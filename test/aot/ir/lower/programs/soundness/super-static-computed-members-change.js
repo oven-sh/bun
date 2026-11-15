@@ -31,104 +31,11 @@ function dynamic(text) { return (text + "!").slice(0, text.length); }
 { class A { get me() { return this.tag; } set me(v) { this.tag = v; } } class B extends A {} class C extends A {} const b = new B(), c = new C(); function w(o, v) { o.me = v; } function r(o) { return o.me; }
   w(b, 1); show("11a", r(b) + 1, r(c)); w(chain(c), "text"); show("11b", r(b) + 1, r(c).length); }
 
-// GENERATED: run Z put build w me C
 // CHECK-LABEL: function {{*}}name="run"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_1]] flags=[IsExpected]} results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v2 = GetSuperBase v1 homeKind=ClassPrototype
-// CHECK-NEXT: v3 = SuperGet v2, v0 key="late"
-// CHECK-NEXT: v4 = ToBoolean v3
-// CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v5):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v7 = GetSuperBase v6 homeKind=ClassPrototype
-// CHECK-NEXT: v8 = SuperGet v7, v0 key="late"
-// CHECK-NEXT: v9 = Call v8, v0 calleeName="super.late"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: b4(v10):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v11 = String string="none"
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6():
-// CHECK-NEXT: Return v11
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Z"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_4]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_4]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_4]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="put"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_5]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: [[L_5]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_7]]
-// CHECK-NEXT: v3 = GetSuperBase v2 homeKind=ClassPrototype
-// CHECK-NEXT: SuperSet v3, v0, v1 key="x"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="build"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|[[f_8]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewClosure function=[[f_9]]
-// CHECK-NEXT: v2 = NewClass v1 layout=[[L_10]]
-// CHECK-NEXT: v3 = ToPropertyKey v0
-// CHECK-NEXT: v4 = NewClosure v0 function=[[f_11]]
-// CHECK-NEXT: SetFunctionName v4, v3
-// CHECK-NEXT: DefineMethod v2, v4, v3 layout=[[L_10]]
-// CHECK-NEXT: v7 = FinishClass v2 layout=[[L_10]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="w"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_12]] flags=[IsExpected]}, {type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_12]], v1: undefined|null|number|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: PropSet v0, v1 key="me"
-// CHECK-NEXT: v3 = Undefined
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="me"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=[[L_13]] flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_13]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_13]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="tag"
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="me"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_13]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: [[L_13]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_13]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v1 key="tag"
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_14]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_15]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_15]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

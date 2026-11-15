@@ -1,0 +1,35 @@
+# -- source: the-one-class-that-has-the-names-asked-is-expected-in-the-field.js
+# class Reply {
+#   constructor(start) { this.replyCode = start; this.replySent = false; }
+#   askHeader(name) { return name.length + this.replyCode; }
+# }
+# class Other {
+#   constructor(start) { this.otherMark = start; }
+# }
+# const shell = {
+#   get status() { return this.inner.replyCode; },
+#   ask(name) { return this.inner.askHeader(name); },
+# };
+# function fill(made, inner) { made.inner = inner; return made; }
+# function wrap(inner) { return fill(Object.create(shell), inner); }
+# const listeners = {};
+# function on(name, listener) { listeners[name] = listener; }
+# function emit(name, value) { return listeners[name](value); }
+# on("reply", inner => { const made = wrap(inner); return made.status + made.ask("abc"); });
+# on("other", other => other.otherMark);
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += emit("reply", new Reply(i)) + emit("other", new Other(i));
+# print(sum);
+# -- end of source
+# What lies in `inner` comes through a table of listeners: both classes may lie there. Two names are asked of it; one allocated class has both. The names asked choose what is expected, not what is proven.
+# The store is in a helper, so the field is appended. A store directly behind Object.create() is a field of a constructed object, whose classes are proven.
+# RUN(HELD): link held fields mechanisms=all
+# HELD: field L4.0 "inner" appended proven=L0 writers-known
+# RUN(COUNTS): link held counts mechanisms=all
+# COUNTS: counts cells of fields expected by the names asked of what lies in them | 1
+# RUN(PROVING): link fields mechanisms=all
+# PROVING: "inner" appended proven=L0|L1 writers-known
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 30
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 30

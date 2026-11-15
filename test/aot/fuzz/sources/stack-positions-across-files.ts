@@ -1,19 +1,18 @@
-// Fixed seeds of fuzz/stack-positions-across-files.ts: programs of several files, ES modules, CommonJS and TypeScript, that take functions and classes from
-// each other, in which each call in turn throws. They print the function, file, line and column of every frame.
+// A fixed list of seeds of ../stack-positions-across-files.ts, which describes the programs.
 import { Random } from "../random";
 import { generate } from "../stack-positions-across-files";
 import { family } from "../family";
 
 const plainEnv = {
-  // Once plain Bun's optimizing compilers have taken a function into its caller, a stack trace there lists it even if it left by a tail call.
+  // Once plain Bun's optimizing JIT has inlined a function, a stack trace lists it even if it left by a tail call.
   BUN_JSC_useDFGJIT: "0",
-  // The files print while they are loaded. The reference transpiles on one thread: the texts are read in the order in which they are asked for. An
-  // executable reads nothing.
+  // The files print while they load. Plain Bun transpiles on one thread here, so files are read in request order. An
+  // executable reads no files.
   BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
 };
 
 export default family(
-  "a stack trace has the functions, files, lines and columns that plain Bun shows, whichever call of a program of several files throws",
+  "stack positions across files",
   [
     ...Array.from({ length: 200 }, (_, index) => ({ seed: index + 1, hasMore: false })),
     ...Array.from({ length: 100 }, (_, index) => ({ seed: index + 1001, hasMore: true })),

@@ -1,15 +1,6 @@
-// Random graphs of ES modules: 3 to 12 modules, all reached from m0. An import may go to any module: back (a cycle), to the module
-// itself, twice to the same one. A module has no await, or one to three `await null`, or an await that stands in the text and never
-// runs. It may throw as its first act or as its last, behind its awaits: an Error, a number or undefined.
-//
-// Every line that a module prints is stamped with the turn of the microtask queue in which it is printed, so the order in which
-// modules are evaluated and the turn in which each goes on behind an await are both compared. top.js has no await and imports m0:
-// it runs in the job in which the evaluation of m0 completes. main.js imports top.js dynamically, then, when all is quiet, one more
-// module of the graph, then top.js again, and prints at the end what each import came to: how many turns `import()` itself takes is
-// not part of the language.
-//
-// The graph is chosen by `seed / 3` and the order in which each module lists its imports by the seed, so three seeds in a row are
-// one graph in three orders.
+// Random graphs of ES modules: 3 to 12 modules, all reachable from m0. An import may point to any module: backward (a
+// cycle), to itself, twice to the same one. A module has no await, one to three `await null`, or an await that never
+// runs, and it may throw.
 function random(seed: number) {
   let state = seed >>> 0;
   const next = () => {

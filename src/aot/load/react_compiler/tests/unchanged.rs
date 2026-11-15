@@ -1,10 +1,9 @@
 use bun_ast::runtime::ReactCompilerMode;
 use bun_ast::{Loader, Log};
-use bun_lint_react_compiler::code_generation::GenerationError;
-use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{ExprTag, FnBody};
 use bun_sema::hir_from_data::{DataValue, HostValue};
 use bun_sema::resolve::TreeChange;
+use bun_sema_parser::{CompileParseOptions, parse_for_compile};
 
 use super::{
     COMPILER_RUNTIME, HELLO, MAIN_PATH, RULE, Tree, UNTYPED_HELLO, with_compiled_tree,
@@ -12,7 +11,9 @@ use super::{
 };
 use crate::compile::testing::default_settings;
 use crate::diagnostics::{Diagnostics, LoadMessages};
-use crate::load::react_compiler::ReactCompiler;
+use crate::load::react_compiler::names_bound_again::find_name_bound_elsewhere;
+use crate::load::react_compiler::{ReactCompiler, may_hold_component_or_hook};
+use crate::load::source_provider::WithoutServices;
 
 struct NodeShapes {
     expressions: Vec<(ExprTag, u32, u32)>,
@@ -34,6 +35,54 @@ fn node_shapes(text: &str, mode: ReactCompilerMode) -> NodeShapes {
             function_count: hir.fns.len(),
         }
     })
+}
+
+#[test]
+fn only_a_file_that_may_hold_a_component_or_a_hook_is_parsed_a_second_time() {
+    for (text, expected) in [
+        (
+            "export function add(a: number, b: number) { return a + b; }",
+            false,
+        ),
+        ("export function Label() { return null; }", false),
+        (
+            "export function Label() { used(); user.useless(); use(); return 'use'; }",
+            false,
+        ),
+        ("export function Label() { return <b />; }", true),
+        ("export function Label() { return <></>; }", true),
+        ("export function Label() { useThing(); return null; }", true),
+        ("export function Label() { use1(); return null; }", true),
+        (
+            "export function Label() { (useThing as any)!(); return null; }",
+            true,
+        ),
+        (
+            "export function Label() { Things.useThing(); return null; }",
+            true,
+        ),
+        (
+            "export function Label() { Things['useThing'](); return null; }",
+            true,
+        ),
+        (
+            "import { useThing as thing } from 'things'; export function Label() { thing(); return null; }",
+            true,
+        ),
+        (
+            "export function add(a: number, b: number) { 'use memo'; return a + b; }",
+            true,
+        ),
+        (
+            "export const add = (a: number, b: number) => { 'use forget'; return a + b; };",
+            true,
+        ),
+    ] {
+        let found = with_workbench(text, |bench| {
+            may_hold_component_or_hook(&bench.tree, &bench.atoms)
+        });
+        assert_eq!(found, expected, "{text}");
+    }
 }
 
 fn write_messages(messages: &LoadMessages) -> (Log, bool) {
@@ -60,7 +109,7 @@ fn applies_to_jsx_loaders_outside_node_modules() {
         (Client, "/project/node_modules/p/a.tsx", Loader::Tsx, false),
         (Disabled, "/project/a.tsx", Loader::Tsx, false),
     ] {
-        let compiler = ReactCompiler::new(mode, &messages);
+        let compiler = ReactCompiler::new(mode, &WithoutServices, &messages);
         let applies = compiler.applies_to(path.as_bytes(), loader);
         assert_eq!(applies, expected, "{mode:?} {path}");
     }
@@ -70,17 +119,16 @@ fn applies_to_jsx_loaders_outside_node_modules() {
 fn disabled_mode_changes_nothing() {
     with_workbench(HELLO, |bench| {
         let messages = LoadMessages::default();
-        let compiler = ReactCompiler::new(ReactCompilerMode::Client, &messages);
-        let (bound, analysis) = bench.analyze(&[]);
+        let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
         let nodes = bench.tree.exprs.as_ptr();
 
-        let (change, source) = bench.transform(ReactCompilerMode::Disabled, &bound, &analysis);
+        let (change, source) = bench.transform(ReactCompilerMode::Disabled);
         assert_eq!(change, TreeChange::Unchanged);
         assert!(!source.has_compiled_components);
         assert!(!compiler.needs_declarations(&source));
         assert_eq!(bench.tree.exprs.as_ptr(), nodes);
 
-        let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+        let (change, source) = bench.transform(ReactCompilerMode::Client);
         assert_eq!(change, TreeChange::Changed);
         assert!(source.has_compiled_components);
         assert!(compiler.needs_declarations(&source));
@@ -95,9 +143,8 @@ fn file_without_components_is_not_copied() {
     let no_component = "export function Plain() { return 1; }\n";
     for text in [no_candidate, no_component] {
         with_workbench(text, |bench| {
-            let (bound, analysis) = bench.analyze(&[]);
             let nodes = bench.tree.exprs.as_ptr();
-            let (change, source) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
+            let (change, source) = bench.transform(ReactCompilerMode::Client);
             assert_eq!(change, TreeChange::Unchanged, "{text}");
             assert!(!source.has_compiled_components, "{text}");
             assert_eq!(bench.tree.exprs.as_ptr(), nodes, "{text}");
@@ -145,16 +192,6 @@ fn ts_loader_without_jsx_is_not_compiled() {
     };
     assert!(!is_compiled("main.ts"));
     assert!(is_compiled("main.tsx"));
-}
-
-#[test]
-fn commonjs_file_is_left_as_written() {
-    let text = "function Rule() { return <hr />; }\nmodule.exports = Rule;\n";
-    with_tree("main.jsx", text, ReactCompilerMode::Client, |tree| {
-        assert!(!tree.has_compiled_components());
-        assert_eq!(tree.count_jsx_elements(), 1);
-        assert!(tree.imported_names(COMPILER_RUNTIME).is_empty());
-    });
 }
 
 #[test]
@@ -220,11 +257,8 @@ fn rule_violation_leaves_the_function_as_written() {
 #[test]
 fn generation_error_is_a_build_error() {
     let messages = LoadMessages::default();
-    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &messages);
-    let error = GenerationError {
-        text: "Invalid type configuration for module".to_owned(),
-    };
-    compiler.report_generation_error(&error, MAIN_PATH);
+    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
+    compiler.report_compiler_error("Invalid type configuration for module", MAIN_PATH);
     let (log, has_internal_errors) = write_messages(&messages);
     assert!(!has_internal_errors);
     assert_eq!((log.msgs.len(), log.errors), (1, 1));
@@ -236,7 +270,7 @@ fn generation_error_is_a_build_error() {
 #[test]
 fn unsupported_node_is_an_internal_error() {
     let messages = LoadMessages::default();
-    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &messages);
+    let compiler = ReactCompiler::new(ReactCompilerMode::Client, &WithoutServices, &messages);
     compiler.report_unsupported_node("EClass", MAIN_PATH);
     let (log, has_internal_errors) = write_messages(&messages);
     assert!(has_internal_errors);
@@ -269,7 +303,42 @@ fn existing_ids_keep_their_nodes() {
 }
 
 #[test]
-fn macro_result_survives_the_transform() {
+fn name_that_binds_to_another_declaration_behind_the_writer_is_found() {
+    let written = "const rate = 100;\n\
+                   {\n\
+                   let rate = 3;\n\
+                   function Listed({ items }: { items: number[] }) {\n\
+                   return <p>{items.map(n => n * rate)}</p>;\n\
+                   }\n\
+                   console.log(Listed);\n\
+                   }\n";
+    let twin = written.replace("let rate", "let late");
+    with_workbench(&twin, |bench| {
+        let (change, _) = bench.transform(ReactCompilerMode::Client);
+        assert_eq!(change, TreeChange::Changed);
+        let (arena, atoms, compiled) = (bench.arena, &bench.atoms, &bench.tree);
+        let parse = |text: &str| {
+            let options = CompileParseOptions {
+                path: MAIN_PATH,
+                script_kind: None,
+                experimental_decorators: false,
+                every_file_is_a_module: true,
+                reads_jsdoc: true,
+                ignores_pure_comments: false,
+            };
+            parse_for_compile(arena, &options, text.as_bytes(), atoms)
+        };
+        let of_its_own_text = find_name_bound_elsewhere(&parse(&twin), compiled, atoms, arena);
+        assert_eq!(of_its_own_text, None);
+        let found = find_name_bound_elsewhere(&parse(written), compiled, atoms, arena);
+        let (position, name) = found.expect("the name binds to the outer declaration");
+        assert_eq!(atoms.bytes(name), b"rate");
+        assert_eq!(position as usize, written.find("* rate").unwrap() + 2);
+    });
+}
+
+#[test]
+fn file_with_macro_is_left_as_written_without_the_bundler() {
     let text = "import { version } from './macro.ts' with { type: 'macro' };\n\
                 export const built = version();\n\
                 export function Hello({ name }: { name: string }) {\n\
@@ -283,16 +352,9 @@ fn macro_result_survives_the_transform() {
         };
         let result = &*arena.alloc(DataValue::Number(7.0));
         let host_values = &*arena.alloc_slice_copy(&[(call, HostValue::Data(result))]);
+        bench.analyze(host_values);
 
-        let (bound, analysis) = bench.analyze(host_values);
-        let decided = Decision::Constant(Constant::Number(7.0));
-        assert!(analysis.pending_macro_calls.is_empty());
-        assert_eq!(analysis.decisions.decision(call), decided);
-
-        let (change, _) = bench.transform(ReactCompilerMode::Client, &bound, &analysis);
-        assert_eq!(change, TreeChange::Changed);
-        let (_, analysis) = bench.analyze(host_values);
-        assert!(analysis.pending_macro_calls.is_empty());
-        assert_eq!(analysis.decisions.decision(call), decided);
+        let (change, _) = bench.transform(ReactCompilerMode::Client);
+        assert_eq!(change, TreeChange::Unchanged);
     });
 }

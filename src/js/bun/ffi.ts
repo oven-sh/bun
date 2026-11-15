@@ -69,13 +69,17 @@ const ptr = (arg1: ArrayBufferView | ArrayBufferLike, arg2?: number) =>
   typeof arg2 === "undefined" ? ffi.ptr(arg1) : ffi.ptr(arg1, arg2);
 const toBuffer = ffi.toBuffer;
 const toArrayBuffer = ffi.toArrayBuffer;
-const nativeViewSource = ffi.viewSource;
-
-const nativeLinkSymbols = ffi.linkSymbols;
 const nativeDLOpen = ffi.dlopen;
-const nativeCallback = ffi.callback!;
+// These throw the errors that the `Bun.FFI` functions of the same name return.
+const openLibrary: (path: unknown, symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "openLibrary");
+const linkLibrary: (symbols: object) => $Node.FFILibrary = $bindgen("ffi.bind.ts", "linkLibrary");
+const makeFunction: (options: object, name: string) => $Node.FFIFunction = $bindgen("ffi.bind.ts", "makeFunction");
+const makeCallback: (options: object, callback: unknown) => object = $bindgen("ffi.bind.ts", "makeCallback");
+const printSource: (symbols: object, isCallback?: boolean) => string | string[] = $bindgen(
+  "ffi.bind.ts",
+  "printSource",
+);
 const closeCallback: (callback: JSCallback) => void = $bindgen("ffi.bind.ts", "closeCallback");
-const nativeCFunction = ffi.cfunction!;
 delete ffi.callback;
 delete ffi.closeCallback;
 delete ffi.cfunction;
@@ -84,8 +88,7 @@ class JSCallback {
   declare readonly ptr: number | null;
 
   constructor(cb: (...args: any[]) => unknown, options: object) {
-    const cell = nativeCallback(options, cb);
-    if (Error.isError(cell)) throw cell;
+    const cell = makeCallback(options, cb);
     Object.setPrototypeOf(cell, (new.target ?? JSCallback).prototype);
     return cell as JSCallback;
   }
@@ -180,14 +183,14 @@ function normalizePath(path: string | URL | Bun.BunFile | undefined) {
     // https://github.com/oven-sh/bun/issues/10304
     path = Bun.fileURLToPath(path);
   } else if (typeof path === "object" && path) {
-    if (path instanceof URL) {
-      // This is mostly for import.meta.resolve()
-      // https://github.com/oven-sh/bun/issues/10304
-      path = Bun.fileURLToPath(path as URL);
-    } else if ($inheritsBlob(path)) {
+    if ($inheritsBlob(path)) {
       // must be a Bun.file() blob
       // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
       path = path.name;
+    } else {
+      // This is mostly for import.meta.resolve()
+      // https://github.com/oven-sh/bun/issues/10304
+      path = require("internal/url").toPathIfFileURL(path) as string;
     }
   }
 
@@ -197,8 +200,7 @@ function normalizePath(path: string | URL | Bun.BunFile | undefined) {
 function dlopen(path: string | URL | Bun.BunFile | undefined, options: object) {
   path = normalizePath(path);
 
-  const result = nativeDLOpen(path, options);
-  if (Error.isError(result)) throw result;
+  const result = openLibrary(path, options);
 
   // Bind it because it's a breaking change to not do so
   // Previously, it didn't need to be bound
@@ -256,14 +258,12 @@ function cc(options) {
 }
 
 function viewSource(symbols: object, isCallback?: boolean) {
-  const result = nativeViewSource(symbols, isCallback);
-  if (Error.isError(result)) throw result;
+  var result = printSource(symbols, isCallback);
   return result;
 }
 
 function linkSymbols(options: object) {
-  const result = nativeLinkSymbols(options);
-  if (Error.isError(result)) throw result;
+  var result = linkLibrary(options);
   return result;
 }
 
@@ -272,8 +272,7 @@ function closeJSCFFICFunction() {}
 function CFunction(options: object) {
   const identifier = `CFunction${cFunctionI++}`;
 
-  const fn = nativeCFunction(options, identifier);
-  if (Error.isError(fn)) throw fn;
+  const fn = makeFunction(options, identifier);
   fn.close = closeJSCFFICFunction;
   return fn;
 }

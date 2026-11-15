@@ -1,0 +1,24 @@
+`new Function('return import("dep")')()` in a test file finds what it finds under plain bun test: packages, a module of Bun, files beside the test file. Over layers the build once stopped with an internal error.
+#### main.test.mjs
+import { test } from "bun:test";
+console.log("| CASE", "an ES package:", Object.keys(await new Function('return import("es-package")')()).sort().join());
+console.log("| CASE", "a CommonJS package:", Object.keys(await new Function('return import("commonjs-package")')()).sort().join());
+console.log("| CASE", "a module of Bun's own:", Object.keys(await new Function('return import("node:path")')()).sort().join());
+try { new Function('import("a", "b", "c")'); } catch (error) { console.log("| CASE", "three arguments:", error.name); }
+try { new Function('return require("./src/three.cjs")')(); } catch (error) { console.log("| CASE", "require:", error.name); }
+console.log("| CASE", "an ES file:", Object.keys(await new Function('return import("./src/two.mjs")')()).sort().join());
+console.log("| CASE", "a CommonJS file:", Object.keys(await new Function('return import("./src/three.cjs")')()).sort().join());
+try { await new Function('return import("absent-package")')(); } catch (error) { console.log("| CASE", "absent:", error.name); }
+test("end", () => {});
+#### node_modules/commonjs-package/index.js
+exports.one = 1;
+#### node_modules/commonjs-package/package.json
+{ "name": "commonjs-package", "main": "index.js" }
+#### node_modules/es-package/index.js
+export const one = 1;
+#### node_modules/es-package/package.json
+{ "name": "es-package", "type": "module", "main": "index.js" }
+#### src/three.cjs
+exports.three = 3;
+#### src/two.mjs
+export const two = 2;

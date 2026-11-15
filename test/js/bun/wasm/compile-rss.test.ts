@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
-// Unfixed, the 8 idle wasm compiler threads keep 35 to 39 MiB of freed compile temporaries until
-// they exit after 10 s. Fixed, they release it about 100 ms after the last compile and RSS returns
-// to where it started.
+// Unfixed, the idle wasm compiler thread keeps 18 to 36 MiB of freed compile temporaries until it
+// exits after 10 s. Fixed, it releases them about 100 ms after the last compile and RSS returns to
+// where it started.
 const idleTargetMiB = 10;
 
 // Debug and ASAN builds link a JavaScriptCore that does not allocate through mimalloc, so the
@@ -16,9 +16,10 @@ test.skipIf(isDebug || isASAN)(
       cmd: [bunExe(), path.join(import.meta.dir, "compile-rss-fixture.mjs"), String(idleTargetMiB)],
       env: {
         ...bunEnv,
-        // The retained amount scales with the compiler thread count. Pin it so the test does not
-        // depend on the core count of the machine.
-        BUN_JSC_numberOfWasmCompilerThreads: "8",
+        // The retained amount scales with the compiler thread count, so the test must not depend on
+        // the core count of the machine. And the fixture has to wake the thread: of several, a busy
+        // machine leaves some without work.
+        BUN_JSC_numberOfWasmCompilerThreads: "1",
       },
       stdout: "pipe",
       stderr: "pipe",

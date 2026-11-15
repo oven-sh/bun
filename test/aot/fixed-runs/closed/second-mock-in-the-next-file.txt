@@ -1,0 +1,49 @@
+Three test files in one realm: the first mocks a module, the second mocks it again and asks for the original, the third mocks nothing; the module is a file, and a package.
+#### package.json
+{ "name": "project", "type": "module" }
+#### a-file/src/given.js
+export const a = "real a";
+export const f = () => "real f";
+#### a-file/src/user.js
+import * as given from "./given.js";
+import { a } from "./given.js";
+export const seen = () => [given.a, given.f(), a].join();
+#### a-file/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("./src/given.js", importOriginal => ({ a: "mock a", f: () => "mock f" }));
+import { seen } from "./src/user.js";
+test("a", () => console.log("| CASE a-file a", seen()));
+#### a-file/b.test.js
+import { test, vi } from "bun:test";
+test("b", async () => {
+  vi.doMock("./src/given.js", async importOriginal => ({ ...(await importOriginal()), a: "mock b" }));
+  console.log("| CASE a-file b", (await import("./src/user.js")).seen());
+});
+#### a-file/z.test.js
+import { test, vi } from "bun:test";
+import { seen } from "./src/user.js";
+test("z", () => console.log("| CASE a-file z", seen()));
+#### a-package/node_modules/pkg/package.json
+{ "name": "pkg", "main": "index.js", "type": "module" }
+#### a-package/node_modules/pkg/index.js
+export const a = "real a";
+export const f = () => "real f";
+#### a-package/src/user.js
+import * as given from "pkg";
+import { a } from "pkg";
+export const seen = () => [given.a, given.f(), a].join();
+#### a-package/a.test.js
+import { test, vi } from "bun:test";
+vi.mock("pkg", importOriginal => ({ a: "mock a", f: () => "mock f" }));
+import { seen } from "./src/user.js";
+test("a", () => console.log("| CASE a-package a", seen()));
+#### a-package/b.test.js
+import { test, vi } from "bun:test";
+test("b", async () => {
+  vi.doMock("pkg", async importOriginal => ({ ...(await importOriginal()), a: "mock b" }));
+  console.log("| CASE a-package b", (await import("./src/user.js")).seen());
+});
+#### a-package/z.test.js
+import { test, vi } from "bun:test";
+import { seen } from "./src/user.js";
+test("z", () => console.log("| CASE a-package z", seen()));

@@ -2,17 +2,17 @@
 // CHECK-LABEL: function {{*}}name="anotherObject"
 // CHECK: NewArray
 // CHECK: = Call
-// CHECK-LABEL: function {{*}}name="definition"
-// CHECK: b0([[definition_target]]: {{*}}, [[definition_source]]: {{*}}):
-// CHECK: = Builtin builtin=ObjectGetOwnPropertyDescriptors
-// CHECK-NEXT: [[definition_describe]] = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
-// CHECK-NEXT: [[definition_described]] = Call [[definition_describe]], -, [[definition_source]]
-// CHECK-NEXT: [[definition_define]] = Builtin builtin=CompilerHelpersDefinePropertiesFrom
-// CHECK-NEXT: = Call [[definition_define]], -, [[definition_target]], [[definition_described]], [[definition_source]]
-// CHECK-NEXT: Return
-// CHECK-LABEL: function {{*}}name="descriptorsThatSomebodyHolds"
-// CHECK: = Builtin builtin=ObjectGetOwnPropertyDescriptors
-// CHECK: = Builtin builtin=ObjectDefineProperties
+// CHECK-LABEL: function {{*}}name="emptyList"
+// CHECK-NOT: Construct
+// CHECK: = NewArray
+// CHECK-LABEL: function {{*}}name="emptyObject"
+// CHECK-NOT: Construct
+// CHECK: [[emptyObject_made]] = NewObject
+// CHECK-NEXT: = FinishObject [[emptyObject_made]]
+// CHECK-LABEL: function {{*}}name="emptyObjectByCall"
+// CHECK-NOT: = Call
+// CHECK: [[emptyObjectByCall_made]] = NewObject
+// CHECK-NEXT: = FinishObject [[emptyObjectByCall_made]]
 // CHECK-LABEL: function {{*}}name="fromEntries"
 // CHECK-NOT: NewArray
 // CHECK-NOT: = Call
@@ -24,6 +24,9 @@
 // CHECK-NOT: ToPropertyKey
 // CHECK: [[keyThatIsComputed_made]] = NewDictionary
 // CHECK-NEXT: ElemDefine [[keyThatIsComputed_made]], [[keyThatIsComputed_key]], [[keyThatIsComputed_value]] calledBuiltin=ObjectFromEntries
+// CHECK-LABEL: function {{*}}name="listOfLength"
+// CHECK-NOT: NewArray
+// CHECK: = Construct {{*}}calleeName="Array"
 // CHECK-LABEL: function {{*}}name="map"
 // CHECK: b0([[map_a]]: {{*}}, [[map_b]]: {{*}}):
 // CHECK-NOT: NewArray
@@ -87,11 +90,18 @@ export function setWithHole(a) {
   return new Set([a, , a]);
 }
 
-export function definition(target, source) {
-  return Object.defineProperties(target, Object.getOwnPropertyDescriptors(source));
+export function emptyList() {
+  return new Array();
 }
 
-export function descriptorsThatSomebodyHolds(target, source) {
-  const descriptors = Object.getOwnPropertyDescriptors(source);
-  return Object.defineProperties(target, descriptors);
+export function listOfLength(length) {
+  return new Array(length);
+}
+
+export function emptyObject() {
+  return new Object();
+}
+
+export function emptyObjectByCall() {
+  return Object();
 }

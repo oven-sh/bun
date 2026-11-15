@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""altered-arrays.py <seed> [ts|js]: Arrays of every storage, ALTERED in every way that puts something in front of Array.prototype's own methods or changes what a method must do (own properties under method names, constructor, symbols: iterator, isConcatSpreadable, species by the constructor, toPrimitive; toString | toJSON | valueOf | then | join of one's own; another prototype by four roads, a prototype that inherits from Array.prototype with overrides, null; heirs of Array; frozen | sealed | not extensible; a length that cannot be written; getters at indices; harmless names), by direct text and from behind a function, before and AFTER the array has passed the same site unaltered; then every built-in method by its name in the text. As plain Bun or a throw."""
+"""altered-arrays.py <seed> [ts|js]: Arrays of every storage kind, altered in every way that shadows Array.prototype's
+methods or changes what a method must do (own properties named like methods, constructor, Symbol.iterator,
+isConcatSpreadable, species, another prototype ..), then used.
+"""
 import random, sys
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1
 TS = (sys.argv[2] if len(sys.argv) > 2 else 'ts') == 'ts'

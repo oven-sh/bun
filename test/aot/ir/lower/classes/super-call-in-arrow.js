@@ -8,8 +8,10 @@
 // RUN(CONSTRUCTOR): lower
 // CONSTRUCTOR-LABEL: function {{*}}name="Deferred" {{*}}kind=DerivedConstructor
 // CONSTRUCTOR-NOT: SuperConstruct
+// CONSTRUCTOR: = CallDirect {{*}}function=[[construct]]
+// CONSTRUCTOR-NOT: SuperConstruct
 // CONSTRUCTOR-NOT: CallDirect
-// CONSTRUCTOR-LABEL: function {{*}}name="construct"
+// CONSTRUCTOR: function [[construct]] {{*}}name="construct"
 
 class Base {}
 

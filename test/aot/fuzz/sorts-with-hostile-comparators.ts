@@ -1,29 +1,14 @@
-// `sort` and `toSorted` of arrays and typed arrays, with comparators that do not behave.
-//
-//   elements     integers, doubles, both, doubles among NaN, -0 and infinities, strings, objects, objects that lack the compared field,
-//                numbers among undefined and null
-//   made by      push, a literal, new Array(n), Array.from, a subclass; with holes or without
-//   then         nothing, shift, unshift, a splice at the front, a delete, a longer length, a far index, a named property, frozen, sealed,
-//                closed to new properties, a read-only length
-//   order        random with few or many equal elements, ascending, descending, all equal, one long run and a short one, many short runs,
-//                two runs that interleave, two runs of which the second lies below the first
-//   length       0 to 5,000, most often around 2, 8, 32, 64 and 128
-//   answers      honest, reversed, random, NaN, undefined, always 1, -1 or 0, booleans, strings, infinities, an object with valueOf, a BigInt,
-//                a symbol, a promise; honest but for every n-th call
-//   at one call  the comparator throws; cuts, empties or grows the array; stores another kind of element; deletes one; freezes or seals the
-//                array; makes an element an accessor or the length read-only; sorts, reverses, fills or shifts the same array; gives it another
-//                prototype; collects garbage. A typed array has its buffer resized or transferred
-//   printed      per scene: what came back or what was thrown, the number of calls, and of the array: Array.isArray, the length, a hash of
-//                the elements in order, a hash that no order changes, the number of holes
+// `sort` and `toSorted` on arrays and typed arrays, with misbehaving comparators: inconsistent results, NaN,
+// exceptions, and mutation of the array during the sort.
 import type { Random } from "./random";
 
 interface Kind {
   type: string;
   make: (rank: string, index: string) => string;
-  /** A literal with the same kind of element, or undefined where a literal says nothing new. */
+  /** A literal with the same kind of element, or undefined if a literal adds nothing new. */
   literal?: (rank: number) => string;
   honest: string;
-  /** An element of another kind of storage. */
+  /** An element that needs another storage kind. */
   stranger: string;
 }
 
@@ -67,7 +52,7 @@ function drawOrder(r: Random, length: number): string {
   ]);
 }
 
-/** What the comparator answers. The second member says whether it is a number as TypeScript sees it. */
+/** What the comparator returns. The second member says whether TypeScript considers it a number. */
 function drawAnswer(r: Random, honest: string): [string, boolean] {
   return r.weighted<[string, boolean]>([
     [6, [honest, true]],
@@ -190,7 +175,7 @@ function drawCall(r: Random, comparator: string): string {
   ]);
 }
 
-// The loop makes the call of the sort count as hot, so that it is compiled as a call of the compiler's own sort behind a test.
+// The loop makes the sort call hot, so that it is compiled as a guarded call of the compiler's own sort.
 function finish(scene: number, typed: boolean, setup: string, call: string): string {
   return `function scene${scene}()${typed ? ": void" : ""} {
   for (let turn = 0; turn < 2; turn++) {

@@ -4,7 +4,7 @@
 //
 //   bun --expose-internals fresh-results.ts <aot_builtin_table.json> [pattern of paths]      the last line that it prints is `Found` below, as JSON
 import { bodyOf, within } from "./evaluate";
-import { calls, families, familiesNotCalled, linkedByLibraryCode, notCalled } from "./fresh-results-calls";
+import { addedByLibraryCode, calls, families, familiesNotCalled, notCalled } from "./fresh-results-calls";
 import { readTable, type Entry, type Overload, type Row, type TableType, type TypePart } from "./table";
 import { attempt, matches, neverEvaluated, plansOf, write } from "./table-driven";
 
@@ -139,10 +139,10 @@ export class Judge {
         const listed = this.memberNames(current);
         const others = Reflect.ownKeys(actual)
           .map(nameOfKey)
-          .filter(name => !listed.has(name));
+          .filter(name => !listed.has(name) && !addedByLibraryCode[entry.path]?.includes(name));
         if (others.length > 0) problems.push(`${entry.path} holds ${others.join(" ")}`);
       }
-      if (entry.prototypeLink === "Unknown" || entry.path in linkedByLibraryCode) return problems;
+      if (entry.prototypeLink === "Unknown") return problems;
       actual = Object.getPrototypeOf(actual);
       current = entry.prototypeLink === "Null" ? null : entry.inheritsFrom;
     }
@@ -440,7 +440,10 @@ export async function judgeFreshRows(tablePath: string, only: RegExp | null = nu
     process.platform as string
   ];
   const elsewhere = new Set<string>();
-  for (const entry of table.entries as DumpedEntry[]) {
+  // A snapshot of the heap is as large as the heap, and every row that is called leaves something there: those rows come first.
+  const growsWithTheHeap = (entry: DumpedEntry) => Number(/HeapSnapshot/.test(entry.path));
+  const entries = (table.entries as DumpedEntry[]).toSorted((a, b) => growsWithTheHeap(b) - growsWithTheHeap(a));
+  for (const entry of entries) {
     if (only !== null && !only.test(entry.path)) continue;
     if (platform !== undefined && !entry.platforms.includes(platform)) {
       elsewhere.add(entry.path);
@@ -448,7 +451,7 @@ export async function judgeFreshRows(tablePath: string, only: RegExp | null = nu
     }
     for (const [classes, type] of newValuesOf(entry)) {
       const key = `${entry.path} > ${classes}`;
-      if (key in notCalled) {
+      if (key in notCalled || familiesNotCalled.some(each => each.rows.test(entry.path))) {
         found.notCalled.push(key);
         continue;
       }

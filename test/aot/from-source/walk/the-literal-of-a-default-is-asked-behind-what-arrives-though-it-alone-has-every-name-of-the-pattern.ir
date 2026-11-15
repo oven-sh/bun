@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# 'use strict';
+# function shape(x, { width = "", height, depth, tint = x } = {}) { return x + width.length + (tint === x ? 1 : 0); }
+# const table = { shape }, key = JSON.parse('"shape"'), given = { width: 'q', height: 1 };
+# function run(turns) { let s = 0; const h = table[key]; for (let i = 0; i < turns; i++) s += h(i, given); return s; }
+# console.log(run(3));
+# -- end of source
+# The `{}` that stands in for the parameter is given the names of the pattern, so it alone "holds" depth and tint, in fields that nobody ever writes. The names used narrowed the expectation to it: a test
+# that failed at every call, and four reads by name behind it. Where a literal of the function's own meets what arrives at a join, the names do not narrow; what arrives is asked first, the literal behind it.
+# RUN: walk f1 mechanisms=all
+# CHECK: ShapeTest {{*}} layouts=[L
+# CHECK: GetSlot {{*}} key="width" receivers=[L{{*}}] level=Proven
+# CHECK: ShapeTest {{*}} layouts=[L
+# CHECK: GetSlotOrUndefined {{*}} key="width"
+# In a copy what arrives is asked too, once in front of the loop.
+# RUN(COPY): walk f2 mechanisms=all
+# COPY: frame 1 callee=f1
+# COPY: ShapeTest {{*}} layouts=[L
+# COPY: GetSlot {{*}} key="width" receivers=[L{{*}}] level=Proven

@@ -47,7 +47,7 @@ static NEVER_INLINE void collectAsyncStackFramesFromPromiseWithCompiledCode(JSC:
             case JSC::JSPromise::InlineReactionKind::InternalMicrotask: {
                 if (auto* asyncFunction = unwrapAsyncFunctionFromContext(p->inlineReactionContext()))
                     return asyncFunction;
-                if (auto* next = dynamicDowncast<JSC::JSPromise>(p->payloadCell())) {
+                if (auto* next = JSC::JSPromise::promiseForReactionCell(p->payloadCell())) {
                     p = next;
                     continue;
                 }
@@ -66,7 +66,9 @@ static NEVER_INLINE void collectAsyncStackFramesFromPromiseWithCompiledCode(JSC:
                 return nullptr;
             if (auto* asyncFunction = unwrapAsyncFunctionFromContext(JSC::JSPromiseReaction::tryGetContext(reaction)))
                 return asyncFunction;
-            if (!dynamicCastValue(reaction->promise(), &p))
+            JSC::JSValue settled = reaction->promise();
+            p = settled && settled.isCell() ? JSC::JSPromise::promiseForReactionCell(settled.asCell()) : nullptr;
+            if (!p)
                 return nullptr;
         }
         return nullptr;

@@ -6,6 +6,7 @@ use super::throw;
 use super::{Expect, get_signature};
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_have_been_last_called_with(
         &self,
         this_value: JsWrapper<'_, Self>,

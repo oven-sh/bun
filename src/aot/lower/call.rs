@@ -1,34 +1,41 @@
 mod array_makers;
+mod assignment_of_literals;
+mod assignment_to_new_object;
 mod callee;
+mod copied_factory;
 mod evaluated_text;
 mod intrinsic;
 mod intrinsic_call;
 mod intrinsic_operation;
-mod number_questions;
+mod prototype_makers;
 mod written_operands;
 
-use bun_sema::bind::Binding;
-use bun_sema::hir::{Call, ExprId, ExprKind, IdList};
+use bun_sema::atom::known;
+use bun_sema::fold::Constant;
+use bun_sema::hir::{Call, Chain, ExprId, ExprKind, FnId, IdList, MemberKey};
 use smallvec::SmallVec;
 
-use super::expression::{Evaluation, Tail, TailCast};
-use super::positions::SiteOrigin;
+use super::expression::{self, Evaluation, Tail, TailCast};
+use super::function::{self, EntryArguments};
 use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
-use crate::builtins::{Intrinsic, Resolved, builtin_value_of};
-use crate::ir::generated::TypeSiteKind;
-use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, ValueId};
+use crate::builtins::{Resolved, builtin_value_of, table};
+use crate::ir::{
+    DeclaredType, Edge, ExpectedResultId, PositionFlags, PropertyKey, PropertyKeyId, StringId,
+    TypeTable, ValueId,
+};
+use crate::load::SourceKind;
 
-pub(in crate::lower) use self::callee::PrintedOperators;
+use crate::modules::ModuleRef;
+
 pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
+pub(in crate::lower) use self::prototype_makers::PrototypeMakers;
 
+#[derive(Clone)]
 pub(crate) enum Arguments {
     Values(SmallVec<[ValueId; 4]>),
     List(ValueId),
 }
-
-// A marked call goes where `bun build` lets it go, and `Removable` decides that.
-const IS_ANNOTATED_PURE: bool = false;
 
 #[derive(Copy, Clone, Debug)]
 pub(in crate::lower) struct Callee {
@@ -56,7 +63,6 @@ impl Callee {
 #[derive(Copy, Clone)]
 pub(in crate::lower) struct CallOptions<'t> {
     pub(in crate::lower) tail: Tail<'t>,
-    pub(in crate::lower) expected_result: Option<ExpectedResultId>,
     pub(in crate::lower) is_never_inlined: bool,
     pub(in crate::lower) is_done_in_place: bool,
     pub(in crate::lower) call_number: Option<u32>,
@@ -64,8 +70,20 @@ pub(in crate::lower) struct CallOptions<'t> {
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_arguments(&mut self, arguments: IdList<ExprId>) -> Arguments {
-        let arguments: SmallVec<[ExprId; 4]> = self.file.hir.ids(arguments).collect();
-        self.lower_argument_slice(&arguments)
+        let hir = self.file.hir;
+        let mut has_spread = false;
+        for argument in hir.ids(arguments) {
+            has_spread |= matches!(hir[argument].kind, ExprKind::Spread(_));
+        }
+        if has_spread {
+            let arguments: SmallVec<[ExprId; 4]> = hir.ids(arguments).collect();
+            return self.lower_argument_slice(&arguments);
+        }
+        let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        for argument in hir.ids(arguments) {
+            values.push(self.lower_expression(argument));
+        }
+        Arguments::Values(values)
     }
 
     pub(crate) fn emit_construct(
@@ -76,9 +94,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         let builder = &mut self.builder;
         match arguments {
-            Arguments::Values(values) => {
-                builder.construct(callee, None, &values, name, IS_ANNOTATED_PURE)
-            }
+            Arguments::Values(values) => builder.construct(callee, None, &values, name),
             Arguments::List(list) => builder.construct_list(callee, None, list, name),
         }
     }
@@ -92,21 +108,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         emit_call(self, callee, None, arguments)
     }
 
-    fn emit_locked_call(
-        &mut self,
-        builtin: BuiltinId,
-        this: Option<ValueId>,
-        arguments: &[ValueId],
-    ) -> ValueId {
-        let callee = self.emit_builtin_itself(builtin);
-        emit_call(self, callee, this, arguments)
-    }
-
     pub(in crate::lower) fn lower_call(
         &mut self,
         call: ExprId,
         evaluation: Evaluation<'_>,
     ) -> ValueId {
+        if !self.loose_loops.is_empty()
+            && let Some(value) = self.try_lower_closing_call(call)
+        {
+            return value;
+        }
         let (hir, bound, builtins) = (self.file.hir, self.file.bound, self.file.builtins);
         let site = call_site(self.file, call);
         let exit = evaluation.chain_exit;
@@ -114,10 +125,23 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if bound.eval_scope(call).is_some() {
             return scope::lower_direct_eval(self, call);
         }
+        if let ExprKind::Call(id) = hir[call].kind {
+            if hir.is_settled_eval(id) {
+                return scope::lower_direct_eval(self, call);
+            }
+            if !hir.known_evaluations_of(id).is_empty() {
+                return self.lower_known_function_call(call, id, evaluation.tail);
+            }
+        }
         if matches!(hir[site.callee].kind, ExprKind::Super) {
             return self.lower_super_call(call);
         }
-        self.record_read_of_builtin_path(inner);
+        if matches!(evaluation.tail, Tail::Yes { casts: None })
+            && matches!(hir[call].kind, ExprKind::Call(_))
+            && let Some(value) = self.try_lower_self_tail_call(call, site)
+        {
+            return value;
+        }
         let is_in_tail_position = matches!(evaluation.tail, Tail::Yes { .. });
         let outer = std::mem::replace(&mut self.is_call_in_tail_position, is_in_tail_position);
         let loaded = self.try_lower_module_call(call, exit);
@@ -125,57 +149,244 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = loaded {
             return value;
         }
+        if let Some(function) = self.file.scopes.function_called_by_name(call) {
+            if let Some(value) = self.try_lower_private_state_call(call) {
+                return value;
+            }
+            if let Some(value) = self.try_lower_certain_helper(call) {
+                return value;
+            }
+            return self.lower_call_of_declaration(call, site, function, evaluation.tail);
+        }
         if let Some(value) = self.try_lower_export_definition(call) {
+            return value;
+        }
+        if let Some(value) = self.try_lower_definition_of_getters(call) {
+            return value;
+        }
+        if let Some(value) = self.try_lower_copy_of_getters(call) {
             return value;
         }
         if let Some(value) = self.try_lower_known_call(call) {
             return value;
         }
-        match builtins.of_expr(inner) {
+        if let Some(value) = self.try_lower_call_of_new_function(call, site, evaluation.tail) {
+            return value;
+        }
+        let (is_resolved, named) = match builtins.of_expr(inner) {
             Some(Resolved::Intrinsic(intrinsic)) => {
                 return intrinsic::lower_intrinsic_call(self, call, intrinsic, evaluation);
             }
-            Some(Resolved::Builtin(_) | Resolved::DynamicGlobal(_)) | None => {}
-        }
+            Some(Resolved::Builtin(path)) => (true, Some(path.id)),
+            Some(Resolved::DynamicGlobal(_)) => (true, None),
+            None => (false, None),
+        };
         if let Some(text) = builtins.evaluated_text(call) {
             return self.lower_evaluated_text_call(call, text, exit, evaluation.tail);
         }
-        if let Some(value) = self.try_lower_call(call, site, evaluation.tail) {
+        if let Some(value) = self.try_lower_builtin_call_in_place(call, site, evaluation.tail) {
             return value;
         }
 
-        let expected = self.file.find_callee_by_signature(call, inner);
+        let expected = match is_resolved {
+            true => None,
+            false => self.file.find_callee_by_signature(call),
+        };
         let mut callee = self.lower_callee(site.callee, exit, expected);
         callee.function = self.leave_chain_if_nullish(site, callee.function, exit);
         let arguments = self.lower_arguments(site.args);
-        let tail = match self.file.makes_array_in_caller(site) {
-            true => Tail::No,
-            false => evaluation.tail,
+        self.emit_call_of_named(call, site, named, callee, arguments, evaluation.tail)
+    }
+
+    // `(function () { .. }).call(object, value)`: a new function has no member of its own under this name, so the call enters it.
+    fn try_lower_call_of_new_function(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        tail: Tail<'_>,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let access = self.file.skip_type_syntax(site.callee);
+        let ExprKind::Dot {
+            obj,
+            name: known::call,
+            chain: Chain::No,
+            ..
+        } = hir[access].kind
+        else {
+            return None;
         };
-        self.emit_call_expression(call, callee, arguments, tail)
+        let arguments: SmallVec<[ExprId; 4]> = hir.ids(site.args).collect();
+        let replaced = self.file.inputs.replaced_builtins;
+        let is_replaced = replaced
+            .binary_search(&(BuiltinId::FunctionPrototypeCall as u32))
+            .is_ok();
+        let function = self.file.skip_type_syntax(obj);
+        if !matches!(hir[function].kind, ExprKind::Fn(_))
+            || !matches!(site.chain, Chain::No)
+            || !matches!(tail, Tail::No)
+            || intrinsic::has_spread(hir, &arguments)
+            || is_replaced
+        {
+            return None;
+        }
+        let function = self.lower_expression(obj);
+        let mut values: SmallVec<[ValueId; 4]> = arguments
+            .iter()
+            .map(|&argument| self.lower_expression(argument))
+            .collect();
+        let this = match values.is_empty() {
+            true => self.builder.undefined(),
+            false => values.remove(0),
+        };
+        let options = CallOptions {
+            tail: Tail::No,
+            is_never_inlined: false,
+            is_done_in_place: false,
+            call_number: None,
+        };
+        let expected = self.find_expected_result(call);
+        self.set_position(self.file.call_position(site));
+        let callee = Callee::without_key(function, Some(this), None);
+        let arguments = Arguments::Values(values);
+        let value = self.emit_call_with_expected_result(callee, arguments, options, expected);
+        self.set_position(hir[call].pos);
+        Some(self.claim_call_result(call, value))
+    }
+
+    pub(super) fn emit_call_of_declaration(
+        &mut self,
+        call: ExprId,
+        function: FnId,
+        arguments: Arguments,
+    ) -> ValueId {
+        let Arguments::Values(mut values) = arguments else {
+            unreachable!("a call with a spread argument reads its callee");
+        };
+        self.convert_arguments(call, &mut values);
+        let id = function::declare_source_function(self.file, function, None);
+        let arguments = EntryArguments {
+            this: None,
+            new_target: None,
+            parameters: &values,
+        };
+        let value = self.emit_direct_call(id, arguments);
+        self.claim_call_result(call, value)
+    }
+
+    fn lower_call_of_declaration(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        function: FnId,
+        tail: Tail<'_>,
+    ) -> ValueId {
+        let Arguments::Values(mut values) = self.lower_arguments(site.args) else {
+            unreachable!("a call with a spread argument reads its callee");
+        };
+        self.convert_arguments(call, &mut values);
+        let id = function::declare_source_function(self.file, function, None);
+        self.set_position(self.file.call_position(site));
+        self.quote_if_next_fails(call);
+        let arguments = EntryArguments {
+            this: None,
+            new_target: None,
+            parameters: &values,
+        };
+        let value = self.emit_direct_call(id, arguments);
+        match tail {
+            Tail::No => {
+                self.set_position(self.file.hir[call].pos);
+                self.claim_call_result(call, value)
+            }
+            Tail::Yes { casts } => {
+                let position = self.file.find_position_of_returned_call(call);
+                let cast = TailCast {
+                    positions: std::slice::from_ref(&position),
+                    outer: casts,
+                    breaks_no_int32_promise: self.enters_int32_promise_behind_return(casts)
+                        && self.file.breaks_no_int32_promise(call),
+                };
+                self.return_call_in_tail_position(value, Tail::Yes { casts: Some(&cast) })
+            }
+        }
+    }
+
+    fn hand_global_object_to_stub(&mut self, arguments: Arguments) -> Arguments {
+        let mut values: SmallVec<[ValueId; 4]> = match arguments {
+            Arguments::Values(values) => values,
+            Arguments::List(list) => (0..2)
+                .map(|index| {
+                    let index = self.builder.integer(index);
+                    self.builder.elem_get(list, index)
+                })
+                .collect(),
+        };
+        while values.len() < 2 {
+            values.push(self.builder.undefined());
+        }
+        values.truncate(2);
+        values.push(self.builder.builtin(BuiltinId::GlobalThis, false));
+        Arguments::Values(values)
     }
 
     pub(in crate::lower) fn lower_new(&mut self, expression: ExprId, tail: Tail<'_>) -> ValueId {
-        let builtins = self.file.builtins;
+        let (hir, builtins) = (self.file.hir, self.file.builtins);
+        if let ExprKind::New(id) = hir[expression].kind
+            && !hir.known_evaluations_of(id).is_empty()
+        {
+            return self.lower_known_function_call(expression, id, tail);
+        }
         if let Some(text) = builtins.evaluated_text(expression) {
             return self.lower_evaluated_text_call(expression, text, None, tail);
         }
         let site = call_site(self.file, expression);
-        self.record_read_of_builtin_path(site.callee);
-        if let Some(value) = self.try_lower_new(expression, site) {
+        if let Some(value) = self.try_lower_builtin_construct_in_place(expression, site) {
             return value;
         }
         let function = self.lower_expression(site.callee);
         let callee = Callee::without_key(function, None, self.file.find_callee_name(site.callee));
-        let arguments = self.lower_arguments(site.args);
-        if self.file.is_tail_call(expression, tail) {
-            return self.emit_call_expression(expression, callee, arguments, tail);
-        }
-        self.file
-            .record_construction_by_library(expression, site.callee);
+        let hir = self.file.hir;
+        let mut handed = hir
+            .ids(site.args)
+            .map(|argument| hir.skip_type_assertions(argument));
+        let only = handed.next().filter(|_| handed.next().is_none());
+        let around = std::mem::replace(&mut self.only_argument_of_construction, only);
+        let arguments = self.lower_arguments_of_construction(site);
+        self.only_argument_of_construction = around;
         let value = self.emit_new_expression(expression, callee, arguments);
         self.record_state_creation(expression, function, value);
         value
+    }
+
+    fn lower_arguments_of_construction(&mut self, site: Call) -> Arguments {
+        let file = &*self.file;
+        let arguments: SmallVec<[ExprId; 4]> = file.hir.ids(site.args).collect();
+        let is_worker = || {
+            let constructor = table::find_name(b"Worker").and_then(table::global);
+            match file.builtins.of_expr(file.skip_type_syntax(site.callee)) {
+                Some(Resolved::Builtin(callee)) => {
+                    Some(table::canonical_id(callee.id)) == constructor.map(table::canonical_id)
+                }
+                _ => false,
+            }
+        };
+        let text = match arguments.first() {
+            Some(&name) if matches!(file.hir[name].kind, ExprKind::String(_)) => None,
+            Some(&name) if !intrinsic::has_spread(file.hir, &arguments) => file
+                .find_text_made_of_own_path(name)
+                .filter(|_| is_worker()),
+            _ => None,
+        };
+        let Some(text) = text else {
+            return self.lower_argument_slice(&arguments);
+        };
+        let mut values: SmallVec<[ValueId; 4]> = SmallVec::new();
+        values.push(self.emit_text(&text));
+        for &argument in &arguments[1..] {
+            values.push(self.lower_expression(argument));
+        }
+        Arguments::Values(values)
     }
 
     pub(in crate::lower) fn lower_argument_slice(&mut self, arguments: &[ExprId]) -> Arguments {
@@ -195,6 +406,49 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments: Arguments,
         options: CallOptions<'_>,
     ) -> ValueId {
+        self.emit_call_with_expected_result(callee, arguments, options, None)
+    }
+
+    fn emit_call_with_expected_result(
+        &mut self,
+        callee: Callee,
+        arguments: Arguments,
+        options: CallOptions<'_>,
+        expected_result: Option<ExpectedResultId>,
+    ) -> ValueId {
+        let on_answer = match self.callees_read_on_answers.is_empty() {
+            true => None,
+            false => self.callees_read_on_answers.remove(&callee.function),
+        };
+        let Some(on_answer) = on_answer else {
+            return self.emit_call_of_one_callee(callee, arguments, options, expected_result);
+        };
+        let split = self.split_on_type(on_answer, TypeTable::ABSENT);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        for (block, function) in [
+            (split.taken, callee.function),
+            (split.not_taken, split.not_taken_value),
+        ] {
+            self.builder.switch_to(block);
+            let arguments = arguments.clone();
+            let callee = Callee { function, ..callee };
+            let value = self.emit_call_of_one_callee(callee, arguments, options, expected_result);
+            self.builder.write_variable(result, value);
+            self.jump(join);
+        }
+        self.continue_in(join);
+        self.builder.read_variable(result)
+    }
+
+    fn emit_call_of_one_callee(
+        &mut self,
+        callee: Callee,
+        arguments: Arguments,
+        options: CallOptions<'_>,
+        expected_result: Option<ExpectedResultId>,
+    ) -> ValueId {
+        let called_builtin = None;
         let value = match arguments {
             Arguments::Values(values) => self.builder.call(
                 callee.function,
@@ -202,10 +456,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 &values,
                 callee.key,
                 callee.name,
-                options.expected_result,
-                None,
+                expected_result,
+                called_builtin,
                 options.call_number,
-                IS_ANNOTATED_PURE,
                 options.is_never_inlined,
                 options.is_done_in_place,
             ),
@@ -215,7 +468,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 list,
                 callee.key,
                 callee.name,
-                options.expected_result,
+                expected_result,
             ),
         };
         self.return_call_in_tail_position(value, options.tail)
@@ -232,57 +485,111 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let mut cast_positions: SmallVec<[DeclaredType; 4]> = SmallVec::new();
                 let mut next = casts;
                 while let Some(cast) = next {
-                    cast_positions.push(cast.position);
+                    cast_positions.extend_from_slice(cast.positions);
                     next = cast.outer;
                 }
-                self.emit_return_call(call, &cast_positions);
+                let owes_no_proof = casts.is_some_and(|cast| cast.breaks_no_int32_promise);
+                self.emit_return_call(call, &cast_positions, owes_no_proof);
                 self.builder.undefined()
             }
         }
+    }
+
+    fn enters_int32_promise_behind_return(&self, casts: Option<&TailCast<'_>>) -> bool {
+        let is_promise =
+            |position: &DeclaredType| position.flags.contains(PositionFlags::IS_INT32_PROMISE);
+        let mut next = casts;
+        while let Some(cast) = next {
+            if cast.positions.iter().any(is_promise) {
+                return true;
+            }
+            next = cast.outer;
+        }
+        is_promise(&self.returned)
     }
 
     pub(in crate::lower) fn emit_call_expression(
         &mut self,
         call: ExprId,
         callee: Callee,
+        arguments: Arguments,
+        tail: Tail<'_>,
+    ) -> ValueId {
+        let site = call_site(self.file, call);
+        let named = self.file.skip_type_syntax(site.callee);
+        let named = self.file.builtins.builtin_of_expression(named);
+        self.emit_call_of_named(call, site, named, callee, arguments, tail)
+    }
+
+    fn emit_call_of_named(
+        &mut self,
+        call: ExprId,
+        site: Call,
+        named: Option<BuiltinId>,
+        mut callee: Callee,
         mut arguments: Arguments,
         tail: Tail<'_>,
     ) -> ValueId {
         let hir = self.file.hir;
-        let site = call_site(self.file, call);
         self.convert_argument_values(call, &mut arguments);
-        let is_reflect_construct_syntax = self.file.is_reflect_construct_syntax(site.callee)
-            && matches!(&arguments, Arguments::Values(values) if values.len() >= 2);
+        let is_of_program = self.file.inputs.sources.kind(self.file.file) == SourceKind::Program;
+        if named == Some(BuiltinId::NodeModuleCreateRequire) && is_of_program {
+            callee.this = Some(self.emit_this_by_which_the_program_vouches(&callee));
+        }
+        if matches!(hir[call].kind, ExprKind::Call(_)) && named.is_some_and(table::stubs_global) {
+            arguments = self.hand_global_object_to_stub(arguments);
+        }
+        self.file.intern_key_written_at_definition(site, named);
+        self.file.intern_keys_passed_to_callback(site);
         let options = CallOptions {
             tail: Tail::No,
-            expected_result: self.find_expected_result(call),
             is_never_inlined: false,
-            is_done_in_place: is_reflect_construct_syntax || self.file.makes_array_in_caller(site),
-            call_number: self.file.find_number_of_symbol_call(call),
+            is_done_in_place: false,
+            call_number: self.file.number_symbol_call(call, named),
         };
+        let expected = self.find_expected_result(call);
         self.set_position(self.file.call_position(site));
-        if is_reflect_construct_syntax {
-            // A call site lists the start of a construction only in front of the place where the construction is reported. The key may be a constant that is written earlier.
-            let start = self.file.first_position(call);
-            self.set_position(self.position().max(start));
-            self.builder.set_written_position(start);
-        }
+        self.quote_if_next_fails(call);
         match tail {
             Tail::No => {
-                let value = self.emit_call_at(callee, arguments, options);
+                let value =
+                    self.emit_call_with_expected_result(callee, arguments, options, expected);
                 self.set_position(hir[call].pos);
                 self.claim_call_result(call, value)
             }
             Tail::Yes { casts } => {
+                let position = self.file.find_position_of_returned_call(call);
                 let cast = TailCast {
-                    position: self.call_result_position(call),
+                    positions: std::slice::from_ref(&position),
                     outer: casts,
+                    breaks_no_int32_promise: self.enters_int32_promise_behind_return(casts)
+                        && self.file.breaks_no_int32_promise(call),
                 };
                 let tail = Tail::Yes { casts: Some(&cast) };
-                self.describe_int32_tail_call(call);
-                self.emit_call_at(callee, arguments, CallOptions { tail, ..options })
+                let options = CallOptions { tail, ..options };
+                self.emit_call_with_expected_result(callee, arguments, options, expected)
             }
         }
+    }
+
+    fn emit_this_by_which_the_program_vouches(&mut self, callee: &Callee) -> ValueId {
+        let this = self.builder.create_variable(None);
+        let written = callee.this.unwrap_or_else(|| self.builder.undefined());
+        self.builder.write_variable(this, written);
+        let real = self.emit_builtin_itself(BuiltinId::NodeModuleCreateRequire);
+        let is_real = self.builder.strict_eq(callee.function, real);
+        let by_real = self.create_block();
+        let done = self.create_block();
+        self.builder
+            .branch(is_real, Edge::to(by_real), Edge::to(done));
+
+        self.continue_in(by_real);
+        let word = self.emit_builtin_itself(BuiltinId::PrivateGlobalsCreateCommonJSModule);
+        self.builder.write_variable(this, word);
+        self.jump(done);
+
+        self.continue_in(done);
+        self.builder.read_variable(this)
     }
 
     fn emit_new_expression(
@@ -293,51 +600,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     ) -> ValueId {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
-        let site = call_site(self.file, expression);
-        if !self.file.is_printed_as_call(site) && !self.file.makes_array_in_caller(site) {
-            self.builder
-                .set_written_position(self.file.hir[expression].pos);
+        self.quote_if_next_fails(expression);
+        if let Some(start) = self.file.construction_start(expression) {
+            self.builder.set_construction_start(start);
         }
-        let value = if self.file.makes_array_in_caller(site) {
-            self.emit_array_made_in_caller(callee, arguments)
-        } else {
-            self.emit_construct(callee.function, arguments, callee.name)
-        };
+        let value = self.emit_construct(callee.function, arguments, callee.name);
         self.set_position(self.file.hir[expression].pos);
         self.claim_call_result(expression, value)
-    }
-
-    fn emit_array_made_in_caller(&mut self, callee: Callee, arguments: Arguments) -> ValueId {
-        let options = CallOptions {
-            tail: Tail::No,
-            expected_result: None,
-            is_never_inlined: false,
-            is_done_in_place: true,
-            call_number: None,
-        };
-        self.emit_call_at(callee, arguments, options)
     }
 
     fn convert_argument_values(&mut self, call: ExprId, arguments: &mut Arguments) {
         match arguments {
             Arguments::Values(values) => self.convert_arguments(call, values),
             Arguments::List(list) => self.convert_argument_list(call, *list),
-        }
-    }
-
-    pub(in crate::lower) fn call_result_position(&mut self, call: ExprId) -> DeclaredType {
-        if !self.file.is_checked() {
-            return DeclaredType::untyped();
-        }
-        match self.file.queries.resolved_call(call) {
-            Ok(Some(target)) => {
-                let origin = SiteOrigin {
-                    kind: TypeSiteKind::CallResult,
-                    position: self.file.hir[call].pos,
-                };
-                self.file.create_position(target.result, origin)
-            }
-            Ok(None) | Err(_) => DeclaredType::untyped(),
         }
     }
 }
@@ -353,6 +628,27 @@ pub(crate) fn emit_call(
     emit_call_of(lowering, callee, arguments)
 }
 
+/// The call of a function that the build made of a text that is evaluated. Stacks show `eval` in front of the caller.
+pub(in crate::lower) fn emit_call_by_eval(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    function: ValueId,
+    this: Option<ValueId>,
+) -> ValueId {
+    let called_builtin = Some(BuiltinId::Eval);
+    lowering.builder.call(
+        function,
+        this,
+        &[],
+        None,
+        None,
+        None,
+        called_builtin,
+        None,
+        false,
+        false,
+    )
+}
+
 pub(in crate::lower) fn emit_call_of(
     lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
     callee: Callee,
@@ -360,7 +656,6 @@ pub(in crate::lower) fn emit_call_of(
 ) -> ValueId {
     let options = CallOptions {
         tail: Tail::No,
-        expected_result: None,
         is_never_inlined: false,
         is_done_in_place: false,
         call_number: None,
@@ -369,7 +664,6 @@ pub(in crate::lower) fn emit_call_of(
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // A call of `Symbol` itself says which of the calls of its file it is: the key of the symbols that it makes holds the number.
     fn find_number_of_symbol_call(&self, call: ExprId) -> Option<u32> {
         let ExprKind::Call(number) = self.hir[call].kind else {
             return None;
@@ -379,103 +673,122 @@ impl FileLowering<'_, '_, '_, '_> {
         calls_symbol.then_some(u32::from(number))
     }
 
-    // Bun's transpiler prints a `new` without arguments without `()`, unless something is read from the result or the result is called.
-    fn construct_position(&self, expression: ExprId) -> u32 {
-        let site = call_site(self, expression);
-        let is_reported_at_callee = match self.runs_as_written() {
-            true => site.close_pos != u32::MAX,
-            false => {
-                !site.args.is_empty()
-                    || self.is_base_of_access(expression)
-                    || self.is_printed_as_call(site)
-            }
+    #[inline]
+    fn number_symbol_call(&mut self, call: ExprId, named: Option<BuiltinId>) -> Option<u32> {
+        match named {
+            Some(BuiltinId::Symbol | BuiltinId::SymbolFor) => self.number_symbol_made_by(call),
+            _ => None,
+        }
+    }
+
+    fn number_symbol_made_by(&mut self, call: ExprId) -> Option<u32> {
+        self.intern_key_of_registered_symbol(call);
+        let number = self.find_number_of_symbol_call(call)?;
+        let description = match self.hir.ids(call_site(self, call).args).next() {
+            Some(written) => match expression::find_constant(self, written) {
+                Some(Constant::String(text)) => Some(Some(self.intern_atom(text))),
+                _ => None,
+            },
+            None => Some(None),
         };
-        match is_reported_at_callee {
-            true => self.last_mapped_position(site.callee),
-            false => self.hir[expression].pos,
+        if let Some(description) = description {
+            let module = self.fragment.declare_module(ModuleRef::File(self.file));
+            let key = PropertyKey::from_created_symbol(module, number, description);
+            self.fragment.property_keys.intern(key);
         }
+        Some(number)
     }
 
-    fn is_base_of_access(&self, expression: ExprId) -> bool {
-        let position = self.hir[expression].pos;
-        let transpiled = self.transpiled.as_ref();
-        transpiled.is_some_and(|transpiled| transpiled.has_accessed_construction_at(position))
-    }
-
-    // A native error constructor, `Function` and `Array` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.
-    // Of `new Array(..)` without a spread argument it prints a list, or a call that bytecode does in the caller.
-    fn is_printed_as_call(&self, site: Call) -> bool {
-        let inner = self.skip_type_syntax(site.callee);
-        if !self.is_free_name(inner) || self.runs_as_written() {
-            return false;
-        }
-        let Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) =
-            self.builtins.of_expr(inner)
-        else {
-            return false;
+    fn intern_key_written_at_definition(&mut self, site: Call, named: Option<BuiltinId>) {
+        let place = match named {
+            Some(BuiltinId::ObjectDefineProperty | BuiltinId::ReflectDefineProperty) => 1,
+            Some(
+                BuiltinId::ObjectPrototype__defineGetter__
+                | BuiltinId::ObjectPrototype__defineSetter__,
+            ) => 0,
+            _ => return,
         };
-        match path.id {
-            BuiltinId::Error
-            | BuiltinId::TypeError
-            | BuiltinId::SyntaxError
-            | BuiltinId::RangeError
-            | BuiltinId::ReferenceError
-            | BuiltinId::EvalError
-            | BuiltinId::URIError
-            | BuiltinId::AggregateError
-            | BuiltinId::Function => true,
-            BuiltinId::Array => {
-                let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
-                intrinsic::has_spread(self.hir, &arguments)
-            }
-            _ => false,
-        }
-    }
-
-    fn is_tail_call(&self, construction: ExprId, tail: Tail<'_>) -> bool {
-        matches!(tail, Tail::Yes { .. }) && self.is_printed_as_call(call_site(self, construction))
-    }
-
-    fn is_free_name(&self, expression: ExprId) -> bool {
-        matches!(self.hir[expression].kind, ExprKind::Ident(_))
-            && self.bound.binding(expression) == Binding::Free
-    }
-
-    // The bytecode of `Array()` and `Array(length)` makes the array without a call, so the caller stays on the stack. A module of the library is bytecode too.
-    // It goes by the callee that Bun's transpiler prints.
-    fn makes_array_in_caller(&self, site: Call) -> bool {
-        let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
-        if arguments.len() > 1 || intrinsic::has_spread(self.hir, &arguments) {
-            return false;
-        }
-        let mut inner = self.skip_unprinted_syntax(site.callee);
-        while let ExprKind::Ident(_) = self.hir[inner].kind
-            && self.bound.binding(inner) != Binding::Free
-            && let Some(initializer) = self.find_printed_initializer(inner)
+        if let Some(written) = self.hir.ids(site.args).nth(place)
+            && let Some(key) = self.find_constant_key(written)
         {
-            inner = self.skip_unprinted_syntax(initializer);
+            self.fragment.note_key_laid_by_descriptor(key);
         }
-        let is_array = match self.builtins.of_expr(inner) {
-            Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => {
-                path.id == BuiltinId::Array
-            }
-            Some(Resolved::Intrinsic(Intrinsic::Builtin(id))) => id == BuiltinId::Array,
-            Some(Resolved::Intrinsic(_)) | None => false,
-        };
-        is_array && self.is_free_name(inner)
     }
 
-    fn find_callee_by_signature(&mut self, call: ExprId, inner: ExprId) -> Option<BuiltinId> {
-        if self.builtins.of_expr(inner).is_some() {
-            return None;
+    /// `["x", "y"].forEach(function (key) { C.prototype[key] = .. })`: the link resolves the stores to the names.
+    fn intern_keys_passed_to_callback(&mut self, site: Call) {
+        let hir = self.hir;
+        let Some((list, MemberKey::Name(_))) = hir.member_key(self.skip_type_syntax(site.callee))
+        else {
+            return;
+        };
+        let callback = hir.ids(site.args).next();
+        let passes_function = callback.is_some_and(|callback| {
+            matches!(hir[self.skip_type_syntax(callback)].kind, ExprKind::Fn(_))
+        });
+        if passes_function {
+            self.intern_keys_of_written_list(list);
         }
-        let target = self.queries.resolved_call(call).ok()??;
+    }
+
+    /// `for (const key of ["x", "y"]) C.prototype[key] = ..`
+    pub(in crate::lower) fn intern_keys_of_written_list(&mut self, list: ExprId) {
+        let hir = self.hir;
+        let ExprKind::Array(elements) = hir[self.skip_type_syntax(list)].kind else {
+            return;
+        };
+        for element in hir.ids(elements) {
+            let element = self.skip_type_syntax(element);
+            match hir[element].kind {
+                ExprKind::Array(row) => {
+                    for part in hir.ids(row) {
+                        self.intern_key_of_constant_string(part);
+                    }
+                }
+                _ => self.intern_key_of_constant_string(element),
+            }
+        }
+    }
+
+    fn intern_key_of_constant_string(&mut self, value: ExprId) {
+        let constant = expression::find_constant(self, value);
+        let constant =
+            constant.or_else(|| expression::find_constant_outside_dead_zone(self, value));
+        if let Some(Constant::String(text)) = constant {
+            self.atom_key(text);
+        }
+    }
+
+    fn intern_key_of_registered_symbol(&mut self, call: ExprId) {
+        let ExprKind::Call(site) = self.hir[call].kind else {
+            return;
+        };
+        let callee = self.skip_type_syntax(self.hir[site].callee);
+        if self.builtins.builtin_of_expression(callee) != Some(BuiltinId::SymbolFor) {
+            return;
+        }
+        let Some(written) = self.hir.ids(self.hir[site].args).next() else {
+            return;
+        };
+        if let Some(Constant::String(text)) = expression::find_constant(self, written) {
+            let text = self.intern_atom(text);
+            let key = PropertyKey::from_registered_symbol(text);
+            self.fragment.property_keys.intern(key);
+        }
+    }
+
+    fn find_callee_by_signature(&mut self, call: ExprId) -> Option<BuiltinId> {
+        let declaration = match self.queries.only_declaration_called(call) {
+            Some(function) => function,
+            None => self.queries.resolved_call(call).ok()??.declaration?,
+        };
         let types = self.inputs.builtin_types;
-        let index = types.value_of_call_signature(target.declaration?)?;
+        let index = types.value_of_call_signature(self.queries.files(), declaration)?;
         builtin_value_of(index)
     }
 }
 
+#[inline]
 fn call_site(file: &FileLowering<'_, '_, '_, '_>, call: ExprId) -> Call {
     let hir = file.hir;
     let (ExprKind::Call(site) | ExprKind::New(site) | ExprKind::TaggedTemplate(site)) =

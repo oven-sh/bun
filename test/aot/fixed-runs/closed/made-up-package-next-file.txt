@@ -1,0 +1,20 @@
+A test file mocks a package that isn't installed. Its mock ends with it: in the next file import() of the name rejects, and require() throws, with the loader's own error for a name that nothing resolves.
+#### a.test.mjs
+import { mock, test } from "bun:test";
+test("a", async () => {
+  mock.module("made-up-dep", () => ({ v: "mock" }));
+  console.log("| CASE a", await (await import("./uses.mjs")).v());
+});
+#### package.json
+{ "name": "p" }
+#### uses.mjs
+export const v = async () => (await import("made-up-dep")).v;
+export const ask = () => import("made-up-dep").then(it => "loaded " + it.v, e => [e.constructor.name, e.code, String(e.message).replace(/ from .*/, "")].join(" . "));
+export const need = () => { try { return "loaded " + import.meta.require("made-up-dep").v; } catch (e) { return [e.constructor.name, e.code, String(e.message).replace(/ from .*/, "")].join(" . "); } };
+#### z.test.mjs
+import { test } from "bun:test";
+test("z", async () => {
+  const { ask, need } = await import("./uses.mjs");
+  console.log("| CASE z import()", await ask());
+  console.log("| CASE z require()", need());
+});

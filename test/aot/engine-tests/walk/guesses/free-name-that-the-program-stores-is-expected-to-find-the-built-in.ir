@@ -1,0 +1,71 @@
+# A free name whose member of the global object the program may replace is no constant: it is read through the record of its binding and called by value, two operations. What is written of the name is the built-in,
+# so one comparison with the cell of the built-in stands between the two: behind it the call goes by the row, and where it fails the value is called as it is written.
+# function replace(mine) { isNaN = mine; }   function asked(value) { return isNaN(value | 0) ? 1 : 0; }
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: [[found]]: anything{{*}} = GetGlobalBinding key="isNaN" level=Expected [seesScriptBindings]
+# CHECK: = TypeTest [[found]] testedType=builtin(IsNaN)
+# CHECK: = Call [[found]], -,
+# A function of the host without code of its own behind the test is called by value as ever: function waited(run) { return setTimeout(run, 1); }
+# RUN(HOST): walk f4 mechanisms=all-Inlining
+# HOST-LABEL: code f4:Body
+# HOST-NOT: TypeTest
+# With guesses withheld the value is called.
+# RUN(WITHHELD): walk f2 mechanisms=all-Inlining-Guesses
+# WITHHELD-LABEL: code f2:Body
+# WITHHELD-NOT: TypeTest
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="replace" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="isNaN" mode=Sloppy [isFreeName]
+    v3 = Undefined
+    Return v3
+}
+function f2 name="asked" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="isNaN" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(IsNaN) flags=[IsExpected]}
+    v4 = Integer
+    v5 = BitOr v0, v4
+    v6 = Call v3, -, v5 calleeName="isNaN"
+    v7 = ToBoolean v6
+    Branch v7 -> taken b1(), notTaken b2()
+  b1():
+    v8 = Integer integer=1
+    Return v8
+  b2():
+    v9 = Integer
+    Return v9
+}
+function f3 name="replaceTimer" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="setTimeout" mode=Sloppy [isFreeName]
+    v3 = Undefined
+    Return v3
+}
+function f4 name="waited" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="setTimeout" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(SetTimeout) flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Call v3, -, v0, v4 calleeName="setTimeout"
+    v6 = TypeOf v5
+    Return v6
+}

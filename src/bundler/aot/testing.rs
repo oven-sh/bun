@@ -1,7 +1,7 @@
 //! For tests of the front end that stop behind a stage of their own: what `build` hands `bun_aot::compile`.
 
 use super::options::{OptionsInput, options_from_bundler};
-use super::services::BundlerServices;
+use super::services::{BundlerServices, NamesWanted};
 use crate::Transpiler;
 use crate::bundle_v2::BundleV2;
 use bun_alloc::Arena;
@@ -50,7 +50,7 @@ pub fn with_front_end_inputs<R>(
 ) -> Option<R> {
     // A build fills the loader it is handed, so each has its own, as in `Bun.build`.
     let mut environment = Loader::init();
-    let mut event_loop = bun_event_loop::AnyEventLoop::default();
+    let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
         absolute_working_dir: Some(Box::from(inputs.working_directory)),
@@ -69,6 +69,8 @@ pub fn with_front_end_inputs<R>(
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;
     // As the command line has it without `--env`.
     transpiler.options.env.behavior = api::DotEnvBehavior::disable;
+    // And without `--minify-syntax`, which the options begin with where the target is Bun.
+    transpiler.options.minify_syntax = false;
     transpiler.configure_defines().ok()?;
     transpiler.configure_linker();
     let input = OptionsInput {
@@ -91,12 +93,21 @@ pub fn with_front_end_inputs<R>(
         .opts
         .root_dir
         .clone_from(&transpiler.options.root_dir);
-    let event_loop = Some(NonNull::from(&mut event_loop));
+    let event_loop = Some(NonNull::from(&event_loop));
     let started = BundleV2::init_without_starting_threads(
         transpiler, None, &arena, event_loop, false, None, &arena,
     );
     let mut bundle = started.ok()?;
-    let services = BundlerServices::new(NonNull::from(&mut *bundle).cast(), MODULE_PREFIX);
+    let services = BundlerServices::new(
+        NonNull::from(&mut *bundle).cast(),
+        MODULE_PREFIX,
+        &inputs.options.user_defined_names,
+        NamesWanted {
+            runs_in_place: inputs.options.runs_in_place,
+            loads_code_from_disk: inputs.options.loads_code_from_disk,
+            root_directory: Box::from(&options.paths.root_directory[..]),
+        },
+    );
     let result = then(&options, &services, log);
     drop(services.shut_down());
     bundle.deinit_without_freeing_arena();

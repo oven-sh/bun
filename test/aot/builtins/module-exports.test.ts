@@ -81,7 +81,7 @@ test("the programs import every module of module-exports.txt", () => {
       match => match[1],
     );
   });
-  expect(imported.sort()).toEqual([...written.keys()].filter(specifier => specifier !== "bun:test").sort());
+  expect(imported.sort()).toEqual([...written.keys()].filter(specifier => !specifier.startsWith("bun:test")).sort());
 });
 
 test("formatModuleExports writes what parseModuleExports reads", () => {

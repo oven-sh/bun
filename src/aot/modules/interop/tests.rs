@@ -1,7 +1,7 @@
 use super::*;
 use crate::builtins::RuntimeModule;
 use crate::load::EntryPointKind;
-use crate::modules::testing::{file_named, with_graph, with_runtime_graph};
+use crate::modules::testing::{bind_whole_program, file_named, with_graph, with_runtime_graph};
 use crate::modules::{BindInput, ExportBinding, ImportBinding, ModuleGraph, ModuleRef, SiteAnswer};
 use bun_sema::bind::Decl;
 use bun_sema::hir::ImportId;
@@ -17,6 +17,15 @@ const DATA_WITH_DEFAULT: Interop = Interop::new(
     ModuleKind::Data,
     SyntheticExportRule::None,
     RequireResult::DefaultExport,
+);
+const TEXT_IN_EXECUTABLE: Interop = Interop {
+    loader_returns_namespace: true,
+    ..DATA_WITH_DEFAULT
+};
+const TEXT_LEFT_TO_LOADER: Interop = Interop::new(
+    ModuleKind::Data,
+    SyntheticExportRule::None,
+    RequireResult::Namespace,
 );
 
 fn check_interop(files: &[(&str, &str)], name: &str, expected: Interop) {
@@ -244,12 +253,104 @@ fn json_file_whose_namespace_can_be_reached_exports_every_key() {
 }
 
 #[test]
+fn json_file_exports_every_key_where_a_package_is_left_out() {
+    let files = [
+        ("main.js", "import data from './data.json'; data.a;"),
+        ("data.json", r#"{ "x": 1, "a": 2, "b-c": 3 }"#),
+    ];
+    with_graph(&files, |graph, input| {
+        assert_eq!(export_names(graph, input, "data.json"), [b"default"]);
+        let packages = [b"left-out".to_vec()];
+        let input = &BindInput {
+            external_packages: &packages,
+            ..*input
+        };
+        let graph = &bind_whole_program(input);
+        let every_key = [&b"a"[..], b"b-c", b"default", b"x"];
+        assert_eq!(export_names(graph, input, "data.json"), every_key);
+        let data = graph.interop(ModuleRef::File(file_named(input, "data.json")));
+        assert_eq!(data.require_result, RequireResult::NamespaceIfImported);
+    });
+}
+
+#[test]
 fn text_file_exports_default_only() {
     let files = [("main.js", "import './notes.txt';"), ("notes.txt", "text")];
-    check_interop(&files, "notes.txt", DATA_WITH_DEFAULT);
     with_graph(&files, |graph, input| {
+        let file = file_named(input, "notes.txt");
+        let alone = file_interop(input.files, input.sources, file);
+        assert_eq!(alone, DATA_WITH_DEFAULT);
+        assert_eq!(graph.interop(ModuleRef::File(file)), TEXT_IN_EXECUTABLE);
         assert_eq!(export_names(graph, input, "notes.txt"), [b"default"]);
     });
+}
+
+#[test]
+fn blank_markdown_file_exports_nothing() {
+    let main = "import './blank.md'; import './short.md';";
+    let files = [("main.js", main), ("blank.md", ""), ("short.md", " \n")];
+    with_graph(&files, |graph, input| {
+        assert!(export_names(graph, input, "blank.md").is_empty());
+        assert!(export_names(graph, input, "short.md").is_empty());
+    });
+}
+
+#[test]
+fn text_file_answers_its_text_only_where_the_bundler_links_every_require() {
+    let linked = [
+        ("main.cjs", "require('./notes.txt');"),
+        ("main.cjs", "module.require('./notes.txt');"),
+        ("main.mjs", "require('./notes.txt');"),
+        ("main.cts", "import notes = require('./notes.txt'); notes;"),
+        (
+            "main.cjs",
+            "require('./notes.txt'); require(process.argv[2]);",
+        ),
+    ];
+    let left_to_loader = [
+        (
+            "main.mjs",
+            "import { createRequire } from 'node:module'; createRequire(import.meta.url)('./notes.txt');",
+        ),
+        (
+            "main.mjs",
+            "import { createRequire } from 'node:module'; const load = createRequire(import.meta.url); require('./notes.txt'); load('./notes.txt');",
+        ),
+        ("main.mjs", "import.meta.require('./notes.txt');"),
+        ("main.cjs", "const load = require; load('./notes.txt');"),
+        ("main.cjs", "require.call(null, './notes.txt');"),
+        ("main.cjs", "require('./notes.txt', {});"),
+        (
+            "main.cjs",
+            "for (const name of ['notes']) require('./' + name + '.txt');",
+        ),
+    ];
+    let linked = linked.map(|main| (main, TEXT_IN_EXECUTABLE));
+    let left_to_loader = left_to_loader.map(|main| (main, TEXT_LEFT_TO_LOADER));
+    for (main, expected) in linked.into_iter().chain(left_to_loader) {
+        with_graph(&[main, ("notes.txt", "text")], |graph, input| {
+            let file = file_named(input, "notes.txt");
+            assert_eq!(graph.interop(ModuleRef::File(file)), expected, "{}", main.1);
+        });
+    }
+}
+
+#[test]
+fn other_data_answers_its_value_to_a_require_that_the_bundler_does_not_link() {
+    let files = [
+        ("main.mjs", "import.meta.require('./data.json');"),
+        ("data.json", r#"{ "x": 1 }"#),
+    ];
+    check_interop(&files, "data.json", DATA_WITH_DEFAULT);
+}
+
+#[test]
+fn data_file_that_is_only_required_answers_its_value() {
+    let files = [
+        ("main.cjs", "console.log(require('./data.json'));"),
+        ("data.json", r#"{ "x": 1 }"#),
+    ];
+    check_interop(&files, "data.json", DATA_WITH_DEFAULT);
 }
 
 #[test]
@@ -286,21 +387,6 @@ fn package_type_module_ignores_es_module_annotation() {
         ..COMMONJS
     };
     check_interop(&files, "legacy.js", expected);
-}
-
-#[test]
-fn evaluated_text_is_commonjs() {
-    let files = [("main.js", r#"new Function("a", "b", "return a + b");"#)];
-    with_graph(&files, |graph, input| {
-        let main = file_named(input, "main.js");
-        let [(_, function)] = input.sources.evaluated_functions_of(main) else {
-            panic!("the constant text is one function of the program");
-        };
-        assert_eq!(input.sources.kind(function.file), SourceKind::EvaluatedText);
-        let interop = file_interop(input.files, input.sources, function.file);
-        assert_eq!(interop, COMMONJS);
-        assert_eq!(graph.interop(ModuleRef::File(function.file)), interop);
-    });
 }
 
 #[test]

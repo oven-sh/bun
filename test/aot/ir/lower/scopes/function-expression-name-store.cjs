@@ -4,9 +4,8 @@
 // CHECK-NOT: Throw
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="withDirective"
-// CHECK-NOT: NewRuntimeError
-// CHECK-NOT: Throw
-// CHECK: Return
+// CHECK: [[refused]] = NewRuntimeError runtimeError=ConstantAssignment name="withDirective"
+// CHECK-NEXT: Throw [[refused]]
 // CHECK-LABEL: function {{*}}name="strict"
 // CHECK: [[error]] = NewRuntimeError runtimeError=ConstantAssignment name="strict"
 // CHECK-NEXT: Throw [[error]]

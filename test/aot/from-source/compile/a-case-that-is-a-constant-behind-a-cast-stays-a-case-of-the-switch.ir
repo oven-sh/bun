@@ -1,0 +1,46 @@
+# One `switch` over the members of an enum, and two of its labels are written with a cast: `case Kind.Null as Listed:`. A cast in a checked file is a conversion that is tested, so the label was
+# taken for no constant: the switch was cut at it into a switch, a comparison, a switch, a comparison and a switch, and a value of the last piece went through all five.
+# The label is a constant that the type of the cast takes, so the conversion has nothing to test: it stays a case. A cast to a type that does not take it is still compared by itself.
+# f1 = nameOf . f2 = odd
+# -- source: main.ts
+# const enum Kind { Any, Unknown, Text, Null, Never, This, Literal, Reference, Query, List, Far = 40 }
+# type Listed = Kind.Any | Kind.Unknown | Kind.Text | Kind.Never | Kind.Literal | Kind.Reference | Kind.Query | Kind.List | Kind.Far;
+# function nameOf(kind: Listed): string {
+#   switch (kind) {
+#     case Kind.Any:
+#     case Kind.Unknown: return "any";
+#     case Kind.Text: return "text";
+#     case Kind.Null as Listed: return "null";
+#     case Kind.Never: return "never";
+#     case Kind.This as Listed:
+#     case Kind.Literal: return "this or literal";
+#     case Kind.Reference: return "reference";
+#     case (Kind.Query as number) as Listed: return "query";
+#     case Kind.List: return "list";
+#     case Kind.Far: return "far";
+#     default: return "none";
+#   }
+# }
+# function odd(value: unknown): string {
+#   switch (value) {
+#     case 1: return "one";
+#     case 2 as unknown as string: return "two";
+#     case 3: return "three";
+#     default: return "none";
+#   }
+# }
+# let said = "";
+# for (let kind = -1; kind < 12; kind++) said += nameOf(kind as Listed) + ",";
+# said += nameOf(40 as Listed) + "," + nameOf(1.5 as Listed) + "," + nameOf("3" as unknown as Listed) + "," + nameOf(undefined as unknown as Listed);
+# for (const value of [1, 2, 3, "2", 4]) said += "," + odd(value);
+# console.log(said);
+# -- end of source
+# RUN: print f1
+# CHECK: Switch {{*}} cases=[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 40]
+# CHECK-NOT: Switch
+# CHECK-NOT: StrictEq
+# RUN(ODD): print f2
+# ODD: StrictEq
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: none,any,any,text,null,never,this or literal,this or literal,reference,query,list,none,none,far,none,none,none,one,two,three,none,none
+# ANSWERS-NEXT: exited with 0

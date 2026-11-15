@@ -12,8 +12,7 @@ use bun_install::lockfile::{
     tree,
 };
 use bun_install::package_manager_real::{
-    PackageJSONEditor, ProgressStrings, ROOT_PACKAGE_JSON_PATH, package_json_write_back,
-    update_lockfile_if_needed,
+    PackageJSONEditor, ProgressStrings, package_json_write_back, update_lockfile_if_needed,
 };
 use bun_install::{
     self as install, DEFAULT_TRUSTED_DEPENDENCIES_LIST, DependencyID, LifecycleScriptSubprocess,
@@ -60,6 +59,8 @@ enum Action {
 struct Blocked {
     dep_id: DependencyID,
     package_id: PackageID,
+    /// The id in the install tree, for a hoisted package.
+    tree_id: Option<tree::Id>,
     /// Scripts run deepest first, like during an install.
     depth: usize,
     scripts_list: ScriptsList,
@@ -100,7 +101,7 @@ impl Blocked {
 
         let mut scripts = packages.items_scripts()[package_id];
         // Pass `true` to get the scripts that will run once the package is trusted.
-        match scripts.get_list(log, lockfile, folder, alias, resolution, true) {
+        match scripts.get_list(log, folder, alias, resolution, true) {
             Ok(list) => Ok(list.filter(|list| list.total > 0)),
             Err(bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT)) => Ok(None),
             Err(e) => Err(e.into()),
@@ -152,6 +153,7 @@ impl Blocked {
             blocked.push(Blocked {
                 dep_id: folder.dep_id,
                 package_id: folder.pkg_id,
+                tree_id: None,
                 depth: folder.depth,
                 scripts_list,
                 in_global_store: !is_link
@@ -201,6 +203,7 @@ impl Blocked {
                     blocked.push(Blocked {
                         dep_id,
                         package_id,
+                        tree_id: Some(node_modules.tree_id),
                         depth: node_modules.depth,
                         scripts_list,
                         in_global_store: false,
@@ -210,6 +213,28 @@ impl Blocked {
             }
         }
         Ok(blocked)
+    }
+
+    fn find_bin_conflicts(pm: &mut PackageManager, blocked: &mut [Blocked]) -> crate::Result<()> {
+        if blocked.iter().all(|info| info.tree_id.is_none()) {
+            return Ok(());
+        }
+        bun_install::prune::with_install_tree(pm, |pm| {
+            let direct_packages = bun_install::bin::LinkOrder::direct_packages(&pm.lockfile)?;
+            for info in blocked {
+                if let Some(tree_id) = info.tree_id
+                    && info.action == Action::Run
+                {
+                    info.scripts_list.bin_conflicts = bun_install::bin::find_bin_conflicts(
+                        &pm.lockfile,
+                        &direct_packages,
+                        tree_id,
+                        info.dep_id,
+                    );
+                }
+            }
+            Ok(())
+        })?
     }
 
     /// (dependency name, the name `trustedDependencies` knows the package by)
@@ -479,9 +504,10 @@ impl TrustCommand {
             return Ok(());
         }
 
+        Blocked::find_bin_conflicts(pm, &mut blocked)?;
+
         // Opened before any script runs: a script whose trust cannot be recorded must not run.
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init` and immutable thereafter.
-        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_package_json_path = pm.root_package_json_path;
         let (cwd, flags) = (bun_sys::Fd::cwd(), bun_sys::O::RDWR | bun_sys::O::CLOEXEC);
         let root_file = match bun_sys::File::openat(cwd, root_package_json_path, flags, 0) {
             Ok(file) => file,
@@ -663,7 +689,7 @@ impl TrustCommand {
             .pwrite_all(new_package_json_contents, 0)
             .map_err(crate::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        let _ = root_file.close();
+        drop(root_file);
 
         if total_scripts_ran > 0 {
             bun_core::pretty!(

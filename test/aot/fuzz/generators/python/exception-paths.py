@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""exception-paths.py <seed>: exceptions through random chains of frames of every kind.
-
-A row is a chain of two to seven functions. Each calls the next in a way of its own, drawn from some ninety: directly, in tail position, through
-call, apply, bind and Reflect, as a callback of a built-in (map, sort, replace, JSON, Array.from ..), as a getter, setter, constructor, field
-initializer, static block, proxy trap, conversion (toString, valueOf, Symbol.toPrimitive), iterator, generator (next, throw, return), default
-parameter, tagged template, from code made at run time, as a promise reaction, an awaited thenable, an async generator. The last one throws,
-in one of thirty ways, or returns. On the way up a frame may catch and rethrow, wrap, swallow, run a finally block, or return from one.
-Every frame keeps values alive across its call and adds them up afterwards, so a register or stack slot that unwinding does not
-restore changes the sum. A frame is typed TypeScript, TypeScript through `any`, or JavaScript in a file of its own.
-Three files: main.ts, and after a line `//// <name>` each, typed.ts and untyped.js. As plain Bun, line by line."""
+"""exception-paths.py <seed>: Exceptions through random chains of frames of every kind. A row is a chain of two to seven
+functions, each calling the next in one of some ninety ways: directly, in tail position, through call, apply, bind, a
+getter, a built-in's callback ..
+"""
 import random, re, sys
 
 seed = int(sys.argv[1]) if len(sys.argv) > 1 else 1

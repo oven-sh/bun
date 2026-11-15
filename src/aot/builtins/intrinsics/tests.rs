@@ -100,6 +100,8 @@ fn conversions_and_throws() {
             "$throwTypeError", Call => Intrinsic::Throw(ErrorKind::TypeError),
             "$throwRangeError", Call => Intrinsic::Throw(ErrorKind::RangeError),
             "$ifAbruptCloseIterator", Call => Intrinsic::IfAbruptCloseIterator,
+            "$iteratorGenericClose", Call => Intrinsic::IteratorGenericClose,
+            "$iteratorGenericNext", Call => Intrinsic::IteratorGenericNext,
             "$undefined", Value => Intrinsic::Undefined,
         );
         assert_absent(spellings, &[("$toNumber", Value), ("$undefined", Call)]);

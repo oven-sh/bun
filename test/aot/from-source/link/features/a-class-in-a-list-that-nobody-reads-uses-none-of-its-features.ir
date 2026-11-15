@@ -1,0 +1,11 @@
+# Link holds the class in the list, and nobody takes it out
+# The twin: a-class-in-a-list-uses-its-features.ir
+# -- source: a-class-in-a-list-that-nobody-reads-uses-none-of-its-features.ts
+# const list = [WebSocket];
+# console.log(list.length);
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by WebSocket

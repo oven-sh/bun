@@ -1,5 +1,4 @@
 // The exports object of a compiled CommonJS module has the keys, the key order, the descriptors and the prototype that plain Bun gives it, whichever way its names are stored or defined.
-// Todo: It gets a fresh copy of a module by deleting the module from require.cache. That does nothing in an executable, where a module runs once. It needs a file of its own for each case.
 const { describe, show } = require("../../../fixtures/commonjs/describe-object.cjs");
 
 function probe(label, object, names) {
@@ -63,22 +62,12 @@ describe("odd names", odd);
 console.log("read by name:", show([odd.a, odd[0], odd[3], odd["1.5"], odd.__proto__, odd.constructor, odd.length, odd.then, odd.ascii, odd.inherited, odd[""], odd.hasOwnProperty]));
 console.log("odd names, printed:", odd);
 
-const definedPath = require.resolve("./defined-properties.cjs");
-const integrityLevels = [
-  ["defined", object => object],
-  ["defined, then made not extensible", Object.preventExtensions],
-  ["defined, then sealed", Object.seal],
-  ["defined, then frozen", Object.freeze],
-];
-for (const [label, apply] of integrityLevels) {
-  delete require.cache[definedPath];
-  const defined = apply(require("./defined-properties.cjs"));
-  describe(label, defined);
-  console.log(`${label}, printed:`, defined);
-  print(`${label}: changes`, defined.change());
-  describe(`${label}: after the changes`, defined);
-  console.log(`${label}: after the changes, printed:`, defined);
-}
+const defined = require("./defined-properties.cjs");
+describe("defined", defined);
+console.log("defined, printed:", defined);
+print("defined: changes", defined.change());
+describe("defined: after the changes", defined);
+console.log("defined: after the changes, printed:", defined);
 
 describe("nothing stored", require("./nothing-stored.cjs"));
 

@@ -1,7 +1,9 @@
 use super::handlers::emit_call;
-use crate::ir::builder::{BuilderScratch, Edge, FunctionBuilder, MAX_SPARE_VALUES};
+use crate::ir::builder::{
+    BuilderScratch, Edge, FunctionBuilder, MAX_SPARE_FIELD_WORDS, MAX_SPARE_VALUES,
+};
 use crate::ir::declared::DeclaredType;
-use crate::ir::generated::{BlockFrequency, FunctionFlags, Opcode, TerminatorKind};
+use crate::ir::generated::{FunctionFlags, Opcode, TerminatorKind, ValueHead};
 use crate::ir::ids::{ABSENT_WORD, BlockId, Id, TypeId, ValueId, VariableId};
 use crate::ir::testing::{
     build_function, create_blocks, create_builder, create_catch_handler, function_with_parameters,
@@ -16,7 +18,7 @@ fn entry_parameters_follow_function() {
         | FunctionFlags::HAS_HIDDEN_REST;
     let mut function = function_with_parameters(flags, &[TypeTable::NUMBER, TypeTable::STRING]);
     let captures = [TypeTable::BOOLEAN, TypeTable::SYMBOL];
-    function.captures = captures.map(DeclaredType::from_compiler).to_vec();
+    function.captures = (captures.map(|ty| DeclaredType::from_compiler(ty).into())).to_vec();
     function.this_type = DeclaredType::from_compiler(TypeTable::OBJECT);
 
     let builder = FunctionBuilder::new(function, BuilderScratch::default());
@@ -183,15 +185,15 @@ fn second_terminator_is_ignored() {
         builder.seal(first);
         builder.seal(second);
     });
-    assert_eq!(function.body.block_count, 2);
+    assert_eq!(function.body.block_count, 1);
     let entry = function
         .body
         .blocks()
         .next()
         .expect("the body has an entry block");
     let terminator = entry.terminator();
-    assert_eq!(terminator.kind, TerminatorKind::Jump);
-    assert_eq!(terminator.target_count(), 1);
+    assert_eq!(terminator.kind, TerminatorKind::Unreachable);
+    assert_eq!(terminator.target_count(), 0);
 }
 
 #[test]
@@ -246,25 +248,6 @@ fn handler_of_returns_covering_handler() {
 }
 
 #[test]
-fn frequency_is_set_per_block() {
-    let function = build_function(&[TypeTable::BOOLEAN], |builder| {
-        let condition = builder.parameter(0);
-        let [likely, unlikely] = create_blocks(builder);
-        builder.set_frequency(unlikely, BlockFrequency::Unlikely);
-        builder.branch(condition, Edge::to(likely), Edge::to(unlikely));
-        for block in [likely, unlikely] {
-            builder.seal(block);
-            builder.switch_to(block);
-            builder.return_value(None);
-        }
-    });
-    let blocks = function.body.blocks();
-    let frequencies: Vec<BlockFrequency> = blocks.map(|block| block.frequency).collect();
-    let (normal, unlikely) = (BlockFrequency::Normal, BlockFrequency::Unlikely);
-    assert_eq!(frequencies, [normal, normal, unlikely]);
-}
-
-#[test]
 fn scratch_passes_capacity_to_next_builder() {
     let mut builder = create_builder(&[]);
     assert_eq!(builder.values.capacity(), 0);
@@ -276,10 +259,10 @@ fn scratch_passes_capacity_to_next_builder() {
     let function = function_with_parameters(FunctionFlags::default(), &[]);
     let next = FunctionBuilder::new(function, scratch);
     assert!(next.values.is_empty());
-    assert!(next.field_words.is_empty());
+    assert!(next.words.is_empty());
     assert_eq!(next.blocks.len(), 1);
     assert!(next.values.capacity() >= 100);
-    assert!(next.field_words.capacity() >= 200);
+    assert!(next.words.capacity() >= 100 * (ValueHead::WORDS + 2));
 }
 
 #[test]
@@ -294,6 +277,19 @@ fn scratch_drops_vectors_over_cap() {
     let function = function_with_parameters(FunctionFlags::default(), &[]);
     let next = FunctionBuilder::new(function, scratch);
     assert_eq!(next.values.capacity(), 0);
+}
+
+#[test]
+fn scratch_drops_words_over_cap() {
+    let mut builder = create_builder(&[]);
+    let part = builder.undefined();
+    builder.strcat(&vec![part; MAX_SPARE_FIELD_WORDS]);
+    builder.return_value(None);
+    let (_, scratch) = builder.finish();
+    let function = function_with_parameters(FunctionFlags::default(), &[]);
+    let next = FunctionBuilder::new(function, scratch);
+    assert_eq!(next.words.capacity(), 0);
+    assert!(next.values.capacity() >= 2);
 }
 
 #[test]

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""zones.py <part> <parts> | default: constant date formatters with a named time zone (or, with `default`, with no timeZone option), each against a twin whose arguments are not constants.
-The program finds every offset change of each zone from 1850 to 2110 itself (a daily scan with a non-constant formatter, then bisection to the millisecond) and compares at each change, 1 ms, 1 s, 1 h and 1 day either side,
-first in ascending order, then shuffled (the fast path caches one offset range), plus far past, far future and pseudo-random values. toLocaleString, toLocaleDateString and toLocaleTimeString with the same constants are compared too."""
+"""Constant date formatters with a named time zone (or, with `default`, without a timeZone option), each against a twin
+with non-constant arguments. The program finds every offset change of each zone and formats around it.
+"""
 import sys, json
 ZONES = ["America/New_York", "America/Los_Angeles", "America/St_Johns", "America/Sao_Paulo", "America/Havana", "America/Santiago", "America/Asuncion", "America/Caracas", "America/Argentina/Buenos_Aires", "America/Nuuk", "America/Godthab", "America/Scoresbysund", "America/Mexico_City", "America/Phoenix", "America/Anchorage", "America/Juneau", "America/Metlakatla", "America/Guyana", "America/Paramaribo", "America/Montevideo", "America/Noronha", "America/Miquelon",
  "Europe/London", "Europe/Dublin", "Europe/Paris", "Europe/Moscow", "Europe/Istanbul", "Europe/Lisbon", "Europe/Amsterdam", "Europe/Kyiv", "Europe/Kiev", "Europe/Volgograd", "Europe/Samara", "Europe/Chisinau", "Europe/Riga",

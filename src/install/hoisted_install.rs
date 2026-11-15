@@ -14,7 +14,7 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 
 use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
+use crate::{DependencyID, PackageID};
 // Bring the `items_<field>{,_mut}()` column accessors for
 // `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
@@ -23,30 +23,8 @@ use crate::package_install;
 use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_real::run_tasks;
-use crate::package_manager_task as Task;
+use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::prune::LinkedNodeModules;
-
-/// `RunTasksCallbacks` impl for the hoisted-install loop, with
-/// `Ctx == PackageInstaller`.
-pub(crate) struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
-    type Ctx = PackageInstaller<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const IS_PACKAGE_INSTALLER: bool = true;
-
-    fn on_extract_package_installer(
-        ctx: &mut Self::Ctx,
-        task_id: Task::Id,
-        dependency_id: DependencyID,
-        data: &mut ExtractData,
-        log_level: package_manager::Options::LogLevel,
-    ) {
-        ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
-    }
-}
 
 /// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
 /// bar.
@@ -82,74 +60,42 @@ fn run_tasks_until_done(
     installer: &mut PackageInstaller<'_>,
     links: Option<&AtomicUsize>,
 ) -> crate::Result<()> {
-    struct Closure<'a, 'b> {
-        installer: &'a mut PackageInstaller<'b>,
-        err: Option<crate::Error>,
-        // raw `*mut` — `sleep_until` also receives this pointer, so `&mut` here would alias.
-        manager: *mut PackageManager,
-        links: Option<&'a AtomicUsize>,
-    }
+    // Not `sleep()`, which would run no task until all current lifecycle scripts have finished.
+    Output::flush();
+    loop {
+        // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow.
+        let manager = unsafe { &mut *mgr };
+        let log_level = manager.options.log_level;
+        run_tasks(manager, Caller::HoistedLinker(installer), true, log_level)?;
 
-    impl<'a, 'b> Closure<'a, 'b> {
-        fn is_done(closure: &mut Self) -> bool {
-            // SAFETY: `closure.manager` is the raw provenance root set
-            // below; `sleep_until`/`tick_raw` hold no `&mut` across
-            // this callback, so this is the unique live borrow.
-            let manager = unsafe { &mut *closure.manager };
-            let log_level = manager.options.log_level;
-            if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                manager,
-                closure.installer,
-                true,
-                log_level,
-            ) {
-                closure.err = Some(err);
-                return true;
-            }
+        // A script that has ended makes room for one that waits.
+        installer.run_available_scripts(log_level);
+        manager.report_slow_lifecycle_scripts();
 
-            // A script that has ended makes room for one that waits.
-            closure.installer.run_available_scripts(log_level);
-            manager.report_slow_lifecycle_scripts();
-
-            let pending_task_count = manager.pending_task_count();
-            if pending_task_count > 0
-                && PackageManager::verbose_install()
-                && PackageManager::has_enough_time_passed_between_waiting_messages()
-            {
-                bun_core::pretty_errorln!(
-                    "<d>[PackageManager]<r> waiting for {} tasks\n",
-                    pending_task_count
-                );
-            }
-
-            match closure.links {
-                Some(links) => links.load(Ordering::Acquire) == 0,
-                None => {
-                    closure.installer.has_deferred_links()
-                        || (manager.pending_task_count() == 0
-                            && manager.has_no_more_pending_lifecycle_scripts())
-                }
-            }
+        let pending_task_count = manager.pending_task_count();
+        if pending_task_count > 0
+            && PackageManager::verbose_install()
+            && PackageManager::has_enough_time_passed_between_waiting_messages()
+        {
+            bun_core::pretty_errorln!(
+                "<d>[PackageManager]<r> waiting for {} tasks\n",
+                pending_task_count
+            );
         }
+
+        let is_done = match links {
+            Some(links) => links.load(Ordering::Acquire) == 0,
+            None => {
+                installer.has_deferred_links()
+                    || (manager.pending_task_count() == 0
+                        && manager.has_no_more_pending_lifecycle_scripts())
+            }
+        };
+        if is_done {
+            return Ok(());
+        }
+        installer.manager().event_loop.tick(core::ptr::null_mut());
     }
-
-    let mut closure = Closure {
-        installer,
-        err: None,
-        manager: mgr,
-        links,
-    };
-
-    // Whenever the event loop wakes up, we need to call `run_tasks`
-    // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
-    // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
-    // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow;
-    // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
-    // `Closure::is_done`, so the callback's `&mut *closure.manager`
-    // is the unique live borrow.
-    unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };
-
-    closure.err.map_or(Ok(()), Err)
 }
 
 /// Has the thread pool link the waiting packages, including the ones that start waiting in the
@@ -459,6 +405,7 @@ pub(crate) fn install_hoisted_packages(
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
                 unfinished_scripts: Default::default(),
+                direct_packages: bun_ptr::BackRef::new(&direct_packages),
                 copy_trees: {
                     let self_contained = this.lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;
@@ -512,12 +459,7 @@ pub(crate) fn install_hoisted_packages(
                 // We want to minimize how often we call this function
                 // That's part of why we unroll this loop
                 if this.pending_task_count() > 0 {
-                    run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        this,
-                        &mut installer,
-                        true,
-                        log_level,
-                    )?;
+                    run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
                     if !this.options.do_.install_packages() {
                         return Err(crate::Error::InstallFailed);
                     }
@@ -530,12 +472,7 @@ pub(crate) fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                this,
-                &mut installer,
-                true,
-                log_level,
-            )?;
+            run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
             if !this.options.do_.install_packages() {
                 return Err(crate::Error::InstallFailed);
             }

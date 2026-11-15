@@ -11,7 +11,7 @@ use core::ffi::c_void;
 use bun_core::strings;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
-use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
+use crate::webcore::blob::{self, Any as AnyBlob, BlobExt};
 use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
 use crate::webcore::{ReadableStream, Response, response};
 
@@ -136,21 +136,14 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
         let AnyBlob::Blob(blob) = any_blob else {
             unreachable!("Any::store() returned Some, so this is the Blob variant");
         };
-        // `defer blob.detach()` — RAII via scopeguard.
-        let blob = scopeguard::guard(blob, |b: Blob| b.detach());
         blob.resolve_size();
         let size = blob.size.get();
         return ReadableStream::from_blob_copy_ref(&this.js_thread(context), &blob, size);
     }
 
-    // `defer any_blob.detach()` — RAII via scopeguard.
-    let any_blob = scopeguard::guard(any_blob, |mut b: AnyBlob| b.detach());
-
     // Push the blob contents into the streaming compiler by passing a pointer and
     // length, and return null to signify this has been done.
     let slice = any_blob.slice();
-    // `slice` is kept alive by `any_blob` until `detach()` (scopeguard) runs
-    // at end of scope.
     JSC__Wasm__StreamingCompiler__addBytes(streaming_compiler, slice.as_ptr(), slice.len());
 
     Ok(JSValue::NULL)

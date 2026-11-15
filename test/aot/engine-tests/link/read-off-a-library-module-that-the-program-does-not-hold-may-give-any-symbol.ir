@@ -1,0 +1,26 @@
+# print({}); the name ring off the object of internal/process/tick_ring, in a program that does not hold that module: the host laid what lies there, and the table lists none of it.
+# The other side: read-off-a-library-module-that-the-program-holds-gives-what-its-code-laid-there.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=InternalProcessTick_ring
+    v1 = PropGet v0 key="ring"
+    v2 = Builtin builtin=GlobalThis
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = PropGet v2 key="print" [isFreeName]
+    v6 = Call v5, -, v4 calleeName="print"
+    Return v1
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

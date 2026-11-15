@@ -1,0 +1,26 @@
+# -- source: under-the-word-what-a-branch-has-narrowed-is-held-where-it-lies-as-a-raw-number-too.ts
+# declare function print(...values: unknown[]): void;
+# function place(x: number, size: number): string { x = x | 0; size = size & 255; if (-1 < x) return x < size ? "inside" : "outside"; return "none"; }
+# const shelf: any[] = [place];
+# const at: number[] = JSON.parse("[0]");
+# print(shelf[at[0]](-1, 10), shelf[at[0]](3, 10));
+# -- end of source
+# f1 = place. Behind `-1 < x` the compiler knows that x is no less than nought, and compares it with `size` as a number without a sign. Where proofs are checked at run time
+# (testing=CheckProofsAtRunTime, which --aot-harden=proof-checks enables), a value that a branch has narrowed used to be checked only if it was boxed or a cell.
+# An unboxed number was checked where some operation consumed it, or nowhere. Now it is checked where the branch narrows it.
+# Fault injection, testing=TreatEqualIntegersAsLess: `<` on two integers behaves as `<=`, so -1 passes the test. In a user's build nothing is checked.
+# RUN(HELD): walk f1 mechanisms=all testing=CheckProofsAtRunTime
+# HELD: [[narrowed]]: int[0, 2147483647] @Int32 = Narrowed
+# HELD-NEXT: = CheckProof [[narrowed]] checkedType=int[0, 2147483647] {{*}}source=Test
+# RUN(PLAIN): walk f1 mechanisms=all
+# PLAIN-NOT: source=Test
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: none inside
+# RIGHT-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=TreatEqualIntegersAsLess
+# LIE: outside inside
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# STOPPED: bun: internal AOT error: type check failed
+# STOPPED-NEXT: in a value narrowed by a branch
+# STOPPED-NOT: outside
+# STOPPED: crashed with

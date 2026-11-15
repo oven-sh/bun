@@ -59,6 +59,7 @@ export const jscNames = {
     "delete",
     "forEach",
     "get",
+    "getPrototypeOf",
     "has",
     "keys",
     "reject",

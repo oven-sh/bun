@@ -286,11 +286,17 @@ test.skipIf(isWindows).each([
   writeFileSync(
     tool,
     `#!/bin/sh
+dynamic=false
+undefined_only=false
 for arg in "$@"; do
-  if [ "$arg" = "--undefined-only" ]; then
-    printf '%s\\n' "$FIXTURE_IMPORTS"
-  fi
+  case "$arg" in
+    --dynamic) dynamic=true ;;
+    --undefined-only) undefined_only=true ;;
+  esac
 done
+if [ "$dynamic" = true ] && [ "$undefined_only" = true ]; then
+  printf '%s\\n' "$FIXTURE_IMPORTS"
+fi
 `,
   );
   chmodSync(tool, 0o755);
@@ -324,6 +330,20 @@ done
   expect(exitCode).toBe(missing ? 1 : 0);
 });
 
+// -mtune keeps the fortified wrappers out of line: it is left out where the build is hardened. WebKit's .github/scripts/lanes.mjs does the same.
+test("a hardened build for arm64 names no processor to tune for", () => {
+  using dir = tempDir("build-hardened-flags-tune", {});
+  const tunes = (cfg: Config) =>
+    Object.values(everyFlagOf(cfg)).flatMap(list => list.filter(flag => /^-(mtune|Ztune-cpu)=/.test(flag)));
+  const hardened = linuxConfig({ hardened: true, arch: "aarch64" }, String(dir));
+  expect(tunes(hardened)).toEqual([]);
+  for (const list of [everyFlagOf(hardened).c, everyFlagOf(hardened).dependencyCxx]) {
+    expect(list).toContain("-D_FORTIFY_SOURCE=2");
+    expect(list).toContain("-march=armv8-a+crc");
+  }
+  expect(tunes(linuxConfig({ arch: "aarch64" }, String(dir)))).toContain("-mtune=ampere1");
+});
+
 test("--hardened=on is refused where nothing can be hardened", () => {
   using dir = tempDir("build-hardened-flags-refused", {});
   for (const partial of [
@@ -343,7 +363,7 @@ test("--hardened=on strips with llvm-strip, which keeps PT_GNU_RELRO, or not at 
   expect(linuxConfig({}, String(dir), mockToolchain({ llvmStrip: undefined })).strip).toEndWith("strip");
 });
 
-const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"];
+const librariesThatCallBackIntoJavaScript = ["boringssl", "cares", "lsquic", "lsqpack", "sqlite", "tinycc"] as const;
 
 test("the libraries that never call back into JavaScript keep their arrays on a second stack", () => {
   using dir = tempDir("build-hardened-flags-safe-stack", {});
@@ -354,7 +374,7 @@ test("the libraries that never call back into JavaScript keep their arrays on a 
     expect(safeStackFlags(on, name)).toEqual(["-fsanitize=safe-stack"]);
     expect(safeStackFlags(off, name)).toEqual([]);
   }
-  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"])
+  for (const name of [...librariesThatCallBackIntoJavaScript, "mimalloc", "WebKit"] as const)
     expect(safeStackFlags(on, name)).toEqual([]);
   expect(everyFlagOf(on).cxx).toContain("-DBUN_SAFE_STACK=1");
   expect(everyFlagOf(on).dependencyC).not.toContain("-fsanitize=safe-stack");

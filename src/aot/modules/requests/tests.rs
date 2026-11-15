@@ -1,13 +1,18 @@
 mod module_set;
 
 use super::*;
+use crate::compile::testing::{default_settings, with_loaded_build_and_options};
+use crate::load::ProjectId;
 use crate::load::runtime_modules::HOST_VALUE_MODULE;
+use crate::modules::bindings::list_in_order_of_stars;
 use crate::modules::testing::{describe_module, file_named, with_graph};
 use crate::modules::{
     Candidates, ModuleFailure, ModuleFailureId, ModuleGraph, SiteAnswer, compare_modules,
 };
 use bstr::BStr;
+use bun_ast::Loader;
 use bun_core::strings::split;
+use bun_options_types::aot_options::AotOptions;
 use bun_sema::hir::ImportEqualsId;
 use bun_sema::program::HostModuleId;
 
@@ -46,6 +51,10 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
         let compiled = compiled.expect("the loader compiles the entry point");
         let mut scanner = FileScanner {
             file: main,
+            files,
+            sources: program.input.sources,
+            runs_tests: program.input.runs_tests,
+            asks_loader_where_bundler_does: false,
             hir: files.hir(main),
             compiled,
             named_in_choices: &[],
@@ -53,9 +62,30 @@ fn with_scanner(source: &str, check: impl FnOnce(&mut FileScanner<'_, '_>, &[Imp
             spellings: Vec::new(),
             externals: Vec::new(),
             failures: Vec::new(),
-            sites_over_candidate_limit: Vec::new(),
         };
         check(&mut scanner, compiled.analysis.import_sites);
+    });
+}
+
+fn with_program_that_loads_code_from_disk(
+    main: &str,
+    check: impl FnOnce(&ModuleGraph, &Files<'_>, FileId),
+) {
+    let options = AotOptions {
+        loads_code_from_disk: true,
+        ..AotOptions::default()
+    };
+    let files = [("main.js", main)];
+    with_loaded_build_and_options(&files, &default_settings(), options, |build, loaded| {
+        let Ok(bound) = build.bind_modules(loaded) else {
+            panic!("the modules were not bound");
+        };
+        let files = loaded.project(ProjectId::Application).loaded.files();
+        check(
+            &bound.projects.application.graph,
+            files,
+            files.entry_points()[0],
+        );
     });
 }
 
@@ -488,12 +518,127 @@ fn pattern_site_lists_candidates() {
         let expected = pages.map(|name| SpelledModule {
             spelling: program.atom(&format!("./{name}")),
             module: program.module(name),
+            is_left_to_loader: false,
         });
         assert_eq!(program.only_candidates("main.ts"), expected);
         assert!(program.request_lines("main.ts").is_empty());
         for name in pages {
             assert!(program.graph.has_record(program.file(name)));
         }
+    });
+}
+
+#[test]
+fn name_for_the_transpiler_alone_is_a_spelling_only_where_it_reads_the_name() {
+    let spellings_under = |callee: &str, argument: &str| {
+        let start = "const flag = process.argv.length; const load = require;";
+        let main = format!("{start} exports.it = {callee}({argument});");
+        let mut spellings = Vec::new();
+        with_program(&[("main.cjs", main.as_str())], |program| {
+            let spelled = program.only_candidates("main.cjs").iter();
+            spellings.extend(spelled.map(|it| program.text_of(it.spelling).to_string()));
+        });
+        spellings.sort();
+        spellings
+    };
+    let spellings_of = |argument: &str| spellings_under("require", argument);
+    assert_eq!(spellings_of("['bun:url', 'os'][flag]"), ["os"]);
+    assert_eq!(spellings_of("['node:url', 'os'][flag]"), ["node:url", "os"]);
+    assert_eq!(spellings_of("{ a: 'bun:url', b: 'os' }[flag]"), ["os"]);
+    assert_eq!(
+        spellings_of("flag ? 'bun:os' : ['bun:url', 'path'][flag]"),
+        ["bun:os", "path"]
+    );
+    assert_eq!(
+        spellings_of("false ? 'bun:os' : ['bun:os', 'path'][flag]"),
+        ["path"]
+    );
+    assert_eq!(
+        spellings_under("load", "flag ? 'bun:os' : ['bun:url', 'path'][flag]"),
+        ["path"]
+    );
+}
+
+#[test]
+fn computed_site_beside_a_plugin_leaves_its_files_to_the_loader() {
+    const PLUGIN: &str = r#"Bun.plugin({ name: "p", setup() {} });"#;
+    const CHOICE: &str = r#"(flag ? "./pages/home.js" : "./pages/about.js")"#;
+    let rows = [
+        (
+            "main.mjs",
+            "const pick = CHOICE; return import(pick);",
+            true,
+        ),
+        ("main.mjs", "return import(`./pages/${flag}.js`);", true),
+        (
+            "main.cjs",
+            "return require('./pages/' + flag + '.js');",
+            true,
+        ),
+        ("main.mjs", "return import.meta.require(CHOICE);", true),
+        ("main.mjs", "return import(CHOICE);", false),
+        ("main.cjs", "return require(CHOICE);", false),
+    ];
+    for (name, body, is_left_beside_plugin) in rows {
+        for plugin in [PLUGIN, ""] {
+            let body = body.replace("CHOICE", CHOICE);
+            let main = format!("{plugin}\nglobalThis.load = function (flag) {{ {body} }};\n");
+            let files = [
+                (name, &main[..]),
+                ("pages/home.js", "globalThis.home = 1;"),
+                ("pages/about.js", "globalThis.about = 1;"),
+            ];
+            with_program(&files, |program| {
+                let candidates = program.only_candidates(name).iter();
+                let mut spelled: Vec<(String, ModuleRef, bool)> = candidates
+                    .map(|it| {
+                        let spelling = program.text_of(it.spelling).to_string();
+                        (spelling, it.module, it.is_left_to_loader)
+                    })
+                    .collect();
+                spelled.sort_by(|left, right| left.0.cmp(&right.0));
+                let is_left = is_left_beside_plugin && !plugin.is_empty();
+                let expected = ["pages/about.js", "pages/home.js"]
+                    .map(|page| (format!("./{page}"), program.module(page), is_left));
+                assert_eq!(spelled, expected, "{main}");
+            });
+        }
+    }
+}
+
+#[test]
+fn every_name_of_a_file_is_left_to_the_loader_beside_a_plugin() {
+    let files = [
+        (
+            "main.mjs",
+            r#"Bun.plugin({ name: "p", setup() {} });
+            globalThis.load = function (flag) { const pick = flag ? "kit" : "./tool"; return import(pick); };"#,
+        ),
+        (
+            "node_modules/kit/package.json",
+            r#"{ "name": "kit", "main": "./start.js" }"#,
+        ),
+        ("node_modules/kit/start.js", "globalThis.kit = 1;"),
+        ("tool/package.json", r#"{ "main": "./start.js" }"#),
+        ("tool/start.js", "globalThis.tool = 1;"),
+    ];
+    with_program(&files, |program| {
+        let candidates = program.only_candidates("main.mjs");
+        let mut spelled: Vec<(String, bool)> = candidates
+            .iter()
+            .map(|it| {
+                (
+                    program.text_of(it.spelling).to_string(),
+                    it.is_left_to_loader,
+                )
+            })
+            .collect();
+        spelled.sort();
+        let expected = [("./tool".to_string(), true), ("kit".to_string(), true)];
+        assert_eq!(spelled, expected);
+        let entry_points = program.input.files.entry_points();
+        assert!(!entry_points.contains(&program.file("node_modules/kit/start.js")));
+        assert!(!entry_points.contains(&program.file("tool/start.js")));
     });
 }
 
@@ -529,7 +674,7 @@ fn candidates_of_each_site_are_a_range() {
         };
         let fs = HostModuleId(RuntimeModule::NodeFs.registry_id());
         let host_modules = [fs, HostModuleId(u32::MAX)];
-        let first = CodeAnswer::Computed(ComputedTargets::Modules {
+        let first = ComputedTargets::Modules {
             files: &[FileId(5), FileId(7)],
             host_modules: &host_modules,
             spellings: &[
@@ -537,18 +682,18 @@ fn candidates_of_each_site_are_a_range() {
                 (Atom(2), ComputedTarget::HostModule(HostModuleId(u32::MAX))),
                 (Atom(3), ComputedTarget::HostModule(fs)),
             ],
-        });
-        let second = CodeAnswer::Computed(ComputedTargets::Modules {
+        };
+        let second = ComputedTargets::Modules {
             files: &[FileId(5)],
             host_modules: &[],
             spellings: &[(Atom(1), ComputedTarget::File(FileId(5)))],
-        });
+        };
         assert_eq!(
-            scanner.scan_site(0, site, first),
+            scanner.scan_site(0, site, CodeAnswer::Computed(&first)),
             ScannedSite::Candidates(0..2)
         );
         assert_eq!(
-            scanner.scan_site(1, site, second),
+            scanner.scan_site(1, site, CodeAnswer::Computed(&second)),
             ScannedSite::Candidates(2..3)
         );
         let expected = [
@@ -561,6 +706,7 @@ fn candidates_of_each_site_are_a_range() {
         let spelled = |spelling, module| SpelledModule {
             spelling: Atom(spelling),
             module,
+            is_left_to_loader: false,
         };
         let expected = [
             spelled(1, ModuleRef::File(FileId(5))),
@@ -568,47 +714,6 @@ fn candidates_of_each_site_are_a_range() {
             spelled(1, ModuleRef::File(FileId(5))),
         ];
         assert_eq!(scanner.spellings, expected);
-        assert!(scanner.failures.is_empty());
-    });
-}
-
-#[test]
-fn site_over_candidate_limit_is_recorded() {
-    with_scanner(PATTERN_REQUIRE, |scanner, sites| {
-        let [site] = sites else {
-            panic!("the import sites are {sites:?}");
-        };
-        let unknown_for = |cause| {
-            CodeAnswer::Computed(ComputedTargets::All {
-                cause,
-                host_modules: &[],
-            })
-        };
-        let other_causes = [
-            ComputedUnknown::NoPattern,
-            ComputedUnknown::NoConstantPrefix,
-            ComputedUnknown::PackageImports,
-            ComputedUnknown::ConfigPaths,
-            ComputedUnknown::ExternalCandidate,
-        ];
-        for cause in other_causes {
-            let scanned = scanner.scan_site(0, site, unknown_for(cause));
-            assert_eq!(scanned, ScannedSite::AllModules, "{cause:?}");
-        }
-        assert!(scanner.sites_over_candidate_limit.is_empty());
-
-        let over_limit = unknown_for(ComputedUnknown::TooManyCandidates);
-        assert_eq!(
-            scanner.scan_site(0, site, over_limit),
-            ScannedSite::AllModules
-        );
-        let [span] = scanner.sites_over_candidate_limit[..] else {
-            panic!("the sites are {:?}", scanner.sites_over_candidate_limit);
-        };
-        assert_eq!(span.file, scanner.file);
-        let text = &scanner.hir.text[span.start as usize..span.end as usize];
-        assert_eq!(BStr::new(text), "`./pages/${name}.js`");
-        assert!(scanner.candidates.is_empty());
         assert!(scanner.failures.is_empty());
     });
 }
@@ -632,6 +737,7 @@ fn external_kind_is_recorded() {
             let module = ModuleRef::External {
                 importer,
                 specifier,
+                type_attribute: None,
             };
             assert_eq!(answer, SiteAnswer::Module(module));
             assert_eq!(program.graph.external_kind(module), Some(kind));
@@ -640,6 +746,82 @@ fn external_kind_is_recorded() {
         let expected_requests = [UNCOMPILED_MODULE, HOST_VALUE_MODULE]
             .map(|specifier| format!("request external:{specifier}"));
         assert_eq!(program.request_lines("main.js"), expected_requests);
+    });
+}
+
+#[test]
+fn load_of_file_missing_at_build_is_left_to_loader() {
+    let main = "
+        export {};
+        import('./made.mjs');
+        require('./made.cjs');
+        require.resolve('./made.cjs');
+    ";
+    with_program_that_loads_code_from_disk(main, |graph, files, main| {
+        let left_to_loader = ["./made.mjs", "./made.cjs"].map(|specifier| ModuleRef::External {
+            importer: main,
+            specifier: files.atoms.intern(specifier.as_bytes()),
+            type_attribute: None,
+        });
+        let [imported, required] = left_to_loader.map(SiteAnswer::Module);
+        let resolved = SiteAnswer::Failed(ModuleFailureId(0));
+        let sites = files.analysis(main).import_sites.iter();
+        let answers: Vec<_> = sites
+            .map(|site| graph.site_answer(main, site.kind))
+            .collect();
+        assert_eq!(answers, [imported, required, resolved]);
+        let kinds = left_to_loader.map(|module| graph.external_kind(module));
+        assert_eq!(kinds, [Some(ExternalKind::UncompiledCode); 2]);
+        assert!(graph.errors().is_empty());
+        assert_eq!(graph.failures().len(), 1);
+    });
+}
+
+#[test]
+fn statement_that_names_file_missing_at_build_is_an_error() {
+    with_program_that_loads_code_from_disk("import './made.mjs';", |graph, files, main| {
+        let sites = files.analysis(main).import_sites;
+        let [site] = sites else {
+            panic!("the import sites are {sites:?}");
+        };
+        assert_eq!(graph.site_answer(main, site.kind), SiteAnswer::Erased);
+        let [error] = graph.errors() else {
+            panic!("the errors are {:?}", graph.errors());
+        };
+        assert_eq!(error.site, site.kind);
+        assert_eq!(error.effect(), FailureEffect::StopsBuild);
+        assert!(graph.failures().is_empty());
+    });
+}
+
+#[test]
+fn import_statement_hands_its_type_to_the_loader() {
+    let main = format!(
+        "import a from '{UNCOMPILED_MODULE}' with {{ type: 'toml' }};
+        import b from '{UNCOMPILED_MODULE}';
+        import c from '{UNCOMPILED_MODULE}' with {{ type: 'TEXT' }};
+        import d from '{UNCOMPILED_MODULE}' with {{ type: 'no loader' }};
+        export {{ e }} from '{UNCOMPILED_MODULE}' with {{ type: 'toml' }};
+        export * as f from '{UNCOMPILED_MODULE}' with {{ type: 'text' }};
+        import('{UNCOMPILED_MODULE}', {{ with: {{ type: 'toml' }} }});"
+    );
+    with_program(&[("main.js", main.as_str())], |program| {
+        let external = |type_attribute| {
+            SiteAnswer::Module(ModuleRef::External {
+                importer: program.file("main.js"),
+                specifier: program.atom(UNCOMPILED_MODULE),
+                type_attribute,
+            })
+        };
+        let answers = program.site_answers("main.js");
+        let answers: Vec<_> = answers.iter().map(|&(_, answer)| answer).collect();
+        let (toml, text) = (Some(Loader::Toml), Some(Loader::Text));
+        let expected = [toml, None, text, None, toml, text, None].map(external);
+        assert_eq!(answers, expected);
+        let modules = [None, toml, text].map(external);
+        let listed = program.graph.other_modules().iter();
+        let listed: Vec<_> = listed.map(|&module| SiteAnswer::Module(module)).collect();
+        assert_eq!(listed, modules);
     });
 }
 
@@ -688,11 +870,19 @@ fn file_without_jsx_requests_no_jsx_module() {
 }
 
 #[test]
-fn commonjs_file_has_jsx_site_without_request() {
+fn commonjs_file_requires_module_of_its_jsx() {
     with_react_program("module.exports = <div />;", |program| {
         let main = program.file("main.jsx");
         assert_eq!(program.graph.kind(main), ModuleKind::CommonJs);
-        assert!(program.graph.requests(main).is_empty());
+        let requests = program.graph.requests(main);
+        let [request] = requests else {
+            panic!("the requests are {requests:?}");
+        };
+        assert_eq!(request.target, program.module(JSX_RUNTIME));
+        assert_eq!(
+            request.kind,
+            crate::ir::generated::ModuleRequestKind::Require
+        );
         let runtime = SiteAnswer::Module(program.module(JSX_RUNTIME));
         let expected = [(ImportSiteKind::JsxRuntime, runtime)];
         assert_eq!(program.site_answers("main.jsx"), expected);
@@ -766,6 +956,7 @@ fn external_module_names_importer_and_specifier() {
         let module = ModuleRef::External {
             importer: scanner.file,
             specifier,
+            type_attribute: None,
         };
         let result = scanner.answer_of(CodeAnswer::External { specifier, kind });
         assert_eq!(result, Ok(ScannedSite::Module(module)));
@@ -774,11 +965,88 @@ fn external_module_names_importer_and_specifier() {
 }
 
 #[test]
+fn star_over_a_file_mentioned_above_other_stars_bears_its_place() {
+    let create_draft = |file: u32, is_star_export: bool| RequestDraft {
+        target: ModuleRef::File(FileId(file)),
+        phase: ImportPhase::Evaluation,
+        is_star_export,
+        star_place: NO_STAR_PLACE,
+    };
+    let limit = MAX_SCANNED_REQUESTS as u32;
+    for others in [0, limit, 3 * limit] {
+        let (first, second) = (others, others + 1);
+        let mut requests = RequestList::default();
+        for file in 0..others {
+            requests.add(create_draft(file, false));
+        }
+        requests.add(create_draft(second, false));
+        requests.add(create_draft(first, true));
+        requests.add(create_draft(second, true));
+        requests.add(create_draft(second, true));
+        requests.add(create_draft(first, false));
+
+        let listed = requests.drafts[others as usize..].iter();
+        let listed: Vec<(ModuleRef, bool, u32)> = listed
+            .map(|it| (it.target, it.is_star_export, it.star_place))
+            .collect();
+        let file = |file: u32| ModuleRef::File(FileId(file));
+        assert_eq!(listed, [(file(second), true, 1), (file(first), true, 0)]);
+
+        let finished: Vec<ModuleRequest> = requests.drafts[others as usize..]
+            .iter()
+            .map(|draft| ModuleRequest {
+                is_star_export: draft.is_star_export,
+                star_place: draft.star_place,
+                ..ModuleRequest::import(draft.target)
+            })
+            .collect();
+        let in_order: Vec<(ModuleRef, bool)> = list_in_order_of_stars(&finished)
+            .iter()
+            .map(|it| (it.target, it.is_star_export))
+            .collect();
+        assert_eq!(
+            in_order,
+            [
+                (file(second), false),
+                (file(first), true),
+                (file(second), true)
+            ]
+        );
+    }
+}
+
+#[test]
+fn constant_name_at_require_made_of_handed_url_has_one_answer() {
+    let main = "import { createRequire } from 'node:module';
+        function probe(url) {
+            const load = createRequire(url);
+            try { load('./gauge.json'); } catch {}
+        }
+        probe(import.meta.url);";
+    for code in ["gauge.json.cjs", "gauge.json/index.js"] {
+        with_program(
+            &[("main.mjs", main), (code, "module.exports = {};")],
+            |program| {
+                let [failure] = program.graph.failures() else {
+                    panic!("the failures are {:?}", program.graph.failures());
+                };
+                let ModuleFailureKind::Unresolved { specifier, .. } = failure.kind else {
+                    panic!("the failure is {:?}", failure.kind);
+                };
+                assert_eq!(program.text_of(specifier), "./gauge.json", "{code}");
+                assert_eq!(failure.effect(), FailureEffect::ThrowsAtSite);
+            },
+        );
+    }
+}
+
+#[test]
 fn requests_merge_past_scan_limit() {
     let create_draft = |file: u32, is_star_export: bool| RequestDraft {
         target: ModuleRef::File(FileId(file)),
         phase: ImportPhase::Evaluation,
         is_star_export,
+        star_place: NO_STAR_PLACE,
     };
     let limit = MAX_SCANNED_REQUESTS as u32;
     for count in [limit, limit + 1, 3 * limit] {

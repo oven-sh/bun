@@ -1,0 +1,26 @@
+# -- source: main.cjs
+# "use strict";
+# function each(list, f) { for (let i = 0; i < list.length; i++) f(list[i], i); }
+# function addAll(names) { for (const name of names) A.prototype[name] = function (x) { return this.v + x; }; }
+# function mixin(target, names) { for (const name of names) target[name] = function (x) { return this.v * x; }; }
+# class A { constructor(v) { this.v = v; } }
+# class W { constructor(v) { this.v = v; } }
+# class M { constructor(v) { this.v = v; } }
+# each(["add", "sub"], name => { W.prototype[name] = function (x) { return this.v - x; }; });
+# addAll(["foo", "bar"]);
+# mixin(M.prototype, ["mul", "div"]);
+# const a = new A(3), w = new W(4), m = new M(5);
+# function run(count) { let sum = 0; for (let i = 0; i < count; i++) sum += a.foo(i & 3) + a.bar(1); return sum; }
+# function runEach(count) { let sum = 0; for (let i = 0; i < count; i++) sum += w.add(i & 3) + w.sub(1); return sum; }
+# function runMixin(count) { let sum = 0; for (let i = 0; i < count; i++) sum += m.mul(i & 3) + m.div(1); return sum; }
+# print(run(10), runEach(10), runMixin(10));
+# -- end of source
+# The stores lie under the names of the lists alone: the calls are followed to what is stored.
+# RUN(PARAMETER): walk f4 mechanisms=all
+# PARAMETER: frame {{*}} callee=f11
+# RUN(CALLBACK): walk f5 mechanisms=all
+# CALLBACK: frame {{*}} callee=f13
+# RUN(TARGET): walk f6 mechanisms=all
+# TARGET: frame {{*}} callee=f12
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 83 57 115

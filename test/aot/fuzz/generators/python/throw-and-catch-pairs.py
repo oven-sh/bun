@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""throw-and-catch-pairs.py <seed>: random strict TypeScript programs about WHAT IS THROWN AND WHO CATCHES IT: values of every kind (errors, heirs of Error, plain objects, numbers, strings, undefined, null, symbols, functions, frozen objects, the same
-object twice) thrown in compiled code, by the engine (a read off null, a call of no function, a dead zone, a bad length, BigInt mixing, JSON.parse, a stack that overflows) and by host functions; through zero to five compiled frames (inlined or not, recursive), and
-through the engine's own frames: callbacks of map | forEach | sort | reduce | replace | JSON.stringify | Array.from | Reflect.apply | Promise executors, getters, setters, Proxy traps, valueOf | toString | Symbol.toPrimitive, iterators (next | return that
-throw, IteratorClose), generators (throw() into them, finally that yields), constructors, field initializers, default parameters, destructuring, tagged templates; caught at once, far up, rethrown, replaced in catch, overridden by finally (return | break | continue |
-throw), caught without a binding, by async functions (rejections, awaits in catch and finally). What is logged: the order of everything, the identity of what was caught (=== what was thrown), its message, name, own keys, and that `stack` is a string."""
+"""throw-and-catch-pairs.py <seed>: Random strict TypeScript programs about what is thrown and who catches it: values of
+every kind (errors, Error subclasses, plain objects, numbers, strings, undefined, null, symbols, functions, frozen
+objects) and handlers at every level.
+"""
 import random, sys, os
 
 HEAD = r'''const G: any = globalThis;

@@ -1,7 +1,7 @@
 // RUN: link
-// CHECK: expectedresult [[expected]] type=[[chain]] layouts={{*}}[[chain]], [[row]]]
-// CHECK: layout [[chain]] name="Chain<Row>"
-// CHECK: layout [[row]] name="Row"
+// CHECK: expectedresult [[expected]] type=[[chain]] layouts={{*}}[[row]], [[chain]]]
+// CHECK: layout [[row]] module={{*}}fields=[{key="id"
+// CHECK: layout [[chain]] module={{*}}fields=[{key="and"
 // CHECK: function {{*}}name="fluent"
 // CHECK: = Call {{*}}expectedResult=[[expected]]
 // CHECK: Return

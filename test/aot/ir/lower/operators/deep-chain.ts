@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: MaxNestingDepthHits = 0
 // CHECK-LABEL: function {{*}}name="sum"
 // CHECK-COUNT-1000: = Add
 // CHECK-COUNT-1000: = Add

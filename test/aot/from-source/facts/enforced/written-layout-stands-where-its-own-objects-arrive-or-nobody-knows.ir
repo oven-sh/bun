@@ -1,0 +1,19 @@
+# the twin of written-layout-is-taken-back-where-a-stranger-was-seen-to-arrive.ir. What arrives at `socket` is a Socket: the written type stands. At `other` arrives what a parameter brings of a function that only code nobody has seen calls:
+# there the flow says nothing of the field, and where it says nothing what is written stands.
+# f1 = respond, f2 = wrap
+# -- source: written-layout-stands-where-its-own-objects-arrive-or-nobody-knows.ts
+# declare function sink(...values: unknown[]): void;
+# class Socket { fd: number; constructor(fd: number) { this.fd = fd; } }
+# class Reply { socket: Socket; constructor(socket: Socket) { this.socket = socket; } }
+# class Wrapper { other: Socket; constructor(other: Socket) { this.other = other; } }
+# function respond(fd: number) { return new Reply(new Socket(fd)); }
+# function wrap(other: Socket) { return new Wrapper(other); }
+# sink(respond, wrap);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "socket" source=written type=undefined|null|L
+# CHECK: field {{*}} "other" source=written type=undefined|null|L
+# CHECK: counts fields {{*}} | taken back 0 |
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: taken-back
+# NEVER-NOT: differs-from-table

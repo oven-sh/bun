@@ -58,6 +58,51 @@ test("an output of Bun.build() is hashed as its bytes, and one written to outdir
   expect(() => Bun.sha(written)).toThrow(fileBlob);
   expect(() => nodeHash("sha1", written)).toThrow(fileBlob);
 });
+describe("digest() into a TypedArray needs room for the digest", () => {
+  /** `expected(size)` is what an array of `size` bytes, all 0xee before, holds afterwards. */
+  function check(make: () => Bun.CryptoHasher, expected: (size: number) => Buffer) {
+    const { byteLength } = make();
+    for (const extra of [0, 1, 100]) {
+      const into = new Uint8Array(byteLength + extra).fill(0xee);
+      expect(make().digest(into)).toBe(into);
+      expect(Buffer.from(into).toString("hex")).toBe(expected(into.length).toString("hex"));
+    }
+    expect(() => make().digest(new Uint8Array(byteLength - 1))).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: `TypedArray must be at least ${byteLength} bytes`,
+      }),
+    );
+  }
+  const thenUntouched = (digest: Buffer) => (size: number) =>
+    Buffer.concat([digest, Buffer.alloc(size - digest.length, 0xee)]);
+  const isXOF = (algorithm: string) => algorithm.startsWith("shake");
+  const takesKey = (algorithm: Bun.SupportedCryptoAlgorithms) => {
+    try {
+      return !!new Bun.CryptoHasher(algorithm, "key");
+    } catch {
+      return false;
+    }
+  };
+
+  test.each(Bun.CryptoHasher.algorithms.filter(algorithm => !isXOF(algorithm)))("%s writes nothing else", algorithm => {
+    const make = () => new Bun.CryptoHasher(algorithm).update("abc");
+    check(make, thenUntouched(make().digest()));
+  });
+
+  test.each(Bun.CryptoHasher.algorithms.filter(takesKey))("%s with a key writes nothing else", algorithm => {
+    const make = () => new Bun.CryptoHasher(algorithm, "key").update("abc");
+    check(make, thenUntouched(make().digest()));
+  });
+
+  test.each(Bun.CryptoHasher.algorithms.filter(isXOF))("%s fills it", algorithm => {
+    check(
+      () => new Bun.CryptoHasher(algorithm).update("abc"),
+      outputLength => createHash(algorithm, { outputLength }).update("abc").digest(),
+    );
+  });
+});
+
 test("CryptoHasher update should throw when no parameter/null/undefined is passed", () => {
   const expected = expect.objectContaining({
     name: "TypeError",

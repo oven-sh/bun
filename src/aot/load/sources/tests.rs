@@ -1,48 +1,45 @@
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
+use bstr::BString;
 use bun_ast::Log;
 use bun_builtin_sources::Archive;
 use bun_options_types::aot_options::AotOptions;
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::FileOrigin;
 use bun_sema::fold::{FoldInputs, FoldOptions};
-use bun_sema::hir::{ExprKind, FnKind};
-use bun_sema::hir_from_data::{DataModule, DataValue};
+use bun_sema::hir_from_data::DataModule;
 use bun_sema::program::CodeAnswer;
 use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::{Arena, Session};
 use bun_sema_driver::{CompileRequest, EntryPoints, Libs, load_program};
-use bun_threading::Guarded;
 
 use super::*;
 use crate::builtins::BuiltinNames;
 use crate::compile::testing::{
     default_settings, set_up_output, with_bind_input, with_bind_input_and_provider,
-    with_loaded_build, with_project_view, with_runtime_bind_input,
+    with_loaded_build, with_runtime_bind_input,
 };
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{InternalError, LoadMessages, Span};
 use crate::engine::ExecutableIdentity;
 use crate::ir::run_serially;
+use crate::load::contents::{FoundBecause, FoundEntryPoint};
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
 use crate::load::host_platform;
 use crate::load::module_paths::{file_ids, is_linkable};
 use crate::load::project::PerProject;
 use crate::load::runtime_modules::RuntimeModules;
 use crate::load::source_provider::{
-    DeferredLoad, Failed, LoadRequest, Loaded, MacroCall, Resolution, ResolveRequest, SourceFile,
+    DataFailure, DeferredLoad, Failed, LoadRequest, Loaded, Resolution, ResolveRequest, SourceFile,
     SourceProvider, WithoutServices,
 };
 use crate::options::{LoadOptions, Options, PathOptions};
-use crate::statistics::{LimitId, LimitValues, Loss, Stage};
+use crate::statistics::Stage;
 
-const VIRTUAL_PAGE: &[u8] = b"page.html";
+const TEXT_OF_PLUGIN_MODULE: &[u8] = b"export default 1;";
 
-#[derive(Default)]
-struct TestPlugins {
-    page_paths: Guarded<Vec<Vec<u8>>>,
-}
+struct TestPlugins;
 
 impl SourceProvider for TestPlugins {
     fn fold_options<'s>(
@@ -55,14 +52,12 @@ impl SourceProvider for TestPlugins {
     }
 
     fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
-        let path: &[u8] = match request.specifier {
-            b"virtual:config" => b"config",
-            b"virtual:page" => VIRTUAL_PAGE,
-            _ => return WithoutServices.resolve(request, log),
-        };
+        if request.specifier != b"virtual:config" {
+            return WithoutServices.resolve(request, log);
+        }
         Ok(Resolution::Module {
             namespace: b"v".to_vec(),
-            path: path.to_vec(),
+            path: b"config".to_vec(),
         })
     }
 
@@ -70,13 +65,9 @@ impl SourceProvider for TestPlugins {
         if request.module.namespace != b"v" {
             return WithoutServices.load(request, log);
         }
-        let (text, loader): (&'static [u8], Loader) = match request.module.path {
-            VIRTUAL_PAGE => (b"<html></html>", Loader::Html),
-            _ => (b"export default 1;", Loader::Js),
-        };
         Ok(Loaded::Source {
-            contents: Cow::Borrowed(text),
-            loader,
+            contents: Cow::Borrowed(TEXT_OF_PLUGIN_MODULE),
+            loader: Loader::Js,
             is_from_plugin: true,
         })
     }
@@ -91,12 +82,8 @@ impl SourceProvider for TestPlugins {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         match file.loader {
-            Loader::Html => {
-                self.page_paths.lock().push(file.path.to_vec());
-                Ok(DataModule::Page)
-            }
             Loader::Wasm => Ok(DataModule::RuntimeRequire {
                 specifier: atoms.intern(file.path),
                 loader_type: None,
@@ -104,26 +91,6 @@ impl SourceProvider for TestPlugins {
             }),
             _ => WithoutServices.parse_data(file, arena, atoms, log),
         }
-    }
-
-    fn run_macro<'s>(
-        &self,
-        call: &MacroCall<'_, 's>,
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<&'s DataValue<'s>, Failed> {
-        WithoutServices.run_macro(call, arena, atoms, log)
-    }
-
-    fn bundle_pages<'s>(
-        &self,
-        pages: &[&[u8]],
-        arena: &'s Arena,
-        atoms: &Interner<'s>,
-        log: &mut Log,
-    ) -> Result<Vec<&'s DataValue<'s>>, Failed> {
-        WithoutServices.bundle_pages(pages, arena, atoms, log)
     }
 
     fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
@@ -140,7 +107,6 @@ enum TestHost {
 struct LoadSetup<'a> {
     host: TestHost,
     entry_points: &'a [&'a str],
-    max_string_bytes: usize,
 }
 
 impl Default for LoadSetup<'static> {
@@ -148,7 +114,6 @@ impl Default for LoadSetup<'static> {
         LoadSetup {
             host: TestHost::Application,
             entry_points: &["main.ts"],
-            max_string_bytes: usize::MAX,
         }
     }
 }
@@ -182,6 +147,7 @@ fn create_options<'a>(
             module_prefix: b"/$bunfs/root/".to_vec(),
             root_directory: b"/project".to_vec(),
             entry_point_names: to_byte_strings(entry_points),
+            entry_point_file_names: Vec::new(),
         },
         removable: Default::default(),
         lists_modules: false,
@@ -204,7 +170,6 @@ fn with_freeze_input<R>(
     let archive = Archive::embedded();
     let runtime_modules = RuntimeModules::new(archive, false);
     let messages = LoadMessages::default();
-    let limits = LimitValues::for_host();
     let application_host = LoadHost::new(LoadHostInput {
         disk: &disk,
         provider: &WithoutServices,
@@ -213,14 +178,13 @@ fn with_freeze_input<R>(
         messages: &messages,
         builtin_names: &builtin_names,
         platform: host_platform(),
-        limits: &limits,
     });
     let host: &dyn CodeHost = match setup.host {
         TestHost::Application => &application_host,
         TestHost::DiskWithoutPayloads => &disk,
     };
     let fold_options = FoldOptions {
-        max_string_bytes: setup.max_string_bytes,
+        max_string_bytes: usize::MAX,
         ..FoldOptions::default()
     };
     let fold = FoldInputs::new(fold_options, session.arena());
@@ -234,6 +198,8 @@ fn with_freeze_input<R>(
         threads: NonZeroUsize::MIN,
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
+        order: 1,
     };
     let loaded = load_program(&session, host, &request).expect("every entry point is found");
     then(&FreezeInput {
@@ -243,7 +209,8 @@ fn with_freeze_input<R>(
         manifest: archive.manifest(),
         host_loaded_modules: &[],
         modules_named_at_run_time: &[],
-        is_world: false,
+        found_entry_points: &[],
+        levels_above_root: None,
     })
 }
 
@@ -305,7 +272,8 @@ fn freeze_runtime_project(files: &Files<'_>, host_loaded_modules: &[RuntimeModul
         manifest: Archive::embedded().manifest(),
         host_loaded_modules,
         modules_named_at_run_time: &[],
-        is_world: false,
+        found_entry_points: &[],
+        levels_above_root: None,
     };
     freeze_sources(&input, &run_serially).unwrap().sources
 }
@@ -331,7 +299,6 @@ fn lowering_kind_joins_source_kinds() {
     let program = Some(lower::SourceKind::Program);
     assert_eq!(SourceKind::Program.lowering_kind(), program);
     assert_eq!(SourceKind::Data.lowering_kind(), program);
-    assert_eq!(SourceKind::EvaluatedText.lowering_kind(), program);
     let module = RuntimeModule::NodeFs;
     assert_eq!(
         SourceKind::RuntimeModule(module).lowering_kind(),
@@ -374,7 +341,10 @@ fn kinds_and_loaders_follow_payloads() {
         let describe = |name: &str| {
             let file = file_at(input.files, name);
             let payload = parsed_source(input.files, file);
-            assert!(!payload.is_some_and(|it| it.is_from_plugin), "{name}");
+            assert!(
+                !payload.is_some_and(|it| it.plugin_module.is_some()),
+                "{name}"
+            );
             (
                 sources.kind(file),
                 sources.loader(file),
@@ -418,10 +388,44 @@ fn entry_point_uses_configured_name() {
         let paths = sources.module_paths(main);
         assert_eq!(paths.public_path, b"/$bunfs/root/app.js");
         assert_eq!(paths.display_path, b"main.ts");
+        assert_eq!(&*sources.path_in_stack_traces(main), b"main.ts");
         assert_eq!(sources.diagnostic_path(main), b"/project/main.ts");
         assert_eq!(sources.kind(main), SourceKind::Program);
         let expected = vec![(Loader::Jsx, b"/$bunfs/root/app.js?jsx".to_vec())];
         assert_eq!(public_paths_at(input.files, &sources, "app.js"), expected);
+    });
+}
+
+#[test]
+fn in_place_stack_traces_have_disk_paths() {
+    let files = [
+        ("main.ts", "import './src/deep.ts';"),
+        ("src/deep.ts", "export {};"),
+    ];
+    with_freeze_input(&files, &LoadSetup::default(), |input| {
+        let paths_with = |runs_in_place| {
+            let aot = AotOptions {
+                runs_in_place,
+                ..AotOptions::default()
+            };
+            let options = create_options(&aot, &[], &["main.ts"]);
+            let input = FreezeInput {
+                options: &options,
+                ..*input
+            };
+            let sources = freeze_sources(&input, &run_serially).unwrap().sources;
+            ["main.ts", "src/deep.ts"].map(|name| {
+                let file = file_at(input.files, name);
+                BString::from(&*sources.path_in_stack_traces(file))
+            })
+        };
+        assert_eq!(paths_with(false), ["main.ts", "src/deep.ts"]);
+        if !cfg!(windows) {
+            assert_eq!(
+                paths_with(true),
+                ["/project/main.ts", "/project/src/deep.ts"]
+            );
+        }
     });
 }
 
@@ -436,7 +440,7 @@ fn entry_point_name_cannot_leave_module_prefix() {
                 .sources;
             let main = input.files.entry_points()[0];
             let public_path = sources.module_paths(main).public_path;
-            assert_eq!(public_path, b"/$bunfs/root/_.._/out/app.js");
+            assert_eq!(public_path, b"/$bunfs/_.._/_.._/out/app.js");
         },
     );
 }
@@ -466,6 +470,77 @@ fn command_line_files_are_entry_points_in_order() {
         ];
         assert_eq!(sources.entry_points(), expected);
     });
+}
+
+#[test]
+fn found_entry_point_follows_the_written_ones_under_its_own_name() {
+    let files = [("main.ts", "export {};"), ("plugin.ts", "export {};")];
+    let setup = LoadSetup {
+        entry_points: &["main.ts", "plugin.ts"],
+        ..LoadSetup::default()
+    };
+    with_freeze_input(&files, &setup, |input| {
+        let aot = AotOptions::default();
+        let options = create_options(&aot, &[], &["main.ts"]);
+        let found_entry_points = [FoundEntryPoint {
+            source_path: project_path("plugin.ts"),
+            name: b"found.js".to_vec(),
+            because: FoundBecause::NamedByData,
+            started_at: None,
+            starts: Vec::new(),
+            is_guess: false,
+        }];
+        let input = FreezeInput {
+            options: &options,
+            found_entry_points: &found_entry_points,
+            ..*input
+        };
+        let sources = freeze_sources(&input, &run_serially).unwrap().sources;
+        let plugin = file_at(input.files, "plugin.ts");
+        let expected = [
+            EntryPoint {
+                file: file_at(input.files, "main.ts"),
+                kind: EntryPointKind::Main,
+            },
+            EntryPoint {
+                file: plugin,
+                kind: EntryPointKind::Additional,
+            },
+        ];
+        assert_eq!(sources.entry_points(), expected);
+        assert_eq!(sources.public_path(plugin), b"/$bunfs/root/found.js");
+    });
+}
+
+#[test]
+fn test_runner_loads_what_a_computed_name_may_reach() {
+    let kinds_with = |name: &str| {
+        let test = format!(
+            "import {{ vi }} from 'bun:test'; import './src/user.ts'; import './other.ts'; await vi.importMock({name});"
+        );
+        let files = [
+            ("a.test.ts", &test[..]),
+            ("src/user.ts", "import './counter.ts';"),
+            ("src/counter.ts", "export {};"),
+            ("other.ts", "export {};"),
+        ];
+        let setup = LoadSetup {
+            entry_points: &["a.test.ts"],
+            ..LoadSetup::default()
+        };
+        with_freeze_input(&files, &setup, |input| {
+            let sources = freeze_sources(input, &run_serially).unwrap().sources;
+            ["src/user.ts", "src/counter.ts", "other.ts"]
+                .map(|name| entry_point_kind(&sources, file_at(input.files, name)))
+        })
+    };
+    let loaded = Some(EntryPointKind::LoadedByTestRunner);
+    assert_eq!(kinds_with("'./src/counter.ts'"), [None, loaded, None]);
+    assert_eq!(
+        kinds_with("import.meta.dir + '/src/' + globalThis.name + '.ts'"),
+        [loaded, loaded, None]
+    );
+    assert_eq!(kinds_with("globalThis.name"), [loaded, loaded, loaded]);
 }
 
 #[test]
@@ -511,11 +586,12 @@ fn plugin_module_uses_namespace_and_path() {
                 import text from 'virtual:config' with { type: 'text' };\n\
                 console.log(config, text);";
     let files = [("main.js", main)];
-    let provider = TestPlugins::default();
-    with_bind_input_and_provider(&files, &default_settings(), &provider, |input| {
+    with_bind_input_and_provider(&files, &default_settings(), &TestPlugins, |input| {
         let sources = input.sources;
         let mut found: Vec<(Loader, &[u8], &[u8])> = file_ids(input.files.modules.len())
-            .filter(|&file| parsed_source(input.files, file).is_some_and(|it| it.is_from_plugin))
+            .filter(|&file| {
+                parsed_source(input.files, file).is_some_and(|it| it.plugin_module.is_some())
+            })
             .map(|file| {
                 let paths = sources.module_paths(file);
                 (sources.loader(file), paths.public_path, paths.display_path)
@@ -549,7 +625,7 @@ fn second_loader_of_path_has_suffix() {
 }
 
 #[test]
-fn only_loader_of_path_has_no_suffix_where_no_attribute_chooses_the_same() {
+fn form_that_attribute_asks_for_stands_under_the_path_where_no_attribute_chooses_the_same() {
     let main = "import note from './note.txt' with { type: 'text' };\nconsole.log(note);";
     let files = [("main.ts", main), ("note.txt", "export default 1;")];
     with_bind_input(&files, &default_settings(), |input| {
@@ -766,12 +842,13 @@ fn compiled_file_without_payload_is_internal_error() {
 }
 
 #[test]
-fn macro_diagnostic_lands_on_its_file() {
+fn diagnostics_of_a_payload_land_on_its_file_in_order() {
     let main = "import { value } from './dep.ts';\n\
                 import text from './dep.ts' with { type: 'text' };\n\
                 export default [value, text];";
     let dependency = "import { double } from './macro.ts' with { type: 'macro' };\n\
-                      export const value = double(Math.random());";
+                      export const value = double(Math.random());\n\
+                      export const other = double(Date.now());";
     let files = [
         ("main.ts", main),
         ("dep.ts", dependency),
@@ -784,7 +861,6 @@ fn macro_diagnostic_lands_on_its_file() {
         let FrozenSources {
             sources,
             diagnostics,
-            ..
         } = freeze_sources(input, &run_serially).unwrap();
         let find_compiled_as = |loader: Loader| {
             let mut files = files_at(input.files, "dep.ts").into_iter();
@@ -793,47 +869,25 @@ fn macro_diagnostic_lands_on_its_file() {
         assert!(find_compiled_as(Loader::Text).is_some());
         let script = find_compiled_as(Loader::Ts).unwrap();
 
-        let argument = "Math.random()";
-        let start = dependency.find(argument).unwrap() as u32;
-        let span = Span {
-            file: script,
-            start,
-            end: start + argument.len() as u32,
+        let span_of = |call: &str| {
+            let start = dependency.find(call).unwrap() as u32;
+            Span {
+                file: script,
+                start,
+                end: start + call.len() as u32,
+            }
         };
+        let first_call = span_of("double(Math.random())");
+        let second_call = span_of("double(Date.now())");
         let reported: Vec<(Code, Option<Span>)> = diagnostics
             .iter()
             .map(|diagnostic| (diagnostic.code, diagnostic.span))
             .collect();
-        assert_eq!(reported, [(Code::MacroArgumentNotConstant, Some(span))]);
-    });
-}
-
-#[test]
-fn page_is_listed_with_provider_path() {
-    let main = "import page from './index.html';\n\
-                import other from 'virtual:page';\n\
-                import data from './data.json';\n\
-                export default [page, other, data];";
-    let files = [
-        ("main.ts", main),
-        ("index.html", "<html></html>"),
-        ("data.json", "{}"),
-    ];
-    let provider = TestPlugins::default();
-    with_bind_input_and_provider(&files, &default_settings(), &provider, |input| {
-        let pages = input.sources.pages();
-        assert!(pages.is_sorted_by(|a, b| a.0 < b.0));
-        for &(file, _) in pages {
-            assert!(input.sources.is_data(file));
-            assert_eq!(input.sources.loader(file), Loader::Html);
-        }
-        let mut listed_paths: Vec<&[u8]> = pages.iter().map(|(_, path)| &**path).collect();
-        listed_paths.sort_unstable();
-        let expected: [&[u8]; 2] = [b"/project/index.html", VIRTUAL_PAGE];
-        assert_eq!(listed_paths, expected);
-        let mut parsed_paths = provider.page_paths.lock().clone();
-        parsed_paths.sort_unstable();
-        assert_eq!(parsed_paths, expected);
+        let expected = [
+            (Code::MacrosDisabled, Some(first_call)),
+            (Code::MacrosDisabled, Some(second_call)),
+        ];
+        assert_eq!(reported, expected);
     });
 }
 
@@ -843,105 +897,12 @@ fn web_assembly_file_is_listed() {
                 import data from './data.json';\n\
                 export default [module, data];";
     let files = [("main.ts", main), ("a.wasm", "\0asm"), ("data.json", "{}")];
-    let provider = TestPlugins::default();
-    with_bind_input_and_provider(&files, &default_settings(), &provider, |input| {
+    with_bind_input_and_provider(&files, &default_settings(), &TestPlugins, |input| {
         let module = file_at(input.files, "a.wasm");
         assert_eq!(input.sources.web_assembly_files(), [module]);
         assert_eq!(input.sources.loader(module), Loader::Wasm);
         let bytes = &parsed_source(input.files, module).unwrap().web_assembly;
         assert_eq!(bytes.as_deref(), Some(&b"\0asm"[..]));
-    });
-}
-
-#[test]
-fn evaluated_function_is_found_by_file_and_call() {
-    let source = r#"export const getGlobal = Function("return this");"#;
-    with_project_view(&[("main.js", source)], |view| {
-        let (files, sources) = (view.files(), view.sources);
-        let main = sources.entry_points()[0].file;
-        let [((file, call), function)] = *sources.evaluated_functions_of(main) else {
-            panic!("expected one compiled text");
-        };
-        assert_eq!(file, main);
-        let ExprKind::Call(call_record) = files.hir(main)[call].kind else {
-            panic!("expected a call");
-        };
-        assert_eq!(sources.evaluated_function(main, call), Some(function));
-        assert_eq!(sources.evaluator_of(function.file), Some(main));
-        assert_eq!(sources.evaluator_of(main), None);
-
-        assert_eq!(sources.kind(function.file), SourceKind::EvaluatedText);
-        let text = parsed_source(files, function.file).unwrap();
-        assert_eq!(text.evaluated_function, Some(function.function));
-        assert_eq!(
-            files.hir(function.file)[function.function].kind,
-            FnKind::Expr
-        );
-        let paths = sources.module_paths(function.file);
-        assert!(paths.public_path.starts_with(b"/$bun/text/"));
-        assert_eq!(paths.display_path, paths.public_path);
-        assert_eq!(sources.diagnostic_path(function.file), paths.public_path);
-
-        let callee = files.hir(main)[call_record].callee;
-        assert_eq!(sources.evaluated_function(main, callee), None);
-        assert_eq!(sources.evaluated_function(function.file, call), None);
-        assert!(sources.evaluated_functions_of(function.file).is_empty());
-    });
-}
-
-#[test]
-fn uncompiled_text_has_no_function() {
-    let source = r#"export const getRequire = Function("return require");"#;
-    with_project_view(&[("main.js", source)], |view| {
-        let (files, sources) = (view.files(), view.sources);
-        let main = sources.entry_points()[0].file;
-        let [site] = parsed_source(files, main).unwrap().evaluated_text_sites[..] else {
-            panic!("expected one evaluated text");
-        };
-        let implied_answers = files.compiled(main).unwrap().implied_answers;
-        let CodeAnswer::File(text_file) = implied_answers[site.implied_answer as usize] else {
-            panic!("expected the file of the text");
-        };
-        assert_eq!(sources.kind(text_file), SourceKind::EvaluatedText);
-        assert_eq!(
-            parsed_source(files, text_file).unwrap().evaluated_function,
-            None
-        );
-        assert_eq!(sources.evaluated_function(main, site.call), None);
-        assert!(sources.evaluated_functions_of(main).is_empty());
-    });
-}
-
-#[test]
-fn folded_string_over_limit_is_a_loss_with_span() {
-    let source = "export const long = 'abc' + 'def';\nexport const short = 'ab' + 'cd';";
-    let setup = LoadSetup {
-        max_string_bytes: 4,
-        ..LoadSetup::default()
-    };
-    with_freeze_input(&[("main.ts", source)], &setup, |input| {
-        let counters = freeze_sources(input, &run_serially).unwrap().counters;
-        let sum = "'abc' + 'def'";
-        let start = source.find(sum).unwrap() as u32;
-        let expected = Loss {
-            limit: LimitId::MaxFoldedStringBytes,
-            subject: Some(Span {
-                file: input.files.entry_points()[0],
-                start,
-                end: start + sum.len() as u32,
-            }),
-            count: 1,
-        };
-        assert_eq!(counters.losses(), [expected]);
-    });
-    with_freeze_input(&[("main.ts", source)], &LoadSetup::default(), |input| {
-        assert!(
-            freeze_sources(input, &run_serially)
-                .unwrap()
-                .counters
-                .losses()
-                .is_empty()
-        );
     });
 }
 

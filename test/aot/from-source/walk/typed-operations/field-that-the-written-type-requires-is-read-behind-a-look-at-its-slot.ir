@@ -1,0 +1,14 @@
+# -- source: field-that-the-written-type-requires-is-read-behind-a-look-at-its-slot.ts
+# declare function report(value: unknown): void;
+# interface Response { req: object; sendDate: boolean; }
+# function Response(this: Response, req: object | undefined) { if (req === undefined) return; this.req = req; this.sendDate = true; }
+# export function render(response: Response) { report(response.sendDate); }
+# report(new (Response as any)({}));
+# report(render);
+# -- end of source
+# `function Response(this: Response, req) { if (req === undefined) return; this.req = req; this.sendDate = true; }`: the constructor stores `sendDate` on one of its ways alone, so the layout's own record does not say IsRequired.
+# `interface Response { sendDate: boolean }`, the type that the program writes for the object, requires it: a look at the slot pays, and the read is typed behind it.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: GetSlot {{*}}key="sendDate" receivers=[L0] level=Expected
+# CHECK-NOT: PropGet

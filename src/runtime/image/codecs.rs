@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/spng/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (turbo/bun_png/libwebp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -273,7 +273,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Webp => webp::decode(bytes, max_pixels),
         // Static codecs cover everything we ship; profiling on M-series showed
         // ImageIO is no faster (AppleJPEG ≈ libjpeg-turbo since Huffman is the
-        // bottleneck and isn't vectorisable; spng+zlib-ng beats ImageIO's
+        // bottleneck and isn't vectorisable; for PNG, zlib-ng beats ImageIO's
         // system libz). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
@@ -439,7 +439,7 @@ pub(crate) struct EncodeOptions {
     pub(crate) quality: u8,
     /// WebP only: emit lossless VP8L instead of lossy VP8.
     pub(crate) lossless: bool,
-    /// PNG only: zlib level 0–9. -1 = libspng default.
+    /// PNG only: zlib level 0–9. -1 = zlib's default.
     pub(crate) compression_level: i8,
     /// PNG only: quantize to ≤ `colors` and emit an indexed PNG.
     pub(crate) palette: bool,
@@ -466,18 +466,26 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's, libc for
-/// libspng); rather than dupe into the global allocator so JS can own it,
+/// codecs each malloc internally (turbojpeg's allocator, libwebp's); rather
+/// than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///
 /// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
 pub(crate) struct Encoded {
-    // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
-    // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
-    pub(crate) bytes: NonNull<[u8]>,
-    pub(crate) free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    bytes: NonNull<[u8]>,
+    free: Free,
+}
+
+type Free = unsafe extern "C" fn(*mut c_void, *mut c_void);
+
+impl core::ops::Deref for Encoded {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: live until `free` runs.
+        unsafe { self.bytes.as_ref() }
+    }
 }
 
 impl Drop for Encoded {
@@ -492,7 +500,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, libc `free`) to the
+/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.
@@ -508,7 +516,21 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[cfg(any(target_os = "macos", windows))]
+    /// SAFETY: `ptr` is null, or `free` releases it and nothing else does. It holds `len` bytes,
+    /// unless the result is only dropped.
+    pub(crate) unsafe fn from_raw(ptr: *mut u8, len: usize, free: Free) -> Option<Encoded> {
+        Some(Encoded {
+            bytes: NonNull::slice_from_raw_parts(NonNull::new(ptr)?, len),
+            free,
+        })
+    }
+
+    /// The caller releases the bytes with the function returned.
+    pub(crate) fn into_raw(self) -> (NonNull<[u8]>, Free) {
+        let this = core::mem::ManuallyDrop::new(self);
+        (this.bytes, this.free)
+    }
+
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let (ptr, len, _capacity) = bytes.into_parts();
         Encoded {

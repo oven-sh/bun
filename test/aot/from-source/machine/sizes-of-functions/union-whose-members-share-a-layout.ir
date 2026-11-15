@@ -1,0 +1,22 @@
+# f1 = evaluate
+# -- source: union-whose-members-share-a-layout.ts
+# type Sum = { op: 1; left: number; right: number };
+# type Twice = { op: 2; value: number };
+# type Literal = { op: 3; value: number };
+# function evaluate(node: Sum | Twice | Literal): number {
+#   if (node.op === 1) return node.left + node.right;
+#   if (node.op === 2) return node.value + node.value;
+#   return node.value;
+# }
+# declare const input: any;
+# const sum: Sum = { op: 1, left: +input, right: +input };
+# const twice: Twice = { op: 2, value: +input };
+# const literal: Literal = { op: 3, value: +input };
+# (globalThis as any).answer = evaluate(input > 1 ? sum : input ? twice : literal);
+# -- end of source
+# The compiler before this one: 11 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 19, patches 0, moves 0, unlikely or rare 6.
+# RUN(X64): steps most:19 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 19

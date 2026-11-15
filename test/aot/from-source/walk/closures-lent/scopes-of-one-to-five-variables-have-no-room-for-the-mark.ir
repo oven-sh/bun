@@ -1,0 +1,26 @@
+# The cells of all five scopes are handed back. The mark lies in the header, and while a cell waits the link to the next lies in the slot of its first variable: a scope is as large as its variables make it, 8 bytes of header and 8 a variable in steps of 16.
+# f1 = each, f2 = one, f3 = two, f4 = three, f5 = four, f6 = five
+# -- source: scopes-of-one-to-five-variables-have-no-room-for-the-mark.ts
+# declare function print(...values: unknown[]): void;
+# function each(list: number[], visit: (x: number) => void): void { for (let i = 0; i < list.length; i++) visit(list[i]); }
+# function one(list: number[]): number { let a = 0; each(list, x => { a += x; }); return a; }
+# function two(list: number[]): number { let a = 0, b = 0; each(list, x => { a += x; b += a; }); return a + b; }
+# function three(list: number[]): number { let a = 0, b = 0, c = 0; each(list, x => { a += x; b += a; c += b; }); return a + b + c; }
+# function four(list: number[]): number { let a = 0, b = 0, c = 0, d = 0; each(list, x => { a += x; b += a; c += b; d += c; }); return a + b + c + d; }
+# function five(list: number[]): number { let a = 0, b = 0, c = 0, d = 0, e = 0; each(list, x => { a += x; b += a; c += b; d += c; e += d; }); return a + b + c + d + e; }
+# const list = [1, 2, 3];
+# print(one(list), two(list), three(list), four(list), five(list));
+# print(one(list), two(list), three(list), four(list), five(list));
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: Environment size=16 handed-back link-at=8
+# CHECK: Environment size=32 handed-back link-at=8
+# CHECK: Environment size=32 handed-back link-at=8
+# CHECK: Environment size=48 handed-back link-at=8
+# CHECK: Environment size=48 handed-back link-at=8
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 6 16 31 52 80
+# ANSWERS-NEXT: 6 16 31 52 80
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: 6 16 31 52 80
+# CALLED-NEXT: 6 16 31 52 80

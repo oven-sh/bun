@@ -20,7 +20,7 @@ async function run(cwd: string, ...args: string[]) {
 
 const passed = (said: string) => [...said.matchAll(/^\(pass\) (.*?)(?: \[.*\])?$/gm)].map(match => match[1]).sort();
 const errors = (said: string) =>
-  [...said.matchAll(/^error: (TS\d+):.*\n +at .*paths-of-the-tsconfigs-above[^\\/]*[\\/](.+):(\d+):\d+$/gm)]
+  [...said.matchAll(/^(?:error|warn): (TS\d+):.*\n +at .*paths-of-the-tsconfigs-above[^\\/]*[\\/](.+):(\d+):\d+$/gm)]
     .map(match => `${match[2]!.replaceAll("\\", "/")}:${match[3]} ${match[1]}`)
     .sort();
 
@@ -36,12 +36,16 @@ test("a name that the nearest tsconfig.json leads elsewhere is not found by the 
     "packages/one/tsconfig.json": config({ "core/*": ["../../not-built/*"] }),
     "packages/one/one.test.ts": `import { expect, test } from "bun:test";\nimport { value } from "core/value";\ntest("one", () => {\n  expect(value).toBe(1);\n});\n`,
   });
+  // The test file fails when it loads, with the words of `bun test`.
+  const notFound = "error: Cannot find module 'core/value' from";
   const plain = await run(String(dir), "test");
+  expect(plain.said).toContain(notFound);
   expect(passed(plain.said)).toEqual(["root"]);
   const alone = await run(String(dir), "test", "--aot", "./packages/one/one.test.ts");
-  expect(errors(alone.said)).toEqual(["packages/one/one.test.ts:2 TS100150"]);
+  expect(alone.said).toContain(notFound);
+  expect(passed(alone.said)).toEqual([]);
   const together = await run(String(dir), "test", "--aot");
-  expect(errors(together.said)).toEqual(["packages/one/one.test.ts:2 TS100150"]);
+  expect(together.said).toContain(notFound);
   expect(passed(together.said)).toEqual(["root"]);
 }, 60_000);
 
@@ -60,7 +64,7 @@ test("a type imported by a name that only a tsconfig.json further up knows is fo
   expect(passed(plain.said)).toEqual(["root", "two"]);
   const alone = await run(String(dir), "test", "--aot", "./packages/two/two.test.ts");
   expect(errors(alone.said)).toEqual(["packages/two/two.test.ts:2 TS2307"]);
-  expect(passed(alone.said)).toEqual([]);
+  expect(passed(alone.said)).toEqual(["two"]);
   const together = await run(String(dir), "test", "--aot");
   expect(errors(together.said)).toEqual([]);
   expect(passed(together.said)).toEqual(["root", "two"]);
@@ -93,7 +97,7 @@ test("the paths of a tsconfig.json that is not above a file have a say about it 
   const ofTheLibrary = await run(String(dir), "test", "--aot", "./lib/lib.test.ts");
   expect({ errors: errors(ofTheLibrary.said), passed: passed(ofTheLibrary.said) }).toEqual({
     errors: ["lib/index.ts:1 TS2307"],
-    passed: [],
+    passed: ["lib"],
   });
   const ofTheApplication = await run(String(dir), "test", "--aot", "./app/app.test.ts");
   expect({ errors: errors(ofTheApplication.said), passed: passed(ofTheApplication.said) }).toEqual({

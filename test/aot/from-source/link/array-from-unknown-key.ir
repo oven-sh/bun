@@ -1,0 +1,15 @@
+# -- source: array-from-unknown-key.js
+# class Item { constructor(n) { this.count = n; } }
+# const byKey = new Map();
+# function add(key, n) { let items = byKey.get(key); if (!items) byKey.set(key, items = new Set()); items.add(new Item(n)); }
+# function total(key) { let sum = 0; for (const item of Array.from(byKey.get(key))) sum += item.count; return sum; }
+# for (let i = 0; i < 4; i++) add(i & 1 ? "odd" : "even", i);
+# let answer = "none";
+# try { total("none"); } catch (error) { answer = error.constructor === TypeError; }
+# print(total("odd"), total("even"), answer);
+# -- end of source
+# L0 = Item. Array.from() is called with undefined or a Set: the row of iterables takes every object, and the rows behind it are called with undefined alone.
+# RUN(ITEM): link why-gone L0
+# ITEM: why-gone L0: it has not gone
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 2 true

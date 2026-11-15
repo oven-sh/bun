@@ -64,7 +64,7 @@ show("(function ({ x }) { a: pass(1); })(nothing);", () => { (function ({ x }) {
 show("(function ({ x }) { do {} while (five); })(nothing);", () => { (function ({ x }) { do {} while (five); })(nothing); });
 show("(function ({ x }) { for (const each of []) {} })(nothing);", () => { (function ({ x }) { for (const each of []) {} })(nothing); });
 show("(function ({ x }) { for (const each in holder) pass(each); })(nothing);", () => { (function ({ x }) { for (const each in holder) pass(each); })(nothing); });
-show("(function ({ x }) { \"use strict\"; })(nothing);", () => { (function ({ x }) { "use strict"; })(nothing); });
+show("(function ({ x }) { \"use client\"; })(nothing);", () => { (function ({ x }) { "use client"; })(nothing); });
 show("(function ({ x }) { debugger; })(nothing);", () => { (function ({ x }) { debugger; })(nothing); });
 show("(function ({ x }) { const { a } = holder; })(nothing);", () => { (function ({ x }) { const { a } = holder; })(nothing); });
 show("(function ({ x }) { let a = 1, b = five; })(nothing);", () => { (function ({ x }) { let a = 1, b = five; })(nothing); });

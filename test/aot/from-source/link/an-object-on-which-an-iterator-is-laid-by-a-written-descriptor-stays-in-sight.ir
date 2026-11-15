@@ -1,0 +1,10 @@
+# The key of the definition is written as a well-known symbol: it is a written key, as the same symbol is in `bag[Symbol.iterator] = ..`: the object stays in sight and the loop finds what was laid. L1 = the bag.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L1 changes=[IsFrozen, GainsProperty, GetsAccessor] stays-with-compiled-code
+# -- source: an-object-on-which-an-iterator-is-laid-by-a-written-descriptor-stays-in-sight.js
+# const bag = { items: [1, 2, 3] };
+# Object.defineProperty(bag, Symbol.iterator, { value: function () { return this.items[Symbol.iterator](); } });
+# let sum = 0;
+# for (const n of bag) sum += n;
+# console.log(sum);
+# -- end of source

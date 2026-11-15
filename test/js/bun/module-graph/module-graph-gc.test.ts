@@ -2,7 +2,7 @@
 // records, CommonJS modules and its context) alive, and that nothing else does.
 import { heapStats } from "bun:jsc";
 import { afterAll, describe, expect, jest, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "path";
@@ -331,6 +331,36 @@ describe("ModuleGraph GC: cells a graph made go with it", () => {
     await make(30);
     expect((await settle({ SymbolTable: baseline + 10 })).SymbolTable).toBeLessThanOrEqual(baseline + 10);
   });
+
+  test("the compiled code of a CommonJS module goes with the last graph that ran it", async () => {
+    // Many, because the count also has the code of whatever else ran before: up to 30 of those go away during this test.
+    const files = 160;
+    let all = "";
+    for (let i = 0; i < files; i++) {
+      writeFileSync(file(`only-in-graphs-${i}.cjs`), `module.exports = function f${i}() { return ${i}; };`);
+      all += `require("./only-in-graphs-${i}.cjs");\n`;
+    }
+    writeFileSync(file("only-in-graphs.cjs"), all);
+    writeFileSync(file("only-in-graphs-first.cjs"), "");
+    const load = async (entry = "only-in-graphs.cjs") => {
+      const graph = new ModuleGraph();
+      await graph.import(file(entry));
+      return graph;
+    };
+    // Another file, so the baseline has none of the code that is counted, whether or not this graph is collected by then.
+    await (async () => void (await load("only-in-graphs-first.cjs")))();
+    const { FunctionCodeBlock: baseline } = await baselineOf("FunctionCodeBlock");
+    await (async () => {
+      const held = [await load(), await load()];
+      held[0].dispose();
+      // The wrapper functions' code, once for both graphs, while either is held.
+      const { FunctionCodeBlock: whileHeld } = await baselineOf("FunctionCodeBlock");
+      expect(whileHeld - baseline).toBeWithin(files / 2 + 1, files * 2);
+      expect(held.length).toBe(2);
+    })();
+    const limit = baseline + files / 2;
+    expect((await settle({ FunctionCodeBlock: limit })).FunctionCodeBlock).toBeLessThanOrEqual(limit);
+  }, 30_000);
 
   test("the host's copy of a file a collected graph also loaded is untouched", async () => {
     const hostRequire = require("node:module").createRequire(import.meta.url);

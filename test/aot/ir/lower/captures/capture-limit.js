@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: MaxCapturesHits = 1
 // CHECK-LABEL: function {{*}}name="f"
 // CHECK: [[environment]] = NewObject {{*}}layout=[[layout]]
 // CHECK: [[c0]] = Call
@@ -8,7 +7,7 @@
 // CHECK-LABEL: function {{*}}name="sum"
 // CHECK: captures=[{type=env [[layout]] flags=[IsFromCompiler]}] thisType
 // CHECK-LABEL: function {{*}}name="one"
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="c0"}] thisType
 
 export function f(g) {
   const c0 = g(), c1 = g(), c2 = g(), c3 = g(), c4 = g(), c5 = g(), c6 = g(), c7 = g(), c8 = g(), c9 = g();

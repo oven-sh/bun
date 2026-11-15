@@ -1,0 +1,19 @@
+# -- source: main.js
+# function Base(a, b, c) { this.a = a; this.b = b; this.c = c; }
+# function make() { function Heir(a) { this.a = a; this.d = 1; } Object.setPrototypeOf(Heir.prototype, Base.prototype); Object.setPrototypeOf(Heir, Base); return Heir; }
+# const made = new (publish(Base))(1, 2, 3);
+# print(made.a + made.b + made.c, Object.keys(made).join(), typeof make);
+# -- end of source
+# `Base` is in the hands of code that nobody has seen, so its `this` is only expected: its own layout and that of the function linked below it. That function is declared inside a function that never runs, so its class may be evaluated again and no guard answers for what stands above its objects: a store that creates has no form for it. One such member used to close the three stores for the whole union: a stub a store.
+# A guess is tested, so it may be narrower than what is expected: the heirs whose class may be evaluated again are left out of the test, and the stores are built for the rest. f1 = Base; L0 = Base, L1 = Heir
+# RUN(WALK): walk f1 mechanisms=all
+# WALK-LABEL: code f1:Body
+# WALK: PutSlotOrAdd {{*}} key="a" receivers=[L0]
+# WALK: PutSlotOrAdd {{*}} key="b" receivers=[L0]
+# WALK: PutSlotOrAdd {{*}} key="c" receivers=[L0]
+# RUN(ANSWERS): run-in-shell globalThis.publish = (given) => given;
+# ANSWERS: 6 a,b,c function
+# ANSWERS-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.publish = (given) => given;
+# CHECKED: 6 a,b,c function
+# CHECKED-NEXT: exited with 0

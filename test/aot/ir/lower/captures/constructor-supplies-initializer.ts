@@ -3,11 +3,11 @@
 // CHECK: [[a]] = Call {{*}}calleeName="g"
 // CHECK: = NewClosure [[a]] function=
 // CHECK-LABEL: function {{*}}kind=BaseConstructor
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="a"}] thisType
 // CHECK: b0([[copy]]: anything,
 // CHECK: = CallDirect [[copy]], [[this]] function=
 // CHECK-LABEL: function {{*}}kind=Initializer
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="a"}] thisType
 
 declare function g(): unknown;
 

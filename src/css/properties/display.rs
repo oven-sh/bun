@@ -14,7 +14,7 @@ pub enum Display {
 // Tries each payload's `parse` in declaration order; `to_css` dispatches to
 // the active payload.
 impl Display {
-    pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         if let Ok(kw) = input.try_parse(DisplayKeyword::parse) {
             return Ok(Display::Keyword(kw));
         }
@@ -75,7 +75,7 @@ pub struct DisplayPair {
 }
 
 impl DisplayPair {
-    fn parse(input: &mut Parser) -> css::Result<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut list_item = false;
         let mut outside: Option<DisplayOutside> = None;
         let mut inside: Option<DisplayInside> = None;
@@ -237,7 +237,7 @@ pub enum DisplayInside {
 }
 
 impl DisplayInside {
-    fn parse(input: &mut Parser) -> css::Result<Self> {
+    fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident()?;
 

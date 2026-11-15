@@ -1,0 +1,10 @@
+import { check } from "../src/show";
+import { iterate, destructure } from "fake-shapes/more";
+import { Vec2 } from "fake-typed";
+import { Vec3, Pile } from "../src/models";
+const F = "32";
+check(F, "as written", () => [iterate(new Vec3(1, 2, 3)), destructure(new Vec2(1, 2)), iterate(Pile.from([1, 2])), destructure("ab"), iterate(new Map([[1, 2]])), destructure(new Set([1])), iterate((function* () { yield 1; })())]);
+check(F, "the iterator of a typed class replaced", () => { const old = Vec2.prototype[Symbol.iterator]; (Vec2.prototype as any)[Symbol.iterator] = function* (this: Vec2) { yield "patched"; yield this.x; }; const out = [iterate(new Vec3(1, 2, 3)), destructure(new Vec2(1, 2)), [...new Vec2(5, 6)]]; Vec2.prototype[Symbol.iterator] = old; return [out, [...new Vec2(5, 6)]]; });
+check(F, "an own iterator", () => { const v: any = new Vec2(1, 2); v[Symbol.iterator] = function () { let n = 0; return { next: () => ({ done: n > 1, value: "own" + n++ }), return() { return {}; } }; }; return [iterate(v), destructure(v), [...v]]; });
+check(F, "things that are not iterable", () => [1, null, {}, new (class {})()].map(v => { try { return iterate(v); } catch (e) { return (e as Error).name; } }));
+check(F, "return is called on an early end", () => { const log: string[] = []; const it = { [Symbol.iterator]() { let n = 0; return { next: () => ({ done: false, value: n++ }), return() { log.push("return"); return {}; } }; } }; const [a] = it as any; return [a, destructure({ [Symbol.iterator]: () => ({ next: () => ({ done: true, value: undefined }) }) }), log]; });

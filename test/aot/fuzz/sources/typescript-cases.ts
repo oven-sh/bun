@@ -1,6 +1,7 @@
-// TypeScript's own compiler and conformance tests as programs: some 9,000 pieces of real TypeScript that somebody else wrote. They come from test/cli/check/typescript-go/bundle.zst, where
-// `bun check` already compares its diagnostics with typescript-go's. Seed n draws case n. A case that the build refuses counts as skipped: many are written to be refused, and each is built
-// under the options in its own first lines. Most cases print nothing, so this mainly finds builds that stop or crash, and exceptions that only the compiled program throws.
+// TypeScript's own compiler and conformance tests as programs: some 9,000 pieces of real TypeScript written by other
+// people. They come from test/cli/check/typescript-go/bundle.zst, where `bun check` already compares its diagnostics
+// with typescript-go's. Seed n picks case n. A case whose build is rejected counts as skipped: many are meant to be
+// rejected, and each is built with the options in its first lines.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { asProgram, type Drawn } from "../family";
@@ -8,13 +9,15 @@ import { asProgram, type Drawn } from "../family";
 const casesRoot = "/_submodules/TypeScript/tests/cases/";
 
 /**
- * Cases that say nothing about the compiler, because `bun <file>` is no yardstick for them. In all but the last plain Bun's own transpiler departs from what TypeScript means, and the
- * executable does what TypeScript means. A case that begins to agree costs nothing here; one that is missing shows up as a find, is looked at once, and is added with its kind.
+ * Cases that say nothing about the compiler, because `bun <file>` is not a valid reference for them. In all but the
+ * last, plain Bun's own transpiler deviates from TypeScript's semantics and the executable follows them. A case that
+ * starts to agree costs nothing here; a missing one shows up as a finding, is examined once, and is added under its
+ * kind.
  */
 const plainBunIsNoYardstick = new Set([
   // `import require = require(..)`
   "compiler/collisionExportsRequireAndAlias.ts",
-  // the text of a function is printed
+  // a function's source text is printed
   "compiler/collisionThisExpressionAndLocalVarInLambda.ts",
   "compiler/noCollisionThisExpressionAndLocalVarInLambda.ts",
   // `continue` to the outer of two labels of one endless loop
@@ -37,7 +40,8 @@ const plainBunIsNoYardstick = new Set([
   "conformance/parser/ecmascript5/EnumDeclarations/parserInterfaceKeywordInEnum1.ts",
   // a static member named `prototype` in an ambient class
   "conformance/classes/propertyMemberDeclarations/staticPropertyNameConflictsInAmbientContext.ts",
-  // decorators: a private name in an operand, an `accessor` field under experimentalDecorators, a decorated class that names itself
+  // decorators: a private name in an operand, an `accessor` field under experimentalDecorators, a decorated class that
+  // names itself
   "conformance/decorators/class/method/decoratorOnClassMethod19.ts",
   "conformance/decorators/class/property/decoratorOnClassProperty13.ts",
   "conformance/decorators/legacyDecorators-contextualTypes.ts",
@@ -108,7 +112,10 @@ function compilerOptions(source: string) {
   return options;
 }
 
-/** The files of a case. Its last file is what runs. Nothing where it has inputs other than TypeScript modules, where the file that runs lies in a folder of its own, or where another file imports it. */
+/**
+ * The files of a case. Its last file is the entry point. Nothing if it has inputs other than TypeScript modules, if the
+ * entry point is in its own folder, or if another file imports it.
+ */
 function filesOf(source: string) {
   const pieces = source.split(/^\s*\/\/\s*@filename\s*:\s*([^\r\n]+)\r?\n/im);
   const files: [string, string][] = [];
@@ -136,8 +143,8 @@ function filesOf(source: string) {
 }
 
 let cases: [name: string, source: string][] | undefined;
-const drawn: Drawn = (seed, bed) => {
-  if (bed.name !== "product") return;
+const drawn: Drawn = (seed, runner) => {
+  if (runner.name !== "product") return;
   cases ??= readCases();
   const [name, source] = cases[seed % cases.length];
   const made = filesOf(source);
@@ -148,7 +155,7 @@ const drawn: Drawn = (seed, bed) => {
       ...program,
       notes: name,
       group: name.split("/").slice(0, 2).join("/"),
-      standsAlone: true,
+      needsOwnBuild: true,
       mayBeRefused: true,
     }
   );

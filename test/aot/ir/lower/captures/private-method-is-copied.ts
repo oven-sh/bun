@@ -5,7 +5,7 @@
 // CHECK: [[method]] = NewClosure [[a]] function=
 // CHECK: = NewClosure [[token]], [[method]] function=
 // CHECK-LABEL: function {{*}}name="#m"
-// CHECK: captures=[{type=anything}] thisType
+// CHECK: captures=[{type=anything variableName="a"}] thisType
 // CHECK-LABEL: function {{*}}name="n"
 // CHECK: captures=[{type=classtoken flags=[IsFromCompiler]}, {type=anything}] thisType
 // CHECK: b0([[tokenCopy]]: classtoken, [[methodCopy]]: anything, [[this]]:

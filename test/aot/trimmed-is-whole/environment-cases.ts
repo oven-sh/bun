@@ -615,7 +615,7 @@ export const cases: Case[] = [
 ];
 
 export const refused =
-  /^BUN_OPTIONS=(--help|-h|--aot|--aot-audit|--aot-log-type-mismatches|--check|--watch|--hot|--sql-preconnect|-i)$|^BUN_OPTIONS=--(trace-event|trace-env|trace-exit|stack-trace-limit|fetch-preconnect|redis-preconnect|install=|preload=|require=|import=|eval=|print=)|^BUN_OPTIONS=-[rep]=|--compile-exec-argv=--preload/;
+  /^BUN_OPTIONS=(--help|-h|--aot|--aot-audit|--check|--watch|--hot|--sql-preconnect|-i)$|^BUN_OPTIONS=--(trace-event|trace-env|trace-exit|stack-trace-limit|fetch-preconnect|redis-preconnect|install=|preload=|require=|import=|eval=|print=)|^BUN_OPTIONS=-[rep]=|--compile-exec-argv=--preload/;
 
 // Nothing today. A `preload` in a bunfig.toml stood here: an executable ignores it, trimmed or whole.
 export const knownToDiffer: [RegExp, string][] = [];

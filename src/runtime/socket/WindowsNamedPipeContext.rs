@@ -12,7 +12,7 @@ use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, SysErrorJsc};
-use bun_sys::windows::libuv as uv;
+use bun_ptr::{RefPtr, ThisPtr};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -29,6 +29,8 @@ pub(crate) struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
     ref_count: Cell<u32>,
+    /// Held until the pipe closes, or fails to open.
+    pub(super) self_ref: Cell<Option<RefPtr<Self>>>,
     // Holds `create()`'s +1 on the wrapped socket while not `None`. `on_close`
     // and `fail_connect` release it and clear this; anything still here is
     // deref'd in `Drop` before the `named_pipe` field drops — teardown order
@@ -54,18 +56,16 @@ bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, 
     unsafe { (*ptr::addr_of_mut!((*this).named_pipe)).close_or_cancel_connect() }
 });
 
-/// Reached from `on_close` → `Self::deref` while `WindowsNamedPipe::on_close`
+/// Reached from `on_close` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
 /// project raw fields only — same constraint as the `on_*` handlers below.
 fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
     // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
-    // `task_event`/`vm`/`task` are disjoint from the caller's `&mut named_pipe`, and
-    // `vm` is `&'static` (JSC_BORROW) so `enqueue_task`'s `&mut` goes through a raw cast.
+    // `task_event`/`vm` are disjoint from the caller's `&mut named_pipe`.
     unsafe {
         debug_assert!((*this).task_event != EventState::Deinit);
         (*this).task_event = EventState::Deinit;
-        let vm = ptr::from_ref::<VirtualMachine>((*this).vm).cast_mut();
-        (*vm).enqueue_task(Task::init(this));
+        (*this).vm.enqueue_task(Task::init(this));
     }
 }
 
@@ -148,28 +148,6 @@ macro_rules! match_socket {
 // Instead each handler projects only the disjoint fields it needs (`socket`,
 // `is_open`, `global_this`) via raw-pointer place expressions, and passes
 // `addr_of_mut!((*this).named_pipe)` as a raw pointer without retagging.
-/// Fails the pending connect and releases `create()`'s sole ref, unless
-/// `disarm()` runs first.
-struct FailAndRelease(Option<*mut WindowsNamedPipeContext>);
-
-impl FailAndRelease {
-    fn get(&mut self) -> *mut WindowsNamedPipeContext {
-        self.0.expect("guard already disarmed")
-    }
-
-    fn disarm(mut self) -> *mut WindowsNamedPipeContext {
-        self.0.take().expect("guard already disarmed")
-    }
-}
-
-impl Drop for FailAndRelease {
-    fn drop(&mut self) {
-        if let Some(this) = self.0.take() {
-            WindowsNamedPipeContext::fail_and_release(this);
-        }
-    }
-}
-
 impl WindowsNamedPipeContext {
     fn on_open(this: *mut Self) {
         // SAFETY: `this` is the live ctx ptr registered in `create()`; `is_open`,
@@ -299,10 +277,11 @@ impl WindowsNamedPipeContext {
     fn on_close(this: *mut Self) {
         // SAFETY: see `on_open`. Snapshot `socket` BEFORE clearing it, then match
         // the snapshot — the macro must not read `(*this).socket` directly here.
-        let (socket, pipe) = unsafe {
+        let (_self_ref, socket, pipe) = unsafe {
             let socket = (*this).socket;
             (*this).socket = SocketType::None;
-            (socket, ptr::addr_of_mut!((*this).named_pipe))
+            let pipe = ptr::addr_of_mut!((*this).named_pipe);
+            ((*this).self_ref.take(), socket, pipe)
         };
         match_socket!(socket, |s: NewSocket<SSL>| {
             let closed = NewSocket::on_close(s, socket_from_named_pipe::<SSL>(pipe), 0, None);
@@ -310,9 +289,6 @@ impl WindowsNamedPipeContext {
             s.get().deref();
             closed
         });
-        // SAFETY: `this` is the live ctx pointer registered in create();
-        // releasing the named-pipe's ref may schedule deinit.
-        unsafe { Self::deref(this) };
     }
 
     /// # Safety
@@ -330,25 +306,12 @@ impl WindowsNamedPipeContext {
         }
     }
 
-    /// Owns the freshly-`create()`d context until `disarm()`: on any early
-    /// return it fails the pending connect and releases the sole ref.
-    fn armed(this: *mut Self) -> FailAndRelease {
-        FailAndRelease(Some(this))
+    fn fail_open(this: ThisPtr<Self>) {
+        let _self_ref = this.self_ref.take();
+        Self::fail_connect(this.as_ptr(), SystemErrno::ENOENT as i32);
     }
 
-    /// errdefer shared by `open`/`connect`: fail the wrapped JS socket, then
-    /// release the only ref `create()` handed us.
-    fn fail_and_release(this: *mut Self) {
-        Self::fail_connect(this, SystemErrno::ENOENT as i32);
-        // SAFETY: `this` was just returned from `create()` (refcount==1);
-        // release the only ref on the errdefer path.
-        unsafe { Self::deref(this) };
-    }
-
-    pub(crate) fn create(
-        cx: &bun_jsc::JsThread<'_>,
-        socket: SocketType,
-    ) -> *mut WindowsNamedPipeContext {
+    pub(crate) fn create(cx: &bun_jsc::JsThread<'_>, socket: SocketType) -> ThisPtr<Self> {
         let global_this = GlobalRef::from(cx.global());
         let vm: &'static VirtualMachine = global_this.bun_vm();
         let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
@@ -364,15 +327,6 @@ impl WindowsNamedPipeContext {
         // `&mut WindowsNamedPipe`).
         let handlers = NamedPipeHandlers {
             ctx: this.cast::<c_void>(),
-            // SAFETY: `p` is the `ctx` set above (`this.cast()`); the
-            // WindowsNamedPipe never invokes a handler after `on_close`
-            // schedules deinit, so the allocation is live for the call.
-            // `rc_ref` projects `ref_count` via raw place — `(*p).ref_()` would
-            // autoref `&Self` over the whole struct, but `WindowsNamedPipe::r#ref`
-            // holds `&mut (*this).named_pipe` across this callback.
-            ref_ctx: |p| unsafe { <Self as bun_ptr::AnyRefCounted>::rc_ref(p.cast::<Self>()) },
-            // SAFETY: `p` is the `ctx` set above (`this.cast()`); the allocation is live for the call (see `ref_ctx`).
-            deref_ctx: |p| unsafe { Self::deref(p.cast::<Self>()) },
             on_open: |p| Self::on_open(p.cast::<Self>()),
             on_data: |p, d| Self::on_data(p.cast::<Self>(), d),
             on_handshake: |p, ok, err| Self::on_handshake(p.cast::<Self>(), ok, err),
@@ -385,10 +339,7 @@ impl WindowsNamedPipeContext {
             on_keylog: |p, d| Self::on_keylog(p.cast::<Self>(), d),
             server_identity: |p, ssl| Self::server_identity(p.cast::<Self>(), ssl),
         };
-        let named_pipe = {
-            let pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
-            WindowsNamedPipe::from(pipe, handlers, vm)
-        };
+        let named_pipe = WindowsNamedPipe::new(handlers, vm);
         // SAFETY: `this` is freshly allocated uninit storage exclusively owned here; we write
         // every field exactly once before any read.
         unsafe {
@@ -396,6 +347,7 @@ impl WindowsNamedPipeContext {
                 this,
                 WindowsNamedPipeContext {
                     ref_count: Cell::new(1),
+                    self_ref: Cell::new(None),
                     socket,
                     named_pipe,
                     vm,
@@ -417,9 +369,13 @@ impl WindowsNamedPipeContext {
             Ok(())
         });
 
-        // SAFETY: non-null, fully initialised above, heap-pinned; disarmed when freed.
-        unsafe { bun_jsc::AbortHandle::arm_owner(this, cx.context()) };
-
+        // SAFETY: initialised above with a count of 1, heap-pinned; disarmed when freed.
+        let self_ref = unsafe {
+            bun_jsc::AbortHandle::arm_owner(this, cx.context());
+            RefPtr::from_raw(this)
+        };
+        let this = self_ref.this_ptr();
+        this.self_ref.set(Some(self_ref));
         this
     }
 
@@ -437,16 +393,8 @@ impl WindowsNamedPipeContext {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(cx, socket);
-
-        // The guard reaches `socket` through `this`: `create()` moved it there.
-        let mut guard = Self::armed(this);
-
-        // SAFETY: `this` is live and exclusively accessed here
-        unsafe { (*guard.get()).named_pipe.open(fd, ssl_config, owned_ctx) }?;
-
-        let this = guard.disarm();
-        // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
-        Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
+        (this.named_pipe.open(fd, ssl_config, owned_ctx)).inspect_err(|_| Self::fail_open(this))?;
+        Ok(this.named_pipe.root.get())
     }
 
     /// See `open` for `owned_ctx` ownership.
@@ -460,16 +408,13 @@ impl WindowsNamedPipeContext {
         // TODO: reuse the same context for multiple connections when possibles
 
         let this = WindowsNamedPipeContext::create(cx, socket);
-        let mut guard = Self::armed(this);
-
-        // SAFETY: `this` is live and exclusively accessed here
-        let named_pipe = unsafe { &mut (*guard.get()).named_pipe };
+        let named_pipe = &this.named_pipe;
 
         if path[path.len() - 1] == 0 {
             // is already null terminated
             // SAFETY: path[path.len()-1] == 0 checked above
             let slice_z = ZStr::from_slice_with_nul(path);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
+            named_pipe.connect(slice_z, ssl_config, owned_ctx)
         } else {
             let mut path_buf = bun_paths::path_buffer_pool::get();
             // we need to null terminate the path
@@ -479,12 +424,11 @@ impl WindowsNamedPipeContext {
             path_buf[len] = 0;
             // SAFETY: path_buf[len] == 0 written above
             let slice_z = ZStr::from_buf(&path_buf[..], len);
-            named_pipe.connect(slice_z, ssl_config, owned_ctx)?;
+            named_pipe.connect(slice_z, ssl_config, owned_ctx)
         }
+        .inspect_err(|_| Self::fail_open(this))?;
 
-        let this = guard.disarm();
-        // SAFETY: `this` is live; returning interior pointer to heap-allocated field (BACKREF)
-        Ok(unsafe { ptr::addr_of_mut!((*this).named_pipe) })
+        Ok(this.named_pipe.root.get())
     }
 }
 

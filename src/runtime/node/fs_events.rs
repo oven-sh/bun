@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
-use bun_threading::{Mutex, Semaphore, UnboundedQueue};
+use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
 // are fine in Rust, so import the real shapes instead of mirroring them.
@@ -268,11 +268,10 @@ fn init_core_services() -> CoreServices {
 pub(crate) struct FSEventsLoop {
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
-    mutex: Mutex,
+    mutex: Guarded<FSEventsLoopState>,
     sem: Semaphore,
     tasks: UnboundedQueue<ConcurrentTask>,
     thread: UnsafeCell<Option<std::thread::JoinHandle<()>>>,
-    state: UnsafeCell<FSEventsLoopState>,
 }
 
 struct FSEventsLoopState {
@@ -284,46 +283,27 @@ struct FSEventsLoopState {
     cf_paths: CFArrayRef,
 }
 
-// SAFETY: cross-thread pointers are `AtomicPtr`; `state` is only accessed under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
+// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
 unsafe impl Sync for FSEventsLoop {}
-// SAFETY: no thread-affine data; the loop is a leaked `&'static` singleton and all shared access is synchronized per the `Sync` impl above.
-unsafe impl Send for FSEventsLoop {}
-
-impl FSEventsLoop {
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn state(&self) -> &mut FSEventsLoopState {
-        // SAFETY: the caller holds `self.mutex`, so this is the only live reference to `state`.
-        unsafe { &mut *self.state.get() }
-    }
-}
 
 pub(crate) struct Task {
-    pub ctx: *mut (),
-    pub callback: fn(*mut ()),
+    pub ctx: &'static FSEventsLoop,
+    pub callback: fn(&FSEventsLoop),
 }
 
 impl Task {
     pub(crate) fn run(&mut self) {
-        let callback = self.callback;
-        let ctx = self.ctx;
-        debug_assert!(!ctx.is_null());
-        callback(ctx);
+        (self.callback)(self.ctx);
     }
 
-    pub(crate) fn new<T>(ctx: &'static T, callback: fn(&T)) -> Task {
-        Task {
-            // SAFETY: `fn(&T)` and `fn(*mut ())` have identical single-pointer ABI, and `ctx` is a valid `&T` at call time.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&T), fn(*mut ())>(callback) },
-            ctx: core::ptr::from_ref::<T>(ctx).cast_mut().cast::<()>(),
-        }
+    pub(crate) fn new(ctx: &'static FSEventsLoop, callback: fn(&FSEventsLoop)) -> Task {
+        Task { ctx, callback }
     }
 }
 
 pub(crate) struct ConcurrentTask {
     pub task: Task,
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
-    pub(crate) auto_delete: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
@@ -379,18 +359,9 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue; this
-            // thread owns it exclusively once popped. Scoped accesses so no
-            // reference is live when the node is freed below.
-            let auto_delete = unsafe {
-                (*task).task.run();
-                (*task).auto_delete
-            };
-            if auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent; freed
-                // through the queue pointer (allocation provenance).
-                drop(unsafe { bun_core::heap::take(task) });
-            }
+            // SAFETY: heap-allocated in `enqueue_task_concurrent`; this thread
+            // owns it exclusively once popped.
+            unsafe { bun_core::heap::take(task) }.task.run();
         }
     }
 
@@ -400,11 +371,10 @@ impl FSEventsLoop {
         let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
-            mutex: Mutex::new(),
             sem: Semaphore::default(),
             tasks: UnboundedQueue::default(),
             thread: UnsafeCell::new(None),
-            state: UnsafeCell::new(FSEventsLoopState {
+            mutex: Guarded::new(FSEventsLoopState {
                 watchers: Vec::new(),
                 watcher_count: 0,
                 has_scheduled_watchers: false,
@@ -473,7 +443,6 @@ impl FSEventsLoop {
         self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
             task,
             next: bun_threading::Link::new(),
-            auto_delete: true,
         }));
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
@@ -509,9 +478,7 @@ impl FSEventsLoop {
         // so without this lock we can read `handle.path` / call `handle.emit`
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
-        let _guard = loop_.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { loop_.state() };
+        let state = loop_.mutex.lock();
 
         for watcher in state.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -584,9 +551,7 @@ impl FSEventsLoop {
 
     // Runs on CF Thread
     fn schedule(&self) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         state.has_scheduled_watchers = false;
         let watcher_count = state.watcher_count;
 
@@ -725,9 +690,7 @@ impl FSEventsLoop {
     }
 
     fn register_watcher(&'static self, watcher: *mut FSEventsWatcher) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         if state.watcher_count as usize == state.watchers.len() {
             state.watcher_count += 1;
             state.watchers.push(NonNull::new(watcher));
@@ -750,9 +713,7 @@ impl FSEventsLoop {
     }
 
     fn unregister_watcher(&'static self, watcher: *mut FSEventsWatcher) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         let len = state.watchers.len() as usize;
         for i in 0..len {
             if let Some(item) = state.watchers.slice_mut()[i] {
@@ -808,9 +769,7 @@ impl FSEventsLoop {
         // SAFETY: signal_source is a valid CF object until released here
         unsafe { (cf.release)(signal_source) };
 
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         if state.watcher_count > 0 {
             while let Some(watcher) = state.watchers.pop() {
                 if let Some(w) = watcher {

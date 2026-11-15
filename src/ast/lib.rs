@@ -200,17 +200,10 @@ impl Ref {
     /// Represents a null state without using an extra bit.
     pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
 
-    /// Raw 64-bit representation **including** user bits. For round-tripping
-    /// through external pointer-packed storage (e.g. css `IdentOrRef`). Differs
-    /// from [`Self::as_u64`], which masks user bits for hashing/equality.
+    /// Raw 64-bit representation **including** user bits, which [`Self::as_u64`] masks.
     #[inline]
     pub const fn to_raw_bits(self) -> u64 {
         self.0
-    }
-    /// Reconstruct from a value previously returned by [`Self::to_raw_bits`].
-    #[inline]
-    pub const fn from_raw_bits(bits: u64) -> Ref {
-        Ref(bits)
     }
 
     /// General constructor exposing all three packed fields. Prefer `init` for
@@ -962,13 +955,7 @@ impl BabyString {
     /// Locates `substring` inside `container` (the string later passed to
     /// [`BabyString::slice`]) and records its offset and length.
     pub fn r#in(container: &[u8], substring: &[u8]) -> BabyString {
-        // bun_core::strings::index_of deliberately returns None for an empty
-        // needle, but an empty `substring` reaches this path via resolve errors
-        // for `import ""`, so short-circuit it here to offset 0.
-        if substring.is_empty() {
-            return BabyString::new(0, 0);
-        }
-        // `container` is formatted lossily, so a `substring` with invalid UTF-8 may not be in it.
+        // Not found for `import ""`, or for a non-UTF-8 specifier that was formatted lossily.
         let Some(off) = bun_core::strings::index_of(container, substring) else {
             return BabyString::new(0, 0);
         };
@@ -2052,7 +2039,7 @@ macro_rules! add_warning_pretty {
     };
 }
 
-#[inline]
+#[inline(never)]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     // Markup conversion happens over the *format-string literal only*;
     // interpolated values are never inspected for `<..>` markup.

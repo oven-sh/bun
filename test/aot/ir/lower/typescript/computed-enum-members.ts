@@ -2,7 +2,8 @@
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[head]] = NewObject layout=[[layout]] @
 // CHECK-NEXT: [[enum]] = FinishObject [[head]]
-// CHECK: PutModuleVariable [[enum]] variable=
+// CHECK: [[exported]] = Convert [[enum]] declared={type=undefined|[[layout]] flags=[IsExpected]}
+// CHECK: PutModuleVariable [[exported]] variable=
 // CHECK: = Call {{*}}calleeName="f"
 // CHECK: PropSet [[enum]], {{*}}key="A"
 // CHECK: [[aKey]] = ToPropertyKey

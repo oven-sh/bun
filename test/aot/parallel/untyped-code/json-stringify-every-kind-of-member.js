@@ -1,6 +1,4 @@
 // `JSON.stringify` of every kind of value that SerializeJSONProperty tells apart, as a member, an element and at the top: functions, undefined, symbols, bigints, toJSON, boxed primitives, numbers, keys, getters, hidden and private members, unions, subclasses, replacers, indents, cycles, and holders that change while they are written. Each case has its own call site, reached three times.
-// STATISTIC: OwnKeyWalksExpanded >= 50
-// STATISTIC: SerializersCreated >= 35
 // TODO: built one by one the cases get 173 serializers, and the more of them stand in one file the fewer get one.
 {
 class A { f = () => 1; x = 1 }

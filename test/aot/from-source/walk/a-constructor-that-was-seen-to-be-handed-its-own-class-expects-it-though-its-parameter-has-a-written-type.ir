@@ -1,0 +1,15 @@
+# -- source: main.ts
+# interface Row { id: number; score: number }
+# const data = JSON.parse('{"rows":[{"id":0,"score":0.25}],"never":false}');
+# const rows: Row[] = data.rows; const never: boolean = data.never;
+# class Member { id: number; score: number; constructor(row: Row) { this.id = row.id; this.score = row.score; } }
+# const first = new Member(rows[0]!);
+# function run(turns: number): number { let s = 0; let m = first; for (let i = 0; i < turns; i++) { m = new Member(never ? rows[0]! : m); s += m.id + m.score; } return s; }
+# console.log(run(9), run(0));
+# export {};
+# -- end of source
+# A constructor does not expect its own class of what it takes apart unless one was seen to arrive. What was seen to arrive was kept only for parameters WITHOUT a written type, so for a typed parameter the
+# question was always answered "none", and a copying constructor beside which parsed data may arrive lost its typed reads. It is kept beside a written type too: here a Member is seen to arrive, and is expected.
+# RUN: walk f2 mechanisms=all
+# CHECK: ShapeTest {{*}} layouts=[L
+# CHECK: GetSlot {{*}} key="id"

@@ -1,0 +1,23 @@
+An object of import() that is held since before vi.doMock() stays the file's.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import * as ns from "./m.js";
+const hand = object => object.who + " " + Object.keys(object).sort().join("+");
+test("t", async () => {
+  const held = await import("./m.js");
+  vi.doMock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+  const mocked = await import("./m.js");
+  say(held.who, held.count(), hand(ns), mocked === ns);
+});
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

@@ -1,0 +1,16 @@
+# The header compares the counter with an element of a view, and no iteration stores into a view: the element is read before the loop, and no iteration checks whether its index is inside the other views.
+# LIBRARY: own
+# -- source: main.ts
+# function sum(starts: Int32Array, edges: Int32Array, v: number): number { let s = 0; for (let e = starts[v]; e < starts[v + 1]; e++) s += edges[e]; return s; }
+# const starts = new Int32Array([0, 2, 2, 5, 100]), edges = new Int32Array([1, 2, 4, 8, 16, 32]);
+# publish(() => { const sums: number[] = []; for (let v = 0; v < 5; v++) sums.push(sum(starts, edges, v)); return sums.join(); });
+# declare function publish(run: () => string): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: Less {{*}} form=Integers
+# CHECK: GetTypedArrayElement {{*}} isInsideView]
+# CHECK: Increment {{*}} form=Integers
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 3,0,28,NaN,0

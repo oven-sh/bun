@@ -1,10 +1,7 @@
-// Small functions that a compiler takes into their callers: closures made in loops that keep the turn's own variable, closures that call
-// themselves, pairs that call each other, functions that only a loop calls, copies two and three deep, parameters that are stored to, defaults
-// that look at earlier parameters, `arguments`, rest parameters, early returns out of loops and out of try and finally, labels, `this` by the way
-// a function is called, getters, captured variables that both sides change. Whole numbers only. A line for each function: what forty calls yield.
-//
-// A program is a seed. The same seed always writes the same program.
-import { withLoopsOf } from "./births-and-uses/where-a-stretch-stands";
+// Small functions that a compiler inlines: closures created in loops that keep the iteration's variable, self-recursive
+// closures, mutually recursive pairs, functions only called from a loop, inlining two and three levels deep, assigned
+// parameters, defaults that read earlier parameters.
+import { withLoopsOf } from "./allocations-and-uses/code-block-placement";
 import { randomFrom } from "./constant-expressions";
 
 export function program(seed: number, isTypeScript: boolean): { file: string; text: string } {

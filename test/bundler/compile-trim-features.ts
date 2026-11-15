@@ -1,5 +1,5 @@
 import { builtinFeatureUses, readTrimTable } from "bun:internal-for-testing";
-import { bunEnv, bunExe, tempDir, tempDirWithBunTypes } from "harness";
+import { bunEnv, bunExe, isLinux, tempDir, tempDirWithBunTypes } from "harness";
 import { join } from "node:path";
 import { guardFeatureOf } from "../../scripts/build/trim/builtin-uses";
 import {
@@ -9,8 +9,10 @@ import {
   type FeatureName,
   type TrimFeature,
 } from "../../scripts/build/trim/features";
+import { describeFiller } from "../../scripts/build/trim/report";
 import type { TrimTable } from "../../scripts/build/trim/table";
 import type { BuiltinEntry } from "../../scripts/build/trim/types";
+import { declare } from "../aot/harness/capabilities";
 
 export const repositoryRoot: string = join(import.meta.dir, "..", "..");
 
@@ -39,6 +41,9 @@ export function getMappedSegments(file: Buffer): Buffer[] {
       ),
     );
 }
+
+/** A floor under the number of features that an executable lacks. What Bun's own modules use hangs on the platform in places, and the counts are those of Linux. */
+export const atLeastOnLinux = (count: number): number => (isLinux ? count : 0);
 
 export const model: FeatureModel = loadFeatures(repositoryRoot);
 export const builtinEntries: BuiltinEntry[] = builtinFeatureUses();
@@ -107,6 +112,7 @@ export function textOf(feature: FeatureName): string {
 
 export function saysFeatureWasRemoved(stderr: string, feature: FeatureName): boolean {
   if (stderr.includes(`--trim removed ${textOf(feature)} from this executable`)) return true;
+  if (stderr.includes(`This executable doesn't include ${textOf(feature)}, but the program needs it`)) return true;
   // One of Bun's own modules may catch the error and put its message into one of its own: util.inspect into an AssertionError, inspector.open() into the line that Node prints.
   if (stderr.includes(`rror: ${textOf(feature)} was removed by --trim because your code never uses it by name.`))
     return true;
@@ -219,7 +225,7 @@ export function describeBytesRemovedWith(feature: FeatureName, removedIndexes: r
         const kept = sets[set]!.filter(index => !removed.has(index)).map(nameOf);
         return `${cuttable} bytes that can be cut and ${fillOnly} that can only be filled go with ${sets[set]!.map(nameOf).join(", ")}; kept: ${kept.join(", ") || "none"}`;
       }),
-    `${holes.length} holes`,
+    describeFiller(holes.map(hole => hole.bytes)),
     ...holes.flatMap(({ bytes, bytesOfFeature }, index) =>
       bytesOfFeature > 0
         ? [`hole ${index + 1} by size: ${bytes} bytes, ${bytesOfFeature} of them go with ${feature}`]
@@ -263,3 +269,5 @@ export function removedOnlyWith(name: string): string[] {
   }
   return chosen.slice(1).map(each => each.name);
 }
+
+declare("a Bun that trims", () => (canTrim ? undefined : "this build of Bun doesn't support --trim"));

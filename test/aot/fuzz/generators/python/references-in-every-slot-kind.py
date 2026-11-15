@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-"""references-in-every-slot-kind.py <seed>: a program that keeps references in every kind of place, beside a model of plain numbers, and takes random steps: store a NEW item into an old place, move an OLD item from place to place (no allocation), clear, collect the young
-(once, or several times in a row with nothing or only stores between), collect fully, make garbage that takes the room of whatever was freed too early, check. It prints only sums: as plain Bun, and `wrong 0`."""
+"""references-in-every-slot-kind.py <seed>: A program that keeps references in every kind of location, beside a model
+made of plain numbers, and takes random steps: store a new item into an old location, move an old item, drop one,
+collect. Then it compares with the model.
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 weights = dict(fresh=R.choice([5, 20, 40]), move=R.choice([20, 40, 60]), clear=R.choice([2, 8]), young=R.choice([5, 15, 30]), runOfYoung=R.choice([2, 8, 15]), full=R.choice([1, 2, 4]), garbage=R.choice([2, 6, 12]), check=R.choice([10, 30]), big=R.choice([0, 1, 3]), weak=R.choice([2, 6]))

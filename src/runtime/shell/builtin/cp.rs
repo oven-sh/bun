@@ -803,11 +803,11 @@ impl ShellCpTask {
 
         // Pool thread: hand the copy to an fs.cp task bound to the loop and
         // poster this shell task captured on its own thread.
-        let _ = crate::node::fs::ShellAsyncCpTask::create_for_shell(
+        crate::node::fs::ShellAsyncCpTask::create_for_shell(
             args,
             self.task.event_loop,
             poster.clone(),
-            std::ptr::from_mut::<ShellCpTask>(self),
+            bun_ptr::ParentRef::from_ref_mut(self),
         );
 
         Check::Copy

@@ -1,3 +1,4 @@
+// A list of programs from ../generators/builtins-vs-running-bun.ts, which describes them.
 import {
   accessorsReadOffReceiversOfManyKinds,
   calledConstructedAndExtended,
@@ -7,7 +8,7 @@ import {
 import { family } from "../family";
 
 export default family(
-  "built-ins asked of the running bun",
+  "builtins vs running bun",
   Object.entries({
     "held and called without their holder": heldAndCalledWithoutTheirHolder,
     "called on receivers of many kinds": calledOnReceiversOfManyKinds,

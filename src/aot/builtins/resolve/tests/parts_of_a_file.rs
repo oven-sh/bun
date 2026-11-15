@@ -1,7 +1,6 @@
 use super::*;
 use crate::builtins::RuntimeFunction;
 
-// Each is cut into the part in front of the bar and the part behind it.
 const HANDED_TO_THE_OTHER_PART: &[&str] = &[
     "const p = process;| function f() { return p.stdin; }",
     "function f() { return p.stdin; }| const p = process;",

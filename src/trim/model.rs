@@ -21,7 +21,6 @@ pub enum UnseenCodeCause {
     ProgramNotCompiled,
     ReportMissing,
     FlowResultDisabled,
-    FlowGaveUp,
     EvaluatesText,
     ImportsUncompiledCode,
     LoadsModuleByName,
@@ -33,11 +32,10 @@ pub enum UnseenCodeCause {
 
 impl UnseenCodeCause {
     #[cfg(any(test, feature = "test_support"))]
-    pub const ALL: [UnseenCodeCause; 11] = [
+    pub const ALL: [UnseenCodeCause; 10] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
         UnseenCodeCause::FlowResultDisabled,
-        UnseenCodeCause::FlowGaveUp,
         UnseenCodeCause::EvaluatesText,
         UnseenCodeCause::ImportsUncompiledCode,
         UnseenCodeCause::LoadsModuleByName,
@@ -54,8 +52,7 @@ impl UnseenCodeCause {
     pub fn admits_library_text(self) -> bool {
         !matches!(
             self,
-            UnseenCodeCause::FlowGaveUp
-                | UnseenCodeCause::EvaluatesText
+            UnseenCodeCause::EvaluatesText
                 | UnseenCodeCause::LoadsModuleByName
                 | UnseenCodeCause::RunsUnseenCode
                 | UnseenCodeCause::RunsMachineCode
@@ -83,8 +80,11 @@ pub struct UsedFeatures {
     pub features: Vec<UsedFeature>,
     pub causes: Vec<UnseenCode>,
     pub locales: UsedLocales,
-    /// False: the build has compiled the code that every Worker of the program starts from.
+    /// False: the build has compiled the code that every Worker of the program starts from, or the program starts none.
     pub starts_workers_from_unseen_code: bool,
+    /// The program's code names `Bun.build` and may ask it for more than a bundle: by `check`, `dts`, `compile`, `plugins` or a `target` that starts with "bun-". `Bun.serve` brings the bundler too, for its `app`, and only bundles with it.
+    pub names_bun_build: bool,
+    pub can_reach_test_runner: bool,
 }
 
 impl UsedFeatures {
@@ -97,6 +97,8 @@ impl UsedFeatures {
             }],
             locales: UsedLocales::Unknown(None),
             starts_workers_from_unseen_code: true,
+            names_bun_build: false,
+            can_reach_test_runner: true,
         }
     }
 
@@ -112,6 +114,8 @@ impl UsedFeatures {
             causes: Vec::new(),
             locales: UsedLocales::Unknown(None),
             starts_workers_from_unseen_code: true,
+            names_bun_build: features.contains(&Feature::Bundler),
+            can_reach_test_runner: features.contains(&Feature::Test),
         }
     }
 
@@ -121,6 +125,11 @@ impl UsedFeatures {
 
     pub fn uses(&self, feature: Feature) -> bool {
         self.features.iter().any(|used| used.feature == feature)
+    }
+
+    /// Code that the build has not compiled: text made at run time, or a file on disk.
+    pub fn can_start_worker_from_unseen_code(&self) -> bool {
+        self.starts_workers_from_unseen_code && self.uses(Feature::WorkerConstructor)
     }
 
     pub fn names(&self, feature: Feature) -> bool {
@@ -314,6 +323,16 @@ pub struct TrimPlan {
     pub(crate) refused_entry_points: Vec<RefusedEntryPoint>,
     pub(crate) icu_packages: Vec<PlannedIcuPackage>,
     pub(crate) keeps_table: bool,
+    pub(crate) unrequested: UnrequestedCut,
+}
+
+/// What the same executable loses if nobody asks to trim it. `apply` only counts its bytes.
+#[derive(Clone, Debug)]
+pub enum UnrequestedCut {
+    Nothing,
+    Planned(Box<TrimPlan>),
+    /// Without the request this executable can't be built, so there is nothing to compare with.
+    Unknown,
 }
 
 impl TrimPlan {
@@ -324,7 +343,12 @@ impl TrimPlan {
             refused_entry_points: Vec::new(),
             icu_packages: Vec::new(),
             keeps_table: false,
+            unrequested: UnrequestedCut::Nothing,
         }
+    }
+
+    pub fn set_unrequested_cut(&mut self, unrequested: UnrequestedCut) {
+        self.unrequested = unrequested;
     }
 
     pub fn decision(&self) -> &Decision {
@@ -350,6 +374,8 @@ pub struct TrimSummary {
     pub cut_bytes: u64,
     pub filled_bytes: u64,
     pub file_bytes_saved: u64,
+    /// How much smaller the request to trim made the file. `None` if its size without the request is unknown.
+    pub requested_cut_bytes: Option<u64>,
     pub uncut: Option<Uncut>,
     pub format: Option<ExecutableFormat>,
 }

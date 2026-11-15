@@ -125,13 +125,10 @@ function show(value) {
 }
 `;
 
-/** A function over one parameter holds the value itself, and is made with its object. */
-const madeWithTheirObjects = new Set(["a-literal-with-an-arrow-over-a-parameter", "a-literal-with-a-function-that-names-itself", "a-literal-with-an-async-arrow", "a-literal-with-a-generator", "a-literal-filled-by-stores", "a-class-whose-constructor-stores-an-arrow-over-its-parameter", "a-function-called-with-new", "two-literals-of-one-shape-with-different-functions", "a-literal-whose-member-is-sometimes-null", "a-literal-made-in-a-loop", "a-literal-in-a-literal"]);
-
 const everyLook = () => {
   const written: Record<string, string> = {};
   for (const maker in makers) {
-    let text = `// ${maker.replaceAll("-", " ")}, looked at in every way.\n${madeWithTheirObjects.has(maker) ? "" : "// STATISTIC: FieldsDeferringClosures >= 100\n"}${head}`;
+    let text = `// ${maker.replaceAll("-", " ")}, looked at in every way.\n${head}`;
     let n = 0;
     for (const look in looks) {
       n++;
@@ -241,7 +238,7 @@ const everyMakerLeftHalfWay = () => {
     written[`a-function-in-a-member-${name}.js`] = `// ${name.replaceAll("-", " ")}\n${headOfMakers}${text}`;
     all += text;
   }
-  written["functions-in-members-makers-left-half-way-all-together.js"] = `// Makers that are left half way, entered again, or entered by another road, in one program.\n// STATISTIC: FieldsDeferringClosures >= 40\n${all}`;
+  written["functions-in-members-makers-left-half-way-all-together.js"] = `// Makers that are left half way, entered again, or entered by another road, in one program.\n${all}`;
   return written;
 };
 

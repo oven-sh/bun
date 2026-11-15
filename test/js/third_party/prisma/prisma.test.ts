@@ -264,7 +264,7 @@ for (const type of ["sqlite", "postgres" /*"mssql", "mongodb"*/]) {
 
         expect(usersWithPosts.length).toBe(1);
 
-        expect(async () => await prisma.user.deleteMany({ where: { testId } })).toThrow();
+        await expect(async () => await prisma.user.deleteMany({ where: { testId } })).toThrow();
 
         const deletedPosts = await prisma.post.deleteMany({ where: { testId } });
 

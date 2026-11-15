@@ -25,16 +25,16 @@ test("a type error in a preload ends bun run --aot before a line runs", async ()
   expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 1 });
 });
 
-test("and bun test --aot", async () => {
+test("bun test --aot warns of it and runs", async () => {
   const files = {
     "pre.ts": log + `console.log("the preload ran"); const port: number = "8080"; console.log(port);`,
     "main.test.ts":
       `import { test } from "bun:test";\n` + log + `test("case", () => { console.log("the test ran"); });`,
   };
   const { stdout, stderr, exitCode } = await ran(files, "test", "--aot", "--preload", "./pre.ts", "./main.test.ts");
-  expect(stderr).toContain("TS2322");
-  expect(stdout).not.toContain("ran");
-  expect(exitCode).toBe(1);
+  expect(stderr).toContain("warn: TS2322");
+  expect(stdout).toContain("the preload ran\n8080\nthe test ran\n");
+  expect(exitCode).toBe(0);
 });
 
 test("a preload without errors runs first, and a value in it that does not fit its type gives what plain Bun gives", async () => {

@@ -138,7 +138,7 @@ pub struct MultiPartUpload {
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
     pub(crate) credentials: RefPtr<S3Credentials>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
@@ -421,11 +421,7 @@ impl Drop for MultiPartUpload {
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
-        self.poll_ref.with_mut(|poll_ref| {
-            poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.unref(bun_io::js_vm_ctx());
     }
 }
 
@@ -437,9 +433,8 @@ impl MultiPartUpload {
         let this = this.cast::<Self>();
         // SAFETY: callback context — `this` is live; this takes over the ref
         // `process_buffered` (or the retry path) took for this request.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `this` is live for at least the guard's duration.
-        let self_ = unsafe { &*this };
+        let guard = unsafe { RefPtr::from_raw(this) };
+        let self_ = &*guard;
         if self_.state.get() == State::Finished {
             return Ok(());
         }
@@ -611,11 +606,7 @@ impl MultiPartUpload {
             )?;
             // Nothing more is expected for this upload (a rollback request keeps the loop alive
             // itself), and whoever still holds a ref may hold it for as long as the collector likes.
-            self.poll_ref.with_mut(|poll_ref| {
-                poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
+            self.poll_ref.unref(bun_io::js_vm_ctx());
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -633,7 +624,7 @@ impl MultiPartUpload {
     pub(crate) fn fail_writer_collected(&self) {
         self.ref_();
         self.vm
-            .event_loop_ref()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::init(
                 self.root_ptr().cast::<WriterCollected>(),
             ));
@@ -687,9 +678,8 @@ impl MultiPartUpload {
     ) -> bun_jsc::JsResult<()> {
         let this = this.cast::<Self>();
         // SAFETY: callback context — takes over the ref taken before the request was queued.
-        let _guard = unsafe { RefPtr::from_raw(this) };
-        // SAFETY: `this` is live for at least the guard's duration.
-        let self_ = unsafe { &*this };
+        let guard = unsafe { RefPtr::from_raw(this) };
+        let self_ = &*guard;
         // `fail` ran while this request was in flight: an upload the server created is still open.
         let failed = self_.state.get() == State::Finished;
         match result {

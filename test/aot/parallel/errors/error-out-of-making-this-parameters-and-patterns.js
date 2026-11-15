@@ -1,0 +1,117 @@
+// Making `this` has no position of its own: an error out of reading the prototype of new.target is reported at the first position that the constructor records.
+// Here: parameters with defaults, patterns, and variables that a closure names.
+function f() {
+  return 0;
+}
+const g = { x: 1, l: [] };
+class C2 {}
+var p = 1;
+function column(A) {
+  const given = { __proto__: A.prototype };
+  const B = new Proxy(A, { get: (t, k) => (k === "prototype" ? given : t[k]) });
+  try {
+    new B();
+  } catch (error) {
+    console.log(error.stack.split("\n").find(line => line.includes("new A")).replace(/.*[\\/]/, ""));
+  }
+}
+column(class A { constructor() { const { a } = g; } m() {} });
+column(class A { constructor() { const [a] = []; } m() {} });
+column(class A { constructor(a = g.x) { f(); } });
+column(class A { constructor(...r) { f(); } });
+column(class A { constructor(a) { const { x } = a; f(); } });
+column(class A { constructor(a) { const { x, y } = a; f(); } });
+column(class A { constructor(a) { const { x = p } = a; f(); } });
+column(class A { constructor(a) { const { x: { y } } = a; f(); } });
+column(class A { constructor(a) { const { [p]: y } = a; f(); } });
+column(class A { constructor(a) { const { x, ...r } = a; f(); } });
+column(class A { constructor(a) { const [x] = a; f(); } });
+column(class A { constructor(a) { const [x, y] = a; f(); } });
+column(class A { constructor(a) { const [x, ...y] = a; f(); } });
+column(class A { constructor(a) { const [x = p] = a; f(); } });
+column(class A { constructor({ a }) { f(); } });
+column(class A { constructor({ a, b }) { f(); } });
+column(class A { constructor({ a = p }) { f(); } });
+column(class A { constructor({ a } = {}) { f(); } });
+column(class A { constructor({ a } = g) { f(); } });
+column(class A { constructor([a]) { f(); } });
+column(class A { constructor(a = 1) { f(); } });
+column(class A { constructor(a = p) { f(); } });
+column(class A { constructor(a = f()) { g.x; } });
+column(class A { constructor(a = {}) { f(); } });
+column(class A { constructor(a = []) { f(); } });
+column(class A { constructor(a, b = a) { f(); } });
+column(class A { constructor(a, b = a.x) { f(); } });
+column(class A { constructor(a, ...r) { f(); } });
+column(class A { constructor(a, ...[r]) { f(); } });
+column(class A { constructor(a) { for (const [k, v] of a) {} } });
+column(class A { constructor(a, ...r) { this.h = () => a; f(); } });
+column(class A { constructor(a, b = 1) { this.h = () => a; f(); } });
+column(class A { constructor(a, b = 1) { this.h = () => b; f(); } });
+column(class A { constructor(a = 1, b) { this.h = () => b; f(); } });
+column(class A { constructor({ a }) { this.h = () => a; f(); } });
+column(class A { constructor({ a, b }) { this.h = () => b; f(); } });
+column(class A { constructor([a]) { this.h = () => a; f(); } });
+column(class A { constructor(...r) { this.h = () => r; f(); } });
+column(class A { constructor(a, { b }) { f(); } });
+column(class A { constructor(a, [b]) { f(); } });
+column(class A { constructor(a = 1, [b]) { f(); } });
+column(class A { constructor(a = p, [b]) { f(); } });
+column(class A { constructor({ a }, [b]) { f(); } });
+column(class A { constructor({ a: [b] }) { f(); } });
+column(class A { constructor({ a: { b } }) { f(); } });
+column(class A { constructor({ a, ...r }) { f(); } });
+column(class A { constructor({ [p]: a }) { f(); } });
+column(class A { constructor({ a = f() }) { g.x; } });
+column(class A { constructor([a = p]) { f(); } });
+column(class A { constructor(a = () => 1) { f(); } });
+column(class A { constructor(a = this) { f(); } });
+column(class A { constructor(a = this.x) { f(); } });
+column(class A { constructor(a = new.target) { f(); } });
+column(class A { constructor(a = [p]) { f(); } });
+column(class A { constructor(a = { p }) { f(); } });
+column(class A { constructor(a) { for (const [x] of this) f(); } });
+column(class A { constructor(a) { for (const { x } of this) f(); } });
+column(class A { constructor(a) { const [x] = this; f(); } });
+column(class A { constructor(a) { const [x] = [1]; f(); } });
+column(class A { constructor(a) { const [x, y] = [a, a]; f(); } });
+column(class A { constructor(a) { const [x, y] = [1, 2]; f(); } });
+column(class A { constructor(a) { const [] = this; f(); } });
+column(class A { constructor(a) { let [x] = this; f(); } });
+column(class A { constructor(a) { var [x] = this; f(); } });
+column(class A { constructor(a) { const { x } = this; f(); } });
+column(class A { constructor(a) { const {} = this; f(); } });
+column(class A { constructor(a) { const { x, ...r } = this; f(); } });
+column(class A { constructor(a) { const { ...r } = this; f(); } });
+column(class A { constructor(a) { const { [this.k]: x } = this; f(); } });
+column(class A { constructor(a) { const { [a]: x } = this; f(); } });
+column(class A { constructor(a) { const { x = a } = this; f(); } });
+column(class A { constructor(a) { const { x = 1 } = this; f(); } });
+column(class A { constructor(a) { const [x = a] = this; f(); } });
+column(class A { constructor(a) { const { x: [y] } = this; f(); } });
+column(class A { constructor(a) { const { x: { y } } = this; f(); } });
+column(class A { constructor(a) { const { w, x: [y] } = this; f(); } });
+column(class A { constructor(a) { const [[y]] = this; f(); } });
+column(class A { constructor(a) { const [{ y }] = this; f(); } });
+column(class A { constructor(a) { let x; [x] = this; f(); } });
+column(class A { constructor(a) { let x; ({ x } = this); f(); } });
+column(class A { constructor(a) { let x; ({ x = a } = this); f(); } });
+column(class A { constructor(a) { let x; ({ y: x } = this); f(); } });
+column(class A { constructor(a) { [this.x] = this; f(); } });
+column(class A { constructor(a) { [this.x, this.y] = this; f(); } });
+column(class A { constructor(a) { [a.x] = this; f(); } });
+column(class A { constructor(a) { [p] = this; f(); } });
+column(class A { constructor(a) { ({ x: this.x } = this); f(); } });
+column(class A { constructor(a) { ({ x: this[a] } = this); f(); } });
+column(class A { constructor(a) { ({ x: a.x } = this); f(); } });
+column(class A { constructor(a) { ({ x: p } = this); f(); } });
+column(class A { constructor(a) { ({ p } = this); f(); } });
+column(class A { constructor(a) { ({ x: this.x, ...this.r } = this); f(); } });
+column(class A { constructor(a) { const { x } = this; this.h = () => x; } });
+column(class A { constructor(a) { const { w, x } = this; this.h = () => x; } });
+column(class A { constructor(a) { const [x] = this; this.h = () => x; } });
+column(class A { constructor(a) { const { x = 1 } = this; this.h = () => x; } });
+column(class A { constructor(a = 1) { this.t = arguments.length; f(); } });
+column(class A { constructor(...r) { this.t = arguments.length; f(); } });
+column(class A { constructor(a) { for (const [c] = this; ; ) { break; } f(); } });
+column(class A { constructor(a) { (function () { const { z } = g; })(); } });

@@ -1,0 +1,24 @@
+# -- source: a-name-laid-under-an-unknown-key-on-a-function-between-refuses-no-other-name.js
+# function Base(n) { this.n = n; }
+# Base.prototype.twice = function twice() { return this.n * 2; };
+# function Mid(n) { Base.call(this, n); }
+# Object.setPrototypeOf(Mid.prototype, Base.prototype);
+# function Leaf(n) { Mid.call(this, n); }
+# Object.setPrototypeOf(Leaf.prototype, Mid.prototype);
+# const table = { map() { return 0; }, twice() { return 100; } };
+# function run(o, turns) { let sum = 0; for (let i = 0; i < turns; i++) { if (i === 3) { const keys = Object.keys(table); for (let k = 0; k < keys.length; k++) Object.defineProperty(Mid.prototype, keys[k], { value: table[keys[k]], writable: true, configurable: true }); } sum += o.twice(); } return sum; }
+# print(run(new Leaf(1), 6));
+# -- end of source
+# `o.twice()`: the method is laid on Base.prototype, the object is a Leaf, and Mid stands between. A loop defines names on Mid.prototype under keys that it reads off Object.keys(), as the
+# library's streams lay their operators on Readable.prototype: Link cannot tell the keys and lists one entry without a key. That entry says nothing of `twice`, so the search for the method goes on
+# above Mid, as it does for a class: the call is built behind the guard of the name `twice`, which the run time holds by name: it ends for whatever name is really laid, on the function itself and
+# on every function below it. In the fourth turn the loop lays `twice` itself on Mid.prototype: the guard ends, and the closed call finds the nearer function.
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: = HasLayoutPrototype
+# CHECK: = AreMembersUnchanged conditions=[{layout=L2 key="twice"}]
+# RUN(LINK): link members mechanisms=all
+# LINK: on-prototype L0 "twice" expected=f5
+# LINK: on-prototype L1 [some key]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 306

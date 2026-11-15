@@ -1,0 +1,15 @@
+# -- source: main.js
+# const shape = { alpha: 0, beta: 7 };
+# function build(shape, base) { const made = Object.create(base); for (const name of Object.keys(shape)) Object.defineProperty(made, name, { get: () => shape[name], enumerable: true }); return made; }
+# const knobs = build(shape, { describe() { return "knobs"; } });
+# function pick() { return knobs.alpha ? 1 : knobs.beta ? 2 : 3; }
+# print(pick()); print(knobs.describe()); print(Object.keys(knobs));
+# -- end of source
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN: run-in-shell
+# CHECK: 2
+# CHECK-NEXT: knobs
+# CHECK-NEXT: alpha,beta
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

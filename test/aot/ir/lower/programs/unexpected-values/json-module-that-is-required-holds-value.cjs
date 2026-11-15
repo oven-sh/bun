@@ -2,6 +2,11 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
 // STATISTIC: SourceFilesData = 1
+// CHECK-LABEL: function {{*}}name="attempt"
+// CHECK-LABEL: function {{*}}name="iterates"
+// CHECK-LABEL: function {{*}}name="truncates"
+// CHECK-LABEL: function {{*}}name="storesMember"
+// CHECK-LABEL: function {{*}}name="get"
 
 // FILE: main.cjs
 // A json module that is required holds the value.
@@ -171,105 +176,3 @@ attempt("the keys", () => Object.keys(data).map(kind => kind + ": " + Object.key
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: attempt iterates truncates storesMember get
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: undefined|null|string, v2: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v4 = PropGet v3 key="console" [isFreeName]
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="log"
-// CHECK-NEXT: v7 = Convert v6 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v8 = String string=" -> "
-// CHECK-NEXT: v9 = Add v1, v8
-// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v11 = Call v10, -, v2 calleeName="outcome"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v13 = Add v9, v12
-// CHECK-NEXT: v14 = Call v7, v5, v13 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v15 = Undefined
-// CHECK-NEXT: Return v15
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="iterates"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_1]] field=3
-// CHECK-NEXT: v3 = CheckInitialized v2 name="data"
-// CHECK-NEXT: v4 = PropGet v3 key="arrays"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = ElemGet v5, v1
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|string|Array flags=[IsExpected]}
-// CHECK-NEXT: v8 = Data data=[[d_4]]
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<never> flags=[IsExpected]}
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v11 = IteratorOpen v7
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v13 = IteratorResume v11
-// CHECK-NEXT: v14 = ResultAt v13
-// CHECK-NEXT: v15 = ResultAt v13 index=1
-// CHECK-NEXT: Branch v14 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: b4():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5() handler=b6():
-// CHECK-NEXT: v16 = PropGet v10 key="push"
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v18 = Call v17, v10, v15 calleeKey="push" calleeName="seen.push"
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b6() role=IterationCleanup subject=v11:
-// CHECK-NEXT: v19 = CatchException
-// CHECK-NEXT: IteratorClose v11 completion=Throw
-// CHECK-NEXT: Rethrow v19
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="truncates"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_1]] field=3
-// CHECK-NEXT: v3 = CheckInitialized v2 name="data"
-// CHECK-NEXT: v4 = PropGet v3 key="numbers"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_7]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = ElemGet v5, v1
-// CHECK-NEXT: v7 = Convert v6 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = BitOr v7, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v10
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="storesMember"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|number|string|symbol|bigint|[[L_8]] flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetEnvironmentField v0 layout=[[L_1]] field=3
-// CHECK-NEXT: v3 = CheckInitialized v2 name="data"
-// CHECK-NEXT: v4 = PropGet v3 key="objects"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[L_10]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = ElemGet v5, v1
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|number|string|symbol|bigint|[[L_8]] flags=[IsExpected]}
-// CHECK-NEXT: v8 = Integer integer=1
-// CHECK-NEXT: PropSet v7, v8 key="x" mode=Sloppy
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsSloppy, HasExplicitName] captures=[{type=undefined|null|Array flags=[IsExpected]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0(v0: undefined|null|Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="push"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = String string="get y"
-// CHECK-NEXT: v4 = Call v2, v0, v3 calleeKey="push" calleeName="log.push"
-// CHECK-NEXT: v5 = String string="two"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }

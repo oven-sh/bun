@@ -1,8 +1,13 @@
 // RUN: link
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesRuntime >= 90
-// CHECK-NOT: function {{*}}name="getHostname"
-// CHECK-NOT: function {{*}}name="callbackifyOnRejected"
+// CHECK-LABEL: function {{*}}name="getHostname"
+// CHECK-NOT: Return
+// CHECK: NewRuntimeError runtimeError=FunctionNotCompiled
+// RUN(UTIL): link
+// UTIL-LABEL: function {{*}}name="callbackifyOnRejected"
+// UTIL-NOT: Return
+// UTIL: NewRuntimeError runtimeError=FunctionNotCompiled
 
 // What stands behind process.stdout evaluates node:url and node:util too, and reads some of their exports by name: neither is lowered whole.
 

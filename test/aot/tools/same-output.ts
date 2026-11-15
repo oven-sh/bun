@@ -6,6 +6,7 @@
 //   the IR         what the front end hands to the engine (`--aot-out`). If it differs, the change is in src/aot or src/sema.
 //   the code       the machine code in the executable's image, function by function (the compiler's map says where each one lies).
 // It prints one line for each program that differs, with the first functions that do, and exits with 1 if there is any.
+// A program that neither Bun builds is not compared. The closing line counts those, and if they are all there is it exits with 1.
 // Without programs it takes the small benchmarks of ../perf/idioms, 260 programs in a minute on sixteen cores. A folder stands for every .ts, .tsx, .js and .mjs file in it.
 // Give it large programs too (a server with its packages): most of the compiler's decisions depend on the size of the program.
 //
@@ -18,9 +19,12 @@ import { availableParallelism, tmpdir } from "os";
 import "../harness/without-installing-packages";
 import { basename, dirname, join, resolve } from "path";
 import { parseArgs } from "util";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 
 type Built = { ir: string; functions: Map<string, { size: number; hash: string }>; failure?: string };
 export type Difference = { program: string; what: string; functions: string[] };
+/** `builtByNeither`: both builds failed, so neither IR nor code was compared. */
+export type Outcome = { difference: Difference | undefined; builtByNeither: boolean };
 
 const hashOf = (bytes: Uint8Array | string) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 16);
 
@@ -77,12 +81,15 @@ async function build(bun: string, program: string, work: string, flags: string[]
   }
 }
 
-export async function compareProgram(before: string, after: string, program: string, work: string, flags: string[] = []): Promise<Difference | undefined> {
+export async function compareBuilds(before: string, after: string, program: string, work: string, flags: string[] = []): Promise<Outcome> {
   // Both builds use a folder of the same name, one after the other: a path of another length is another program.
   const was = await build(before, program, join(work, "build"), flags);
   const is = await build(after, program, join(work, "build"), flags);
-  if (was.failure || is.failure)
-    return was.failure === is.failure ? undefined : { program, what: was.failure && is.failure ? "fails with another message" : was.failure ? "builds now" : "no longer builds", functions: [] }; // prettier-ignore
+  if (was.failure || is.failure) {
+    const builtByNeither = Boolean(was.failure && is.failure);
+    if (was.failure === is.failure) return { difference: undefined, builtByNeither };
+    return { difference: { program, what: builtByNeither ? "fails with another message" : was.failure ? "builds now" : "no longer builds", functions: [] }, builtByNeither }; // prettier-ignore
+  }
   const resized: string[] = [];
   const rewritten: string[] = [];
   for (const [name, { size, hash }] of is.functions) {
@@ -92,9 +99,13 @@ export async function compareProgram(before: string, after: string, program: str
     else if (then.hash !== hash) rewritten.push(`bytes only: ${name}`);
   }
   for (const name of was.functions.keys()) if (!is.functions.has(name)) resized.push(`gone: ${name}`);
-  if (was.ir === is.ir && !resized.length && !rewritten.length) return undefined;
+  if (was.ir === is.ir && !resized.length && !rewritten.length) return { difference: undefined, builtByNeither: false };
   const what = `${was.ir === is.ir ? "the same IR" : "another IR"}; of ${is.functions.size} functions ${resized.length} new, gone or of another size, ${rewritten.length} of the same size with other bytes`;
-  return { program, what, functions: [...resized, ...rewritten] };
+  return { difference: { program, what, functions: [...resized, ...rewritten] }, builtByNeither: false };
+}
+
+export async function compareProgram(before: string, after: string, program: string, work: string, flags: string[] = []): Promise<Difference | undefined> {
+  return (await compareBuilds(before, after, program, work, flags)).difference;
 }
 
 function programsIn(path: string): string[] {
@@ -122,14 +133,16 @@ if (import.meta.main) {
     process.exit(2);
   }
   const programs = (positionals.length ? positionals : [join(import.meta.dir, "..", "perf", "idioms")]).flatMap(path => programsIn(resolve(path)));
-  const work = mkdtempSync(join(tmpdir(), "same-output-"));
+  const work = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "same-output-")));
   const differences: Difference[] = [];
+  let unbuilt = 0;
   const waiting = [...programs.entries()];
   await Promise.all(
     Array.from({ length: Number(options.jobs) }, async () => {
       for (let next = waiting.shift(); next; next = waiting.shift()) {
-        const difference = await compareProgram(resolve(options.before!), resolve(options.after!), next[1], join(work, String(next[0]).padStart(6, "0")), options["build-flag"]); // prettier-ignore
+        const { difference, builtByNeither } = await compareBuilds(resolve(options.before!), resolve(options.after!), next[1], join(work, String(next[0]).padStart(6, "0")), options["build-flag"]); // prettier-ignore
         if (difference) differences.push(difference);
+        if (builtByNeither) unbuilt++;
       }
     }),
   );
@@ -138,6 +151,8 @@ if (import.meta.main) {
     console.log(`${program}: ${what}`);
     for (const name of functions.slice(0, Number(options.show))) console.log(`    ${name}`);
   }
-  console.log(differences.length ? `${differences.length} of ${programs.length} programs differ` : `IDENTICAL: ${programs.length} programs`);
-  process.exit(differences.length ? 1 : 0);
+  const compared = programs.length - unbuilt;
+  const verdict = differences.length ? `${differences.length} of ${programs.length} programs differ` : `${compared ? "IDENTICAL" : "NOTHING COMPARED"}: ${compared} programs`; // prettier-ignore
+  console.log(unbuilt ? `${verdict}, ${unbuilt} built by neither Bun` : verdict);
+  process.exit(differences.length || !compared ? 1 : 0);
 }

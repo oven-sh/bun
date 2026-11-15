@@ -1,16 +1,20 @@
 use super::inputs::{
-    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathState, TrieNode,
+    DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, LinkForm, PathInPlace, PathState,
+    StoredByMocks, TrieNode,
 };
 use super::{Constant, slice_in};
 use crate::atom::Atom;
 use crate::session::Arena;
 
 impl<'s> FoldInputs<'s> {
-    #[allow(clippy::large_types_passed_by_value)] // made for this call
+    #[allow(clippy::large_types_passed_by_value)]
     pub fn new(options: FoldOptions<'s>, arena: &'s Arena) -> FoldInputs<'s> {
         let mut trie = TrieBuilder::default();
         for define in options.defines {
             trie.ensure_path(define.path).value = Some(define.value);
+        }
+        for &path in options.user_defined {
+            trie.ensure_path(path).is_user_defined = true;
         }
         for &path in options.dropped_calls {
             trie.ensure_path(path).ends_dropped_path = true;
@@ -21,6 +25,7 @@ impl<'s> FoldInputs<'s> {
             .map(|node| TrieNode {
                 edges: slice_in(&node.edges, arena),
                 value: node.value,
+                is_user_defined: node.is_user_defined,
                 ends_dropped_path: node.ends_dropped_path,
             })
             .collect();
@@ -28,21 +33,58 @@ impl<'s> FoldInputs<'s> {
             DefineRoot::Global(name) => filter | root_filter_bit(name),
             DefineRoot::ImportMeta => filter,
         });
+        let names_in_place: Vec<PathInPlace<'s>> = (options.defines.iter())
+            .filter_map(|define| match define.value {
+                DefineValue::GlobalPath(&[first_name, ref rest @ ..]) => Some(PathInPlace {
+                    path: define.path,
+                    first_name,
+                    is_one_name: rest.is_empty(),
+                    is_in_bundle: false,
+                }),
+                _ => None,
+            })
+            .collect();
+        let names_in_place_in_bundle: Vec<PathInPlace<'s>> = (names_in_place.iter())
+            .map(|&it| PathInPlace {
+                is_in_bundle: true,
+                ..it
+            })
+            .collect();
         FoldInputs {
             nodes: slice_in(&nodes, arena),
             roots: slice_in(&trie.roots, arena),
             root_filter,
+            names_in_place: slice_in(&names_in_place_in_bundle, arena),
+            names_in_place_for_bun_run: slice_in(&names_in_place, arena),
             features: options.features,
+            features_are_unknown: options.features_are_unknown,
             preserves_unused_imports: options.preserves_unused_imports,
             minifies_syntax: options.minifies_syntax,
+            runs_in_place: false,
+            is_read_left_out_where_unused: options.is_read_left_out_where_unused,
+            has_names_for_brackets: options.minifies_syntax,
             max_string_bytes: options.max_string_bytes,
-            is_called_before_it_runs: false,
+            max_pattern_bytes: options.max_pattern_bytes,
+            stored_by_mocks: StoredByMocks::Nothing,
         }
     }
 
-    pub fn for_file_called_before_it_runs(self) -> FoldInputs<'s> {
+    pub fn for_program_that_runs_in_place(self) -> FoldInputs<'s> {
         FoldInputs {
-            is_called_before_it_runs: true,
+            runs_in_place: true,
+            has_names_for_brackets: true,
+            names_in_place: self.names_in_place_for_bun_run,
+            ..self
+        }
+    }
+
+    pub fn names_in_place(&self) -> &'s [PathInPlace<'s>] {
+        self.names_in_place
+    }
+
+    pub fn for_file_stored_by_mocks(self, stored_by_mocks: StoredByMocks<'s>) -> FoldInputs<'s> {
+        FoldInputs {
+            stored_by_mocks,
             ..self
         }
     }
@@ -71,12 +113,11 @@ impl<'s> FoldInputs<'s> {
         })
     }
 
-    // `bun build` replaces and drops what ends in `.name`; `["name"]` may stand in front of it. With --minify-syntax it has `["name"]` as `.name` first.
     pub(super) fn child(&self, state: PathState, name: Atom, form: LinkForm) -> Option<PathState> {
         let parent = state.node;
         let node = parent.and_then(|parent| find_node(self.nodes[parent as usize].edges, name));
         let has_optional_link = state.has_optional_link || form.is_in_optional_chain;
-        let ends_with_index = form.is_index && !self.minifies_syntax;
+        let ends_with_index = form.is_index && !self.has_names_for_brackets;
         let ends_dropped_path = !has_optional_link
             && node.is_some_and(|node| self.nodes[node as usize].ends_dropped_path);
         let is_dropped = !ends_with_index && (state.is_dropped || ends_dropped_path);
@@ -110,8 +151,28 @@ impl<'s> FoldInputs<'s> {
         }
     }
 
+    #[inline]
+    pub(super) fn is_user_defined(&self, state: PathState) -> bool {
+        state
+            .node
+            .is_some_and(|node| self.nodes[node as usize].is_user_defined)
+    }
+
     pub(super) fn has_feature(&self, flag: Atom) -> bool {
         self.features.contains(&flag)
+    }
+
+    pub(super) fn features_are_unknown(&self) -> bool {
+        self.features_are_unknown
+    }
+
+    pub(super) fn is_held_to_minified_syntax(&self) -> bool {
+        self.has_names_for_brackets
+    }
+
+    pub(super) fn is_read_left_out_where_unused(&self, path: &[&[u8]]) -> bool {
+        self.is_read_left_out_where_unused
+            .is_some_and(|is_left_out| is_left_out(path))
     }
 
     #[inline]
@@ -124,7 +185,6 @@ impl<'s> FoldInputs<'s> {
         self.max_string_bytes
     }
 
-    /// What a build knows `root.member` to be, where `root` is the global of that name.
     pub(crate) fn constant_of_member(&self, root: Atom, member: Atom) -> Option<Constant> {
         let root = self.root(DefineRoot::Global(root))?;
         match self.value_of(self.child(root, member, LinkForm::DOT)?)? {
@@ -142,6 +202,7 @@ impl<'s> FoldInputs<'s> {
 struct NodeBuilder<'s> {
     edges: Vec<(Atom, u32)>,
     value: Option<DefineValue<'s>>,
+    is_user_defined: bool,
     ends_dropped_path: bool,
 }
 

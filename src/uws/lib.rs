@@ -1561,7 +1561,7 @@ pub mod ssl_wrapper {
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
-pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN};
+pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN, ThreadLoop};
 
 /// Extension methods on the re-exported `bun_uws_sys::InternalLoopData` for the
 /// typed parent-loop accessors. The sys crate only stores tag+ptr; this tier
@@ -1588,8 +1588,6 @@ impl InternalLoopDataExt for InternalLoopData {
 // definition forced callers (e.g. `socket_body.rs` start_tls) to
 // `.cast::<bun_uws_sys::SocketGroup>()` between two layout-identical types.
 
-/// Alias for the per-group C vtable struct under its pre-merge name.
-pub use bun_uws_sys::socket_group::VTable as SocketGroupVTable;
 pub use bun_uws_sys::{ConnectResult, SocketGroup};
 
 // ═══════════════════════════════════════════════════════════════════════════

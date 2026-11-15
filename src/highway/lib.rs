@@ -12,6 +12,22 @@ unsafe extern "C" {
 
     fn highway_line_starts(text: *const u8, text_len: usize, out: *mut u32) -> usize;
 
+    fn highway_pack_words(
+        words: *const u32,
+        groups: usize,
+        controls: *mut u8,
+        data: *mut u8,
+    ) -> usize;
+
+    fn highway_unpack_words(
+        controls: *const u8,
+        groups: usize,
+        data: *const u8,
+        data_len: usize,
+        words: *mut u32,
+        used: *mut usize,
+    ) -> usize;
+
     #[cfg(not(miri))]
     fn highway_memmem(
         haystack: *const u8,
@@ -176,6 +192,25 @@ unsafe extern "C" {
         out_indices: *mut u32,
         inout_state: *mut u64,
     ) -> usize;
+
+    fn highway_png_unfilter(
+        filter_type: u8,
+        bpp: usize,
+        row: *mut u8,
+        above: *const u8,
+        len: usize,
+    );
+
+    fn highway_png_filter_rgba(
+        row: *const u8,
+        above: *const u8,
+        len: usize,
+        sub: *mut u8,
+        up: *mut u8,
+        average: *mut u8,
+        paeth: *mut u8,
+        sums: *mut u64,
+    );
 }
 
 // NOTE: every public wrapper below is `#[inline(always)]`. They are thin
@@ -320,6 +355,46 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
     starts
 }
 
+/// Packs groups of four words. The sign of each is folded into its lowest bit, then it's written in 0, 1, 2 or 4 bytes
+/// to `data`. The control byte of a group has two bits for each of its words. Returns the number of bytes used in `data`.
+#[inline(always)]
+pub fn pack_words(words: &[[u32; 4]], controls: &mut [u8], data: &mut [u8]) -> usize {
+    assert!(controls.len() == words.len() && data.len() >= 16 * words.len());
+    // SAFETY: the kernel writes a control byte and at most 16 bytes for each group.
+    unsafe {
+        highway_pack_words(
+            words.as_ptr().cast(),
+            words.len(),
+            controls.as_mut_ptr(),
+            data.as_mut_ptr(),
+        )
+    }
+}
+
+/// Unpacks groups that `pack_words` packed, from the first on, as long as `data` has 16 more bytes. Returns how many it
+/// wrote to `words`, and the number of their bytes.
+#[inline(always)]
+pub fn unpack_words(
+    controls: &[u8],
+    data: &[u8],
+    words: &mut [[core::mem::MaybeUninit<u32>; 4]],
+) -> (usize, usize) {
+    assert!(words.len() == controls.len());
+    let mut used = 0;
+    // SAFETY: the kernel reads no byte past the end of `data`, and writes at most one group for each control byte.
+    let groups = unsafe {
+        highway_unpack_words(
+            controls.as_ptr(),
+            controls.len(),
+            data.as_ptr(),
+            data.len(),
+            words.as_mut_ptr().cast(),
+            &raw mut used,
+        )
+    };
+    (groups, used)
+}
+
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() {
@@ -346,8 +421,8 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         if p.is_null() {
             None
         } else {
-            // SAFETY: highway_memmem returns a pointer within `haystack` on success.
-            Some(unsafe { p.offset_from(haystack.as_ptr()) } as usize)
+            // highway_memmem returns a pointer within `haystack` on success.
+            Some(p.addr() - haystack.as_ptr().addr())
         }
     }
 }
@@ -1230,6 +1305,49 @@ pub fn xml_structural_index16_chunk(
             state.as_mut_ptr(),
         )
     }
+}
+
+/// Undoes PNG's filter type 1 (Sub), 2 (Up), 3 (Average) or 4 (Paeth) on `row`, whose pixels have 1, 2, 4, 6 or 8 bytes.
+/// `above` is the row before it, with its filter undone, or zeros. Another filter type or pixel size leaves `row` as it is.
+#[inline(always)]
+pub fn png_unfilter(filter_type: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) {
+    assert_eq!(row.len(), above.len());
+    // SAFETY: the kernel reads and writes `row.len()` bytes of `row` and reads as many of `above` (asserted above).
+    unsafe {
+        highway_png_unfilter(
+            filter_type,
+            bytes_per_pixel,
+            row.as_mut_ptr(),
+            above.as_ptr(),
+            row.len(),
+        );
+    }
+}
+
+/// Applies PNG's filter types 1 to 4 to `row`, whose pixels have 4 bytes: `filtered[t - 1]` is for type `t`.
+/// `above` is the row before it, or zeros. Returns, for types 0 to 4, how far the filtered bytes are from zero, taken
+/// as signed and added up.
+#[inline(always)]
+pub fn png_filter_rgba(row: &[u8], above: &[u8], filtered: [&mut [u8]; 4]) -> [u64; 5] {
+    assert_eq!(row.len(), above.len());
+    assert!(filtered.iter().all(|line| line.len() == row.len()));
+    let [sub, up, average, paeth] = filtered;
+    let mut sums = [0; 5];
+    // SAFETY: the kernel reads `row.len()` bytes of `row` and `above`, writes as many to each of the four (asserted
+    // above), and writes 5 sums.
+    unsafe {
+        highway_png_filter_rgba(
+            row.as_ptr(),
+            above.as_ptr(),
+            row.len(),
+            sub.as_mut_ptr(),
+            up.as_mut_ptr(),
+            average.as_mut_ptr(),
+            paeth.as_mut_ptr(),
+            sums.as_mut_ptr(),
+        );
+    }
+    sums
 }
 
 /// Raw output column pointers for [`parse_mappings`]. Each points to `cap`

@@ -1,6 +1,9 @@
 // RUN: lower
-// DIAGNOSTIC: TS100009 1
-// STATISTIC: AotFilesUsed = 0
+// STATISTIC: SourceFilesDemoted = 0
+// STATISTIC: SourceFilesChecked = 2
+// CHECK-COUNT-2: = Call {{*}}calleeName="after"
+
+// A package that says nothing has null checks on, so `let last: string = null` is a type error. It is not reported, and the file keeps its types.
 
 // FILE: app.ts
 import { after } from "lenient";

@@ -13,19 +13,21 @@ pub use self::find::{
     BindingValues, Certainty, FileHelpers, HeldFunction, KnownFunction, KnownReference,
 };
 use self::held_early::find_files_held_early;
-pub use self::private_state::FilePrivateStates;
+pub use self::private_state::{FilePrivateStates, StateOwner};
 pub use self::published::{Helper, Shape};
 pub use self::quiet::Quiet;
 pub use self::resolve::{
     KnownCallee, PrivateFieldAccess, PrivateFieldCall, PrivateMemberKind, PrivateStateKind,
-    PrivateStateRole, PrivateStateSite, ResolveInput, ResolvedReference, resolve_callee,
-    resolve_private_field_call, resolve_reference,
+    PrivateStateRole, PrivateStateSite, PublicFieldAnswer, ResolveInput, ResolvedReference,
+    calls_only_published_helpers, resolve_callee, resolve_loaded_reference,
+    resolve_private_field_call, resolve_public_field, resolve_reference,
 };
 
+use crate::builtins::id::BuiltinId;
 use crate::ir::{InParallel, for_each_mut};
 use crate::modules::ModuleGraph;
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, SymbolId};
+use bun_sema::bind::{Binding, Parent, SymbolId};
 use bun_sema::hir::{BinOp, ExprId, ExprKind, FnId, NodeData};
 use bun_sema::program::{FileId, Files};
 use bun_sema::util::FxHashSet;
@@ -42,6 +44,7 @@ pub struct PublishedFunction {
 pub enum Reference {
     Helper(Helper),
     Global(&'static [&'static str]),
+    Holder,
 }
 
 #[derive(Default)]
@@ -59,12 +62,31 @@ fn find_by_key<K: Ord + Copy, V>(sorted: &[(K, V)], key: K) -> Option<&V> {
 fn reads_private_state(helper: Helper) -> bool {
     matches!(
         helper,
-        Helper::ClassPrivateFieldGet | Helper::ClassPrivateFieldSet | Helper::ClassPrivateFieldIn
+        Helper::ClassPrivateFieldGet
+            | Helper::ClassPrivateFieldSet
+            | Helper::ClassPrivateFieldIn
+            | Helper::AssertClassBrand
+            | Helper::PrivateElementAdd
     )
 }
 
 impl KnownHelpers {
-    pub fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
+    pub fn keep_private_states_in_collections(&mut self, replaced: &[u32]) {
+        if private_state::replaces_method_of_collections(replaced) {
+            self.private_states = Vec::new();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn compute(files: &Files<'_>, in_parallel: InParallel<'_>) -> KnownHelpers {
+        KnownHelpers::compute_below_added_names(files, &[], in_parallel)
+    }
+
+    pub fn compute_below_added_names(
+        files: &Files<'_>,
+        names_added_to_builtins: &[(BuiltinId, Atom)],
+        in_parallel: InParallel<'_>,
+    ) -> KnownHelpers {
         let mut found: Vec<(FileId, FileHelpers)> = files
             .compiled_files()
             .iter()
@@ -74,7 +96,7 @@ impl KnownHelpers {
         for_each_mut(&mut found, in_parallel, &|(file, helpers)| {
             let is_held_early =
                 || held_early.get_or_init(|| find_files_held_early(files))[file.idx()];
-            *helpers = find::find_in_file(files, *file, &is_held_early);
+            *helpers = find::find_in_file(files, *file, names_added_to_builtins, &is_held_early);
         });
         let file_count = files.modules.len();
         let mut known = KnownHelpers::default();
@@ -142,7 +164,6 @@ impl KnownHelpers {
     fn find_called_symbol(files: &Files<'_>, file: FileId, callee: ExprId) -> Option<SymbolId> {
         let (hir, bound) = (files.hir(file), files.bound(file));
         let mut callee = hir.skip_type_assertions(callee);
-        // `(0, helper)(..)`
         while let ExprKind::Binary {
             op: BinOp::Comma,
             left,
@@ -165,7 +186,6 @@ impl KnownHelpers {
         }
     }
 
-    /// The helper that a callee is whenever the call runs.
     pub fn certain_callee(
         &self,
         files: &Files<'_>,
@@ -178,5 +198,63 @@ impl KnownHelpers {
         };
         let known = self.function(file, held.definition)?;
         (values.holds_from_the_start && known.relies_on_facts).then_some(known)
+    }
+
+    /// The only function that `callee` ever holds. A call before its initialization throws.
+    pub fn only_callee(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let symbol = KnownHelpers::find_called_symbol(files, file, callee)?;
+        let values = self.binding(file, symbol)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let is_only_value = values.certainty != Certainty::MayHoldOtherValues
+            && held.closure == held.definition
+            && !files.bound(file).is_visible_to_eval(symbol);
+        (is_only_value && known.relies_on_facts).then_some(known)
+    }
+
+    /// A helper that a statement ahead of the call defines, both of them statements of one body.
+    pub fn callee_defined_ahead(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let (hir, bound) = (files.hir(file), files.bound(file));
+        let values = self.binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let (defined, called) = (values.defined_by?, bound.statement_of_expr(callee)?);
+        let body = bound.parent_of_stmt(defined);
+        let is_ahead = matches!(body, Parent::File | Parent::FnBody(_))
+            && body == bound.parent_of_stmt(called)
+            && hir[defined].start < hir[called].start;
+        (is_ahead && values.certainty != Certainty::MayHoldOtherValues && known.relies_on_facts)
+            .then_some(known)
+    }
+
+    /// A helper that answers a value with a marker before it asks anything else. What it names for other values does not matter there.
+    pub fn callee_returning_marked_value(
+        &self,
+        files: &Files<'_>,
+        file: FileId,
+        callee: ExprId,
+    ) -> Option<&KnownFunction> {
+        let values = self.binding(file, KnownHelpers::find_called_symbol(files, file, callee)?)?;
+        let [held] = values.functions[..] else {
+            return None;
+        };
+        let known = self.function(file, held.definition)?;
+        let tests_marker_first = known.shape == Shape::ImportStarMarkedOrCopied;
+        (values.holds_from_the_start && (known.relies_on_facts || tests_marker_first))
+            .then_some(known)
     }
 }

@@ -90,7 +90,7 @@ pub struct NoOpRenamer<'a> {
 }
 
 impl<'a> NoOpRenamer<'a> {
-    pub(crate) fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
+    pub fn init(symbols: symbol::Map, source: &'a bun_ast::Source<'a>) -> NoOpRenamer<'a> {
         NoOpRenamer { symbols, source }
     }
 

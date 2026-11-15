@@ -27,6 +27,7 @@ pub(in crate::resolve) struct CodeManifest<'h> {
     pub(super) module_type: DeclaredModuleType,
     pub(super) exports: Option<ExportsEntry<'h>>,
     names_aot_condition: bool,
+    module: &'h [u8],
     side_effects: DeclaredSideEffects<'h>,
 }
 
@@ -77,6 +78,18 @@ impl<'h> Resolver<'h> {
         ancestors(directory).find_map(|ancestor| self.code_manifest(ancestor))
     }
 
+    fn nearest_named_manifest(&self, directory: &[u8]) -> Option<&'h CodeManifest<'h>> {
+        let by_directory = &self.code_state().named_manifests;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        let nearest = ancestors(directory).find_map(|ancestor| {
+            let manifest = self.code_manifest(ancestor);
+            manifest.filter(|manifest| !manifest.name.is_empty())
+        });
+        *by_directory.insert_ref(self.keep(directory), nearest)
+    }
+
     pub(super) fn module_type_manifest(&self, directory: &[u8]) -> Option<&'h CodeManifest<'h>> {
         let directory = strings::without_trailing_slash(directory);
         if directory.len() == root_length(directory) || !self.is_dir(directory) {
@@ -98,7 +111,6 @@ impl<'h> Resolver<'h> {
             .find_map(|ancestor| self.code_manifest(ancestor)?.package())
     }
 
-    /// Whether the `exports` or `imports` of the package that holds `path` name the "aot" condition.
     pub fn is_in_aot_package(&self, path: &[u8]) -> bool {
         self.aot_package_directory(path).is_some()
     }
@@ -107,7 +119,17 @@ impl<'h> Resolver<'h> {
         if !path.starts_with(b"/") {
             return None;
         }
-        let manifest = ancestors(dirname::<Posix>(path))
+        let directory = dirname::<Posix>(path);
+        let by_directory = &self.code_state().aot_package_directories;
+        if let Some(&known) = by_directory.get_ref(directory) {
+            return known;
+        }
+        let found = self.find_aot_package_directory(directory);
+        *by_directory.insert_ref(self.keep(directory), found)
+    }
+
+    fn find_aot_package_directory(&self, directory: &[u8]) -> Option<&'h [u8]> {
+        let manifest = ancestors(directory)
             .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
             .find_map(|ancestor| {
                 self.code_manifest(ancestor)
@@ -129,19 +151,93 @@ impl<'h> Resolver<'h> {
             && nearest(path).is_some_and(|other| std::ptr::eq(manifest, other))
     }
 
-    /// As the bundler has it: the nearest `package.json` with a name speaks for the file.
     pub fn declared_side_effects(&self, path: &[u8]) -> DeclaredSideEffects<'h> {
         if !path.starts_with(b"/") {
             return DeclaredSideEffects::Unspecified;
         }
-        let named_manifest = |ancestor| {
-            let manifest = self.code_manifest(ancestor);
-            manifest.filter(|manifest| !manifest.name.is_empty())
-        };
-        match ancestors(dirname::<Posix>(path)).find_map(named_manifest) {
+        let directory = dirname::<Posix>(path);
+        let declared = match self.nearest_named_manifest(directory) {
             Some(manifest) => manifest.side_effects,
             None => DeclaredSideEffects::Unspecified,
+        };
+        if declared == DeclaredSideEffects::Unspecified {
+            return declared;
         }
+        let lists = |declared: &DeclaredSideEffects<'h>, file: &[u8]| match *declared {
+            DeclaredSideEffects::Listed { directory, entries } => {
+                let host = self.code_host();
+                let mut entries = entries.iter();
+                entries.any(|entry| host.names_file_with_side_effects(directory, entry, file))
+            }
+            DeclaredSideEffects::Unspecified | DeclaredSideEffects::None => false,
+        };
+        let folders_below_node_modules = || {
+            ancestors(directory)
+                .take_while(|&ancestor| strings::basename_posix(ancestor) != b"node_modules")
+        };
+        let installed_package = folders_below_node_modules()
+            .filter(|&folder| !strings::basename_posix(folder).starts_with(b"@"))
+            .last()
+            .filter(|_| search::is_in_node_modules(path));
+        if let Some(own) = installed_package.and_then(|package| self.code_manifest(package))
+            && !own.name.is_empty()
+            && own.side_effects == DeclaredSideEffects::Unspecified
+        {
+            return DeclaredSideEffects::Unspecified;
+        }
+        let manifests = || folders_below_node_modules().filter_map(|it| self.code_manifest(it));
+        let lists_main_beside_file = |manifest: &CodeManifest<'h>| {
+            let main = self.find_main_beside_module(manifest, path);
+            main.is_some_and(|main| lists(&manifest.side_effects, &main))
+        };
+        if manifests().any(lists_main_beside_file) {
+            return DeclaredSideEffects::Unspecified;
+        }
+        manifests()
+            .map(|manifest| manifest.side_effects)
+            .find(|declared| lists(declared, path))
+            .unwrap_or(declared)
+    }
+
+    /// The file that "main" names in `manifest`, if an import of its directory takes `module` for "module".
+    fn find_main_beside_module(
+        &self,
+        manifest: &CodeManifest<'h>,
+        module: &[u8],
+    ) -> Option<Vec<u8>> {
+        let is_listed = matches!(
+            manifest.side_effects,
+            DeclaredSideEffects::Listed {
+                directory: _,
+                entries: _
+            }
+        );
+        let named = join(manifest.directory, manifest.module);
+        if !is_listed || manifest.module.is_empty() || !module.starts_with(&named) {
+            return None;
+        }
+        let search = FileSearch {
+            directory: manifest.directory,
+            specifier: b".",
+            kind: CodeImportKind::Import,
+            prefers_module_field: self.code_options().prefers_module_field,
+        };
+        let FoundCode::File {
+            path,
+            required,
+            links_followed,
+            has_side_effects: _,
+        } = self.code_host().find_code_file(&search)
+        else {
+            return None;
+        };
+        let module_path = |found: Vec<u8>| match links_followed {
+            true => found,
+            false => self.module_path(&found),
+        };
+        required
+            .filter(|_| module_path(path) == module)
+            .map(module_path)
     }
 
     fn read_code_manifest(&self, directory: &'h [u8]) -> Option<&'h CodeManifest<'h>> {
@@ -199,7 +295,6 @@ fn build_map<'h>(
         .filter(|(key, _)| key.ends_with(b"/") || strings::contains_char(key, b'*'))
         .copied()
         .collect();
-    // The comparison is not a total order, so the result depends on the algorithm: `bun_resolver` sorts with this one.
     index_sort::sort_slice_by(&mut expansion_keys, |a, b| {
         strings::glob_length_compare(a.0, b.0)
     });
@@ -238,6 +333,10 @@ fn read_manifest<'h>(
             .flatten()
             .any(|table| names_condition(table, AOT_CONDITION)),
         exports,
+        module: slice_in(
+            non_empty_string_property(json, b"module").unwrap_or_default(),
+            arena,
+        ),
         side_effects: read_side_effects(arena, directory, json),
     })
 }
@@ -816,16 +915,18 @@ mod tests {
     }
 
     fn find_side_effects(host: &MemoryHost, path: &str) -> String {
-        with_resolver(host, |resolver| {
-            match resolver.declared_side_effects(path.as_bytes()) {
-                DeclaredSideEffects::Unspecified => "unspecified".to_owned(),
-                DeclaredSideEffects::None => NONE.to_owned(),
-                DeclaredSideEffects::Listed { directory, entries } => {
-                    let entries: Vec<&bstr::BStr> = entries.iter().map(|it| it.as_bstr()).collect();
-                    format!("{entries:?} in {}", directory.as_bstr())
-                }
+        with_resolver(host, |resolver| describe_side_effects(resolver, path))
+    }
+
+    fn describe_side_effects(resolver: &Resolver<'_>, path: &str) -> String {
+        match resolver.declared_side_effects(path.as_bytes()) {
+            DeclaredSideEffects::Unspecified => "unspecified".to_owned(),
+            DeclaredSideEffects::None => NONE.to_owned(),
+            DeclaredSideEffects::Listed { directory, entries } => {
+                let entries: Vec<&bstr::BStr> = entries.iter().map(|it| it.as_bstr()).collect();
+                format!("{entries:?} in {}", directory.as_bstr())
             }
-        })
+        }
     }
 
     #[test]
@@ -881,8 +982,14 @@ mod tests {
                 r#"{"sideEffects": false}"#,
             ),
         ]);
-        for directory in ["", "esm/", "unnamed/", "rejected/", "missing/deep/"] {
-            let file = format!("/p/node_modules/s/{directory}a.js");
+        for file in [
+            "a.js",
+            "esm/a.js",
+            "unnamed/b.js",
+            "rejected/a.js",
+            "missing/deep/a.js",
+        ] {
+            let file = format!("/p/node_modules/s/{file}");
             assert_eq!(find_side_effects(&host, &file), NONE, "{file}");
         }
         for file in [
@@ -893,6 +1000,180 @@ mod tests {
             "virtual:a.js",
         ] {
             assert_eq!(find_side_effects(&host, file), "unspecified", "{file}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn manifest_that_lists_a_file_declares_its_side_effects() {
+        let host = MemoryHost::new(&[
+            (
+                "/p/node_modules/s/package.json",
+                r#"{"name": "s", "sideEffects": false}"#,
+            ),
+            (
+                "/p/node_modules/s/esm/package.json",
+                r#"{"type": "module", "sideEffects": ["./a.js"]}"#,
+            ),
+            (
+                "/p/node_modules/t/package.json",
+                r#"{"name": "t", "sideEffects": ["./dist/a.js"]}"#,
+            ),
+            (
+                "/p/node_modules/t/dist/package.json",
+                r#"{"name": "t", "sideEffects": ["./dist/a.js"]}"#,
+            ),
+            ("/p/node_modules/u/package.json", r#"{"name": "u"}"#),
+            (
+                "/p/node_modules/u/esm/package.json",
+                r#"{"sideEffects": false}"#,
+            ),
+            (
+                "/p/package.json",
+                r#"{"name": "app", "sideEffects": ["./node_modules/s/b.js"]}"#,
+            ),
+        ]);
+        for (file, expected) in [
+            ("s/esm/a.js", r#"["./a.js"] in /p/node_modules/s/esm"#),
+            ("s/esm/b.js", NONE),
+            ("s/b.js", NONE),
+            ("t/dist/a.js", r#"["./dist/a.js"] in /p/node_modules/t"#),
+            (
+                "t/dist/b.js",
+                r#"["./dist/a.js"] in /p/node_modules/t/dist"#,
+            ),
+            ("u/esm/a.js", "unspecified"),
+        ] {
+            let file = format!("/p/node_modules/{file}");
+            assert_eq!(find_side_effects(&host, &file), expected, "{file}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn installed_package_that_says_nothing_under_its_name_has_side_effects() {
+        let host = MemoryHost::new(&[
+            ("/p/node_modules/s/package.json", r#"{"name": "s"}"#),
+            (
+                "/p/node_modules/s/dist/package.json",
+                r#"{"name": "s-dist", "sideEffects": false}"#,
+            ),
+            (
+                "/p/node_modules/@o/package.json",
+                r#"{"name": "o", "sideEffects": false}"#,
+            ),
+            ("/p/node_modules/@o/t/package.json", r#"{"name": "@o/t"}"#),
+            (
+                "/p/node_modules/@o/t/dist/package.json",
+                r#"{"name": "t-dist", "sideEffects": false}"#,
+            ),
+            ("/p/node_modules/@q/package.json", r#"{"name": "q"}"#),
+            (
+                "/p/node_modules/@q/r/package.json",
+                r#"{"name": "@q/r", "sideEffects": false}"#,
+            ),
+            ("/p/node_modules/u/package.json", r#"{"type": "module"}"#),
+            (
+                "/p/node_modules/u/dist/package.json",
+                r#"{"name": "u-dist", "sideEffects": false}"#,
+            ),
+            ("/p/node_modules/v/lib/package.json", r#"{"name": "v-lib"}"#),
+            (
+                "/p/node_modules/v/lib/dist/package.json",
+                r#"{"name": "v-dist", "sideEffects": false}"#,
+            ),
+            ("/p/package.json", r#"{"name": "app"}"#),
+            (
+                "/p/packages/w/package.json",
+                r#"{"name": "w", "sideEffects": false}"#,
+            ),
+        ]);
+        for (file, expected) in [
+            ("node_modules/s/dist/a.js", "unspecified"),
+            ("node_modules/@o/t/dist/a.js", "unspecified"),
+            ("node_modules/@q/r/a.js", NONE),
+            ("node_modules/u/dist/a.js", NONE),
+            ("node_modules/v/lib/dist/a.js", NONE),
+            ("packages/w/a.js", NONE),
+        ] {
+            let file = format!("/p/{file}");
+            assert_eq!(find_side_effects(&host, &file), expected, "{file}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn file_that_an_import_finds_with_side_effects_is_noted_where_its_path_says_otherwise() {
+        let host = MemoryHost::new(&[
+            (
+                "/p/node_modules/s/package.json",
+                r#"{"name": "s", "sideEffects": false}"#,
+            ),
+            ("/p/node_modules/s/dist/a.js", ""),
+            ("/p/node_modules/s/dist/b.js", ""),
+            ("/p/node_modules/t/package.json", r#"{"name": "t"}"#),
+            ("/p/node_modules/t/c.js", ""),
+        ])
+        .finds_with_side_effects("s/a", "/p/node_modules/s/dist/a.js")
+        .finds("s/b", "/p/node_modules/s/dist/b.js")
+        .finds_with_side_effects("t/c", "/p/node_modules/t/c.js");
+        with_resolver(&host, |resolver| {
+            let import = |specifier: &str| {
+                resolver.resolve_code(&CodeRequest {
+                    specifier: specifier.as_bytes(),
+                    importer: b"/p/main.ts",
+                    directory: b"/p",
+                    kind: CodeImportKind::Import,
+                    form: CodeImportForm::Static,
+                })
+            };
+            let noted = || {
+                let files = ["s/dist/a.js", "s/dist/b.js", "t/c.js"];
+                files.map(|file| {
+                    let path = format!("/p/node_modules/{file}");
+                    resolver.is_found_with_side_effects(path.as_bytes())
+                })
+            };
+            for specifier in ["s/dist/a.js", "s/b", "t/c"] {
+                import(specifier);
+                assert_eq!(noted(), [false; 3], "{specifier}");
+            }
+            assert_eq!(import("s/a"), import("s/dist/a.js"));
+            assert_eq!(noted(), [true, false, false]);
+            let by_path = describe_side_effects(resolver, "/p/node_modules/s/dist/a.js");
+            assert_eq!(by_path, NONE);
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn list_that_names_main_speaks_for_the_file_that_module_names() {
+        let manifest = |list: &str| {
+            format!(
+                r#"{{"name": "s", "main": "./main.cjs", "module": "./esm.mjs", "sideEffects": [{list}]}}"#
+            )
+        };
+        for (list, expected) in [
+            (r#""./main.cjs""#, "unspecified"),
+            (
+                r#""./other.cjs""#,
+                r#"["./other.cjs"] in /p/node_modules/s"#,
+            ),
+        ] {
+            let manifest = manifest(list);
+            let host = MemoryHost::new(&[
+                ("/p/node_modules/s/package.json", manifest.as_str()),
+                ("/p/node_modules/s/main.cjs", ""),
+                ("/p/node_modules/s/esm.mjs", ""),
+            ])
+            .required_in_place_of("/p/node_modules/s/esm.mjs", "/p/node_modules/s/main.cjs");
+            let session = Session::new();
+            let options = Options::default();
+            let mut code = CodeOptions::bun_run(b"/p");
+            code.prefers_module_field = true;
+            let resolver = Resolver::for_compile(&session, &host, &options, &code);
+            let found = describe_side_effects(&resolver, "/p/node_modules/s/esm.mjs");
+            assert_eq!(found, expected, "{list}");
         }
     }
 

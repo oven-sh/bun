@@ -120,6 +120,8 @@ unsafe extern "C" {
 
     pub fn inflateReset(stream: *mut zStream_struct) -> ReturnCode;
 
+    pub fn inflateValidate(stream: *mut zStream_struct, check: c_int) -> ReturnCode;
+
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
@@ -160,20 +162,12 @@ pub struct ZlibReaderArrayList<'a> {
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
     fn drop(&mut self) {
-        self.end();
+        // SAFETY: zlib was initialized via inflateInit2_, or has no state to free.
+        unsafe { inflateEnd(self.zlib.as_ptr()) };
     }
 }
 
 impl<'a> ZlibReaderArrayList<'a> {
-    pub(crate) fn end(&mut self) {
-        // always free with `inflateEnd`
-        if self.state != ZlibReaderArrayListState::End {
-            // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(self.zlib.as_ptr()) };
-            self.state = ZlibReaderArrayListState::End;
-        }
-    }
-
     pub fn init(input: &'a [u8], list: &'a mut Vec<u8>) -> Result<Self, ZlibError> {
         let options = Options {
             window_bits: 15 + 32,
@@ -278,7 +272,7 @@ impl<'a> ZlibReaderArrayList<'a> {
 
                 match rc {
                     ReturnCode::StreamEnd => {
-                        self.end();
+                        self.state = ZlibReaderArrayListState::End;
                         return Ok(());
                     }
                     ReturnCode::MemError => {
@@ -604,14 +598,6 @@ pub struct ZlibCompressorArrayList<'a> {
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {
-    pub(crate) fn end(&mut self) {
-        if self.state != ZlibCompressorArrayListState::End {
-            // SAFETY: zlib was initialized via deflateInit2_; safe to end.
-            unsafe { deflateEnd(self.zlib.as_ptr()) };
-            self.state = ZlibCompressorArrayListState::End;
-        }
-    }
-
     pub fn init(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
@@ -673,7 +659,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
             if self.list_ptr.len() == self.list_ptr.capacity()
                 && self.list_ptr.try_reserve(4096).is_err()
             {
-                self.end();
                 self.state = ZlibCompressorArrayListState::Error;
                 return Err(ZlibError::OutOfMemory);
             }
@@ -693,11 +678,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
             match rc {
                 ReturnCode::StreamEnd => {
-                    self.end();
+                    self.state = ZlibCompressorArrayListState::End;
                     return Ok(());
                 }
                 ReturnCode::MemError => {
-                    self.end();
                     self.state = ZlibCompressorArrayListState::Error;
                     return Err(ZlibError::OutOfMemory);
                 }
@@ -707,7 +691,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 | ReturnCode::NeedDict
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
-                    self.end();
                     self.state = ZlibCompressorArrayListState::Error;
                     return Err(ZlibError::ZlibError);
                 }
@@ -720,7 +703,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
 impl<'a> Drop for ZlibCompressorArrayList<'a> {
     fn drop(&mut self) {
-        self.end();
+        // SAFETY: zlib was initialized via deflateInit2_, or has no state to free.
+        unsafe { deflateEnd(self.zlib.as_ptr()) };
     }
 }
 
@@ -768,6 +752,14 @@ impl DeflateEncoder {
         unsafe { deflateReset(self.strm.as_ptr()) }
     }
 
+    /// `deflateBound()`: room in which one `Finish` step over `source_len` bytes is sure to end the stream,
+    /// if both fit in 32 bits, which is all a step takes and gives.
+    pub fn bound(&mut self, source_len: usize) -> usize {
+        let source_len = uLong::try_from(source_len).unwrap_or(uLong::MAX);
+        // SAFETY: strm was initialized via deflateInit2_.
+        unsafe { deflateBound(self.strm.as_ptr(), source_len) as usize }
+    }
+
     /// One `deflate()` call writing into `out`'s spare capacity.
     ///
     /// Reserves at least `reserve` spare bytes in `out`, points
@@ -783,15 +775,7 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            reserve,
-            usize::MAX,
-            flush,
-            deflate,
-        )
+        self.step_up_to(input, out, reserve, usize::MAX, flush)
     }
 
     /// Like [`step`](Self::step), but `deflate()` sees exactly `limit` bytes of output space,
@@ -803,7 +787,19 @@ impl DeflateEncoder {
         limit: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, limit, limit, flush, deflate)
+        self.step_up_to(input, out, limit, limit, flush)
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_up_to(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        reserve: usize,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, reserve, limit, flush, deflate)
     }
 }
 
@@ -859,9 +855,19 @@ impl InflateDecoder {
         rc
     }
 
+    /// `inflateValidate()`: whether the stream's check value (Adler-32 or CRC-32) is computed and compared.
+    pub fn set_validate(&mut self, check: bool) -> ReturnCode {
+        // SAFETY: strm was initialized via inflateInit2_.
+        unsafe { inflateValidate(self.strm.as_ptr(), c_int::from(check)) }
+    }
+
     #[inline]
     pub fn is_inflating(&self) -> bool {
         matches!(self.state, State::Inflating)
+    }
+
+    pub fn is_gzip_only(&self) -> bool {
+        self.multi_member
     }
 
     /// One `inflate()` call writing into `out`'s spare capacity. Same
@@ -873,33 +879,29 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            reserve,
-            usize::MAX,
-            flush,
-            inflate,
-        )
+        self.step_up_to(input, out, reserve, usize::MAX, flush)
     }
 
-    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    /// Like [`step_up_to`](Self::step_up_to), with room reserved for all of `limit`.
     pub fn step_limited(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
         limit: usize,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            limit,
-            limit,
-            FlushValue::NoFlush,
-            inflate,
-        )
+        self.step_up_to(input, out, limit, limit, FlushValue::NoFlush)
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_up_to(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        reserve: usize,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, reserve, limit, flush, inflate)
     }
 
     /// Append decompressed output to `out` (growing by 4096-byte steps, capped at

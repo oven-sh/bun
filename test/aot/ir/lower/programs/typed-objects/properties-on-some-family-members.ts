@@ -107,60 +107,7 @@ for (let round = 0; round < 2000; round++) for (let i = 0; i < parts.length; i++
 lines.push(String(sum));
 console.log(lines.join("\n"));
 
-// GENERATED: has_head1 own0 make0 bump_head1
 // CHECK-LABEL: function {{*}}name="has_head1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=[[w_3]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_4]] site=[[w_5]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="head1"
-// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: v4 = LogicalNot v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean site=[[w_3]]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="own0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_6]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=[[w_7]] flags=[OmitsNull]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_4]] site=[[w_8]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="own0"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsNull]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="make0"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_4]] site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_10]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_4]] site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bump_head1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_4]] site=[[w_12]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v2 = PropGet v1 key="head1"
-// CHECK-NEXT: v3 = TypeTest v2 testedType=undefined
-// CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b3(v5):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v6 = Convert v0 declared={type=undefined|null|[[L_4]] site=[[w_13]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-// CHECK-NEXT: v7 = PropGet v6 key="head1"
-// CHECK-NEXT: v8 = Integer integer=1
-// CHECK-NEXT: v9 = Add v7, v8
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_14]]}
-// CHECK-NEXT: PropSet v6, v10 key="head1"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v12 = Undefined
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

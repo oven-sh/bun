@@ -4,7 +4,7 @@ use bun_removable_features::{EnteredFrom, Feature, FeatureSet, TrimFeature};
 
 use crate::model::{
     Decision, EdgeStrength, FeatureEdges, OptionRequirement, RetainReason, Retained, TrimInput,
-    UnseenCodeCause,
+    UnseenCodeCause, UsedFeatures,
 };
 use crate::settings::collect_requirements;
 
@@ -19,11 +19,15 @@ const ENGINE_FEATURES_OUTSIDE_LANGUAGE: [Feature; 3] =
     [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
 
 // Megabytes of code and data. Evaluated text and computed keys don't keep them: the program has to name them or list them in `allow`.
-const KEPT_ONLY_WHEN_NAMED: [TrimFeature; 3] = [
+const RETAINED_BY_NAME: [TrimFeature; 3] = [
     TrimFeature::Intl,
     TrimFeature::Temporal,
     TrimFeature::Webassembly,
 ];
+
+// A megabyte too. Nobody comes by the test runner without naming `Bun.jest`, "bun:test", "bun:test/vitest" or "node:test": its classes hang under no name.
+// The name `test` of `allow` and `remove` also covers `bun test`, which no program enters.
+const TEST_RUNNER_RETAINED_BY_NAME: Feature = Feature::Test;
 
 // A path that is computed at run time may name a data file on disk: JSON, TOML, text.
 const LOADS_FILES_FROM_DISK: Feature = Feature::DataFileLoaders;
@@ -34,6 +38,15 @@ const RUNS_FILES_FROM_DISK: [Feature; 4] = [
     Feature::RuntimeTranspiler,
     Feature::Interpreter,
     Feature::BuiltinSourceText,
+];
+
+pub(crate) const STARTS_WORKERS: Feature = Feature::WorkerConstructor;
+
+// How a Worker talks to the thread that started it. The code of that thread names none of it.
+const ENTERED_BY_EACH_WORKER: [Feature; 3] = [
+    Feature::PostMessage,
+    Feature::MessageChannel,
+    Feature::StructuredClone,
 ];
 
 // A realm that the program creates holds nothing compiled: it runs the built-in modules from their text.
@@ -76,7 +89,7 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     let mut retained = compute_seed(input, &requirements);
     retain_what_allowed_builtins_need(&mut retained, edges);
     if !request.removes_unused {
-        retain_all_a_program_can_enter(&mut retained);
+        retain_all_a_program_can_enter(&mut retained, input);
     }
     close(&mut retained, edges);
 
@@ -129,6 +142,16 @@ fn compute_seed(input: &TrimInput<'_>, requirements: &[OptionRequirement]) -> Re
         };
         seed.insert(RUNS_BUILTIN_MODULES_FROM_TEXT, reason);
     }
+    // Such a Worker runs its code like a file that is loaded by a computed path.
+    if input.used.can_start_worker_from_unseen_code() {
+        let reason = RetainReason::NeededBy {
+            feature: STARTS_WORKERS,
+            strength: EdgeStrength::RecoverableGuard,
+        };
+        let features = features_reachable_by(UnseenCodeCause::LoadsCodeByName);
+        seed.insert_set(&features, reason);
+        seed.insert_set(&FeatureSet::from_features(&ENTERED_BY_EACH_WORKER), reason);
+    }
     for (index, option) in requirements.iter().enumerate() {
         let features = option.requirement.required_features();
         seed.insert_set(&features, RetainReason::RequiredByOption(index));
@@ -160,8 +183,26 @@ fn retain_what_allowed_builtins_need(retained: &mut RetainedFeatures, edges: &Fe
     }
 }
 
-fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
-    if retained.set.contains(Feature::Bundler) {
+// Evaluated text, a name from run time and code from outside find `Bun.build`, and it bundles for them. `Bun.serve` bundles for its `app`.
+// What else it enters stays for a program whose code names it and may ask it for more than a bundle (`UsedFeatures::names_bun_build`).
+fn may_enter_all_of_bundler(input: &TrimInput<'_>) -> bool {
+    let allows_bundler = |name: &TrimFeature| name.features().contains(Feature::Bundler);
+    input.used.names_bun_build
+        || input.used.has_cause(UnseenCodeCause::ReportMissing)
+        || input.used.has_cause(UnseenCodeCause::FlowResultDisabled)
+        || input.request.allow.iter().any(allows_bundler)
+}
+
+fn can_enter_test_runner(used: &UsedFeatures) -> bool {
+    used.can_reach_test_runner
+        || used.uses(CREATES_REALMS)
+        || used.can_start_worker_from_unseen_code()
+}
+
+fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures, input: &TrimInput<'_>) {
+    let builds_executables =
+        retained.set.contains(Feature::Bundler) && may_enter_all_of_bundler(input);
+    if builds_executables {
         let reason = RetainReason::NeededBy {
             feature: Feature::Bundler,
             strength: EdgeStrength::RecoverableGuard,
@@ -172,14 +213,22 @@ fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {
     }
     let mut features = FeatureSet::all();
     features.subtract(&Feature::all_outside_compiled_programs());
+    // The image lists all of it that the program can enter, and those uses are kept already. A template gets its program later.
+    if !input.request.is_template {
+        features.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+        if !builds_executables && !can_enter_test_runner(input.used) {
+            features.subtract(&FeatureSet::from_features(&[Feature::Test]));
+        }
+    }
     retained.insert_set(&features, RetainReason::NotRequested);
 }
 
-pub fn features_kept_only_when_named() -> FeatureSet {
+pub fn features_retained_by_name() -> FeatureSet {
     let mut features = FeatureSet::EMPTY;
-    for name in KEPT_ONLY_WHEN_NAMED {
+    for name in RETAINED_BY_NAME {
         features.union_with(&name.features());
     }
+    features.insert(TEST_RUNNER_RETAINED_BY_NAME);
     features
 }
 
@@ -191,9 +240,13 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
             features.insert(Feature::Jit);
             features
         }
-        UnseenCodeCause::ReportMissing => program_features,
+        // Nothing says what the image lists either.
+        UnseenCodeCause::ReportMissing => {
+            let mut features = program_features;
+            features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            features
+        }
         UnseenCodeCause::FlowResultDisabled => program_features,
-        UnseenCodeCause::FlowGaveUp => language_features(),
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
         UnseenCodeCause::LoadsModuleByName => FeatureSet::from_features(&[LOADS_FILES_FROM_DISK]),
@@ -213,7 +266,7 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
 
 fn features_reachable_by_text() -> FeatureSet {
     let mut features = language_features();
-    features.subtract(&features_kept_only_when_named());
+    features.subtract(&features_retained_by_name());
     features
 }
 
@@ -266,13 +319,11 @@ fn collect_retained(present: &FeatureSet, mut reasons: Vec<Retained>) -> Vec<Ret
 #[cfg(test)]
 mod tests {
     use bun_options_types::trim::TrimRequest;
-    use bun_removable_features::{Removal, RuntimeRequirement};
+    use bun_removable_features::{Removal, RuntimeRequirement, features_running_uncompiled_code};
 
     use super::*;
     use crate::model::EdgeStrength::{self, AbortingGuard, RecoverableGuard, Reference};
-    use crate::model::{
-        ExecutableSettings, FeatureEdge, UnseenCode, UsedFeature, UsedFeatures, WitnessIndex,
-    };
+    use crate::model::{ExecutableSettings, FeatureEdge, UnseenCode, UsedFeature, WitnessIndex};
 
     const OPTION_LABEL: &[u8] = b"--option";
 
@@ -412,6 +463,11 @@ mod tests {
                 match feature.entered_from() {
                     EnteredFrom::Program => assert!(!is_removed, "{cause:?} {feature:?}"),
                     EnteredFrom::CommandLine => assert!(is_removed, "{cause:?} {feature:?}"),
+                    EnteredFrom::CompiledCode => assert_eq!(
+                        is_removed,
+                        cause != UnseenCodeCause::ReportMissing,
+                        "{cause:?} {feature:?}"
+                    ),
                     EnteredFrom::Startup => {}
                 }
             }
@@ -445,10 +501,10 @@ mod tests {
     }
 
     #[test]
-    fn analysis_that_gave_up_retains_whole_language() {
+    fn analysis_that_is_disabled_retains_whole_language() {
         let text = UsedFeatures::with_cause(UnseenCodeCause::EvaluatesText);
         let text = decide_request(&text, &removing_unused()).unused;
-        let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowGaveUp);
+        let gave_up = UsedFeatures::with_cause(UnseenCodeCause::FlowResultDisabled);
         let gave_up = decide_request(&gave_up, &removing_unused()).unused;
         assert!(gave_up.is_subset_of(&text));
         for feature in [Feature::IntlCollation, Feature::Temporal] {
@@ -487,13 +543,14 @@ mod tests {
 
     #[test]
     fn only_cause_opening_whole_runtime_retains_what_has_to_be_named() {
-        let only_when_named = features_kept_only_when_named();
+        let only_when_named = features_retained_by_name();
         for feature in [
             Feature::IntlCollation,
             Feature::IntlSegmenter,
             Feature::IntlLocale,
             Feature::Temporal,
             Feature::WebAssembly,
+            Feature::Test,
         ] {
             assert!(only_when_named.contains(feature), "{feature:?}");
         }
@@ -502,7 +559,7 @@ mod tests {
             let decision = decide_request(&used, &removing_unused());
             if CAUSES_OPENING_WHOLE_RUNTIME.contains(&cause) {
                 assert!(!decision.unused.intersects(&only_when_named), "{cause:?}");
-            } else if cause != UnseenCodeCause::FlowGaveUp {
+            } else {
                 assert!(only_when_named.is_subset_of(&decision.unused), "{cause:?}");
             }
         }
@@ -559,6 +616,37 @@ mod tests {
         assert!(!by_name.unused.contains(Feature::DataFileLoaders));
         assert!(by_name.unused.contains(Feature::RuntimeTranspiler));
         assert!(by_name.unused.contains(Feature::Interpreter));
+    }
+
+    #[test]
+    fn worker_of_unseen_code_keeps_what_runs_it() {
+        let unseen = using(&[Feature::WorkerConstructor]);
+        let unused = decide_request(&unseen, &removing_unused()).unused;
+        for feature in features_running_uncompiled_code().iter() {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        for feature in ENTERED_BY_EACH_WORKER {
+            assert!(!unused.contains(feature), "{feature:?}");
+        }
+        assert!(!unused.contains(Feature::RegExp));
+        // Of Bun's APIs it finds what the program uses.
+        assert!(unused.contains(Feature::Sql));
+        assert!(unused.contains(Feature::IntlCollation));
+    }
+
+    #[test]
+    fn program_that_starts_no_worker_of_unseen_code_keeps_nothing_for_one() {
+        let compiled = UsedFeatures {
+            starts_workers_from_unseen_code: false,
+            ..using(&[Feature::WorkerConstructor])
+        };
+        for used in [compiled, using(&[Feature::Sql])] {
+            let unused = decide_request(&used, &removing_unused()).unused;
+            for feature in features_running_uncompiled_code().iter() {
+                assert!(unused.contains(feature), "{feature:?}");
+            }
+            assert!(unused.contains(Feature::PostMessage));
+        }
     }
 
     #[test]
@@ -683,13 +771,19 @@ mod tests {
         for cause in UnseenCodeCause::ALL {
             let used = UsedFeatures::with_cause(cause);
             let decision = decide_request(&used, &TrimRequest::default());
-            let opens_whole_runtime = CAUSES_OPENING_WHOLE_RUNTIME.contains(&cause);
+            let keeps_compilers = matches!(
+                cause,
+                UnseenCodeCause::ReportMissing | UnseenCodeCause::FlowResultDisabled
+            );
             for &feature in Feature::ALL {
                 let is_expected = match cause {
                     UnseenCodeCause::ProgramNotCompiled => false,
+                    _ if feature.entered_from() == EnteredFrom::CompiledCode => {
+                        cause != UnseenCodeCause::ReportMissing
+                    }
                     _ => {
                         outside.contains(feature)
-                            && !(opens_whole_runtime && ENTERED_BY_BUNDLER.contains(&feature))
+                            && !(keeps_compilers && ENTERED_BY_BUNDLER.contains(&feature))
                     }
                 };
                 assert_eq!(
@@ -701,8 +795,74 @@ mod tests {
         }
         assert_eq!(
             decide_request(&using(&[Feature::Sql]), &TrimRequest::default()).unused,
-            outside
+            Feature::all_that_leave_unasked()
         );
+    }
+
+    #[test]
+    fn what_compiled_code_enters_stays_where_the_image_lists_it() {
+        let used = using(&[Feature::MapAndSetOperations]);
+        for request in [TrimRequest::default(), removing_unused()] {
+            let decision = decide_request(&used, &request);
+            assert!(!decision.unused.contains(Feature::MapAndSetOperations));
+            assert!(decision.unused.contains(Feature::ProxyOperations));
+        }
+        let template = TrimRequest {
+            is_template: true,
+            ..TrimRequest::default()
+        };
+        assert_eq!(
+            decide_request(&used, &template).unused,
+            Feature::all_outside_compiled_programs()
+        );
+    }
+
+    #[test]
+    fn test_runner_stays_where_program_can_reach_it() {
+        let keeps = |used: &UsedFeatures, request: &TrimRequest| {
+            !decide_request(used, request).unused.contains(Feature::Test)
+        };
+        let whole = TrimRequest::default();
+        assert!(!keeps(&using(&[Feature::Sql]), &whole));
+        let reaching = UsedFeatures {
+            can_reach_test_runner: true,
+            ..using(&[Feature::Sql])
+        };
+        assert!(keeps(&reaching, &whole));
+        assert!(!keeps(&reaching, &removing_unused()));
+        for feature in [
+            Feature::Test,
+            Feature::ShadowRealm,
+            Feature::WorkerConstructor,
+            Feature::Bundler,
+        ] {
+            assert!(keeps(&using(&[feature]), &whole), "{feature:?}");
+        }
+        let mut bundling = using(&[Feature::Bundler]);
+        bundling.names_bun_build = false;
+        assert!(!keeps(&bundling, &whole));
+        let compiled = UsedFeatures {
+            starts_workers_from_unseen_code: false,
+            ..using(&[Feature::WorkerConstructor])
+        };
+        assert!(!keeps(&compiled, &whole));
+        for cause in UnseenCodeCause::ALL {
+            assert!(keeps(&UsedFeatures::with_cause(cause), &whole), "{cause:?}");
+        }
+        for request in [
+            TrimRequest {
+                is_template: true,
+                ..TrimRequest::default()
+            },
+            TrimRequest {
+                allow: vec![TrimFeature::Test],
+                ..TrimRequest::default()
+            },
+        ] {
+            assert!(keeps(&using(&[Feature::Sql]), &request));
+        }
+        let option = decide_with_option(RuntimeRequirement::RuntimeCode, &whole);
+        assert!(!option.unused.contains(Feature::Test));
     }
 
     #[test]
@@ -725,6 +885,46 @@ mod tests {
 
         let trimmed = decide_request(&used, &removing_unused());
         assert!(FeatureSet::from_features(&ENTERED_BY_BUNDLER).is_subset_of(&trimmed.unused));
+    }
+
+    #[test]
+    fn program_that_does_not_name_the_bundler_keeps_no_compiler() {
+        let compilers = FeatureSet::from_features(&ENTERED_BY_BUNDLER);
+        let mut reached = using(&[Feature::Bundler]);
+        reached.features[0].is_named = false;
+        reached.names_bun_build = false;
+        let mut serving = using(&[Feature::Serve, Feature::Bundler]);
+        serving.names_bun_build = false;
+        let outside = UsedFeatures::with_cause(UnseenCodeCause::ImportsUncompiledCode);
+        let admitted = UsedFeatures::with_cause(UnseenCodeCause::OptionAdmitsCode);
+        for used in [&reached, &serving, &outside, &admitted] {
+            let decision = decide_request(used, &TrimRequest::default());
+            assert!(!decision.unused.contains(Feature::Bundler));
+            assert!(compilers.is_subset_of(&decision.unused));
+        }
+
+        let mut unsure = reached.clone();
+        unsure.causes.push(UnseenCode {
+            cause: UnseenCodeCause::ReportMissing,
+            witness: None,
+        });
+        let decision = decide_request(&unsure, &TrimRequest::default());
+        assert!(
+            !compilers
+                .iter()
+                .any(|feature| decision.unused.contains(feature))
+        );
+
+        let allowing = TrimRequest {
+            allow: vec![TrimFeature::Bundler],
+            ..TrimRequest::default()
+        };
+        let decision = decide_request(&reached, &allowing);
+        assert!(
+            !compilers
+                .iter()
+                .any(|feature| decision.unused.contains(feature))
+        );
     }
 
     #[test]
@@ -760,7 +960,7 @@ mod tests {
             ..TrimRequest::default()
         };
         let internal_only = decide_request(&used, &request);
-        let mut removed = Feature::all_outside_compiled_programs();
+        let mut removed = Feature::all_that_leave_unasked();
         removed.insert(Feature::Ffi);
         assert_eq!(internal_only.unused, removed);
         let expected = [

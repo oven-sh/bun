@@ -1,7 +1,6 @@
-// Writes a program of several files out of the code of stack-positions-in-ordinary-code.ts: ES modules, CommonJS files and TypeScript, which export what
-// they declare in every way and take it from each other in every way, directly or through a file that exports it again. Some files call while they are
-// loaded. `step()` lives in a file of its own and throws at the call whose number the program asks for; the program prints the function, file, line and
-// column of every frame.
+// Builds a multi-file program from the code of stack-positions-in-ordinary-code.ts: ES modules, CommonJS files and
+// TypeScript that export and import in every way, directly or through re-exports. Whichever call throws, the stack
+// trace must show the same functions, files, lines and columns as plain Bun.
 import type { Random } from "./random";
 import {
   constructorFunction,
@@ -15,18 +14,19 @@ import {
 
 type Kind = "module" | "commonjs" | "typescript";
 
-// `member` is read from what the file exports under `exportedAs`.
+// `member` is read from the file's export `exportedAs`.
 type Offered = Exported & { member?: string };
 
 interface File {
   path: string;
   kind: Kind;
   offers: Offered[];
-  // It waits at its top level, or something that it imports does: `require()` refuses it.
+  // It has top-level await, or something it imports does: `require()` rejects it.
   awaits: boolean;
 }
 
-// `hasMore` adds packages in node_modules, functions that return what `require()` answers, and default exports without a name.
+// `hasMore` adds packages in node_modules, functions that return the result of `require()`, and anonymous default
+// exports.
 export function generate(
   random: Random,
   hasMore = false,
@@ -49,7 +49,7 @@ export function generate(
       [flavor === "modules" ? 0 : 3, "commonjs"],
     ]);
   const mainKind = drawKind();
-  // While the files that an ES module imports are being loaded, `require()` may refuse one of them.
+  // While an ES module's imports are loading, `require()` may reject one of them.
   const mayRequireModules = (role: Part["role"]) => mainKind === "commonjs" || role === "loaded" || role === "main";
   const extensionOf = (kind: Kind) =>
     kind === "typescript"
@@ -57,7 +57,8 @@ export function generate(
       : kind === "module"
         ? random.pick([".mjs", ".mjs", ".js"])
         : random.pick([".cjs", ".cjs", ".js"]);
-  // TypeScript finds a file without its extension only if that is `.ts` or `.js`, also in a JavaScript file through which a TypeScript file imports a name.
+  // TypeScript only resolves a file without its extension if that is `.ts` or `.js`, also in a JavaScript file through
+  // which a TypeScript file imports a name.
   const specifier = (from: string, to: string) => {
     const inPackage = /^node_modules\/(\w+)\//.exec(to);
     if (inPackage) return JSON.stringify(inPackage[1]);
@@ -104,14 +105,14 @@ export function generate(
       constructorFunction +
       (legacy.kind === "commonjs" ? "exports.Legacy = Legacy;\n" : "export { Legacy };\n");
 
-  // The lines with which a file takes `wanted` from another, and how it writes each of them from then on.
+  // The lines with which a file imports `wanted` from another, and how it refers to each name afterwards.
   function take(path: string, kind: Kind, mayAwait: boolean, from: File, wanted: Offered[], locals: Set<string>) {
     const lines: string[] = [];
     const functions: Callable[] = [];
     const shapes: Shape[] = [];
     const source = specifier(path, from.path);
     const isTypeKnown = kind === "typescript" && from.kind === "typescript";
-    // A typed file takes what an untyped file exports as `any`.
+    // A typed file treats an untyped file's exports as `any`.
     const isLoose = kind === "typescript" && from.kind !== "typescript";
     const any = isLoose ? ": any" : "";
     const loosened = (local: string) => {
@@ -140,7 +141,7 @@ export function generate(
       locals.add(local);
       return local;
     };
-    // One name may stand for several things that are read from it.
+    // One name may be the base of several member reads.
     const byName = [...Map.groupBy(wanted, offered => offered.exportedAs).values()];
     const destructured = (separator: string) =>
       byName.map(group => {
@@ -160,7 +161,7 @@ export function generate(
           for (const offered of wanted) add(offered, member(holder, offered), false);
         },
         () => {
-          // TypeScript refuses a comma whose left side does nothing.
+          // TypeScript rejects a comma expression whose left side has no effect.
           const holder = fresh("library") + "_1";
           lines.push(`const ${holder} = ${requireName}(${source});`);
           for (const offered of wanted)
@@ -189,7 +190,7 @@ export function generate(
     if (kind === "commonjs") {
       if (from.awaits || random.chance(0.15)) {
         if (inPlace().length && !from.awaits) required("require");
-        // A class of a file that waits stays out of reach here.
+        // A class of a file with top-level await is out of reach here.
         return { lines, functions, shapes: from.awaits ? [] : shapes };
       }
       required("require");
@@ -290,7 +291,7 @@ export function generate(
     const locals = new Set<string>();
     const reachable = files.filter(from => kind !== "commonjs" || from.kind === "commonjs" || mayRequireModules(role));
     const sources = role === "main" ? files : random.sample(reachable, random.between(0, 3));
-    // `main` loads every file ahead of those that throw while they are loaded.
+    // `main` loads every file before those that throw while loading.
     let early = "";
     for (const from of sources) {
       const wanted = random.sample(from.offers, random.between(role === "main" ? 0 : 1, 4));
@@ -305,7 +306,7 @@ export function generate(
       lines.push(...taken.lines);
       functions.push(...taken.functions);
       shapes.push(...taken.shapes);
-      // What is imported where it is used does not hold the file up.
+      // An import at the point of use does not delay the file.
       if (taken.lines.length) file.awaits ||= from.awaits;
     }
     const heading =
@@ -313,7 +314,7 @@ export function generate(
       takeNames(kind, helperNames(kind === "typescript", isBroad), specifier(path, helpers.path)) +
       (isBroad && kind !== "typescript" ? takeNames(kind, ["Legacy"], specifier(path, legacy.path)) : "") +
       (lines.some(line => line.includes("createRequire(")) ? 'import { createRequire } from "node:module";\n' : "") +
-      // Declarations stand behind the imports.
+      // Declarations come after the imports.
       [...lines.filter(line => line.startsWith("import ")), ...lines.filter(line => !line.startsWith("import "))]
         .map(line => line + "\n")
         .join("") +
@@ -345,7 +346,7 @@ export function generate(
   for (let index = random.between(2, 5); index > 0; index--)
     files.push(addFile(fresh("part"), "library", drawLibraryKind()));
 
-  // Two files that need each other.
+  // Two files that import each other.
   if (random.chance(0.5)) {
     const kind = drawLibraryKind();
     const [first, second] = [fresh("circle"), fresh("circle")];
@@ -377,7 +378,7 @@ export function generate(
     });
   }
 
-  // A file that exports again what others export.
+  // A file that re-exports what others export.
   if (random.chance(0.6)) {
     const kind = drawLibraryKind();
     const path = "lib/index" + extensionOf(kind);
@@ -411,9 +412,9 @@ export function generate(
         ])();
         continue;
       }
-      // TypeScript refuses `export *` of a file that assigns to `module.exports`.
+      // TypeScript rejects `export *` of a file that assigns to `module.exports`.
       const mayTakeAll = kind !== "typescript" || from.kind !== "commonjs";
-      // TypeScript reads no JavaScript of a package, so it finds no name behind a star over one.
+      // TypeScript does not read a package's JavaScript, so it finds no name behind `export *` over one.
       const isRead = !hasTyped || from.kind === "typescript" || !from.path.startsWith("node_modules/");
       const all = isRead ? "*" : `{ ${[...new Set(named.map(offered => offered.exportedAs))].join(", ")} }`;
       const offersBefore = barrel.offers.length;
@@ -463,7 +464,7 @@ export function generate(
     const stem = fresh("loaded");
     const loaded = addFile(stem, "loaded", kind);
     let target = loaded;
-    // Another file may stand between `main` and the file that throws.
+    // Another file may be between `main` and the file that throws.
     if (random.chance(0.4)) {
       const between: File = {
         kind: loaded.awaits ? "module" : drawKind(),

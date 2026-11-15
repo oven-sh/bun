@@ -81,6 +81,10 @@ pub(crate) mod test {
     #[path = "Timings.rs"]
     pub(crate) mod timings;
 
+    /// `bun test --aot --shard`: puts test files that import the same modules in the same shard.
+    #[path = "ShardsByReach.rs"]
+    pub(crate) mod shards_by_reach;
+
     /// `bun test --parallel`: process-pool coordinator/worker entry points.
     /// Thin façade re-exporting from `parallel::runner`.
     #[path = "ParallelRunner.rs"]
@@ -1052,6 +1056,16 @@ pub(crate) mod command {
             if bun_removable_features::is_removed(bun_removable_features::Feature::Tools) {
                 bun_standalone_graph::Graph::exit_without_program();
             }
+        }
+
+        #[cfg(not(bun_locked_environment))]
+        if let Some(first) = bun::argv().get(1 + bun::bun_options_argc())
+            && first
+                .as_bytes()
+                .starts_with(run_compiled::PROGRAM_FILE_FLAG)
+            && let Some(graph) = run_compiled::load_program_file()?
+        {
+            return boot_standalone(graph, log);
         }
 
         // Fast path: `bun -v` / `bun --version` / `bun --revision`, the
@@ -2045,6 +2059,7 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   Short for <b>bun build --compile --aot<r>. Without an entry point, it compiles the file that \"bin\" in
   <b>package.json<r> points to, then \"module\", then \"main\", then index.ts, index.tsx, index.mts or index.js.
+  The entry point can be the name of an executable of an installed package, as in <b>bun run<r>.
 
 <b>Flags:<r>"
                 );
@@ -2058,6 +2073,9 @@ A full list of flags is available at <magenta>https://bun.com/docs/bundler<r>
 
   <d>Choose the name of the executable<r>
   <b><green>bun compile<r> <cyan>--outfile=my-app<r> <blue>./cli.ts<r>
+
+  <d>Compile the command-line tool of an installed package<r>
+  <b><green>bun compile<r> <blue>rollup<r>
 
   <d>List the code that compiled to a slow path<r>
   <b><green>bun compile<r> <cyan>--explain<r> <blue>./server.ts<r>
@@ -2101,9 +2119,6 @@ Full documentation is available at <magenta>https://bun.com/docs/compiler/aot<r>
 
   <d>Compile the test files ahead of time, then run them<r>
   <b><green>bun test<r> <cyan>--aot<r>
-
-  <d>The same, and log every value that doesn't match its declared type<r>
-  <b><green>bun test<r> <cyan>--aot-log-type-mismatches<r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/test<r>
 "

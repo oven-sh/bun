@@ -4,6 +4,7 @@ use bun_jsc::{JSValue, JsResult};
 use super::{throw, Expect};
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_be_object(
         &self,
         this_value: JsWrapper<'_, Self>,

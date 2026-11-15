@@ -149,7 +149,7 @@ pub(crate) fn scan_imports_and_exports(
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
                     col_ref!(import_records_list)[id].as_slice(),
-                    css_asts,
+                    col_ref!(css_asts),
                     col_ref!(input_files),
                     col_ref!(loaders),
                     // `log_disjoint`: split-borrow with the SoA column refs above.
@@ -655,22 +655,12 @@ pub(crate) fn scan_imports_and_exports(
         //
         // `do_step5` only touches distinct SoA rows per `source_index` (the
         // columns are pre-sized and never reallocate during this step).
-        // We pass `*mut LinkerContext` through a
-        // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
+        // The tasks share one `&LinkerContext`; the callee uses it
         // for reads and writes per-row cells via raw `split_raw()` pointers —
         // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
         // forms `&mut LinkerContext`).
         {
-            #[repr(transparent)]
-            struct Step5Ctx<'a>(*mut LinkerContext<'a>);
-            // SAFETY: the pointer is only dereferenced to `&LinkerContext` for
-            // reads plus raw `*mut` per-row SoA cells for disjoint-row writes
-            // (see `do_step5` doc); lifetime is bounded by the blocking
-            // `each()` call below. The `ThreadPool::Worker` it acquires is
-            // per-OS-thread.
-            unsafe impl core::marker::Sync for Step5Ctx<'_> {}
-
-            let ctx = Step5Ctx(core::ptr::from_mut::<LinkerContext<'_>>(this));
+            let ctx: &LinkerContext<'_> = this;
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool
             // set in `BundleV2::init`.
@@ -680,9 +670,9 @@ pub(crate) fn scan_imports_and_exports(
             // variant). Step 6 reuses it afterwards.
             worker_pool.each(
                 ctx,
-                |ctx: &Step5Ctx<'_>, source_index: Index, i: usize| {
-                    // SAFETY: see `Step5Ctx` Sync justification above.
-                    unsafe { LinkerContext::do_step5(ctx.0, source_index, i) };
+                |ctx: &&LinkerContext<'_>, source_index: Index, i: usize| {
+                    // SAFETY: `reachable` names each file once, so each call has its own rows.
+                    unsafe { ctx.do_step5(source_index, i) };
                 },
                 &mut reachable[..],
             );
@@ -1760,11 +1750,11 @@ mod __css_validation {
     // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
-    pub(super) fn validate_css_import_composes(
+    pub(super) fn validate_css_import_composes<'bump>(
         this: &mut LinkerContext,
         id: usize,
-        css_asts: *mut [CssCol],
-        import_records_list: *mut [ImportRecordList<'_>],
+        css_asts: *mut [CssCol<'bump>],
+        import_records_list: *mut [ImportRecordList<'bump>],
         input_files: *mut [Source],
     ) {
         // `css_asts[id]` checked Some by caller. We only *read* the AST here;
@@ -1792,7 +1782,7 @@ mod __css_validation {
                     continue;
                 };
                 for name in compose.names.slice() {
-                    let name_v = name.v();
+                    let name_v = name.v;
                     if !other_css_ast.local_scope.contains(name_v) {
                         // Split-borrow — see `LinkerContext::log_disjoint`.
                         let _ = this.log_disjoint().add_error_fmt(
@@ -1841,12 +1831,12 @@ mod __css_validation {
     /// 2. Composing from the global scope is pretty rare
     ///
     /// We should find a way to do this without incurring performance penalties to the common cases.
-    fn validate_composes_from_properties(
+    fn validate_composes_from_properties<'bump>(
         this: &mut LinkerContext,
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
-        import_records_list: *mut [ImportRecordList<'_>],
-        all_css_asts: *mut [CssCol],
+        import_records_list: *mut [ImportRecordList<'bump>],
+        all_css_asts: *mut [CssCol<'bump>],
     ) {
         #[derive(Default)]
         struct PropertyInFile {
@@ -1866,13 +1856,13 @@ mod __css_validation {
             properties: StringArrayHashMap<PropertyInFile>,
             stack: Vec<Frame>,
             all_import_records: *mut [ImportRecordList<'bump>],
-            all_css_asts: *mut [CssCol],
+            all_css_asts: *mut [CssCol<'bump>],
             all_symbols: &'a symbol::Map,
             all_sources: *mut [Source<'a>],
             log: &'a mut Log,
         }
 
-        impl<'a, 'bump> Visitor<'a, 'bump> {
+        impl<'a, 'bump: 'a> Visitor<'a, 'bump> {
             fn add_property_or_warn(
                 &mut self,
                 local: bun_ast::Ref,
@@ -1959,7 +1949,7 @@ mod __css_validation {
             }
 
             /// Frames only reference classes found in a CSS AST, so `idx` always has one.
-            fn css_ast(&self, idx: IndexInt) -> &'a BundlerStyleSheet {
+            fn css_ast(&self, idx: IndexInt) -> &'a BundlerStyleSheet<'bump> {
                 col_ref!(self.all_css_asts)[idx as usize]
                     .as_deref()
                     .expect("composes walk only reaches files with a CSS AST")
@@ -2008,7 +1998,7 @@ mod __css_validation {
                                         continue;
                                     };
                                     for name in compose.names.slice() {
-                                        let name_v = name.v();
+                                        let name_v = name.v;
                                         let Some(other_name) = other_ast.local_scope.get(name_v)
                                         else {
                                             continue;
@@ -2027,7 +2017,7 @@ mod __css_validation {
                             } else {
                                 // inside this file
                                 for name in compose.names.slice() {
-                                    let name_v = name.v();
+                                    let name_v = name.v;
                                     let Some(name_entry) = ast.local_scope.get(name_v) else {
                                         continue;
                                     };

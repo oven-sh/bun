@@ -1,10 +1,7 @@
 import { testPrograms } from "./each-program";
 
+// The driver is passed to the DataSource. A driver that TypeORM requires by a computed name is
+// "a computed package name resolves like the same literal name" in ../in-place-executables.test.ts.
 testPrograms("typeorm", {
-  typeorm: {
-    // A driver that is required by a computed name is found where it is an entry point.
-    given: ["node_modules/sql.js/dist/sql-wasm.js", "--asset", "node_modules/sql.js/dist/sql-wasm.wasm"],
-    needsTheDisk: "a driver that is required by a computed name: the name of the package is looked up on the disk",
-  },
   typeorm_given: { forms: ["as one file"], given: ["--asset", "node_modules/sql.js/dist/sql-wasm.wasm"] },
 });

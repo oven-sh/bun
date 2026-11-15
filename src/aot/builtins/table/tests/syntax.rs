@@ -23,16 +23,20 @@ fn split_binding_text(text: &str) -> Option<(BuiltinName, BuiltinName)> {
     Some((find_name(file)?, find_name(symbol)?))
 }
 
-// Native code makes these from host functions of its own and hands them to the library or to the program, so no text names them.
-const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 14] = [
+const HANDED_OVER_BY_NATIVE_CODE: [BuiltinId; 19] = [
     BuiltinId::NativeNewCppFunctionBunProcessCppBun__Process__disconnect,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_emitWarning,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsFunction_throwValue,
     BuiltinId::NativeNewCppFunctionBunProcessCppJsSend,
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper,
+    BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionInternalGetWindowSize,
+    BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionNeedsWholeInputStream,
+    BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionNeedsWholeOutputStream,
+    BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionWriteToStandardSink,
     BuiltinId::NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning,
     BuiltinId::NativeNewCppFunctionErrorCodeCppNodeError_proto_toString,
+    BuiltinId::NativeNewCppFunctionFormatStackTraceForJSCppJsFunctionDefaultErrorPrepareStackTrace,
     BuiltinId::NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush,
     BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsEditWindowsEnvVar,
     BuiltinId::NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite,
@@ -209,4 +213,14 @@ fn native_bindings_are_hidden_roots() {
         assert_eq!(entry(id).holder, None, "{}", text_of(id));
         assert!(members(id).is_empty(), "{}", text_of(id));
     }
+}
+
+#[test]
+fn text_is_a_frames_mark_as_a_whole() {
+    let native_code = frames_mark_of(b"frames are native code");
+    assert_eq!(native_code, Some(FramesMark::NativeCode));
+    assert_eq!(frames_mark_of(b"has no frames"), Some(FramesMark::Hidden));
+    assert_eq!(frames_mark_of(b"has no frames."), None);
+    assert_eq!(frames_mark_of(b"use strict"), None);
+    assert_eq!(frames_mark_of(b""), None);
 }

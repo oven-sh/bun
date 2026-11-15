@@ -2,6 +2,7 @@
 import { expect } from "bun:test";
 import { bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { reads } from "./harness/reads";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
@@ -37,5 +38,6 @@ test("the most memory a WeakMap of short-lived keys takes does not grow with the
     expect({ stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     most.push(Number(ran.stdout.trim()));
   }
+  reads("a weak map that was given eight times the keys", most[1]! / most[0]!, 2, "times the memory");
   expect(most[1]! / most[0]!).toBeLessThan(2);
 }, 240_000);

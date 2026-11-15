@@ -17,7 +17,7 @@ async function bun(cwd: string, ...args: string[]) {
 }
 
 describe.concurrent("an option that configures bytecode has no effect with --aot", () => {
-  test.skipIf(!!unsupported).each(["--bytecode-depth=1", "--bytecode-order=app.order"])(
+  test.skipIf(!!unsupported).each(["--bytecode-depth=1", "--bytecode-order=app.order", "--no-optimize-bytecode"])(
     "bun build --compile --aot %s",
     async flag => {
       using dir = tempDir("aot-bytecode-flag", files);
@@ -31,7 +31,10 @@ describe.concurrent("an option that configures bytecode has no effect with --aot
         "--outfile",
         "out",
       );
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stderr, exitCode }).toEqual({
+        stderr: `note: ${flag.split("=")[0]} has no effect with --aot: the program is compiled to machine code\n`,
+        exitCode: 0,
+      });
       expect(await run([join(String(dir), isWindows ? "out.exe" : "out")], String(dir), bunEnv)).toMatchObject({
         stdout: "1\n",
         exitCode: 0,

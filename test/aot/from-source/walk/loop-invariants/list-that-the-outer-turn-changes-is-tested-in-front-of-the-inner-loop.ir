@@ -1,0 +1,16 @@
+# the outer turn appends to the list, the inner loop only reads it. So the list is asked anew in each outer turn, in front of the inner loop, and its storage is read there: nothing of it stands in front of the outer head
+# f1 = sumsAsItGrows
+# -- source: list-that-the-outer-turn-changes-is-tested-in-front-of-the-inner-loop.ts
+# declare function sink(...values: unknown[]): void;
+# function sumsAsItGrows(list: number[], rounds: number) { let s = 0; for (let k = 0; k < rounds; k++) { for (let i = 0; i < list.length; i++) s += list[i]; list.push(k); } return s; }
+# sink(sumsAsItGrows, [1, 2, 3]);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = HasArrayStorage
+# CHECK-NOT: = GetArrayStorage
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Double
+# CHECK: = GetArrayStorage
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = GetArrayElement {{*}}level=Proven

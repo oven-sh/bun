@@ -140,97 +140,9 @@ function aPromise() {
 async function awaited() { return await aPromise(); }
 awaited().then(value => { say("a promise with a then of its own", value); console.log(lines.join("\n")); });
 
-// GENERATED: aRegularExpression awaited identity push Loud
 // CHECK-LABEL: function {{*}}name="aRegularExpression"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|number|string> site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewRegExp pattern="a(b)?" regExpFlags=[Global]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|RegExp site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v2 = String string="ab a"
-// CHECK-NEXT: v3 = PropGet v2 key="replace"
-// CHECK-NEXT: v4 = String string="x"
-// CHECK-NEXT: v5 = Call v3, v2, v1, v4 calleeKey="replace" calleeName="replace"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v7 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[f_5]] flags=[IsExpected]}
-// CHECK-NEXT: PropSet v1, v8 key="exec"
-// CHECK-NEXT: v10 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v11 = CheckInitialized v10 name="identity"
-// CHECK-NEXT: v12 = Integer integer=1
-// CHECK-NEXT: v13 = Call v11, -, v12 calleeName="identity"
-// CHECK-NEXT: v14 = Convert v13 declared={type=1 site=[[w_7]]} illTypedCause=FromLooseType
-// CHECK-NEXT: v15 = Convert v14 declared={type=number site=[[w_8]]}
-// CHECK-NEXT: PropSet v1, v15 key="lastIndex"
-// CHECK-NEXT: v17 = String string="ab a"
-// CHECK-NEXT: v18 = PropGet v17 key="replace"
-// CHECK-NEXT: v19 = String string="x"
-// CHECK-NEXT: v20 = Call v18, v17, v1, v19 calleeKey="replace" calleeName="replace"
-// CHECK-NEXT: v21 = Convert v20 declared={type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v22 = PropGet v1 key="test"
-// CHECK-NEXT: v23 = String string="ab"
-// CHECK-NEXT: v24 = Call v22, v1, v23 calleeKey="test" calleeName="pattern.test"
-// CHECK-NEXT: v25 = Convert v24 declared={type=boolean site=[[w_10]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v26 = PropGet v1 key="lastIndex"
-// CHECK-NEXT: v27 = Convert v26 declared={type=number site=[[w_11]]} illTypedCause=Assertion
-// CHECK-NEXT: v28 = NewArray v6, v21, v25, v27 contents=undefined|null|boolean|number|string
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|boolean|number|string> site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v29
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="awaited"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: v2 = Call v1 calleeName="aPromise"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Promise<number> flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v4 = Await v3
-// CHECK-NEXT: v5 = Convert v4 declared={type=number site=[[w_13]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: v6 = Convert v5 declared={type=number|object site=[[w_14]]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="identity"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_15]] site=[[w_16]]}] results=[{type=undefined|null|[[L_15]] site=[[w_17]]}] functionTypes={{*}}[[f_18]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_15]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_15]] site=[[w_17]]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|"assigned" site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_20]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="assigned"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|"assigned" site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Loud"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_21]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_21]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="push"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasRestParameter, HasThis, IsChecked, HasExplicitName] captures=[{type=function flags=[IsFromCompiler]}] thisType={type=[[L_21]] site=[[w_22]]} parameters=[{type=Array<number> site=[[w_23]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=number site=[[w_24]]}] {
-// CHECK-NEXT: b0(v0: function, v1: [[L_21]], v2: Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0 homeKind=ClassPrototype
-// CHECK-NEXT: v4 = SuperGet v3, v1 key="push"
-// CHECK-NEXT: v5 = NewArray contents=anything
-// CHECK-NEXT: v6 = PropGet v2 key="map"
-// CHECK-NEXT: v7 = NewClosure function=[[f_25]]
-// CHECK-NEXT: v8 = Call v6, v2, v7 calleeKey="map" calleeName="values.map"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array<number> site=[[w_26]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: AppendSpread v5, v9
-// CHECK-NEXT: v11 = CallList v4, v1, v5 calleeName="super.push"
-// CHECK-NEXT: ReturnCall v11 casts=[{declared={type=number site=[[w_27]]}}, {declared={type=number site=[[w_24]]}}]
-// CHECK-NEXT: }

@@ -1,0 +1,48 @@
+# process.stdout.write("x"); process.constructor.prototype.on = sink; process.on("exit", () => {})
+# As built-in-below-one-come-by-under-the-name-of-the-link-whose-member-is-written-is-let-go.ir: `constructor` read off a built-in answers a function whose `prototype` is the object above.
+# Where text may be evaluated, `constructor` read off anything lets everything go, and the fault does not show: so the build refuses such text here.
+# LIBRARY: own
+# OPTIONS: exclude=EvaluatedText,HostEvaluatedText
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsGetStdioWriteStream function=f2
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="stdout"
+    v2 = PropGet v1 key="write"
+    v3 = String string="x"
+    v4 = Call v2, v1, v3 calleeKey="write"
+    v5 = PropGet v0 key="constructor"
+    v6 = PropGet v5 key="prototype"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="sink" [isFreeName]
+    PropSet v6, v8 key="on"
+    v10 = PropGet v0 key="on"
+    v11 = Convert v10 declared={type=builtin(EventEmitterPrototypeOn) flags=[IsExpected]}
+    v12 = String string="exit"
+    v13 = NewClosure function=f3
+    v14 = Call v11, v0, v12, v13 calleeKey="on"
+    v15 = Undefined
+    Return v15
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    Return v4
+}
+function f2 name="getStdioWriteStream" module=m2 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdioWriteStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

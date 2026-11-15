@@ -908,11 +908,12 @@ bool JSWebSocketOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> hand
     return false;
 }
 
-void JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSWebSocketOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsWebSocket = static_cast<JSWebSocket*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsWebSocket->wrapped(), jsWebSocket);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

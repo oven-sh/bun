@@ -1,0 +1,22 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# function shrink(to: number): number { const bytes = new ArrayBuffer(64, { maxByteLength: 128 }); const before = bytes.byteLength; bytes.resize(to); return before * 100 + bytes.byteLength; }
+# print(shrink(8));
+# print(shrink(16));
+# print("went on");
+# -- end of source
+# All bytes of the buffer are zero, and its cell keeps its words when it is made smaller. The net sees it all the same: how long a buffer is now lies in the lane of TypedArrayStorage, and a run of zero words counts in a hash.
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 6408
+# NET-NEXT: 6416
+# NET-NEXT: went on
+# RUN(STORAGE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/ArrayBuffer.prototype.resize/TypedArrayStorage mechanisms=all
+# STORAGE: of built-in:ArrayBuffer.prototype.resize say that the call does not write TypedArrayStorage, but operand 0 changed there
+# STORAGE-NOT: went on
+# STORAGE: crashed
+# STORAGE: with
+# RUN(BYTES): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Builtin/ArrayBuffer.prototype.resize/TypedArrayElements mechanisms=all
+# BYTES: of built-in:ArrayBuffer.prototype.resize say that the call does not write TypedArrayElements, but these parts of operand 0 changed: the bytes
+# BYTES-NOT: went on
+# BYTES: crashed
+# BYTES: with

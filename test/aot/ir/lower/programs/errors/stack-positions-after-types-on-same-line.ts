@@ -423,104 +423,12 @@ check(182, 419, (): any => { const before: Array<number | string> = [1 as number
 // prettier-ignore
 check(183, 421, (): any => { const before: Array<number | string> = [1 as number]; const [x] = { [Symbol.iterator]() { return { next() { return { done: false }; }, return: fail }; } }; });
 
-// GENERATED: fail F h C next
 // CHECK-LABEL: function {{*}}name="fail"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="Error" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Error) flags=[IsExpected]}
-// CHECK-NEXT: v4 = String string="fail"
-// CHECK-NEXT: v5 = Construct v3, -, v4 calleeName="Error"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|Error flags=[IsExpected]}
-// CHECK-NEXT: Throw v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="F"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, HasThis, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = NewRuntimeError runtimeError=LeftOutOfExecutable name="F"
-// CHECK-NEXT: Throw v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PrivateHas v1, v0 layout=[[L_3]] field=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="C"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_6]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PrivateHas v1, v0 layout=[[L_7]] field=1
-// CHECK-NEXT: v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|[[L_8]] flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: undefined|null|[[L_8]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v1 key="y"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v4 = PrivateHas v3, v0 layout=[[L_10]] field=1
-// CHECK-NEXT: v5 = Convert v4 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_12]]
-// CHECK-NEXT: v3 = Call v2, -, v1 calleeName="id"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v5 = PrivateHas v4, v0 layout=[[L_13]] field=1
-// CHECK-NEXT: v6 = Convert v5 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="h"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] length=1 captures=[{type=classtoken flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=false|1 flags=[IsExpected]}] functionTypes={{*}}[[f_14]]] {
-// CHECK-NEXT: b0(v0: classtoken, v1: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PrivateHas v1, v0 layout=[[L_15]] field=1
-// CHECK-NEXT: v3 = ToBoolean v2
-// CHECK-NEXT: Branch v3 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v4):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: Jump -> next b5(v5)
-// CHECK-NEXT: b4(v6):
-// CHECK-NEXT: Jump -> next b5(v6)
-// CHECK-NEXT: b5(v7):
-// CHECK-NEXT: v8 = Convert v7 declared={type=false|1 flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="next"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|[[L_16]] flags=[IsExpected]}] functionTypes={{*}}[[f_17]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_18]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_16]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

@@ -1,0 +1,19 @@
+vi.spyOn(Bun, "origin", "get") and three more read-only members of Bun that change on their own, beside a file that uses Bun.
+#### a.test.js
+import { test, vi } from "bun:test";
+import { read } from "./lib.js";
+test("t", () => {
+  console.log("| CASE", read());
+  vi.spyOn(Bun, "origin", "get").mockReturnValue("spied");
+  vi.spyOn(Bun, "isStandaloneExecutable", "get").mockReturnValue("spied");
+  vi.spyOn(Bun, "version_with_sha", "get").mockReturnValue("spied");
+  vi.spyOn(Bun, "ModuleGraph", "get").mockReturnValue("spied");
+  console.log("| CASE", read(), [Bun.origin, Bun.isStandaloneExecutable, Bun.version_with_sha, Bun.ModuleGraph].join());
+  vi.restoreAllMocks();
+  console.log("| CASE", read());
+});
+#### lib.js
+export const read = () => [Bun.origin, Bun.isStandaloneExecutable, Bun.version_with_sha, Bun.ModuleGraph].map(value => typeof value + " " + (value === "spied")).join(", ");
+export const usesBun = Bun.file("x.txt").name + Bun.inspect(1);
+#### package.json
+{ "name": "p", "type": "module" }

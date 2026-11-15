@@ -1,15 +1,17 @@
-use bun_sema::bind::FnOwner;
-use bun_sema::hir::{self, ExprId, IdList, PatKind, Span, StmtId, StmtKind, VarDeclId, VarKind};
+use bun_sema::fold::{Constant, FoldedValue};
+use bun_sema::hir::{
+    self, ExprId, Flags, IdList, PatKind, Span, StmtId, StmtKind, VarDeclId, VarKind,
+};
 use smallvec::SmallVec;
 
 use super::FunctionLowering;
 use super::call::{self};
 use super::control::{CleanupLanding, CleanupPath};
 use super::member::PropertyName;
+use super::statement::statements_behind;
 use crate::builtins::id::BuiltinId;
-use crate::ir::generated::BlockRole;
-use crate::ir::{Edge, FunctionKey, LocalVariable, ValueId};
-use crate::modules::ModuleKind;
+use crate::ir::generated::{BlockRole, RuntimeErrorKind};
+use crate::ir::{Edge, LocalVariable, TypeTable, ValueId, WellKnownSymbol};
 
 const HAS_AWAIT_STATE: &str = "a scope with an asynchronous resource has its await state";
 
@@ -53,8 +55,11 @@ pub(in crate::lower) fn find_resource_declarations(
     let StmtKind::Var(declarations) = hir[statement.some()?].kind else {
         return None;
     };
-    let first = declarations.iter().next()?;
-    get_dispose_hint(hir[first].kind).map(|_| declarations)
+    let first = hir[declarations.iter().next()?];
+    if first.flags.contains(Flags::AMBIENT) {
+        return None;
+    }
+    get_dispose_hint(first.kind).map(|_| declarations)
 }
 
 fn has_async_resource(hir: &hir::File<'_>, declarations: Span<VarDeclId>) -> bool {
@@ -72,14 +77,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     .is_some_and(|declarations| has_async_resource(hir, declarations))
         });
         let mut scope = self.begin_resource_scope(is_async);
-        for statement in hir.ids(statements) {
+        for (index, statement) in (0..).zip(hir.ids(statements)) {
             if decisions.is_dead_stmt(statement) {
+                self.count_statement(statement);
+                continue;
+            }
+            if self.lower_store_at_birth(statement) {
                 continue;
             }
             let Some(declarations) = find_resource_declarations(hir, statement) else {
-                self.lower_statement(statement);
+                self.lower_statement_in_list(statement, statements_behind(statements, index));
                 continue;
             };
+            self.count_statement(statement);
             for declaration in declarations.iter() {
                 self.lower_resource_declaration(&mut scope, declaration);
             }
@@ -141,11 +151,47 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         };
         let binding = self.file.bound.initialized_binding(decl.pat);
-        let key = self.file.function_name_key(binding, name, pattern.pos);
-        let name = PropertyName::Constant(key);
+        let name = self.file.name_given_by_binding(binding, name);
         let value = self.lower_named_evaluation(initializer, name);
         self.set_position(pattern.pos);
+        let is_nothing = matches!(
+            self.file.decisions().constant(hir, initializer),
+            FoldedValue::Constant(Constant::Null | Constant::Undefined)
+        );
+        if is_nothing && get_dispose_hint(decl.kind) == Some(DisposeHint::Sync) {
+            self.bind_pattern(decl.pat, value, Some(initializer));
+            return;
+        }
         add_resource(self, scope, declaration, value, Some(initializer));
+    }
+
+    // GetDisposeMethod, with the engine's messages. A read in the program's own code is resolved like any other.
+    fn lower_dispose_method(&mut self, value: ValueId) -> ValueId {
+        let found = self.create_block();
+        let method = self.builder.add_parameter(found, None);
+        let nothing = self.create_block();
+        let present = self.branch_if_nullish(value, nothing);
+
+        let error = RuntimeErrorKind::ResourceNotObject;
+        let object = self.builder.require_object(present, error);
+        let key = self.file.symbol_key(WellKnownSymbol::Dispose);
+        let read = self.emit_get(object, PropertyName::Constant(key));
+
+        let functions = self.split_on_type(read, TypeTable::FUNCTION);
+        self.builder.switch_to(functions.not_taken);
+        let absent = self.create_block();
+        self.branch_if_nullish(functions.not_taken_value, absent);
+        self.emit_throw_runtime_error(RuntimeErrorKind::DisposeMethodNotCallable, None);
+        self.continue_in(absent);
+        self.emit_throw_runtime_error(RuntimeErrorKind::DisposeMethodAbsent, None);
+        self.builder.switch_to(functions.taken);
+        self.jump_with(found, &[functions.taken_value]);
+
+        self.continue_in(nothing);
+        let undefined = self.builder.undefined();
+        self.jump_with(found, &[undefined]);
+        self.continue_in(found);
+        method
     }
 
     fn emit_disposal(
@@ -156,8 +202,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         is_last: bool,
         path: CleanupPath,
     ) {
-        let position = self.find_disposal_position();
-        self.set_position(position.unwrap_or(resource.position));
+        self.set_position(resource.position);
         let pending = match path {
             CleanupPath::Normal => None,
             CleanupPath::Throw { thrown } => Some(thrown),
@@ -174,7 +219,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let done = self.create_block();
         let skipped = self.create_block();
         let method = self.branch_if_undefined(resource.method, skipped);
-        // What a method throws is thrown again by the scope: that `throw` is the one whose frames are listed if nobody catches it.
         let handler = self.begin_handler(BlockRole::CatchHandler, None);
         let this = Some(resource.value);
         let result = call::emit_call(self, method, this, &[]);
@@ -210,35 +254,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(state) = trailing {
             self.emit_pending_await(state);
         }
-    }
-
-    // JSC records the calls that dispose behind the body, which the source map takes back to the last token of the function, or to a `)` or `]` that is printed right behind the function.
-    fn find_disposal_position(&mut self) -> Option<u32> {
-        if let Some(found) = self.disposal_position {
-            return found;
-        }
-        let file = &*self.file;
-        let found = match self.key {
-            FunctionKey::Source(source) if file.runs_as_written() => {
-                file.find_end_of_function(source.function)
-            }
-            _ if file.is_shown_without_source_map() => None,
-            FunctionKey::Source(source) => {
-                let behind = match file.bound.fns[source.function.idx()].owner {
-                    FnOwner::Expr(owner) => file.find_closing_token_behind(owner),
-                    _ => None,
-                };
-                behind.or_else(|| file.last_mapped_function_position(source.function))
-            }
-            FunctionKey::ModuleBody(_) | FunctionKey::WrappedModuleBody(_)
-                if file.inputs.modules.kind(file.file) == ModuleKind::CommonJs =>
-            {
-                file.last_mapped_list_position(file.hir.body)
-            }
-            _ => None,
-        };
-        self.disposal_position = Some(found);
-        found
     }
 
     fn emit_pending_await(&mut self, state: AwaitState) {
@@ -277,23 +292,24 @@ fn add_resource(
     let Some(hint) = get_dispose_hint(decl.kind) else {
         unreachable!("add_resource takes a using declaration");
     };
-    let helper = match hint {
-        DisposeHint::Sync => BuiltinId::CompilerHelpersGetDisposeMethod,
-        DisposeHint::Async => BuiltinId::CompilerHelpersGetAsyncDisposeMethod,
+    let method = match hint {
+        DisposeHint::Sync => lowering.lower_dispose_method(value),
+        DisposeHint::Async => {
+            let helper = BuiltinId::CompilerHelpersGetAsyncDisposeMethod;
+            lowering.emit_builtin_call(helper, &[value])
+        }
     };
-    let method = lowering.emit_builtin_call(helper, &[value]);
     lowering.begin_cleanup(BlockRole::DisposalCleanup, Some(value));
     scope.resources.push(Resource {
         value,
         method,
         hint,
-        position: lowering.position(),
+        position: lowering.file.hir[decl.pat].pos,
     });
-    let mapped = lowering.file.hir[decl.pat].pos;
-    lowering.bind_pattern(decl.pat, value, source, mapped);
+    lowering.bind_pattern(decl.pat, value, source);
 }
 
-#[allow(clippy::needless_pass_by_value)] // the end of the scope
+#[allow(clippy::needless_pass_by_value)]
 fn end_resource_scope(lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>, scope: ResourceScope) {
     let mut follows_async_resource = false;
     for (index, &resource) in scope.resources.iter().enumerate().rev() {

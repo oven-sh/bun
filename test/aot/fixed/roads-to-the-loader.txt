@@ -1,0 +1,16 @@
+#### made-name-called-on-module.cjs
+const name = ("require" + Math.random()).slice(0, 7);
+console.log(typeof module[name]("timers").setImmediate);
+#### made-name-called-on-module.cjs prints
+function
+#### made-name-on-module-handed-on.cjs
+const name = ("require" + Math.random()).slice(0, 7);
+function read(object, key) { return object[key]; }
+console.log(typeof read(module, name).call(module, "timers").setImmediate);
+#### made-name-on-module-handed-on.cjs prints
+function
+#### made-name-on-import-meta.mjs
+const name = ("require" + Math.random()).slice(0, 7);
+console.log(typeof import.meta[name]("timers").setImmediate);
+#### made-name-on-import-meta.mjs prints
+function

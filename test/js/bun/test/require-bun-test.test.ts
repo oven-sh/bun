@@ -111,7 +111,7 @@ test.concurrent("require('bun:test') under a computed name, outside bun test", a
   });
   const { stdout, exitCode } = await run([bunExe(), "main.cjs", specifier], String(dir));
   expect(stdout.split("\n")).toEqual([
-    "afterAll afterEach beforeAll beforeEach describe expect expectTypeOf it jest mock onTestFinished setDefaultTimeout setSystemTime spyOn test vi xdescribe xit xtest",
+    "afterAll afterEach aroundAll aroundEach beforeAll beforeEach describe expect expectTypeOf it jest mock onTestFinished setDefaultTimeout setSystemTime spyOn test vi xdescribe xit xtest",
     "true true true",
     "bun:test false 0",
     'Cannot use test outside of the test runner. Run "bun test" to run tests.',

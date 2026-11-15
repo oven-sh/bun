@@ -1,0 +1,8 @@
+# `util.deprecate(...bad);` in a loop of untyped code: a guess stands at the call (a method off an object of which only a guess is held) and nobody reads what the call gives: the call has no name behind its walk.
+# Whoever parts ways around such a call lets them meet with nothing in their hands. A form that handed the call's name on stopped the build: "a jump hands on what has no type".
+# -- source: main.js
+# const util = require("node:util"); for (const bad of [[() => {}, "m"], [() => {}, "n"]]) { util.deprecate(...bad); print("ok"); }
+# -- end of source
+# RUN(BUILDS): compile DirectCalls mechanisms=all
+# BUILDS-NOT: a jump hands on what has no type
+# BUILDS: statistic DirectCalls

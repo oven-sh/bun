@@ -9,7 +9,9 @@
 //! Which task gets anywhere first depends on timing. These rules keep the report a function of the program:
 //!
 //! - **One commit at a time.** Commits store under one mutex and are numbered from 1 in that order. The first entry for
-//!   a key wins.
+//!   a key wins. A thread that sleeps under the mutex, in front of another lock or in a page fault, keeps every other
+//!   commit waiting. So a commit first does all that needs no order (`Commits::prepare`), and takes no lock under the
+//!   mutex that it has no use for.
 //! - **A task that finds an entry also finds everything stored before it.** It doesn't evaluate the entry, so it misses
 //!   whatever that evaluation stored along the way unless it can find that too. A commit first stores the entries keyed
 //!   by a record, in log order, each with a release store, so an entry becomes visible after everything that was stored
@@ -82,15 +84,17 @@
 //! - Variances don't wait for a commit either. See `Claims`.
 
 use super::task::{Task, tables_of, tables_written_immediately};
-use super::{Checker, Program, Spare};
+use super::{Checker, Program, Query, Spare};
 use crate::local::{Log, node_word};
-use crate::program::{FileId, Sym};
+use crate::program::{FileId, Files, ReadingNoTrees, Sym};
 use crate::session::Arena;
-use crate::table::Publish;
-use crate::util::{FxHashMap, SharedSort};
+use crate::table::{Prepared, Publish};
+use crate::util::{FxBuild, FxHashMap, SharedSort};
 use bun_threading::{Condvar, Guarded};
 use std::cell::{Cell, RefCell};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::hash::{BuildHasher, Hash};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// A field of `Program`.
 pub(super) struct Commits<'s> {
@@ -105,8 +109,35 @@ pub(super) struct Commits<'s> {
     /// One bit per file. Set once a task that was checking another file has found an error while evaluating something
     /// about this file, and has committed. See `View::hides`.
     with_errors: &'s [AtomicU32],
+    /// One bit per file. Set until the file's type errors have been collected. See `Checker::needs_argument_check`.
+    pending_checks: &'s [AtomicU32],
     /// `tables_written_immediately`
     immediate_tables: u128,
+    /// `Program::commit_totals`
+    totals: [AtomicU64; 10],
+    /// `Program::count_entries_found`
+    counts_entries_found: AtomicBool,
+}
+
+/// A commit that has waited for the mutex for longer than this has slept. `Mutex::lock` spins for a few microseconds.
+const LONGEST_WAIT_AWAKE: Duration = Duration::from_micros(50);
+
+/// A commit that has held the mutex for longer than this counts as a long hold in `Program::commit_totals`.
+const LONGEST_SHORT_HOLD: Duration = Duration::from_millis(1);
+
+/// What `Commits::prepare` has made of a task's `Log`.
+pub(super) struct PreparedLog {
+    /// The entries keyed by a record, in log order, and then those keyed by a node or a symbol.
+    entries: Vec<Prepared>,
+    /// How many of `entries` are keyed by a record.
+    records: usize,
+}
+
+#[cfg(test)]
+impl PreparedLog {
+    pub(super) fn len(&self) -> usize {
+        self.entries.len()
+    }
 }
 
 /// Allocated in an arena so that tasks can refer to it.
@@ -126,11 +157,83 @@ struct Numbers {
 pub(super) struct CycleCommit {
     number: u32,
     /// The keys from `Task::take_logged_at_cycles`, sorted. They cover the queries in the cycles and whatever else was
-    /// stored in the same statements. A record key is its table's slot and `Publish::identity_of_logged`.
-    record_keys: Vec<(u32, u64)>,
-    node_keys: Vec<[u32; 3]>,
+    /// stored while those queries were on the stack. A record key is its table's slot and `Publish::identity_of_logged`.
+    record_keys: SortedKeys<(u32, u64)>,
+    node_keys: SortedKeys<[u32; 3]>,
+    /// The files of `node_keys`, sorted.
+    files: Vec<u32>,
     /// Hashes of the queries in the cycles this commit resolves, sorted. See `Task::take_cycle_members`.
     members: Vec<u64>,
+}
+
+/// Nearly every lookup misses, because every task looks up what it has logged in every `CycleCommit`.
+struct SortedKeys<K> {
+    sorted: Vec<K>,
+    filter: KeyFilter,
+}
+
+impl<K: Copy + Ord + Hash> SortedKeys<K> {
+    fn new(mut keys: Vec<K>) -> SortedKeys<K> {
+        keys.shared_sort_unstable();
+        let filter = KeyFilter::new(keys.len(), keys.iter().map(KeyFilter::hash));
+        SortedKeys {
+            sorted: keys,
+            filter,
+        }
+    }
+
+    /// True if one of `keys` is in the list. Each comes with its `KeyFilter::hash`.
+    fn contain_any(&self, keys: &[(u64, K)]) -> bool {
+        (keys.iter()).any(|(hash, key)| {
+            self.filter.may_hold(*hash) && self.sorted.binary_search(key).is_ok()
+        })
+    }
+}
+
+fn with_hashes<K: Hash>(keys: Vec<K>) -> Vec<(u64, K)> {
+    let with_hash = |key| (KeyFilter::hash(&key), key);
+    keys.into_iter().map(with_hash).collect()
+}
+
+/// A Bloom filter with two bits for each key, both in one word.
+struct KeyFilter {
+    /// A power of two of them.
+    words: Box<[u64]>,
+}
+
+impl KeyFilter {
+    const KEYS_PER_WORD: usize = 4;
+
+    fn hash<K: Hash>(key: &K) -> u64 {
+        FxBuild.hash_one(key)
+    }
+
+    fn new(count: usize, hashes: impl Iterator<Item = u64>) -> KeyFilter {
+        let words = count.div_ceil(Self::KEYS_PER_WORD).next_power_of_two();
+        let mut filter = KeyFilter {
+            words: vec![0; words].into_boxed_slice(),
+        };
+        for hash in hashes {
+            filter.words[filter.word_of(hash)] |= Self::bits(hash);
+        }
+        filter
+    }
+
+    #[inline]
+    fn word_of(&self, hash: u64) -> usize {
+        (hash >> 12) as usize & (self.words.len() - 1)
+    }
+
+    #[inline]
+    fn bits(hash: u64) -> u64 {
+        1 << (hash & 63) | 1 << (hash >> 6 & 63)
+    }
+
+    #[inline]
+    fn may_hold(&self, hash: u64) -> bool {
+        let bits = Self::bits(hash);
+        self.words[self.word_of(hash)] & bits == bits
+    }
 }
 
 impl Drop for Commits<'_> {
@@ -156,7 +259,46 @@ impl<'s> Commits<'s> {
             cycle_commits: Guarded::default(),
             ranks_of_files: &[],
             with_errors: &[],
+            pending_checks: &[],
             immediate_tables: tables_written_immediately(),
+            totals: Default::default(),
+            counts_entries_found: AtomicBool::new(false),
+        }
+    }
+
+    /// Call once the commit has let go of the mutex. `stored` is what `store` returned.
+    fn note_commit(&self, stored: [u64; 2], waited: Duration, held: Duration) {
+        if waited > LONGEST_WAIT_AWAKE {
+            self.totals[6].fetch_add(1, Ordering::Relaxed);
+        }
+        if held > LONGEST_SHORT_HOLD {
+            let more = [1, held.as_nanos() as u64, stored[0] + stored[1]];
+            for (total, more) in self.totals[7..].iter().zip(more) {
+                total.fetch_add(more, Ordering::Relaxed);
+            }
+        }
+        let (waited, held) = (waited.as_nanos() as u64, held.as_nanos() as u64);
+        let more = [1, stored[0] + stored[1], held, waited, stored[1]];
+        for (total, more) in self.totals.iter().zip(more) {
+            total.fetch_add(more, Ordering::Relaxed);
+        }
+    }
+
+    /// `Program::commit_totals`
+    pub(super) fn totals(&self) -> [u64; 10] {
+        (self.totals.each_ref()).map(|total| total.load(Ordering::Relaxed))
+    }
+
+    /// `Program::count_entries_found`
+    pub(super) fn count_entries_found(&self, counts: bool) {
+        self.counts_entries_found.store(counts, Ordering::Relaxed);
+    }
+
+    /// Adds what `view`'s task has counted since the last call. See `Program::count_entries_found`.
+    pub(super) fn note_entries_found(&self, view: &View) {
+        let found = view.found.take();
+        if found != 0 {
+            self.totals[5].fetch_add(found, Ordering::Relaxed);
         }
     }
 
@@ -169,8 +311,10 @@ impl<'s> Commits<'s> {
 
     /// `ranks` is `Files::rank_of_file`, indexed by file. Without this call, no task hides anything. See `View::hides`.
     pub(super) fn for_files(mut self, ranks: &'s [u32], arena: &'s Arena) -> Commits<'s> {
-        let words = (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
-        (self.ranks_of_files, self.with_errors) = (ranks, arena.alloc_slice_fill_iter(words));
+        let words = || (0..ranks.len().div_ceil(32)).map(|_| AtomicU32::new(0));
+        self.ranks_of_files = ranks;
+        self.with_errors = arena.alloc_slice_fill_iter(words());
+        self.pending_checks = arena.alloc_slice_fill_iter(words());
         self
     }
 
@@ -193,20 +337,47 @@ impl<'s> Commits<'s> {
             compared_with_pinned: Cell::new(0),
             own: RefCell::default(),
             times_unsettled: Cell::new(0),
+            counts_found: self.counts_entries_found.load(Ordering::Relaxed),
+            found: Cell::new(0),
         }
     }
 
-    /// Stores the entries of `task`'s commit `number`, in the order described at the top of this file. The caller holds
-    /// the mutex. `tables` is indexed by slot, and `log` is the task's. Returns how many entries it stored.
+    /// Does what a commit of `task` can do before it takes the mutex, so that it holds the mutex only for the stores. See
+    /// `Publish::prepare_logged`. `tables` is indexed by slot, and `log` is the task's.
+    pub(super) fn prepare(tables: &[&dyn Publish<'s>], task: &Task<'s>, log: &Log) -> PreparedLog {
+        let prepare = |slot: u32, key: u64| {
+            let table = tables.get(slot as usize)?;
+            table.prepare_logged(task, slot, key)
+        };
+        let mut entries = task.buffer().take_spare_prepared();
+        if entries.capacity() < log.len() {
+            entries = Vec::with_capacity(log.len());
+        }
+        for &[slot, key] in &log.record_keys {
+            if let Some(entry) = prepare(slot, u64::from(key)) {
+                entries.push(entry);
+            }
+        }
+        let records = entries.len();
+        for &[slot, file, index] in &log.node_keys {
+            if let Some(entry) = prepare(slot, node_word(file, index)) {
+                entries.push(entry);
+            }
+        }
+        PreparedLog { entries, records }
+    }
+
+    /// Stores the entries of commit `number`, in the order described at the top of this file. The caller holds the mutex.
+    /// `tables` is indexed by slot. Returns how many entries it stored under records, and how many under nodes and
+    /// symbols.
     pub(super) fn store(
         &self,
         tables: &[&dyn Publish<'s>],
-        task: &Task<'s>,
-        log: &mut Log,
+        prepared: &PreparedLog,
         number: u32,
         ring: Option<CycleCommit>,
-    ) -> u64 {
-        let mut stored = 0;
+    ) -> [u64; 2] {
+        let mut stored = [0; 2];
         self.numbers.begun.store(number, Ordering::Release);
         // This comes before the first entry, so a task that finds an entry also sees this.
         if let Some(ring) = ring {
@@ -215,14 +386,12 @@ impl<'s> Commits<'s> {
                 .push(CycleCommit { number, ..ring });
             self.numbers.with_a_cycle.store(number, Ordering::Release);
         }
-        for &[slot, key] in &log.record_keys {
-            if let Some(table) = tables.get(slot as usize) {
-                stored += u64::from(table.store_logged(task, u64::from(key), number));
-            }
-        }
-        for &[slot, file, index] in &log.node_keys {
-            if let Some(table) = tables.get(slot as usize) {
-                stored += u64::from(table.store_logged(task, node_word(file, index), number));
+        let (under_records, under_nodes) = prepared.entries.split_at(prepared.records);
+        for (entries, stored) in [under_records, under_nodes].into_iter().zip(&mut stored) {
+            for &entry in entries {
+                if let Some(table) = tables.get(entry.slot as usize) {
+                    *stored += u64::from(table.store_prepared(entry, number));
+                }
             }
         }
         self.numbers.stored.store(number, Ordering::Release);
@@ -277,6 +446,10 @@ pub(crate) struct View<'s> {
     own: RefCell<Vec<u32>>,
     /// How many times `state` has caught a commit in the middle of storing.
     times_unsettled: Cell<u32>,
+    /// `Program::count_entries_found`
+    counts_found: bool,
+    /// How many entries the task has been the first to find since `Commits::note_entries_found`.
+    found: Cell<u64>,
 }
 
 impl View<'_> {
@@ -290,6 +463,16 @@ impl View<'_> {
         }
     }
 
+    /// `snapshot_of`, or `None` if the task may ignore some of the commits that it sees in `file` (`hides`).
+    #[inline]
+    pub(super) fn snapshot_without_hidden_commits(&self, file: FileId) -> Option<u32> {
+        match self.may_hide_commits(file) {
+            true => None,
+            false => Some(self.snapshot_of(file)),
+        }
+    }
+
+    #[cold]
     #[inline(never)]
     fn touch(&self, file: FileId) -> u32 {
         let stored = self.numbers.stored.load(Ordering::Acquire);
@@ -306,14 +489,22 @@ impl View<'_> {
         self.last_idle_commit
             .set(self.numbers.stored.load(Ordering::Acquire));
         let pinned = self.pinned.get();
-        self.touched.borrow_mut().retain(|&file| {
-            if file != pinned
-                && let Some(file_snapshot) = self.file_snapshots.get(file as usize)
-            {
+        let mut touched = self.touched.borrow_mut();
+        if touched[..] == [pinned] {
+            return;
+        }
+        let mut is_pinned_touched = false;
+        for &file in touched.iter() {
+            if file == pinned {
+                is_pinned_touched = true;
+            } else if let Some(file_snapshot) = self.file_snapshots.get(file as usize) {
                 file_snapshot.set(0);
             }
-            file == pinned
-        });
+        }
+        touched.clear();
+        if is_pinned_touched {
+            touched.push(pinned);
+        }
     }
 
     /// True if the task is visiting `file`, so what it sees there stays the same until it visits another file.
@@ -342,9 +533,13 @@ impl View<'_> {
     /// without errors lose nothing.
     #[inline]
     pub(crate) fn hides(&self, file: FileId, commit: u32) -> bool {
+        self.may_hide_commits(file) && self.hides_a_later_commit(file, commit)
+    }
+
+    #[inline]
+    fn may_hide_commits(&self, file: FileId) -> bool {
         let word = self.with_errors.get(file.idx() / 32);
         word.is_some_and(|it| it.load(Ordering::Relaxed) >> (file.0 % 32) & 1 != 0)
-            && self.hides_a_later_commit(file, commit)
     }
 
     #[cold]
@@ -370,8 +565,19 @@ impl View<'_> {
         self.numbers.with_a_cycle.load(Ordering::Acquire) > self.last_idle_commit.get()
     }
 
-    fn is_own(&self, commit: u32) -> bool {
+    pub(crate) fn is_own(&self, commit: u32) -> bool {
         self.own.borrow().binary_search(&commit).is_ok()
+    }
+
+    /// See `Program::count_entries_found`.
+    #[inline]
+    pub(crate) fn counts_found(&self) -> bool {
+        self.counts_found
+    }
+
+    /// The task has found an entry that another task's commit stored and that no task had found before.
+    pub(crate) fn note_found(&self) {
+        self.found.set(self.found.get() + 1);
     }
 
     /// Call after the task's commit `number`.
@@ -451,6 +657,21 @@ pub(super) enum NotShared {
 }
 
 impl<'s> Program<'s> {
+    /// So far: commits, the entries that they stored, the nanoseconds that all tasks together held the mutex of
+    /// `Checker::commit` and waited for it, how many of the entries are under nodes and symbols, and how many of those a
+    /// task other than the one that stored them has found (`count_entries_found`), how many of the commits slept
+    /// in front of the mutex, and of the commits that held it for longer than a millisecond their number, their
+    /// nanoseconds and the entries that they stored.
+    pub fn commit_totals(&self) -> [u64; 10] {
+        self.commits.totals()
+    }
+
+    /// For a log. The tasks that begin from now on mark each entry under a node or a symbol that they find and another
+    /// task's commit stored, and count the marks they are the first to set. A mark changes no lookup.
+    pub fn count_entries_found(&self, counts: bool) {
+        self.commits.count_entries_found(counts);
+    }
+
     /// See `Claims`. The caller is about to start an outermost measurement of `sym`'s variances. It isn't measuring
     /// yet, so it has no claim. `may_claim` is true if its result has a chance of being shared.
     pub(super) fn claim_variances(&self, sym: Sym, may_claim: bool) -> VarianceClaim<'s> {
@@ -525,6 +746,25 @@ impl<'s> Program<'s> {
         not_registered
     }
 
+    /// A task is going to check `file` and report its type errors. Call before any task begins.
+    pub fn set_check_pending(&self, file: FileId) {
+        if let Some(word) = self.commits.pending_checks.get(file.idx() / 32) {
+            word.fetch_or(1 << (file.0 % 32), Ordering::Relaxed);
+        }
+    }
+
+    /// `file` is checked for good.
+    fn clear_check_pending(&self, file: FileId) {
+        if let Some(word) = self.commits.pending_checks.get(file.idx() / 32) {
+            word.fetch_and(!(1 << (file.0 % 32)), Ordering::Release);
+        }
+    }
+
+    pub(super) fn is_check_pending(&self, file: FileId) -> bool {
+        let word = self.commits.pending_checks.get(file.idx() / 32);
+        word.is_some_and(|it| it.load(Ordering::Acquire) >> (file.0 % 32) & 1 != 0)
+    }
+
     /// Returns the number of the last commit that has finished storing.
     pub fn last_commit(&self) -> u32 {
         self.commits.numbers.stored.load(Ordering::Acquire)
@@ -533,6 +773,11 @@ impl<'s> Program<'s> {
     /// True if a commit numbered `after + 1..=last` resolved a cycle that contains one of `members`. See
     /// `Checker::take_unresolved_cycle`.
     pub fn is_cycle_resolved(&self, members: &[u64], after: u32, last: u32) -> bool {
+        // A commit up to `last` has stored everything, so it has announced itself here if it resolved a cycle.
+        let newest = self.commits.numbers.with_a_cycle.load(Ordering::Acquire);
+        if members.is_empty() || newest <= after {
+            return false;
+        }
         let cycle_commits = self.commits.cycle_commits.lock();
         let from = cycle_commits.partition_point(|ring| ring.number <= after);
         let mut since = cycle_commits[from..]
@@ -548,6 +793,9 @@ impl<'s> Program<'s> {
     /// They're compared with every earlier commit. A task only notes variances it computed itself, which it only does
     /// if it found none. They stay noted, because the task keeps using them.
     fn is_invalid(&self, task: &Task<'s>) -> bool {
+        if task.order_dependent_variances.is_empty() {
+            return false;
+        }
         let serial = self.serial_variances.lock();
         let mut noted = task.order_dependent_variances.iter();
         noted.any(|it| {
@@ -559,6 +807,9 @@ impl<'s> Program<'s> {
 
     /// Call once `task`'s commit is known to be valid. Later commits are compared with what the task noted.
     fn register_notes(&self, task: &Task<'s>) {
+        if task.order_dependent_variances.is_empty() {
+            return;
+        }
         let mut serial = self.serial_variances.lock();
         for it in &task.order_dependent_variances {
             serial.entry(it.sym).or_insert(it.variances);
@@ -613,8 +864,8 @@ impl<'s> Checker<'_, 's> {
     /// error.
     fn is_commit_due(&self) -> bool {
         self.task.commits()
-            && !self.task.is_trusted()
             && self.task.buffer().logged() >= KEYS_PER_COMMIT
+            && !self.task.is_trusted()
     }
 
     /// Call when nothing in progress has looked at a table or is about to store in one.
@@ -636,6 +887,7 @@ impl<'s> Checker<'_, 's> {
     /// - The task has stored, since it was last idle, under a key that the commit has. A task that misses a member
     ///   evaluates it and stores it. See `Task::overlaps_a_cycle_commit`.
     /// - The commit has a key in the file the task is visiting, which doesn't change during the visit.
+    #[inline]
     fn discard_if_missed_cycle_member(&self) {
         let Some(view) = self.task.view() else {
             return;
@@ -646,10 +898,22 @@ impl<'s> Checker<'_, 's> {
         if newest <= last_idle_commit.min(compared) {
             return;
         }
+        self.discard_if_missed_member_of_cycles_up_to(view, newest);
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn discard_if_missed_member_of_cycles_up_to(&self, view: &View<'s>, newest: u32) {
+        let (last_idle_commit, compared) =
+            (view.last_idle_commit.get(), view.compared_with_pinned.get());
         // Copied because `identities_of` borrows the task's buffer again.
         let (record_keys, node_keys) = self.task.logged_since_idle();
         let (record_keys, node_keys) = (record_keys.to_vec(), node_keys.to_vec());
-        let record_keys = identities_of(&tables_of(self.p), &self.task, &record_keys);
+        let record_keys = match record_keys.is_empty() {
+            true => Vec::new(),
+            false => identities_of(&tables_of(self.p), &self.task, &record_keys),
+        };
+        let (record_keys, node_keys) = (with_hashes(record_keys), with_hashes(node_keys));
         let cycle_commits = self.p.commits.cycle_commits.lock();
         let from =
             cycle_commits.partition_point(|ring| ring.number <= last_idle_commit.min(compared));
@@ -659,15 +923,11 @@ impl<'s> Checker<'_, 's> {
         };
         let has_missed = cycle_commits[from..].iter().any(|ring| {
             ring.number > compared
-                && ring.node_keys.iter().any(|key| key[1] == view.pinned.get())
+                && ring.files.binary_search(&view.pinned.get()).is_ok()
                 && !is_of_later_file(ring.number)
                 || ring.number > last_idle_commit
-                    && (record_keys
-                        .iter()
-                        .any(|key| ring.record_keys.binary_search(key).is_ok())
-                        || node_keys
-                            .iter()
-                            .any(|key| ring.node_keys.binary_search(key).is_ok()))
+                    && (ring.record_keys.contain_any(&record_keys)
+                        || ring.node_keys.contain_any(&node_keys))
         });
         view.compared_with_pinned.set(compared.max(newest));
         if has_missed && !self.task.was_discarded() {
@@ -692,6 +952,17 @@ impl<'s> Checker<'_, 's> {
         self.task.closed_cycle_count()
     }
 
+    /// How many queries the task has listed as members of those cycles.
+    #[cfg(any(test, feature = "test_support"))]
+    pub fn cycle_members_added(&self) -> u64 {
+        self.task.cycle_members_added()
+    }
+
+    /// A commit with a cycle discards the task if it lists one of the keys that the task has logged since it was idle.
+    pub fn most_logged_between_idle_moments(&self) -> usize {
+        self.task.most_logged_between_idle_moments()
+    }
+
     /// True if the task was discarded because of a cycle or an invalid commit, not a limit. Its files can be rechecked
     /// before the last round.
     pub fn can_recheck_early(&self) -> bool {
@@ -701,6 +972,144 @@ impl<'s> Checker<'_, 's> {
     /// Returns hashes of the queries in the cycle that got this task discarded. Empty if that cycle is already committed.
     pub fn take_unresolved_cycle(&self) -> Vec<u64> {
         self.task.take_cycle_members()
+    }
+
+    /// Computes, each from nothing, an instantiation halfway up each chain that was refused for its depth since the last call, so
+    /// that the chain ends there when it is asked for again. A chain is let go after the 1,000 steps that tsgo allows a recursion
+    /// that costs no depth (`too_many_tail_calls`), a file after the 5,000,000 instantiations that it allows a statement.
+    pub fn compute_refused_instantiations(&mut self) -> RefusedInstantiations {
+        let refused = std::mem::take(&mut self.refused_instantiations);
+        if refused.is_empty() {
+            return RefusedInstantiations::None;
+        }
+        let mut is_listed = crate::util::FxHashSet::default();
+        let mut chains: Vec<Vec<_>> = refused
+            .into_iter()
+            .filter(|it| !self.refused_instantiations_tried.contains(it) && is_listed.insert(*it))
+            .map(|it| vec![it])
+            .collect();
+        // An entry stands 50 instantiations below the one before it, and a step costs two: the alias and its branch.
+        const MOST_ENTRIES_OF_A_CHAIN: usize = 1000 * 2 / (100 / 2);
+        let mut has_computed = false;
+        while !chains.is_empty() && self.instantiations_spent_on_refused < 5_000_000 {
+            for pending in &mut chains {
+                let Some(&(ty, mapper)) = pending.last() else {
+                    continue;
+                };
+                self.instantiations_up_to_a_limit.clear();
+                let hits = self.instantiation_limit_hits;
+                self.instantiate(ty, mapper);
+                self.instantiations_spent_on_refused += u64::from(self.instantiation_count);
+                let deeper = std::mem::take(&mut self.refused_instantiations);
+                let is_computed = self.instantiation_limit_hits == hits;
+                let listed = pending.len();
+                if !is_computed {
+                    pending.extend(deeper.into_iter().filter(|it| {
+                        !self.refused_instantiations_tried.contains(it) && is_listed.insert(*it)
+                    }));
+                }
+                if pending.len() == listed {
+                    pending.pop();
+                    self.refused_instantiations_tried.insert((ty, mapper));
+                    has_computed |= is_computed;
+                } else if pending.len() > MOST_ENTRIES_OF_A_CHAIN {
+                    self.refused_instantiations_tried.extend(pending.drain(..));
+                }
+            }
+            chains.retain(|pending| !pending.is_empty());
+        }
+        self.refused_instantiations_tried
+            .extend(chains.into_iter().flatten());
+        self.instantiations_up_to_a_limit.clear();
+        match has_computed {
+            true => RefusedInstantiations::Computed,
+            false => RefusedInstantiations::StillRefused,
+        }
+    }
+
+    /// While it is set, a chain that is refused for its depth reports nothing and nothing in progress is stored.
+    pub fn leave_depth_limit_unreported(&mut self, leaves: bool) {
+        self.leaves_depth_limit_unreported = leaves;
+        self.refused_instantiations.clear();
+        debug_assert!(self.instantiation_chain.is_empty());
+    }
+
+    /// Call before the first visit of a file.
+    pub fn allow_refused_instantiations_of_next_file(&mut self) {
+        self.instantiations_spent_on_refused = 0;
+    }
+
+    pub fn leaves_depth_limit_unreported(&self) -> bool {
+        self.leaves_depth_limit_unreported
+    }
+
+    pub fn record_cycles_entered(&mut self, records: bool) {
+        self.records_cycles_entered.set(records);
+        self.cycles_entered.get_mut().clear();
+    }
+
+    pub fn take_cycles_entered(&mut self) -> CyclesEntered {
+        CyclesEntered(std::mem::take(self.cycles_entered.get_mut()))
+    }
+
+    pub fn enter_cycles_again(&mut self, cycles: &CyclesEntered) {
+        debug_assert!(self.stack.is_empty());
+        for &entry in &cycles.0 {
+            let has_tree = |file: FileId| {
+                let module = self.files().module(file);
+                !module.is_leaf || module.bound.symbols.len() > 0 || !module.hir.stmts.is_empty()
+            };
+            if !entry.file_that_names_it().is_some_and(has_tree) {
+                continue;
+            }
+            match entry {
+                Query::Expr(file, e) | Query::ExprInFlowLoop(file, e) => {
+                    self.type_of_expr(file, e);
+                }
+                Query::Call(file, call) => {
+                    self.resolved_signature(file, call);
+                }
+                Query::Symbol(sym) => {
+                    self.type_of_symbol(sym);
+                }
+                Query::Declared(sym) => {
+                    self.declared_type(sym);
+                }
+                Query::Return(file, func) | Query::ReturnAtFirstLook(file, func) => {
+                    self.return_type_of_fn(file, func);
+                }
+                Query::Pat(file, pat) | Query::ParameterSymbol(file, pat) => {
+                    self.type_of_pat(file, pat);
+                }
+                Query::LiteralProp(file, prop) => {
+                    self.type_of_literal_prop(file, prop);
+                }
+                Query::TypeNode(file, node) | Query::WriteType(file, node) => {
+                    self.type_from_node(file, node);
+                }
+                Query::Enum(file, member) => {
+                    self.enum_member_value(file, member);
+                }
+                Query::Bases(sym) => {
+                    self.base_types(sym);
+                }
+                Query::BaseConstructor(class) => {
+                    self.base_constructor_type_of_class(class);
+                }
+                Query::AliasTarget(_)
+                | Query::InitializerIsUndefined(..)
+                | Query::ReturnOfSignature(_)
+                | Query::Shape(_)
+                | Query::Properties(_)
+                | Query::Constraint(_)
+                | Query::InferredConstraint(_)
+                | Query::MappedProp(..)
+                | Query::Cond(..)
+                | Query::TypeArguments(_)
+                | Query::Comparison(_) => {}
+            }
+            self.take_ran_out_of_stack();
+        }
     }
 
     /// Call before `check_file`. See `Task::set_first_in_order`.
@@ -716,10 +1125,12 @@ impl<'s> Checker<'_, 's> {
     pub fn commit_after_file(&mut self, is_last: bool) -> bool {
         self.discard_if_missed_cycle_member();
         // The last round's task commits once, when it ends. See `is_commit_due`. It's never discarded.
-        if self.task.is_trusted() && !is_last && !self.task.was_discarded() {
-            return true;
+        let commits_later = self.task.is_trusted() && !is_last && !self.task.was_discarded();
+        let is_kept = commits_later || self.commit(true);
+        if is_kept && let Some(file) = self.task.file {
+            self.p.clear_check_pending(file);
         }
-        self.commit(true)
+        is_kept
     }
 
     /// See the top of this file. Nothing may be in progress in the task.
@@ -727,6 +1138,9 @@ impl<'s> Checker<'_, 's> {
     /// Returns true if the task continues, that is, if it isn't discarded.
     fn commit(&mut self, is_between_files: bool) -> bool {
         let p = self.p;
+        if let Some(view) = self.task.view() {
+            p.commits.note_entries_found(view);
+        }
         let Some([immediate_diagnostics, mut reported]) =
             self.take_diagnostics_for_commit(is_between_files)
         else {
@@ -735,7 +1149,9 @@ impl<'s> Checker<'_, 's> {
             }
             return !self.task.was_discarded();
         };
-        p.publish_reported(self.task.number(), immediate_diagnostics);
+        if !immediate_diagnostics.is_empty() {
+            p.publish_reported(self.task.number(), immediate_diagnostics);
+        }
         if self.task.was_discarded() {
             return false;
         }
@@ -746,29 +1162,37 @@ impl<'s> Checker<'_, 's> {
             .unwrap_or(0);
         let at_cycles = self.task.take_logged_at_cycles();
         let mut log = self.task.buffer().take_log();
+        let tables = tables_of(p);
         let ring = (!at_cycles.is_empty()).then(|| {
             let (mut record_keys, mut node_keys) = (Vec::new(), Vec::new());
-            let tables = tables_of(p);
             for [from, to] in &at_cycles {
                 let logged = log.record_keys.get(from[0]..to[0]).unwrap_or(&[]);
                 record_keys.extend(identities_of(&tables, &self.task, logged));
                 node_keys.extend_from_slice(log.node_keys.get(from[1]..to[1]).unwrap_or(&[]));
             }
-            record_keys.shared_sort_unstable();
-            node_keys.shared_sort_unstable();
+            let mut files: Vec<u32> = node_keys.iter().map(|key| key[1]).collect();
+            files.shared_sort_unstable();
+            files.dedup();
             CycleCommit {
                 number: 0,
-                record_keys,
-                node_keys,
+                record_keys: SortedKeys::new(record_keys),
+                node_keys: SortedKeys::new(node_keys),
+                files,
                 members: self.task.take_cycle_members(),
             }
         });
         self.withhold_until_the_file_ends(&mut log, is_between_files);
+        let prepared = Commits::prepare(&tables, &self.task, &log);
+        let asked = Instant::now();
         let mut committing = p.commits.committing.lock();
+        let entered = Instant::now();
+        let waited = entered.duration_since(asked);
         let is_invalid =
             !self.task.is_trusted() && self.task.view().is_some() && p.is_invalid(&self.task);
         if is_invalid {
+            let held = entered.elapsed();
             drop(committing);
+            p.commits.note_commit([0; 2], waited, held);
             (self.task).discard_until_recheck();
             return false;
         }
@@ -783,17 +1207,23 @@ impl<'s> Checker<'_, 's> {
         p.commits.numbers.ranks.lock().push(rank);
         p.register_notes(&self.task);
         let task = &self.task;
-        p.drop_diagnostics_of_losers(&mut reported, |commit| {
-            task.view().is_some_and(|view| view.is_own(commit))
-        });
-        p.publish_reported(task.number(), reported);
-        (p.commits).store(&tables_of(p), task, &mut log, number, ring);
+        // Which of two tasks reports under a query is decided by the order of their commits.
+        if !reported.is_empty() {
+            p.drop_diagnostics_of_losers(&mut reported, |commit| {
+                task.view().is_some_and(|view| view.is_own(commit))
+            });
+            p.publish_reported(task.number(), reported);
+        }
+        let stored = (p.commits).store(&tables, &prepared, number, ring);
+        let held = entered.elapsed();
         drop(committing);
+        p.commits.note_commit(stored, waited, held);
         if let Some(view) = task.view() {
             view.has_committed(number);
         }
         task.resume_writing_immediately();
         task.buffer().recycle_log(log);
+        task.buffer().recycle_prepared(prepared.entries);
         true
     }
 
@@ -809,8 +1239,12 @@ impl<'s> Checker<'_, 's> {
             return;
         }
         let uncommitted = &self.task.uncommitted_files;
+        let (mut last_file, mut is_uncommitted) = (NO_FILE, false);
         log.node_keys.retain(|&entry| {
-            let is_uncommitted = uncommitted.contains(&FileId(entry[1]));
+            if entry[1] != last_file {
+                last_file = entry[1];
+                is_uncommitted = uncommitted.contains(&FileId(last_file));
+            }
             if is_uncommitted {
                 withheld.push(entry);
             }
@@ -820,6 +1254,7 @@ impl<'s> Checker<'_, 's> {
 
     /// Ends a task that `see_commits` was called for, after its last `commit_after_file`, on its own thread.
     pub fn end_task_after_commits(&mut self) {
+        self.aot_answers.outlives_task = !self.task.was_discarded() && self.task.own.is_empty();
         self.task.end(self.p)
     }
 }
@@ -845,7 +1280,70 @@ impl<'p, 's> Checker<'p, 's> {
         spare.signature_links.clear();
         spare.widened_types.clear();
         spare.apparent_types_of_intersections.clear();
-        spare.aot_answers.clear();
+        spare.aot_answers.end_task();
         spare
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct CyclesEntered(Vec<Query>);
+
+impl CyclesEntered {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn append(&mut self, mut later: CyclesEntered) {
+        self.0.append(&mut later.0);
+    }
+
+    pub fn retain_within_reach_of(&mut self, files: &Files<'_>, visited: &[FileId]) {
+        let _reading = ReadingNoTrees::begin();
+        let is_reached = files.reached_from(visited.to_vec());
+        self.0.retain(|entry| {
+            let file = entry.file_that_names_it();
+            file.is_some_and(|file| is_reached[file.idx()] || !files.module(file).is_closed)
+        });
+    }
+}
+
+/// `Checker::compute_refused_instantiations`
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum RefusedInstantiations {
+    None,
+    Computed,
+    StillRefused,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KeyFilter, SortedKeys, with_hashes};
+
+    #[test]
+    fn sorted_keys_find_members() {
+        let held: Vec<(u32, u64)> = (0..1000).map(|at| (at % 7, u64::from(at) * 3)).collect();
+        let keys = SortedKeys::new(held.clone());
+        for key in with_hashes(held) {
+            assert!(keys.contain_any(&[key]));
+        }
+        let absent: Vec<(u32, u64)> = (0..1000)
+            .map(|at| (at % 7, u64::from(at) * 3 + 1))
+            .collect();
+        assert!(!keys.contain_any(&with_hashes(absent)));
+        let none: SortedKeys<[u32; 3]> = SortedKeys::new(Vec::new());
+        assert!(!none.contain_any(&with_hashes(vec![[0, 1, 2]])));
+    }
+
+    #[test]
+    fn filter_rejects_absent_keys() {
+        let hashes = |from: u32| (from..from + 4096).map(|at| KeyFilter::hash(&[at % 9, at, 1]));
+        let filter = KeyFilter::new(4096, hashes(0));
+        assert!(hashes(0).all(|hash| filter.may_hold(hash)));
+        let accepted = hashes(100_000).filter(|&hash| filter.may_hold(hash));
+        assert!(accepted.count() < 4096 / 16);
     }
 }

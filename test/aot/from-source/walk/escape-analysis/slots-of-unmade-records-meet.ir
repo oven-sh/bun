@@ -1,0 +1,16 @@
+# f1 = Pair, f2 = sum, f3 = pairs
+# -- source: main.ts
+# class Pair { a: number; b: number; constructor(n: number) { if (n & 1) { this.a = n; this.b = 1; } else { this.a = 2; this.b = n; } } }
+# function sum(n: number): number { let s = 0; for (let i = 0; i < n; i++) { const o = { x: i, y: 2 }; if (i & 1) o.x = 5; else o.y = 7; s += o.x * 10 + o.y; } return s; }
+# function pairs(n: number): number { let s = 0; for (let i = 0; i < n; i++) { const p = new Pair(i); s += p.a * 10 + p.b; } return s; }
+# print(sum(5), pairs(5));
+# -- end of source
+# A slot of a record that is unmade on every way comes to the join in a parameter, so the record stays unmade.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: = NewObject
+# RUN(PAIRS): walk f3 mechanisms=all
+# PAIRS-LABEL: code f3:Body
+# PAIRS-NOT: = NewObject
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 185 108

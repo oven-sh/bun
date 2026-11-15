@@ -1,9 +1,7 @@
 use super::assert_graph;
 use super::graphs::{emit_read_marker, enter_loop, increment_variable, write_integer};
 use crate::ir::builder::{Edge, FunctionBuilder, Handler};
-use crate::ir::generated::{
-    BlockFrequency, BlockRole, IteratorCompletion, IteratorKind, Opcode, ResumeMode,
-};
+use crate::ir::generated::{BlockRole, IteratorCompletion, IteratorKind, Opcode, ResumeMode};
 use crate::ir::ids::{TypeId, ValueId};
 use crate::ir::testing::{build_function, create_catch_handler, enter_block};
 use crate::ir::types::TypeTable;
@@ -18,7 +16,6 @@ pub(super) fn emit_call(builder: &mut FunctionBuilder, callee: ValueId) -> Value
         None,
         None,
         None,
-        false,
         false,
         false,
     )
@@ -185,14 +182,12 @@ function f0 module=m0 thisType={type=anything} parameters=[{type=anything}] resu
   b0(v0: anything):
     v1 = Integer integer=1
     Jump -> next b1()
-  b1() handler=b3():
+  b1() handler=b2():
     v2 = Call v0
     v3 = Integer integer=2
-    Jump -> next b2()
-  b2() handler=b3():
     v4 = Call v0
     Return
-  b3() role=CatchHandler:
+  b2() role=CatchHandler:
     v5 = CatchValue
     Return
 }
@@ -553,28 +548,6 @@ fn landing_block_has_handler_role() {
         assert_eq!(roles, [BlockRole::Ordinary, BlockRole::Ordinary, role]);
         assert!(function.body.blocks().all(|block| block.subject.is_none()));
     }
-}
-
-#[test]
-fn split_keeps_frequency() {
-    let function = build_function(&[TypeTable::ANYTHING], |builder| {
-        let callee = builder.parameter(0);
-        let x = builder.create_variable(None);
-        write_integer(builder, x, 1);
-        let handler = create_catch_handler(builder);
-        let covered = enter_block(builder, Some(handler));
-        builder.set_frequency(covered, BlockFrequency::Unlikely);
-        emit_call(builder, callee);
-        write_integer(builder, x, 2);
-        emit_call(builder, callee);
-        builder.return_value(None);
-        enter_landing_block(builder, handler);
-        builder.return_value(None);
-    });
-    let blocks = function.body.blocks();
-    let frequencies: Vec<BlockFrequency> = blocks.map(|block| block.frequency).collect();
-    let (normal, unlikely) = (BlockFrequency::Normal, BlockFrequency::Unlikely);
-    assert_eq!(frequencies, [normal, unlikely, unlikely, normal]);
 }
 
 #[cfg(debug_assertions)]

@@ -1,0 +1,25 @@
+# One way round the loop only reads; the other calls a function that may store into the fields
+# The two fields, the number made of one and the decoded view stand in a block in front of the head that takes the head's parameters: the front
+# The way that did nothing comes round to the head. The way that called comes round to the front, which reads anew
+# `x++` is where the two ways meet in the text: it is walked once for each, or the meet would know nothing
+# -- source: main.ts
+# type Grid = { wide: number; marks: Int32Array };
+# function touch(grid: Grid, at: number, depth: number): number { if (depth > 0) return touch(grid, at, -depth); grid.wide = at; grid.marks = grid.marks; return 1; }
+# function count(grid: Grid, last: number): number { let found = 0; for (let x = 0; x < last; x++) { const mark = grid.marks[grid.wide + x]!; if (mark !== 1) continue; found += touch(grid, x, 2); } return found; }
+# console.log(count({ wide: 2, marks: new Int32Array(16) }, 8));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[head]]({{*}}isLoopHead=true
+# CHECK-NEXT: = LoopHint
+# CHECK: [[front]]({{*}}isLoopHead=true
+# CHECK-NEXT: = GetSlot {{*}}key="marks"
+# CHECK-NEXT: = GetSlot {{*}}key="wide"
+# CHECK: Jump -> next [[head]](
+# CHECK-NOT: GetSlot
+# CHECK: = CallDirect
+# CHECK-NOT: GetSlot
+# CHECK: = Increment
+# CHECK: Jump -> next [[front]](
+# CHECK: = Increment
+# CHECK-NEXT: Jump -> next [[head]](

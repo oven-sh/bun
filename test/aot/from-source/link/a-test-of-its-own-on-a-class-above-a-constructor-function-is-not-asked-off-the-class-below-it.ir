@@ -1,0 +1,17 @@
+# Only the prototype objects are linked, so `o instanceof A` looks for Symbol.hasInstance on A, Base and Function.prototype. Top's test is not on that way: it is not run, and o keeps its number.
+# -- source: main.js
+# function Base() {}
+# function sum(o) { return o.x + 1; }
+# class O { constructor(n) { this.x = n; } }
+# class Top { static [Symbol.hasInstance](value) { value.x = "text"; return true; } }
+# Object.setPrototypeOf(Base.prototype, Top.prototype);
+# class A extends Base {}
+# const o = new O(1);
+# print(o instanceof A, sum(o), typeof o.x, o instanceof Top, sum(o), typeof o.x);
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# CHECK: false 2 number true text1 string
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: false 2 number true text1 string
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: false 2 number true text1 string

@@ -1,5 +1,8 @@
 // A package whose "exports" give `import` and `require` a different file is imported and required by one file.
-const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+const settled = async () => {
+  await globalThis.pendingPrint;
+  await new Promise(resolve => setTimeout(resolve, 1));
+};
 console.log("# import-and-require");
 await import("./import-and-require/import-and-require.mjs");
 await settled();

@@ -1,14 +1,5 @@
-// Arrays that had elements inserted or removed at the front, then are read, written, swapped, sorted and resized
-// while the program allocates enough garbage to keep the garbage collector running.
-//
-//   elements   integers, doubles, a mix of both, strings, objects, nested arrays, numbers mixed with strings
-//   length     from 10 to 20,000
-//   the front  unshift, shift, splice at index 0 or 1, several of them, or nothing
-//   or         many arrays stay alive; each is changed at the front, and later gets an element of another kind
-//   or         sort after sort, each behind a change at the front, with a comparator that allocates
-//   the loop   swaps by destructuring, stores, reads, push and pop; now and then sort, reverse, indexOf, includes,
-//              slice, fill, copyWithin, for-of, spread, a rest pattern, another unshift or shift
-//   printed    per scene: the length, a hash of all elements, and a running sum of what was read
+// Arrays that had elements inserted or removed at the front are read, written, swapped, sorted and resized while the
+// program allocates enough garbage to keep the collector running.
 import type { Random } from "./random";
 
 interface Kind {
@@ -97,7 +88,8 @@ export function generate(r: Random, typed: boolean): string {
       );
     const list = typed ? `const list: Array<${kind.type}> = [];` : `const list = [];`;
     if (r.chance(0.2)) {
-      // Many arrays stay alive. Each is changed at the front while young; later it gets an element of another kind, so its storage changes kind.
+      // Many arrays stay alive. Each is changed at the front while young; later it gets an element of another type, so
+      // its storage kind changes.
       const size = r.pick([129, 140, 200, 300]);
       const alive = r.pick([15, 63, 255]);
       const first = r.pick(["i", "i", "i + 0.5", '"s" + i']);
@@ -153,7 +145,7 @@ scene${scene}();`);
       continue;
     }
     if (r.chance(0.3)) {
-      // Sorts without end: the front moves before each sort, and the comparator allocates now and then.
+      // Endless sorting: the front moves before each sort, and the comparator sometimes allocates.
       const size = r.pick([129, 130, 200, 400, 600]);
       const compare =
         kind.compare.replace(

@@ -1,0 +1,17 @@
+Two hoisted vi.mock(), of node:fs and of a package, where the test file and a file that it imports both import node:fs.
+#### hoist.test.ts
+import { test, vi } from "vitest";
+import { exists, name } from "./uses";
+import fs, { existsSync } from "node:fs";
+vi.mock("node:fs", () => ({ default: { existsSync: () => "default" }, existsSync: () => "mocked" }));
+vi.mock("pkg", () => ({ default: { name: "mocked" } }));
+(globalThis.events ??= []).push(exists, name, existsSync("/"), fs.existsSync("/"));
+test("t", () => console.log("| CASE " + JSON.stringify(globalThis.events)));
+#### node_modules/pkg/index.js
+(globalThis.events ??= []).push("load pkg"); module.exports = { name: "real" };
+#### node_modules/pkg/package.json
+{ "name": "pkg", "main": "index.js" }
+#### uses.ts
+import { existsSync } from "node:fs";
+import pkg from "pkg";
+export const exists = existsSync("/"), name = pkg.name;

@@ -16,8 +16,6 @@ use bun_semver as Semver;
 use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
 
-use crate::bun_progress::Node as ProgressNode;
-
 use super::options::{self, Enable, LogLevel};
 use super::{Command, PackageManager, ProgressStrings, Subcommand};
 
@@ -270,7 +268,7 @@ fn get_temporary_directory_run(
                 return Err(DirectoryError::ProbeTemporary(err2));
             }
         };
-        let _ = file.close(); // close error is non-actionable
+        drop(file);
 
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
@@ -1239,9 +1237,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
 }
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {
-    let file = attempt_to_create_package_json_and_open()?;
-    let _ = file.close(); // close error is non-actionable
-    Ok(())
+    attempt_to_create_package_json_and_open().map(drop)
 }
 
 pub fn save_lockfile(
@@ -1306,17 +1302,9 @@ pub fn save_lockfile(
         return Ok(false);
     }
 
-    // `Progress::start`
-    // returns `&mut Node` borrowing `this.progress`, which would conflict with
-    // the `&mut this` reborrows below. Stash as a raw pointer
-    // (the node lives inside `this.progress.root`).
-    let mut save_node: *mut ProgressNode = core::ptr::null_mut();
-
     if log_level.show_progress() {
         this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        save_node = this.progress.start(ProgressStrings::save(), 0);
-        // SAFETY: `save_node` was just set by `progress.start()` and is non-null.
-        unsafe { (*save_node).activate() };
+        this.progress.start(ProgressStrings::save(), 0).activate();
 
         this.progress.refresh();
     }
@@ -1353,10 +1341,7 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        // SAFETY: `save_node` was set to a non-null `&mut Node` in the
-        // matching `show_progress()` branch above and `this.progress` is
-        // unchanged in between.
-        unsafe { (*save_node).end() };
+        this.progress.root.end();
         this.progress.refresh();
         this.progress.root.end();
         this.progress = Default::default();

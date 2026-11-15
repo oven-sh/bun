@@ -4,11 +4,15 @@
  */
 import { JSCallback } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { webkit } from "../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../scripts/build/flags.ts";
+import { findImage, imageFlag, imageHeader } from "../aot/cli/compiled-image";
+import { unsupported } from "../aot/harness/compiler";
 
 function mockToolchain(): Toolchain {
   return {
@@ -148,6 +152,7 @@ test.skipIf(!hasShadowRealm)("a Bun built without the option has ShadowRealm", a
 });
 
 const refusal = "bun:ffi: this build of Bun does not call native functions";
+const compiler = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 function callsNativeFunctions() {
   try {
@@ -179,6 +184,66 @@ describe.skipIf(callsNativeFunctions())("a Bun built with --ffi=off", () => {
       exitCode: 0,
     });
   });
+
+  test.skipIf(isWindows || !compiler)("dlopen() and cc() load no library", async () => {
+    using dir = tempDir("build-left-out-features", {
+      "library.c": `#include <unistd.h>
+__attribute__((constructor)) static void loaded(void) { (void)!write(1, "loaded\\n", 7); }
+int answer(void) { return 42; }`,
+      "source.c": "int answer(void); int twice(void) { return 2 * answer(); }",
+    });
+    const library = join(String(dir), "libanswer.so");
+    await using compile = Bun.spawn({
+      cmd: [compiler!, "-shared", "-fPIC", "-o", library, join(String(dir), "library.c")],
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await compile.exited).toBe(0);
+    const source = `
+      const { cc, dlopen } = require("bun:ffi");
+      const signature = { returns: "int", args: [] };
+      for (const load of [
+        () => dlopen(process.env.LIBRARY, { answer: signature }),
+        () => cc({ source: process.env.SOURCE, library: ["answer"], flags: ["-L" + process.env.DIRECTORY], symbols: { twice: signature } }),
+      ]) {
+        try { load(); console.log("returned"); } catch (error) { console.log(error.name + ": " + error.message); }
+      }
+    `;
+    const env = { LIBRARY: library, SOURCE: join(String(dir), "source.c"), DIRECTORY: String(dir) };
+    expect(await run(source, env)).toEqual({
+      stdout: Array(2)
+        .fill("TypeError: " + refusal)
+        .join("\n"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.skipIf(!!unsupported)(
+    "an executable that evaluates text holds no code for calls of native functions",
+    async () => {
+      using dir = tempDir("build-left-out-features", {
+        "main.js": `console.log((0, eval)(process.argv[2] ?? "1 + 1"));`,
+      });
+      const outfile = join(String(dir), isWindows ? "main.exe" : "main");
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", "--aot", "main.js", "--outfile", outfile],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({
+        stderr: expect.not.stringMatching(/^error\b/m),
+        exitCode: 0,
+      });
+      const file = readFileSync(outfile);
+      const image = findImage(file);
+      expect(file.readUInt32LE(image + imageHeader.flags) & imageFlag.admitsUnknownJavaScript).not.toBe(0);
+      expect(file.readUInt32LE(image + imageHeader.ffiCodeSize)).toBe(0);
+    },
+    120_000,
+  );
 
   test("what calls nothing stays", async () => {
     expect(

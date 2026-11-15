@@ -1,0 +1,56 @@
+# THE LIBRARY's DOOR. The word of a library module holds what its body has returned and is empty until then; whoever asks for the module reads that word or asks the run time, which throws while the body runs, as Bun's registry would overflow.
+# internal/http:  var held = host("held");  var other = require("internal/url");  return function read() { return held }          internal/url:  var early = require("internal/http");  return early()
+# So nobody outside a module of the library has a function or an object of it before every store in the straight line of its body has run. If the asker got the word as it stands, `early` would be the empty word and the call a wild jump.
+# LIBRARY: own
+# RUN(LINK): link variables functions mechanisms=all
+# LINK: variable g0 {{*}}filled
+# LINK: variable g2 proven=f4 {{*}}filled
+# LINK: function f2 {{*}}result=f4
+# RUN(SHELL): run-in-shell globalThis.host = text => text + "!"; globalThis.register = load => { for (let turn = 0; turn < 3; turn++) { try { print(load()()); } catch (error) { print(error.name); } } };
+# SHELL-COUNT-3: RangeError
+# SHELL: exited with 0
+
+variable g0 name="held" module=m1 declared={type=anything} initialization=Undefined
+variable g1 name="other" module=m1 declared={type=anything} initialization=Undefined
+variable g2 name="early" module=m2 declared={type=anything} initialization=Undefined
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:http" displayPath="internal:http" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalHttp body=f2
+module m2 path="internal:url" displayPath="internal:url" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUrl body=f3
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="register"
+    Return v3
+}
+function f1 name="load" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="internal/http"
+    Return v0
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="host" [isFreeName]
+    v2 = String string="held"
+    v3 = Call v1, -, v2 calleeName="host"
+    PutModuleVariable v3 variable=g0
+    v5 = RequireModule module=m2 referrer=m1 specifier="internal/url"
+    PutModuleVariable v5 variable=g1
+    v7 = NewClosure function=f4
+    Return v7
+}
+function f3 module=m2 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m2 specifier="internal/http"
+    PutModuleVariable v0 variable=g2
+    v2 = Call v0 calleeName="early"
+    Return v2
+}
+function f4 name="read" module=m1 role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    Return v0
+}

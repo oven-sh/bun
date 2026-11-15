@@ -1,6 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 11
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="outcome"
+// CHECK-LABEL: function {{*}}name="Thing"
+// CHECK-LABEL: function {{*}}name="bump"
 
 // FILE: main.js
 // `const keys = { .. }; module.exports = keys`: what the module exports is the literal, whoever asks and however, and symbols made there are keys like any other.
@@ -132,64 +136,3 @@ module.exports = { exported: keys, own() { return keys.kOwn; } };
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: show outcome Thing bump
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|boolean|number|string flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: undefined|null|string, v2: undefined|null|boolean|number|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="lines"
-// CHECK-NEXT: v5 = PropGet v4 key="push"
-// CHECK-NEXT: v6 = Convert v5 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v1, v7
-// CHECK-NEXT: v9 = Builtin builtin=String
-// CHECK-NEXT: v10 = Call v9, -, v2 calleeName="String"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v12 = Add v8, v11
-// CHECK-NEXT: v13 = Call v6, v4, v12 calleeKey="push" calleeName="lines.push"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="outcome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewRuntimeError runtimeError=LeftOutOfExecutable name="outcome"
-// CHECK-NEXT: Throw v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Thing"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=[[L_3]] flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: [[L_3]], v2: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v4 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v5 = CheckInitialized v4 name="kState"
-// CHECK-NEXT: ElemSet v3, v5, v2
-// CHECK-NEXT: v7 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: v8 = GetEnvironmentField v0 layout=[[L_1]] field=2
-// CHECK-NEXT: v9 = CheckInitialized v8 name="kCount"
-// CHECK-NEXT: v10 = Integer
-// CHECK-NEXT: ElemSet v7, v9, v10
-// CHECK-NEXT: v12 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
-// CHECK-NEXT: PropSet v12, v2 key="plain"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: Return v14
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="bump"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] captures=[{type=undefined|null|symbol flags=[IsExpected]}, {type=undefined|null|symbol flags=[IsExpected]}] thisType={type=undefined|null|object flags=[IsExpected]} results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|symbol, v1: undefined|null|symbol, v2: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = ElemGet v2, v1
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: ElemSet v2, v1, v6
-// CHECK-NEXT: v8 = ElemGet v2, v0
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

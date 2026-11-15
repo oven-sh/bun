@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# function Cold(v) { this.f = v; Object.freeze(this); this.g = v; }
+# function Shut(v) { this.f = v; Object.preventExtensions(this); this.g = v + 0.5; this.h = this.g; }
+# function Some(v) { this.f = v; if (v & 1) Object.seal(this); this.g = v; }
+# function Open(v) { this.f = v; this.g = v; }
+# function say(o) { var s = ""; for (var i = 0; i < 3; i++) s += o.f + "," + o.g + ";"; return s; }
+# print(say(new Cold(1)), say(new Shut(2)), say(new Some(3)), say(new Some(4)), say(new Open(5)), typeof new Shut(6).h);
+# -- end of source
+# In sloppy code a store into an object that takes none does nothing. What is stored behind a call that has the object is not filled; it is of birth, and whether it lies there is asked of the slot.
+# RUN(OPEN): link fields mechanisms=all
+# OPEN: "g" proven={{*}} filled
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1,undefined;1,undefined;1,undefined; 2,undefined;2,undefined;2,undefined; 3,undefined;3,undefined;3,undefined; 4,4;4,4;4,4; 5,5;5,5;5,5; undefined
+# RUN(CLOSED): run-in-shell mechanisms=all-Guesses
+# CLOSED: 1,undefined;1,undefined;1,undefined; 2,undefined;2,undefined;2,undefined; 3,undefined;3,undefined;3,undefined; 4,4;4,4;4,4; 5,5;5,5;5,5; undefined

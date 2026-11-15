@@ -7,6 +7,7 @@ use super::throw;
 use super::Expect;
 
 impl Expect {
+    #[optimize(size)]
     pub(crate) fn to_have_returned_with(
         &self,
         this_value: JsWrapper<'_, Self>,

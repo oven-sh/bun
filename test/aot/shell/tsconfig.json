@@ -1,0 +1,6 @@
+{
+  // The front end takes functions-of-the-shell.js as an entry point: without this it would read every file of test/tsconfig.json.
+  "extends": "../../tsconfig.json",
+  "files": [],
+  "include": []
+}

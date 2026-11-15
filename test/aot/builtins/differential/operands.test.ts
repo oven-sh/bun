@@ -6,7 +6,7 @@ import { everyCandidate, everyFamily } from "./instances";
 import { Realm } from "./members";
 import { planFor, selectOverload, type Call, type Outcomes } from "./operands";
 import type { OperandSet } from "./runs";
-import { needsDifferentialTest, Table, type CallMode } from "./table-description";
+import { isObject, needsDifferentialTest, Table, type CallMode } from "./table-description";
 
 const table = new Table(aotBuiltinEntries());
 const realm = new Realm(table);
@@ -140,6 +140,29 @@ describe("the sets of operands", () => {
       .filter(entry => entry.overloads.some(needsDifferentialTest) && realm.valueOf(entry.token) !== undefined)
       .filter(entry => planFor(realm, callOf(entry.path)).sets.length === 0)
       .map(entry => entry.path);
+    expect(without).toEqual([]);
+  });
+
+  test("exist for every own property of the instances of a class", () => {
+    const without = table.dump.entries
+      .filter(entry => entry.flags.includes("IsOwnPropertyOfInstances") && entry.overloads.some(needsDifferentialTest))
+      .filter(entry => planFor(realm, callOf(entry.path, "Get")).sets.length === 0)
+      .map(entry => entry.path);
+    expect(without).toEqual([]);
+  });
+
+  test("read an own property from what the constructor makes where the type of the receiver does not name the class", () => {
+    const call = callOf("URIError.prototype.message", "Get");
+    expect(call.overloads[0].receiver?.accepted.isAnything).toBe(true);
+    expect(namesOf(planFor(realm, call).sets)).toContain("constructed:URIError()");
+  });
+});
+
+describe("the realm", () => {
+  test("has the prototype object of every class", () => {
+    const without = table.dump.classes
+      .filter(({ prototype }) => prototype !== null && !isObject(realm.valueOf(prototype)))
+      .map(({ token }) => token);
     expect(without).toEqual([]);
   });
 });

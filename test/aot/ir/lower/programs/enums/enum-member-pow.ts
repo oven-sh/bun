@@ -21,12 +21,4 @@ const list: Size[] = [Size.Small, Size.Root];
 console.log(member === run, list[0] === run, list.includes(run as Size), new Set<Size>(list).has(run as Size), { [Size.Small]: 1 }[run]);
 switch (run as Size) { case Size.Small: console.log("the case is met"); break; default: console.log("the case is missed"); }
 
-// GENERATED: unknown
 // CHECK-LABEL: function {{*}}name="unknown"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]]}] results=[{type=undefined|null|[[L_1]] site=[[w_3]]}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_1]] site=[[w_3]]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

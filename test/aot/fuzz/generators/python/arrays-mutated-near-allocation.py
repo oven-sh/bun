@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""arrays-mutated-near-allocation.py <part 0..7>: THE WHOLE TABLE, not a sample: an array MADE IN THE FUNCTION, altered IN THE FUNCTION (every alteration of altered-arrays.py), then the built-in that the alteration is about (for an own property under a method's name: that method; for the others: fourteen uses), in four forms: in a row; the alteration behind a call that is handed the array; behind an alias; in the second turn of a loop round the use. As plain Bun or a throw."""
+"""arrays-mutated-near-allocation.py <part 0..7>: A complete table: an array allocated in a function is altered in the
+same function (every alteration from altered-arrays.py), and then the built-in that the alteration affects is called.
+"""
 import sys, importlib.util, io, contextlib
 part = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 spec = importlib.util.spec_from_file_location('g', __file__.replace('arrays-mutated-near-allocation.py', 'altered-arrays.py'))

@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""named-stores-every-object-kind.py: A MATRIX: every one of 60 names is stored through ONE SITE A NAME into a FRESH object of every one of some 60 kinds, so each site meets every kind: own data (first, middle, last, in line and out of line), absent (a transition), read-only own | inherited, a setter own | inherited, a getter alone own | inherited, hidden, frozen | sealed | not extensible, a dictionary, after a delete, no prototype, a prototype that is a proxy, a proxy, arrays, functions, class instances with fields | accessors | private names, boxed and bare primitives, Maps, Dates, errors thrown by setters. After the store: what the store expression gave or threw, the value read back through a site, own keys in order, the descriptor; then a second store over it, a delete and a third store. One line a kind and name group; strict code."""
+"""named-stores-every-object-kind.py: A matrix: each of 60 names is stored, through one site per name, into a fresh
+object of each of some 60 kinds, so every site sees every kind: own data, accessors, read-only, inherited, frozen,
+proxies ..
+"""
 N = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'x', 'y', 'z', 'id', 'key', 'value', 'type', 'kind', 'next', 'prev', 'left', 'right', 'size', 'count', 'data', 'items', 'first', 'last', 'constructor', 'toString', 'valueOf', 'hasOwnProperty', '__proto__', 'prototype', 'then', 'get', 'set', 'has', 'push', 'pop', 'map', 'message', 'stack', 'index', 'input', 'done', 'caller', 'callee', 'arguments', 'p0', 'p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9', 'q299', 'q150', 'q0']
 print('"use strict";')
 print('const NAMES = %s;' % N)

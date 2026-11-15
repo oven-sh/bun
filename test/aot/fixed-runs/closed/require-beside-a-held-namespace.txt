@@ -1,0 +1,14 @@
+mock.module() behind a namespace import: the held namespace and import.meta.require() beside it; then the next test file.
+#### a.test.mjs
+import { test, mock, jest, vi } from "bun:test";
+const log = (...a) => console.log("| CASE " + a.join(" "));
+import * as ns from "./lib.mjs";
+test("a", async () => { mock.module("./lib.mjs", () => ({ v: "mock v" })); log("a", ns.v, import.meta.require("./lib.mjs").v); });
+#### lib.mjs
+console.log("| CASE lib runs");
+export let v = "real v";
+export const kept = "kept";
+#### z.test.mjs
+import { test, mock, jest, vi } from "bun:test";
+const log = (...a) => console.log("| CASE " + a.join(" "));
+test("z", async () => { const r = import.meta.require("./lib.mjs"); log("z require", r.v, r.kept, Object.keys(r).join()); log("z import", (await import("./lib.mjs")).v, (await import("./lib.mjs")) === r); });

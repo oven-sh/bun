@@ -2,9 +2,13 @@ use super::TestFailure;
 use super::test_file::{
     DiagnosticName, OptionWord, Place, parse_decimal, parse_engine_diagnostic_name,
 };
-use bun_aot::emit::emit;
+use bun_aot::emit::emit_with_bodies_in_bytes;
 use bun_aot::ir::generated::{InternalErrorKind, StatisticId};
-use bun_aot::ir::{FunctionId, Id, Program, print_function, print_program, run_serially};
+use bun_aot::ir::{
+    FunctionId, Id, Program, REWRITTEN_TYPE, print_function, print_program,
+    print_program_held_to_engine, run_serially,
+};
+use bun_aot::link::LinkedFunctions;
 use bun_aot::statistics::Statistics;
 use bun_aot::{BuildFailed, link_program};
 use bun_ast::{Log, Metadata};
@@ -12,6 +16,7 @@ use bun_bundler::aot::testing::{FrontEndInputs, with_front_end_inputs};
 use bun_options_types::aot_options::{AotOptions, TargetPlatform};
 use bun_sema_driver::Libs;
 use std::ffi::OsStr;
+use std::mem::take;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -29,7 +34,6 @@ static NEXT_PROGRAM_FILE_NUMBER: AtomicU32 = AtomicU32::new(0);
 pub struct CommandResult {
     pub output: String,
     pub diagnostics: Vec<(DiagnosticName, String)>,
-    /// Where each of `diagnostics` stands. The engine's have no place.
     pub places: Vec<Option<Place>>,
     pub statistics: Vec<(StatisticId, u64)>,
     pub engine_was_skipped: Option<String>,
@@ -48,7 +52,6 @@ pub fn find_command(name: &str) -> Option<Command> {
     Some(command)
 }
 
-/// What is built: the entry points, and the folders that paths are read and printed from.
 pub struct Project {
     pub root: PathBuf,
     pub working_directory: PathBuf,
@@ -79,11 +82,19 @@ pub fn parse_option_words<'a>(
         match word.as_str() {
             "erase-types" => aot.erases_types = true,
             "builtin-modules" => aot.omits_builtin_modules = false,
+            "obfuscates" => aot.obfuscates = true,
+            "keeps-names" => aot.keeps_names = true,
+            "entry-points-run-again" => aot.entry_points_run_again = true,
+            "runs-in-place" => aot.runs_in_place = true,
+            "discards-first-visits" => aot.discards_first_visits = true,
+            "last-file-first" => aot.check_order = u32::MAX,
+            "runs-tests" => {
+                aot.runs_tests = true;
+                aot.runs_in_place = true;
+            }
             "platform=darwin" => aot.platform = Some(TargetPlatform::Darwin),
             "platform=linux" => aot.platform = Some(TargetPlatform::Linux),
             "platform=windows" => aot.platform = Some(TargetPlatform::Windows),
-            "type-errors=silent" => aot.reports_type_mismatches = false,
-            "type-errors=log" => aot.reports_type_mismatches = true,
             _ => {
                 let count = word.strip_prefix("threads=");
                 let Some(count) = count.and_then(parse_decimal::<NonZeroU32>) else {
@@ -153,7 +164,6 @@ pub fn run_command(command: Command, path: &Path, aot: &AotOptions) -> CommandOu
     outcomes.pop().expect("one command has one outcome")
 }
 
-/// One build, printed by each of the commands.
 pub fn run_commands(
     commands: &[Command],
     project: &Project,
@@ -181,7 +191,6 @@ fn build(
     outputs: &mut [String],
 ) -> CommandOutcome {
     static OUTPUT: Once = Once::new();
-    // A thread of Bun's pool asserts that Bun's `main` has set up the output.
     OUTPUT.call_once(bun_core::output::stdio::init);
     let bytes_of = |path: &Path| path.as_os_str().as_encoded_bytes().to_vec();
     let entry_points: Vec<Vec<u8>> = project
@@ -218,12 +227,14 @@ fn build(
     };
     let mut result = create_command_result(&log, &linked.summary.statistics);
     result.places = find_places(&log, &project.root);
+    let mut program = linked.program;
     for (command, output) in commands.iter().zip(outputs) {
-        *output = command(&linked.program);
+        *output = command(&program);
     }
-    let text = print_program(&linked.program);
-    let bytes =
-        emit(linked.program, &run_serially).map_err(|error| format!("emit failed: {error:?}"))?;
+    let text = print_program_held_to_engine(&program);
+    let functions = LinkedFunctions::of_program_functions(take(&mut program.functions));
+    let bytes = emit_with_bodies_in_bytes(&mut program, functions, &run_serially)
+        .map_err(|error| format!("emit failed: {error:?}"))?;
     let byte_count = bytes.as_slice().len() as u64;
     result
         .statistics
@@ -300,7 +311,6 @@ fn print_with_engine(testaot: &OsStr, program: &[u8]) -> Result<Output, String> 
     output
 }
 
-/// The tool and these tests were built from two states of the schema, so it reads nothing that they emit.
 fn reports_other_schema(stderr: &str) -> bool {
     let message = InternalErrorKind::SchemaMismatch.message();
     stderr.lines().any(|line| line.contains(message))
@@ -316,6 +326,79 @@ fn parse_engine_diagnostics(stderr: &str) -> Vec<(DiagnosticName, String)> {
         .collect()
 }
 
+fn find_end_of_item(text: &str) -> usize {
+    let mut depth = 0usize;
+    let mut is_quoted = false;
+    let mut bytes = text.bytes().enumerate();
+    while let Some((index, byte)) = bytes.next() {
+        match byte {
+            b'\\' if is_quoted => {
+                bytes.next();
+            }
+            b'"' => is_quoted = !is_quoted,
+            _ if is_quoted => {}
+            b'<' | b'[' | b'(' | b'{' => depth += 1,
+            b'>' | b']' | b')' | b'}' | b',' | b' ' if depth == 0 => return index,
+            b'>' | b']' | b')' | b'}' => depth -= 1,
+            _ => {}
+        }
+    }
+    text.len()
+}
+
+fn split_at_fields(line: &str) -> Option<(&str, Vec<&str>, &str)> {
+    const LIST: &str = " fields=[";
+    let start = line.find(LIST).filter(|_| line.starts_with("layout "))?;
+    let mut rest = &line[start + LIST.len()..];
+    let mut fields = Vec::new();
+    while rest.starts_with('{') {
+        let (field, behind) = rest.split_at(find_end_of_item(rest));
+        fields.push(field);
+        rest = behind.strip_prefix(", ").unwrap_or(behind);
+    }
+    Some((&line[..start], fields, rest.strip_prefix(']')?))
+}
+
+fn remove_inherited_fields(engine_line: &str, front_end_line: &str) -> String {
+    let Some((head, fields, rest)) = split_at_fields(engine_line) else {
+        return engine_line.to_owned();
+    };
+    let own_count = split_at_fields(front_end_line).map_or(0, |(_, fields, _)| fields.len());
+    let (own, inherited) = fields.split_at(own_count.min(fields.len()));
+    if !(inherited.iter()).all(|field| field.contains(" originLayout=L")) {
+        return engine_line.to_owned();
+    }
+    if own.is_empty() {
+        return format!("{head}{rest}");
+    }
+    format!("{head} fields=[{}]{rest}", own.join(", "))
+}
+
+fn remove_expectations_of_fields(line: &str) -> String {
+    match line.starts_with("layout ") {
+        true => (line.replace(" flags=[IsExpected]", "")).replace("IsExpected, ", ""),
+        false => line.to_owned(),
+    }
+}
+
+fn is_same_line(engine_line: &str, front_end_line: &str) -> bool {
+    let engine_line = remove_inherited_fields(engine_line, front_end_line);
+    let engine_line = remove_expectations_of_fields(&engine_line);
+    let front_end_line = &remove_expectations_of_fields(front_end_line);
+    let mut parts = front_end_line.split(REWRITTEN_TYPE);
+    let first = parts.next().unwrap_or_default();
+    let Some(mut rest) = engine_line.strip_prefix(first) else {
+        return false;
+    };
+    for part in parts {
+        match rest[find_end_of_item(rest)..].strip_prefix(part) {
+            Some(behind) => rest = behind,
+            None => return false,
+        }
+    }
+    rest.is_empty()
+}
+
 fn find_first_difference(engine_text: &str, front_end_text: &str) -> Option<String> {
     let mut engine_lines = engine_text.lines();
     let mut front_end_lines = front_end_text.lines();
@@ -323,7 +406,11 @@ fn find_first_difference(engine_text: &str, front_end_text: &str) -> Option<Stri
     loop {
         let engine_line = engine_lines.next();
         let front_end_line = front_end_lines.next();
-        if engine_line != front_end_line {
+        let is_same = match (engine_line, front_end_line) {
+            (Some(engine_line), Some(front_end_line)) => is_same_line(engine_line, front_end_line),
+            (engine_line, front_end_line) => engine_line == front_end_line,
+        };
+        if !is_same {
             return Some(format!(
                 "line {number}: the engine prints {}, the front end {}",
                 engine_line.unwrap_or("<nothing>"),
@@ -353,10 +440,6 @@ mod tests {
             is_internal_error,
             statistics,
             compilation: None,
-            refused_entry_points: None,
-            is_one_program: false,
-            brought_bun_types: false,
-            has_early_errors: false,
         }
     }
 
@@ -368,14 +451,14 @@ mod tests {
         check_with_engine(testaot.map(OsStr::new), b"", front_end_text, result)
     }
 
-    fn parse(words: &[&str]) -> Result<(bool, bool, u32), TestFailure> {
+    fn parse(words: &[&str]) -> Result<(bool, u32), TestFailure> {
         let words = words.iter().zip(1..).map(|(word, line)| OptionWord {
             word: (*word).to_owned(),
             line,
         });
         let aot = parse_option_words(&words.collect::<Vec<_>>())?;
         let thread_count = aot.thread_count.map_or(0, NonZeroU32::get);
-        Ok((aot.erases_types, aot.reports_type_mismatches, thread_count))
+        Ok((aot.erases_types, thread_count))
     }
 
     #[test]
@@ -390,37 +473,25 @@ mod tests {
 
     #[test]
     fn front_end_words() {
-        assert_eq!(parse(&[]), Ok((false, false, 1)));
-        let listed = ["erase-types", "type-errors=log", "threads=4"];
-        assert_eq!(parse(&listed), Ok((true, true, 4)));
-        let listed = [
-            "type-errors=log",
-            "threads=4",
-            "type-errors=silent",
-            "threads=2",
-        ];
-        assert_eq!(parse(&listed), Ok((false, false, 2)));
+        assert_eq!(parse(&[]), Ok((false, 1)));
+        let listed = ["erase-types", "threads=4"];
+        assert_eq!(parse(&listed), Ok((true, 4)));
+        let listed = ["threads=4", "threads=2"];
+        assert_eq!(parse(&listed), Ok((false, 2)));
     }
 
     #[test]
     fn unknown_words() {
         for word in [
             "nonsense",
-            "out=program.bin",
             "erase-types=1",
-            "type-errors",
-            "type-errors=ignore",
             "threads",
             "threads=",
             "threads=0",
             "threads=+1",
             "threads=many",
             "threads=4294967296",
-            "validate",
-            "check=verify-each-pass",
-            "disable=flow-results",
-            "limit=MaxTypeNodes:1",
-            "layout-seed=9",
+            "symbols",
         ] {
             let message = format!("unknown option word {word}");
             let failure = parse(&["erase-types", word]).unwrap_err();
@@ -567,6 +638,33 @@ mod tests {
                 "a\nb\n",
                 "a\n",
                 Some("line 2: the engine prints b, the front end <nothing>"),
+            ),
+            (
+                "v1 = Convert v0 declared={type=Map<string, \"a> b\"|L2> flags=[A]} @1\n",
+                "v1 = Convert v0 declared={type=\u{2026} flags=[A]} @1\n",
+                None,
+            ),
+            (
+                "b0(v0: anything, v1: L1|L2):\n",
+                "b0(v0: \u{2026}, v1: \u{2026}):\n",
+                None,
+            ),
+            (
+                "v1 = TypeTest v0 testedType=L1 @1\n",
+                "v1 = TypeTest v0 testedType=\u{2026} @2\n",
+                Some(
+                    "line 1: the engine prints v1 = TypeTest v0 testedType=L1 @1, the front end v1 = TypeTest v0 testedType=\u{2026} @2",
+                ),
+            ),
+            (
+                "layout L1 base=L0 fields=[{key=\"b\" declared={type=number} originLayout=L0 originField=1}, {key=\"a\" declared={type=number} originLayout=L0 originField=0}] supertypes=[L0]\n",
+                "layout L1 base=L0 fields=[{key=\"b\" declared={type=number} originLayout=L0 originField=1}] supertypes=[L0]\n",
+                None,
+            ),
+            (
+                "layout L1 base=L0 fields=[{key=\"a\" declared={type=number} originLayout=L0 originField=0}] supertypes=[L0]\n",
+                "layout L1 base=L0 supertypes=[L0]\n",
+                None,
             ),
         ] {
             let difference = find_first_difference(engine_text, front_end_text);

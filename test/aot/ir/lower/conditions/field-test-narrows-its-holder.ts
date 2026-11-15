@@ -5,12 +5,12 @@
 // CHECK-NEXT: Branch [[test]] -> taken [[taken]](| 0), notTaken [[other]](| 0)
 // CHECK: [[taken]]([[read]]):
 // CHECK-NEXT: [[narrowed]] = NarrowByField [[holder]], [[read]] key="kind"
-// CHECK: [[a]] = Convert [[narrowed]] declared={type=undefined|null|L{{*}}} illTypedCause=Assertion
-// CHECK-NEXT: = PropGet [[a]] key="a"
+// CHECK-NOT: = Convert
+// CHECK: = PropGet [[narrowed]] key="a"
 // CHECK: [[other]]([[otherRead]]):
 // CHECK-NEXT: [[remaining]] = NarrowByField [[holder]], [[otherRead]] key="kind"
-// CHECK: [[b]] = Convert [[remaining]] declared={type=undefined|null|L{{*}}} illTypedCause=Assertion
-// CHECK-NEXT: = PropGet [[b]] key="b"
+// CHECK-NOT: = Convert
+// CHECK: = PropGet [[remaining]] key="b"
 // CHECK-LABEL: function {{*}}name="capturedHolder"
 // CHECK-NOT: NarrowByField
 // CHECK-LABEL: function {{*}}name="chain"

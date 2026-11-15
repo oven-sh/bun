@@ -46,6 +46,7 @@ pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 
 /// `-Zshare-generics` reuses an instantiation only from an upstream crate. The users of `BunGlobWalker` do not depend on
 /// each other, so its methods are instantiated here and every user links to this copy.
+#[cfg_attr(mordant, allow(unused_pub))]
 pub fn walk_bun_glob(walker: &mut BunGlobWalker) -> Result<bun_sys::Result<()>, bun_core::Error> {
     walker.walk()
 }

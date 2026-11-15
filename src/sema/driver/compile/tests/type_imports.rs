@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use super::support::{TemporaryDirectory, disk, with_host};
-use super::support::{TestProgram, check_only, from_bun_check, with_conditions, with_program};
+use super::support::{
+    TestProgram, check_whole_files, from_bun_check, with_conditions, with_program,
+};
 use bun_sema::program::{CodeAnswer, FileId, FileRole, Files};
 use bun_sema::util::SharedSort;
 
@@ -14,7 +16,7 @@ fn imported_files(files: &Files<'_>, importer: FileId, specifier: &str) -> Vec<F
 }
 
 fn files_with_unresolved_import(program: &TestProgram<'_, '_>) -> Vec<FileId> {
-    let build = check_only(program);
+    let build = check_whole_files(program);
     let unresolved = build.diagnostics().filter(|it| it.diagnostic.code == 2307);
     unresolved.filter_map(|it| it.diagnostic.file).collect()
 }
@@ -274,7 +276,6 @@ fn name_that_runs_keeps_code_answer_in_jsdoc() {
         let index = program.file("node_modules/dep/index.js");
         let lib = program.file("node_modules/dep/lib.js");
         assert_eq!(imported_files(program.files(), index, "./lib"), [lib]);
-        // The declaration file is in the program for what it says of `lib.js` alone.
         let declarations = program.file("node_modules/dep/lib.d.ts");
         let own_declaration = imported_files(program.files(), lib, "declaration=");
         assert_eq!(own_declaration, [declarations]);

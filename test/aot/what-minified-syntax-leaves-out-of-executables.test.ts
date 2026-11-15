@@ -1,9 +1,11 @@
 // Under --minify-syntax `bun build` leaves out an unused `new Map([..])`, `new Set([..])` and the like. An executable built with --aot leaves out the same.
-import { afterAll, expect } from "bun:test";
-import { readFileSync, rmSync } from "fs";
+import { expect } from "bun:test";
+import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
+import { bytesAndStoredStrings } from "./harness/executable-bytes";
 import { buildFlags, compileCommand } from "./harness/flags";
 import { beforeAll, describe, test } from "./supported";
 
@@ -22,9 +24,25 @@ function withEffect(text: string): string {
 export const unusedWithEffectM9 = new Set([withEffect("keptEffectTextM10")]);
 export const usedMapM11 = new Map([["usedMapTextM12", 2]]);
 `,
+  "helper.js": `
+const limit = 5;
+var __defProp = Object.defineProperty;
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, { get: all[name], enumerable: true });
+};
+var lib_exports = {};
+__export(lib_exports, { limit: () => limit, add: () => add });
+function add(a, b) {
+  return a + b;
+}
+export const sum = values => values.reduce((total, value) => lib_exports.add(total, value), lib_exports.limit);
+`,
   "main.ts": `
 import { usedMapM11 } from "./library";
+import { sum } from "./helper.js";
 console.log([...usedMapM11.keys()].join());
+console.log(sum([1, 2]));
 `,
 };
 
@@ -43,13 +61,13 @@ describe.each([
   beforeAll(async () => {
     const command = [bunExe(), ...compileCommand, buildFlags.withoutFunctionSource, ...flags];
     built(await spawned([...command, "./main.ts", "--outfile", executable], folder, bunEnv));
-    bytes = readFileSync(executable);
+    bytes = bytesAndStoredStrings(executable);
   }, 300_000);
 
   test("the program prints what it prints under plain Bun", async () => {
     const run = await spawned([executable], folder, bunEnv);
     expect({ stdout: run.stdout, stderr: run.stderr, exitCode: run.exitCode }).toEqual({
-      stdout: "keptEffectTextM10\nusedMapTextM12\n",
+      stdout: "keptEffectTextM10\nusedMapTextM12\n8\n",
       stderr: "",
       exitCode: 0,
     });

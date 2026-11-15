@@ -2,20 +2,25 @@ mod values;
 
 use bun_sema::atom::known;
 use bun_sema::bind::BindingInitializer;
-use bun_sema::fold::Decision;
-use bun_sema::hir::ExprId;
+use bun_sema::check::aot::ObjectMemberKind;
+use bun_sema::fold::{Constant, Decision};
+use bun_sema::hir::{EnumId, ExprId};
 use rustc_hash::FxHashMap;
+use smallvec::smallvec;
 
 use self::values::Part;
+use super::call::Arguments;
 use super::{FileLowering, FunctionLowering};
+use crate::builtins::id::BuiltinId;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{Data, DataNode, LimitId};
-use crate::ir::{DataId, ValueId};
+use crate::ir::{DataId, LayoutId, PropertyKeyId, ValueId};
 use crate::modules::ExportBinding;
 
 #[derive(Default)]
 pub(crate) struct DataState {
     records: FxHashMap<ExprId, DataId>,
+    enums: FxHashMap<EnumId, DataId>,
 }
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
@@ -25,7 +30,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let root = match self.file.decisions().decision(expression) {
             Decision::Data(value) => values::create_node(self.file, Part::Value(value)),
-            Decision::DeferredData => self.file.create_deferred_node(),
+            Decision::DeferredData => match self.file.create_deferred_node() {
+                Some(node) => node,
+                None => return self.emit_refusal_of_unbundled_page(),
+            },
             Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => {
                 debug_assert!(
                     self.file.decisions().is_data_literal(expression),
@@ -37,6 +45,48 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_int32_members(expression);
         let data = add_record(self.file, expression, root);
         self.builder.data(data)
+    }
+
+    pub(in crate::lower) fn lower_data_of_object(
+        &mut self,
+        literal: ExprId,
+        layout: LayoutId,
+        entries: &[(Constant, Constant)],
+    ) -> ValueId {
+        if let Some(&data) = self.file.modules.data.records.get(&literal) {
+            return self.builder.data(data);
+        }
+        let root = values::create_object_node(self.file, layout, entries);
+        let data = add_record(self.file, literal, root);
+        self.builder.data(data)
+    }
+
+    pub(in crate::lower) fn lower_data_of_enum(
+        &mut self,
+        declaration: EnumId,
+        names: &[(PropertyKeyId, ObjectMemberKind)],
+        entries: &[(Constant, Constant)],
+    ) -> ValueId {
+        if let Some(&data) = self.file.modules.data.enums.get(&declaration) {
+            return self.builder.data(data);
+        }
+        let layout = self.file.untyped_layout(names);
+        let root = values::create_object_node(self.file, layout, entries);
+        let module = Some(self.file.module_id());
+        let data = self.file.fragment.add_data(Data { root, module });
+        self.file.modules.data.enums.insert(declaration, data);
+        self.builder.data(data)
+    }
+
+    fn emit_refusal_of_unbundled_page(&mut self) -> ValueId {
+        let path = self.file.inputs.sources.diagnostic_path(self.file.file);
+        let reason = b"': the page isn't bundled into this executable, because no import or require() names it";
+        let message = [b"Cannot load '", bun_paths::basename(path), reason].concat();
+        let message = self.emit_text(&message);
+        let constructor = self.emit_builtin_itself(BuiltinId::Error);
+        let error = self.emit_construct(constructor, Arguments::Values(smallvec![message]), None);
+        self.emit_throw(error);
+        self.builder.undefined()
     }
 }
 
@@ -59,7 +109,7 @@ impl FileLowering<'_, '_, '_, '_> {
         };
         let root = match self.decisions().decision(expression) {
             Decision::Data(value) => values::create_node(self, Part::Value(value)),
-            Decision::DeferredData => self.create_deferred_node(),
+            Decision::DeferredData => self.create_deferred_node()?,
             Decision::Unknown | Decision::Constant(_) | Decision::GlobalPath(_) => return None,
         };
         Some(add_record(self, expression, root))
@@ -96,11 +146,10 @@ fn add_record(
     expression: ExprId,
     mut root: DataNode,
 ) -> DataId {
-    let maximum = file.inputs.limits.get(LimitId::MaxNestingDepth);
+    let maximum = file.inputs.limits.get(LimitId::MaxDataNestingDepth);
     if nesting_depth(&root) > maximum {
         let position = file.hir[expression].pos;
         file.queries.answer_nothing_from_now_on();
-        file.gave_up(LimitId::MaxNestingDepth, position);
         let span = file.span_at(position);
         let depth = maximum.to_string();
         file.diagnostics

@@ -21,13 +21,16 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import { withoutInstallingPackages } from "./harness/without-installing-packages";
+import { ownTemporaryFolder } from "./harness/temporary-folders";
 
 const words = process.argv.slice(2);
 const option = (name: string) => words.find(word => word.startsWith(`--${name}=`))?.slice(name.length + 3);
 const filters = words.filter(word => !word.startsWith("--"));
 const flag = option("flag") ?? "--aot";
 const bun = resolve(option("bun") ?? process.execPath);
-const out = withoutInstallingPackages(resolve(option("out") ?? mkdtempSync(join(tmpdir(), "whole-suite-"))));
+const out = withoutInstallingPackages(
+  resolve(option("out") ?? ownTemporaryFolder(mkdtempSync(join(tmpdir(), "whole-suite-")))),
+);
 const [shard, shards] = option("shard")?.split("/") ?? [];
 const repository = join(import.meta.dir, "..", "..");
 mkdirSync(out, { recursive: true });

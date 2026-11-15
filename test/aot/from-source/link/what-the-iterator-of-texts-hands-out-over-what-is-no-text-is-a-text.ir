@@ -1,0 +1,19 @@
+# `String.prototype[Symbol.iterator].call(12)`: the row converts its receiver to a text, and the iterator goes over that text.
+# Link reckoned what the steps hand out from the receiver as it arrived: of a number or a boolean nothing, of a list its elements. So `next().value` was proven undefined, or a number, and the executable stopped at the text that came.
+# -- source: what-the-iterator-of-texts-hands-out-over-what-is-no-text-is-a-text.ts
+# declare function sink(...values: unknown[]): void;
+# function ofNumber(v: number): unknown { return String.prototype[Symbol.iterator].call(v).next().value; }
+# function ofBoolean(v: boolean): unknown { return String.prototype[Symbol.iterator].call(v).next().value; }
+# function ofList(v: number[]): unknown { return String.prototype[Symbol.iterator].call(v).next().value; }
+# function ofText(v: string): unknown { return String.prototype[Symbol.iterator].call(v).next().value; }
+# function listOfNumber(v: number): unknown { return Array.prototype[Symbol.iterator].call(v).next().value; }
+# sink(ofNumber(12), ofBoolean(true), ofList([7, 8]), ofText("ab"), listOfNumber(12));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=undefined|string returns
+# CHECK: function f2 {{*}}result=undefined|string returns
+# CHECK: function f3 {{*}}|string returns
+# CHECK: function f4 {{*}}result=undefined|string returns
+# CHECK: function f5 {{*}}result=undefined returns
+# RUN(SHELL): run-in-shell globalThis.sink = (...values) => print(values.map(String).join(" "));
+# SHELL: 1 t 7 a undefined

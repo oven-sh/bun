@@ -1,23 +1,10 @@
-// The table of ./object-mutations.ts in TypeScript that the checker accepts under `strict`, without `any`, without a cast and without a declaration that has no body.
-// A reference of a declared type is held somewhere. The object behind it is changed in a way that no type forbids. A look through the typed reference then sees what the language says it sees:
-// a read of a field that is declared `number` runs the getter that was planted, answers the text that a wider alias stored, finds the value of the prototype once the field is deleted,
-// and a store to a frozen object throws.
-//
-// The table is a cross product: the declared type and what satisfies it x what the prototype holds under the key x which object is changed x the change x the key x how the change spells the key
-// x where the typed reference is held and when the change runs x whether the change stands in a callee x the look. An entry has the name it has in ./object-mutations.ts wherever it means the same.
-//
-// Where a change has put a value of another type under the key, a compiled program may throw a TypeError at the typed read. It never takes the value for what it is not.
-// A look that throws prints THROWS and the kind of the error.
-//
-// A change takes the object under a type of its own choice, and every such type is one that the declared type is assignable to:
-//   object            for the functions of Object and Reflect, which take any object, any key and any value
-//   { k?: number }    the property made optional: it can be deleted and set to undefined
-//   { k?: unknown }   the property made wider: it can hold anything
+// The table of ./object-mutations.ts as TypeScript that type-checks under `strict`, without `any`, casts or ambient
+// declarations. A reference of a declared type is held somewhere, the object is mutated in a way no type forbids, and
+// it is inspected through the reference. `--planes` writes the programs of `testPlanes` instead. The full product is
+// far too large to write out: narrow the axes.
 //
 //   bun typed-object-mutations.ts <folder> [--filter=<regex over names>] [--sample=<how many>] [--seed=<number>] [--names=<file with a name on each line>]
 //       [--planes] [--holders=a,b] [--aboves=..] [--targets=..] [--changes=..] [--keys=..] [--presences=..] [--spellings=..] [--places=..] [--callees=..] [--looks=..]
-//
-// writes <folder>/<name>.ts and a tsconfig.json. With --planes it writes the programs of `testPlanes` instead. The whole product is far too large to write: narrow the axes, or pass --sample. `pickCombination` draws one of them for another driver.
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
@@ -27,14 +14,17 @@ interface Key {
   name: string;
   /** The key as a constant expression. */
   constant: string;
-  /** The key as it stands in a literal or in a type. */
+  /** The key as written in a literal or a type. */
   inLiteral: string;
   /** The property of an object under the key. */
   at: (object: string) => string;
-  /** An expression that puts the same key together while the program runs, and the type of that expression. */
+  /** An expression that computes the same key at run time, and its type. */
   computed: string;
   computedType: string;
-  /** The declared type of the property, and two other values of that type: what a change puts there and what a look stores. */
+  /**
+   * The property's declared type, and two other values of that type: what a mutation stores and what an inspection
+   * stores.
+   */
   type: string;
   sameTypeValue: string;
   storedValue: string;
@@ -60,18 +50,21 @@ const exactAlias = (key: Key) => (key.isIndex ? "number[]" : `{ ${key.inLiteral}
 
 interface Holder {
   name: string;
-  /** The declarations. `hasKey`: the object has `k` from its creation on, and its type requires it. Otherwise the type declares `k` optional and the object lacks it. */
+  /**
+   * The declarations. `hasKey`: the object has `k` initially, and its type requires it. Otherwise the type declares `k`
+   * optional and the object lacks it.
+   */
   define: (hasKey: boolean) => string;
-  /** The body of `make`, which answers another object each time. */
+  /** The body of `make`, which returns a new object each time. */
   make: (hasKey: boolean) => string;
   /** The declared type of every reference to the object. */
   type: string;
-  /** `make` has no declared result: the type is taken from it. */
+  /** `make` has no declared return type: the type is inferred from it. */
   isInferred?: boolean;
-  /** The prototype of the object and the prototype above it, where they belong to the program. */
+  /** The object's prototype and that prototype's prototype, if they belong to the program. */
   proto?: string;
   grand?: string;
-  /** What `instanceof` is asked about. */
+  /** The right operand of `instanceof`. */
   class?: string;
   isArray?: boolean;
   /** Its type cannot declare `k` optional. */
@@ -204,7 +197,7 @@ const holders: Holder[] = [
     class: "A",
     needsKey: true,
   },
-  // What satisfies the type of a class without being an instance of it.
+  // Values that satisfy a class's type without being instances of it.
   { name: "proxy-held-as-class", define: hasKey => `class A {\n${fields(hasKey)}  ${methods(hasKey)}\n}\n`, make: () => `return new Proxy(new A(), {});`, type: "A", proto: "A.prototype", class: "A", isProxy: true },
   {
     name: "logging-proxy-held-as-class",
@@ -264,7 +257,10 @@ const holders: Holder[] = [
   },
 ];
 
-/** What lies above the object under the key before anything runs: a descriptor that is defined on the prototype, or on the prototype above it, once the declarations have run. */
+/**
+ * What the prototype chain has under the key before anything runs: a descriptor that is defined on the prototype, or on
+ * its prototype, once the declarations have run.
+ */
 interface Above {
   name: string;
   planted?: string;
@@ -288,7 +284,7 @@ type Target = "itself" | "prototype" | "prototype-above";
 const targets: Target[] = ["itself", "prototype", "prototype-above"];
 
 interface Site {
-  /** The changed object, under the type that the change asks for. */
+  /** The mutated object, with the type the mutation needs. */
   object: string;
   key: Key;
   /** The key as an expression: the constant, or the variable `name`. */
@@ -297,18 +293,18 @@ interface Site {
 
 interface Change {
   name: string;
-  /** The type under which the change takes the object. Left out: `object`. */
+  /** The type under which the mutation takes the object. Default: `object`. */
   alias?: (key: Key) => string;
   text: (site: Site) => string;
-  /** Declarations in front of everything. */
+  /** Declarations before everything else. */
   before?: string;
-  /** The key stands in the text of the change, so it cannot be put together while the program runs. */
+  /** The key is part of the mutation's text, so it cannot be computed at run time. */
   namesKey?: boolean;
   /** The alias requires the key. */
   needsKey?: boolean;
   needsArray?: boolean;
   needsNumber?: boolean;
-  /** Under another key a look would print the source text of a function. */
+  /** With another key an inspection would print a function's source text. */
   needsMethod?: boolean;
   needsObject?: boolean;
 }
@@ -319,7 +315,7 @@ const defines = (name: string, ...descriptors: Descriptor[]): Change => ({
   name,
   text: s => descriptors.map(descriptor => `Object.defineProperty(${s.object}, ${s.keyText}, ${typeof descriptor === "string" ? descriptor : descriptor(s.key)});\n`).join(""),
 });
-/** A store through the alias that admits the value. */
+/** A store through the alias that allows the value. */
 const stores = (name: string, value: string, fits: (key: Key) => boolean): Change => ({
   name,
   alias: key => (fits(key) ? looseAlias(key) : wideAlias(key)),
@@ -444,7 +440,7 @@ interface LookSite {
 
 interface Look {
   name: string;
-  /** Statements that leave what they saw in `seen`. */
+  /** Statements that store what they observed in `seen`. */
   text: (site: LookSite) => string;
   before?: string;
   helpers?: string[];
@@ -463,7 +459,7 @@ interface Look {
 const asNumber = (s: LookSite) => (s.isRequired ? s.key.at(s.object) : `(${s.key.at(s.object)} ?? 0)`);
 
 const looks: Look[] = [
-  // Looks that read.
+  // Inspections that read.
   { name: "read", text: s => `seen = str(${s.key.at(s.object)});\n` },
   { name: "read-twice", text: s => `seen = str(${s.key.at(s.object)}) + " " + str(${s.key.at(s.object)});\n` },
   { name: "type-of", text: s => `seen = typeof ${s.key.at(s.object)};\n` },
@@ -497,7 +493,7 @@ const looks: Look[] = [
   { name: "sum-by-index", text: s => `let sum = 0;\nfor (let i = 0; i < ${s.object}.length && i < 12; i++) sum += ${s.object}[i];\nseen = str(sum);\n`, needsArray: true },
   { name: "join", text: s => `seen = shortened(${s.object}.join());\n`, helpers: ["listed"], needsArray: true },
 
-  // Looks that read nothing: only an effect tells.
+  // Inspections that read nothing: only a side effect shows.
   { name: "store", text: s => `${s.key.at(s.object)} = ${s.key.storedValue};\nseen = "stored";\n`, needsWritableKey: true },
   { name: "store-twice", text: s => `${s.key.at(s.object)} = 5;\n${s.key.at(s.object)} = 6;\nseen = "stored";\n`, needsNumber: true, needsWritableKey: true },
   { name: "store-neighbor", text: s => `${s.object}.z = 5;\nseen = "stored";\n`, refusesArray: true },
@@ -512,20 +508,20 @@ interface Parts {
   /** The declared type of the object. */
   type: string;
   make: string;
-  /** What is changed, given the variable that holds the object. */
+  /** The mutated object, given the variable that holds the object. */
   subject: (object: string) => string;
-  /** The change of the given object. An exception is noted. */
+  /** The mutation of the given object. An exception is logged. */
   change: (subject: string) => string;
-  /** Leaves what a look through the reference saw, with the effects it had, in `line`. */
+  /** Stores what an inspection through the reference observed, with its side effects, in `line`. */
   observe: (reference: string) => string;
-  /** Looks and prints. `label` is an expression. */
+  /** Inspects and prints. `label` is an expression. */
   look: (reference: string, label: string) => string;
 }
 
 interface Place {
   name: string;
   text: (parts: Parts) => string;
-  /** The change runs before there is an object. */
+  /** The mutation runs before the object exists. */
   needsOtherTarget?: boolean;
 }
 
@@ -533,12 +529,15 @@ const locals = `let seen = "";\nlet before = 0;\nlet line = "";\n`;
 const reportFailure = `print("run threw " + kindOf(e));\n`;
 const inFunction = (body: string, isAsync = false) =>
   `${isAsync ? "async function run(): Promise<void>" : "function run(): void"} {\n${locals}${body}}\n${isAsync ? `run().then(undefined, (e: unknown) => {\n${reportFailure}});\n` : `try {\nrun();\n} catch (e) {\n${reportFailure}}\n`}`;
-/** The object is made, `setup` puts the typed reference somewhere, and the object is looked at through `reference` before and after `between`, which is the change unless it is given. */
+/**
+ * The object is created, `setup` stores the typed reference somewhere, and the object is inspected through `reference`
+ * before and after `between`, which defaults to the mutation.
+ */
 const held = (p: Parts, reference: string, setup = "", between = p.change(p.subject("o"))) => `const o: ${p.type} = ${p.make};\n${setup}${p.look(reference, `"before"`)}${between}${p.look(reference, `"after"`)}`;
 const printWhenItDiffers = `if (line !== last || i === 150) {\nprint(i + ": " + line);\nlast = line;\n}\n`;
 const once = (body: string) => `if (!isDone) {\nisDone = true;\n${body}}\n`;
 
-/** Something that runs statements once, which name `o`. */
+/** Something that runs statements once; they refer to `o`. */
 interface Trigger {
   name: string;
   text: (body: string) => string;
@@ -732,19 +731,19 @@ export interface Combination {
   target: Target;
   change: Change;
   key: Key;
-  /** The object has `k` from its creation on, and its type requires it. */
+  /** The object has `k` initially, and its type requires it. */
   isOwn: boolean;
-  /** How the change spells the key. A look names it. */
+  /** How the mutation spells the key. An inspection uses the name. */
   spelling: Spelling;
   place: Place;
-  /** The change stands in a function that takes the object under the type the change asks for. */
+  /** The mutation is in a function that takes the object under the type the mutation needs. */
   isChangedInCallee: boolean;
   look: Look;
 }
 
 function isPossible({ holder, above, target, change, key, isOwn, spelling, place, look }: Combination): boolean {
   if (!!holder.isArray !== !!key.isIndex) return false;
-  // Only `k` can be left out.
+  // Only `k` can be omitted.
   if (key.name === "k" ? !isOwn && holder.needsKey : isOwn) return false;
   const isRequired = key.name !== "k" || isOwn;
   if (above.planted && !(above.isFar ? holder.grand : holder.proto)) return false;
@@ -754,7 +753,7 @@ function isPossible({ holder, above, target, change, key, isOwn, spelling, place
   if (change.needsArray && !(holder.isArray && target === "itself")) return false;
   if (change.needsNumber && key.type !== "number") return false;
   if (change.needsObject && !key.isObject) return false;
-  // A proxy may become its own ancestor, and every lookup then ends in a stack overflow at a depth of its own.
+  // A proxy may become its own ancestor, and every lookup then overflows the stack at a different depth.
   if (change.name === "prototype-to-its-heir" && holder.isProxy) return false;
   if (change.needsMethod && !key.isMethod) return false;
   if (change.needsKey && !isRequired) return false;
@@ -773,7 +772,7 @@ function isPossible({ holder, above, target, change, key, isOwn, spelling, place
 
 const guarded = (body: string, handler: string) => `try {\n${body}} catch (e) {\n${handler}}\n`;
 
-/** The statements of the program. They can stand in a function. */
+/** The program's statements. They can go in a function. */
 export function bodyOf(combination: Combination): string {
   const { holder, above, target, change, key, isOwn, spelling, place, isChangedInCallee, look } = combination;
   const hasKey = key.name !== "k" || isOwn;
@@ -807,7 +806,7 @@ export function bodyOf(combination: Combination): string {
   ].join("");
 }
 
-/** The program: a module, so that its declarations are its own. */
+/** The program: a module, so that its declarations are private. */
 export const textOf = (combination: Combination) => `${bodyOf(combination)}export {};\n`;
 
 export const nameOf = ({ holder, above, target, change, key, isOwn, spelling, place, isChangedInCallee, look }: Combination) =>
@@ -837,7 +836,7 @@ const chosen = <T extends { name: string }>(items: T[], names: string[] | undefi
   return items.filter(item => names.includes(item.name));
 };
 
-/** The axes cut down to the given names. An axis that is left out stays whole. */
+/** The axes restricted to the given names. An omitted axis stays complete. */
 export function axesOf(names: Partial<Record<keyof Axes, string[]>>): Axes {
   return {
     holders: chosen(holders, names.holders),
@@ -871,7 +870,7 @@ export function* combinations(axes: Axes = allAxes): Generator<Combination> {
                     }
 }
 
-/** The combination that `nameOf` gives the name. */
+/** The combination with the given `nameOf` name. */
 export function combinationOf(name: string): Combination {
   const [holder, above, target, change, key, spelling, place, look] = name.split(".");
   const [keyName, presence = "absent"] = key.split("+");
@@ -882,12 +881,13 @@ export function combinationOf(name: string): Combination {
   return combination;
 }
 
-/** One combination, drawn with `pick`. */
+/** One random combination, picked with `pick`. */
 export function pickCombination(pick: <T>(items: readonly T[]) => T, axes: Axes = allAxes): Combination {
   for (;;) {
     const combination = {
       holder: pick(axes.holders),
-      // Two of three objects have nothing above them under the key, and two of three changes are made to the object itself.
+      // Two of three objects have nothing on their prototype chain under the key, and two of three mutations apply to
+      // the object itself.
       above: axes.aboves.includes(aboves[0]) && pick([0, 1, 2]) ? aboves[0] : pick(axes.aboves),
       target: axes.targets.includes("itself") && pick([0, 1, 2]) ? ("itself" as const) : pick(axes.targets),
       change: pick(axes.changes),
@@ -902,7 +902,7 @@ export function pickCombination(pick: <T>(items: readonly T[]) => T, axes: Axes 
   }
 }
 
-/** Programs with many combinations each, every combination in a function of its own. */
+/** Programs with many combinations each, every combination in its own function. */
 export function programsBy(group: (combination: Combination) => string, axes: Axes): { name: string; text: string }[] {
   const groups = Map.groupBy(combinations(axes), group);
   return [...groups].map(([name, members]) => ({
@@ -913,9 +913,9 @@ export function programsBy(group: (combination: Combination) => string, axes: Ax
 
 export interface Plane {
   title: string;
-  /** The programs that run in every run of the test. */
+  /** The programs that every test run includes. */
   alwaysRun: string[];
-  /** Some of its changes put a value of another type under the key. */
+  /** Some of its mutations store a value of another type under the key. */
   programs: { name: string; text: string }[];
 }
 
@@ -923,7 +923,7 @@ export interface Plane {
 export function testPlanes(): Plane[] {
   const byHolder = ({ holder }: Combination) => holder.name;
   const objects = holders.filter(holder => !holder.isArray).map(holder => holder.name);
-  // Where a setter refuses the value, the object is not changed, and every line that follows differs.
+  // If a setter rejects the value, the object is unchanged, and every following line differs.
   const objectsWithoutSetter = holders.filter(holder => !holder.isArray && !holder.hasTypedSetter).map(holder => holder.name);
   const arrays = holders.filter(holder => holder.isArray && holder.name !== "array-of-length").map(holder => holder.name);
   const references = ["between-uses", "held-in-field", "held-in-element", "held-in-captured-variable", "parameter-in-a-hot-loop"];

@@ -1,7 +1,7 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Initializer
 // CHECK: [[read]] = PropGet {{*}}key="v"
-// CHECK-NEXT: [[converted]] = Convert [[read]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// CHECK-NEXT: [[converted]] = Convert [[read]] declared={type=number} @
 // CHECK-NEXT: PropDefine [[this]], [[converted]] key="x"
 // CHECK-NOT: Convert
 // CHECK: [[untyped]] = PropGet {{*}}key="v"

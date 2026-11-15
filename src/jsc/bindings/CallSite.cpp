@@ -61,8 +61,9 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     bool isCompiledHostFunction = isCompiled && frame.representsHostFunction();
     bool isCompiledHiddenBuiltin = isCompiled && !isCompiledHostFunction && frame.isBuiltinFunction();
 #if ENABLE(AOT)
-    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction)
+    if (isCompiled && !isStrictFrame && !isCompiledHiddenBuiltin && !isCompiledHostFunction) {
         isStrictFrame = JSC::AOT::FunctionDescription(frame.compiledFrame().function).isStrict();
+    }
 #endif
 
     // JSC::StackFrame has no receiver, so getThis() is always undefined.
@@ -87,6 +88,9 @@ void CallSite::finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encountere
     m_functionName.set(vm, this, stackFrame.functionName());
     m_sourceURL.set(vm, this, stackFrame.sourceURL());
     m_sourceID = stackFrame.sourceID();
+#if ENABLE(AOT)
+    m_compiledModule = stackFrame.compiledModule();
+#endif
 
     const auto* sourcePositions = stackFrame.getSourcePositions();
     if (sourcePositions) {
@@ -194,8 +198,15 @@ void CallSite::formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WT
         if (!mySourceURL || mySourceURL->length() == 0) {
             sb.append("unknown"_s);
         } else {
-            sb.append(mySourceURL->getString(globalObject));
+            String url = mySourceURL->getString(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+            if (m_compiledModule)
+                url = JSC::AOT::displayPathOf(m_compiledModule);
+            else if (Zig::hasExternalSourceMap() && url == Zig::externalSourceMapFileURL())
+                url = Zig::externalSourceMapDisplayPath();
+#endif
+            sb.append(url);
         }
 
         if (line && column) {

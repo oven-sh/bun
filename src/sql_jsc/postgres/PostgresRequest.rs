@@ -160,9 +160,9 @@ fn array_literal(global: &JSGlobalObject, list: JSValue, tag: types::Tag) -> JsR
     };
     let function = global
         .bun_vm()
-        .as_mut()
         .sql_state()
         .postgresql_context
+        .get()
         .array_literal_fn
         .get()
         .unwrap();

@@ -1,0 +1,21 @@
+# -- source: behind-the-test-for-a-view-the-other-holders-of-the-loop-may-be-views-or-what-is-written-of-them.js
+# function weigh(a, w, x) {
+#   let c = 0;
+#   for (let i = 0; i < a.length; i++) c = c + w[i & 7] * x[i & 7] + a[i & 7] * 0.5;
+#   return c;
+# }
+# sink(weigh);
+# const halves = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+# print(weigh(Float64Array.from(halves), halves, halves.slice()), weigh(Float64Array.from(halves), Float64Array.from(halves), Float64Array.from(halves)), weigh(halves, halves, halves));
+# -- end of source
+# The loop is built once for each kind of holder that `a` may be. In the copy for a kind of view the other holders that the loop reads in step are expected to be that kind too. They need not be: here a
+# view comes with two lists. So behind the one test stand two copies: in the first the others are asked for the view's kind; who fails there goes on to the second, where they are asked for what is
+# written of them, lists, and `a` is still the view. Without the second the whole loop fell to its closed copy.
+# f1 = weigh
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetTypedArrayElement
+# CHECK: = GetArrayElement
+# CHECK: = GetArrayElement
+# CHECK: = GetTypedArrayElement
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 262 262 262

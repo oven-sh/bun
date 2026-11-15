@@ -1,6 +1,7 @@
 mod contents;
 mod exploration;
 mod mapping;
+mod memo;
 mod shape_edges;
 mod shape_table;
 #[cfg(test)]
@@ -18,28 +19,22 @@ use super::{CheckerTypeId, FileLowering};
 use crate::ir::{Mapped, TypeId, TypeTable};
 
 pub(in crate::lower) use self::contents::find_contents_type;
+pub(in crate::lower) use self::memo::TypeMemo;
 
 #[derive(Default)]
 pub(crate) struct TypeState {
     pub(in crate::lower) positions: PositionState,
     pub(in crate::lower) conversions: ConversionState,
     pub(in crate::lower) function_types: FunctionTypeState,
-    mapped: FxHashMap<CheckerTypeId, MappedType>,
-    shallow: FxHashMap<CheckerTypeId, Mapped>,
     exhausted: FxHashSet<CheckerTypeId>,
     facts: FxHashMap<(CheckerTypeId, u8), bool>,
-    sources: FxHashMap<TypeId, CheckerTypeId>,
     walk: exploration::Walk,
-    alike_walk: shape_table::AlikeWalkTables,
-    /// The tuple that `find_element_type` was asked about last, and the position of its first
-    /// element that is not one value.
     pub(in crate::lower) first_variable_element: Option<(CheckerTypeId, usize)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-struct MappedType {
+pub(super) struct MappedType {
     mapped: Mapped,
-    // How many types it reaches, itself among them. Nothing, where they are more than the limit.
     weight: Option<u32>,
 }
 
@@ -72,7 +67,6 @@ impl FileLowering<'_, '_, '_, '_> {
         kept.or_else(|| self.types.facts.get(&(ty, fact as u8)).copied())
     }
 
-    // A fact that follows from answers that hold in every file lies with them. Any other holds for this file.
     fn keep_fact(&mut self, ty: CheckerTypeId, fact: KeptFact, holds: bool, unstable_answers: u64) {
         if !self.queries.keep_fact(ty, fact, holds, unstable_answers) {
             self.types.facts.insert((ty, fact as u8), holds);
@@ -94,11 +88,11 @@ impl FileLowering<'_, '_, '_, '_> {
         holds
     }
 
-    fn find_tuple_contents(&mut self, container: CheckerTypeId, position: u32) -> Option<TypeId> {
+    fn find_tuple_contents(&mut self, container: CheckerTypeId) -> Option<TypeId> {
         let container = self.queries.without_nullish(container).ok()?;
         let elements = match self.queries.type_shape(container).ok()?.kind {
             ShapeKind::Tuple { elements, .. } => elements,
-            ShapeKind::Int32 { base } => return self.find_tuple_contents(base, position),
+            ShapeKind::Int32 { base } => return self.find_tuple_contents(base),
             _ => return None,
         };
         let mut contents = TypeTable::NEVER;
@@ -106,7 +100,7 @@ impl FileLowering<'_, '_, '_, '_> {
             let held = match element.kind {
                 TupleElementKind::Required
                 | TupleElementKind::Optional
-                | TupleElementKind::Rest => self.map_type_at(element.ty, position).ty,
+                | TupleElementKind::Rest => self.map_type_at(element.ty).ty,
                 TupleElementKind::Variadic => return None,
             };
             contents = self.fragment.types.union(contents, held);
@@ -114,30 +108,46 @@ impl FileLowering<'_, '_, '_, '_> {
         (contents != TypeTable::NEVER).then_some(contents)
     }
 
-    pub(crate) fn array_literal_contents(&mut self, literal: ExprId) -> TypeId {
-        debug_assert!(
-            matches!(self.hir[literal].kind, ExprKind::Array(_)),
-            "an array literal was expected"
-        );
-        let contextual = self.queries.contextual_type(literal).ok().flatten();
-        let own = self.queries.expression_type(literal).ok();
-        self.record_array_literal_flow(literal, contextual, own);
-        let container = contextual.or(own);
-        let Some(element) = container.and_then(|ty| self.find_array_element_type(ty)) else {
-            let position = self.hir[literal].pos;
-            let contents = container.and_then(|ty| self.find_tuple_contents(ty, position));
-            return contents.unwrap_or(TypeTable::ANYTHING);
-        };
-        let contents = self.map_type_at(element, self.hir[literal].pos).ty;
-        // `[]` alone has the type `never[]`: what it holds, and not what is stored into it later, which is what the contents declare.
-        if contextual.is_none() && contents == TypeTable::NEVER {
+    /// The numbers that the checker infers for an array literal without a written type.
+    fn inferred_literal_contents(&mut self, literal: ExprId) -> TypeId {
+        if !self.is_checked() {
             return TypeTable::ANYTHING;
         }
-        contents
+        let Ok(list) = self.queries.expression_type(literal) else {
+            return TypeTable::ANYTHING;
+        };
+        let Some(element) = self.find_array_element_type(list) else {
+            return TypeTable::ANYTHING;
+        };
+        match self.queries.type_shape(element).map(|shape| shape.kind) {
+            Ok(ShapeKind::Number) => TypeTable::NUMBER,
+            _ => TypeTable::ANYTHING,
+        }
     }
 
-    pub(in crate::lower) fn find_mapped_source(&self, ty: TypeId) -> Option<CheckerTypeId> {
-        self.types.sources.get(&ty).copied()
+    pub(in crate::lower) fn literal_holds_inferred_numbers(&mut self, literal: ExprId) -> bool {
+        matches!(self.hir[literal].kind, ExprKind::Array(_))
+            && self.inferred_literal_contents(literal) == TypeTable::NUMBER
+    }
+
+    pub(crate) fn array_literal_contents(&mut self, literal: ExprId) -> TypeId {
+        debug_assert!(
+            matches!(
+                self.hir[literal].kind,
+                ExprKind::Array(_) | ExprKind::New(_)
+            ),
+            "an array literal or `new Array()` was expected"
+        );
+        let Ok(Some(container)) = self.queries.contextual_type(literal) else {
+            return self.inferred_literal_contents(literal);
+        };
+        match self.find_array_element_type(container) {
+            Some(element) => self.map_type_at(element).ty,
+            None => {
+                let contents = self.find_tuple_contents(container);
+                contents.unwrap_or(TypeTable::ANYTHING)
+            }
+        }
     }
 }
 
@@ -146,28 +156,4 @@ pub(in crate::lower) fn lists_int32(
     ty: CheckerTypeId,
 ) -> bool {
     file.find_fact(ty, KeptFact::ListsInt32, shape_table::lists_int32)
-}
-
-pub(in crate::lower) fn lists_only_integers(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> bool {
-    let compute = shape_table::lists_only_integers;
-    file.find_fact(ty, KeptFact::ListsOnlyIntegers, compute)
-}
-
-pub(in crate::lower) fn is_mapped_alike_in_every_file(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> bool {
-    let compute = shape_table::is_mapped_alike_in_every_file;
-    file.find_fact(ty, KeptFact::IsMappedAlikeInEveryFile, compute)
-}
-
-pub(in crate::lower) fn has_layout_in_every_value(
-    file: &mut FileLowering<'_, '_, '_, '_>,
-    ty: CheckerTypeId,
-) -> bool {
-    let compute = shape_table::has_layout_in_every_value;
-    file.find_fact(ty, KeptFact::HasLayoutInEveryValue, compute)
 }

@@ -197,26 +197,29 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
     }
 
     fn seed_type_files(&self, ahead: &Prefetch<'s, 'r>, found: &Found<'s>) {
-        let mut code_paths: Vec<&'r [u8]> = Vec::new();
+        let code_paths = self.entries.iter().filter_map(|entry| {
+            let file = entry.file?;
+            let is_code = entry.has_code() && entry.key.loader == HostLoader::default();
+            is_code.then_some((file, entry.key.path))
+        });
+        // Where case counts, a path that is spelled otherwise is another file's, so the list of what is loaded tells.
         let mut registered_paths: FxHashSet<&'s [u8]> = FxHashSet::default();
-        for entry in &self.entries {
-            if let Some(file) = entry.file
-                && entry.has_code()
-                && entry.key.loader == HostLoader::default()
-            {
-                code_paths.push(entry.key.path);
-                registered_paths.insert(found.files[file.idx()].path.text);
-            }
+        if !self.is_case_sensitive {
+            registered_paths.extend(
+                code_paths
+                    .clone()
+                    .map(|it| found.files[it.0.idx()].path.text),
+            );
         }
         let is_code_path = |path: &[u8]| {
             if self.is_case_sensitive {
-                return registered_paths.contains(path);
+                return false;
             }
             let mut buffer = path_buffer_pool::get();
             let text = to_path_in(path, false, &mut buffer[..]);
             registered_paths.contains(&text[..])
         };
-        ahead.skip_code_files(&is_code_path, &code_paths);
+        ahead.skip_code_files(&is_code_path, code_paths.map(|it| it.1), self.entries.len());
         for entry in &self.entries {
             if !entry.has_code() {
                 ahead.add_seed(entry.key.path, false);
@@ -231,13 +234,22 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
 }
 
 impl<'r> Prefetch<'_, 'r> {
-    fn skip_code_files(&self, is_code_path: &dyn Fn(&[u8]) -> bool, code_paths: &[&'r [u8]]) {
+    fn skip_code_files(
+        &self,
+        is_code_path: &dyn Fn(&[u8]) -> bool,
+        code_paths: impl Iterator<Item = &'r [u8]>,
+        most_paths: usize,
+    ) {
         let mut state = self.state.lock();
-        for &path in code_paths {
+        state.seen.reserve(most_paths);
+        let mut seen_before: FxHashSet<&'r [u8]> = FxHashSet::default();
+        for path in code_paths {
             let next = state.seen.len() as u32;
-            state.seen.entry(path).or_insert(next);
+            if *state.seen.entry(path).or_insert(next) != next {
+                seen_before.insert(path);
+            }
         }
-        state.to_read.retain(|file| !is_code_path(file.path));
+        (state.to_read).retain(|file| !seen_before.contains(file.path) && !is_code_path(file.path));
     }
 
     pub(super) fn add_seed(&self, path: &'r [u8], is_lib: bool) {

@@ -81,6 +81,7 @@ fn default_settings() -> TranspileSettings {
         experimental_decorators: false,
         emits_decorator_metadata: false,
         use_define_for_class_fields: None,
+        bun_run_assigns_class_fields: false,
     }
 }
 
@@ -108,6 +109,7 @@ fn default_host_selects_loader_by_path_alone() {
     let loader = Bare.loader_of(&LoaderRequest {
         path: MAIN,
         kind: CodeImportKind::Require,
+        is_linked_by_bundler: true,
         type_attribute: Some(b"text"),
         embed_attribute: Some(b"true"),
         settings: &settings,
@@ -183,6 +185,7 @@ fn default_host_leaves_tree_and_payload_unchanged() {
             is_library: false,
             host_values: &[],
             jsx: JsxMode::Classic,
+            own_name: b"",
         },
         &atoms,
         arena,
@@ -215,6 +218,7 @@ fn default_host_leaves_tree_and_payload_unchanged() {
         bound: &bound,
         analysis: &analysis,
         settings: &settings,
+        import_meta_main: None,
     };
     let change = Bare.transform_tree(arena, &atoms, &mut transform, &mut payload);
     assert_eq!(change, TreeChange::Unchanged);

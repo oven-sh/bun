@@ -91,7 +91,7 @@ pub struct PostgresSQLConnection {
     pub(crate) pending_requests: Cell<u32>,
     advancing: Cell<bool>,
 
-    pub(crate) poll_ref: JsCell<KeepAlive>,
+    pub(crate) poll_ref: KeepAlive,
     pub(crate) global_object: BackRef<JSGlobalObject>,
     vm: BackRef<VirtualMachine>,
     pub(crate) statements: JsCell<StatementCache>,
@@ -156,16 +156,6 @@ impl Drop for Advancing<'_> {
     }
 }
 
-struct RowCells(SmallVec<[DataCell::SQLDataCell; 70]>);
-
-impl Drop for RowCells {
-    fn drop(&mut self) {
-        for cell in &mut self.0 {
-            cell.deinit();
-        }
-    }
-}
-
 bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
     from_timer_ptr => timers.timer,
     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
@@ -174,11 +164,8 @@ bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
 impl Drop for PostgresSQLConnection {
     fn drop(&mut self) {
         self.disconnect();
-        // `free_sensitive`: the connection options carry the password.
-        for b in self.options_buf.iter_mut() {
-            // SAFETY: plain byte write; volatile so it is not elided.
-            unsafe { core::ptr::write_volatile(b, 0) };
-        }
+        // The connection options carry the password.
+        bun_alloc::secure_zero(&mut self.options_buf);
     }
 }
 
@@ -197,8 +184,8 @@ impl PostgresSQLConnection {
     }
 
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
-        VirtualMachine::get().event_loop_mut()
+    fn event_loop(&self) -> &'static crate::jsc::EventLoop {
+        VirtualMachine::get().event_loop()
     }
 
     #[inline]
@@ -382,7 +369,7 @@ impl PostgresSQLConnection {
         self.reset_connection_timeout();
         if status == Status::Connected {
             self.update_flags(|f| f.insert(ConnectionFlags::ON_CONNECT_PENDING));
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.unref(self.vm_ctx());
         }
         self.update_has_pending_activity();
     }
@@ -425,9 +412,9 @@ impl PostgresSQLConnection {
             && (flags.contains(ConnectionFlags::COPY_OUT_PAUSED)
                 || (!self.has_query_running() && self.write_buffer.get().remaining().is_empty()));
         if idle {
-            self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+            self.poll_ref.unref(self.vm_ctx());
         } else {
-            self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+            self.poll_ref.r#ref(self.vm_ctx());
         }
     }
 
@@ -562,7 +549,7 @@ impl PostgresSQLConnection {
         self.unregister_auto_flusher();
         let event_loop = self.event_loop();
         event_loop.enter();
-        self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
+        self.poll_ref.unref(self.vm_ctx());
         fail(self);
         event_loop.exit();
     }
@@ -630,7 +617,7 @@ impl PostgresSQLConnection {
             };
         }
 
-        self.poll_ref.with_mut(|r| r.r#ref(self.vm_ctx()));
+        self.poll_ref.r#ref(self.vm_ctx());
         self.update_has_pending_activity();
 
         if matches!(
@@ -867,13 +854,12 @@ pub(crate) fn create_connection<'a>(
     scram_password: &[u8],
 ) -> JsResult<JSValue> {
     let global_object = cx.global();
-    let vm = global_object.bun_vm().as_mut();
+    let vm = global_object.bun_vm();
     let port = port as i32;
     // The connection is the calling script's.
     let context = global_object.bun_vm().context_of_caller();
     let Some(args) = ConnectionCtorArgs::parse(
         global_object,
-        &mut *vm,
         hostname,
         ssl_mode,
         tls.to_js(),
@@ -1043,7 +1029,7 @@ impl CancelTarget {
 
 fn open(
     global_object: &JSGlobalObject,
-    group: &mut uws::SocketGroup,
+    group: &uws::SocketGroup,
     params: ConnectParams<'_>,
 ) -> Result<JSValue, uws::ConnectError> {
     let ConnectionStrings {
@@ -1057,67 +1043,63 @@ fn open(
     } = params.strings;
     let carries_cancel_request = params.cancel.is_some();
 
-    let ptr: *mut PostgresSQLConnection =
-        bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
-            socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
-                socket: uws::InternalSocket::Detached,
-            })),
-            status: Cell::new(Status::Connecting),
-            ref_count: Cell::new(1),
-            write_buffer: JsCell::new(OffsetByteList::default()),
-            read_buffer: JsCell::new(OffsetByteList::default()),
-            last_message_start: Cell::new(0),
-            requests: JsCell::new(PostgresRequest::Queue::new()),
-            pipelined_requests: Cell::new(0),
-            nonpipelinable_requests: Cell::new(0),
-            pending_requests: Cell::new(0),
-            advancing: Cell::new(false),
-            poll_ref: JsCell::new(KeepAlive::default()),
-            global_object: BackRef::new(global_object),
-            vm: BackRef::from(
-                core::ptr::NonNull::new(VirtualMachine::get_mut_ptr()).expect("vm singleton"),
-            ),
-            statements: JsCell::new(StatementCache::default()),
-            prepared_statement_id: Cell::new(0),
-            transaction_status: Cell::new(b'I'),
-            js_value: JsCell::new(crate::jsc::JsRef::empty()),
-            backend_key_data: Cell::new(None),
-            cancel_target: JsCell::new(params.cancel),
-            database,
-            user: username,
-            password,
-            scram_password,
-            path,
-            options,
-            options_buf,
-            authentication_state: JsCell::new(AuthenticationState::Pending),
-            secure: params.secure,
-            tls_config: params.tls_config,
-            tls_status: Cell::new(if params.ssl_mode != SSLMode::Disable {
-                TLSStatus::Pending
-            } else {
-                TLSStatus::None
-            }),
-            ssl_mode: params.ssl_mode,
-            channel_binding: params.channel_binding,
-            flags: Cell::new(if params.use_unnamed_prepared_statements {
-                ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
-            } else {
-                ConnectionFlags::empty()
-            }),
-            timers: ConnectionTimers::new(
-                params.idle_timeout_ms,
-                params.connection_timeout_ms,
-                params.max_lifetime_ms,
-                EventLoopTimerTag::PostgresSQLConnectionTimeout,
-                EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
-            ),
-            auto_flush_registered: Cell::new(false),
-            channel_names: JsCell::new(Vec::new()),
-            copy_out: JsCell::new(Vec::new()),
-        }));
-
-    let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
+    let this = RefPtr::new(PostgresSQLConnection {
+        socket: JsCell::new(Socket::SocketTcp(uws::SocketTCP {
+            socket: uws::InternalSocket::Detached,
+        })),
+        status: Cell::new(Status::Connecting),
+        ref_count: Cell::new(1),
+        write_buffer: JsCell::new(OffsetByteList::default()),
+        read_buffer: JsCell::new(OffsetByteList::default()),
+        last_message_start: Cell::new(0),
+        requests: JsCell::new(PostgresRequest::Queue::new()),
+        pipelined_requests: Cell::new(0),
+        nonpipelinable_requests: Cell::new(0),
+        pending_requests: Cell::new(0),
+        advancing: Cell::new(false),
+        poll_ref: KeepAlive::default(),
+        global_object: BackRef::new(global_object),
+        vm: BackRef::new(VirtualMachine::get()),
+        statements: JsCell::new(StatementCache::default()),
+        prepared_statement_id: Cell::new(0),
+        transaction_status: Cell::new(b'I'),
+        js_value: JsCell::new(crate::jsc::JsRef::empty()),
+        backend_key_data: Cell::new(None),
+        cancel_target: JsCell::new(params.cancel),
+        database,
+        user: username,
+        password,
+        scram_password,
+        path,
+        options,
+        options_buf,
+        authentication_state: JsCell::new(AuthenticationState::Pending),
+        secure: params.secure,
+        tls_config: params.tls_config,
+        tls_status: Cell::new(if params.ssl_mode != SSLMode::Disable {
+            TLSStatus::Pending
+        } else {
+            TLSStatus::None
+        }),
+        ssl_mode: params.ssl_mode,
+        channel_binding: params.channel_binding,
+        flags: Cell::new(if params.use_unnamed_prepared_statements {
+            ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
+        } else {
+            ConnectionFlags::empty()
+        }),
+        timers: ConnectionTimers::new(
+            params.idle_timeout_ms,
+            params.connection_timeout_ms,
+            params.max_lifetime_ms,
+            EventLoopTimerTag::PostgresSQLConnectionTimeout,
+            EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
+        ),
+        auto_flush_registered: Cell::new(false),
+        channel_names: JsCell::new(Vec::new()),
+        copy_out: JsCell::new(Vec::new()),
+    });
+    let ptr = this.as_ptr();
 
     {
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
@@ -1145,19 +1127,14 @@ fn open(
             )
         };
 
-        this.socket.set(Socket::SocketTcp(match result {
-            Ok(s) => s,
-            Err(err) => {
-                // SAFETY: fresh allocation, sole ref.
-                drop(unsafe { bun_core::heap::take(ptr) });
-                return Err(err);
-            }
-        }));
+        this.socket.set(Socket::SocketTcp(result?));
     }
 
     // only call toJS if connectUnixAnon does not fail immediately
     this.reset_connection_timeout();
-    this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
+    this.poll_ref.ref_(this.vm_ctx());
+    // The wrapper takes the ref.
+    let this = this.into_this_ptr();
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
     this.js_value
@@ -1248,7 +1225,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
 impl PostgresSQLConnection {
     pub fn r#ref(&self) {
         self.update_flags(|f| f.insert(ConnectionFlags::KEEP_ALIVE_REQUESTED));
-        self.poll_ref.with_mut(|p| p.ref_(self.vm_ctx()));
+        self.poll_ref.ref_(self.vm_ctx());
         self.update_has_pending_activity();
     }
 
@@ -1337,7 +1314,7 @@ impl PostgresSQLConnection {
         let socket = *self.socket.get();
         if !socket.is_closed() {
             // event loop need to be alive to close the socket
-            self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
+            self.poll_ref.ref_(self.vm_ctx());
             // will unref on socket close
             socket.close_now();
         }
@@ -2014,35 +1991,6 @@ impl PostgresSQLConnection {
                 // keeps the statement alive.
                 let mut cached_structure: Option<ParentRef<PostgresCachedStructure>> = None;
                 let request_flags = request.flags.get();
-                let row_type = request.row_type.get();
-                if row_type != 0
-                    && request_flags.formats == ResultFormats::Decodable
-                    && !request_flags.bigint
-                    && request_flags.result_mode == SQLQueryResultMode::Objects
-                {
-                    if !statement.row_decoder.is_for(row_type) {
-                        statement.create_row_decoder(self.global(), row_type);
-                    }
-                    if let Some(this_value) = request.this_value.get().try_get() {
-                        let rows = postgres_sql_query::js::pending_value_get_cached(this_value)
-                            .unwrap_or_default();
-                        let (_, length) = reader.peek_length()?;
-                        let appended_to = statement
-                            .row_decoder
-                            .append_row(self.global(), &reader.peek()[4..length], rows)
-                            .map_err(crate::jsc::js_error_to_postgres)?;
-                        if let Some(appended_to) = appended_to {
-                            if rows.is_empty() {
-                                postgres_sql_query::js::pending_value_set_cached(
-                                    this_value,
-                                    self.global(),
-                                    appended_to,
-                                );
-                            }
-                            return reader.skip_message();
-                        }
-                    }
-                }
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
@@ -2056,25 +2004,14 @@ impl PostgresSQLConnection {
                     }
                 }
 
-                // Seeded with the field's column kind so a short DataRow still
-                // matches the Structure built from these fields.
-                let mut cells = RowCells(
-                    statement
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, field)| {
-                            DataCell::SQLDataCell::null_for_column(i as u32, &field.name_or_index)
-                        })
-                        .collect(),
-                );
                 let mut putter = DataCell::Putter {
-                    list: &mut cells.0,
+                    list: SmallVec::new(),
                     fields: &statement.fields,
                     formats: request_flags.formats,
                     bigint: request_flags.bigint,
                     global_object: self.global(),
                 };
+                putter.list.reserve_exact(statement.fields.len());
 
                 // Tells a cell the client cannot decode from a framing error of `decode` itself.
                 let mut cell_failed = false;
@@ -2284,7 +2221,6 @@ impl PostgresSQLConnection {
                 statement.cached_structure = Default::default();
                 statement.needs_duplicate_check = true;
                 statement.fields_flags = Default::default();
-                statement.row_decoder = Default::default();
             }
             MessageType::Authentication => {
                 let auth = protocol::Authentication::decode_internal(&mut reader)?;

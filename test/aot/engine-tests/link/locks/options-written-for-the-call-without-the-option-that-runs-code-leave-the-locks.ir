@@ -1,0 +1,26 @@
+# Bun.serve({ port: 0 }); Date.now();
+# The layout of the options comes from the declared type and lists `app`, which nobody fills. The options are a literal that is made for the call: nobody else has held it, so it has what is written in it.
+# If a layout that lists the option counted as passing it, no typed program that starts a server would have a lock.
+# The controls: WebKit's aot/tests/link/locks/the-flow-brings-options-written-with-the-option-that-runs-code.ir, options-written-for-the-call-with-the-option-that-runs-code-lay-no-lock.ir, options-that-somebody-else-held-first-lay-no-lock-where-their-layout-lists-the-option.ir
+# RUN: locks open
+# CHECK-NOT: no-lock-is-laid
+# CHECK: locked DateNow
+
+layout L0 module=m0 fields=[{key="app" declared={type=anything} flags=[IsNeverWritten]}, {key="port" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=Bun
+    v2 = PropGet v1 key="serve"
+    v3 = NewObject layout=L0
+    v4 = Integer
+    PropDefine v3, v4 key="port"
+    v6 = FinishObject v3
+    v7 = Call v2, v1, v6 calleeKey="serve"
+    v8 = PropGet v0 key="Date" [isFreeName]
+    v9 = PropGet v8 key="now"
+    v10 = Call v9, v8 calleeKey="now"
+    Return v10
+}

@@ -295,14 +295,13 @@ impl Watcher {
             // ends before the free below.
             let me = unsafe { &*this };
             // `thread_body` clears `watchloop_handle` under this mutex when it returns ownership.
-            me.mutex.lock();
+            let guard = me.mutex.lock_guard();
             if me.watchloop_handle.load() {
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
-                me.mutex.unlock();
                 false
             } else {
-                me.mutex.unlock();
+                drop(guard);
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -517,7 +516,8 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd, &[event], &mut [], None) };
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -585,7 +585,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
@@ -672,7 +671,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
@@ -886,7 +884,7 @@ impl Watcher {
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
-        self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
 
         if let Some(index) = self.index_of(hash) {
             let mut ownership = FdOwnership::Caller;
@@ -902,19 +900,16 @@ impl Watcher {
                     ownership = FdOwnership::Watcher;
                 }
             }
-            self.mutex.unlock();
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
+        self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
             fd,
             file_path,
             hash,
             dir_fd,
             package_json,
-        );
-        self.mutex.unlock();
-        r
+        )
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
@@ -1062,7 +1057,6 @@ pub struct WatchItem {
     // filepath hash for quick comparison
     pub hash: u32,
     pub fd: Fd,
-    pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,

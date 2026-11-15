@@ -1,0 +1,20 @@
+import { mock, test, vi } from "bun:test";
+import * as all from "./gauge.mjs";
+const show = (label, it) => console.log("SAID", label, Object.keys(it).sort().map(key => key + "=" + String(it[key])).join(","));
+test("what each object shows under each mock", async () => {
+  vi.doMock("./gauge.mjs", () => ({ limit: 0, gone: 5 }));
+  const first = await import("./gauge.mjs");
+  show("first under the first mock", first);
+  mock.module("./gauge.mjs", () => ({ limit: 1, added: 7 }));
+  show("first under the second", first);
+  const again = await import("./gauge.mjs");
+  show("again", again);
+  show("all", all);
+  console.log("SAID the same object", first === again);
+  mock.module("./gauge.mjs", () => ({ limit: 2 }));
+  show("first under the third", first);
+  show("again under the third", again);
+  const last = await import("./gauge.mjs");
+  show("last", last);
+  console.log("SAID the same object", first === last, again === last);
+});

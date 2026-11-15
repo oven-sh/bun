@@ -1,7 +1,9 @@
-use bun_sema::bind::{Binding, Decl, ScopeId, SymbolId};
+use bun_sema::bind::{Binding, CodeUnit, Decl, ScopeId, ScopeKind, SymbolId};
 use bun_sema::check::aot::FunctionRef;
 use bun_sema::fold::{TreeNode, push_children};
-use bun_sema::hir::{ExprId, ExprKind, FnId, StmtId, is_moved_to_file_start};
+use bun_sema::hir::{ExprId, Flags, FnId, GlobalCode, PatKind, StmtId, is_moved_to_file_start};
+use bun_sema::util::SharedSort;
+use bun_sort_by_number::{SortByNumber, number_of_pair};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -9,10 +11,13 @@ use super::prepass::{
     collect_class_decorators, collect_eval_variable_scopes, collect_implicit_uses,
     collect_inner_module_parameters,
 };
-use super::{Context, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId, Walker};
+use super::{
+    Context, DeclarationRead, Initialization, ScopeWalk, Task, WalkedFunction, WalkedFunctionId,
+    WalkedLoop, Walker,
+};
 use crate::ir::FunctionKey;
 use crate::lower::commonjs;
-use crate::lower::scope::analysis::sort_unique;
+use crate::lower::scope::analysis::{find_by_key, shared_sort_unique, sort_unique};
 use crate::lower::scope::lexical_owners::{ScopeObjectSearch, for_each_scope_object};
 use crate::lower::scope::{BindingRef, ScopeInput, ScopeSlot};
 use crate::modules::ModuleKind;
@@ -24,41 +29,290 @@ pub(in crate::lower::scope) fn walk_file(
     let mut walker = Walker::new(input, lexical_owners);
     walker.walk_module();
     let mut walk = walker.walk;
-    if !walker.unprinted_uses.is_empty() {
-        let mut named: Vec<SymbolId> = walker.unprinted_uses.iter().map(|named| named.1).collect();
-        sort_unique(&mut named);
-        let printed_users = walk
-            .uses
-            .iter()
-            .filter_map(|&(user, binding)| match binding {
-                BindingRef::Symbol(symbol) if named.binary_search(&symbol).is_ok() => {
-                    Some((symbol, user))
-                }
-                _ => None,
-            });
-        walk.printed_users = printed_users.collect();
-        walk.printed_users.sort_unstable();
-        walk.symbols_named_in_unprinted_statements = named;
-        let unprinted_uses = walker.unprinted_uses.iter();
-        walk.uses
-            .extend(unprinted_uses.map(|&(user, symbol)| (user, BindingRef::Symbol(symbol))));
+    sort_unique_uses(&mut walk.uses, walk.use_counts.len(), walk.functions.len());
+    sort_unique(&mut walk.calls_by_name);
+    sort_unique(&mut walk.declarations_read_by_every_run);
+    let always_read = std::mem::take(&mut walk.declarations_read_by_every_run);
+    sort_unique(&mut walk.makers_of_closures_in_every_run);
+    let makers = std::mem::take(&mut walk.makers_of_closures_in_every_run);
+    let reads = std::mem::take(&mut walk.declaration_reads);
+    let nested_reads = reads.iter().filter(|read| read.reader != read.owner);
+    let mut read_by_nested_functions: Vec<SymbolId> =
+        nested_reads.map(|read| read.symbol).collect();
+    sort_unique(&mut read_by_nested_functions);
+    spread_looks_to_what_is_handed_on(input, &mut walk);
+    let is_looked_at = std::mem::take(&mut walk.is_looked_at);
+    for read in reads {
+        let needs_shared_place = read_by_nested_functions.binary_search(&read.symbol).is_ok();
+        let sees_itself = walk
+            .functions_that_name_arguments
+            .binary_search(&read.function)
+            .is_ok();
+        if needs_shared_place
+            && !is_looked_at[read.symbol.idx()]
+            && !sees_itself
+            && !input.hir[read.function].flags.contains(Flags::GENERATOR)
+            && !input.bound.is_visible_to_eval(read.symbol)
+        {
+            walk.created_at_each_read.push(read.symbol);
+            walk.made_at_first_read.push((read.symbol, read.function));
+            walk.function_references.push((read.reader, read.function));
+            walk.sites_that_start
+                .push((read.function, read.reader, read.time));
+            continue;
+        }
+        let is_made_at_entry = always_read.binary_search(&read.symbol).is_ok()
+            || makers.binary_search(&read.owner).is_ok();
+        if needs_shared_place && is_made_at_entry {
+            continue;
+        }
+        walk.made_at_first_read.push((read.symbol, read.function));
+        walk.function_references.push((read.reader, read.function));
+        let loop_behind_creation = match needs_shared_place {
+            true => None,
+            false => find_outermost_loop_sharing_binding(input, &walk.loops, read),
+        };
+        if let Some(index) = loop_behind_creation {
+            let walked = &walk.loops[index];
+            walk.sites_that_start
+                .push((read.function, read.reader, walked.entered_at));
+            walk.functions_created_before_loops
+                .push((walked.statement, read.symbol));
+            continue;
+        }
+        walk.sites_that_start
+            .push((read.function, read.reader, read.time));
+        if let Some(index) = read.enclosing_loop {
+            let innermost = &mut walk.loops[index as usize];
+            innermost.stored.push(BindingRef::Symbol(read.symbol));
+            let outermost = innermost.outermost as usize;
+            walk.loops[outermost]
+                .symbols_stored_within
+                .push(read.symbol);
+        }
     }
-    sort_unique(&mut walk.uses);
-    sort_unique(&mut walk.function_references);
-    sort_unique(&mut walk.eval_uses);
-    sort_unique(&mut walk.stored_slots);
-    walk.this_bindings.sort_unstable();
-    sort_unique(&mut walk.symbols_read_by_enums);
-    sort_unique(&mut walk.symbols_in_export_lists);
+    sort_unique(&mut walk.made_at_first_read);
+    sort_unique(&mut walk.created_at_each_read);
+    let without_place = std::mem::take(&mut walk.created_at_each_read);
+    if !without_place.is_empty() {
+        walk.uses.retain(|&(_, binding)| match binding {
+            BindingRef::Symbol(symbol) => without_place.binary_search(&symbol).is_err(),
+            BindingRef::Slot(..) => true,
+        });
+    }
+    walk.created_at_each_read = without_place;
+    sort_unique(&mut walk.functions_created_before_loops);
+    sort_unique(&mut walk.functions_calling_themselves);
+    let references = &walk.function_references;
+    let by_callee = order_by(references, walk.function_of_fn.len(), |it| it.1.idx());
+    walk.function_references = order_by(&by_callee, walk.functions.len(), |it| it.0.0 as usize);
+    walk.function_references.dedup();
+    sort_unique(&mut walk.names_called);
+    shared_sort_unique(&mut walk.eval_uses);
+    shared_sort_unique(&mut walk.stored_slots);
+    walk.this_bindings.shared_sort_unstable();
     walk.symbol_stores
-        .sort_unstable_by_key(|store| (store.0, store.1));
+        .sort_by_u64(|store| number_of_pair(store.0.0, store.1.0));
     sort_unique(&mut walk.function_of_field);
-    sort_unique(&mut walk.slot_initializations);
+    shared_sort_unique(&mut walk.slot_initializations);
     for walked_loop in &mut walk.loops {
         sort_unique(&mut walked_loop.stored);
     }
+    for function in std::mem::take(&mut walk.functions_laid_in_literals) {
+        if let Some(walked) = walk.function_of_fn[function.idx()] {
+            walk.functions[walked.index()].is_laid_in_literal = true;
+        }
+    }
     merge_redeclared_functions(&mut walk.hoisted_functions);
+    find_starts_of_functions_made_late(input, &mut walk);
     walk
+}
+
+fn sort_unique_uses(
+    uses: &mut Vec<(WalkedFunctionId, BindingRef)>,
+    symbol_count: usize,
+    function_count: usize,
+) {
+    let mut by_binding = order_by(uses, symbol_count + 1, |entry| match entry.1 {
+        BindingRef::Symbol(symbol) => symbol.idx(),
+        BindingRef::Slot(..) => symbol_count,
+    });
+    let first_slot = by_binding.partition_point(|entry| matches!(entry.1, BindingRef::Symbol(_)));
+    by_binding[first_slot..].sort_unstable();
+    *uses = order_by(&by_binding, function_count, |entry| entry.0.0 as usize);
+    uses.dedup();
+}
+
+fn order_by<T: Copy>(list: &[T], number_count: usize, number_of: impl Fn(&T) -> usize) -> Vec<T> {
+    let Some(&first) = list.first() else {
+        return Vec::new();
+    };
+    let mut places = vec![0u32; number_count];
+    for entry in list {
+        places[number_of(entry)] += 1;
+    }
+    let mut total = 0;
+    for place in &mut places {
+        let count = *place;
+        *place = total;
+        total += count;
+    }
+    let mut ordered = vec![first; list.len()];
+    for entry in list {
+        let place = &mut places[number_of(entry)];
+        ordered[*place as usize] = *entry;
+        *place += 1;
+    }
+    ordered
+}
+
+fn spread_looks_to_what_is_handed_on(input: &ScopeInput<'_, '_>, walk: &mut ScopeWalk) {
+    let (hir, bound) = (input.hir, input.bound);
+    sort_unique(&mut walk.functions_that_name_arguments);
+    let handed = std::mem::take(&mut walk.names_handed_to_declarations);
+    let is_looked_at = &mut walk.is_looked_at;
+    let mut taken_by: Vec<(SymbolId, SymbolId)> = Vec::with_capacity(handed.len());
+    for (name, callee, index) in handed {
+        let mut parameters = hir[callee].params.iter();
+        let takes_rest = parameters
+            .clone()
+            .any(|parameter| hir[parameter].flags.contains(Flags::REST));
+        if takes_rest
+            || walk
+                .functions_that_name_arguments
+                .binary_search(&callee)
+                .is_ok()
+        {
+            is_looked_at[name.idx()] = true;
+            continue;
+        }
+        let Some(parameter) = parameters.nth(index as usize) else {
+            continue;
+        };
+        let pattern = hir[parameter].pat;
+        let symbol = match hir[pattern].kind {
+            PatKind::Ident(_) => bound.declared_symbol(Decl::Param(pattern)).some(),
+            _ => None,
+        };
+        match symbol.filter(|&symbol| !bound.is_visible_to_eval(symbol)) {
+            Some(symbol) => taken_by.push((symbol, name)),
+            None => is_looked_at[name.idx()] = true,
+        }
+    }
+    for copy in bound.runtime.parameter_var_copies() {
+        taken_by.push((copy.variable, copy.parameter));
+    }
+    let taken_by = order_by(&taken_by, is_looked_at.len(), |entry| entry.0.idx());
+    let mut looked_at: Vec<SymbolId> = taken_by.iter().map(|entry| entry.0).collect();
+    looked_at.dedup();
+    looked_at.retain(|parameter| is_looked_at[parameter.idx()]);
+    while let Some(parameter) = looked_at.pop() {
+        for &(_, name) in entries_of(&taken_by, parameter) {
+            if !std::mem::replace(&mut is_looked_at[name.idx()], true) {
+                looked_at.push(name);
+            }
+        }
+    }
+}
+
+fn find_outermost_loop_sharing_binding(
+    input: &ScopeInput<'_, '_>,
+    loops: &[WalkedLoop],
+    read: DeclarationRead,
+) -> Option<usize> {
+    let scopes = &input.bound.scopes;
+    let declared_in = input.bound.symbol_scope(read.symbol);
+    let mut found = None;
+    let mut current = read.enclosing_loop;
+    while let Some(index) = current {
+        let walked = &loops[index as usize];
+        let parent_of = |&scope: &ScopeId| scopes[scope.idx()].parent.some();
+        if !std::iter::successors(walked.boundary.some(), parent_of)
+            .any(|scope| scope == declared_in)
+        {
+            break;
+        }
+        found = Some(index as usize);
+        current = walked.parent;
+    }
+    found
+}
+
+fn find_starts_of_functions_made_late(input: &ScopeInput<'_, '_>, walk: &mut ScopeWalk) {
+    let sites = std::mem::take(&mut walk.sites_that_start);
+    if sites.is_empty() {
+        return;
+    }
+    let bound = input.bound;
+    let (functions, function_of_fn) = (&mut walk.functions, &walk.function_of_fn);
+    let global_code = input.hir.global_code();
+    for &(scope, symbol, function) in &walk.hoisted_functions {
+        let is_made_as_property = matches!(
+            bound.scopes[scope.idx()].kind,
+            ScopeKind::Fn(script) if global_code.contains(&(script, GlobalCode::Script))
+        );
+        if is_made_as_property {
+            continue;
+        }
+        let is_never_made = matches!(
+            bound.code_unit(bound.symbol_scope(symbol)),
+            CodeUnit::Function(_)
+        ) && !bound.is_visible_to_eval(symbol)
+            && walk.use_counts.get(symbol.idx()) == Some(&0);
+        let is_made_at_first_read = find_by_key(&walk.made_at_first_read, symbol).is_some();
+        if !is_never_made && !is_made_at_first_read {
+            continue;
+        }
+        if let Some(walked) = function_of_fn[function.idx()] {
+            functions[walked.index()].is_made_late = true;
+            functions[walked.index()].is_only_called_directly = is_never_made;
+            functions[walked.index()].created_at = u32::MAX;
+        }
+    }
+    let mut read_by: Vec<(u32, u32)> = Vec::new();
+    let mut found: Vec<(u32, u32)> = Vec::new();
+    for &(function, user, time) in &sites {
+        let Some(function) = function_of_fn[function.idx()] else {
+            continue;
+        };
+        let started = functions[function.index()];
+        if !started.is_made_late {
+            continue;
+        }
+        let mut read: Option<WalkedFunctionId> = None;
+        let (mut start, mut below_owner) = (time, user);
+        while Some(below_owner) != started.creator {
+            let around = functions[below_owner.index()];
+            let is_made_with_hoisted_functions =
+                around.hoisted_to.is_some() && !around.is_made_late;
+            (start, read) = match is_made_with_hoisted_functions {
+                true => (0, None),
+                false => (around.created_at, Some(below_owner)),
+            };
+            let Some(creator) = around.creator else {
+                (start, read) = (0, None);
+                break;
+            };
+            below_owner = creator;
+        }
+        match read.filter(|read| functions[read.index()].is_made_late) {
+            Some(read) => read_by.push((read.0, function.0)),
+            None => found.push((start, function.0)),
+        }
+    }
+    read_by.sort_unstable();
+    found.sort_unstable();
+    let mut pending: Vec<u32> = Vec::new();
+    for (start, function) in found {
+        pending.push(function);
+        while let Some(function) = pending.pop() {
+            if start < functions[function as usize].created_at {
+                functions[function as usize].created_at = start;
+                let readers = entries_of(&read_by, function).iter();
+                pending.extend(readers.map(|entry| entry.1));
+            }
+        }
+    }
 }
 
 pub(super) fn entries_of<K: Copy + Ord, V>(list: &[(K, V)], key: K) -> &[(K, V)] {
@@ -73,7 +327,7 @@ pub(super) fn bindings_of<K: Copy + Ord>(list: &[(K, Binding)], key: K) -> Small
 }
 
 fn merge_redeclared_functions(functions: &mut Vec<(ScopeId, SymbolId, FnId)>) {
-    functions.sort_by_key(|entry| entry.0);
+    functions.sort_by_u32(|entry| entry.0.0);
     let mut positions: FxHashMap<(ScopeId, SymbolId), usize> = FxHashMap::default();
     let mut length = 0;
     for index in 0..functions.len() {
@@ -92,6 +346,17 @@ impl<'x, 's> Walker<'x, 's> {
         let (hir, bound) = (input.hir, input.bound);
         let decisions = &input.compiled.analysis.decisions;
         let is_commonjs = input.modules.kind(input.file) == ModuleKind::CommonJs;
+        let may_run_as_original = input.modules.may_run_as_original(input.file);
+        let keeps_wrapper = may_run_as_original
+            || is_commonjs && commonjs::keeps_wrapper(hir, bound, decisions, input.builtins);
+        let wrapper_slots = match keeps_wrapper {
+            true => {
+                let may_be_reevaluated =
+                    may_run_as_original || input.modules.may_be_reevaluated(input.file);
+                commonjs::WrapperSlots::of(bound, decisions, may_be_reevaluated)
+            }
+            false => commonjs::WrapperSlots::default(),
+        };
         let (jsx_uses, metadata_uses) = collect_implicit_uses(bound);
         let (eval_variable_scopes, parameter_eval_variable_scopes) =
             collect_eval_variable_scopes(hir, bound, decisions);
@@ -108,28 +373,45 @@ impl<'x, 's> Walker<'x, 's> {
                 bound,
                 input.modules.inner_modules(input.file),
             ),
+            literal_of_bodies: (input.modules.wrapped().literal_of_bodies(input.file))
+                .unwrap_or(ExprId::NONE),
             jsx_uses,
             metadata_uses,
             class_decorators: collect_class_decorators(hir, bound),
             last_users: vec![None; bound.symbols.len()],
-            unprinted_uses: Vec::new(),
             pending_stores: Vec::new(),
-            halves_in_front: Vec::new(),
-            unconditional_statements: Vec::new(),
+            unconditional_calls_of_super: Default::default(),
+            fields_evaluated_in_constructors: Default::default(),
+            places_of_this_super_and_return: Default::default(),
             clock: 0,
+            number_walked: 0,
+            is_only_called_or_tested: vec![false; hir.exprs.len()],
             walk: ScopeWalk {
                 function_of_fn: vec![None; hir.fns.len()],
+                use_counts: vec![0; bound.symbols.len()],
+                is_looked_at: vec![false; bound.symbols.len()],
                 symbol_initializations: vec![None; bound.symbols.len()],
                 last_store_times: vec![0; bound.symbols.len()],
-                symbols_read_by_enums: Vec::new(),
-                symbols_in_export_lists: Vec::new(),
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
                 is_switch_scope: vec![false; bound.scopes.len()],
                 is_repeated_scope: vec![false; bound.scopes.len()],
                 eval_variable_scopes,
                 parameter_eval_variable_scopes,
-                has_wrapper_parameters: is_commonjs
-                    && commonjs::keeps_wrapper(bound, decisions, input.builtins),
+                has_wrapper_parameters: keeps_wrapper,
+                wrapper_slots,
+                has_values_of_each_run: is_commonjs
+                    && (!keeps_wrapper || may_run_as_original)
+                    && input.modules.may_be_reevaluated(input.file),
+                keeps_first_exports: is_commonjs
+                    && !keeps_wrapper
+                    && commonjs::keeps_first_exports(
+                        input.file,
+                        hir,
+                        bound,
+                        input.compiled,
+                        input.modules,
+                        input.builtins,
+                    ),
                 ..ScopeWalk::default()
             },
             stack: Vec::new(),
@@ -155,7 +437,6 @@ impl<'x, 's> Walker<'x, 's> {
         }
     }
 
-    // The callback of `__commonJS(cb)` or `__esm(fn)` is the body of a module of its own.
     fn declare_inner_module_bodies(&mut self) -> Vec<(FnId, WalkedFunctionId)> {
         let file = self.input.file;
         let callbacks = self.input.modules.inner_modules(file);
@@ -174,16 +455,33 @@ impl<'x, 's> Walker<'x, 's> {
     fn run_pushed_tasks(&mut self) {
         self.stack.reverse();
         while let Some((task, context)) = self.stack.pop() {
-            let first_child = self.stack.len();
+            let mut low = self.stack.len();
             self.run_task(task, context);
-            self.stack[first_child..].reverse();
+            let mut high = self.stack.len();
+            while low + 1 < high {
+                high -= 1;
+                let (first, last) = (self.stack[low], self.stack[high]);
+                self.stack[low] = last;
+                self.stack[high] = first;
+                low += 1;
+            }
         }
     }
 
     fn run_task(&mut self, task: Task, context: Context) {
         match task {
-            Task::Statement(statement) => self.visit_statement(statement, context),
-            Task::Expression(expression) => self.visit_expression(expression, context),
+            Task::Statement(statement) => {
+                self.number_walked += 1;
+                self.visit_statement(statement, context);
+            }
+            Task::Expression(expression) => {
+                self.number_walked += 1;
+                self.visit_expression(expression, context);
+            }
+            Task::EndTry(index) => {
+                let size = &mut self.walk.tries[index as usize].size;
+                *size = self.number_walked - *size;
+            }
             Task::MarkCreated(function) => {
                 let time = self.tick();
                 self.walk.functions[function.index()].created_at = time;
@@ -200,7 +498,6 @@ impl<'x, 's> Walker<'x, 's> {
                     self.walk.last_store_times[symbol.idx()] = time;
                 }
             }
-            // The decorators are walked first, and run among the other parts of the class or behind them all. So none of the stores that the function makes while it evaluates the class counts as made until the class is.
             Task::EndDecoratedClass { first_store } => {
                 let time = self.tick();
                 for &(symbol, _, function) in &self.walk.symbol_stores[first_store as usize..] {
@@ -212,11 +509,10 @@ impl<'x, 's> Walker<'x, 's> {
             }
             Task::EndLoop(index) => {
                 let time = self.tick();
-                for &binding in &self.walk.loops[index as usize].stored {
-                    if let BindingRef::Symbol(symbol) = binding {
-                        let last = &mut self.walk.last_store_times[symbol.idx()];
-                        *last = (*last).max(time);
-                    }
+                let ended = &mut self.walk.loops[index as usize];
+                for symbol in std::mem::take(&mut ended.symbols_stored_within) {
+                    let last = &mut self.walk.last_store_times[symbol.idx()];
+                    *last = (*last).max(time);
                 }
             }
         }
@@ -237,6 +533,9 @@ impl<'x, 's> Walker<'x, 's> {
             creator,
             created_at: 0,
             hoisted_to: None,
+            is_made_late: false,
+            is_only_called_directly: false,
+            is_laid_in_literal: false,
         });
         WalkedFunctionId(self.walk.functions.len() as u32 - 1)
     }
@@ -266,47 +565,39 @@ impl<'x, 's> Walker<'x, 's> {
         }
     }
 
+    pub(super) fn push_present_expressions<const N: usize>(
+        &mut self,
+        expressions: [ExprId; N],
+        context: Context,
+    ) {
+        for expression in expressions {
+            if expression.is_some() {
+                self.push_task(Task::Expression(expression), context);
+            }
+        }
+    }
+
     pub(super) fn push_evaluated_children(&mut self, expression: ExprId, context: Context) {
-        let mut children = std::mem::take(&mut self.children);
-        children.clear();
-        push_children(self.hir, TreeNode::Expr(expression), &mut children);
-        for &child in &children {
+        self.children.clear();
+        push_children(self.hir, TreeNode::Expr(expression), &mut self.children);
+        for &child in &self.children {
             match child {
-                TreeNode::Expr(child) => self.push_task(Task::Expression(child), context),
+                TreeNode::Expr(child) => self.stack.push((Task::Expression(child), context)),
                 _ => {
                     debug_assert!(false, "every child of this expression is an expression");
                 }
             }
         }
-        self.children = children;
     }
 
-    pub(super) fn record_symbols_read_by_enum(&mut self, initializer: ExprId) {
-        if initializer.is_none() {
-            return;
-        }
-        let mut nodes = vec![TreeNode::Expr(initializer)];
-        while let Some(node) = nodes.pop() {
-            if let TreeNode::Expr(expression) = node
-                && matches!(self.hir[expression].kind, ExprKind::Ident(_))
-                && let Binding::Symbol(symbol) = self.bound.binding(expression)
-            {
-                self.walk.symbols_read_by_enums.push(symbol);
-            }
-            push_children(self.hir, node, &mut nodes);
-        }
-    }
-
-    // The code of a function, of a field initializer or of the file, whose top scope is `scope`. The file alone runs once.
     pub(super) fn enter_unit(&mut self, function: WalkedFunctionId, scope: ScopeId) -> Context {
         let context = Context {
             function,
             lexical_scope: self.lexical_owners[scope.idx()],
             enclosing_loop: None,
             enclosing_try: None,
-            is_repeated: function != WalkedFunctionId::MODULE_BODY,
+            is_repeated: self.walk.functions[function.index()].creator.is_some(),
             is_conditional: false,
-            is_unprinted: false,
         };
         self.enter_scope(scope, context);
         context
@@ -319,15 +610,8 @@ impl<'x, 's> Walker<'x, 's> {
     }
 
     pub(super) fn record_symbol_use(&mut self, context: Context, symbol: SymbolId) {
-        if context.is_unprinted {
-            self.unprinted_uses.push((context.function, symbol));
-            return;
-        }
-        self.record_unwritten_symbol_use(context, symbol);
-    }
-
-    // A use for which the source text has no name.
-    pub(super) fn record_unwritten_symbol_use(&mut self, context: Context, symbol: SymbolId) {
+        let count = &mut self.walk.use_counts[symbol.idx()];
+        *count = count.saturating_add(1);
         let last_user = &mut self.last_users[symbol.idx()];
         if *last_user == Some(context.function) {
             return;
@@ -350,17 +634,18 @@ impl<'x, 's> Walker<'x, 's> {
     }
 
     pub(super) fn record_store(&mut self, context: Context, binding: BindingRef) {
-        let mut next = context.enclosing_loop;
-        while let Some(index) = next {
-            let walked_loop = &mut self.walk.loops[index as usize];
-            walked_loop.stored.push(binding);
-            next = walked_loop.parent;
+        if let Some(index) = context.enclosing_try {
+            self.walk.tries[index as usize].stored.push(binding);
         }
-        let mut next = context.enclosing_try;
-        while let Some(index) = next {
-            let walked_try = &mut self.walk.tries[index as usize];
-            walked_try.stored.push(binding);
-            next = walked_try.parent;
+        let Some(index) = context.enclosing_loop else {
+            return;
+        };
+        let innermost = &mut self.walk.loops[index as usize];
+        innermost.stored.push(binding);
+        if let BindingRef::Symbol(symbol) = binding {
+            let outermost = innermost.outermost as usize;
+            let stored = &mut self.walk.loops[outermost].symbols_stored_within;
+            stored.push(symbol);
         }
     }
 

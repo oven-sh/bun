@@ -29,7 +29,8 @@ import quick, toolchain
 
 
 def verdicts(arguments, work, options):
-    env = {**os.environ, "WORK": work, "RUN_OPTIONS": options}
+    # A collection drops what the run time has learned, so under stress a program counts otherwise: neither run counts, unless it is told to.
+    env = {**os.environ, "WORK": work, "RUN_OPTIONS": options, "KNOWS_SHELL_FUNCTIONS": os.environ.get("KNOWS_SHELL_FUNCTIONS", "0")}
     output = subprocess.run([sys.executable, HERE + "/quick.py", *arguments], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.decode(errors="replace")
     return dict(line.split(": ", 1) for line in output.split("\n") if ": " in line)
 

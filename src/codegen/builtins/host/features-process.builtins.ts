@@ -139,7 +139,8 @@ export default b.declarations(
   extendAll(["ProcessKill"], "process._kill", "process.kill"),
 
   extendAll(
-    ["ProcessOutputStreams", "ProcessStdout"],
+    // BunProcess.cpp openStandardSink() calls Bun.file(fd).writer() when a stream is first read.
+    ["ProcessOutputStreams", "ProcessStdout", "BunFile", "FileSink", "Bodies"],
     "console._stderr",
     "console._stdout",
     "process.stderr",

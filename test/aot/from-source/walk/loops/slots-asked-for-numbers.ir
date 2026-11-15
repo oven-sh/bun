@@ -1,0 +1,21 @@
+# f1 = Meter
+# f2 = load
+# f3 = run
+# -- source: main.mjs
+# function Meter() { this.count = 0; this.sum = 0; }
+# Meter.prototype.load = function (values) { this.count = values[0]; this.sum = values[1]; };
+# Meter.prototype.run = function (turns) { for (let turn = 0; turn < turns; turn++) { unseen(); this.count += turn; this.sum += this.count; } };
+# const meter = new Meter(); globalThis.unseen = () => globalThis.other?.(meter); meter.load(globalThis.values ?? [1, 2]); meter.run(3);
+# print(meter.count, meter.sum);
+# -- end of source
+# The slots are asked for numbers before the first store, and both sums are sums of numbers.
+# RUN: walk f3 mechanisms=all
+# CHECK: calleeName="unseen"
+# CHECK: GetSlot{{*}}key="count"
+# CHECK: TypeTest{{*}}testedType=number
+# CHECK: GetSlot{{*}}key="sum"
+# CHECK: TypeTest{{*}}testedType=number
+# CHECK: Add{{*}}form=Numbers
+# CHECK: PutSlot{{*}}key="count"
+# CHECK: Add{{*}}form=Numbers
+# CHECK: PutSlot{{*}}key="sum"

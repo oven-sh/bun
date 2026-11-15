@@ -1,0 +1,16 @@
+# `const step = steps[names[which]]` in front of the loop, `steps` a written record of two functions: the call in the loop has no one callee, so neither the elements handed to it nor its answer spoke for numbers: three reads and a store by stubs and seven operators by stubs in every turn: ten times plain.
+# Each function that is expected of the callee is looked through; one that reckons is enough. Guesses: the lists are asked in front of the loop, the callee in the turn.
+# LIBRARY: own
+# -- source: main.js
+# const first = JSON.parse("[1.5,2.5,3.5,4.5]"), second = JSON.parse("[0.5,0.25,2,4]"), mixed = JSON.parse("[0,0,0,0]");
+# const steps = { blend: (c, a) => c * a + a * 0.5, count: (c, a) => [c, a].length }, names = JSON.parse('["blend","count"]');
+# function run(count, which) { const step = steps[names[which]]; for (let i = 0; i < count; i++) mixed[i] = step(first[i], second[i]); return mixed.join(); }
+# publish(run);
+# -- end of source
+# RUN(LOOP): walk f1 mechanisms=all
+# LOOP: code f1:Body
+# LOOP: PutContiguousIndex
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(2, 0)); print(run(4, 0)); print(run(3, 1)); };
+# SHELL: 1,0.75,0,0
+# SHELL-NEXT: 1,0.75,8,20
+# SHELL-NEXT: 2,2,2,20

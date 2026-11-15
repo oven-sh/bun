@@ -45,7 +45,7 @@ use bun_watcher::Watcher;
 pub(super) use self::assets::Assets;
 pub(super) use self::error_report_request::ErrorReportRequest;
 
-pub(super) use self::incremental_graph::IncrementalGraph;
+pub(super) use self::incremental_graph::{Graphs, IncrementalGraph};
 pub(super) use self::memory_cost::MemoryCost;
 
 bun_output::declare_scope!(DevServer, visible);
@@ -87,9 +87,12 @@ mod watcher_atomics;
 pub(super) use crate::server::SavedRequestUnion;
 pub(crate) use bundle::EntryPointList;
 use bundle::{RouteIndexAndRecurseFlag, TestingBatch};
-use deferred_request::{DeferredRequest, DeferredScriptRequest, Handler, ResponseAndMethod};
+use deferred_request::{DeferredScriptRequest, Handler, ResponseAndMethod};
 pub(crate) use directory_watch_store::DirectoryWatchStore;
-use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled};
+use ensure_route::{
+    BundleQueueType, HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_route_is_bundled,
+    trace_route_failures,
+};
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use hmr_socket::hmr_socket_behavior;
@@ -185,16 +188,6 @@ pub(crate) struct GraphTraceState {
     pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
-    pub(crate) fn new(server_files: usize, client_files: usize) -> crate::Result<GraphTraceState> {
-        let server_bits = DynamicBitSet::init_empty(server_files)?;
-        let client_bits = DynamicBitSet::init_empty(client_files)?;
-        Ok(GraphTraceState {
-            server_bits,
-            client_bits,
-            failures: Vec::new(),
-        })
-    }
-
     #[inline]
     pub(crate) fn bits(&mut self, side: Side) -> &mut DynamicBitSet {
         match side {
@@ -267,9 +260,8 @@ impl ResponseLike for bun_uws::AnyResponse {
 /// `DevServer.HmrSocket` — per-WebSocket state. Method bodies (open/close/
 /// message handlers) live in [`hmr_socket`].
 pub(crate) struct HmrSocket {
-    /// BACKREF: owned by `dev.active_websocket_connections`; destroyed via
-    /// `remove` + `heap::take` in `on_close`.
-    pub(crate) dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
+    /// Null once `Drop for DevServer` has released this socket, which it then closes.
+    pub(crate) dev: *mut DevServer,
     pub(crate) underlying: Option<bun_uws::AnyWebSocket>,
     pub(crate) subscriptions: crate::bake::dev_server::HmrTopicBits,
     /// By telling DevServer the active route, this enables receiving detailed
@@ -321,19 +313,6 @@ impl DevServer {
         self.vm().global()
     }
 
-    /// Recover `&mut VirtualMachine` via the global singleton — `self.vm` is
-    /// `*const`. The VM is process-unique on the JS thread, so
-    /// `VirtualMachine::get()` returns the same instance with write provenance.
-    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
-    #[inline]
-    pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(
-            self.vm.as_const_ptr(),
-            VirtualMachine::get()
-        ));
-        VirtualMachine::get_mut()
-    }
-
     #[inline]
     pub(crate) fn ssr_transpiler_mut(&mut self) -> &mut Transpiler<'static> {
         // SAFETY: written in `init()` before any access.
@@ -352,11 +331,6 @@ pub(crate) struct Options<'a> {
     pub bundler_options: bake::SplitBundlerOptions,
     pub broadcast_console_log_from_browser_to_server: bool,
 }
-
-// The fields `client_graph`, `server_graph` and `directory_watchers`
-// all use `@fieldParentPointer` to access DevServer's state. This pattern has
-// made it easier to group related fields together, but one must remember those
-// structures still depend on the DevServer pointer.
 
 #[cfg(debug_assertions)]
 #[repr(u128)]
@@ -455,9 +429,6 @@ pub(crate) struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub(crate) magic: Magic,
-    /// Absolute path to project root directory. For the HMR
-    /// runtime, its module IDs are strings relative to this.
-    pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.
     pub(crate) inspector_server_id: DebuggerId,
@@ -487,8 +458,7 @@ pub(crate) struct DevServer {
     /// only a debug assertion as contention to this is always a bug; If a bundle is
     /// active and a file is changed, that change is placed into the next bundle.
     pub(crate) graph_safety_lock: ThreadLock,
-    pub(crate) client_graph: IncrementalGraph<{ bake::Side::Client }>,
-    pub(crate) server_graph: IncrementalGraph<{ bake::Side::Server }>,
+    pub(crate) graphs: Graphs,
     /// Barrel files with deferred (is_unused) import records. These files must
     /// be re-parsed on every incremental build because the set of needed exports
     /// may have changed. Populated by applyBarrelOptimization.
@@ -498,27 +468,12 @@ pub(crate) struct DevServer {
     /// when a barrel is re-parsed in an incremental build, exports requested
     /// by non-stale files (from previous builds) are still kept.
     pub(crate) barrel_needed_exports: bun_collections::StringArrayHashMap<StringHashMap<()>>,
-    /// State populated during bundling and hot updates. Often cleared
-    pub(crate) incremental_result: IncrementalResult,
-    /// Quickly retrieve a framework route's index from its entry point file. These
-    /// are populated as the routes are discovered. The route may not be bundled OR
-    /// navigatable, such as the case where a layout's index is looked up.
-    pub(crate) route_lookup:
-        ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
     /// This acts as a duplicate of the lookup table in uws, but only for HTML routes
     /// Used to identify what route a connected WebSocket is on, so that only
     /// the active pages are notified of a hot updates.
     pub(crate) html_router: HTMLRouter,
-    /// Assets are accessible via `/_bun/asset/<key>`
-    /// This store is not thread safe.
-    pub(crate) assets: Assets,
-    /// Similar to `assets`, specialized for the additional needs of source mappings.
+    /// Similar to `Assets`, specialized for the additional needs of source mappings.
     pub(crate) source_maps: SourceMapStore,
-    /// All bundling failures are stored until a file is saved and rebuilt.
-    /// They are stored in the wire format the HMR runtime expects so that
-    /// serialization only happens once.
-    /// Keyed by `failure.owner`, stored as `OwnerPacked → SerializedFailure`.
-    pub(crate) bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
     /// When set, nothing is ever bundled for the server-side,
     /// and DevSever acts purely as a frontend bundler.
     pub(crate) frontend_only: bool,
@@ -573,6 +528,8 @@ pub(crate) struct DevServer {
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
+    /// Owned by `bundler_options` or by the server.
+    pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,
@@ -580,7 +537,7 @@ pub(crate) struct DevServer {
     /// will immediately enqueue this.
     pub(crate) next_bundle: NextBundle,
     pub(crate) deferred_request_pool:
-        HiveArrayFallback<deferred_request::Node, { DeferredRequest::MAX_PREALLOCATED }>,
+        HiveArrayFallback<deferred_request::Node, { deferred_request::MAX_PREALLOCATED }>,
     /// UWS can handle closing the websocket connections themselves
     pub(crate) active_websocket_connections: HashMap<*mut HmrSocket, ()>,
 

@@ -1,0 +1,22 @@
+# -- source: turns.ts
+# declare function id<T>(value: T): T;
+# declare function report(value: number): void;
+# function turn(weights: number[]): number {
+#   for (let i = 0; i < weights.length; i++) { const twice = weights[i]! * 2; }
+#   return weights.length;
+# }
+# report(turn(id([1.5, 2.5, 3.5])));
+# report(turn(id([1, 2, 3, 4])));
+# -- end of source
+# A read inside a list whose storage holds raw doubles or int32s loads, asks for the hole and calls nothing, as a read out of boxed storage does. It was held to what the schema declares for every read by position:
+# it may throw and may collect. So the sweep kept it where nobody used it, and a loop that only counts read its list in every turn.
+# Where the contents are claimed to be fewer numbers than all, the read holds the double against that claim and may stop: there it stays.
+# f1 = turn
+# RUN: walk f1 mechanisms=all
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: arrayStorage=Double level=Proven
+# CHECK: Return
+# RUN(RUNS): run-in-shell mechanisms=all globalThis.id = value => value; globalThis.report = value => print(String(value));
+# RUNS: 3
+# RUNS: 4
+# RUNS: exited with 0

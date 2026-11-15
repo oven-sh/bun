@@ -1,0 +1,25 @@
+vi.doMock() in the body of an imported file: the test file itself has yet to run and reads the mock.
+#### a.test.js
+import { test, vi } from "bun:test";
+const say = (...all) => console.log("| CASE", ...all);
+import "./first.js";
+import { who, count } from "./m.js";
+test("t", () => {
+  say(who, count());
+});
+#### first.js
+import { vi } from "bun:test";
+import { who } from "./m.js";
+console.log("| CASE first runs", who);
+vi.doMock("./m.js", () => { console.log("| CASE factory runs"); return { who: "mock", count: () => "mock" }; });
+#### m.js
+console.log("| CASE m runs");
+let n = 0;
+export const who = "real";
+export function count() { return ++n; }
+#### package.json
+{ "type": "module" }
+#### z.test.js
+import { test } from "bun:test";
+import "./m.js";
+test("other file", () => {});

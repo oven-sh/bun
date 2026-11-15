@@ -1,0 +1,1 @@
+import gauge from "./gauge.cjs"; export const read = () => [gauge.word, gauge.bump()].join(); export const space = gauge;

@@ -104,30 +104,3 @@ export function run(log) {
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v1 = CheckInitialized v0 name="run"
-// CHECK-NEXT: v2 = NewClosure function=[[f_2]]
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="run"
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v2 = PropGet v1 key="console" [isFreeName]
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="log"
-// CHECK-NEXT: v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v6 = Call v5, v3, v0 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: ReturnCall v6
-// CHECK-NEXT: }

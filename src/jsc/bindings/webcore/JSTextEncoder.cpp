@@ -64,7 +64,7 @@ extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject
 
 // Functions
 
-static JSC_DECLARE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encode);
+JSC_DECLARE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encode);
 static JSC_DECLARE_HOST_FUNCTION(jsTextEncoderPrototypeFunction_encodeInto);
 
 // Attributes

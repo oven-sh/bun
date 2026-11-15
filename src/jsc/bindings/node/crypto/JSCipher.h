@@ -88,6 +88,26 @@ public:
         return ncrypto::Cipher::FromCtx(m_ctx).isSupportedAuthenticatedMode();
     }
 
+    // The block a padded decipher held back, once padding is off: OpenSSL still emits it, BoringSSL does not.
+    std::span<const uint8_t> heldBackBlock() const
+    {
+        const EVP_CIPHER_CTX* ctx = m_ctx.get();
+        if (!ctx->final_used || !(ctx->flags & EVP_CIPH_NO_PADDING))
+            return {};
+        return std::span { ctx->final }.first(m_ctx.getBlockSize());
+    }
+
+    // Moves heldBackBlock() to the front of `out` and returns its size.
+    size_t takeHeldBackBlock(std::span<uint8_t> out)
+    {
+        auto block = heldBackBlock();
+        if (block.empty())
+            return 0;
+        memcpySpan(out, block);
+        m_ctx.get()->final_used = 0;
+        return block.size();
+    }
+
     ncrypto::CipherCtxPointer m_ctx;
     const CipherKind m_kind;
     AuthTagState m_authTagState;

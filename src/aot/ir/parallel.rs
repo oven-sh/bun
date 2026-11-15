@@ -1,4 +1,5 @@
 use bun_threading::Guarded;
+use core::mem::MaybeUninit;
 
 pub type InParallel<'a> = &'a (dyn Fn(usize, &(dyn Fn(usize) + Sync)) + Sync);
 
@@ -31,7 +32,102 @@ pub fn map_each<T: Send, R: Send>(
     slots.into_iter().map(take).collect()
 }
 
-/// Frees what the items own on all threads.
+pub fn filter_each<T: Copy + Send + Sync>(
+    items: &[T],
+    in_parallel: InParallel<'_>,
+    is_wanted: &(dyn Fn(T) -> bool + Sync),
+) -> Vec<T> {
+    collect_from_each(items, in_parallel, &|item, wanted| {
+        if is_wanted(item) {
+            wanted.push(item);
+        }
+    })
+}
+
+pub fn collect_from_each<T: Copy + Send + Sync, R: Send>(
+    items: &[T],
+    in_parallel: InParallel<'_>,
+    collect: &(dyn Fn(T, &mut Vec<R>) + Sync),
+) -> Vec<R> {
+    const CHUNK_LEN: usize = 256;
+    let chunks: Vec<&[T]> = items.chunks(CHUNK_LEN).collect();
+    let collected = map_each(chunks, in_parallel, &|chunk| {
+        let mut collected = Vec::new();
+        for &item in chunk {
+            collect(item, &mut collected);
+        }
+        collected
+    });
+    collected.into_iter().flatten().collect()
+}
+
+pub fn extend_from_boxes<T: Send>(
+    list: &mut Vec<T>,
+    boxes: Vec<Box<T>>,
+    in_parallel: InParallel<'_>,
+) {
+    let count = boxes.len();
+    list.reserve(count);
+    let slots = list.spare_capacity_mut()[..count].iter_mut();
+    let mut moves: Vec<(&mut MaybeUninit<T>, Option<Box<T>>)> =
+        slots.zip(boxes.into_iter().map(Some)).collect();
+    for_each_mut(&mut moves, in_parallel, &|(slot, item)| {
+        slot.write(*item.take().expect("each is moved once"));
+    });
+    drop(moves);
+    // SAFETY: `for_each_mut` has visited each of the `count` slots, which wrote it.
+    unsafe { list.set_len(list.len() + count) };
+}
+
+pub fn extend_from_each<S: Sync, T: Send>(
+    list: &mut Vec<T>,
+    lists: &[Vec<S>],
+    in_parallel: InParallel<'_>,
+    make: &(dyn Fn(&S) -> T + Sync),
+) {
+    let count: usize = lists.iter().map(Vec::len).sum();
+    list.reserve(count);
+    let mut free = &mut list.spare_capacity_mut()[..count];
+    let mut tasks: Vec<(&mut [MaybeUninit<T>], &[S])> = Vec::with_capacity(lists.len());
+    for items in lists {
+        let (slots, rest) = core::mem::take(&mut free).split_at_mut(items.len());
+        free = rest;
+        tasks.push((slots, items));
+    }
+    for_each_mut(&mut tasks, in_parallel, &|(slots, items)| {
+        for (slot, item) in slots.iter_mut().zip(items.iter()) {
+            slot.write(make(item));
+        }
+    });
+    drop(tasks);
+    // SAFETY: the tasks share out the first `count` slots, a task has a slot for each of its items, and `for_each_mut` has visited each task, which wrote its slots.
+    unsafe { list.set_len(list.len() + count) };
+}
+
+pub fn extend_from_lists<T: Send>(
+    list: &mut Vec<T>,
+    lists: Vec<Vec<T>>,
+    in_parallel: InParallel<'_>,
+) {
+    let count: usize = lists.iter().map(Vec::len).sum();
+    list.reserve(count);
+    let mut free = &mut list.spare_capacity_mut()[..count];
+    let mut moves: Vec<(&mut [MaybeUninit<T>], Vec<T>)> = Vec::with_capacity(lists.len());
+    for items in lists {
+        let (slots, rest) = core::mem::take(&mut free).split_at_mut(items.len());
+        free = rest;
+        moves.push((slots, items));
+    }
+    for_each_mut(&mut moves, in_parallel, &|(slots, items)| {
+        for (slot, item) in slots.iter_mut().zip(core::mem::take(items)) {
+            slot.write(item);
+        }
+    });
+    drop(moves);
+    // SAFETY: the moves share out the first `count` slots, a move has a slot for each of its items, and `for_each_mut` has visited each move, which wrote its slots.
+    unsafe { list.set_len(list.len() + count) };
+}
+
 pub fn drop_each<T: Send>(items: Vec<T>, in_parallel: InParallel<'_>) {
     let items = items.into_iter().map(|item| Guarded::new(Some(item)));
     let items: Vec<Guarded<Option<T>>> = items.collect();
@@ -58,6 +154,66 @@ mod tests {
             assert_eq!(dropped.load(Ordering::Relaxed), 3);
         });
         assert_eq!(dropped.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn filter_each_keeps_the_order_whatever_the_order_of_the_tasks() {
+        let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+            (0..count).rev().for_each(work);
+        };
+        let items: Vec<u32> = (0..1000).collect();
+        let ways: [InParallel<'_>; 2] = [&run_serially, &in_reverse];
+        for in_parallel in ways {
+            let multiples = filter_each(&items, in_parallel, &|item| item % 300 == 0);
+            assert_eq!(multiples, [0, 300, 600, 900]);
+            assert!(filter_each(&[], in_parallel, &|_: u32| true).is_empty());
+        }
+    }
+
+    #[test]
+    fn extend_from_boxes_keeps_the_order() {
+        let mut list = vec![1, 2];
+        let boxes = vec![Box::new(3), Box::new(4), Box::new(5)];
+        extend_from_boxes(&mut list, boxes, &run_serially);
+        assert_eq!(list, [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn extend_from_each_keeps_the_order_whatever_the_order_of_the_tasks() {
+        let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+            (0..count).rev().for_each(work);
+        };
+        let ways: [InParallel<'_>; 2] = [&run_serially, &in_reverse];
+        for in_parallel in ways {
+            let mut list = vec![String::from("0")];
+            let lists: Vec<Vec<u32>> = vec![vec![1, 2], Vec::new(), vec![3]];
+            extend_from_each(&mut list, &lists, in_parallel, &|number| number.to_string());
+            assert_eq!(list, ["0", "1", "2", "3"]);
+            extend_from_each(&mut list, &[], in_parallel, &|number: &u32| {
+                number.to_string()
+            });
+            assert_eq!(list.len(), 4);
+        }
+    }
+
+    #[test]
+    fn extend_from_lists_keeps_the_order_whatever_the_order_of_the_tasks() {
+        let in_reverse = |count: usize, work: &(dyn Fn(usize) + Sync)| {
+            (0..count).rev().for_each(work);
+        };
+        let ways: [InParallel<'_>; 2] = [&run_serially, &in_reverse];
+        for in_parallel in ways {
+            let mut list = vec![String::from("a")];
+            let lists: [&[&str]; 3] = [&["b", "c"], &[], &["d"]];
+            let lists: Vec<Vec<String>> = lists
+                .iter()
+                .map(|list| list.iter().copied().map(String::from).collect())
+                .collect();
+            extend_from_lists(&mut list, lists, in_parallel);
+            assert_eq!(list, ["a", "b", "c", "d"]);
+            extend_from_lists(&mut list, Vec::new(), in_parallel);
+            assert_eq!(list.len(), 4);
+        }
     }
 
     #[test]

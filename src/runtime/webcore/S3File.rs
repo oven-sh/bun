@@ -170,8 +170,8 @@ fn construct_s3_file_internal_store(
     let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
         global
             .bun_vm()
-            .as_mut()
             .transpiler
+            .get()
             .env_mut()
             .get_s3_credentials(),
     );
@@ -253,7 +253,7 @@ fn finish_s3_blob(
                     if blob::is_valid_blob_type(slice) {
                         blob.content_type_was_set.set(true);
                         blob.content_type
-                            .set(match global.bun_vm().as_mut().mime_type(slice) {
+                            .set(match global.bun_vm().mime_type(slice) {
                                 Some(mime) => blob::BlobContentType::from(mime),
                                 None => blob::BlobContentType::from_lowercased(slice),
                             });
@@ -263,16 +263,6 @@ fn finish_s3_blob(
         }
     }
     Ok(blob)
-}
-
-fn construct_s3_file_internal(
-    global: &JSGlobalObject,
-    path: PathLike<'static>,
-    options: Option<JSValue>,
-) -> JsResult<*mut Blob> {
-    Ok(Blob::new(construct_s3_file_internal_store(
-        global, path, options,
-    )?))
 }
 
 pub(crate) struct S3BlobStatTask {
@@ -419,15 +409,21 @@ impl S3BlobStatTask {
         Ok(promise)
     }
 
+    #[inline(never)]
     pub(crate) fn exists(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::exists);
         Self::start(cx, blob, "exists", S3BlobStatTask::on_s3_exists_resolved)
     }
 
+    #[inline(never)]
     pub(crate) fn stat(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::stat);
         Self::start(cx, blob, "stat", S3BlobStatTask::on_s3_stat_resolved)
     }
 
+    #[inline(never)]
     pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
+        bun_removable_features::removable_definition!(S3Client, Self::size);
         Self::start(cx, blob, "size", S3BlobStatTask::on_s3_size_resolved)
     }
 
@@ -561,9 +557,7 @@ pub(crate) fn construct_internal_js(
     path: PathLike<'static>,
     options: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    let blob = construct_s3_file_internal(global, path, options)?;
-    // SAFETY: `blob` is a freshly heap-allocated `*mut Blob` from `Blob::new`; the wrapper adopts it.
-    Ok(BlobExt::to_js(unsafe { &mut *blob }, global))
+    Ok(construct_s3_file_internal_store(global, path, options)?.into_js(global))
 }
 
 pub(crate) fn to_js_unchecked(global: &JSGlobalObject, this: *mut Blob) -> JSValue {
@@ -583,22 +577,14 @@ pub(crate) mod exports {
     /// returns JSValue).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: C++ prototype getter passes the wrapper's live Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+    fn JSS3File__bucket(this: &Blob, global: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
 
     /// `options` is empty when it was not passed.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__presign(
-        this: *mut Blob,
-        global: *mut JSGlobalObject,
-        options: JSValue,
-    ) -> JSValue {
-        // SAFETY: JSC method shim passes the wrapper's live Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+    fn JSS3File__presign(this: &Blob, global: &JSGlobalObject, options: JSValue) -> JSValue {
         bun_jsc::to_js_host_call(global, || {
             super::get_presign_url_from(this, global, (!options.is_empty()).then_some(options))
         })
@@ -606,9 +592,7 @@ pub(crate) mod exports {
 
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
-    fn JSS3File__stat(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
-        // SAFETY: JSC method shim passes the wrapper's live Blob and global.
-        let (this, global) = unsafe { (&*this, &*global) };
+    fn JSS3File__stat(this: &Blob, global: &JSGlobalObject) -> JSValue {
         bun_jsc::to_js_host_call(global, || {
             S3BlobStatTask::stat(&global.js_thread_of_caller(), this)
         })

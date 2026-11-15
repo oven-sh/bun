@@ -1,6 +1,6 @@
 // RUN: link
-// CHECK: layout [[both]] name="Whole" {{*}}fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=undefined|number}}]
-// CHECK: function {{*}}name="both" {{*}}parameters=[{type=undefined|null|[[both]] site=w{{*}}}, {type=undefined|null|[[both]] site=w{{*}}}]
+// CHECK: layout [[both]] {{*}}fields=[{key="a" declared={type=number} flags=[IsRequired]}, {key="b" declared={type=undefined|number}}]
+// CHECK: function {{*}}name="both" {{*}}parameters=[{type=undefined|null|[[both]] flags={{*}}}, {type=undefined|null|[[both]] flags={{*}}}]
 
 // Optional or required is not part of a layout's key. An object of either type can have the layout, so a field is required only if every type with the
 // layout requires it.

@@ -1,0 +1,13 @@
+# -- source: main.js
+# function nearest(rows, x, y, turns) { const centers = [rows[0], rows[1], rows[2]]; let best = -1, least = Infinity; for (let turn = 0; turn < turns; turn++) { for (let c = 0; c < centers.length; c++) { const dx = x + turn - centers[c][0], dy = y - centers[c][1], v = dx * dx + dy * dy; if (v < least) { least = v; best = turn * 10 + c; } } } return best; }
+# sink(nearest);
+# -- end of source
+# `centers` is a list written in the function, and nobody knows what its rows are. The loop subtracts what it reads off them at [0] and [1]: by its own text they are expected to be lists of numbers.
+# So each row is asked whether it is one, and behind the test its elements are read in line. No other list is in sight: whatever is asked for a list of numbers here is a row.
+# The loop over the rows stands in another loop. Alone in its function its three turns are written out and stand in no loop, and no guess opens there.
+# f1 = nearest
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}} testedType=Array<number>
+# CHECK: = Narrowed
+# CHECK: = GetArrayElement {{*}} [keyIsIntegral

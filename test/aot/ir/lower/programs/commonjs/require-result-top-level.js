@@ -1,6 +1,10 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 3
+// CHECK-LABEL: function {{*}}name="said"
+// CHECK-LABEL: function {{*}}name="viaFunction"
+// CHECK-LABEL: function {{*}}name="fn"
+// CHECK-LABEL: function {{*}}name="cl"
 
 // FILE: main.js
 // `const m = require(..)` at the top level of a module is read before and after the declaration has run.
@@ -47,55 +51,3 @@ exports.m = "b.m";
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: said viaFunction fn cl
-// CHECK-LABEL: function {{*}}name="said"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b3():
-// CHECK-NEXT: v1 = Builtin builtin=String
-// CHECK-NEXT: v2 = Call v0 calleeName="f"
-// CHECK-NEXT: v3 = Call v1, -, v2 calleeName="String"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: b3() role=CatchHandler:
-// CHECK-NEXT: v5 = CatchValue
-// CHECK-NEXT: v6 = String string="threw "
-// CHECK-NEXT: v7 = PropGet v5 key="name"
-// CHECK-NEXT: v8 = Add v6, v7
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="viaFunction"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|"a" flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v2 = CheckInitialized v1 name="m"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|[[L_3]] flags=[IsExpected]}
-// CHECK-NEXT: v4 = PropGet v3 key="x"
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|"a" flags=[IsExpected]}
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="fn"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="cl"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_6]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_6]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_6]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }

@@ -10,7 +10,7 @@ use crate::{
     get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_ptr::RefPtr;
@@ -276,21 +276,6 @@ fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut 
     unsafe { &mut *p }
 }
 
-impl<const SSL: bool> PooledSocket<SSL> {
-    /// Drop the strong refs the pool holds while a socket is parked
-    /// (proxy_tunnel / h2_session) and clear the heap-owned
-    /// `target_hostname`. Called from `Drop` and `add_memory_back_to_pool`
-    /// before the slot is recycled or its socket force-closed.
-    ///
-    /// Centralises the intrusive-rc `deref` so each caller doesn't repeat the
-    /// pair of `unsafe { …::deref(nn.as_ptr()) }`.
-    fn release_parked_refs(&mut self) {
-        self.target_hostname = Box::default();
-        self.proxy_tunnel = None;
-        self.h2_session = None;
-    }
-}
-
 #[derive(Clone, Copy)]
 struct PoolKey<'a> {
     required_for_socket: PeerVerification,
@@ -518,13 +503,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(session));
     }
 
-    fn ssl_ctx(&self) -> *mut SSL_CTX {
-        if !SSL {
-            unreachable!();
-        }
-        self.secure.as_ref().unwrap().as_ptr()
-    }
-
     pub(crate) fn init_with_client_config(
         &mut self,
         client: &mut HTTPClient,
@@ -547,8 +525,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
-        self.secure = match opts.create_ssl_context(&mut err) {
-            Some(ctx) => Some(ctx),
+        let ctx = match opts.create_ssl_context(&mut err) {
+            Some(ctx) => ctx,
             None => {
                 return Err(match err {
                     uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
@@ -563,11 +541,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 });
             }
         };
-        // SAFETY: secure was just set to Some.
-        unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+        ssl_ctx_setup(self.secure.insert(ctx));
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         Ok(())
     }
 
@@ -584,7 +560,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             },
             ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
             ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
-                init_opts.abs_ca_file_name.as_ptr().cast()
+                init_opts.abs_ca_file_name.as_ptr()
             } else {
                 core::ptr::null()
             },
@@ -596,11 +572,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
-            self.secure = Some(
+            let ctx = self.secure.insert(
                 uws::SocketContext::BunSocketContextOptions {
                     // we request the cert so we load root certs and can verify it
                     request_cert: 1,
@@ -611,8 +586,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 .create_ssl_context(&mut err)
                 .unwrap(),
             );
-            // SAFETY: secure was just set to Some.
-            unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+            ssl_ctx_setup(ctx);
         }
     }
 
@@ -947,13 +921,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
                 let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
-                socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
-                // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
-                // owned-heap fields (tunnel/target_hostname/h2_session)
-                // were just moved out / cleared, so the in-place drop in `put`
-                // touches only trivially-droppable residuals.
+                // SAFETY: `socket_ptr` is a fully-initialized hive slot.
                 let ok = unsafe { pool.put(socket_ptr) };
                 debug_assert!(ok);
                 bun_core::scoped_log!(
@@ -1029,7 +999,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_unix_group(
-            &mut self.group,
+            &self.group,
             Self::KIND,
             if SSL {
                 self.secure.as_ref().map(OwnedSslCtx::as_ptr)
@@ -1185,7 +1155,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
         bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_group(
-            &mut self.group,
+            &self.group,
             Self::KIND,
             if SSL {
                 self.secure.as_ref().map(OwnedSslCtx::as_ptr)
@@ -1270,7 +1240,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         while let Some(idx) = iter.next() {
             let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
             // Not shutdown(): its close callback would deref the freed HTTPClient in the ext slot.
-            pooled.release_parked_refs();
+            pooled.proxy_tunnel = None;
+            pooled.h2_session = None;
             pooled.http_socket.close(uws::CloseKind::Failure);
         }
     }
@@ -1311,14 +1282,10 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         // cache-miss error path frees the half-init context); tolerate that
         // here by skipping group teardown when it was never linked into the
         // loop.
-        if !self.group.loop_.is_null() {
+        if !self.group.loop_.get().is_null() {
             // Force-close any remaining sockets before unlinking the group so
             // the loop never dereferences a freed `*Context` via `group->ext`.
             self.group.close_all();
-            // Note: SocketGroup deinit must run before the embedding struct
-            // is freed (it unlinks from the loop's group list).
-            // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-            unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
         }
     }
 }
@@ -1482,16 +1449,7 @@ impl<const SSL: bool> Handler<SSL> {
 
     unsafe fn add_memory_back_to_pool(pooled_ptr: *mut PooledSocket<SSL>) {
         // SAFETY: caller guarantees `pooled_ptr` points at a live HiveArray slot.
-        // Hoist `owner` and clear the slot's owned resources first; the
-        // `&mut HiveArray` receiver formed by `pending_sockets.put` (covering
-        // this very slot) is created only after the `&mut PooledSocket` borrow
-        // is dropped — avoids Stacked Borrows invalidation of the slot pointer.
-        // SAFETY: see fn-level contract.
-        let (owner, transport) = unsafe {
-            let slot = &mut *pooled_ptr;
-            slot.release_parked_refs();
-            (slot.owner, slot.transport)
-        };
+        let (owner, transport) = unsafe { ((*pooled_ptr).owner, (*pooled_ptr).transport) };
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.
         let ok = unsafe {

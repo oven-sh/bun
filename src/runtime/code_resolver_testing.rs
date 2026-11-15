@@ -3,7 +3,6 @@ use std::fmt::Debug;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
-use bun_aot::statistics::{LimitId, LimitValues};
 use bun_bundler::aot::FileFinder;
 use bun_core::strings;
 use bun_jsc::JsResult;
@@ -73,7 +72,7 @@ impl DiskWithBuiltinModules {
             }
         }
         // SAFETY: the thread of the VM waits in the native call that makes this host and drops it.
-        let file_finder = unsafe { FileFinder::new(&vm.transpiler, conditions) };
+        let file_finder = unsafe { FileFinder::new(vm.transpiler.get(), conditions) };
         DiskWithBuiltinModules {
             disk,
             modules,
@@ -306,21 +305,12 @@ fn json_text(json: &Json) -> Vec<u8> {
     text
 }
 
-pub(crate) fn code_options_with_limits(
-    working_directory: &[u8],
-    limits: &LimitValues,
-) -> CodeOptions {
-    let max_candidates = limits.get(LimitId::MaxComputedSpecifierCandidates);
-    CodeOptions {
-        max_computed_candidates: u32::try_from(max_candidates).unwrap_or(u32::MAX),
-        ..CodeOptions::bun_run(working_directory)
-    }
-}
+/// Must equal `MAX_FOLDED_STRING_BYTES` in `src/aot/load/fold_inputs.rs`, which is private to the compiler crate.
+const MAX_FOLDED_STRING_BYTES: usize = 1 << 16;
 
-pub(crate) fn fold_options_with_limits<'s>(limits: &LimitValues) -> FoldOptions<'s> {
-    let max_string_bytes = limits.get(LimitId::MaxFoldedStringBytes);
+pub(crate) fn fold_options_for_compile<'s>() -> FoldOptions<'s> {
     FoldOptions {
-        max_string_bytes: usize::try_from(max_string_bytes).unwrap_or(usize::MAX),
+        max_string_bytes: MAX_FOLDED_STRING_BYTES,
         ..FoldOptions::default()
     }
 }
@@ -329,10 +319,16 @@ fn vm_code_options(vm: &VirtualMachine, root: &[u8]) -> CodeOptions {
     let top_level_directory = from_native(vm.top_level_dir());
     let node_path = vm.env_loader().get(b"NODE_PATH").unwrap_or_default();
     let separator: &[u8] = if cfg!(windows) { b";" } else { b":" };
-    let tsconfig_override = vm.transpiler.resolver.opts.tsconfig_override.as_deref();
-    let mut code = code_options_with_limits(root, &LimitValues::for_host());
+    let tsconfig_override = vm
+        .transpiler
+        .get()
+        .resolver
+        .opts
+        .tsconfig_override
+        .as_deref();
+    let mut code = CodeOptions::bun_run(root);
     code.remove_condition(AOT_CONDITION);
-    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    code.preserves_symlinks = vm.transpiler.get().resolver.opts.preserve_symlinks;
     code.node_paths = strings::tokenize(node_path, separator)
         .map(|entry| from_argument(&top_level_directory, entry))
         .collect();
@@ -397,6 +393,7 @@ pub(crate) fn resolve_computed_specifier(
         directory: &directory,
         kind,
         form: CodeImportForm::Static,
+        site: Default::default(),
     });
     Ok(Some(json_text(&computed_resolution_json(
         &host, resolution,
@@ -606,13 +603,12 @@ pub(crate) fn describe_code_graph(
         false => working_directory_argument,
     });
 
-    let limits = LimitValues::for_host();
-    let mut code = code_options_with_limits(&working_directory, &limits);
+    let mut code = CodeOptions::bun_run(&working_directory);
     for condition in strings::tokenize(conditions_argument, b"\n") {
         code.add_custom_condition(condition);
     }
     let vm = cx.global().bun_vm();
-    code.preserves_symlinks = vm.transpiler.resolver.opts.preserve_symlinks;
+    code.preserves_symlinks = vm.transpiler.get().resolver.opts.preserve_symlinks;
     let host =
         DiskWithBuiltinModules::new(vm, threads, &working_directory, &code.custom_conditions);
 
@@ -627,7 +623,7 @@ pub(crate) fn describe_code_graph(
     let fold_options = FoldOptions {
         defines: arena.alloc_slice_copy(&defines),
         features: arena.alloc_slice_copy(&features),
-        ..fold_options_with_limits(&limits)
+        ..fold_options_for_compile()
     };
     let fold = FoldInputs::new(fold_options, arena);
     let entry_points: Vec<Vec<u8>> = strings::tokenize(entry_points_argument, b"\n")
@@ -643,6 +639,8 @@ pub(crate) fn describe_code_graph(
         threads: NonZeroUsize::new(host.threads()).unwrap_or(NonZeroUsize::MIN),
         progress: None,
         left_out_bodies: None,
+        discards_first_visits: false,
+        order: 1,
     };
     let description = match load_program(&session, &host, &request) {
         Ok(loaded) => {

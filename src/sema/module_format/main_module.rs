@@ -1,7 +1,7 @@
 use crate::atom::known;
 use crate::bind::{Bound, CommonJsVariable, Parent};
 use crate::hir::{BinOp, ExprId, ExprKind, File, MemberKey};
-use crate::import_sites::is_free_common_js;
+use crate::import_sites::{is_free_common_js, may_be_modified};
 
 pub(super) fn find_main_module_comparison(
     hir: &File<'_>,
@@ -20,6 +20,17 @@ pub(super) fn find_main_module_comparison(
         }
         operand = parent;
     }
+}
+
+pub fn settled_main_module_operand(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    comparison: ExprId,
+) -> Option<ExprId> {
+    let module = main_module_operand(hir, bound, comparison)?;
+    let is_settled = !may_be_modified(hir, bound, CommonJsVariable::Module)
+        && !may_be_modified(hir, bound, CommonJsVariable::Require);
+    is_settled.then_some(module)
 }
 
 pub fn main_module_operand(

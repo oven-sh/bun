@@ -10,8 +10,8 @@ use bun_core::env_var;
 use crate::import_record;
 use crate::{Index, LinkerContext, UseDirective};
 
-pub(crate) struct StaticRouteVisitor<'a> {
-    pub(crate) c: &'a LinkerContext<'a>,
+pub(crate) struct StaticRouteVisitor<'a, 'ctx> {
+    pub(crate) c: &'a LinkerContext<'ctx>,
     pub(crate) cache: ArrayHashMap</* Index::Int */ u32, bool>,
     pub(crate) visited: AutoBitSet,
     pub(crate) stack: Vec<Frame>,
@@ -23,7 +23,7 @@ pub(crate) struct Frame {
     next_record: usize,
 }
 
-impl<'a> StaticRouteVisitor<'a> {
+impl<'a> StaticRouteVisitor<'a, '_> {
     /// This the quickest, simplest, dumbest way I can think of doing this.
     /// Investigate performance. It can have false negatives (it doesn't properly
     /// handle cycles), but that's okay as it's just used an optimization

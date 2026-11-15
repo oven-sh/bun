@@ -1,0 +1,20 @@
+# a literal that is written as a class lies at the places of its instances, and one place is held to one type or to none: so its slots are held with theirs. A literal that shares a family with no instance is held to nothing.
+# f1 = Node, f2 = asNode, f3 = alone
+# -- source: literal-that-shares-a-family-with-an-instance-is-held.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Kind { Leaf, Branch }
+# interface Node { kind: Kind; open: boolean }
+# function Node(this: Node, kind: Kind, open: boolean) { this.kind = kind; this.open = open; }
+# function asNode(kind: Kind): Node { return { kind, open: false }; }
+# interface Alone { closed: boolean }
+# function alone(closed: boolean): Alone { return { closed }; }
+# sink(Node, asNode, alone, new (Node as any)(Kind.Branch, true));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: "kind" {{*}}held=undefined|null|int
+# CHECK: "open" {{*}}held=undefined|null|boolean
+# CHECK: "kind" {{*}}held=undefined|null|int
+# CHECK: "open" {{*}}held=undefined|null|boolean
+# RUN(ALONE): facts enforced mechanisms=all
+# ALONE-NOT: "closed"
+# ALONE-NOT: differs-from-table

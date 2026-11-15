@@ -1,0 +1,18 @@
+# -- source: builtin-constructors-in-variables.js
+# function tooEarly() { try { return bytes(2); } catch (error) { return error.constructor.name; } }
+# print(tooEarly());
+# var u8 = Uint8Array;
+# function bytes(n) { var o = new u8(n); for (var i = 0; i < n; i++) o[i] = i; return o.subarray(1).length; }
+# print(tooEarly());
+# print(bytes(7));
+# -- end of source
+# A variable that is found too early holds undefined, which is no constructor: that arm throws. What is constructed is a Uint8Array and nothing else.
+# f1 = bytes
+# RUN(BYTES): walk f1:Body mechanisms=all
+# BYTES: Uint8Array @Cell = CallInline
+# BYTES-NOT: testedType=Uint8Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: TypeError
+# ANSWERS-NEXT: 1
+# ANSWERS-NEXT: 6
+# ANSWERS-NEXT: exited with 0

@@ -164,11 +164,11 @@ fn u32_at(bytes: &[u8], offset: usize) -> u32 {
     u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four bytes"))
 }
 
-fn fill_byte(architecture: Architecture, is_code: bool, address: u64) -> u8 {
-    match (is_code, architecture) {
-        (false, _) => 0,
-        (true, Architecture::X86_64) => 0xcc,
-        (true, Architecture::Aarch64) => [0x00, 0x00, 0x20, 0xd4][(address & 3) as usize],
+fn fill_byte(target: Target, is_code: bool) -> u8 {
+    match (is_code, target.architecture, target.format) {
+        (false, ..) | (true, Architecture::Aarch64, _) => 0,
+        (true, Architecture::X86_64, ExecutableFormat::MachO) => 0xcc,
+        (true, Architecture::X86_64, _) => 0xf4,
     }
 }
 
@@ -312,11 +312,10 @@ impl TrimmedCheck<'_> {
     }
 
     fn check_cut_or_filled(&self, range: &ToyRange) {
-        let architecture = self.layout.target.architecture;
+        let fill = fill_byte(self.layout.target, range.is_code);
         let addresses = range.range.start..range.range.end;
         if let Some(bytes) = self.new.bytes(range.range) {
             for (address, byte) in addresses.zip(bytes) {
-                let fill = fill_byte(architecture, range.is_code, address);
                 assert!(
                     byte == fill,
                     "{}: {address:#x} holds {byte:#x}, not fill {fill:#x}",
@@ -327,7 +326,6 @@ impl TrimmedCheck<'_> {
         }
         for address in addresses {
             let byte = self.new.byte_at(address);
-            let fill = fill_byte(architecture, range.is_code, address);
             assert!(
                 matches!(byte, MemoryByte::Unmapped | MemoryByte::NoAccess)
                     || byte == MemoryByte::Mapped(fill),
@@ -600,13 +598,13 @@ fn close_over_followed_edges(table: &ToyTable, seed: FeatureSet) -> FeatureSet {
 
 fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
     use UnseenCodeCause::{
-        EvaluatesText, FlowGaveUp, LoadsCodeByName, LoadsModuleByName, RunsMachineCode,
+        EvaluatesText, LoadsCodeByName, LoadsModuleByName, ReportMissing, RunsMachineCode,
         RunsUnseenCode,
     };
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
     let outside_language = [Feature::WebAssembly, Feature::Inspector, Feature::Profilers];
-    let only_when_named = bun_trim::features_kept_only_when_named();
+    let only_when_named = bun_trim::features_retained_by_name();
     match cause {
         LoadsModuleByName => FeatureSet::from_features(&[Feature::DataFileLoaders]),
         LoadsCodeByName => {
@@ -619,18 +617,23 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
             ]));
             features
         }
-        FlowGaveUp | EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
+        EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
             .iter()
             .filter(|feature| {
                 let is_added_for_cause = matches!(cause, RunsUnseenCode | RunsMachineCode)
                     && *feature == Feature::NativeAddons;
-                let has_to_be_named = cause != FlowGaveUp && only_when_named.contains(*feature);
+                let has_to_be_named = only_when_named.contains(*feature);
                 is_added_for_cause
                     || (feature.is_engine()
                         && !outside_language.contains(feature)
                         && !has_to_be_named)
             })
             .collect(),
+        ReportMissing => {
+            let mut features = program_features;
+            features.union_with(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            features
+        }
         _ => program_features,
     }
 }
@@ -660,9 +663,22 @@ fn check_plan(
     if used.names(Feature::ShadowRealm) {
         seed.insert(Feature::RuntimeTranspiler);
     }
+    if used.starts_workers_from_unseen_code && used.uses(Feature::WorkerConstructor) {
+        seed.union_with(&features_opened_by(UnseenCodeCause::LoadsCodeByName));
+        seed.union_with(&FeatureSet::from_features(&[
+            Feature::PostMessage,
+            Feature::MessageChannel,
+            Feature::StructuredClone,
+        ]));
+    }
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {
-        if seed.contains(Feature::Bundler) {
+        let may_enter_all_of_bundler = used.names_bun_build
+            || used.has_cause(UnseenCodeCause::ReportMissing)
+            || used.has_cause(UnseenCodeCause::FlowResultDisabled)
+            || (request.allow.iter()).any(|name| name.features().contains(Feature::Bundler));
+        let builds_executables = seed.contains(Feature::Bundler) && may_enter_all_of_bundler;
+        if builds_executables {
             seed.union_with(&FeatureSet::from_features(&[
                 Feature::Check,
                 Feature::AotCompiler,
@@ -672,6 +688,16 @@ fn check_plan(
         }
         let mut entered_by_programs = FeatureSet::all();
         entered_by_programs.subtract(&Feature::all_outside_compiled_programs());
+        let can_enter_test_runner = builds_executables
+            || used.can_reach_test_runner
+            || used.uses(Feature::ShadowRealm)
+            || used.can_start_worker_from_unseen_code();
+        if !request.is_template {
+            entered_by_programs.subtract(&Feature::all_entered_from(EnteredFrom::CompiledCode));
+            if !can_enter_test_runner {
+                entered_by_programs.subtract(&FeatureSet::from_features(&[Feature::Test]));
+            }
+        }
         seed.union_with(&entered_by_programs);
     }
     let retained = close_over_followed_edges(table, seed);
@@ -1242,7 +1268,7 @@ fn assert_all_filled(layout: &ToyLayout, trimmed: &Trimmed, range: AddressRange)
         .bytes(range)
         .unwrap_or_else(|| panic!("{target:?}: a filled range is not mapped"));
     for (address, byte) in (range.start..range.end).zip(bytes) {
-        let fill = fill_byte(target.architecture, true, address);
+        let fill = fill_byte(target, true);
         assert!(
             byte == fill,
             "{target:?}: {address:#x} holds {byte:#x}, not fill {fill:#x}"
@@ -1305,7 +1331,7 @@ fn aligned_range_is_cut_ragged_range_is_filled() {
             !matches!(middle, MemoryByte::Mapped(_)),
             "{target:?}: the middle is {middle:?}"
         );
-        let fill = MemoryByte::Mapped(fill_byte(target.architecture, true, start));
+        let fill = MemoryByte::Mapped(fill_byte(target, true));
         assert!(
             new.byte_at(start) == fill,
             "{target:?}: the ragged start is not filled"

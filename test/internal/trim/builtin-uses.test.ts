@@ -83,12 +83,12 @@ describe("checkBuiltinUses", () => {
     expect(error.file).toBe("builtin-uses.json");
   });
 
-  test("rejects a feature that only the command line enters, and the JIT, also with a condition", () => {
+  test("rejects a feature that only the command line enters, and the JIT, unless it has a condition", () => {
     const withC = (change: object) => ({
       ...abc,
       features: abc.features.map(feature => (feature.name === "C" ? { ...feature, ...change } : feature)),
     });
-    const uses = (more: Partial<BuiltinEntry> = {}) => ({ entries: [entry(1, [always("A"), sometimes("C")], more)] });
+    const uses = (more: Partial<BuiltinEntry> = {}) => ({ entries: [entry(1, [always("A"), always("C")], more)] });
     const commandLine = withC({ enteredFrom: "command-line" });
     expect(buildErrorOf(() => checkBuiltinUses(uses(), commandLine, "builtin-uses.json")).message).toBe(
       "Bun.builtin1 uses C, which no executable compiled ahead of time has",
@@ -102,6 +102,8 @@ describe("checkBuiltinUses", () => {
       expect(() => checkBuiltinUses(uses(more), commandLine, "builtin-uses.json")).not.toThrow();
     }
     expect(() => checkBuiltinUses(uses(), withC({ enteredFrom: "startup" }), "builtin-uses.json")).not.toThrow();
+    const underCondition = { entries: [entry(1, [always("A"), sometimes("C")])] };
+    expect(() => checkBuiltinUses(underCondition, commandLine, "builtin-uses.json")).not.toThrow();
     const jit = { ...abc, features: [...abc.features, { ...abc.features[0]!, name: "JIT", index: 500 }] };
     expect(
       buildErrorOf(() => checkBuiltinUses({ entries: [entry(1, [always("JIT")])] }, jit, "builtin-uses.json")).message,

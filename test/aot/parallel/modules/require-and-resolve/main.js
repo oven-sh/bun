@@ -4,8 +4,9 @@ const { pathToFileURL } = require("node:url");
 const nestedCommonJS = require("./nested/resolver.cjs");
 
 const computed = name => "./" + name;
-const folderURL = pathToFileURL(__dirname).href;
-const scrub = text => String(text).replaceAll(folderURL, "<url>").replaceAll(__dirname, "<folder>");
+// require.resolve() says where a file lay when the program was built. import.meta.resolve() and a message name it as the module system knows it.
+const folderURL = pathToFileURL(module.path).href;
+const scrub = text => String(text).replaceAll(folderURL, "<url>").replaceAll(module.path, "<folder>").replaceAll(__dirname, "<folder>");
 
 function describeError(error) {
   return [error.name, error.code, scrub(error.message)].join(" | ");

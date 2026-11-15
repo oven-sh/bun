@@ -1,6 +1,5 @@
 // `new Response(body, { status, statusText, headers })` with a literal that the call alone has is compiled to a call that takes the literal's members. Every shape of init gives the Response, or the error, of plain Bun.
 // response-literal-init.ts is the same program with the global and Response.json replaced at the end, so that no call of it is known.
-// STATISTIC: LiteralArgumentsTakenApart >= 40
 const lines: string[] = [];
 async function say(label: string, work: () => unknown) {
   let text: string;

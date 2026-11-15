@@ -97,7 +97,7 @@ impl<'a> ProcessHandle<'a> {
 
         let argv = ScriptArgv::new(state.shell_bin, handle.config.combined)?;
         let start_time = Instant::now();
-        let spawned: spawn::SpawnProcessResult = 'brk: {
+        let mut spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
@@ -132,17 +132,6 @@ impl<'a> ProcessHandle<'a> {
             }??;
             // `env` drops here (or on `?` above), restoring PATH.
         };
-        #[cfg(unix)]
-        let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
-        // Windows: `spawn_process_windows` has already moved the heap pipe out of
-        // `options.stdout/stderr` (via `heap::take`) into `spawned.stdout/stderr`
-        // as `WindowsStdioResult::Buffer(Box<Pipe>)`. The raw `*mut Pipe` left in
-        // `options` is dangling-by-design — re-`heap::take`ing it here would be a
-        // double `Box::from_raw` (UAF + double-free). Take the Box from the
-        // *result* instead, before `to_process` consumes `spawned`.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        #[cfg(windows)]
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
@@ -162,12 +151,12 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout) = stdout_fd {
+            if let Some(stdout) = stdout_pipe.map(sys::File::into_raw) {
                 let _ = sys::set_nonblocking(stdout);
                 handle.remaining_fds += 1;
                 handle.stdout.start(stdout, true)?;
             }
-            if let Some(stderr) = stderr_fd {
+            if let Some(stderr) = stderr_pipe.map(sys::File::into_raw) {
                 let _ = sys::set_nonblocking(stderr);
                 handle.remaining_fds += 1;
                 handle.stderr.start(stderr, true)?;
@@ -188,23 +177,21 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
-        // The exit handler re-borrows `handle.process`, so go through the
-        // `Process` allocation itself rather than a borrow of the slot.
-        // SAFETY: just spawned; the slot's handle keeps it live.
-        let process = unsafe { &mut *handle.process.as_ref().unwrap().process.as_ptr() };
+        // Not a borrow of the slot, which the exit handler borrows again.
+        let process = handle.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::FilterRunHandle, handle_ptr)
         });
 
-        match process.watch_or_reap() {
+        match spawn::Process::watch_or_reap(process) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
                 }
             }
         }
@@ -270,7 +257,7 @@ impl<'a> ProcessHandle<'a> {
 bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             let info = (*this).process.as_mut().unwrap();
             info.status = status;
             info.end_time = Some(Instant::now());
@@ -286,9 +273,8 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl<'a> ProcessHandle<'a> {
-    fn loop_(&self) -> *mut bun_io::Loop {
-        // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-        bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
+    fn loop_(&self) -> bun_io::LoopRef {
+        bun_io::uws_to_native(self.state.event_loop.loop_)
     }
 }
 
@@ -303,7 +289,7 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
-    event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
+    event_loop      = |this| (*(*this).state.as_ptr()).event_loop.as_event_loop_ctx();
 }
 
 /// Compile-time ANSI-tag expansion.
@@ -315,12 +301,9 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    // Raw `*mut` — `init_global` returns the
-    // thread-local singleton pointer; aliasing &mut would be UB.
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output
     draw_buf: Vec<u8>,
@@ -683,7 +666,7 @@ impl<'a> State<'a> {
     }
 
     fn flush_draw_buf(&self) {
-        let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
+        let _ = bun_sys::File::borrow(&bun_sys::Fd::stdout()).write_all(&self.draw_buf);
     }
 
     fn abort(&mut self) {
@@ -949,7 +932,6 @@ pub(crate) fn run_scripts_with_filter(
     let event_loop = MiniEventLoopMod::init_global(
         // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
         Some(unsafe { &mut *env_ptr }),
-        None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
@@ -957,11 +939,7 @@ pub(crate) fn run_scripts_with_filter(
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    // SAFETY: `event_loop` is the live per-thread `MiniEventLoop` (init'd above);
-    // `as_event_loop_ctx` only stores it as a tagged backref.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
-        &mut *event_loop
-    }));
+    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop.as_event_loop_ctx());
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
         let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
@@ -978,7 +956,6 @@ pub(crate) fn run_scripts_with_filter(
     let mut state = State {
         handles, // placeholder; reassigned after init below
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         draw_buf: Vec::new(),
         last_lines_written: 0,
@@ -1020,18 +997,8 @@ pub(crate) fn run_scripts_with_filter(
             process: None,
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                     &script.package_json_path,
                 )
@@ -1139,8 +1106,7 @@ pub(crate) fn run_scripts_with_filter(
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
+        event_loop.tick_once(&raw const state as *mut c_void);
     }
 
     let status = state.finalize();

@@ -4,18 +4,15 @@ use core::fmt::Arguments;
 use bun_core::fmt::{ConnTimeoutKind, fmt_conn_timeout};
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::{
-    EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, JsCell, VirtualMachine,
-    VirtualMachineSqlExt as _,
-};
+use crate::jsc::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, VirtualMachine};
 
 pub struct ConnectionTimers {
     idle_timeout_ms: u32,
     pub(crate) connection_timeout_ms: u32,
     max_lifetime_ms: u32,
     /// The connection timeout until the connection is established, the idle timeout after.
-    pub(crate) timer: JsCell<EventLoopTimer>,
-    pub(crate) max_lifetime_timer: JsCell<EventLoopTimer>,
+    pub(crate) timer: EventLoopTimer,
+    pub(crate) max_lifetime_timer: EventLoopTimer,
     /// `maxLifetime` ran out while busy; the connection closes when it stops being busy.
     lifetime_exceeded: Cell<bool>,
     /// The pool handed it to a reservation or a transaction: busy even when nothing is on the wire.
@@ -34,8 +31,8 @@ impl ConnectionTimers {
             idle_timeout_ms,
             connection_timeout_ms,
             max_lifetime_ms,
-            timer: JsCell::new(EventLoopTimer::init_paused(timer_tag)),
-            max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(max_lifetime_tag)),
+            timer: EventLoopTimer::init_paused(timer_tag),
+            max_lifetime_timer: EventLoopTimer::init_paused(max_lifetime_tag),
             lifetime_exceeded: Cell::new(false),
             checked_out: Cell::new(false),
         }
@@ -51,16 +48,18 @@ impl ConnectionTimers {
     }
 }
 
-fn start(timer: &JsCell<EventLoopTimer>, ms: u32) {
-    timer.with_mut(|t| t.next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, ms.into()));
-    // The fire path recovers the connection from this pointer.
-    VirtualMachine::get_mut().timer().insert(timer.as_ptr());
+fn start(timer: &EventLoopTimer, ms: u32) {
+    timer.next.set(Timespec::ms_from_now(
+        TimespecMockMode::ForceRealTime,
+        ms.into(),
+    ));
+    // SAFETY: an unlinked field (both callers see to it) of a boxed connection, which stops its
+    // timers before it is freed.
+    unsafe { VirtualMachine::get().timer_insert(timer) };
 }
 
-fn stop(timer: &JsCell<EventLoopTimer>) {
-    if timer.get().state == EventLoopTimerState::ACTIVE {
-        timer.with_mut(|t| VirtualMachine::get_mut().timer().remove(t));
-    }
+fn stop(timer: &EventLoopTimer) {
+    VirtualMachine::get().timer_remove(timer);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -115,9 +114,7 @@ pub trait TimedConnection {
     }
 
     fn on_connection_timeout(&self) {
-        self.timers()
-            .timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+        self.timers().timer.state.set(EventLoopTimerState::FIRED);
         let (kind, ms, stage) = self.timeout();
         if ms != 0 && !self.is_processing_data() {
             self.fail_timeout(kind, format_args!("{}", fmt_conn_timeout(kind, ms, stage)));
@@ -127,7 +124,7 @@ pub trait TimedConnection {
     fn start_max_lifetime_timer(&self) {
         let timers = self.timers();
         if timers.max_lifetime_ms != 0
-            && timers.max_lifetime_timer.get().state != EventLoopTimerState::ACTIVE
+            && timers.max_lifetime_timer.state.get() != EventLoopTimerState::ACTIVE
         {
             start(&timers.max_lifetime_timer, timers.max_lifetime_ms);
         }
@@ -137,7 +134,8 @@ pub trait TimedConnection {
         let timers = self.timers();
         timers
             .max_lifetime_timer
-            .with_mut(|t| t.state = EventLoopTimerState::FIRED);
+            .state
+            .set(EventLoopTimerState::FIRED);
         match self.phase() {
             Phase::Failed => {}
             Phase::Connected if self.is_busy() => {

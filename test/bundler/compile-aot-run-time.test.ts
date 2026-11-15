@@ -177,9 +177,9 @@ describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
     const hits: Record<string, number> = {};
     for (const node of (await Bun.file(join(folder, "entry.cpuprofile")).json()).nodes)
       hits[node.callFrame.functionName] = (hits[node.callFrame.functionName] ?? 0) + node.hitCount;
-    // How many samples a run gets depends on the machine and on its timer.
+    // How many samples a run gets depends on the machine, on its timer and on what else runs there. Where they fall does not: nearly all of the run is native code that the function calls.
     const samples = Object.values(hits).reduce((sum, count) => sum + count, 0);
-    expect({ hits, isSeen: hits.busy! > samples / 20 }).toEqual({ hits, isSeen: true });
+    expect({ hits, hasMostSamples: hits.busy! > samples / 2 }).toEqual({ hits, hasMostSamples: true });
     expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
   });
 
@@ -206,6 +206,48 @@ describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
     if (kinds === 1) expect(Number(second)).toBeLessThan(3000);
     else expect(Number(second)).toBeGreaterThanOrEqual(3000);
   });
+});
+
+test("a large embedded file is read into buffers of their own", async () => {
+  const large = Buffer.alloc(3_000_001);
+  for (let i = 0; i < large.length; i++) large[i] = (i * 31) ^ (i >> 11);
+  using dir = tempDir("compile-aot-large-embedded-file", {
+    "large.bin": large,
+    "index.ts": `
+      import path from "./large.bin" with { type: "file" };
+      import { promises, readFileSync } from "node:fs";
+      const hash = (bytes: Uint8Array) => Bun.hash(bytes).toString(16);
+      const first = readFileSync(path), second = readFileSync(path);
+      const unchanged = hash(second);
+      console.log(first.length, first.byteOffset === 0 && first.buffer.byteLength === first.length, hash(first) === unchanged);
+      for (let i = 0; i < first.length; i += 1009) first[i] = 255 - first[i]!;
+      const third = await promises.readFile(path);
+      console.log(hash(first) === unchanged, hash(second) === unchanged, hash(third) === unchanged);
+      const moved = structuredClone(third.buffer, { transfer: [third.buffer] });
+      console.log(third.length, moved.byteLength >= second.length, readFileSync(path).equals(second));
+      for (let i = 0; i < 20; i++) readFileSync(path)[0] = 1;
+      Bun.gc(true);
+      console.log(unchanged === hash(readFileSync(path)), readFileSync(path, "latin1").length);
+      console.log(unchanged);
+    `,
+  });
+  const outfile = join(String(dir), "index");
+  const build = await runCommand(
+    [bunExe(), "build", "--compile", "--aot", "index.ts", "--outfile", outfile],
+    String(dir),
+  );
+  expect(build.stderr).not.toContain("error");
+  expect(build.exitCode).toBe(0);
+  const { stdout, exitCode } = await runCommand([outfile]);
+  expect(stdout.split("\n")).toEqual([
+    "3000001 true true",
+    "false true true",
+    "0 true true",
+    "true 3000001",
+    Bun.hash(large).toString(16),
+    "",
+  ]);
+  expect(exitCode).toBe(0);
 });
 
 test("compiles RegExps with the u and v flags", async () => {

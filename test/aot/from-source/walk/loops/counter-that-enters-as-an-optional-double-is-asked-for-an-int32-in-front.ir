@@ -1,0 +1,44 @@
+# f3 = word
+# -- source: counter-that-enters-as-an-optional-double-is-asked-for-an-int32-in-front.ts
+# declare function print(...values: unknown[]): void;
+# const BLANK = 32;
+# const TAB = 9;
+# const END = 59;
+# function pastBlanks(text: string, at: any, end: any) {
+#   while (at < end) {
+#     const unit = text.charCodeAt(at);
+#     if (unit !== BLANK && unit !== TAB) break;
+#     at++;
+#   }
+#   return at;
+# }
+# function pastWord(text: string, at: any, end: any, stop: any) {
+#   while (at < end) {
+#     const unit = text.charCodeAt(at);
+#     if (unit === END || unit === stop) break;
+#     at++;
+#   }
+#   return at;
+# }
+# function word(text: string, from: any) {
+#   const end = text.length;
+#   let at = pastBlanks(text, from, end);
+#   const begin = at;
+#   at = pastWord(text, at, end, 65536);
+#   return String(begin) + ":" + String(at) + ":" + text.slice(begin, at);
+# }
+# (globalThis as any).texts = ["  plain/text; more", "plain", "ab;", "ab;cd", "ab;cd;"];
+# const texts: string[] = (globalThis as any).texts;
+# print(word(texts[0], 0), word(texts[1], undefined), word(texts[2], 4294967296), word(texts[3], -2), word(texts[4], 3));
+# -- end of source
+# pastBlanks() is called, and what it gives back is undefined or a whole number: it comes in an optional double. pastWord() is copied, and that value enters its loop as the counter.
+# It is asked for an int32 in front of the loop as a counter in a box is: the typed build compares, reads the character and steps by integers; whatever else enters (undefined, a number past the int32s) goes to the other build.
+# RUN: walk f3 mechanisms=all
+# CHECK: @OptionalDouble = CallDirect
+# CHECK: = TypeTest {{*}}testedType=i32
+# CHECK: isLoopHead=true
+# CHECK: = Less {{*}}form=Integers
+# CHECK: = GetStringCodeUnit
+# CHECK: = Increment {{*}}form=Integers
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 2:12:plain/text undefined:undefined:plain 4294967296:4294967296: -2:2: 3:5:cd

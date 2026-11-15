@@ -1,0 +1,31 @@
+# Where every position is tested (testing=CheckBoundsAtRunTime), what a read is told about its position is held against the view. The code below is told that `k`, held as a number, lies inside. A number that is NaN becomes the least integer on x86-64 and zero on arm64, and zero lies below the length of every view that holds anything: so the number is first asked whether it equals itself, on both. Without the word nothing is asked.
+# f1 = inView
+# -- source: position-held-as-a-number-is-asked-whether-it-is-one-where-every-position-is-tested.ts
+# declare function sink(...values: unknown[]): void;
+# declare function ask(): number;
+# const view = new Float64Array([4.5, 5.5, 6.5]);
+# function inView(k: number) { return view[k]; }
+# sink(inView(ask()));
+# -- end of source
+# -- code
+# code f1:Body {
+#   frame 0 callee=f1 callPosition=4294967295 module=m0
+#   b0(v0: number @Double) entry=0:
+#     v1: absent|Float64Array @JSValue = GetModuleVariable variable=g0 traits=[mayCollect, mayTouchMemory]
+#     v2: Float64Array @JSValue = CheckInitialized v1 name="view" traits=[mayThrow, mayThrowByRule]
+#     v3: Float64Array @Cell = Unbox v2
+#     v4: undefined|number @OptionalDouble = GetTypedArrayElement v3, v0 typedArrayType=10 level=Proven [isInsideView] traits=[mayCollect, mayTouchMemory]
+#     v5: undefined|number @JSValue = Box v4
+#     Return v5
+# }
+# -- end of code
+# RUN: emit-code mechanisms=all testing=CheckBoundsAtRunTime
+# CHECK: Double @[[position]] = ArgumentReg(
+# CHECK: = Equal(@[[position]], @[[position]],
+# CHECK-NEXT: = Branch(
+# CHECK: = Below(
+# RUN(PLAIN): emit-code mechanisms=all
+# PLAIN: Double @[[position]] = ArgumentReg(
+# PLAIN-NOT: = Equal(@[[position]], @[[position]],
+# PLAIN-NOT: = Below(
+# PLAIN: = Return(

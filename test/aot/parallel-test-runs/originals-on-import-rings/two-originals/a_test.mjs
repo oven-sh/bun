@@ -1,0 +1,12 @@
+import { test, vi } from "bun:test";
+import { order } from "./log.mjs";
+import { a } from "./a.mjs";
+vi.mock("./part.mjs", async importOriginal => { const original = await importOriginal();
+order.push("factory part " + original.seesRing());
+return { part: "mock " + original.part };
+});
+vi.mock("./other.mjs", async importOriginal => { const original = await importOriginal();
+order.push("factory other " + original.seesRing());
+return { other: "mock " + original.other };
+});
+test("t", () => console.log("SAID", a(), order.join(" ")));

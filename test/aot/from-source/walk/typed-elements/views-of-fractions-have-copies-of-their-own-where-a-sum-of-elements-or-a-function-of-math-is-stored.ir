@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# "use strict";
+# function sums(xs, ys, out) { for (let i = 0; i < xs.length; i++) out[i] = xs[i] + ys[i]; return out; }
+# function roots(xs, out) { for (let i = 0; i < xs.length; i++) out[i] = Math.sqrt(xs[i]); return out; }
+# const byName = { sums, roots }, names = JSON.parse('["sums","roots"]');
+# print(byName[names[0]](Float64Array.of(1.5, 2.5), Float64Array.of(0.25, 0.5), new Float64Array(2)).join(), byName[names[0]](Int16Array.of(1, 2), Int16Array.of(3, 4), new Int16Array(2)).join(), byName[names[0]]([1, "a"], ["b", 2], []).join());
+# print(byName[names[1]](Float64Array.of(2.25, 4), new Float64Array(2)).join(), byName[names[1]](Uint8Array.of(9, 16), new Uint8Array(2)).join(), byName[names[1]]([25, "36"], []).join());
+# -- end of source
+# In front of a loop the holder is told apart: a list, bytes, the other views. The views of fractions have copies of their own, in which no access tells the kind, only where the text of the loop keeps fractions: that was a
+# product or a quotient of elements. A sum of two elements that is stored, and a function of Math of an element that is stored, keep them as well.
+# RUN(SUMS): walk f1 mechanisms=all
+# SUMS: TypeTest v0 testedType=Float64Array
+# SUMS: PutTypedArrayElement {{*}} typedArrayType=10 level=Proven
+# RUN(ROOTS): walk f2 mechanisms=all
+# ROOTS: TypeTest v0 testedType=Float64Array
+# ROOTS: PutTypedArrayElement {{*}} typedArrayType=10 level=Proven
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1.75,3 4,6 1b,a2
+# RIGHT-NEXT: 1.5,2 3,4 5,6
+# RIGHT-NEXT: exited with 0

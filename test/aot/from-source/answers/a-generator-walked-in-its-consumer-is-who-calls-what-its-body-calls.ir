@@ -1,0 +1,38 @@
+# -- source: main.js
+# import { inSpread, inForOf, inCall, withDefault, outer, withFinally, belowTop } from "./lib/helper.js";
+# function consume() {
+#   print("a spread " + [...inSpread()]);
+#   const seen = [];
+#   for (const origin of inForOf()) seen.push(origin);
+#   print("for-of " + seen);
+#   print("a spread in a call " + [].concat(...inCall()));
+#   print("a default of a parameter " + [...withDefault()]);
+#   print("a generator in a generator " + [...outer()]);
+#   for (const value of withFinally()) break;
+#   print("below the top " + [...belowTop()]);
+# }
+# consume();
+# -- source: lib/helper.js
+# export function* inSpread() { yield callerSourceOrigin(); }
+# export function* inForOf() { yield callerSourceOrigin(); }
+# export function* inCall() { yield callerSourceOrigin(); }
+# export function* withDefault(origin = callerSourceOrigin()) { yield origin; }
+# function* inner() { yield callerSourceOrigin(); }
+# export function* outer() { for (const origin of inner()) yield origin; }
+# export function* withFinally() { try { yield 1; } finally { print("a finally " + callerSourceOrigin()); } }
+# function names() { return new Error().stack.split("\n").slice(0, 3).map(line => line.split("@")[0]).join(" < "); }
+# export function* belowTop() { const listed = names(); yield listed; }
+# -- end of source
+# The body of a generator that is walked in the loop or the spread that consumes it has a frame of its own, and that frame is the one of the body of a coroutine, which is shown wherever it stands. It was written into the image under the number of the function, which is the number of the unit that makes the generator: that one is shown only on top, so whoever asked for the caller got the file of the consumer, and a trace taken further up lacked the generator.
+# RUN: run-in-shell mechanisms=all
+# CHECK: a spread file:///lib/helper.js
+# CHECK-NEXT: for-of file:///lib/helper.js
+# CHECK-NEXT: a spread in a call file:///lib/helper.js
+# CHECK-NEXT: a default of a parameter file:///lib/helper.js
+# CHECK-NEXT: a generator in a generator file:///lib/helper.js
+# CHECK-NEXT: a finally file:///lib/helper.js
+# CHECK-NEXT: below the top names < belowTop < consume
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f12:Body mechanisms=all
+# FORM: frame 0 callee=f12
+# FORM: frame 8 callee=

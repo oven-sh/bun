@@ -1,0 +1,35 @@
+# -- source: main.js
+# class Identity { constructor(o) { return o; } }
+# class Stamp extends Identity { note = "laid"; }
+# class P { level = 3; get twice() { return this.level * 2; } set twice(value) { this.level = value / 2; } }
+# class Q { q = 1; } class R { r = 1; } class S { s = 1; } class T { t = 1; }
+# function read(o) { return o.twice; }
+# function store(o, value) { o.twice = value; }
+# const p = new P();
+# for (const o of [p, new Q(), new R(), new S(), new T()]) new Stamp(o);
+# print(read(p));
+# store(p, 10);
+# print(p.level, Object.keys(p).join());
+# -- end of source
+# f1 = read, f2 = store
+# A class whose base returns its argument lays a field on objects of five other classes. They may gain properties, and no list names all that they may gain.
+# Whoever adds a property to an object that never gains one is stopped; here nobody is. So that nothing of its own hides an accessor declared above is not taken from the tables:
+# a guard of the class is asked, which ends where an object lays the name, and the body of the accessor stands behind it.
+# RUN(READ): walk f1 mechanisms=all
+# READ: [[read]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L2 key="twice"}]
+# READ-NEXT: Branch [[read]] ->
+# READ: GetSlot {{*}} key="level"
+# READ: PropGet {{*}} key="twice"
+# RUN(STORE): walk f2 mechanisms=all
+# STORE: [[store]]: boolean @Boolean = AreMembersUnchanged conditions=[{layout=L2 key="twice"}]
+# STORE-NEXT: Branch [[store]] ->
+# STORE: PutSlot {{*}} key="level"
+# STORE: PropSet {{*}} key="twice"
+# RUN: run-in-shell void 0;
+# CHECK: 6
+# CHECK-NEXT: 5 level,note
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime void 0;
+# CHECKED: 6
+# CHECKED-NEXT: 5 level,note
+# CHECKED-NEXT: exited with 0

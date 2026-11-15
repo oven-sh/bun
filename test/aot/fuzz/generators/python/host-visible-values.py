@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""host-visible-values.py <seed>: random strict TypeScript programs FOR A WHOLE Bun about what the HOST sees of what compiled code makes: records of declared types (optional members absent, undefined, null; numbers kept as
-integers and as doubles; nested; in arrays, Maps, Sets), class instances (fields, private fields, accessors, statics, heirs, heirs of Error | Array | Map), closures of every kind, records with properties beyond their type, frozen ones, rings;
-printed by console.log, Bun.inspect, util.inspect (depths, sorted, showHidden, compact), util.format; copied by structuredClone, v8.serialize, a MessageChannel; compared by Bun.deepEquals, util.isDeepStrictEqual, assert.deepStrictEqual;
-listed by Object.* and JSON.stringify beside them."""
+"""host-visible-values.py <seed>: Random strict TypeScript programs about what the host sees of values that compiled
+code creates: records of declared types (optional members absent, undefined, null; integers and doubles), passed to
+console.log, JSON, structuredClone, expect and others.
+"""
 import random, sys, os
 
 HEAD = r'''import { inspect, format, isDeepStrictEqual } from "node:util";

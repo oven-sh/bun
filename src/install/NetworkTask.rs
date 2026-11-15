@@ -65,8 +65,9 @@ pub struct NetworkTask {
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
-    // ParentRef constructed via `from_raw_mut` so `assume_mut` retains write
-    // provenance for `for_manifest`/`for_tarball` (which call `pm.log_mut()`).
+    // ParentRef constructed via `from_raw_mut` so `as_mut_ptr` retains write
+    // provenance for `notify` (`wake_raw`) and `reset_streaming_for_retry`
+    // (`TarballStream::init`).
     pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     pub(crate) callback: Callback,
     pub(crate) next: bun_threading::Link<NetworkTask>,
@@ -77,10 +78,8 @@ pub struct NetworkTask {
     pub(crate) tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // `'static` matches `PreallocatedTaskStore =
-    // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
-    // and returned to (`discard_unused_streaming_state`).
-    pub(crate) streaming_extract_task: *mut Task<'static>,
+    /// A slot of `PreallocatedTaskStore`, which `discard_unused_streaming_state` returns.
+    pub(crate) streaming_extract_task: *mut Task,
     /// Set by the HTTP thread the first time it commits this request to
     /// the streaming path. Once true, `notify` never pushes this task to
     /// `async_network_task_queue` — the extract Task published by
@@ -103,8 +102,7 @@ unsafe impl bun_threading::Linked for NetworkTask {
     }
 }
 
-/// The network-backed subset of `crate::package_manager_task::Tag` (git
-/// clone/checkout run as thread-pool tasks, never as network tasks).
+/// What the response is for. A git clone or checkout is never a network task.
 pub enum Callback {
     PackageManifest {
         loaded_manifest: Option<PackageManifest>,
@@ -168,22 +166,6 @@ impl NetworkTask {
         // populated via `MaybeUninit::new(AsyncHTTP::init(..))` (or the
         // `ptr::write(real, ..)` in `notify`).
         unsafe { self.unsafe_http_client.assume_init_mut() }
-    }
-
-    /// BACKREF accessor — single `unsafe` deref for the set-once
-    /// `package_manager` `ParentRef` so `for_manifest`/`for_tarball` call
-    /// sites are safe. Lifetime is decoupled from `&self` (the manager is the
-    /// process singleton that owns this task and outlives it).
-    ///
-    /// # Safety (encapsulated)
-    /// `package_manager` is constructed via `ParentRef::from_raw_mut` (write
-    /// provenance) in `write_init`; the `for_*` builders run on the
-    /// single-threaded main setup path, so no overlapping `&mut
-    /// PackageManager` exists for the returned borrow.
-    #[inline]
-    fn pm_mut<'a>(&self) -> &'a mut PackageManager {
-        // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
-        unsafe { self.package_manager.assume_mut() }
     }
 
     // Signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
@@ -261,7 +243,7 @@ impl NetworkTask {
                 if result.has_more {
                     if !chunk.is_empty() {
                         // The drain task is scheduled by `on_chunk`
-                        // (guarded by its own `draining` atomic) so it
+                        // (guarded by its own `draining` flag) so it
                         // runs at most once at a time, releases the
                         // worker on ARCHIVE_RETRY, and is re-enqueued by
                         // the next chunk. Pending-task accounting stays
@@ -551,7 +533,7 @@ impl NetworkTask {
         is_optional: bool,
         needs_extended: bool,
     ) -> Result<AsyncHTTP<'static>, ForManifestError> {
-        let pm = self.pm_mut();
+        let pm = self.package_manager;
         // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
         // was constructed with.
         let log = pm.log_mut();
@@ -835,7 +817,7 @@ impl NetworkTask {
         scope: &npm::registry::Scope,
         authorization: Authorization,
     ) -> Result<(), ForTarballError> {
-        let pm = self.pm_mut();
+        let pm = self.package_manager;
 
         let tarball_url = tarball_.url.slice();
         let built_from_registry_url = tarball_url.is_empty();
@@ -1033,14 +1015,11 @@ impl NetworkTask {
         } else if !self.streaming_extract_task.is_null() {
             let manager = self.package_manager.as_mut_ptr();
             let this: *mut NetworkTask = self;
-            // SAFETY: `init` returns a fresh heap allocation owned here.
-            self.tarball_stream = Some(unsafe {
-                bun_core::heap::take(TarballStream::init(
-                    self.streaming_extract_task,
-                    this,
-                    manager,
-                ))
-            });
+            self.tarball_stream = Some(TarballStream::init(
+                self.streaming_extract_task,
+                this,
+                manager,
+            ));
         }
         self.response = HTTPClientResult::default();
     }
@@ -1077,8 +1056,8 @@ impl NetworkTask {
         unsafe {
             addr_of_mut!((*slot).task_id).write(task_id);
             // SAFETY: `package_manager` is the live owner of this task; write
-            // provenance is required for `for_manifest`/`for_tarball`'s
-            // `assume_mut`, so callers pass `*mut` (not `*const`).
+            // provenance is required for the `as_mut_ptr()` in `notify` and
+            // `reset_streaming_for_retry`, so callers pass `*mut` (not `*const`).
             addr_of_mut!((*slot).package_manager)
                 .write(bun_ptr::ParentRef::from_raw_mut(package_manager));
             // Struct-default fields.

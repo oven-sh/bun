@@ -1,0 +1,57 @@
+# function put(table, key, list) { table[key] = list; }  function each(table, key) { for (const thing of table[key]) sink(thing); }  put(table, sink(), []); each(table, sink());
+# Link holds undefined and null of `table[key]`, what stands where the key is absent: that says nothing of what is iterated, so a list is expected
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[iterable]]: {{*}} = ElemGet
+# CHECK: = TypeTest [[iterable]] testedType=Array
+# CHECK: = GetArrayElement
+# RUN(HELD): link held accesses mechanisms=all
+# HELD: read f1 v2 proven=undefined|null
+
+layout L0 module=m0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = FinishObject v0
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Builtin builtin=GlobalThis
+    v5 = PropGet v4 key="sink" [isFreeName]
+    v6 = Call v5, - calleeName="sink"
+    v7 = NewArray contents=anything
+    v8 = Call v3, -, v1, v6, v7 calleeName="put"
+    v9 = Call v2, -, v1, v6 calleeName="each"
+    Return v9
+}
+function f1 name="each" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    v3 = IteratorOpen v2
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v8 = Undefined
+    Return v8
+  b3() handler=b4():
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="sink" [isFreeName]
+    v11 = Call v10, -, v7
+    Jump -> next b1()
+  b4() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+}
+function f2 name="put" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}

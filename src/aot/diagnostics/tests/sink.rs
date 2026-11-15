@@ -6,12 +6,12 @@ use bun_sema::messages::Category;
 use bun_sema::program::FileId;
 use bun_sema_driver as driver;
 
-use super::super::sink::{BUG_REPORT_REQUEST, MAX_PRINTED_INTERNAL_ERRORS};
+use super::super::sink::BUG_REPORT_REQUEST;
 use super::super::{
     Diagnostic, DiagnosticBuffer, Diagnostics, FileDiagnostic, InternalError, LoadMessages,
-    Severity, SourcePosition, Span, SpanLocator, log_diagnostic,
+    Severity, Span, SpanLocator, log_diagnostic, new_driver_diagnostic,
 };
-use super::{checker_error, describe, file_named, kinds_and_texts, with_effect, written};
+use super::{checker_error, describe, file_named, kinds_and_texts, text, with_effect, written};
 use crate::compile::testing::with_project_view;
 use crate::diagnostic_codes::Code;
 use crate::statistics::Stage;
@@ -27,6 +27,10 @@ fn written_errors(errors: Vec<driver::Diagnostic>) -> Log {
     let mut diagnostics = Diagnostics::new();
     diagnostics.add_build_diagnostics(Stage::Check, errors.collect());
     written(diagnostics)
+}
+
+fn codes_in(buffer: &DiagnosticBuffer) -> Vec<Code> {
+    buffer.iter().map(|diagnostic| diagnostic.code).collect()
 }
 
 #[test]
@@ -81,7 +85,7 @@ fn notes_without_location_print_after_located_messages() {
 }
 
 #[test]
-fn internal_errors_print_last_once_and_capped() {
+fn internal_errors_print_last_and_once() {
     let mut diagnostics = Diagnostics::new();
     for index in (0..25).rev() {
         diagnostics.report_internal_error(Stage::LinkAndEmit, format!("{index:02}").into_bytes());
@@ -94,15 +98,15 @@ fn internal_errors_print_last_once_and_capped() {
 
     let log = written(diagnostics);
     let printed = kinds_and_texts(&log);
-    assert_eq!(printed.len(), 1 + MAX_PRINTED_INTERNAL_ERRORS + 1);
-    assert_eq!(log.errors as usize, 1 + MAX_PRINTED_INTERNAL_ERRORS);
+    assert_eq!(printed.len(), 1 + 26);
+    assert_eq!(log.errors as usize, 1 + 26);
     assert_eq!(printed[0].1, "TS100053: Macros are disabled");
     assert_eq!(printed[1].1, "internal compiler error (Load): zz");
     assert_eq!(printed[2].1, "internal compiler error (LinkAndEmit): 00");
     assert_eq!(printed[3].1, "internal compiler error (LinkAndEmit): 01");
-    assert_eq!(log.msgs[1].notes[0].text.as_ref(), BUG_REPORT_REQUEST);
-    let last = (Kind::Note, "6 more internal errors".to_string());
-    assert_eq!(printed.last(), Some(&last));
+    assert_eq!(printed[26].1, "internal compiler error (LinkAndEmit): 24");
+    assert!(log.msgs[1].notes.is_empty());
+    assert_eq!(log.msgs[26].notes[0].text.as_ref(), BUG_REPORT_REQUEST);
 }
 
 #[test]
@@ -126,7 +130,7 @@ fn internal_error_alone_fails_build() {
 #[test]
 fn warnings_and_notes_do_not_fail_build() {
     let mut diagnostics = Diagnostics::new();
-    let warning = Diagnostic::new(Code::FunctionIntrospection, None, &[b"f.caller"]);
+    let warning = Diagnostic::new(Code::ShadowRealmIsAbsent, None, &[]);
     diagnostics.add(None, warning);
     let note = Diagnostic::new(Code::TryRequireInstead, None, &[b"\"p\""]);
     diagnostics.add(None, note);
@@ -256,16 +260,13 @@ fn position_of_span_is_one_based() {
         let mut locator = SpanLocator::new(view);
         let mut position_at = |start| {
             let end = start;
-            locator.position_of(Span { file, start, end })
+            let unlocated = new_driver_diagnostic(0, Category::Message, Vec::new(), &[]);
+            let located = locator.locate(Span { file, start, end }, unlocated);
+            (located.line, located.column)
         };
-        let in_main = |line, column| SourcePosition {
-            path: b"/project/main.ts".to_vec(),
-            line,
-            column,
-        };
-        assert_eq!(position_at(0), in_main(1, 1));
-        assert_eq!(position_at(28), in_main(2, 14));
-        assert_eq!(position_at(14), in_main(2, 1));
+        assert_eq!(position_at(0), (1, 1));
+        assert_eq!(position_at(28), (2, 14));
+        assert_eq!(position_at(14), (2, 1));
     });
 }
 
@@ -297,7 +298,7 @@ fn buffer_has_errors_only_with_error_severity() {
     };
     let mut buffer = DiagnosticBuffer::default();
     assert!(buffer.is_empty());
-    buffer.report(Code::FunctionIntrospection, span, &[b"f.caller"]);
+    buffer.report(Code::ShadowRealmIsAbsent, span, &[]);
     assert!(!buffer.is_empty());
     assert!(!buffer.has_errors());
 
@@ -305,14 +306,62 @@ fn buffer_has_errors_only_with_error_severity() {
     errors.report(Code::NestedTooDeeply, span, &[b"500"]);
     buffer.append(errors);
     assert!(buffer.has_errors());
-    let codes: Vec<Code> = buffer.iter().map(|diagnostic| diagnostic.code).collect();
-    assert_eq!(codes, [Code::FunctionIntrospection, Code::NestedTooDeeply]);
+    assert_eq!(
+        codes_in(&buffer),
+        [Code::ShadowRealmIsAbsent, Code::NestedTooDeeply]
+    );
+}
+
+#[test]
+fn errors_found_at_load_are_taken_and_others_stay() {
+    with_project_view(&TWO_FILES, |view| {
+        let file = view.files().entry_points()[0];
+        let pattern_error = b"Invalid regular expression: missing )";
+        let reported: [(Code, u32, &[u8]); 3] = [
+            (Code::ModuleNotFound, 7, b"./b"),
+            (Code::InvalidRegExp, 20, pattern_error),
+            (Code::InvalidRegExpFlags, 28, b"xx"),
+        ];
+        let mut buffer = DiagnosticBuffer::default();
+        for (code, start, argument) in reported {
+            let end = start;
+            buffer.report(code, Span { file, start, end }, &[argument]);
+        }
+        let sentence = buffer.take_errors_found_at_load(view);
+        assert_eq!(
+            sentence.as_deref().map(text),
+            Some("Invalid regular expression: missing ) (2:7)".to_string())
+        );
+        assert_eq!(codes_in(&buffer), [Code::ModuleNotFound]);
+    });
+}
+
+#[test]
+fn warnings_alone_give_no_error_found_at_load() {
+    with_project_view(&TWO_FILES, |view| {
+        let span = Span {
+            file: view.files().entry_points()[0],
+            start: 28,
+            end: 29,
+        };
+        let mut buffer = DiagnosticBuffer::default();
+        buffer.report(Code::ShadowRealmIsAbsent, span, &[]);
+        buffer.push(Diagnostic {
+            severity: Severity::Warning,
+            ..Diagnostic::new(Code::AmbiguousExport, Some(span), &[b"x"])
+        });
+        assert_eq!(buffer.take_errors_found_at_load(view), None);
+        assert_eq!(
+            codes_in(&buffer),
+            [Code::ShadowRealmIsAbsent, Code::AmbiguousExport]
+        );
+    });
 }
 
 #[test]
 fn file_diagnostic_takes_owner_file() {
-    let in_file = FileDiagnostic::new(Code::MacroArgumentNotConstant, (4, 9), &[]);
-    let diagnostic = in_file.into_diagnostic(FileId(3));
+    let file_diagnostic = FileDiagnostic::new(Code::MacroArgumentNotConstant, (4, 9), &[]);
+    let diagnostic = file_diagnostic.into_diagnostic(FileId(3));
     let span = Span {
         file: FileId(3),
         start: 4,

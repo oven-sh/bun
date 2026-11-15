@@ -1,0 +1,421 @@
+//// array-of-constant-strings
+const kept: string[][] = [];
+for (let k = 0; k < 8; k++) kept.push(["x", "y"]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[1]!.length;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? ["a", "bb"] : ["ccc", "d"];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-constant-integers
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([7, 8, 9]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[0]! + old[2]!;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [1, 2, 3] : [4, 5, 6];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-constant-doubles
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([0.5, 1.5]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += (old[0]! + old[1]!) | 0;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [1.5, 2.5] : [3.5, 4.5];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-small-integers
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([7, 8, 9]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[0]! + old[2]!;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = [i & 1023, (i + 1) & 1023, (i + 2) & 1023];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-doubles
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([0.5, 1.5]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += (old[0]! + old[1]!) | 0;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = [i + 0.5, i + 1.5];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-objects
+type P = { x: number };
+const a: P = { x: 1 }, b: P = { x: 2 };
+const kept: P[][] = [];
+for (let k = 0; k < 8; k++) kept.push([a, b]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[0]!.x + old[1]!.x;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [a, b] : [b, a];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-strings-in-variables
+const s = "left".slice(zero()), t = "right".slice(zero());
+function zero() {
+  return 0;
+}
+const kept: string[][] = [];
+for (let k = 0; k < 8; k++) kept.push(["x", "y"]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[1]!.length;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [s, t] : [t, s];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-mixed-values
+const kept: (number | string | null)[][] = [];
+for (let k = 0; k < 8; k++) kept.push([1, "s", null]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += (old[0] as number) + (old[1] as string).length;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = [i & 255, "s", null];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-eight-integers
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([0, 1, 2, 3, 4, 5, 6, 7]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[0]! + old[7]!;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = [i & 1, i & 2, i & 3, i & 4, i & 5, i & 6, i & 7, i & 8];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// empty-array
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.length;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = [];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-constant-arrays
+const kept: number[][][] = [];
+for (let k = 0; k < 8; k++) kept.push([[1, 2], [3, 4]]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[1]![0]!;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [[1, 2], [3, 4]] : [[5, 6], [7, 8]];
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-of-two-integers
+type P = { x: number; y: number };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ x: 1, y: 2 });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.x + old.y;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = { x: i & 1023, y: (i + 1) & 1023 };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-of-two-objects
+type Q = { x: number };
+type P = { a: Q; b: Q };
+const a: Q = { x: 1 }, b: Q = { x: 2 };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ a, b });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.a.x + old.b.x;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? { a, b } : { a: b, b: a };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-of-constants
+type P = { kind: string; size: number; on: boolean };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ kind: "c", size: 3, on: true });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.kind.length + old.size + (old.on ? 1 : 0);
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? { kind: "a", size: 1, on: true } : { kind: "b", size: 2, on: false };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-with-a-string-and-a-double
+type P = { name: string; value: number };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ name: "none", value: 0.5 });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.name.length + Math.floor(old.value);
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = { name: i & 1 ? "odd" : "even", value: i + 0.5 };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-of-six-fields
+type P = { a: number; b: number; c: number; d: string; e: boolean; f: null };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ a: 0, b: 0, c: 0, d: "d", e: true, f: null });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.a + old.b + old.c + old.d.length + (old.e ? 1 : 0) + (old.f === null ? 1 : 0);
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = { a: i & 7, b: i & 15, c: i & 31, d: "d", e: (i & 1) === 0, f: null };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// empty-object
+const kept: object[] = [];
+for (let k = 0; k < 8; k++) kept.push({});
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += (old === kept[0] ? 1 : 0);
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = {};
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-that-holds-a-constant-array
+type P = { id: number; tags: string[] };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ id: 0, tags: ["x", "y"] });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.id + old.tags[1]!.length;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = { id: i & 1023, tags: ["a", "b"] };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-that-holds-an-array
+type P = { id: number; pair: number[] };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ id: 0, pair: [1, 2] });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.id + old.pair[1]!;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = { id: i & 1023, pair: [i & 7, i & 15] };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-that-holds-an-object
+type P = { id: number; at: { x: number; y: number } };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ id: 0, at: { x: 1, y: 2 } });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.id + old.at.x + old.at.y;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = { id: i & 1023, at: { x: i & 7, y: i & 15 } };
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-returned-by-a-function
+function pair(x: number, y: number): number[] {
+  return [x, y];
+}
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([1, 2]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old[0]! + old[1]!;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = pair(i & 255, (i >> 3) & 255);
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// object-returned-by-a-function
+type P = { x: number; y: number };
+function point(x: number, y: number): P {
+  return { x, y };
+}
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ x: 1, y: 2 });
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.x + old.y;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = point(i & 255, (i >> 3) & 255);
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// nothing-made
+const first: number[] = [1.5], second: number[] = [2.5];
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([1.5]);
+function look(): number {
+  let sum = 0;
+  for (const old of kept) sum += old.length;
+  return sum;
+}
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? first : second;
+  return (i & 0xfffff) === 0 ? look() : i & 7;
+}
+//// array-of-constant-strings-read-back
+const kept: string[][] = [];
+for (let k = 0; k < 8; k++) kept.push(["x", "y"]);
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? ["a", "bb"] : ["ccc", "d"];
+  const old = kept[(i + 3) & 7]!;
+  return old[1]!.length;
+}
+//// array-of-constant-integers-read-back
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([7, 8, 9]);
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [1, 2, 3] : [4, 5, 6];
+  const old = kept[(i + 3) & 7]!;
+  return old[0]! + old[2]!;
+}
+//// array-of-constant-doubles-read-back
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([0.5, 1.5]);
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? [1.5, 2.5] : [3.5, 4.5];
+  const old = kept[(i + 3) & 7]!;
+  return (old[0]! + old[1]!) | 0;
+}
+//// array-of-doubles-read-back
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([0.5, 1.5]);
+function turn(i: number): number {
+  kept[i & 7] = [i + 0.5, i + 1.5];
+  const old = kept[(i + 3) & 7]!;
+  return (old[0]! + old[1]!) | 0;
+}
+//// object-of-two-integers-read-back
+type P = { x: number; y: number };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ x: 1, y: 2 });
+function turn(i: number): number {
+  kept[i & 7] = { x: i & 1023, y: (i + 1) & 1023 };
+  const old = kept[(i + 3) & 7]!;
+  return old.x + old.y;
+}
+//// nothing-made-read-back
+const first: number[] = [1.5], second: number[] = [2.5];
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([1.5]);
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? first : second;
+  const old = kept[(i + 3) & 7]!;
+  return old.length;
+}
+//// object-kept-in-a-field
+type P = { x: number; y: number };
+const holder: { last: P } = { last: { x: 0, y: 0 } };
+function turn(i: number): number {
+  const old = holder.last;
+  holder.last = { x: i & 255, y: 1 };
+  return old.x + old.y;
+}
+//// array-kept-in-a-field
+const holder: { last: number[] } = { last: [0, 0] };
+function turn(i: number): number {
+  const old = holder.last;
+  holder.last = [i & 255, 1];
+  return old[0]! + old[1]!;
+}
+//// object-pushed-onto-a-list
+type P = { x: number; y: number };
+let list: P[] = [];
+function turn(i: number): number {
+  if (list.length === 64) list = [];
+  list.push({ x: i & 255, y: 1 });
+  return list[list.length >> 1]!.x;
+}
+//// array-pushed-onto-a-list
+let list: number[][] = [];
+function turn(i: number): number {
+  if (list.length === 64) list = [];
+  list.push([i & 255, 1]);
+  return list[list.length >> 1]![0]!;
+}
+//// constant-array-written-now-and-then
+const kept: string[][] = [];
+for (let k = 0; k < 8; k++) kept.push(["x", "y"]);
+function turn(i: number): number {
+  kept[i & 7] = i & 1 ? ["a", "bb"] : ["ccc", "d"];
+  const old = kept[(i + 3) & 7]!;
+  if ((i & 63) === 0) old[0] = "z";
+  return old[1]!.length;
+}
+//// constant-array-pushed-to-at-once
+const kept: string[][] = [];
+for (let k = 0; k < 8; k++) kept.push(["x", "y"]);
+function turn(i: number): number {
+  const made = ["a", "bb"];
+  made.push("ccc");
+  kept[i & 7] = made;
+  return kept[(i + 3) & 7]!.length;
+}
+//// empty-array-then-two-pushes
+const kept: number[][] = [];
+for (let k = 0; k < 8; k++) kept.push([1, 2]);
+function turn(i: number): number {
+  const made: number[] = [];
+  made.push(i & 255);
+  made.push(1);
+  kept[i & 7] = made;
+  const old = kept[(i + 3) & 7]!;
+  return old[0]! + old[1]!;
+}
+//// empty-object-then-two-stores
+type P = { x?: number; y?: number };
+const kept: P[] = [];
+for (let k = 0; k < 8; k++) kept.push({ x: 1, y: 2 });
+function turn(i: number): number {
+  const made: P = {};
+  made.x = i & 255;
+  made.y = 1;
+  kept[i & 7] = made;
+  const old = kept[(i + 3) & 7]!;
+  return old.x! + old.y!;
+}

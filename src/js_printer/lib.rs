@@ -1251,61 +1251,24 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
-pub struct SourceMapHandler<'a> {
-    pub(crate) ctx: NonNull<()>,
-    pub(crate) callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> crate::Result<()>,
-    _marker: core::marker::PhantomData<&'a mut ()>,
-}
+pub type SourceMapHandler<'a> = &'a dyn OnSourceMapChunk;
 
-/// PORTING.md §Dispatch — manual vtable. Rust cannot bake a *runtime* fn pointer
-/// into a captureless `fn(*mut (), ..)` thunk, so the handler is a trait method
-/// and the thunk is monomorphized over `T: OnSourceMapChunk`.
 pub trait OnSourceMapChunk {
     fn on_source_map_chunk(
-        &mut self,
+        &self,
         chunk: SourceMap::Chunk,
         source: &bun_ast::Source,
     ) -> crate::Result<()>;
 }
 
-impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+impl OnSourceMapChunk for core::cell::Cell<Option<SourceMap::Chunk>> {
     fn on_source_map_chunk(
-        &mut self,
+        &self,
         chunk: SourceMap::Chunk,
         _: &bun_ast::Source,
     ) -> crate::Result<()> {
-        *self = Some(chunk);
+        self.set(Some(chunk));
         Ok(())
-    }
-}
-
-impl<'a> SourceMapHandler<'a> {
-    pub(crate) fn on_source_map_chunk(
-        &self,
-        chunk: SourceMap::Chunk,
-        source: &bun_ast::Source,
-    ) -> crate::Result<()> {
-        (self.callback)(self.ctx.as_ptr(), chunk, source)
-    }
-
-    pub fn for_<T: OnSourceMapChunk>(ctx: &'a mut T) -> SourceMapHandler<'a> {
-        // Monomorphized erased thunk: cast `*mut ()` back to `*mut T` and forward to the trait.
-        fn thunk<T: OnSourceMapChunk>(
-            p: *mut (),
-            chunk: SourceMap::Chunk,
-            source: &bun_ast::Source,
-        ) -> crate::Result<()> {
-            // SAFETY: `p` was constructed from `&'a mut T` in `for_` below; the `'a` lifetime
-            // on `SourceMapHandler` ties the handler's lifetime to the borrow, so `p` is a
-            // valid, exclusive `*mut T` for as long as the handler exists.
-            unsafe { (*p.cast::<T>()).on_source_map_chunk(chunk, source) }
-        }
-        SourceMapHandler {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: NonNull::from(ctx).cast::<()>(),
-            callback: thunk::<T>,
-            _marker: core::marker::PhantomData,
-        }
     }
 }
 
@@ -1353,7 +1316,7 @@ pub struct Options<'a> {
     /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: Option<RequireOrImportMetaCallback<'a>>,
+    pub require_or_import_meta_source: Option<&'a dyn RequireOrImportMetaSource>,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1388,8 +1351,8 @@ impl<'a> Options<'a> {
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        match &self.require_or_import_meta_for_source_callback {
-            Some(callback) => callback.call(id, was_unwrapped_require),
+        match self.require_or_import_meta_source {
+            Some(source) => source.require_or_import_meta_for_source(id, was_unwrapped_require),
             None => RequireOrImportMeta::default(),
         }
     }
@@ -1423,7 +1386,7 @@ impl<'a> Default for Options<'a> {
             code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: None,
+            require_or_import_meta_source: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1471,46 +1434,12 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-/// A type-erased `&'a T`, and the `T` method to call on it.
-#[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback<'a> {
-    ctx: NonNull<()>,
-    callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
-    _marker: core::marker::PhantomData<&'a ()>,
-}
-
-/// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
-/// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
         &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
-}
-
-impl<'a> RequireOrImportMetaCallback<'a> {
-    fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx, id, was_unwrapped_require)
-    }
-
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &'a T) -> Self {
-        fn thunk<T: RequireOrImportMetaSource>(
-            p: NonNull<()>,
-            id: u32,
-            was_unwrapped_require: bool,
-        ) -> RequireOrImportMeta {
-            // SAFETY: only `call` calls this, with the `&'a T` that `init` erased beside it, and
-            // `call` needs a `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
-            unsafe { p.cast::<T>().as_ref() }
-                .require_or_import_meta_for_source(id, was_unwrapped_require)
-        }
-        Self {
-            ctx: NonNull::from(ctx).cast::<()>(),
-            callback: thunk::<T>,
-            _marker: core::marker::PhantomData,
-        }
-    }
 }
 
 fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> bool {
@@ -1866,14 +1795,14 @@ pub(crate) mod __gated_printer {
         fn fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::Result<()> {
             // Rust can't pre-count `fmt::Arguments` without formatting,
             // so stream each formatted chunk straight into the writer's
-            // reserved space instead — same zero-heap property without
+            // buffer instead — same zero-heap property without
             // formatting twice.
             struct FmtAdapter<'w, W: WriterTrait> {
                 writer: &'w mut W,
             }
             impl<W: WriterTrait> core::fmt::Write for FmtAdapter<'_, W> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    self.writer.write_reserved(s.as_bytes());
+                    self.writer.print_slice(s.as_bytes());
                     Ok(())
                 }
             }
@@ -6892,7 +6821,7 @@ pub(crate) mod __gated_printer {
                             self.print(b"\\u");
                             let mut tmp = [0u8; 4];
                             let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                            self.writer.write_reserved(&tmp[..len]);
+                            self.print(&tmp[..len]);
                         }
                     }
                     continue;
@@ -6901,7 +6830,7 @@ pub(crate) mod __gated_printer {
                 {
                     let mut tmp = [0u8; 4];
                     let len = encode_wtf8_rune_t(&mut tmp, c as u32);
-                    self.writer.write_reserved(&tmp[..len]);
+                    self.print(&tmp[..len]);
                 }
             }
             Ok(())
@@ -7260,8 +7189,7 @@ pub trait WriterContext {
     fn write_all(&mut self, buf: &[u8]);
     fn get_last_byte(&self) -> u8;
     fn get_last_last_byte(&self) -> u8;
-    fn reserve_next(&mut self, count: u64) -> *mut u8;
-    fn advance_by(&mut self, count: u64);
+    fn reserve_next(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn take_buffer(&mut self) -> MutableString;
     fn done(&mut self) {}
@@ -7274,18 +7202,7 @@ pub trait WriterTrait {
     fn prev_prev_char(&self) -> u8;
     fn print_byte(&mut self, b: u8);
     fn print_slice(&mut self, s: &[u8]);
-    fn reserve(&mut self, count: u64) -> *mut u8;
-    fn advance(&mut self, count: u64);
-    /// Reserve `bytes.len()`, memcpy `bytes` into the reserved region, then advance.
-    /// Centralizes the open-coded `reserve + copy_nonoverlapping + advance` triplet
-    #[inline]
-    fn write_reserved(&mut self, bytes: &[u8]) {
-        let ptr = self.reserve(bytes.len() as u64);
-        // SAFETY: `reserve(n)` returns a writable region of >= n bytes owned by the
-        // writer's internal buffer, which is disjoint from caller-provided `bytes`.
-        unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), ptr, bytes.len()) };
-        self.advance(bytes.len() as u64);
-    }
+    fn reserve(&mut self, count: u64);
     fn slice(&self) -> &[u8];
     fn done(&mut self);
     fn std_writer(&mut self) -> StdWriterAdapter<'_, Self>
@@ -7332,12 +7249,8 @@ impl<C: WriterContext> Writer<C> {
         self.ctx.get_last_last_byte()
     }
 
-    pub(crate) fn reserve(&mut self, count: u64) -> *mut u8 {
+    pub(crate) fn reserve(&mut self, count: u64) {
         self.ctx.reserve_next(count)
-    }
-
-    pub(crate) fn advance(&mut self, count: u64) {
-        self.ctx.advance_by(count);
     }
 
     #[inline]
@@ -7378,12 +7291,8 @@ impl<C: WriterContext> WriterTrait for Writer<C> {
         self.print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> *mut u8 {
+    fn reserve(&mut self, count: u64) {
         self.reserve(count)
-    }
-    #[inline]
-    fn advance(&mut self, count: u64) {
-        self.advance(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7422,12 +7331,8 @@ impl<W: WriterTrait> WriterTrait for &mut W {
         (**self).print_slice(s)
     }
     #[inline]
-    fn reserve(&mut self, count: u64) -> *mut u8 {
+    fn reserve(&mut self, count: u64) {
         (**self).reserve(count)
-    }
-    #[inline]
-    fn advance(&mut self, count: u64) {
-        (**self).advance(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {
@@ -7523,16 +7428,9 @@ impl BufferWriter {
         if len >= 2 { list[len - 2] } else { 0 }
     }
 
-    pub(crate) fn reserve_next(&mut self, count: u64) -> *mut u8 {
+    pub(crate) fn reserve_next(&mut self, count: u64) {
         let n = usize::try_from(count).expect("int cast");
-        // SAFETY: caller treats as write-only; advance_by() commits via commit_spare.
-        unsafe { bun_core::vec::reserve_spare_bytes(&mut self.buffer.list, n) }.as_mut_ptr()
-    }
-
-    pub(crate) fn advance_by(&mut self, count: u64) {
-        let count_usize = usize::try_from(count).expect("int cast");
-        // SAFETY: reserve_next reserved and the caller initialized [len..len+count).
-        unsafe { bun_core::vec::commit_spare(&mut self.buffer.list, count_usize) };
+        self.buffer.list.reserve(n);
     }
 
     pub fn reset(&mut self) {
@@ -7575,12 +7473,8 @@ impl WriterContext for BufferWriter {
         self.get_last_last_byte()
     }
     #[inline]
-    fn reserve_next(&mut self, count: u64) -> *mut u8 {
+    fn reserve_next(&mut self, count: u64) {
         self.reserve_next(count)
-    }
-    #[inline]
-    fn advance_by(&mut self, count: u64) {
-        self.advance_by(count)
     }
     #[inline]
     fn slice(&self) -> &[u8] {

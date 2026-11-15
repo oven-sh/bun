@@ -4,6 +4,7 @@ use core::ptr::NonNull;
 use std::io::Write as _;
 
 use crate::api::js_bundler::PluginJscExt as _;
+use crate::api::standalone_graph_jsc::is_asset;
 use crate::api::{SocketAddress, js_bundler as JSBundler};
 use crate::bake::router as FrameworkRouter;
 use crate::bake::{self as bake};
@@ -30,7 +31,7 @@ use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
-    Node, StringJsc as _, VirtualMachine, host_fn,
+    Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, RefPtr};
@@ -83,6 +84,7 @@ trait RequestCtx: super::any_request_context::CtxKind {
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
     for NewRequestContext<ThisServer, SSL, DBG, false>
 where
+    ThisServer: super::ServerLike + 'static,
     NewRequestContext<ThisServer, SSL, DBG, false>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::Request;
@@ -91,6 +93,7 @@ where
 impl<ThisServer, const SSL: bool, const DBG: bool> RequestCtx
     for NewRequestContext<ThisServer, SSL, DBG, true>
 where
+    ThisServer: super::ServerLike + 'static,
     NewRequestContext<ThisServer, SSL, DBG, true>: super::any_request_context::CtxKind,
 {
     type Req = uws_sys::h3::Request;
@@ -105,7 +108,7 @@ trait RequestCtxOps: RequestCtx {
     type Server;
     fn create_in(
         slot: *mut Self,
-        server: *mut Self::Server,
+        server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -124,7 +127,7 @@ trait RequestCtxOps: RequestCtx {
         reason = "the body slot is a separate pooled allocation, not a field of *self (R-2)"
     )]
     fn request_body_mut(&self) -> Option<&mut BodyValue>;
-    fn set_signal(&self, sig: *mut AbortSignal);
+    fn set_signal(&self, signal: PendingAbortSignal);
     fn set_request_weakref(&self, req: *mut Request);
     fn clear_req(&self);
     fn set_is_web_browser_navigation(&self, v: bool);
@@ -153,7 +156,7 @@ where
     #[inline]
     fn create_in(
         slot: *mut Self,
-        server: *mut ThisServer,
+        server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -212,12 +215,8 @@ where
             .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
     #[inline]
-    fn set_signal(&self, sig: *mut AbortSignal) {
-        // `AbortSignal::new` returns a raw +1 ref to a C++-refcounted opaque;
-        // `RequestContext.signal` stores it as `Option<NonNull<AbortSignal>>`
-        // and pairs the unref in RequestContext cleanup (`shim::signal_release`,
-        // which drops both the pending-activity count and the intrusive ref).
-        self.signal.set(NonNull::new(sig));
+    fn set_signal(&self, signal: PendingAbortSignal) {
+        self.signal.set(Some(signal));
     }
     #[inline]
     fn set_request_weakref(&self, req: *mut Request) {
@@ -637,17 +636,8 @@ impl AnyRoute {
         let Some(headers_js) = argument.get(init_ctx.global, b"headers")? else {
             return Ok(None);
         };
-        let fetch_headers = FetchHeaders::create_from_js(init_ctx.global, headers_js)?;
-        let _fh_guard = scopeguard::guard(fetch_headers, |fh| {
-            // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-            if let Some(h) = fh {
-                bun_opaque::opaque_deref_mut(h.as_ptr()).deref();
-            }
-        });
-
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        let headers_ref = fetch_headers.map(|p| bun_opaque::opaque_deref(p.as_ptr().cast_const()));
-        let route = Self::from_options(init_ctx.global, headers_ref, &mut path)?;
+        let fetch_headers = HeadersRef::create_from_js(init_ctx.global, headers_js)?;
+        let route = Self::from_options(init_ctx.global, fetch_headers.as_deref(), &mut path)?;
 
         if is_index_route {
             return Ok(Some(route));
@@ -884,10 +874,16 @@ impl AnyRoute {
         if let Some(file_route) = FileRoute::from_js(global, argument)? {
             return Ok(Some(AnyRoute::File(file_route)));
         }
-        match StaticRoute::from_js(global, argument)? {
-            Some(s) => Ok(Some(AnyRoute::Static(s))),
-            None => Ok(None),
+        if let Some(s) = StaticRoute::from_js(global, argument)? {
+            return Ok(Some(AnyRoute::Static(s)));
         }
+        // Like a file on disk.
+        let Some(file) = argument.as_class_ref::<Blob>().filter(|it| is_asset(it)) else {
+            return Ok(None);
+        };
+        let file = AnyBlob::Blob(file.dupe());
+        let route = StaticRoute::init_from_any_blob_with_headers(global, file, None, 200)?;
+        Ok(Some(AnyRoute::Static(route)))
     }
 }
 
@@ -913,14 +909,14 @@ pub(crate) enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
     Pending {
         /// Promise may be empty if the plugin load finishes synchronously.
-        plugin: Box<JSBundler::Plugin>,
+        plugin: JSBundler::OwnedPlugin,
         promise: jsc::JSPromiseStrong,
         /// Each holds a ref, released once the route is told the outcome.
         html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
         /// Server whose DevServer is waiting for the plugins to load.
         dev_server: Option<super::AnyServer>,
     },
-    Loaded(Box<JSBundler::Plugin>),
+    Loaded(JSBundler::OwnedPlugin),
     /// Error information is not stored as it is already reported.
     Err,
 }
@@ -996,7 +992,7 @@ impl ServePlugins {
         };
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
-        let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
+        let bunfig_path: &[u8] = &global.bun_vm().transpiler.get().options.bunfig_path;
         // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
         let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
             FileSystem::get().top_level_dir()
@@ -1010,9 +1006,7 @@ impl ServePlugins {
         // here would give it a tag that is invalidated by the writes to `self.state`
         // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
 
-        let plugin = JSBundler::Plugin::create(global, JSBundler::BunPluginTarget::Browser);
-        // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
-        let plugin: Box<JSBundler::Plugin> = unsafe { bun_core::heap::take(plugin) };
+        let plugin = JSBundler::OwnedPlugin::new(global, JSBundler::BunPluginTarget::Browser);
         let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(plugin_list.len());
         for raw_plugin in &plugin_list {
             bunstring_array.push(StringView::from_bytes(raw_plugin));
@@ -1020,7 +1014,7 @@ impl ServePlugins {
         let plugin_js_array =
             bun_string_jsc::to_js_array(global, StringView::as_strings(&bunstring_array))?;
         // `bun bake`: the plugin objects of `bake.config.ts`, after the names of bunfig.toml.
-        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get() {
+        if let Some(config_plugins) = global.bun_vm().bake_config_plugins.get().get() {
             let mut iter = config_plugins.array_iterator(global)?;
             while let Some(config_plugin) = iter.next()? {
                 plugin_js_array.push(global, config_plugin)?;
@@ -1035,15 +1029,15 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop_mut().enter();
+        global.bun_vm().event_loop().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
+                ServePluginsState::Pending { plugin, .. } => plugin,
                 _ => unreachable!(),
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        global.bun_vm().event_loop_mut().exit();
+        global.bun_vm().event_loop().exit();
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1111,23 +1105,18 @@ impl ServePlugins {
         };
         drop(promise); // Drop on JscStrong releases the slot.
 
+        let loaded = plugin.as_non_null();
         self.state = ServePluginsState::Loaded(plugin);
-        let plugin_ref = match &self.state {
-            ServePluginsState::Loaded(p) => &**p,
-            _ => unreachable!(),
-        };
 
         for route in html_bundle_routes {
             bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(
                 route.this_ptr(),
-                Some(NonNull::from(plugin_ref)),
+                Some(loaded),
             ));
         }
         if let Some(server) = dev_server {
             if let Some(dev) = server.dev_server_mut() {
-                bun_core::handle_oom(dev.on_plugins_resolved(Some(
-                    std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
-                )));
+                bun_core::handle_oom(dev.on_plugins_resolved(loaded));
             }
         }
     }
@@ -1145,7 +1134,7 @@ impl ServePlugins {
         else {
             unreachable!()
         };
-        drop(plugin); // pending.plugin.deinit()
+        drop(plugin);
         drop(promise); // Drop on JscStrong releases the slot.
 
         for route in html_bundle_routes {
@@ -1158,7 +1147,7 @@ impl ServePlugins {
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
-        global.bun_vm().as_mut().run_error_handler(err, None);
+        global.bun_vm().run_error_handler(err, None);
     }
 
     /// Clears the pending `server` before it's freed, so a load that settles later can't call into it.
@@ -1173,12 +1162,8 @@ impl ServePlugins {
 
 impl Drop for ServePlugins {
     fn drop(&mut self) {
-        match &self.state {
-            ServePluginsState::Unqueued(_) => {}
-            ServePluginsState::Pending { .. } => debug_assert!(false), // should have one ref while pending!
-            ServePluginsState::Loaded(_) => {}                         // Box<Plugin> drops
-            ServePluginsState::Err => {}
-        }
+        // The promise reaction holds a ref while pending.
+        debug_assert!(!matches!(self.state, ServePluginsState::Pending { .. }));
     }
 }
 
@@ -1399,7 +1384,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(super) fn notify_inspector_server_stopped(&self) {
         if self.inspector_server_id.get().get() != 0 {
             bun_core::hint::cold();
-            if let Some(debugger) = &self.vm().as_mut().debugger {
+            if let Some(debugger) = self.vm().debugger.get() {
                 bun_core::hint::cold();
                 // NOTE (layering): the `HTTPServerAgent.notifyServerStopped`
                 // wrapper lives in
@@ -1676,12 +1661,7 @@ where
         // Keep the upgrader alive across option getters below, which run
         // arbitrary user JS. A re-entrant server.upgrade(req) from a getter
         // would otherwise be able to deref this context out from under us.
-        upgrader.ref_();
-        let _upgrader_guard = scopeguard::guard(upgrader_ptr, |p| {
-            // SAFETY: `p` is the live `upgrader_ptr` whose refcount was bumped by
-            // the `ref_()` above; this guard pairs it with a single `deref()`.
-            unsafe { (*p).deref() }
-        });
+        let _upgrader_ref = upgrader.ref_guard();
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
         // Copy the values, because the option getters below can modify the headers.
@@ -1762,7 +1742,7 @@ where
             // See https://github.com/oven-sh/bun/issues/1339
             upgrader.upgrade_context.set(UpgradeState::Upgraded);
             let signal = upgrader.signal.take();
-            upgrader.resp.set(None);
+            let detached = upgrader.resp.take();
 
             // Snapshot the lazy url before detaching (mirrors to_async_without_abort_handler).
             // SAFETY: re-derived after the JS-running option getters above; still
@@ -1782,6 +1762,7 @@ where
                 &self.config.get().websocket.as_ref().unwrap().handler,
                 options.data,
                 signal,
+                super::server_web_socket::Flags::default(),
             );
             options.data.ensure_still_alive();
 
@@ -1794,7 +1775,7 @@ where
             // on_abort nor an end path can reclaim a parked handler promise's
             // claim later. Reclaim it here.
             upgrader.reclaim_promise_cell();
-            upgrader.deref();
+            drop(detached);
 
             if resp
                 .upgrade(
@@ -1929,7 +1910,7 @@ where
         }
 
         if self.inspector_server_id.get().get() != 0 {
-            if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
+            if let Some(debugger) = self.vm().debugger.get() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
                     &debugger.http_server_agent,
                     self.as_any_server(),
@@ -2394,7 +2375,7 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let transpiler = &VirtualMachine::VirtualMachine::get().transpiler;
+        let transpiler = VirtualMachine::VirtualMachine::get().transpiler.get();
         let _ = bun_js_printer::print_json(
             &mut writer,
             BunInfo::generate(transpiler).expect("unreachable"),
@@ -2424,21 +2405,18 @@ where
         resp: &mut R,
     ) {
         debug_assert!(!user_route.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write
-        // provenance), a back-pointer to the owning server, which outlives
-        // every route it registered.
-        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(user_route.server) };
-        let server_ptr = server_ref.as_ptr();
+        // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
+        // which outlives every route it registered.
+        let server = unsafe { &*user_route.server };
         let index = user_route.id;
 
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(mut prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
-            server_ptr,
+        let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx, R>(
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2448,7 +2426,7 @@ where
             return;
         };
 
-        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_MUX {
             Bun__ServerRouteList__callRouteH3
@@ -2456,7 +2434,7 @@ where
             Bun__ServerRouteList__callRoute
         };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server_ref.global_this);
+        let global = bun_opaque::opaque_deref(server.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             call_route(
                 global,
@@ -2472,17 +2450,11 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request_for::<Ctx>(
-            server_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        server.handle_request_for::<Ctx>(&should_deinit_context, &prepared, req, response_value);
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
-        this: *mut Self,
+        &self,
         should_deinit_context: &core::cell::Cell<bool>,
         prepared: &PreparedRequestFor<Ctx>,
         req: &mut Ctx::Req,
@@ -2498,9 +2470,9 @@ where
 
         // SAFETY: `prepared.ctx` was allocated by `prepare_js_request_context_for`
         // for this frame and cannot be freed while `defer_deinit_...` is set (set
-        // by the caller until cleared below); `this` is the live server backref.
-        let (ctx, server) = unsafe { (&*prepared.ctx, &*this) };
-        RequestCtxOps::on_response(ctx, server, prepared.js_request, response_value);
+        // by the caller until cleared below).
+        let ctx = unsafe { &*prepared.ctx };
+        RequestCtxOps::on_response(ctx, self, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
 
@@ -2531,10 +2503,8 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let self_ptr: *mut Self = self.as_ctx_ptr();
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
-            self_ptr,
+        let Some(prepared) = self.prepare_js_request_context_for::<Ctx, R>(
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2555,17 +2525,11 @@ where
                 Err(err) => global.take_exception(err),
             };
 
-        Self::handle_request_for::<Ctx>(
-            self_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        self.handle_request_for::<Ctx>(&should_deinit_context, &prepared, req, response_value);
     }
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        this: *mut Self,
+        &self,
         req: &mut Ctx::Req,
         resp: &mut R,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -2573,9 +2537,6 @@ where
         method: Option<http::Method>,
     ) -> Option<PreparedRequestFor<Ctx>> {
         jsc::mark_binding!();
-        // SAFETY: `this` is the live heap server registered as the callback
-        // user-data; everything below only needs `&Self`.
-        let server = unsafe { &*this };
 
         // We need to register the handler immediately since uSockets will not buffer.
         //
@@ -2607,7 +2568,7 @@ where
                 // Abort the request very early. For H2/H3 a per-request error
                 // is a stream error; close_connection would take down every
                 // sibling stream on the connection.
-                if len > server.config.get().max_request_body_size {
+                if len > self.config.get().max_request_body_size {
                     RespLike::write_status(resp, b"413 Request Entity Too Large");
                     RespLike::end_without_body(resp, !Ctx::IS_MUX);
                     return None;
@@ -2618,14 +2579,14 @@ where
             None
         };
 
-        server.on_pending_request();
+        self.on_pending_request();
 
         ReqLike::set_yield(req, false);
-        RespLike::timeout(resp, server.config.get().idle_timeout);
+        RespLike::timeout(resp, self.config.get().idle_timeout);
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
-        if server.should_add_timeout_handler_for_warning() {
+        if self.should_add_timeout_handler_for_warning() {
             // We need to pass it a pointer, any pointer should do.
             // SAFETY: the user-data pointer is an opaque sentinel — `on_timeout_for_idle_warn`
             // ignores it and reads the static directly. `AtomicBool::as_ptr` yields a `*mut`
@@ -2652,13 +2613,13 @@ where
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_MUX {
                 debug_assert!(
-                    !server.mux_request_pool.get().is_null(),
+                    !self.mux_request_pool.get().is_null(),
                     "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
                 );
-                let slot = (*server.mux_request_pool.get()).claim();
+                let slot = (*self.mux_request_pool.get()).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
-                    this,
+                    self,
                     req,
                     any_resp,
                     should_deinit_context,
@@ -2667,10 +2628,10 @@ where
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
-                let slot = (*server.request_pool).claim();
+                let slot = self.request_pool.claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
-                    this,
+                    self,
                     req,
                     any_resp,
                     should_deinit_context,
@@ -2683,8 +2644,7 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &*ctx_slot };
 
-        server
-            .vm()
+        self.vm()
             .jsc_vm()
             .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
@@ -2694,14 +2654,10 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
         ctx.set_request_body(Some(body_hive.clone()));
 
-        let _context = server.vm().enter_context(server.context.get());
-        let signal = AbortSignal::new(&server.global());
-        ctx.set_signal(signal);
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-
-        // The Request's own ref.
-        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
+        let _context = self.vm().enter_context(self.context.get());
+        let signal = AbortSignal::new(&self.global());
+        let signal_for_req = signal.clone();
+        ctx.set_signal(PendingAbortSignal::new(signal));
         let request_object_ptr: *mut Request = Request::new(Request::init(
             ctx.ctx_method(),
             AnyRequestContext::init(std::ptr::from_ref::<Ctx>(ctx)),
@@ -2790,7 +2746,7 @@ where
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
                         task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
-                        global: server.global_this,
+                        global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
                         on_readable_stream_available: Some(
@@ -2811,10 +2767,10 @@ where
             js_request: match create_js_request {
                 // SAFETY: from `Request::new` above; the wrapper adopts its ref.
                 CreateJsRequest::Yes => unsafe {
-                    Request::to_js(request_object_ptr, &server.global())
+                    Request::to_js(request_object_ptr, &self.global())
                 },
                 CreateJsRequest::Bake => {
-                    match Request::to_js_for_bake(request_object_ptr, &server.global()) {
+                    match Request::to_js_for_bake(request_object_ptr, &self.global()) {
                         Ok(v) => v,
                         Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(_) => return None,
@@ -2838,22 +2794,18 @@ where
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
         // vec); non-null by invariant.
         debug_assert!(!this.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write provenance),
-        // set at construction and non-null while the route is registered.
-        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(this.server) };
-        let server_ptr = server_ref.as_ptr();
+        // SAFETY: `UserRoute.server` is the owning `NewServer`, set at
+        // construction and non-null while the route is registered.
+        let server = unsafe { &*this.server };
         let index = this.id;
 
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
         let should_deinit_context = core::cell::Cell::new(false);
-        // SAFETY: `server_ptr` is the live heap server registered for this route;
-        // `req`/`resp` are the live uWS handles passed to the route handler.
-        let Some(mut prepared) = Self::prepare_js_request_context(
-            server_ptr,
+        let Some(mut prepared) = server.prepare_js_request_context(
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2868,10 +2820,10 @@ where
                 .upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
         };
-        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server_ref.global_this);
+        let global = bun_opaque::opaque_deref(server.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             Bun__ServerRouteList__callRoute(
                 global,
@@ -2887,13 +2839,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request(
-            server_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        server.handle_request(&should_deinit_context, &prepared, req, response_value);
     }
 
     /// # Safety
@@ -2924,12 +2870,11 @@ where
         }
         // Access `this` as *ThisServer only if id is 0
         debug_assert!(id == 0);
-        let self_ptr: *mut Self = this;
         // SAFETY: for `id == 0` the registered user-data IS `*mut Self`
         // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
         // duration. Shared — the `on_request` call below re-enters JS, so no
         // `&mut` may span it (pending-request accounting is a `Cell`).
-        let this = unsafe { &*self_ptr };
+        let this = unsafe { &*this };
         let Some(server_js) = this.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
@@ -2947,13 +2892,12 @@ where
         let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
         this.on_pending_request();
         req.set_yield(false);
-        // SAFETY: `request_pool` is non-null while the server is alive; `claim()`
-        // reserves a fresh slot whose `Drop` releases it on panic before init.
-        let ctx_slot = unsafe { (*this.request_pool).claim() };
+        // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
+        let ctx_slot = this.request_pool.claim();
         let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot.addr().as_ptr(),
-            self_ptr,
+            this,
             req,
             RespLike::to_any_response(resp),
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2970,14 +2914,8 @@ where
 
         let _context = this.vm().enter_context(this.context.get());
         let signal = AbortSignal::new(&this.global());
-        // The
-        // RequestContext owns one ref so aborts during the WS-upgrade fallback
-        // fetch path propagate.
-        ctx.signal.set(NonNull::new(signal));
-        // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
-        // The Request's own ref.
-        let signal_for_req = bun_opaque::opaque_deref_mut(signal).ref_();
+        let signal_for_req = signal.clone();
+        ctx.signal.set(Some(PendingAbortSignal::new(signal)));
         let request_object_ptr: *mut Request = Request::new(Request::init(
             ctx.method,
             AnyRequestContext::init(std::ptr::from_ref(ctx)),
@@ -3096,7 +3034,7 @@ where
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &self.dev_server.get().as_ref().unwrap().root;
+            let root = &self.dev_server.get().as_ref().unwrap().graphs.root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -3119,7 +3057,7 @@ where
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
             bun_fmt::format_json_string_utf8(
-                &self.dev_server.get().as_ref().unwrap().root,
+                &self.dev_server.get().as_ref().unwrap().graphs.root,
                 Default::default()
             ),
             uuid,
@@ -3159,9 +3097,7 @@ where
 
             let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().enter_event_loop_scope();
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -3195,9 +3131,7 @@ where
         if node_socket.is_undefined_or_null() {
             return Ok(());
         }
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().enter_event_loop_scope();
         callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
         Ok(())
     }

@@ -1,0 +1,22 @@
+# -- source: two-names-on-one-bit.ts
+# class Pair { value = 1; last = 2; }
+# function beside(a: Pair, b: Pair): number { const before = a.value; b.last = 7; return before + a.value; }
+# function same(a: Pair, b: Pair): number { const before = a.value; b.value = 7; return before + a.value; }
+# (globalThis as any).keep = [beside, same];
+# const one = new Pair(), two = new Pair();
+# console.log(beside(one, two), beside(one, one), same(one, two), same(one, one));
+# -- end of source
+# f1 = beside, f2 = same
+# What the walk holds of memory is ended by the masks of what an operation writes: 64 bits a heap, and a name falls on the bit that its text hashes to. `value` and `last` fall on one bit, so the store
+# under `last` ended what was held under `value`, and `a.value` was read twice; under any other pair of names it was read once. A store that names one place is held against the place's own name.
+# The control: `b` may be `a`, so a store under `value` itself ends it and the field is read again.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}} key="value"
+# CHECK: = PutSlot {{*}} key="last"
+# CHECK-NOT: = GetSlot
+# RUN(SAME): walk f2:Body mechanisms=all
+# SAME-LABEL: code f2:Body
+# SAME: = GetSlot {{*}} key="value"
+# SAME: = PutSlot {{*}} key="value"
+# SAME: = GetSlot {{*}} key="value"

@@ -1,0 +1,29 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse("{}");
+# let counted = 9;
+# Object.defineProperty(held, "rows", { get() { counted = Math.max(counted - 1, 0); return [5, 6, 7, 8, 9, 10, 11, 12, 13].slice(0, counted); } });
+# function f(data, w) { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f([held][zero], ["rows"][zero]), counted);
+# -- end of source
+# `data[w]` appears in the loop header and in the loop body. The holder and the key are parameters that the compiler knows nothing about.
+# Their use alone suggests "an array of arrays and an index". When the arguments were neither, the generic version ran: 10,710 instructions for a hundred iterations, where plain Bun takes 885.
+# Now the row is looked up in the preheader, as a row of a proven array is.
+# The lookup is the operation that runs no code and returns absent for everything except an own data property of a plain object under a string key.
+# If the row is found, the code dispatches on what the row is (an array of numbers, an array, bytes, typed arrays) and remembers the row across the iterations.
+# If the operation returns absent, the loop runs as it was built before. A hundred iterations now take 847 instructions.
+# With testing=CheckProofsAtRunTime the read is also built inside the iteration, and its result is checked against the remembered row.
+# Here an accessor returns a different array at each call. The injected fault, testing=UseGenericOwnKeyReads, makes the lookup take the generic path, which runs code.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# RUN(CHECKED): compile KeyedRowLookupsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic KeyedRowLookupsHoisted 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 18 2
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 18 2
+# HELD-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UseGenericOwnKeyReads
+# STOPPED: bun: internal AOT error: redundancy elimination check failed
+# STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# STOPPED: crashed with

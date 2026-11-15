@@ -27,6 +27,12 @@ pub enum DirectiveKind {
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum FramesMark {
+    NativeCode,
+    Hidden,
+}
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Conversion {
     ToBoolean,
     ToNumber,
@@ -64,6 +70,8 @@ pub enum Intrinsic {
     Conversion(Conversion),
     Throw(ErrorKind),
     IfAbruptCloseIterator,
+    IteratorGenericClose,
+    IteratorGenericNext,
     SymbolKey(WellKnownSymbol),
     HasJSType {
         first: CheckedJSType,
@@ -71,6 +79,7 @@ pub enum Intrinsic {
     },
     Builtin(BuiltinId),
     Construct(BuiltinId),
+    IsHolderWithoutAddedNames(BuiltinId),
     NativeBinding(BuiltinId),
     LinkTimeConstant(LinkTimeConstant),
     NativeCall(NativeCallKind),
@@ -136,6 +145,14 @@ pub fn native_binding(
         .binary_search_by_key(&key, |&(kind, file, symbol, _)| (kind, file, symbol))
         .ok()?;
     Some(NATIVE_BINDINGS[index].3)
+}
+
+pub fn frames_mark_of(text: &[u8]) -> Option<FramesMark> {
+    match text {
+        b"frames are native code" => Some(FramesMark::NativeCode),
+        b"has no frames" => Some(FramesMark::Hidden),
+        _ => None,
+    }
 }
 
 pub fn intrinsic_names() -> impl Iterator<Item = BuiltinName> {

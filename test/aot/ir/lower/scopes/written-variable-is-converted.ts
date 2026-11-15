@@ -4,8 +4,7 @@
 // CHECK: Return [[inferredValue]]
 // CHECK-LABEL: function {{*}}name="written"
 // CHECK: [[result]] = Call {{*}}calleeName="g"
-// CHECK-NEXT: [[expected]] = Convert [[result]] declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: [[n]] = Convert [[expected]] declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// CHECK-NEXT: [[n]] = Convert [[result]] declared={type=number} @
 // CHECK: Return [[n]]
 
 declare function g(): any;

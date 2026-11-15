@@ -1,0 +1,10 @@
+# a format that is a text takes the first row; the second is declared
+# -- source: the-body-of-a-request-piped-through-a-compression-stream-brings-no-other-feature.ts
+# Bun.serve({ port: 0, fetch(request) { return new Response(request.body!.pipeThrough(new CompressionStream("gzip"))); } });
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by CompressionStream
+# RUN(NEVER): features
+# NEVER-NOT: feature Interpreter
+# NEVER-NOT: by BunTranspiler

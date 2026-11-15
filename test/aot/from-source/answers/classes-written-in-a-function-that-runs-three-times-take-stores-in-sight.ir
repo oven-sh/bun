@@ -1,0 +1,49 @@
+# -- source: main.js
+# function build(tag) {
+#   class Base {
+#     static make() { return "base " + tag; }
+#     static get label() { return "label " + tag; }
+#     run() { return "run " + tag; }
+#   }
+#   class Lowest extends Base {
+#     static make = "field " + tag;
+#     static kind() { return "kind " + tag; }
+#     static { this.late = tag; }
+#   }
+#   return { Base, Lowest };
+# }
+# const first = build(1), second = build(2), third = build(3);
+# new first.Lowest(); new second.Lowest(); new third.Lowest();
+# print(first.Lowest.make, second.Lowest.kind(), third.Lowest.label, third.Lowest.late, new second.Lowest().run());
+# second.Lowest.kind = function () { return "stored kind"; };
+# second.Base.prototype.run = function () { return "stored run"; };
+# second.Base.make = function () { return "stored make"; };
+# print(first.Lowest.kind(), second.Lowest.kind(), third.Lowest.kind());
+# print(new first.Lowest().run(), new second.Lowest().run(), new third.Lowest().run());
+# print(first.Base.make(), second.Base.make(), third.Base.make(), second.Lowest.make);
+# function bare() { return class Bare {}; }
+# const one = bare(), two = bare(), three = bare();
+# two.prototype.say = function () { return "say"; };
+# three.make = function () { return "make"; };
+# print(typeof new one().say, new two().say(), typeof new three().say, typeof one.make, typeof two.make, three.make());
+# print(new one() instanceof one, new one() instanceof two, new three() instanceof three, one.prototype.constructor === one, three.prototype.constructor === three);
+# -- end of source
+# Two classes stand in a function that runs three times, and every member captures: each evaluation has holders and closures of its own. A static field lies under the name of a static method above, and a static block lays a name.
+# Members of the second evaluation alone are stored over in sight, on both sides; the first and the third keep theirs.
+# A class without a member is evaluated three times as well: from the second time on its holders are made from the structures that the first left behind. A name is laid on a prototype object of the second and on the class object of the third.
+# RUN: run-in-shell
+# CHECK: field 1 kind 2 label 3 3 run 2
+# CHECK-NEXT: kind 1 stored kind kind 3
+# CHECK-NEXT: run 1 stored run run 3
+# CHECK-NEXT: base 1 stored make base 3 field 2
+# CHECK-NEXT: undefined say undefined undefined undefined make
+# CHECK-NEXT: true false true true true
+# CHECK-NEXT: exited with 0
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: field 1 kind 2 label 3 3 run 2
+# CALLED-NEXT: kind 1 stored kind kind 3
+# CALLED-NEXT: run 1 stored run run 3
+# CALLED-NEXT: base 1 stored make base 3 field 2
+# CALLED-NEXT: undefined say undefined undefined undefined make
+# CALLED-NEXT: true false true true true
+# CALLED-NEXT: exited with 0

@@ -4,44 +4,85 @@ mod shown_names;
 #[cfg(test)]
 mod tests;
 
-use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Bound};
-use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef, NamedValues, Queries, QueryInputs};
-use bun_sema::erasure::{TypeRanges, find_type_ranges};
-use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
+use core::cell::{OnceCell, RefCell};
+use core::mem::take;
+use std::borrow::Cow;
+use std::sync::{Arc, OnceLock};
+
+use bun_core::printer::{FIRST_ASCII, LAST_ASCII, bmp_escape, surrogate_pair_escape};
+use bun_core::strings::{CodepointIterator, Cursor};
+use bun_sema::atom::{Atom, NAME_IN_GLOBAL_SCOPE};
+use bun_sema::bind::{Binding, Bound, SymbolId};
+use bun_sema::check::aot::{
+    AliasMentions, BuiltinTypeSymbols, ClassDeclaration, MemberName, NamedValues, Queries,
+    QueryInputs,
+};
+use bun_sema::erasure::{ReplacedText, TypeRanges};
+use bun_sema::fold::{Constant, Decisions};
+use bun_sema::hir::{self, ExprId, ExprKind, MemberId, NodeData};
+use bun_sema::hir_from_data::DataValue;
 use bun_sema::import_sites::ResolvedForm;
-use bun_sema::program::{CompiledModule, FileId, FileRole};
-use bun_sema::resolve::TranspileSettings;
-use rustc_hash::FxHashMap;
+use bun_sema::program::{CompiledModule, FileId, FileRole, Files};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use self::function_table::FunctionTable;
 use self::shown_names::ShownNames;
-use super::LoweredFile;
-use super::call::PrintedOperators;
-use super::class::ClassState;
+use super::class::{ClassState, find_fields_under_signed_members};
+use super::counted_places::CountedPlaces;
 use super::fragment::{FragmentBuilder, ModuleFragment};
-use super::layouts::{DefinedObjectTypes, LayoutState};
+use super::function::{ConstsOfPrefixes, StatementsThatNest, ValuesThatConstsWereFollowedTo};
+use super::layouts::{LayoutState, NamesCreatedOnExports};
 use super::module::{LibraryFunctions, ModuleState};
-use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
-use super::transpiled::{ParsedText, RuntimeTranspiler, TranspileRequest, TranspiledFile};
+use super::object::EnumsThatStayAsBorn;
+use super::parts::{PartState, SharedOfFile};
+use super::quoted_source::QuotedSources;
+use super::said_types::SaidTypes;
+use super::scope::{ResolvedFields, ScopeAnalysis, ScopeInput, analyze_scopes, holds_registry};
+use super::tables::TaskState;
 use super::types::TypeState;
+use super::{KnownHelpersLowered, LoweredFile};
 use crate::builtins::id::RuntimeModule;
-use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
+use crate::builtins::{
+    BuiltinClass, BuiltinId, BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table,
+};
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
 use crate::engine::describe_regexp_syntax_error;
 use crate::ir::generated::FunctionRole;
-use crate::ir::types::release_spare_capacity;
-use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
+use crate::ir::{DeclaredType, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
 use crate::known_helpers::KnownHelpers;
+use crate::load::contents::FixedBuiltins;
+use crate::load::hoisted_mocks::shown_name_of_namespace;
+use crate::load::test_runner_names::written_name_of_local;
 use crate::load::{self, Sources};
-use crate::modules::{CommonJsExports, DeferredData, ModuleGraph, ModuleRef};
+use crate::modules::{CommonJsExports, KnownMemberValues, KnownObjects, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
-use crate::statistics::{Counters, LimitId, LimitValues, StatisticId};
+use crate::statistics::{LimitId, LimitValues};
 
+pub(in crate::lower) use self::function::CreatedRequire;
 pub(crate) use self::function::FunctionLowering;
+
+pub(super) fn regexp_pattern_as_printed(written: &[u8]) -> Cow<'_, [u8]> {
+    let is_printed_as_written = |character: u32| (FIRST_ASCII..=LAST_ASCII).contains(&character);
+    if written
+        .iter()
+        .all(|&byte| is_printed_as_written(u32::from(byte)))
+    {
+        return Cow::Borrowed(written);
+    }
+    let mut printed = Vec::with_capacity(written.len() * 2);
+    let characters = CodepointIterator::init(written);
+    let mut cursor = Cursor::default();
+    while characters.next(&mut cursor) {
+        match cursor.c as u32 {
+            character if is_printed_as_written(character) => printed.push(character as u8),
+            character @ 0..=0xFFFF => printed.extend_from_slice(&bmp_escape(character)),
+            character => printed.extend_from_slice(&surrogate_pair_escape(character)),
+        }
+    }
+    Cow::Owned(printed)
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum SourceKind {
@@ -72,42 +113,61 @@ pub struct FileInputs<'a> {
     pub builtins: &'a ResolvedBuiltins,
 }
 
+impl FileInputs<'_> {
+    pub(crate) fn makes_registries(&self) -> bool {
+        let constructor = table::class_data(BuiltinClass::FinalizationRegistry).constructor;
+        let mut mentioned = self.builtins.mentioned().iter();
+        mentioned.any(|&id| Some(table::canonical_id(id)) == constructor)
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 pub struct LoweringOptions {
     pub platform: Platforms,
-    pub embeds_function_text: bool,
-    pub reports_type_mismatches: bool,
+    pub embeds_function_source: bool,
+    pub reparses_function_sources: bool,
     pub removable: RemovableOptions,
     pub minifies_identifiers: bool,
     pub obfuscates: bool,
+    pub counts_executions: bool,
+    pub runs_tests: bool,
+    pub divides_small_files: bool,
 }
 
 pub struct LoweringInputs<'a> {
     pub roles: &'a [FileRole],
-    // `QueryInputs::checked_elsewhere`
-    pub checked_elsewhere: &'a [FileId],
     pub builtin_types: &'a BuiltinTypeSymbols,
     pub named_values: &'a dyn NamedValues,
     pub builtin_names: &'a BuiltinNames,
     pub sources: &'a Sources,
     pub modules: &'a ModuleGraph,
-    // The files of Bun's own that no code of the program loads, in order.
     pub unreached_files: &'a [FileId],
-    // The files that whoever builds the program cannot mend, in order.
     pub files_of_dependencies: &'a [FileId],
-    pub deferred_data: &'a DeferredData<'a>,
     pub library_functions: &'a LibraryFunctions,
     pub known_helpers: &'a KnownHelpers,
     pub commonjs_exports: &'a CommonJsExports,
-    pub defined_object_types: &'a DefinedObjectTypes,
+    pub names_created_on_exports: &'a NamesCreatedOnExports,
     pub files: &'a [Option<FileInputs<'a>>],
+    pub makes_registries: bool,
+    pub page_manifests: &'a [(FileId, &'a DataValue<'a>)],
+    pub reads_source_paths: bool,
+    pub may_have_plugins: bool,
+    pub replaced_builtins: &'a [u32],
+    pub fixed_builtins: &'a FixedBuiltins,
+    pub names_added_to_builtins: &'a [(BuiltinId, Atom)],
     pub limits: &'a LimitValues,
-    pub transpiler: &'a RuntimeTranspiler<'a>,
     pub options: LoweringOptions,
+    pub said_types: &'a SaidTypes,
+    pub alias_mentions: &'a AliasMentions,
 }
 
 impl<'a> LoweringInputs<'a> {
-    // The file is in the build for the types that it declares alone: the program has no module of it.
+    pub(crate) fn names_lie_on_object_prototype(&self) -> bool {
+        let added = self.names_added_to_builtins;
+        let first = added.partition_point(|&(holder, _)| holder < BuiltinId::ObjectPrototype);
+        (added.get(first)).is_some_and(|&(holder, _)| holder == BuiltinId::ObjectPrototype)
+    }
+
     pub(crate) fn is_left_out(&self, file: FileId) -> bool {
         self.modules.is_left_out(ModuleRef::File(file))
             || self.unreached_files.binary_search(&file).is_ok()
@@ -116,12 +176,30 @@ impl<'a> LoweringInputs<'a> {
     pub fn query_inputs(&self) -> QueryInputs<'a> {
         QueryInputs {
             roles: self.roles,
-            checked_elsewhere: self.checked_elsewhere,
+            checked_elsewhere: &[],
             builtin_types: self.builtin_types,
             named_values: self.named_values,
+            alias_mentions: Some(self.alias_mentions),
             max_inference_nodes: self.limits.get(LimitId::MaxInferenceNodes),
+            limits: self.limits.for_queries(),
         }
     }
+}
+
+pub(in crate::lower) struct StoresByNameInList {
+    pub(in crate::lower) looked_at_from: u32,
+    pub(in crate::lower) last_store_of: FxHashMap<SymbolId, u32>,
+    pub(in crate::lower) kept_plain_below_null: FxHashSet<SymbolId>,
+    pub(in crate::lower) names_stored_on: FxHashMap<SymbolId, Vec<Atom>>,
+}
+
+/// What is listed of a whole file, once, where something first asks.
+#[derive(Default)]
+pub(in crate::lower) struct ListsOfFile {
+    pub(in crate::lower) literals_named_as_prototype_objects: OnceLock<FxHashSet<ExprId>>,
+    pub(in crate::lower) prototype_makers: OnceLock<super::call::PrototypeMakers>,
+    pub(in crate::lower) enums_that_stay_as_born: OnceLock<EnumsThatStayAsBorn>,
+    pub(in crate::lower) places_of_this_super_and_return: OnceLock<Vec<u32>>,
 }
 
 pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
@@ -132,104 +210,119 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     pub(crate) hir: &'p hir::File<'s>,
     pub(crate) bound: &'p Bound<'s>,
     pub(crate) compiled: &'p CompiledModule<'s>,
-    /// What the text of a function of this file is given without.
-    pub(crate) type_ranges: TypeRanges,
+    pub(in crate::lower) values_written_in_place: RefCell<Vec<(ExprId, Constant)>>,
+    pub(in crate::lower) enums_written_as_code: Vec<ReplacedText>,
     pub(crate) builtins: &'a ResolvedBuiltins,
-    /// `Removable::find_simplified_expressions`
-    simplified_expressions: Vec<ExprId>,
+    pub(in crate::lower) simplified_expressions: Arc<Vec<ExprId>>,
+    pub(in crate::lower) invalid_regexp_literals_left_out: Arc<Vec<ExprId>>,
     pub(crate) queries: &'a mut Queries<'c, 'p, 's>,
+    pub(in crate::lower) task: &'a mut TaskState,
     pub(crate) fragment: FragmentBuilder,
     pub(crate) diagnostics: DiagnosticBuffer,
-    pub(crate) scopes: ScopeAnalysis,
+    pub(crate) scopes: Arc<ScopeAnalysis>,
+    pub(in crate::lower) part: Option<Box<PartState>>,
     pub(crate) types: TypeState,
     pub(crate) layouts: LayoutState,
     pub(crate) classes: ClassState,
     pub(crate) modules: ModuleState,
     functions: FunctionTable,
-    atoms: FxHashMap<Atom, StringId>,
-    atom_keys: FxHashMap<Atom, PropertyKeyId>,
+    pub(in crate::lower) levels_of_literals_inside_built_ones: FxHashMap<ExprId, u64>,
+    pub(in crate::lower) lists: Arc<ListsOfFile>,
+    pub(in crate::lower) stores_by_name_in_lists: RefCell<FxHashMap<u32, StoresByNameInList>>,
+    /// What the field of a class, or of the nearest class above that says it, is expected to hold.
+    pub(in crate::lower) expectations_at_or_above:
+        FxHashMap<(ClassDeclaration, MemberName), DeclaredType>,
     shown_names: ShownNames,
-    has_bundled_positions: bool,
-    runs_as_written: bool,
-    pub(in crate::lower) transpiled: Option<TranspiledFile>,
-    pub(in crate::lower) printed_operators: PrintedOperators,
-    counters: Counters,
-    scratch: BuilderScratch,
-    pub(crate) has_chain_past_nesting_limit: bool,
+    pub(in crate::lower) enum_member_reads: FxHashMap<ExprId, Constant>,
+    pub(in crate::lower) namespaces_with_two_tables: RefCell<FxHashMap<SymbolId, bool>>,
+    pub(in crate::lower) names_word_that_mock_looks_for: Option<bool>,
+    pub(in crate::lower) ranges_of_types: OnceCell<TypeRanges>,
+    pub(in crate::lower) statements_that_nest: OnceCell<StatementsThatNest>,
+    pub(in crate::lower) values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo,
+    pub(in crate::lower) consts_of_prefixes: ConstsOfPrefixes,
+    pub(in crate::lower) counted_places: Option<CountedPlaces>,
+    pub(in crate::lower) quoted_sources: QuotedSources,
+    pub(in crate::lower) written_path: Vec<u8>,
+    pub(in crate::lower) known_helpers_lowered: KnownHelpersLowered,
+    pub(in crate::lower) function_sources_reparsed: u64,
+    pub(in crate::lower) declared_records_without_position:
+        Vec<(hir::FnId, crate::ir::generated::DeclaredRecord)>,
+    pub(in crate::lower) resolved_fields: ResolvedFields,
 }
 
-fn runs_file_as_written(kind: load::SourceKind, hir: &hir::File<'_>) -> bool {
-    match kind {
-        load::SourceKind::EvaluatedText => true,
-        // The helpers of the bundler.
-        load::SourceKind::RuntimeModule(module) => table::is_es_module(module),
-        load::SourceKind::Program
-        | load::SourceKind::Data
-        | load::SourceKind::TypesOnly
-        | load::SourceKind::RuntimeFunctions => hir::find_transpiled_mark(&hir.text).is_some(),
-    }
+#[derive(Clone)]
+pub(super) struct ScopesOfFile {
+    pub(super) analysis: Arc<ScopeAnalysis>,
+    pub(super) fields_under_signed_members: Vec<MemberId>,
 }
 
-/// The build runs the macros of a file itself, so the transpiler is asked without them and cannot tell what `bun run` says of such a file.
-fn imports_macro(hir: &hir::File<'_>) -> bool {
-    hir.imports.iter().any(|import| {
-        !import.type_only
-            && hir.import_attribute(import.attributes, known::r#type) == Some(known::r#macro)
-    })
-}
+type AsksAtOnce<'x, 'c, 'p, 's> = dyn Fn(&mut Queries<'c, 'p, 's>, &[SymbolId]) -> Vec<bool> + 'x;
 
-/// What `bun run` reports of TypeScript's own syntax in a file of the program is an error of the build too: nothing else says what that syntax is.
-/// What is JavaScript, the grammar that has read the file has said. So the transpiler's errors count where it reads the text once all that
-/// TypeScript erases is taken out.
-fn transpile_file(
-    inputs: &LoweringInputs<'_>,
-    file: FileId,
-    queries: &Queries<'_, '_, '_>,
-    settings: &TranspileSettings,
-    diagnostics: &mut DiagnosticBuffer,
-) -> Option<TranspiledFile> {
-    let hir = queries.hir();
-    let request = TranspileRequest {
-        path: inputs.sources.diagnostic_path(file),
-        text: &hir.text,
-        loader: inputs.sources.loader(file),
-        has_legacy_decorators: hir.legacy_decorators,
-        assigns_class_fields: settings.use_define_for_class_fields == Some(false),
-        parsed: Some(ParsedText {
-            hir,
-            bound: queries.bound(),
-            atoms: &queries.files().atoms,
-            max_steps: inputs.limits.get(LimitId::MaxStepsToPrintedInitializer),
-        }),
-    };
-    let errors = match inputs.transpiler.transpile(&request) {
-        Ok(transpiled) => return Some(transpiled),
-        Err(errors) => errors,
-    };
-    if inputs.sources.kind(file) != load::SourceKind::Program || imports_macro(hir) {
-        return None;
+impl ScopesOfFile {
+    fn find(inputs: &LoweringInputs<'_>, queries: &mut Queries<'_, '_, '_>) -> ScopesOfFile {
+        ScopesOfFile::find_asking(inputs, queries, &|queries, variables| {
+            let holds = variables
+                .iter()
+                .map(|&variable| holds_registry(queries, variable));
+            holds.collect()
+        })
     }
-    let erased = find_type_ranges(hir);
-    if errors.is_empty() || erased.is_empty() {
-        return None;
-    }
-    let text = &erased.remove_from(&hir.text);
-    let without_types = TranspileRequest {
-        text,
-        parsed: None,
-        ..request
-    };
-    if inputs.transpiler.transpile(&without_types).is_ok() {
-        for error in errors {
-            let span = Span {
-                file,
-                start: error.start,
-                end: error.end,
-            };
-            diagnostics.report(Code::RefusedByTranspiler, span, &[&error.message]);
+
+    /// `find_registries` answers `holds_registry`.
+    pub(super) fn find_asking<'c, 'p, 's>(
+        inputs: &LoweringInputs<'_>,
+        queries: &mut Queries<'c, 'p, 's>,
+        find_registries: &AsksAtOnce<'_, 'c, 'p, 's>,
+    ) -> ScopesOfFile {
+        let file = queries.file();
+        let known_member_values = KnownMemberValues::default();
+        let members = KnownObjects::new(queries.files(), inputs.modules, &known_member_values);
+        let fields_under_signed_members = find_fields_under_signed_members(members, file);
+        let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+        let may_hold_registries = inputs.makes_registries || file_inputs.makes_registries();
+        let files = queries.files();
+        let queries = RefCell::new(queries);
+        let find_registries =
+            |variables: &[SymbolId]| find_registries(&mut queries.borrow_mut(), variables);
+        let find_registries: Option<&dyn Fn(&[SymbolId]) -> Vec<bool>> = match may_hold_registries {
+            true => Some(&find_registries),
+            false => None,
+        };
+        let analysis = analyze_scopes_of_file(
+            inputs,
+            files,
+            file,
+            &fields_under_signed_members,
+            find_registries,
+        );
+        ScopesOfFile {
+            analysis: Arc::new(analysis),
+            fields_under_signed_members,
         }
     }
-    None
+}
+
+fn analyze_scopes_of_file(
+    inputs: &LoweringInputs<'_>,
+    files: &Files<'_>,
+    file: FileId,
+    fields_under_signed_members: &[MemberId],
+    find_registries: Option<&dyn Fn(&[SymbolId]) -> Vec<bool>>,
+) -> ScopeAnalysis {
+    let module = files.module(file);
+    let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+    analyze_scopes(&ScopeInput {
+        file,
+        hir: &module.hir,
+        bound: &module.bound,
+        compiled: module.compiled.expect("only compiled files are lowered"),
+        modules: inputs.modules,
+        builtins: file_inputs.builtins,
+        fields_under_signed_members,
+        find_registries,
+        max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
+        names_lie_on_object_prototype: inputs.names_lie_on_object_prototype(),
+    })
 }
 
 impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
@@ -237,52 +330,57 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         inputs: &'a LoweringInputs<'a>,
         queries: &'a mut Queries<'c, 'p, 's>,
         file: FileId,
+        task: &'a mut TaskState,
+    ) -> FileLowering<'a, 'c, 'p, 's> {
+        let scopes = ScopesOfFile::find(inputs, queries);
+        FileLowering::new_sharing(inputs, queries, file, task, scopes, None)
+    }
+
+    pub(super) fn new_sharing(
+        inputs: &'a LoweringInputs<'a>,
+        queries: &'a mut Queries<'c, 'p, 's>,
+        file: FileId,
+        task: &'a mut TaskState,
+        scopes: ScopesOfFile,
+        shared: Option<&SharedOfFile>,
     ) -> FileLowering<'a, 'c, 'p, 's> {
         let hir = queries.hir();
         let bound = queries.bound();
         let compiled = queries.files().compiled(file);
         let compiled = compiled.expect("only compiled files are lowered");
         let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
-        let runs_as_written = runs_file_as_written(inputs.sources.kind(file), hir);
-        let mut diagnostics = DiagnosticBuffer::default();
-        // The positions in Bun's own modules come from a table.
-        let is_transpiled_at_run_time = match inputs.sources.kind(file) {
-            load::SourceKind::Program | load::SourceKind::Data | load::SourceKind::TypesOnly => {
-                !runs_as_written
+        let path = inputs.sources.diagnostic_path(file);
+        let is_counted =
+            inputs.options.counts_executions && inputs.sources.is_in_coverage_report(file);
+        let ScopesOfFile {
+            analysis: scopes,
+            fields_under_signed_members,
+        } = scopes;
+        let counted_places = is_counted
+            .then(|| CountedPlaces::find(hir, bound, compiled, &fields_under_signed_members, path));
+        let simplified_expressions = match shared {
+            Some(shared) => Arc::clone(&shared.simplified_expressions),
+            None if is_counted => Arc::default(),
+            None => {
+                let removable = Removable::of_file(
+                    queries.files(),
+                    file,
+                    &compiled.analysis,
+                    file_inputs.builtins,
+                    inputs.options.removable,
+                );
+                Arc::new(removable.find_simplified_expressions())
             }
-            load::SourceKind::EvaluatedText
-            | load::SourceKind::RuntimeModule(_)
-            | load::SourceKind::RuntimeFunctions => false,
         };
-        let transpiled = match is_transpiled_at_run_time {
-            true => transpile_file(inputs, file, queries, compiled.settings, &mut diagnostics),
-            false => None,
-        };
-        let scopes = analyze_scopes(&ScopeInput {
-            file,
-            hir,
-            bound,
-            compiled,
-            transpiled: transpiled.as_ref(),
-            modules: inputs.modules,
-            builtins: file_inputs.builtins,
-            max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
-            max_handler_arguments: inputs.limits.get(LimitId::MaxHandlerArguments) as usize,
-            max_handler_arguments_per_block: inputs.limits.get(LimitId::MaxHandlerArgumentsPerBlock)
-                as usize,
+        let invalid_regexp_literals_left_out = shared.map_or_else(Arc::default, |shared| {
+            Arc::clone(&shared.invalid_regexp_literals_left_out)
         });
-        let has_types_in_function_text = inputs.options.embeds_function_text && !hir.is_js;
-        let type_ranges = match has_types_in_function_text {
-            true => find_type_ranges(hir),
-            false => TypeRanges::default(),
-        };
-        let removable = Removable::of_file(
-            queries.files(),
-            file,
-            &compiled.analysis,
-            file_inputs.builtins,
-            inputs.options.removable,
-        );
+        task.begin_file_of(file_inputs.source == SourceKind::Program);
+        let fragment = FragmentBuilder::new(file, task);
+        task.layout_places.begin_file();
+        task.function_places.begin_file();
+        let layouts = LayoutState::new(take(&mut task.layout_places));
+        let functions = FunctionTable::new(take(&mut task.function_places));
         FileLowering {
             inputs,
             file,
@@ -291,99 +389,133 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             hir,
             bound,
             compiled,
-            type_ranges,
+            values_written_in_place: RefCell::default(),
+            enums_written_as_code: Vec::new(),
             builtins: file_inputs.builtins,
-            simplified_expressions: removable.find_simplified_expressions(),
+            simplified_expressions,
+            invalid_regexp_literals_left_out,
             queries,
-            fragment: FragmentBuilder::new(file),
-            diagnostics,
+            task,
+            fragment,
+            diagnostics: DiagnosticBuffer::default(),
             scopes,
+            part: None,
             types: TypeState::default(),
-            layouts: LayoutState::default(),
-            classes: ClassState::default(),
+            layouts,
+            classes: ClassState::new(fields_under_signed_members),
             modules: ModuleState::default(),
-            functions: FunctionTable::default(),
-            atoms: FxHashMap::default(),
-            atom_keys: FxHashMap::default(),
-            shown_names: ShownNames::new(
-                inputs.options,
-                file_inputs.source,
-                hir,
-                bound,
-                inputs.sources.bundled_names(file),
-            ),
-            has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
-            runs_as_written,
-            transpiled,
-            printed_operators: PrintedOperators::default(),
-            counters: Counters::default(),
-            scratch: BuilderScratch::default(),
-            has_chain_past_nesting_limit: false,
+            functions,
+            levels_of_literals_inside_built_ones: FxHashMap::default(),
+            lists: shared.map_or_else(Arc::default, |shared| Arc::clone(&shared.lists)),
+            stores_by_name_in_lists: RefCell::default(),
+            expectations_at_or_above: FxHashMap::default(),
+            shown_names: ShownNames::new(inputs.options, file_inputs.source, hir, bound),
+            enum_member_reads: FxHashMap::default(),
+            namespaces_with_two_tables: RefCell::default(),
+            names_word_that_mock_looks_for: None,
+            ranges_of_types: OnceCell::new(),
+            statements_that_nest: OnceCell::new(),
+            values_that_consts_were_followed_to: ValuesThatConstsWereFollowedTo::default(),
+            consts_of_prefixes: ConstsOfPrefixes::default(),
+            counted_places,
+            quoted_sources: QuotedSources::default(),
+            written_path: Vec::new(),
+            known_helpers_lowered: KnownHelpersLowered::default(),
+            function_sources_reparsed: 0,
+            declared_records_without_position: Vec::new(),
+            resolved_fields: ResolvedFields::default(),
         }
     }
 
-    pub(super) fn refuse_chains_past_nesting_limit(&mut self) {
-        let maximum = self.inputs.limits.get(LimitId::MaxNestingDepth);
-        let Some(position) = self.queries.find_chain_longer_than(maximum) else {
-            return;
-        };
-        self.has_chain_past_nesting_limit = true;
-        self.gave_up(LimitId::MaxNestingDepth, position);
-        let span = self.span_at(position);
-        let depth = maximum.to_string();
-        self.diagnostics
-            .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
-    }
-
-    /// `bun run` reports a file that holds such a literal and runs nothing of it, whether or not anything reads the literal. The engine sees the
-    /// literals that the transpiler prints.
     pub(super) fn refuse_invalid_regexp_literals(&mut self) {
         if self.inputs.sources.kind(self.file) != load::SourceKind::Program {
             return;
         }
+        let decisions = self.decisions();
+        let mut invalid: Vec<(ExprId, Vec<u8>)> = Vec::new();
         for (index, expression) in self.hir.exprs.iter().enumerate() {
             let ExprKind::Regex { pattern, flags } = expression.kind else {
                 continue;
             };
-            let transpiled = self.transpiled.as_ref();
-            if transpiled.is_some_and(|it| !it.has_regexp_literal_at(expression.pos)) {
+            let literal = ExprId(index as u32);
+            if decisions.is_dead_expr(literal) {
                 continue;
             }
-            let pattern = self.queries.atom_bytes(pattern);
+            let pattern = regexp_pattern_as_printed(self.queries.atom_bytes(pattern));
             let flags = self.queries.atom_bytes(flags);
-            if let Some(sentence) = describe_regexp_syntax_error(pattern, flags) {
-                let span = self.span_of(NodeData::Expr(ExprId(index as u32)));
+            if let Some(sentence) = describe_regexp_syntax_error(&pattern, flags) {
+                invalid.push((literal, sentence));
+            }
+        }
+        if invalid.is_empty() {
+            return;
+        }
+        let left_out = Removable::of_file(
+            self.queries.files(),
+            self.file,
+            &self.compiled.analysis,
+            self.builtins,
+            self.inputs.options.removable,
+        )
+        .find_regexp_literals_left_out();
+        for (literal, sentence) in invalid {
+            if left_out.binary_search(&literal).is_ok() {
+                Arc::make_mut(&mut self.invalid_regexp_literals_left_out).push(literal);
+            } else {
+                let span = self.span_of(NodeData::Expr(literal));
                 self.diagnostics
                     .report(Code::InvalidRegExp, span, &[&sentence]);
             }
         }
     }
 
+    pub(super) fn is_invalid_regexp_literal_left_out(&self, literal: ExprId) -> bool {
+        self.invalid_regexp_literals_left_out
+            .binary_search(&literal)
+            .is_ok()
+    }
+
+    pub(super) fn lies_in_package(&self) -> bool {
+        load::is_in_node_modules(self.queries.files().module(self.file).file_name())
+    }
+
     pub(super) fn finish(mut self, module: ModuleFragment) -> LoweredFile {
         self.fragment.is_checked = self.is_checked();
-        let mut fragment = self.fragment.finish(module);
-        fragment.strings.share_strings();
-        fragment.property_keys.release_spare_capacity();
-        fragment.types.share_types();
-        release_spare_capacity(&mut fragment.function_keys);
-        release_spare_capacity(&mut fragment.layout_keys);
-        release_spare_capacity(&mut fragment.variable_keys);
-        release_spare_capacity(&mut fragment.functions);
-        release_spare_capacity(&mut fragment.layouts);
-        release_spare_capacity(&mut fragment.object_types);
-        release_spare_capacity(&mut fragment.object_type_levels);
-        release_spare_capacity(&mut fragment.variables);
-        release_spare_capacity(&mut fragment.type_sites);
-        release_spare_capacity(&mut fragment.expected_results);
-        release_spare_capacity(&mut fragment.data);
-        release_spare_capacity(&mut fragment.supertype_edges);
-        release_spare_capacity(&mut fragment.function_type_edges);
-        LoweredFile {
+        let queries = self.queries.statistics();
+        let FileLowering {
+            task,
             fragment,
-            diagnostics: self.diagnostics,
-            counters: self.counters,
-            queries: self.queries.statistics(),
+            diagnostics,
+            layouts,
+            functions,
+            known_helpers_lowered,
+            function_sources_reparsed,
+            shown_names,
+            ..
+        } = self;
+        task.layout_places = layouts.into_places();
+        task.function_places = functions.into_places();
+        LoweredFile {
+            fragment: fragment.finish(module, task),
+            diagnostics,
+            queries,
+            known_helpers: known_helpers_lowered,
+            function_sources_reparsed,
+            written_function_names: shown_names.written_function_names,
         }
+    }
+
+    pub(super) fn abandon(self) {
+        let FileLowering {
+            task,
+            fragment,
+            layouts,
+            functions,
+            ..
+        } = self;
+        task.layout_places = layouts.into_places();
+        task.function_places = functions.into_places();
+        fragment.abandon(task);
     }
 
     pub(crate) fn is_simplified(&self, expression: ExprId) -> bool {
@@ -400,6 +532,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         self.compiled.analysis.find_resolved_form(argument)
     }
 
+    #[inline]
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {
         let compiled = self.compiled;
         &compiled.analysis.decisions
@@ -412,27 +545,12 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             .is_ok()
     }
 
+    #[inline]
     pub(crate) fn is_checked(&self) -> bool {
         match self.role {
             FileRole::Checked => true,
             FileRole::Inferred | FileRole::TypesOnly => false,
         }
-    }
-
-    // `bun run` hands the text to the engine as it is written, without its transpiler.
-    pub(crate) fn runs_as_written(&self) -> bool {
-        self.runs_as_written
-    }
-
-    // A stack trace shows the positions that the engine records in the text it runs: no source map takes them back to a token.
-    pub(crate) fn is_shown_without_source_map(&self) -> bool {
-        self.has_bundled_positions || self.runs_as_written()
-    }
-
-    pub(crate) fn evaluated_function(&self, call: ExprId) -> Option<FunctionRef> {
-        let function = self.inputs.sources.evaluated_function(self.file, call)?;
-        let is_lowered = self.inputs.files[function.file.idx()].is_some();
-        is_lowered.then_some(function)
     }
 
     pub(crate) fn intern_bytes(&mut self, bytes: &[u8]) -> StringId {
@@ -441,18 +559,30 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     pub(crate) fn intern_atom(&mut self, atom: Atom) -> StringId {
         debug_assert!(atom != Atom::NONE, "a name was expected");
-        if let Some(&id) = self.atoms.get(&atom) {
+        if let Some(&id) = self.task.atoms.get(&atom) {
             return id;
         }
-        let id = self.fragment.strings.intern(self.queries.atom_bytes(atom));
-        self.atoms.insert(atom, id);
+        let bytes = self.queries.atom_bytes(atom);
+        let bytes = bytes.strip_prefix(NAME_IN_GLOBAL_SCOPE).unwrap_or(bytes);
+        let id = self.fragment.strings.intern(bytes);
+        self.task.atoms.insert(atom, id);
+        self.fragment.note_atom_first_met(atom);
         id
     }
 
     pub(crate) fn intern_binding_name(&mut self, binding: Binding, written: Atom) -> StringId {
         match self.short_binding_name(binding) {
             Some(name) => name,
-            None => self.intern_atom(written),
+            None => self.intern_written_name(written),
+        }
+    }
+
+    pub(crate) fn intern_written_name(&mut self, name: Atom) -> StringId {
+        let bytes = self.queries.atom_bytes(name);
+        let written = shown_name_of_namespace(bytes);
+        match written.unwrap_or_else(|| written_name_of_local(bytes)) {
+            same if same.len() == bytes.len() => self.intern_atom(name),
+            written => self.intern_bytes(written),
         }
     }
 
@@ -463,12 +593,13 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
     }
 
     pub(crate) fn atom_key(&mut self, atom: Atom) -> PropertyKeyId {
-        if let Some(&key) = self.atom_keys.get(&atom) {
+        if let Some(&key) = self.task.atom_keys.get(&atom) {
             return key;
         }
         let text = self.intern_atom(atom);
         let key = self.text_key(text);
-        self.atom_keys.insert(atom, key);
+        self.task.atom_keys.insert(atom, key);
+        self.fragment.note_atom_first_met(atom);
         key
     }
 
@@ -491,14 +622,5 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             start: position,
             end: position,
         }
-    }
-
-    pub(crate) fn count(&mut self, statistic: StatisticId, amount: u64) {
-        self.counters.count(statistic, amount);
-    }
-
-    pub(crate) fn gave_up(&mut self, limit: LimitId, position: u32) {
-        let subject = self.span_at(position);
-        self.counters.gave_up(limit, Some(subject));
     }
 }

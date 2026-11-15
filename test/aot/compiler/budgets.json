@@ -1,0 +1,31 @@
+{
+  "instructions": {
+    "lowering": {
+      "glibc": 4000,
+      "musl": 4000
+    },
+    "scan": {
+      "glibc": 800,
+      "musl": 800
+    },
+    "walk": {
+      "glibc": 5000,
+      "musl": 5000
+    },
+    "emit": {
+      "glibc": 2000,
+      "musl": 2000
+    }
+  },
+  "touches": {
+    "ValuesScanned": 2,
+    "ValuesWalkedAndKept": 1.4,
+    "ValuesWalked": 1.2,
+    "OperationsSwept": 1,
+    "OperationsEmitted": 1,
+    "MachineOperationsScanned": 1,
+    "MachineOperationsAllocated": 1,
+    "MachineOperationsEncoded": 1,
+    "FactsCarriedOverEdges": 10
+  }
+}

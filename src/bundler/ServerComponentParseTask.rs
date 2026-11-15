@@ -31,7 +31,7 @@ pub(crate) struct ServerComponentParseTask<'a> {
     // BACKREF (LIFETIMES.tsv) — written through in `on_complete`.
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
-    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    pub ctx: Option<bun_ptr::ParentRef<BundleV2<'a>, bun_ptr::Mut>>,
     pub source: Source<'a>,
 }
 
@@ -105,7 +105,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let result = bun_core::heap::into_raw(result);
 
     // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
+    // of `linker.r#loop` is centralised in `LinkerContext::any_loop`.
     //
     // The loop is effectively non-optional — `BundleV2::init`
     // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
@@ -115,7 +115,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     match worker
         .ctx
         .linker
-        .any_loop_mut()
+        .any_loop()
         .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
     {
         bun_event_loop::AnyEventLoop::Js { .. } => {

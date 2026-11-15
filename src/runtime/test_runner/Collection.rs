@@ -1,9 +1,8 @@
 //! for the collection phase of test execution where we discover all the test() calls
 
 use core::ptr::NonNull;
-use crate::test_runner::expect::make_formatter;
 
-use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
@@ -30,7 +29,7 @@ pub(crate) struct Collection {
 }
 
 pub(crate) struct QueuedDescribe {
-    callback: DeprecatedStrong, // jsc.Strong.Deprecated
+    callback: ProtectedJSValue,
     /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
     /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
     /// queue entries are live; a `&` here would be invalidated by that `&mut` (Stacked Borrows).
@@ -42,7 +41,6 @@ pub(crate) struct QueuedDescribe {
     /// `Collection.active_scope` and mutated through).
     new_scope: NonNull<DescribeScope>,
 }
-// `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
     /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
@@ -132,7 +130,7 @@ impl Collection {
             // `self.active_scope` in `step()` and mutated through).
             self.current_scope_callback_queue.push(QueuedDescribe {
                 active_scope: self.active_scope,
-                callback: DeprecatedStrong::init(cb),
+                callback: cb.protected(),
                 new_scope: NonNull::from(new_scope),
             });
         }
@@ -141,13 +139,11 @@ impl Collection {
 
     pub(crate) fn run_one_completed(
         &mut self,
-        global_this: &JSGlobalObject,
+        _: &JSGlobalObject,
         _: Option<JSValue>,
         data: &RefDataValue,
     ) -> JsResult<()> {
         let _g = group::begin();
-
-        let _formatter = make_formatter(global_this);
 
         let prev_scope: NonNull<DescribeScope> = match data {
             RefDataValue::Collection { active_scope } => *active_scope,
@@ -182,8 +178,6 @@ impl Collection {
             this.run_one_completed(global_this, None, data)?;
         }
 
-        let _formatter = make_formatter(global_this);
-
         // append queued callbacks, in reverse order because items will be pop()ed from the end
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
         for item in this.current_scope_callback_queue.drain(..).rev() {
@@ -191,7 +185,7 @@ impl Collection {
             // every queued item; short-lived read, no aliasing `&mut` is live here.
             if unsafe { item.new_scope.as_ref() }.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
-                drop(item); // Strong released here
+                drop(item);
             } else {
                 this.describe_callback_queue.push(item);
             }
@@ -228,7 +222,8 @@ impl Collection {
             if let Some(cfg_data) = BunTest::run_test_callback(
                 buntest_strong,
                 global_this,
-                callback.get(),
+                callback.value(),
+                &[],
                 false,
                 RefDataValue::Collection { active_scope: previous_scope },
                 &Timespec::EPOCH,
@@ -245,10 +240,16 @@ impl Collection {
 
     pub(crate) fn handle_uncaught_exception(
         &mut self,
-        _: &RefDataValue,
+        data: &RefDataValue,
     ) -> HandleUncaughtExceptionResult {
         let _g = group::begin();
 
+        // The error didn't come from a describe() callback, so don't fail whichever scope happens to be active.
+        if !matches!(data, RefDataValue::Collection { .. })
+            || core::ptr::eq(self.active_scope.as_ptr(), &raw const *self.root_scope)
+        {
+            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+        }
         self.active_scope_mut().failed = true;
 
         HandleUncaughtExceptionResult::ShowUnhandledErrorInDescribe // unhandled because it needs to exit with code 1

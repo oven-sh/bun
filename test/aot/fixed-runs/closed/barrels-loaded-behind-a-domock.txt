@@ -1,0 +1,35 @@
+Three barrels over a leaf, loaded behind a vi.doMock() in a file that the test imports.
+#### a.test.js
+import { test } from "bun:test";
+import { seen } from "./user.js";
+test("t", async () => console.log("| CASE body", await seen()));
+#### barrel.js
+export { x, y } from "./leaf.js"; globalThis.ranBarrel = (globalThis.ranBarrel ?? 0) + 1;
+#### barrel2.js
+export { x, y } from "./barrel.js";
+#### barrel3.js
+export * from "./barrel2.js";
+#### leaf.js
+export const x = "real x"; export const y = "real y";
+#### package.json
+{ "name": "namespace-read-past-mock", "type": "module" }
+#### reader.js
+import * as late from "./barrel2.js"; export const readLate = () => [late.x, late.y].join(" ");
+#### user.js
+import { vi } from "bun:test";
+import * as ns from "./barrel.js";
+const key = JSON.parse('"x"');
+const handed = object => object.y;
+export const seen = async () => {
+  const said = [ns.x];
+  vi.doMock("./barrel.js", () => ({ x: "over x", y: "mock y" }));
+  const m = await import("./barrel2.js");
+  said.push("written " + m.x, "computed " + m[key], "values " + Object.values(m).join("+"), "destructured " + (({ x }) => x)(m), "handed on " + handed(m));
+  const further = await import("./barrel3.js");
+  said.push("a barrel further up " + further.x);
+  const { readLate } = await import("./reader.js");
+  said.push("a reader loaded behind the mock " + readLate());
+  const leaf = await import("./leaf.js");
+  said.push("the file that declares it " + leaf.x);
+  return said.join(" | ");
+};

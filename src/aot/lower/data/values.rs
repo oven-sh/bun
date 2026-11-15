@@ -10,8 +10,8 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::ir::generated::{DataMember, DataNode};
-use crate::ir::{PositionFlags, PropertyKeyId, TypeTable};
-use crate::lower::{FileLowering, FunctionLowering, convert, layouts, positions};
+use crate::ir::{LayoutId, PositionFlags, PropertyKeyId, TypeTable};
+use crate::lower::{FileLowering, FunctionLowering, positions};
 
 const MAX_LINEAR_SEARCH_MEMBERS: usize = 8;
 
@@ -130,6 +130,7 @@ fn visit<'v>(
             DataValue::Number(value) => Constant::Number(value),
             DataValue::String(text) => Constant::String(text),
             DataValue::BigInt(digits) => Constant::BigInt(digits),
+            DataValue::Temporal { .. } => unreachable!("no value with a date in it is data"),
             DataValue::Array(items) => return wait_for_children(Composite::ArrayValue(items)),
             DataValue::Object(entries) => {
                 return wait_for_children(Composite::ObjectValue(entries));
@@ -147,7 +148,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let Some(field) = file.find_field(layout, key) else {
             return;
         };
-        let position = file.field_position(layout, field);
+        let position = file.position_of_member(layout, field, Some(file.hir[property].value));
         let value = file.hir[property].value;
         let FoldedValue::Constant(constant) = file.decisions().constant(file.hir, value) else {
             return;
@@ -156,12 +157,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return;
         }
         let constant = self.emit_constant(constant);
-        let subject = convert::Int32Subject::LiteralProperty;
-        self.describe_int32_flow(position, subject, Some(value));
         self.convert_initializer(constant, position, Some(value));
     }
 
-    /// No operation stores a member of a data literal, so a member that enters an `int32` gets a request of its own.
     pub(super) fn convert_int32_members(&mut self, root: ExprId) {
         let hir = self.file.hir;
         let mut pending = vec![root];
@@ -170,9 +168,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             match hir[literal].kind {
                 ExprKind::Array(items) => pending.extend(hir.ids(items)),
                 ExprKind::Object(properties) => {
-                    // The positions of the fields are made when they are first asked for, which may be here.
                     let layout = self.file.literal_layout(literal);
-                    layouts::own_fields(self.file, layout);
+                    self.file.make_positions_of_fields(layout);
                     let has_promise = positions::has_int32_promise(self.file);
                     for property in properties.iter() {
                         if has_promise {
@@ -227,14 +224,10 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    pub(super) fn create_deferred_node(&mut self) -> DataNode {
-        match self.inputs.deferred_data.get(self.file) {
-            Some(value) => create_node(self, Part::Value(value)),
-            None => {
-                debug_assert!(false, "module binding has the manifest of every page");
-                DataNode::Undefined
-            }
-        }
+    pub(super) fn create_deferred_node(&mut self) -> Option<DataNode> {
+        let manifests = self.inputs.page_manifests;
+        let index = manifests.binary_search_by_key(&self.file, |page| page.0);
+        Some(create_node(self, Part::Value(manifests[index.ok()?].1)))
     }
 
     fn to_property_key(&mut self, constant: Constant) -> PropertyKeyId {
@@ -278,6 +271,25 @@ fn finish_object_literal(
             *member_indexes.entry(key).or_insert(next_index)
         };
         match members.get_mut(index) {
+            Some(member) => member.value = value,
+            None => members.push(DataMember { key, value }),
+        }
+    }
+    DataNode::Object { layout, members }
+}
+
+pub(super) fn create_object_node(
+    file: &mut FileLowering<'_, '_, '_, '_>,
+    layout: LayoutId,
+    entries: &[(Constant, Constant)],
+) -> DataNode {
+    let mut members: Vec<DataMember> = Vec::with_capacity(entries.len());
+    let mut places: FxHashMap<PropertyKeyId, usize> = FxHashMap::default();
+    for &(key, value) in entries {
+        let key = file.to_property_key(key);
+        let value = file.create_leaf(value);
+        let place = *places.entry(key).or_insert(members.len());
+        match members.get_mut(place) {
             Some(member) => member.value = value,
             None => members.push(DataMember { key, value }),
         }

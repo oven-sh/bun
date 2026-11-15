@@ -599,6 +599,8 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
       // uwtable attrs; this only stops our crates from spreading them.)
       rustflags.push("-Cforce-unwind-tables=no");
     }
+  } else if (cfg.trimmable) {
+    rustflags.push("-Zmerge-functions=disabled");
   }
 
   // ─── Environment ───

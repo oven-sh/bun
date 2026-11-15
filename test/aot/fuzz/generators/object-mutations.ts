@@ -1,21 +1,11 @@
-// Programs about one question: an object is changed, and code that uses the object before and after the change sees what the language says it sees.
-// The table is a cross product: what kind of object x what its prototypes hold under the key x which object is changed (itself, its prototype, the prototype above, its class) x the change x the key
-// x how the key is spelled x when and where the change runs x how the object is looked at.
-//
-// Half of the looks read nothing: a store, a deletion or a definition whose only trace is an effect (a setter that runs, a TypeError, a proxy trap, a conversion).
-// In such a program no code reads the property at all. Every effect goes through `note`, which counts it and appends it to `trail`.
-// A look reads the count before and after, in the function that looks.
-//
-// One combination is one program: nothing else in it names the object or the key.
+// An object is mutated, and code that uses it before and after must see what the language specifies. A cross product:
+// the kind of object x what its prototypes hold under the key x which object is mutated x the mutation x when and where
+// it runs x how the object is inspected. `--extension=.cjs` writes sloppy code, where a failed store is ignored.
+// `--planes` writes the programs of `testPlanes` instead. `--group=<n>` puts n combinations into one file, each in its
+// own function.
 //
 //   bun object-mutations.ts <folder> [--print=print|console.log] [--filter=<regex over names>] [--without-text=<regex over programs>] [--sample=<how many>] [--seed=<number>] [--names=<file with a name on each line>] [--library=no] [--extension=.js] [--group=<n>] [--planes]
 //       [--holders=a,b] [--integrities=..] [--aboves=..] [--targets=..] [--operations=..] [--keys=..] [--presences=..] [--spellings=..] [--places=..] [--looks=..]
-//
-// writes <folder>/<name>.js. The whole product is far too large to write: narrow the axes, or pass --sample. `pickCombination` draws one of them for another driver.
-// A program is strict code. With --extension=.cjs it has no directive and is sloppy code, where a store that fails is ignored.
-// With --planes it writes the programs of `testPlanes` instead.
-// With --group=<n> a file holds n combinations, each in a function of its own, and every line it prints starts with the number of its combination: many more combinations for each build,
-// but a property that one combination reads is a property that the program reads.
 import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
@@ -25,18 +15,18 @@ interface Key {
   name: string;
   /** The key as a constant expression. */
   constant: string;
-  /** The key as it stands in a literal or in a class body. */
+  /** The key as written in a literal or a class body. */
   inLiteral: string;
-  /** The name behind a dot, where the key is an identifier. */
+  /** The name after a dot, if the key is an identifier. */
   member?: string;
-  /** An expression that puts the same key together while the program runs. */
+  /** An expression that computes the same key at run time. */
   computed: string;
   before?: string;
   /** Declarations that `computed` needs. */
   beforeComputed?: string;
-  /** What the object holds under the key from its creation on, where it has the key. */
+  /** The object's initial value under the key, if it has the key. */
   ownValue?: string;
-  /** Programs call what stands under it. */
+  /** Programs call the value under it. */
   isCalled?: boolean;
 }
 
@@ -105,31 +95,39 @@ interface Holder {
   name: string;
   /** What the program imports: the names and the module. */
   imports?: [names: string, module: string];
-  /** Declarations in front of `make`. `own` lists the properties that the object has from its creation on, in their order. `members` is what stands beside them or above them: the method `m`, and what the combination declares. */
+  /**
+   * Declarations before `make`. `own` lists the object's initial properties, in order. `members` is what is beside them
+   * or on the prototype: the method `m`, and what the combination declares.
+   */
   define?: (own: Property[], members: Members) => string;
-  /** The body of `make`, which answers another object each time. */
+  /** The body of `make`, which returns a new object each time. */
   make: (own: Property[], members: Members) => string;
-  /** `members` stands in a class or a literal above the object. */
+  /** `members` is in a class or a literal on the object's prototype chain. */
   declaresMembersAbove?: boolean;
-  /** The prototype of the object and the prototype above it, where they belong to the program. */
+  /** The object's prototype and that prototype's prototype, if they belong to the program. */
   proto?: string;
   grand?: string;
-  /** What `instanceof` is asked about. */
+  /** The right operand of `instanceof`. */
   class?: string;
   /** It has elements and a length. */
   isArrayLike?: boolean;
   /** It inherits the methods of arrays. */
   isArray?: boolean;
   isCallable?: boolean;
-  /** It is a function that the program wrote inside a literal or a class. `hosts` lists what it is read from, under the name `made`. */
+  /**
+   * It is a function written inside a literal or a class. `hosts` lists what it is read from, under the name `made`.
+   */
   hasHost?: boolean;
-  /** Its name comes from a computed key. Plain Bun leaves that name out of the name of a function bound to it. */
+  /** Its name comes from a computed key. Plain Bun omits that name from the name of a function bound to it. */
   isNamedByComputedKey?: boolean;
   /** Object.freeze and Object.seal throw for it. */
   refusesFreeze?: boolean;
   /** Its properties are static fields, and a static field named "prototype" cannot be defined. */
   hasStaticFields?: boolean;
-  /** The namespace of the program's own module: the program imports itself by the name of its file, and its properties are exports. */
+  /**
+   * The namespace of the program's own module: the program imports itself by the name of its file, and its properties
+   * are exports.
+   */
   isNamespace?: boolean;
   usesLibrary?: boolean;
 }
@@ -340,7 +338,7 @@ const holders: Holder[] = [
     make: () => `return self;`,
     isNamespace: true,
   },
-  // Functions written inside a literal or a class. Every store of `make` reads the function from its host again.
+  // Functions written inside a literal or a class. Every store in `make` reads the function from its host again.
   ...(
     [
       ["method-in-literal", `const host = { beside: 1, made(p, q) { return "called"; } };`],
@@ -368,7 +366,7 @@ const holders: Holder[] = [
   ).map(
     ([name, host, more]): Holder => ({ name, define: () => `const hosts = [];\n`, make: own => `${host}\n${asStores("host.made", own)}\nhosts.push(host);\nreturn host.made;`, isCallable: true, hasHost: true, ...more }),
   ),
-  // Objects that built-ins and the language make.
+  // Objects created by built-ins and by the language.
   ...(
     [
       ["iterator-result", `(function* () { yield 1; })().next()`, { usesLibrary: true }],
@@ -414,12 +412,12 @@ type Integrity = "open" | "frozen" | "sealed" | "not-extensible";
 const integrities: Integrity[] = ["open", "frozen", "sealed", "not-extensible"];
 const integrityFunctions = { frozen: "Object.freeze", sealed: "Object.seal", "not-extensible": "Object.preventExtensions" };
 
-/** What lies above the object under the key before anything runs. */
+/** What the prototype chain has under the key before anything runs. */
 interface Above {
   name: string;
   /** Members of the class or the literal that has `m`. */
   declared?: (key: string) => string[];
-  /** A descriptor that is defined on the prototype, or on the prototype above it, once the declarations have run. */
+  /** A descriptor that is defined on the prototype, or on its prototype, once the declarations have run. */
   planted?: string;
   isFar?: boolean;
 }
@@ -446,11 +444,11 @@ type Target = "itself" | "prototype" | "prototype-above" | "class-object";
 const targets: Target[] = ["itself", "prototype", "prototype-above", "class-object"];
 
 interface Site {
-  /** The object that is changed or looked at. */
+  /** The object that is mutated or inspected. */
   object: string;
   /** The key as an expression. */
   key: string;
-  /** The key as it stands in a literal. */
+  /** The key as written in a literal. */
   inLiteral: string;
   /** The property of an object under the key. */
   at: (object: string) => string;
@@ -464,7 +462,7 @@ interface Operation {
   text: (site: Site) => string;
   before?: (site: Site) => string;
   needsArrayLike?: boolean;
-  /** It would turn a function under the key into its source text. */
+  /** It would convert a function under the key into its source text. */
   refusesCalledKey?: boolean;
   usesLibrary?: boolean;
 }
@@ -593,7 +591,7 @@ const operations: Operation[] = [
   { name: "assign-text", text: s => `Object.assign(${s.object}, "xy");\n` },
   { name: "assign-array", text: s => `Object.assign(${s.object}, ["x", "y"]);\n` },
   { name: "assign-proxy", text: s => `Object.assign(${s.object}, new Proxy({ ${s.inLiteral}: "behind proxy" }, {}));\n` },
-  // The loops with which programs copy members from one object to another.
+  // The loops programs use to copy members from one object to another.
   { name: "copy-by-keys-loop", text: s => `const source = { early: 1, ${s.inLiteral}: "copied", late: 2 };\nconst keys = Object.keys(source);\nfor (let i = 0; i < keys.length; i++) ${s.object}[keys[i]] = source[keys[i]];\n` },
   { name: "copy-by-for-in", text: s => `const source = { early: 1, ${s.inLiteral}: "copied", late: 2 };\nfor (const key in source) ${s.object}[key] = source[key];\n` },
   { name: "copy-by-entries", text: s => `const changed = ${s.object};\nObject.entries({ early: 1, ${s.inLiteral}: "copied", late: 2 }).forEach(([key, value]) => { changed[key] = value; });\n`, usesLibrary: true },
@@ -639,7 +637,7 @@ const operations: Operation[] = [
 
 interface Look {
   name: string;
-  /** Statements that leave what they saw in `seen`. */
+  /** Statements that store what they observed in `seen`. */
   text: (site: Site) => string;
   before?: (site: Site) => string;
   helpers?: string[];
@@ -655,14 +653,14 @@ interface Look {
 }
 
 const looks: Look[] = [
-  // Looks that read.
+  // Inspections that read.
   { name: "read", text: s => `seen = str(${s.at(s.object)});\n` },
   { name: "read-twice", text: s => `seen = str(${s.at(s.object)}) + " " + str(${s.at(s.object)});\n` },
   { name: "read-if-there", text: s => `seen = str(${s.object}?.${s.at("").replace(/^\./, "")});\n` },
   { name: "type-of", text: s => `seen = typeof ${s.at(s.object)};\n` },
   { name: "call", text: s => `seen = str(${s.at(s.object)}(note));\n`, needsCalledKey: true },
   { name: "call-method", text: s => `seen = str(${s.object}.m());\n` },
-  // A function is read from the literal or the class that it was written in once more.
+  // A function is read again from the literal or class it was written in.
   { name: "same-when-read-again", text: s => `let same = 0;\nfor (let i = 0; i < hosts.length; i++) if (hosts[i].made === ${s.object} && hosts[i].made === hosts[i].made) same++;\nseen = str(same);\n`, needsHost: true },
   { name: "read-through-its-host", text: s => `let found = "";\nfor (let i = 0; i < hosts.length; i++) found += str(${s.at("hosts[i].made")}) + " ";\nseen = found;\n`, needsHost: true },
   { name: "store-through-its-host", text: s => `for (let i = 0; i < hosts.length; i++) ${s.at("hosts[i].made")} = i;\nseen = str(${s.at(s.object)});\n`, needsHost: true },
@@ -734,7 +732,7 @@ const looks: Look[] = [
   { name: "visited-by-for-each", text: s => `const found = [];\n${s.arrayCall("forEach", `(element, i) => { if (i < 12) found.push(i + "=" + str(element)); }`)};\nseen = listed(found);\n`, helpers: ["listed"], needsArrayLike: true, usesLibrary: true },
   { name: "mapped", text: s => `seen = shortened(str(JSON.stringify(${s.arrayCall("map", `element => str(element)`)})));\n`, helpers: ["listed"], needsArrayLike: true, usesLibrary: true },
 
-  // Looks that read nothing: only an effect tells.
+  // Inspections that read nothing: only a side effect shows.
   { name: "store", text: s => `${s.at(s.object)} = 5;\nseen = "stored";\n` },
   { name: "store-text", text: s => `${s.at(s.object)} = "five";\nseen = "stored";\n` },
   { name: "store-undefined", text: s => `${s.at(s.object)} = undefined;\nseen = "stored";\n` },
@@ -783,20 +781,20 @@ const looks: Look[] = [
 
 interface Parts {
   make: string;
-  /** What is changed, given the variable that holds the object. */
+  /** The mutated object, given the variable that holds the object. */
   subject: (object: string) => string;
-  /** The change of the given object. An exception is noted. */
+  /** The mutation of the given object. An exception is logged. */
   change: (subject: string) => string;
-  /** Leaves what a look at the object saw, with the effects it had, in `line`. */
+  /** Stores what an inspection of the object observed, with its side effects, in `line`. */
   observe: (object: string) => string;
-  /** Looks and prints. `label` is an expression. */
+  /** Inspects and prints. `label` is an expression. */
   look: (object: string, label: string) => string;
 }
 
 interface Place {
   name: string;
   text: (parts: Parts) => string;
-  /** The change runs before there is an object. */
+  /** The mutation runs before the object exists. */
   needsOtherTarget?: boolean;
   needsArrayLike?: boolean;
   usesLibrary?: boolean;
@@ -808,7 +806,7 @@ const inFunction = (body: string, keyword = "function") =>
   `${keyword} run() {\n${locals}${body}}\n${keyword === "function" ? `try {\nrun();\n} catch (e) {\n${reportFailure}}\n` : `run().then(undefined, e => {\n${reportFailure}});\n`}`;
 const around = (p: Parts, between: string, setup = "") => `const o = ${p.make};\n${setup}${p.look("o", `"before"`)}${between}${p.look("o", `"after"`)}`;
 
-/** Something that runs statements once, which name `o`. */
+/** Something that runs statements once; they refer to `o`. */
 interface Trigger {
   name: string;
   text: (body: string) => string;
@@ -865,7 +863,9 @@ const triggers: Trigger[] = [
   { name: "in-for-await", text: body => `for await (const step of (async function* () {\n${body}yield 1;\n})());\n`, isAsync: true },
 ];
 
-/** A way from the object that is changed to another expression for the same object. `setup` runs before the first look. */
+/**
+ * A path from the mutated object to another expression for the same object. `setup` runs before the first inspection.
+ */
 interface Route {
   name: string;
   setup?: (subject: string) => string;
@@ -933,7 +933,7 @@ const routes: Route[] = [
   { name: "through-promise-all", setup: x => `const awaited = await Promise.all([[${x}]]);\n`, reach: () => `awaited[0][0]`, isAsync: true, usesLibrary: true },
 ];
 
-/** The routes and the triggers that need no await. */
+/** The routes and triggers that need no await. */
 export const routeNames = routes.filter(route => !route.isAsync).map(route => route.name);
 export const triggerNames = triggers.filter(trigger => !trigger.isAsync).map(trigger => trigger.name);
 
@@ -1087,9 +1087,9 @@ export interface Combination {
   target: Target;
   operation: Operation;
   key: Key;
-  /** The object has the key from its creation on. */
+  /** The object has the key initially. */
   isOwn: boolean;
-  /** How the change spells the key, and how the look does. */
+  /** How the mutation spells the key, and how the inspection does. */
   changeSpelling: Spelling;
   lookSpelling: Spelling;
   place: Place;
@@ -1115,7 +1115,7 @@ function isPossible({ holder, integrity, above, target, operation, key, isOwn, p
   if (look.needsHost && !holder.hasHost) return false;
   if (look.needsCallable && !holder.isCallable) return false;
   if (look.readsNameOfBoundFunction && holder.isNamedByComputedKey) return false;
-  // Function.prototype.toString answers the source text, which a transpiler formats.
+  // Function.prototype.toString returns the source text, which a transpiler reformats.
   if (look.needsCalledKey && holder.isCallable && key.name === "toString") return false;
   return true;
 }
@@ -1124,7 +1124,7 @@ const usesLibrary = ({ holder, operation, place, look }: Combination) => !!(hold
 
 const guarded = (body: string, handler: string) => `try {\n${body}} catch (e) {\n${handler}}\n`;
 
-/** The import declarations of a program, which stand at the top of its file. Sloppy code is CommonJS and calls `require`. */
+/** A program's import declarations, at the top of its file. Sloppy code is CommonJS and calls `require`. */
 export function importsOf({ holder }: Combination, isStrict = true): string {
   if (!holder.imports) return "";
   const [names, module] = holder.imports;
@@ -1209,7 +1209,7 @@ const chosen = <T extends { name: string }>(items: T[], names: string[] | undefi
   return items.filter(item => names.includes(item.name));
 };
 
-/** The axes cut down to the given names. An axis that is left out stays whole. */
+/** The axes restricted to the given names. An omitted axis stays complete. */
 export function axesOf(names: Partial<Record<keyof Axes, string[]>>): Axes {
   return {
     holders: chosen(holders, names.holders),
@@ -1225,7 +1225,7 @@ export function axesOf(names: Partial<Record<keyof Axes, string[]>>): Axes {
   };
 }
 
-/** The combination that `nameOf` gives the name. */
+/** The combination with the given `nameOf` name. */
 export function combinationOf(name: string): Combination {
   const [holder, above, target, operation, key, spelling, place, look] = name.split(".");
   const [holderName, integrity = "open"] = holder.split("+");
@@ -1254,13 +1254,17 @@ export function* combinations(axes: Axes = allAxes): Generator<Combination> {
                     }
 }
 
-/** One combination, drawn with `pick`. `hasLibrary`: built-ins written in JavaScript and the modules of the host are there. `hasFileName`: the program is stored under the name that `textOf` is told. */
+/**
+ * One random combination, picked with `pick`. `hasLibrary`: built-ins written in JavaScript and host modules are
+ * available. `hasFileName`: the program is stored under the name passed to `textOf`.
+ */
 export function pickCombination(pick: <T>(items: readonly T[]) => T, { hasLibrary, hasFileName = false }: { hasLibrary: boolean; hasFileName?: boolean }, axes: Axes = allAxes): Combination {
   for (;;) {
     const [changeSpelling, lookSpelling] = pick(axes.spellings);
     const combination = {
       holder: pick(axes.holders),
-      // Two of three objects are open, half have nothing above them under the key, and half of the changes are made to the object itself.
+      // Two of three objects are extensible, half have nothing on their prototype chain under the key, and half of the
+      // mutations apply to the object itself.
       integrity: axes.integrities.includes("open") && pick([0, 1, 2]) ? "open" : pick(axes.integrities),
       above: axes.aboves.includes(aboves[0]) && pick([0, 1]) ? aboves[0] : pick(axes.aboves),
       target: axes.targets.includes("itself") && pick([0, 1]) ? "itself" : pick(axes.targets),
@@ -1280,7 +1284,7 @@ export function pickCombination(pick: <T>(items: readonly T[]) => T, { hasLibrar
   }
 }
 
-/** Programs with many combinations each, every combination in a function of its own. */
+/** Programs with many combinations each, every combination in its own function. */
 export function programsBy(group: (combination: Combination) => string, axes: Axes): { name: string; text: string }[] {
   const groups = Map.groupBy(
     combinations(axes).filter(combination => !combination.holder.isNamespace),
@@ -1294,7 +1298,7 @@ export function programsBy(group: (combination: Combination) => string, axes: Ax
 
 export interface Plane {
   title: string;
-  /** The programs that run in every run of the test. */
+  /** The programs that every test run includes. */
   alwaysRun: string[];
   programs: { name: string; text: string }[];
 }

@@ -60,16 +60,19 @@ impl<T> Rect<T> {
         }
     }
 
-    pub(crate) fn parse(input: &mut css::Parser) -> Result<Self>
+    pub(crate) fn parse<'bump>(input: &mut css::Parser<'_, 'bump>) -> Result<'bump, Self>
     where
-        T: Parse + Clone,
+        T: Parse<'bump> + Clone,
     {
         Self::parse_with(input, Self::val_parse)
     }
 
-    pub(crate) fn parse_with<F>(input: &mut css::Parser, parse_fn: F) -> Result<Self>
+    pub(crate) fn parse_with<'bump, F>(
+        input: &mut css::Parser<'_, 'bump>,
+        parse_fn: F,
+    ) -> Result<'bump, Self>
     where
-        F: Fn(&mut css::Parser) -> Result<T>,
+        F: Fn(&mut css::Parser<'_, 'bump>) -> Result<'bump, T>,
         T: Clone,
     {
         let first = parse_fn(input)?;
@@ -142,9 +145,9 @@ impl<T> Rect<T> {
         self.left.to_css(dest)
     }
 
-    fn val_parse(i: &mut css::Parser) -> Result<T>
+    fn val_parse<'bump>(i: &mut css::Parser<'_, 'bump>) -> Result<'bump, T>
     where
-        T: Parse,
+        T: Parse<'bump>,
     {
         T::parse(i)
     }

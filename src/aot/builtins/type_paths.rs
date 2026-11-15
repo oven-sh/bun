@@ -1,9 +1,11 @@
 use super::table::{self, BuiltinClass, BuiltinId, BuiltinKind, ClassData, Platforms, TypeName};
 use bun_sema::check::aot::{
-    BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinTypeSymbols, BuiltinValueIndex,
-    BuiltinValuePath, Denotation,
+    BuiltinClassIndex, BuiltinTypeClass, BuiltinTypePath, BuiltinValueIndex, BuiltinValuePath,
+    Denotation,
 };
+use bun_sort_by_number::SortByNumber;
 use smallvec::SmallVec;
+use std::sync::OnceLock;
 
 #[cfg(test)]
 mod tests;
@@ -58,21 +60,6 @@ pub fn type_name_of(class: BuiltinTypeClass) -> Option<&'static TypeName> {
     data.type_names.get(class.type_name as usize)
 }
 
-fn declared_denotation_of(class: BuiltinTypeClass) -> Option<Denotation> {
-    let data = table::class_data(builtin_class_of(class.class)?);
-    let name = data.type_names.get(class.type_name as usize)?;
-    Some(declared_denotation(data, name))
-}
-
-pub fn count_types_degraded_to_views(types: &BuiltinTypeSymbols) -> u64 {
-    let classes = types.classes().map(|(_, class)| class);
-    let degraded = classes.filter(|&class| {
-        class.denotation == Denotation::View
-            && declared_denotation_of(class) == Some(Denotation::Exact)
-    });
-    degraded.count() as u64
-}
-
 struct ValueSpan {
     id: BuiltinId,
     module: Option<&'static str>,
@@ -95,7 +82,6 @@ fn can_have_call_signatures(kind: BuiltinKind) -> bool {
     )
 }
 
-// The module, and the names from the last to the first.
 type PublishedPath = (Option<&'static str>, SmallVec<[&'static str; 4]>);
 
 fn find_published_path(id: BuiltinId) -> Option<PublishedPath> {
@@ -119,7 +105,19 @@ fn find_published_path(id: BuiltinId) -> Option<PublishedPath> {
     }
 }
 
+const SETS_OF_PLATFORMS: usize = 1 << Platforms::all().bits().count_ones();
+
+static PATHS: [OnceLock<BuiltinValuePaths>; SETS_OF_PLATFORMS] =
+    [const { OnceLock::new() }; SETS_OF_PLATFORMS];
+static LISTS: [OnceLock<Vec<BuiltinValuePath<'static>>>; SETS_OF_PLATFORMS] =
+    [const { OnceLock::new() }; SETS_OF_PLATFORMS];
+
 impl BuiltinValuePaths {
+    pub fn list_of(platform: Platforms) -> &'static [BuiltinValuePath<'static>] {
+        let at = usize::from(platform.bits());
+        LISTS[at].get_or_init(|| PATHS[at].get_or_init(|| Self::collect(platform)).paths())
+    }
+
     pub fn collect(platform: Platforms) -> BuiltinValuePaths {
         let mut paths = BuiltinValuePaths {
             names: Vec::new(),
@@ -144,11 +142,10 @@ impl BuiltinValuePaths {
             paths.names.extend(reversed_names.iter().rev());
         }
         paths.add_members_under_second_names(platform);
-        paths.values.sort_by_key(|value| value.id.to_wire());
+        paths.values.sort_by_u32(|value| value.id.to_wire());
         paths
     }
 
-    // An object with a second name, as `self` is `globalThis`, has its members under that name too, and a declaration file can give them signatures of their own there.
     fn add_members_under_second_names(&mut self, platform: Platforms) {
         for second_name in BuiltinId::ALL {
             let Some(object) = table::entry(second_name).same_object_as else {

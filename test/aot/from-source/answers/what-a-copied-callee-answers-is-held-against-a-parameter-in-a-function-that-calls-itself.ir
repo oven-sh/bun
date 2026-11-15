@@ -1,0 +1,22 @@
+# -- source: main.ts
+# class Knot { above: Knot | Bead | undefined; mark: number; constructor(above: Knot | Bead | undefined, mark: number) { this.above = above; this.mark = mark; } }
+# class Bead { mark: number; tint = "red"; above: Knot | Bead | undefined; constructor(above: Knot | Bead | undefined, mark: number) { this.mark = mark; this.above = above; } }
+# type Link = Knot | Bead;
+# function nextOf(t: Link): Link | undefined { return t.mark & 1 ? t.above : undefined; }
+# function settles(t: Link): number { if (t.mark & 256) return -1; const c = nextOf(t); if (c && c !== t) return 1 + settles(c); return 0; }
+# (globalThis as any).kept = settles;
+# const root = new Knot(undefined, 1), mid = new Bead(root, 1), leaf = new Knot(mid, 3);
+# const plain: any = { above: mid, mark: 1 }, bare: any = { mark: 1 }, got: any = { get above() { return root; }, mark: 1 }, far: any = Object.create({ above: leaf }, { mark: { value: 1 } }), own: any = new Knot(undefined, 1); own.above = own;
+# const stop: any = new Knot(leaf, 257), text: any = new Knot("up" as any, 1), zero: any = new Knot(0 as any, 1), nan: any = new Knot(NaN as any, 1), nil: any = new Bead(null as any, 1), even: any = new Bead(leaf, 2);
+# const starts: any[] = [leaf, mid, root, plain, bare, got, far, stop, text, zero, nan, nil, even, 5, "s", true, Symbol.for("made up")];
+# const tops: any[] = [root, mid, leaf, plain, null, undefined, NaN, 0, "up", "s", 5, true];
+# const out: string[] = [];
+# for (const s of starts.concat([own, null, undefined])) { try { out.push(String((globalThis as any).kept(s))); } catch (error) { out.push((error as Error).constructor.name); } }
+# console.log(out.join(" "));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# RUN: run-in-shell mechanisms=all testing=FailSpeculations
+# RUN: run-in-shell mechanisms=all testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# RUN: run-in-shell mechanisms=all testing=IgnoreExpectedTypes
+# CHECK: 2 1 0 2 0 1 3 -1 1 0 0 0 0 0 0 0 0 0 TypeError TypeError
+# CHECK-NEXT: exited with 0

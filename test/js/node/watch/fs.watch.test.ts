@@ -169,6 +169,24 @@ describe("fs.watch", () => {
     });
   });
 
+  test("a recursive watcher sees subfolders of a folder that is already watched", async () => {
+    using dir = tempDir("watch-flat-then-recursive", { "nested/.keep": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const flat = fs.watch(String(dir), () => {});
+    const recursive = fs.watch(String(dir), { recursive: true }, (_, filename) => {
+      if (filename === path.join("nested", "file.txt")) resolve();
+    });
+    recursive.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "nested", "file.txt"), "hello"));
+    try {
+      await promise;
+    } finally {
+      clearInterval(interval);
+      flat.close();
+      recursive.close();
+    }
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
@@ -1291,6 +1309,32 @@ describe("fs.promises.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
+  test.each(["URL", "URL of another implementation"])("should work with a %s", async kind => {
+    const filepath = path.join(testDir, "url.txt");
+    let url = pathToFileURL(filepath);
+    if (kind !== "URL") {
+      const { href, protocol, hostname, pathname } = url;
+      url = { href, protocol, hostname, pathname } as URL;
+    }
+    const interval = repeat(() => {
+      fs.writeFileSync(filepath, "hello");
+    });
+    try {
+      for await (const event of fs.promises.watch(url)) {
+        expect(event.filename).toBe("url.txt");
+        break;
+      }
+      const watcher = fs.watch(url);
+      try {
+        expect(await EventEmitter.once(watcher, "change")).toEqual(["change", "url.txt"]);
+      } finally {
+        watcher.close();
+      }
+    } finally {
+      clearInterval(interval);
+    }
+  });
+
   test("yields events with a null prototype", async () => {
     const root = path.join(testDir, "null-proto-dir");
     fs.mkdirSync(root, { recursive: true });
@@ -1638,8 +1682,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 // PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
 // calling fs.watch() reused that manager: it mutated the watcher map and drove
 // the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager is now
-// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+// debug_assert and aborted; release builds raced). The watchers are now
+// kept per VM, so a Worker's watcher never aliases the main thread's.
 //
 // Must run in a subprocess: on an unpatched debug build the Worker's
 // fs.watch() call aborts the whole runtime.

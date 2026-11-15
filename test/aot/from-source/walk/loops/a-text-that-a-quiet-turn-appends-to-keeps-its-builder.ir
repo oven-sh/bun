@@ -1,0 +1,24 @@
+# f2 = spell
+# -- source: a-text-that-a-quiet-turn-appends-to-keeps-its-builder.ts
+# declare function print(...values: unknown[]): void;
+# let notes = 0;
+# function note(_: string): void { notes++; }
+# (globalThis as any).noters = [note];
+# function spell(words: string): string {
+#   let out = "";
+#   for (let i = 0; i < words.length; i++) {
+#     const unit = words.charCodeAt(i);
+#     if (unit === 92) { out += "/"; (globalThis as any).noters[0](out); continue; }
+#     out += String.fromCharCode(unit + 1);
+#   }
+#   return out;
+# }
+# print(spell("hal\\hal"), notes);
+# -- end of source
+# One turn of the loop calls, the others run no other code, and THEY append: the text grows in a string builder as before.
+# RUN: walk f2 mechanisms=all
+# CHECK: = StackStringBuilderBegin
+# CHECK: isLoopHead=true
+# CHECK: = StackStringBuilderAppend
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: ibm/ibm 1

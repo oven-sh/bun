@@ -344,6 +344,117 @@ int main(int argc, char**) {
 }
 `;
 
+/** What the guards of the engine's header come to, written out in C: a machine without the header runs these. */
+const plainGuards: string = String.raw`#include "guard.h"
+int feature_code(int);
+extern int toy_thrown, toy_thrown_builtin;
+long long Bun__throwForRemovedFeature(void *realm, unsigned short feature);
+long long Bun__throwForRemovedBuiltin(void *realm, unsigned short feature, unsigned builtin);
+enum { Abort, Throw, ReturnUndefined, ReturnDefault };
+enum { NativeCode, Builtin, Definition };
+#define NEVER_INLINE __attribute__((noinline))
+#define IS_REMOVED(feature) (Bun__removableFeatureState.removal[feature] != 0)
+#if defined(__x86_64__)
+#define RECORD_AT(site, feature, function, stub) __asm__ volatile(RECORDS ".p2align 3\n.quad %p0\n.quad %p1\n.short %c2\n.byte %c3\n.byte 0\n.long 0\n.popsection\n" : : "Ws"(site), "Ws"(function), "i"(feature), "i"(stub))
+#else
+#define RECORD_AT(site, feature, function, stub) __asm__ volatile(RECORDS ".p2align 3\n.quad %0\n.quad %1\n.short %c2\n.byte %c3\n.byte 0\n.long 0\n.popsection\n" : : "S"(site), "S"(function), "i"(feature), "i"(stub))
+#endif
+typedef long long (*HostFunction)(void *, void *);
+typedef struct { long long start; unsigned size; unsigned short feature, reserved; } RemovedRange;
+static int removed_feature_at(HostFunction function) {
+    const RemovableFeatureState *state = &Bun__removableFeatureState;
+    if (!state->isTrimmed) return -1;
+    const RemovedRange *ranges = (const RemovedRange *)((const char *)state + state->removedRangesOffset);
+    long long offset = (const char *)function - (const char *)state;
+    for (unsigned i = 0; i < state->removedRangeCount; i++)
+        if (offset >= ranges[i].start && offset - ranges[i].start < ranges[i].size) return ranges[i].feature;
+    return -1;
+}
+static unsigned short feature_of_replaced_function;
+static long long throws_instead(void *realm, void *frame) { return Bun__throwForRemovedFeature(realm, feature_of_replaced_function); }
+static HostFunction function_unless_removed(HostFunction function) {
+    int feature = removed_feature_at(function);
+    if (feature < 0) return function;
+    feature_of_replaced_function = feature;
+    return throws_instead;
+}
+#ifdef __STDC_HOSTED__
+#if __STDC_HOSTED__
+int printf(const char *, ...);
+#define SAY printf
+#endif
+#endif
+#ifndef SAY
+static volatile long long said;
+#define SAY(format, ...) do { long long all[] = { __VA_ARGS__ }; for (unsigned i = 0; i < sizeof all / sizeof *all; i++) said += all[i]; } while (0)
+#endif
+`;
+
+export const plainSpellingsSource: string = String.raw`${plainGuards}
+static NEVER_INLINE int aborts(int x) { return feature_code(x) + 1; }
+static NEVER_INLINE int defaults(int x) { return feature_code(x) | 1; }
+static NEVER_INLINE long long host(void *realm, void *frame) { return feature_code(2) | 1; }
+static NEVER_INLINE long long builtin(void *realm, void *frame) { return feature_code(3) | 1; }
+static NEVER_INLINE long long called(void *realm, void *frame) { return feature_code(6) | 1; }
+static NEVER_INLINE long long listed(void *realm, void *frame) { return feature_code(7) | 1; }
+static NEVER_INLINE long long defined(void *realm, void *frame) { RECORD_OF(Extra, defined, Throw, Definition, 0); return feature_code(5) | 1; }
+static NEVER_INLINE int operation(int x) { return feature_code(x) | 1; }
+static int replacement(int x) { return -1; }
+static NEVER_INLINE int inside_body(int x) { if (x < 0) return 7; return feature_code(x) | 1; }
+int body(int x) { if (IS_REMOVED(Extra)) return 0; RECORD_OF(Extra, inside_body, ReturnDefault, NativeCode, 0); return inside_body(x); }
+static HostFunction volatile table[] = { listed };
+static int take_thrown(void) { int thrown = toy_thrown; toy_thrown = 0; return thrown; }
+static int take_thrown_builtin(void) { int thrown = toy_thrown_builtin; toy_thrown_builtin = 0; return thrown; }
+int main(int argc, char **argv) {
+    // A guard that aborts tests nothing.
+    if (argc > 1) { RECORD_OF(Extra, aborts, Abort, NativeCode, 0); return aborts(argc) & 63; }
+    void *realm = 0, *frame = 0;
+    long long a = 0;
+    if (!IS_REMOVED(Extra)) { RECORD_OF(Extra, defaults, ReturnDefault, NativeCode, 0); a = defaults(1); }
+    RECORD_OF(Extra, host, Throw, NativeCode, 0);
+    long long b = function_unless_removed(host)(realm, frame); int thrownByHost = take_thrown(), builtinOfHost = take_thrown_builtin();
+    RECORD_OF(Extra, builtin, Throw, Builtin, ${spelledBuiltin});
+    long long c = function_unless_removed(builtin)(realm, frame); int thrownByBuiltin = take_thrown(), builtinOfBuiltin = take_thrown_builtin();
+    long long d;
+    if (IS_REMOVED(Extra)) d = Bun__throwForRemovedBuiltin(realm, Extra, ${spelledBuiltin});
+    else { RECORD_OF(Extra, called, Throw, Builtin, ${spelledBuiltin}); d = called(realm, frame); }
+    int thrownByCalled = take_thrown(), builtinOfCalled = take_thrown_builtin();
+    int (*address)(int) = replacement;
+    if (!IS_REMOVED(Extra)) { RECORD_OF(Extra, operation, Abort, NativeCode, 0); address = operation; }
+    long long e = address(4), f = body(5), g = body(-1);
+    RECORD_AT(table, Extra, listed, Throw);
+    long long h = function_unless_removed(table[0])(realm, frame); int thrownByListed = take_thrown(), builtinOfListed = take_thrown_builtin();
+    long long i = function_unless_removed(defined)(realm, frame); int thrownByDefined = take_thrown(), builtinOfDefined = take_thrown_builtin();
+    SAY("%d %d,%d,%d %d,%d,%d %d,%d,%d %d %d,%d %d,%d,%d %d,%d,%d\n", a != 0, b != 0, thrownByHost, builtinOfHost, c != 0, thrownByBuiltin, builtinOfBuiltin, d != 0, thrownByCalled, builtinOfCalled, (int)e == -1, f != 0, (int)g, h != 0, thrownByListed, builtinOfListed, i != 0, thrownByDefined, builtinOfDefined);
+    return 0;
+}
+`;
+export const plainSpellingsEntryPoints: string[] = [
+  "aborts",
+  "defaults",
+  "host",
+  "builtin",
+  "called",
+  "listed",
+  "defined",
+  "operation",
+  "inside_body",
+];
+
+export const plainPointerToBuiltinEnteringOtherSources: Record<string, string> = {
+  "other.c": otherSource,
+  "main.c": String.raw`${plainGuards}
+int entry_of_other(int);
+static NEVER_INLINE long long enters_other(void *realm, void *frame) { RECORD_OF(Other, entry_of_other, Abort, NativeCode, 0); return (feature_code(2) + entry_of_other(3)) | 1; }
+int main(int argc, char **argv) {
+    RECORD_OF(Extra, enters_other, Throw, Builtin, ${spelledBuiltin});
+    long long result = function_unless_removed(enters_other)(0, 0);
+    SAY("%d %d\n", result != 0, toy_thrown);
+    return 0;
+}
+`,
+};
+
 export const builtinEnteringOtherSources: Record<string, string> = {
   "toy.h": toyHeader,
   "guarding.cpp": `#include "toy.h"

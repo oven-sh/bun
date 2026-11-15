@@ -131,7 +131,7 @@ impl AutoFlusher {
         // Do not wrap the side-effecting call in `debug_assert!`;
         // only the *check* is debug-gated.
         let removed = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
@@ -146,7 +146,7 @@ impl AutoFlusher {
         debug_assert!(!this.auto_flusher().registered.get());
         this.auto_flusher().registered.set(true);
         let found_existing = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
         debug_assert!(!found_existing);
@@ -353,8 +353,7 @@ impl SinkHandle {
         !self.is_none()
     }
 
-    /// SAFETY: every non-None variant's pointee is kept alive by the hook-in site for as long
-    /// as this handle is installed.
+    /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         match *self {
             SinkHandle::None => streams::Writable::Done,
@@ -365,9 +364,8 @@ impl SinkHandle {
                 // SAFETY: live backref; ByteStream clears sink before free.
                 unsafe { p.get_mut() }.write(data)
             }),
-            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
-                // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data)
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
+                streams::NetworkSink::write(p.as_ptr(), data)
             }),
             SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
@@ -419,7 +417,4 @@ pub(crate) enum DrainResult {
 pub(crate) enum Lifetime {
     Clone,
     Transfer,
-    Share,
-    /// When reading from a fifo like STDIN/STDERR
-    Temporary,
 }

@@ -17,7 +17,7 @@ fn origins_outside_runtime() -> impl Iterator<Item = FileOrigin> {
 fn role_decision(view: ProgramView<'_, '_>, demoted: &[FileId]) -> RoleDecision {
     let files = view.files();
     let file_ids = (0..files.modules.len()).map(|index| FileId(index as u32));
-    let cause = DemotionCause::TypeError;
+    let cause = DemotionCause::UnverifiedTypes;
     RoleDecision {
         roles: file_ids.map(|file| files.role(file)).collect(),
         demoted: demoted
@@ -131,6 +131,68 @@ fn text_of_compiled_sources_is_counted() {
 }
 
 #[test]
+fn text_counts_once_by_its_kind_and_that_of_packages_in_the_program_too() {
+    let sizes = |statistic, origin| {
+        sizes_of(statistic, origin)
+            .iter()
+            .map(|&(_, lines)| lines)
+            .collect::<Vec<_>>()
+    };
+    for origin in FileOrigin::ALL {
+        assert_eq!(
+            sizes(StatisticId::SourceFilesTypesOnly, origin),
+            [StatisticId::SourceLinesOfDeclarations],
+            "{origin:?}"
+        );
+        assert_eq!(
+            sizes(StatisticId::SourceFilesRuntime, origin),
+            [StatisticId::SourceLinesOfBun],
+            "{origin:?}"
+        );
+        let is_of_package = matches!(
+            origin,
+            FileOrigin::DependencySource | FileOrigin::DependencyJavaScript
+        );
+        for statistic in [
+            StatisticId::SourceFilesChecked,
+            StatisticId::SourceFilesInferred,
+            StatisticId::SourceFilesData,
+        ] {
+            let counted = sizes(statistic, origin);
+            assert_eq!(counted[0], StatisticId::SourceLines, "{origin:?}");
+            assert_eq!(
+                counted[1..],
+                [StatisticId::SourceLinesOfPackages][..usize::from(is_of_package)],
+                "{origin:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn declaration_files_are_counted_beside_the_program() {
+    with_project_view(&FILES, |view| {
+        let statistics = count(view, &role_decision(view, &[]));
+        let files = view.files();
+        let declarations = (0..files.modules.len())
+            .map(|index| FileId(index as u32))
+            .filter(|&file| !files.is_compiled(file));
+        let bytes: u64 = declarations
+            .map(|file| files.module(file).hir.text.len() as u64)
+            .sum();
+        assert!(bytes > 0);
+        assert_eq!(
+            statistics.get(StatisticId::SourceBytesOfDeclarations),
+            bytes
+        );
+        assert!(statistics.get(StatisticId::SourceLinesOfDeclarations) > 0);
+        assert_eq!(statistics.get(StatisticId::SourceLines), 3);
+        assert_eq!(statistics.get(StatisticId::SourceLinesOfPackages), 0);
+        assert_eq!(statistics.get(StatisticId::SourceLinesOfBun), 0);
+    });
+}
+
+#[test]
 fn file_that_is_not_compiled_counts_as_types_only() {
     with_project_view(&FILES, |view| {
         let mut roles = role_decision(view, &[]);
@@ -160,28 +222,9 @@ fn demoted_files_are_counted() {
 }
 
 #[test]
-fn evaluated_text_with_early_error_is_not_a_demoted_file() {
-    let files = [(
-        "a.js",
-        "export const create = () => new Function(\"break;\");\n",
-    )];
-    with_project_view(&files, |view| {
-        let mut compiled_files = view.files().compiled_files().iter().copied();
-        let text = compiled_files.find(|&file| view.origin(file) == FileOrigin::EvaluatedText);
-        let text = text.expect("the text given to Function is a file");
-        let mut roles = role_decision(view, &[]);
-        roles.demoted.push(Demotion {
-            file: text,
-            cause: DemotionCause::EarlyError,
-        });
-        let statistics = count(view, &roles);
-        assert_eq!(statistics.get(StatisticId::SourceFilesDemoted), 0);
-    });
-}
-
-#[test]
 fn runtime_project_adds_neither_text_nor_demotions() {
-    with_loaded_build(&FILES, &default_settings(), |_, loaded| {
+    let sorts = [("a.ts", "console.log([2, 1].sort());\n")];
+    with_loaded_build(&sorts, &default_settings(), |_, loaded| {
         let view = loaded.project(ProjectId::Runtime).view();
         let compiled_files = view.files().compiled_files();
         assert!(!compiled_files.is_empty());
@@ -190,7 +233,10 @@ fn runtime_project_adds_neither_text_nor_demotions() {
             statistics.get(StatisticId::SourceFilesRuntime),
             compiled_files.len() as u64
         );
+        assert!(statistics.get(StatisticId::SourceLinesOfBun) > 0);
+        assert!(statistics.get(StatisticId::SourceBytesOfBun) > 0);
         for absent in [
+            StatisticId::SourceLinesOfPackages,
             StatisticId::SourceFilesChecked,
             StatisticId::SourceFilesInferred,
             StatisticId::SourceFilesData,

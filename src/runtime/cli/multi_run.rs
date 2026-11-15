@@ -73,7 +73,7 @@ impl<'a> PipeReader<'a> {
         }
     }
 
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop {
+    fn event_loop(&self) -> &'static MiniEventLoop {
         // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
         // outlives all handles (lives on `run`'s stack frame for the whole event loop).
         unsafe { (*(*self.handle).state).event_loop }
@@ -104,8 +104,8 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
-    event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
+    loop_           = |this| bun_io::uws_to_native((*this).event_loop().loop_);
+    event_loop      = |this| (*(*(*this).handle).state).event_loop.as_event_loop_ctx();
 }
 
 struct ProcessSlot {
@@ -153,7 +153,7 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let spawned: SpawnProcessResult = {
+        let mut spawned: SpawnProcessResult = {
             // SAFETY: state.env points at the process-lifetime DotEnv loader; nothing else reaches it before the guard drops.
             let env = unsafe { &mut *state.env };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
@@ -178,18 +178,7 @@ impl<'a> ProcessHandle<'a> {
             }?
             .map_err(Error::from)?
         };
-        // `mut` needed on Windows where `WindowsSpawnResult::to_process` takes `&mut self`
-        // and the stdout/stderr pipes are `.take()`n below; on POSIX `to_process` consumes
-        // `self` by value.
-        #[cfg(windows)]
-        let mut spawned = spawned;
-        // POSIX-only: pipe FDs are read before `to_process` consumes `spawned`.
-        // On Windows the readers are wired via `Source::Pipe` taken from
-        // `spawned.stdout/stderr` below, and `WindowsStdioResult` is not `Copy`.
-        #[cfg(unix)]
-        let stdout_fd = spawned.stdout;
-        #[cfg(unix)]
-        let stderr_fd = spawned.stderr;
+        let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
         self.stdout_reader.handle = std::ptr::from_mut(self);
@@ -203,20 +192,12 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // `spawn_process_windows` has *already* reclaimed
-            // sole ownership of that heap pipe into
-            // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
-            // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
-            // second Box from `self.options.stdout` here would alias the same
-            // allocation and double-free when `spawned` drops. Instead, move
-            // the Box out of the spawn *result* — `WindowsStdioResult::take()`
-            // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
                 self.stdout_reader
                     .reader
                     .set_source(bun_io::Source::Pipe(pipe));
             }
-            if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
+            if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
                 self.stderr_reader
                     .reader
                     .set_source(bun_io::Source::Pipe(pipe));
@@ -225,14 +206,14 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(unix)]
         {
-            if let Some(stdout_fd) = stdout_fd {
+            if let Some(stdout_fd) = stdout_pipe.map(bun_sys::File::into_raw) {
                 let _ = bun_sys::set_nonblocking(stdout_fd);
                 self.stdout_reader
                     .reader
                     .start(stdout_fd, true)
                     .map_err(Error::from)?;
             }
-            if let Some(stderr_fd) = stderr_fd {
+            if let Some(stderr_fd) = stderr_pipe.map(bun_sys::File::into_raw) {
                 let _ = bun_sys::set_nonblocking(stderr_fd);
                 self.stderr_reader
                     .reader
@@ -259,23 +240,21 @@ impl<'a> ProcessHandle<'a> {
             end_time: None,
         });
         let self_ptr = std::ptr::from_mut::<Self>(self);
-        // The exit handler re-borrows `self.process`, so go through the
-        // `Process` allocation itself rather than a borrow of the slot.
-        // SAFETY: just spawned; the slot's handle keeps it live.
-        let process = unsafe { &mut *self.process.as_ref().unwrap().process.as_ptr() };
+        // Not a borrow of the slot, which the exit handler borrows again.
+        let process = self.process.as_ref().unwrap().process.this_ptr();
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
             bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::MultiRunHandle, self_ptr)
         });
 
-        match process.watch_or_reap() {
+        match spawn::Process::watch_or_reap(process) {
             Ok(_) => {}
             Err(err) => {
                 if !process.has_exited() {
                     // SAFETY: all-zero is a valid Rusage (POD C struct)
                     let rusage = bun_core::ffi::zeroed::<Rusage>();
-                    process.on_exit(Status::Err(err), &rusage);
+                    spawn::Process::on_exit(process, Status::Err(err), &rusage);
                 }
             }
         }
@@ -316,7 +295,7 @@ impl<'a> ProcessHandle<'a> {
 
 bun_spawn::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
-        on_process_exit(_process, status, _rusage) => {
+        on_process_exit(status, _rusage) => {
             let slot = (*this).process.as_mut().unwrap();
             slot.status = status;
             slot.end_time = Some(Instant::now());
@@ -343,10 +322,9 @@ const RESET: &[u8] = ansi::RESET.as_bytes();
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
     /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
@@ -899,7 +877,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let event_loop = bun_event_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),
-        None,
     );
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
@@ -1120,7 +1097,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let mut state = State {
         handles: Box::default(),
         event_loop,
-        event_loop_handle: EventLoopHandle::init_mini(event_loop),
         remaining_scripts: 0,
         max_label_len,
         shell_bin,
@@ -1145,18 +1121,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             next_dependents: Vec::new(),
             options: SpawnOptions {
                 stdin: spawn::Stdio::Ignore,
-                #[cfg(unix)]
                 stdout: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stdout: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
-                #[cfg(unix)]
                 stderr: spawn::Stdio::Buffer,
-                #[cfg(not(unix))]
-                stderr: spawn::Stdio::Buffer(bun_core::heap::into_raw(Box::new(
-                    bun_core::ffi::zeroed::<bun_sys::windows::libuv::Pipe>(),
-                ))),
                 cwd: config.cwd.clone(),
                 #[cfg(windows)]
                 windows: spawn::WindowsOptions {
@@ -1230,8 +1196,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
+        event_loop.tick_once((&raw const state).cast_mut().cast::<c_void>());
     }
 
     let status = state.finalize();

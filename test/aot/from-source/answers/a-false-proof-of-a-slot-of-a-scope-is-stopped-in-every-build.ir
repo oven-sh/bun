@@ -1,0 +1,44 @@
+# A value that is stored into a slot of a scope either has been shown to have the slot's type or is checked. Link types the slot of `n` by the stores that it sees,
+# the plan gives the slot a raw representation based on that type, and every function that closes over the scope reads the slot without a check.
+# The failing control. Fault injection, testing=AssumeUnknownCallsReturnUndefined: Link assumes that the shell's `id` returns undefined, so `n` holds a number or undefined, but a string is stored.
+# In the first run the setter's body stores the string. It used to print "NaN" and continue.
+# In the second and the third run the setter is called with an argument of another type than the declared one, so its slow version runs.
+# Straight code converts a value to the slot's representation without a check, so such a version goes through the walk, and the entry check is there too.
+# OPTIONS: testing=AssumeUnknownCallsReturnUndefined
+# RUN(WALKED): run-in-shell mechanisms=all-Inlining globalThis.which = 1;
+# WALKED: bun: internal AOT error: type check failed
+# WALKED-NEXT: found string in a closure variable
+# WALKED-NOT: went on
+# WALKED: crashed with
+# RUN(SLOW): run-in-shell mechanisms=all-Inlining globalThis.which = 2;
+# SLOW: bun: internal AOT error: type check failed
+# SLOW-NEXT: found string in a closure variable
+# SLOW-NOT: went on
+# SLOW: crashed with
+# RUN(CELL): run-in-shell mechanisms=all-Inlining globalThis.which = 3;
+# CELL: bun: internal AOT error: type check failed
+# CELL-NEXT: found int32 in a closure variable
+# CELL-NOT: went on
+# CELL: crashed with
+# The passing control: the same stores, of values that fit.
+# RUN(NONE): run-in-shell mechanisms=all globalThis.which = 0;
+# NONE: 2.5 leaf
+# NONE-NEXT: went on
+# NONE-NEXT: exited with 0
+# -- source: a-false-proof-of-a-slot-of-a-scope-is-stopped-in-every-build.ts
+# declare function id(value: unknown): any;
+# declare function print(...values: unknown[]): void;
+# declare const which: number;
+# class Leaf { name = "leaf"; }
+# function counter() { let n = 0.5; return { set(flag: number) { n = flag ? 1.5 : id("text"); }, get() { return n + 1; } }; }
+# function holder() { let kept: Leaf | undefined = new Leaf(); return { set(flag: number) { kept = flag ? new Leaf() : id(7); }, get() { return kept === undefined ? "none" : kept.name; } }; }
+# const c = counter();
+# const h = holder();
+# c.set(1);
+# h.set(1);
+# if (which === 1) c.set(0);
+# if (which === 2) (c.set as any)("");
+# if (which === 3) (h.set as any)("");
+# print(String(c.get()) + " " + h.get());
+# print("went on");
+# -- end of source

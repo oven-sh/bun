@@ -1,0 +1,13 @@
+# f1 = run
+# -- source: main.mjs
+# const table = Object.freeze({ base: 10, get next() { return this.base + ++reads; }, apply(x) { return x; } });
+# let reads = 0;
+# function run(n) { const taken = { ...table }; return taken.next + taken.apply(n); }
+# let n = 0; for (let k = 0; k < 20; k++) n += run(k);
+# print(n);
+# -- end of source
+# The type of a frozen literal lists values, as its copies hold them: the literal keeps a layout of its own.
+# RUN: link fields mechanisms=all
+# CHECK: "next" {{*}}filled-by-accessors-alone
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 600

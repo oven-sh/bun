@@ -118,6 +118,7 @@ impl<'a> Scanner<'a> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
+    #[optimize(size)]
     pub(crate) fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let mut scan_dir_buf = bun_paths::path_buffer_pool::get();
         let parts: [&[u8]; 2] = [self.top_level_dir(), path_literal];
@@ -215,11 +216,12 @@ impl<'a> Scanner<'a> {
     }
 
     /// `handle` stays owned by the caller; the resolver caches the listing but not the fd.
+    #[optimize(size)]
     fn read_dir_with_name(
         &mut self,
         name: &[u8],
         handle: Option<Fd>,
-    ) -> crate::Result<&'static mut EntriesOption> {
+    ) -> crate::Result<&'static EntriesOption> {
         let fs_ptr = self.fs;
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         unsafe { &mut (*fs_ptr).fs }
@@ -275,6 +277,7 @@ impl<'a> Scanner<'a> {
 
     /// Returns true if the given path matches any of the path ignore patterns.
     /// The path is matched as a relative path from the project root.
+    #[optimize(size)]
     pub(crate) fn matches_path_ignore_pattern(&self, abs_path: &[u8]) -> bool {
         if self.path_ignore_patterns.is_empty() {
             return false;

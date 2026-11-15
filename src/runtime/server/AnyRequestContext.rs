@@ -7,7 +7,6 @@ use bun_uws as uws;
 
 use crate::webcore::CookieMap;
 
-pub(crate) use super::request_context::AdditionalOnAbortCallback;
 use super::request_context::RequestContext;
 use super::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 
@@ -79,6 +78,8 @@ const fn ctx_tag_for(ssl: bool, dbg: bool, mux: bool) -> CtxTag {
 // without callers having to spell the eight concrete types.
 impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> CtxKind
     for RequestContext<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: super::ServerLike + 'static,
 {
     const TAG: CtxTag = ctx_tag_for(SSL, DBG, MUX);
 }
@@ -125,9 +126,8 @@ macro_rules! dispatch {
             CtxTag::DebugHttpsMux => arm!(DebugHttpsMuxCtx),
         }
     }};
-    // Raw-pointer variant: hands the typed `*mut T` to `$body` without forming
-    // a `&mut` reborrow. Use when the callee may re-enter while an outer frame
-    // already holds `&mut Self` (borrow = ptr).
+    // Raw-pointer variant: hands the typed `*mut T` to `$body`. For `end_chunk`,
+    // which may release the context in its own frame.
     ($self:expr, $default:expr, ptr |$T:ident, $ptr:ident| $body:expr) => {{
         let this = $self;
         macro_rules! arm {
@@ -152,12 +152,13 @@ macro_rules! dispatch {
 }
 
 impl AnyRequestContext {
-    pub(crate) fn set_additional_on_abort_callback(self, cb: Option<AdditionalOnAbortCallback>) {
+    pub(crate) fn set_deferred_request(
+        self,
+        deferred: crate::bake::dev_server::deferred_request::Handle,
+    ) {
         dispatch!(self, (), |_T, ctx| {
-            if let Some(old) = ctx.additional_on_abort.replace(cb) {
-                debug_assert!(false, "additional_on_abort set twice");
-                old.deref();
-            }
+            let old = ctx.deferred_request.replace(Some(deferred));
+            debug_assert!(old.is_none(), "deferred_request set twice");
         })
     }
 
@@ -235,29 +236,25 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.deref())
     }
 
+    /// For a caller that answers the request by itself.
+    pub(crate) fn detach_response(self) {
+        dispatch!(self, (), |_T, ctx| drop(ctx.detach_response()))
+    }
+
     pub(crate) fn end_with_internal_server_error(self) {
         dispatch!(self, (), |_T, ctx| ctx.end_with_internal_server_error())
     }
 
     pub fn on_request_body_stream_drained(self) {
-        dispatch!(
-            self,
-            (),
-            ptr | T,
-            ptr | T::on_request_body_stream_drained(ptr)
-        )
+        dispatch!(self, (), |_T, ctx| ctx.on_request_body_stream_drained())
     }
 
     pub fn write_chunk(
         self,
         data: &crate::webcore::streams::Result,
     ) -> crate::webcore::streams::Writable {
-        dispatch!(
-            self,
-            crate::webcore::streams::Writable::Done,
-            ptr | T,
-            ptr | T::write_chunk(ptr, data)
-        )
+        dispatch!(self, crate::webcore::streams::Writable::Done, |_T, ctx| ctx
+            .write_chunk(data))
     }
 
     pub fn end_chunk(self, err: Option<&crate::webcore::streams::StreamError>) {

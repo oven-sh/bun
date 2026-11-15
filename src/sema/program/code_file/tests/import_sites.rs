@@ -313,7 +313,7 @@ fn loader_request_carries_kind_and_attributes_of_site() {
         loader_request("/p/meta.txt", CodeImportKind::Require),
         loader_request("/p/meta-named.txt", CodeImportKind::Import),
         with_attributes,
-        loader_request("/p/dir/candidate.txt", CodeImportKind::Import),
+        loader_request("/p/dir/candidate.txt", CodeImportKind::Require),
     ];
     assert_eq!(host.loader_requests(), expected);
 }
@@ -322,7 +322,7 @@ fn loader_request_carries_kind_and_attributes_of_site() {
 fn entry_point_loader_is_requested_as_entry_point() {
     let host = host_of(&[("/p/a.ts", "")]);
     with_compile_context(&TestBuild::new(&host, &["/p/a.ts"]), |context| {
-        assert_eq!(context.entry_points.len(), 1);
+        assert_eq!(context.entry_point_count(), 1);
     });
     let requests = host.loader_requests();
     assert_eq!(

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""concatenated-keys.py <seed>: KEYS MADE OF PARTS (State::m_keysByParts: the ADDRESSES of the string parts and the integers -> the key's cell; m_cachedKeys: hash -> the key's cell; both swept by removeDeadCachedKeys()): `map.get(`${a}:${i}:${b}`)`, template literals, Set, plain objects by such a key. THE PARTS ARE CELLS OF THEIR OWN EACH TIME, THEY DIE, AND OTHER TEXTS OF THE SAME LENGTH TAKE THEIR ROOM: an entry that outlives a part would answer for another text; one that outlives its key hands out freed memory. A model keyed by texts that are joined another way stands beside."""
+"""concatenated-keys.py <seed>: Keys built from parts: `map.get(`${a}:${b}`)` and similar lookups are cached by the
+parts. The parts and keys here are collected and recreated, and different parts produce equal keys.
+"""
 import sys, random
 seed = int(sys.argv[1]); R = random.Random(seed)
 words = R.choice([6, 10, 16]); length = R.choice([2, 3, 5])

@@ -327,6 +327,99 @@ impl Drop for OwnedSslCtx {
     }
 }
 
+/// Owns one `SSL_SESSION` reference.
+pub struct OwnedSslSession(core::ptr::NonNull<SSL_SESSION>);
+
+impl OwnedSslSession {
+    pub fn retain(session: &SSL_SESSION) -> Self {
+        SSL_SESSION_up_ref(session);
+        Self(session.into())
+    }
+
+    pub fn as_ptr(&self) -> *mut SSL_SESSION {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedSslSession {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { SSL_SESSION_free(self.0.as_ptr()) }
+    }
+}
+
+/// Owns one `X509` reference.
+#[repr(transparent)]
+pub struct OwnedX509(core::ptr::NonNull<X509>);
+
+impl OwnedX509 {
+    pub fn retain(cert: &X509) -> Self {
+        X509_up_ref(cert);
+        Self(cert.into())
+    }
+}
+
+impl core::ops::Deref for OwnedX509 {
+    type Target = X509;
+    fn deref(&self) -> &X509 {
+        X509::opaque_ref(self.0.as_ptr())
+    }
+}
+
+impl core::ops::DerefMut for OwnedX509 {
+    fn deref_mut(&mut self) -> &mut X509 {
+        X509::opaque_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for OwnedX509 {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { X509_free(self.0.as_ptr()) }
+    }
+}
+
+/// Owns one `CRYPTO_BUFFER` reference. A slice of them is a `CRYPTO_BUFFER **`.
+#[repr(transparent)]
+pub struct OwnedCryptoBuffer(core::ptr::NonNull<CRYPTO_BUFFER>);
+
+impl OwnedCryptoBuffer {
+    pub fn new(data: &[u8]) -> Option<Self> {
+        // SAFETY: BoringSSL copies `data`, and no pool is asked for.
+        let buf = unsafe { CRYPTO_BUFFER_new(data.as_ptr(), data.len(), core::ptr::null_mut()) };
+        core::ptr::NonNull::new(buf).map(Self)
+    }
+}
+
+impl Drop for OwnedCryptoBuffer {
+    fn drop(&mut self) {
+        // SAFETY: we own exactly one reference, released once.
+        unsafe { CRYPTO_BUFFER_free(self.0.as_ptr()) }
+    }
+}
+
+/// A `BIO` that reads from a slice.
+pub struct MemBio<'a>(core::ptr::NonNull<BIO>, core::marker::PhantomData<&'a [u8]>);
+
+impl<'a> MemBio<'a> {
+    pub fn new(data: &'a [u8]) -> Option<Self> {
+        // SAFETY: the `BIO` only reads `data`, which outlives it.
+        let bio = unsafe { BIO_new_mem_buf(data.as_ptr().cast(), data.len() as ossl_ssize_t) };
+        core::ptr::NonNull::new(bio).map(|bio| Self(bio, core::marker::PhantomData))
+    }
+
+    pub fn as_ptr(&self) -> *mut BIO {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for MemBio<'_> {
+    fn drop(&mut self) {
+        // SAFETY: we own the `BIO`, freed once.
+        unsafe { BIO_free(self.0.as_ptr()) };
+    }
+}
+
 /// Owns the `STACK_OF(GENERAL_NAME)` that `X509V3_EXT_d2i` returns for a
 /// subjectAltName extension. Frees every `GENERAL_NAME` and then the stack.
 pub struct GeneralNames(core::ptr::NonNull<struct_stack_st_GENERAL_NAME>);
@@ -447,9 +540,9 @@ impl X509 {
             let md = match self.signature_digest_nid() {
                 NID_undef => return None,
                 NID_md5 | NID_sha1 => EVP_sha256(),
-                nid => EVP_get_digestbynid(nid),
+                nid => EVP_get_digestbynid(nid)?,
             };
-            if md.is_null() || X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
+            if X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
                 return None;
             }
         }
@@ -506,37 +599,49 @@ impl X509 {
         digest_nid
     }
 
+    pub fn to_der(&self) -> Option<OpensslBytes> {
+        let mut der: *mut u8 = core::ptr::null_mut();
+        // SAFETY: `self` is live. Given null, `i2d_X509` allocates `len` bytes or leaves it null.
+        unsafe {
+            let len = i2d_X509(self, &raw mut der);
+            OpensslBytes::from_raw(der, len as usize)
+        }
+    }
+
     /// Iterates this certificate's Subject Common Names in order.
     pub fn common_names(&mut self) -> CommonNames<'_> {
-        // SAFETY: `self` is a live certificate; a null subject yields an
-        // empty iterator.
-        let subject = unsafe { X509_get_subject_name(self) };
         CommonNames {
-            subject,
+            subject: X509_get_subject_name(self),
             last: -1,
             _cert: core::marker::PhantomData,
         }
     }
 }
 
-/// An `ASN1_STRING_to_UTF8`-transcoded name. `OPENSSL_free`s on drop.
-pub struct Utf8Name {
+/// Bytes that BoringSSL has allocated. `OPENSSL_free`s on drop.
+pub struct OpensslBytes {
     ptr: core::ptr::NonNull<u8>,
     len: usize,
 }
 
-impl core::ops::Deref for Utf8Name {
+impl OpensslBytes {
+    /// SAFETY: `ptr` is null, or `len` bytes from `OPENSSL_malloc` that the caller gives up.
+    pub unsafe fn from_raw(ptr: *mut u8, len: usize) -> Option<Self> {
+        core::ptr::NonNull::new(ptr).map(|ptr| Self { ptr, len })
+    }
+}
+
+impl core::ops::Deref for OpensslBytes {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        // SAFETY: `ASN1_STRING_to_UTF8` allocated `len` readable bytes at `ptr`
-        // and this struct owns them until `Drop`.
+        // SAFETY: this struct owns `len` readable bytes at `ptr` until `Drop`.
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.len) }
     }
 }
 
-impl Drop for Utf8Name {
+impl Drop for OpensslBytes {
     fn drop(&mut self) {
-        // SAFETY: `ptr` was returned by `ASN1_STRING_to_UTF8` (OPENSSL_malloc).
+        // SAFETY: `ptr` is from `OPENSSL_malloc`, freed once.
         unsafe { OPENSSL_free(self.ptr.as_ptr().cast()) }
     }
 }
@@ -551,16 +656,15 @@ pub struct CommonNames<'a> {
 }
 
 impl Iterator for CommonNames<'_> {
-    type Item = Utf8Name;
+    type Item = OpensslBytes;
 
-    fn next(&mut self) -> Option<Utf8Name> {
+    fn next(&mut self) -> Option<OpensslBytes> {
         if self.subject.is_null() {
             return None;
         }
         // SAFETY: the subject and its entries are owned by the certificate
         // borrowed for `'a`; every accessor is guarded against null returns
-        // and non-positive lengths. `ASN1_STRING_to_UTF8` allocates a fresh
-        // buffer that `Utf8Name` owns.
+        // and `ASN1_STRING_to_UTF8` allocates `len` bytes or leaves `out` null.
         unsafe {
             loop {
                 let entry_idx = X509_NAME_get_index_by_NID(self.subject, NID_commonName, self.last);
@@ -578,14 +682,9 @@ impl Iterator for CommonNames<'_> {
                 }
                 let mut out: *mut u8 = core::ptr::null_mut();
                 let len = ASN1_STRING_to_UTF8(&raw mut out, data);
-                let Some(ptr) = core::ptr::NonNull::new(out) else {
-                    continue;
-                };
-                let Ok(len) = usize::try_from(len) else {
-                    OPENSSL_free(ptr.as_ptr().cast());
-                    continue;
-                };
-                return Some(Utf8Name { ptr, len });
+                if let Some(name) = OpensslBytes::from_raw(out, len as usize) {
+                    return Some(name);
+                }
             }
         }
     }
@@ -613,6 +712,12 @@ impl SSL {
         unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
     }
 
+    /// The peer's leaf certificate. A server's cert chain leaves it out.
+    pub fn peer_certificate(&self) -> Option<OwnedX509> {
+        // SAFETY: `self` is a live SSL; the result is null or a new reference.
+        core::ptr::NonNull::new(unsafe { SSL_get_peer_certificate(self) }).map(OwnedX509)
+    }
+
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
     pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
         // SAFETY: the chain and its entries are owned by this SSL and outlive
@@ -629,29 +734,21 @@ impl SSL {
 
 impl Drop for GeneralNames {
     fn drop(&mut self) {
-        // SAFETY: `sk_pop_free_ex` invokes the callback once per element, so it
-        // gets `GENERAL_NAME_free` (per element), not a stack free.
+        // SAFETY: we own the stack. `sk_pop_free_ex` only passes its third argument on
+        // to `call_general_name_free`, once per element, and that ignores it.
         unsafe {
             sk_pop_free_ex(
                 self.0.as_ptr().cast::<OPENSSL_STACK>(),
                 Some(call_general_name_free),
-                Some(core::mem::transmute::<
-                    unsafe extern "C" fn(*mut GENERAL_NAME),
-                    unsafe extern "C" fn(*mut c_void),
-                >(GENERAL_NAME_free)),
+                None,
             )
         }
     }
 }
 
-/// Restores the element type erased through `OPENSSL_sk_free_func`.
-unsafe extern "C" fn call_general_name_free(free_func: OPENSSL_sk_free_func, ptr: *mut c_void) {
-    // SAFETY: `free_func` is `GENERAL_NAME_free` erased in `Drop` above; both
-    // sides are `extern "C" fn(*mut _)`, so the round-trip is ABI-sound.
-    let f: unsafe extern "C" fn(*mut GENERAL_NAME) =
-        unsafe { core::mem::transmute(free_func.expect("non-null free_func")) };
+unsafe extern "C" fn call_general_name_free(_: OPENSSL_sk_free_func, ptr: *mut c_void) {
     // SAFETY: `ptr` is an element `sk_pop_free_ex` is draining from the stack.
-    unsafe { f(ptr.cast::<GENERAL_NAME>()) }
+    unsafe { GENERAL_NAME_free(ptr.cast::<GENERAL_NAME>()) }
 }
 
 unsafe extern "C" {
@@ -681,31 +778,29 @@ unsafe extern "C" {
     pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
-    pub safe fn EVP_md4() -> *const EVP_MD;
-    pub safe fn EVP_md5() -> *const EVP_MD;
-    pub safe fn EVP_ripemd160() -> *const EVP_MD;
-    pub safe fn EVP_sha1() -> *const EVP_MD;
-    pub safe fn EVP_sha224() -> *const EVP_MD;
-    pub safe fn EVP_sha256() -> *const EVP_MD;
-    pub safe fn EVP_sha384() -> *const EVP_MD;
-    pub safe fn EVP_sha512() -> *const EVP_MD;
-    pub safe fn EVP_sha512_224() -> *const EVP_MD;
-    pub safe fn EVP_sha512_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_224() -> *const EVP_MD;
-    pub safe fn EVP_sha3_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_384() -> *const EVP_MD;
-    pub safe fn EVP_sha3_512() -> *const EVP_MD;
-    pub safe fn EVP_blake2b256() -> *const EVP_MD;
-    pub safe fn EVP_blake2b512() -> *const EVP_MD;
+    pub safe fn EVP_md4() -> &'static EVP_MD;
+    pub safe fn EVP_md5() -> &'static EVP_MD;
+    pub safe fn EVP_ripemd160() -> &'static EVP_MD;
+    pub safe fn EVP_sha1() -> &'static EVP_MD;
+    pub safe fn EVP_sha224() -> &'static EVP_MD;
+    pub safe fn EVP_sha256() -> &'static EVP_MD;
+    pub safe fn EVP_sha384() -> &'static EVP_MD;
+    pub safe fn EVP_sha512() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_384() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_512() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b256() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b512() -> &'static EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
-    // POD context by exclusive reference: BoringSSL only zero-initialises the
-    // struct (no deref of its raw-ptr fields), so any `&mut EVP_MD_CTX` is sound.
-    pub safe fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
-    pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
-    pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
+    pub safe fn EVP_MD_size(md: &EVP_MD) -> usize;
+    // Starts with `EVP_MD_CTX_init`: what `ctx` held is never read. Keeps `type_` in `ctx.digest`.
+    pub safe fn EVP_DigestInit(ctx: &mut EVP_MD_CTX, type_: &'static EVP_MD) -> c_int;
     pub fn EVP_DigestInit_ex(
         ctx: *mut EVP_MD_CTX,
         type_: *const EVP_MD,
@@ -718,11 +813,7 @@ unsafe extern "C" {
         md_out: *mut u8,
         out_size: *mut c_uint,
     ) -> c_int;
-    pub fn EVP_get_digestbyname(name: *const c_char) -> *const EVP_MD;
-    pub fn EVP_MD_do_all_sorted(
-        callback: extern "C" fn(*const EVP_MD, *const c_char, *const c_char, *mut c_void),
-        arg: *mut c_void,
-    );
+    pub fn EVP_get_digestbyname(name: *const c_char) -> Option<&'static EVP_MD>;
     pub fn EVP_Digest(
         data: *const c_void,
         len: usize,
@@ -766,7 +857,8 @@ unsafe extern "C" {
 
     // ── X509 ─────────────────────────────────────────────────────────────
     pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
-    pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
+    pub fn i2d_X509(x: *const X509, outp: *mut *mut u8) -> c_int;
+    safe fn X509_up_ref(x: &X509) -> c_int;
     pub fn X509_free(x509: *mut X509);
     fn X509_get_signature_nid(x509: *const X509) -> c_int;
     fn X509_get0_signature(
@@ -798,8 +890,8 @@ unsafe extern "C" {
         out_digest_nid: *mut c_int,
         out_pkey_nid: *mut c_int,
     ) -> c_int;
-    fn EVP_get_digestbynid(nid: c_int) -> *const EVP_MD;
-    pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
+    fn EVP_get_digestbynid(nid: c_int) -> Option<&'static EVP_MD>;
+    pub safe fn X509_get_subject_name(x509: &X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
     fn X509_NAME_get_index_by_NID(name: *const X509_NAME, nid: c_int, lastpos: c_int) -> c_int;
@@ -822,29 +914,6 @@ pub const SSL_GROUP_SECP384R1: u16 = 24;
 pub const SSL_GROUP_SECP521R1: u16 = 25;
 pub const SSL_GROUP_X25519: u16 = 29;
 pub const SSL_GROUP_X448: u16 = 30;
-
-/// `sk_X509_pop_free(sk, X509_free)` — release a `STACK_OF(X509)` and every
-/// element on it.
-#[inline]
-pub unsafe fn sk_X509_pop_free(sk: *mut struct_stack_st_X509) {
-    unsafe extern "C" fn call(f: OPENSSL_sk_free_func, e: *mut c_void) {
-        // SAFETY: BoringSSL only invokes this with the `free_func` we passed
-        // and a live element pointer.
-        unsafe { (f.unwrap())(e) }
-    }
-    // SAFETY: caller-guaranteed live X509 stack; `X509_free` is
-    // `extern "C" fn(*mut X509)`, ABI-compatible with `fn(*mut c_void)`.
-    unsafe {
-        sk_pop_free_ex(
-            sk.cast(),
-            Some(call),
-            Some(core::mem::transmute::<
-                unsafe extern "C" fn(*mut X509),
-                unsafe extern "C" fn(*mut c_void),
-            >(X509_free)),
-        );
-    }
-}
 
 #[inline]
 pub unsafe fn sk_X509_value(sk: *const struct_stack_st_X509, i: usize) -> *mut X509 {
@@ -1009,7 +1078,7 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         u: *mut c_void,
     ) -> *mut X509;
-    pub fn OPENSSL_free(ptr: *mut c_void);
+    fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
     /// Returns a static NUL-terminated string, or NULL if unknown.
@@ -1213,12 +1282,12 @@ unsafe extern "C" {
         cb: Option<pem_password_cb>,
         userdata: *mut c_void,
     ) -> c_int;
-    pub fn CRYPTO_BUFFER_new(
+    fn CRYPTO_BUFFER_new(
         data: *const u8,
         len: usize,
         pool: *mut CRYPTO_BUFFER_POOL,
     ) -> *mut CRYPTO_BUFFER;
-    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
     /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
     /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
     pub fn X509_LAZY_CERT_SET_new(
@@ -1259,10 +1328,11 @@ unsafe extern "C" {
 
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.
-    pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
+    fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
     /// Returns a BORROWED reference to the context's leaf certificate, or null.
     pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
+    safe fn SSL_SESSION_up_ref(session: &SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
 }

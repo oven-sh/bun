@@ -1,0 +1,13 @@
+# f1 = list
+# -- source: main.mjs
+# function list(n) { const o = { a: n, get b() { return this.a + 1; } }; return Object.values(o)[1] + Object.keys(o).length; }
+# let n = 0; for (let k = 0; k < 20; k++) n += list(k);
+# print(n);
+# -- end of source
+# The list of a literal in sight calls its getters in place.
+# RUN: walk f1 mechanisms=all
+# CHECK: InitializeBuiltin builtin=ObjectValues
+# CHECK-NOT: ObjectValues
+# CHECK-NOT: OwnPropertyKeys
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 250

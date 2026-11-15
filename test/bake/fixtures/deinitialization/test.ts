@@ -58,7 +58,7 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
 
     if (sendAnyRequests) {
       if (closeActiveConnections) {
-        expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("closed unexpectedly");
+        await expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("closed unexpectedly");
       } else {
         const response = await fetch(server.url.origin, { keepalive: false });
         expect(response.status).toBe(200);
@@ -68,7 +68,7 @@ async function run({ closeActiveConnections = false, sendAnyRequests = true, web
     }
 
     // Server is closed
-    expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("Unable to connect");
+    await expect(fetch(server.url.origin, { keepalive: false })).rejects.toThrow("Unable to connect");
   }
 
   try {
@@ -112,7 +112,7 @@ const cases = [
   // Multiple HMR sockets still open when DevServer.deinit runs. This exercises
   // the path where deinit iterates active_websocket_connections and calls
   // websocket.close() on each, which synchronously re-enters HmrSocket.onClose
-  // (removing from the map + destroying the HmrSocket).
+  // (destroying the HmrSocket).
   { closeActiveConnections: false, sendAnyRequests: false, websocket: 8 },
   { closeActiveConnections: true, sendAnyRequests: false, websocket: 8 },
 ];

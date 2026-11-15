@@ -1,0 +1,8 @@
+# the evaluator is reached by the name `constructor` off a closure. The text that it evaluates may have replaced that member, so Link takes it for no constant: the record stands at the call all the same
+# -- source: the-constructor-of-a-closure-is-called-at-its-place.ts
+# declare const input: any;
+# (() => {}).constructor(input);
+# -- end of source
+# OPTIONS: report=Uses
+# RUN: causes
+# CHECK: cause EvaluatesText Function at f0 v

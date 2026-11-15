@@ -1,0 +1,15 @@
+# -- source: records.ts
+# interface Parcel { text: string; id: number; isMarked?: boolean; note?: string; never?: string }
+# function make(text: string, id: number): Parcel { return { text, id }; }
+# function mark(parcel: Parcel) { parcel.isMarked = true; parcel.note = "noted"; (parcel as any).later = 1; }
+# function show(m: Parcel) { return Object.keys(m).join() + (m.never === undefined ? " none " : " some ") + (m.isMarked ? "meta" : "plain"); }
+# { const made = make("first", 1); console.log(show(made)); mark(made); console.log(show(made)); }
+# { const made = make("first", 1); console.log(show(made)); mark(made); console.log(show(made)); }
+# export {};
+# -- end of source
+# The program of ..-is-called-once.ir and its last block once more. The check lines are the same.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK: "isMarked" JSValue OutOfLine
+# CHECK: "never" JSValue OutOfLine
+# CHECK: "note" JSValue OutOfLine

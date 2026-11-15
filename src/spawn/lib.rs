@@ -40,8 +40,10 @@ pub use bun_event_loop::EventLoopHandle;
 pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
 pub use bun_spawn_sys::RusageFields;
+#[cfg(unix)]
+pub use bun_spawn_sys::posix_spawn::posix_spawn::LARGEST_REAPED_CHILD;
 pub use process::{
-    Dup2, Exited, ExtraPipe, PidT, Poller, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
+    Dup2, Exited, ExtraPipe, PidT, Process, ProcessHandle, Rusage, SpawnEnv, SpawnOptions,
     SpawnProcessResult, SpawnResultExt, Status, StdioKind, spawn_process, spawn_process_cstr,
 };
 
@@ -64,7 +66,7 @@ bun_dispatch::link_interface! {
         HostProcess,
         SyncWindows,
     ] {
-        fn on_process_exit(process: &mut Process, status: Status, rusage: &Rusage);
+        fn on_process_exit(status: Status, rusage: &Rusage);
     }
 }
 
@@ -79,14 +81,14 @@ pub type ProcessExitHandler = Option<ProcessExit>;
 #[cfg(windows)]
 link_impl_ProcessExit! {
     SyncWindows for process::sync::SyncWindowsProcess => |this| {
-        on_process_exit(process, status, rusage) =>
-            process::sync::SyncWindowsProcess::on_process_exit(this, process, status, &*rusage),
+        on_process_exit(status, _rusage) =>
+            process::sync::SyncWindowsProcess::on_process_exit(this, status),
     }
 }
 #[cfg(not(windows))]
 link_impl_ProcessExit! {
     SyncWindows for process::SyncProcessPosix => |_this| {
-        on_process_exit(_process, _status, _rusage) =>
+        on_process_exit(_status, _rusage) =>
             unreachable!("SyncWindows exit handler is Windows-only"),
     }
 }
@@ -102,13 +104,6 @@ pub use process::{
 };
 #[cfg(windows)]
 pub type SpawnResult = process::WindowsSpawnResult;
-#[cfg(windows)]
-pub mod windows {
-    /// `bun.windows.libuv.Pipe` raw pointer payload of `Stdio::Buffer` /
-    /// `Stdio::Ipc`. Erased so this crate stays libuv-agnostic at the type
-    /// surface; `bun_runtime` casts it back on consumption.
-    pub type UvPipePtr = *mut bun_sys::windows::libuv::Pipe;
-}
 
 /// Blocking (synchronous) spawn helpers.
 pub mod sync {
@@ -129,23 +124,13 @@ pub mod sync {
 // crate naming `bun_jsc`/`bun_runtime`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
-    #[cfg(not(windows))]
-    use bun_sys::Fd;
-
     pub use crate::process::StdioKind;
     pub use crate::static_pipe_writer::{StaticPipeWriter, StaticPipeWriterProcess};
 
-    /// On POSIX this is `Option<Fd>`; on Windows it is the `WindowsStdioResult` union.
     #[cfg(not(windows))]
-    pub type StdioResult = Option<Fd>;
+    pub type StdioResult = Option<bun_sys::File>;
     #[cfg(windows)]
     pub type StdioResult = crate::process::WindowsStdioResult;
-
-    #[cfg(not(windows))]
-    #[inline]
-    pub fn stdio_result_from_fd(fd: Fd) -> StdioResult {
-        Some(fd)
-    }
 
     /// The in-memory payload that a
     /// `StaticPipeWriter` drains into the child's stdin/extra-fd.

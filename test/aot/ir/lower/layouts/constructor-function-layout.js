@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout {{*}}kind=Instance name="F" {{*}}constructor=[[f]] fields=[{key="x" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction]
+// CHECK: layout {{*}}kind=Instance name="F" {{*}}constructor=[[f]] fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
 // CHECK: function [[f]] name="F"
 
 // RUN(METHOD): link

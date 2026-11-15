@@ -1,0 +1,18 @@
+# `beside` is a name that the type does not list, appended by Link, and it finds no granule of the Extension: 64 listed fields that leave the cell have taken them. It is no field. A literal of constants finds its fields by their keys, and finds this one.
+# What it lists for the name is an extra property: the name ends what the allocation lists, and it and `text` behind it are defined by name, in the order in which they are written.
+# -- source: wide.ts
+# declare function sink(...values: unknown[]): void;
+# type Wide = { text: string; m0?: boolean; m1?: boolean; m2?: boolean; m3?: boolean; m4?: boolean; m5?: boolean; m6?: boolean; m7?: boolean; m8?: boolean; m9?: boolean; m10?: boolean; m11?: boolean; m12?: boolean; m13?: boolean; m14?: boolean; m15?: boolean; m16?: boolean; m17?: boolean; m18?: boolean; m19?: boolean; m20?: boolean; m21?: boolean; m22?: boolean; m23?: boolean; m24?: boolean; m25?: boolean; m26?: boolean; m27?: boolean; m28?: boolean; m29?: boolean; m30?: boolean; m31?: boolean; m32?: boolean; m33?: boolean; m34?: boolean; m35?: boolean; m36?: boolean; m37?: boolean; m38?: boolean; m39?: boolean; m40?: boolean; m41?: boolean; m42?: boolean; m43?: boolean; m44?: boolean; m45?: boolean; m46?: boolean; m47?: boolean; m48?: boolean; m49?: boolean; m50?: boolean; m51?: boolean; m52?: boolean; m53?: boolean; m54?: boolean; m55?: boolean; m56?: boolean; m57?: boolean; m58?: boolean; m59?: boolean; m60?: boolean; m61?: boolean; m62?: boolean; m63?: boolean; };
+# function make(text: string): Wide { return { text }; }
+# function fill(one: Wide) { one.m0 = true; one.m1 = true; one.m2 = true; one.m3 = true; one.m4 = true; one.m5 = true; one.m6 = true; one.m7 = true; one.m8 = true; one.m9 = true; one.m10 = true; one.m11 = true; one.m12 = true; one.m13 = true; one.m14 = true; one.m15 = true; one.m16 = true; one.m17 = true; one.m18 = true; one.m19 = true; one.m20 = true; one.m21 = true; one.m22 = true; one.m23 = true; one.m24 = true; one.m25 = true; one.m26 = true; one.m27 = true; one.m28 = true; one.m29 = true; one.m30 = true; one.m31 = true; one.m32 = true; one.m33 = true; one.m34 = true; one.m35 = true; one.m36 = true; one.m37 = true; one.m38 = true; one.m39 = true; one.m40 = true; one.m41 = true; one.m42 = true; one.m43 = true; one.m44 = true; one.m45 = true; one.m46 = true; one.m47 = true; one.m48 = true; one.m49 = true; one.m50 = true; one.m51 = true; one.m52 = true; one.m53 = true; one.m54 = true; one.m55 = true; one.m56 = true; one.m57 = true; one.m58 = true; one.m59 = true; one.m60 = true; one.m61 = true; one.m62 = true; one.m63 = true; }
+# function lay(one: any, name: string) { one.beside = 1; one[name] = 2; }
+# function born(): Wide { return { beside: 7, text: "constant" } as Wide; }
+# const full = make("full"); fill(full); lay(full, "other");
+# sink(full.text, full.m63, (full as any).beside, born());
+# -- end of source
+# f1 = make, f2 = fill, f3 = lay, f4 = born
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: [[made]]: {{*}} = NewObject layout=L0 
+# CHECK: PropDefine [[made]], {{*}}key="beside"
+# CHECK: PropDefine [[made]], {{*}}key="text"

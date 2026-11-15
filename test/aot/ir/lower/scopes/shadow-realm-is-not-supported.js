@@ -1,6 +1,6 @@
 // RUN: lower
-// DIAGNOSTIC: TS100050 shadow-realm-is-not-supported.js:8
-// DIAGNOSTIC: TS100050 shadow-realm-is-not-supported.js:9
+// DIAGNOSTIC: TS100076 shadow-realm-is-not-supported.js:8
+// DIAGNOSTIC: TS100076 shadow-realm-is-not-supported.js:9
 
 function ofLocal(ShadowRealm) {
   return new ShadowRealm();

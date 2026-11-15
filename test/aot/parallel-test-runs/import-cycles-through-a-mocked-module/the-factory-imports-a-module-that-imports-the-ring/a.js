@@ -1,0 +1,1 @@
+import { order } from "./log.js"; import { readA } from "./b.js"; import { part } from "./part.js"; order.push("a"); export const name = "a " + globalThis.c1Ran; export const a = () => part; export const viaB = () => readA();

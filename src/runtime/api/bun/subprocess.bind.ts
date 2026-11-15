@@ -1,9 +1,25 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import { sentHandlesCell, sentMessagesCell, sentOptionsCell } from "../../../codegen/builtins/host/native-cells.ts";
+import * as table from "../../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::api::bun::subprocess::testing_apis" });
 
 /** A stream, a file descriptor, `null` or `undefined`, made the first time it is read. */
 const stdio = { getter: b.any, capability: "js" } as const;
+/** Readable.rs `to_js`: a Buffer where the whole output lies in memory. */
+const whatChildHasWritten = table.union(
+  table.instance("ReadableStream"),
+  table.instance("Buffer"),
+  table.f64,
+  table.undefined,
+  table.strictNull,
+);
+const output = { ...stdio, getter: b.any.returning(whatChildHasWritten.spec) } as const;
+/** Writable.rs `to_js`: the sink of a pipe, the number of a descriptor, undefined for all else. `null` where a terminal stands in. */
+const whatChildReads = table.union(table.instance("FileSink"), table.f64, table.undefined, table.strictNull);
+const input = { ...stdio, getter: b.any.returning(whatChildReads.spec) } as const;
+/** `get_stdio`: a new list each time, `null` for the first three and for a pipe that is gone, the number of a descriptor for the others. */
+const extraPipes = table.instance("Array").holding({ element: table.union(table.f64, table.strictNull) }).fresh;
 
 /** What `Bun.spawn` returns. */
 export const Subprocess = b.class({
@@ -16,11 +32,15 @@ export const Subprocess = b.class({
     connected: { getter: b.bool },
     disconnect: {},
     exitCode: { getter: b.u8.nullable },
-    exited: { getter: b.any.returning("Promise"), capability: "js", passThis: true },
+    exited: {
+      getter: b.any.returning(table.instance("Promise").holding({ value: table.f64, reason: table.any }).spec),
+      capability: "js",
+      passThis: true,
+    },
     kill: { args: { signal: b.any }, capability: "js", throws: true, passThis: true },
     killed: { getter: b.bool },
     pid: { getter: b.i32 },
-    readable: { ...stdio, throws: true, cache: "stdout", rustName: "stdout" },
+    readable: { ...output, throws: true, cache: "stdout", rustName: "stdout" },
     ref: { rustName: "do_ref" },
     resourceUsage: { returns: b.any.returning("ResourceUsage", "undefined"), capability: "js", throws: true },
     send: {
@@ -29,15 +49,20 @@ export const Subprocess = b.class({
       capability: "js",
       throws: true,
       length: 1,
+      uses: {
+        message: [...table.retainedByNativeCode, table.storedIn(table.nativeCell(sentMessagesCell))],
+        handle: [...table.retainedByNativeCode, table.storedIn(table.nativeCell(sentHandlesCell))],
+        options: [...table.retainedByNativeCode, table.storedIn(table.nativeCell(sentOptionsCell))],
+      },
     },
     signalCode: { getter: b.any.returning("string", "number", "null"), capability: "js" },
-    stderr: { ...stdio, throws: true, cache: true },
-    stdin: { ...stdio, cache: true },
-    stdio: { getter: b.any.returning("Array"), capability: "js", throws: true },
-    stdout: { ...stdio, throws: true, cache: true },
+    stderr: { ...output, throws: true, cache: true },
+    stdin: { ...input, cache: true },
+    stdio: { getter: b.any.returning(extraPipes.spec), capability: "js", throws: true },
+    stdout: { ...output, throws: true, cache: true },
     terminal: { internalField: "terminal" },
     unref: { rustName: "do_unref" },
-    writable: { ...stdio, cache: "stdin", rustName: "stdin" },
+    writable: { ...input, cache: "stdin", rustName: "stdin" },
     "@@asyncDispose": {
       returns: b.any.returning("Promise", "undefined"),
       capability: "js",

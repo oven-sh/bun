@@ -18,14 +18,13 @@
 #ifndef UWS_WEBSOCKETPROTOCOL_H
 #define UWS_WEBSOCKETPROTOCOL_H
 
-#include <libusockets.h>
-
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
 #include <string_view>
 
 // bun-specific
+#include "wtf/Assertions.h"
 #include "wtf/SIMDUTF.h"
 
 namespace uWS {
@@ -282,21 +281,42 @@ protected:
     static inline bool rsv1(char *frame) {return *((unsigned char *) frame) & 64;}
     static inline bool isMasked(char *frame) {return ((unsigned char *) frame)[1] & 128;}
 
-    template <int N>
-    static inline void UnrolledXor(char * __restrict data, char * __restrict mask) {
-        if constexpr (N != 1) {
-            UnrolledXor<N - 1>(data, mask);
+    /* Reads all N bytes of src before it writes any of dst, so the two may overlap. */
+    template <unsigned int N>
+    static inline void unmaskBlock(char *dst, const char *src, uint32_t mask) {
+        uint32_t words[N / sizeof(uint32_t)];
+        memcpy(words, src, N);
+        for (uint32_t &word : words) {
+            word ^= mask;
         }
-        data[N - 1] ^= mask[(N - 1) % 4];
+        memcpy(dst, words, N);
+    }
+
+    template <unsigned int N>
+    static inline void unmaskTail(char *dst, const char *src, uint32_t mask, size_t length) {
+        if (length & N) {
+            unmaskBlock<N>(dst, src, mask);
+            dst += N;
+            src += N;
+        }
+        if constexpr (N > sizeof(uint32_t)) {
+            unmaskTail<N / 2>(dst, src, mask, length);
+        }
+    }
+
+    /* Block by block: clang compiles the equivalent loop over bytes to code that is many times slower on x64. */
+    static inline void unmaskWords(char *dst, const char *src, const char *mask, size_t length) {
+        ASSERT(dst <= src && length % sizeof(uint32_t) == 0);
+        uint32_t mask32;
+        memcpy(&mask32, mask, sizeof(mask32));
+        for (; length >= 64; length -= 64, dst += 64, src += 64) {
+            unmaskBlock<64>(dst, src, mask32);
+        }
+        unmaskTail<32>(dst, src, mask32, length);
     }
 
     static inline void unmaskImprecise(char *dst, char *src, char *mask, unsigned int length) {
-        for (unsigned int n = (length >> 2) + 1; n; n--) {
-            *(dst++) = *(src++) ^ mask[0];
-            *(dst++) = *(src++) ^ mask[1];
-            *(dst++) = *(src++) ^ mask[2];
-            *(dst++) = *(src++) ^ mask[3];
-        }
+        unmaskWords(dst, src, mask, ((size_t) (length >> 2) + 1) * 4);
     }
 
     static inline void unmaskImpreciseCopyMask(char *src, unsigned int length) {
@@ -313,12 +333,7 @@ protected:
     }
 
     static inline void unmaskInplace(char *data, char *stop, char *mask) {
-        while (data < stop) {
-            *(data++) ^= mask[0];
-            *(data++) ^= mask[1];
-            *(data++) ^= mask[2];
-            *(data++) ^= mask[3];
-        }
+        unmaskWords(data, data, mask, (size_t) (stop - data));
     }
 
     template <unsigned int MESSAGE_HEADER, typename T>
@@ -378,13 +393,6 @@ protected:
         }
     }
 
-    /* This one is nicely vectorized on both ARM64 and X64 - especially with -mavx */
-    static inline void unmaskAll(char * __restrict data, char * __restrict mask) {
-        for (int i = 0; i < LIBUS_RECV_BUFFER_LENGTH; i += 16) {
-            UnrolledXor<16>(data + i, mask);
-        }
-    }
-
     static inline bool consumeContinuation(char *&src, unsigned int &length, WebSocketState<isServer> *wState, void *user) {
         if (wState->remainingBytes <= length) {
             if (isServer) {
@@ -412,12 +420,7 @@ protected:
                 /* No need to unmask if mask is 0 */
                 uint32_t nullmask = 0;
                 if (memcmp(wState->mask, &nullmask, sizeof(uint32_t))) {
-                    if /*constexpr*/ (LIBUS_RECV_BUFFER_LENGTH == length) {
-                        unmaskAll(src, wState->mask);
-                    } else {
-                        // Slow path
-                        unmaskInplace(src, src + ((length >> 2) + 1) * 4, wState->mask);
-                    }
+                    unmaskInplace(src, src + ((length + 3) & ~3u), wState->mask);
                 }
             }
 

@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# function mixin(S) { if (S === undefined) S = Object; return class Mixed extends S { total(n) { var t = 0; for (var i = 0; i < n; i++) t += this.get(i, 1); return t; } }; } var mixed = mixin;
+# class View extends mixed() { constructor(m) { super(); this.m = m; } get(i, j) { return this.m.get(j, i); } put(i, v) { this.m.put(i, v); } }
+# class M extends mixed(Array) { constructor(r) { super(r); for (var i = 0; i < r; i++) this[i] = [i, i / 2, i, i]; this.rows = r; } get(i, j) { return this[i][j]; } put(i, v) { this[i][1] = v; } }
+# function copy(to, from, n) { for (var i = 0; i < n; i++) to.put(i, from.get(i, 0)); return to; }
+# var m = new M(4), v = new View(m);
+# print(copy(new M(4), m, 4).total(4), copy(v, new M(4), 4).total(4), copy(m, v, 4).total(4));
+# -- end of source
+# The method is read in front of the calls among its arguments: the guess takes these along.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: AreMembersUnchanged conditions=[{layout=L2 key="put"}]
+# RUN(ANSWER): run-in-shell
+# ANSWER: 6 4 0
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 6 4 0
+# CHECKED-NEXT: exited with 0

@@ -5,8 +5,7 @@ use crate::parser::{JSXTag, options};
 use bun_ast::expr::Data as ExprData;
 use bun_ast::flags;
 use bun_ast::op::Level;
-use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G};
-use bun_collections::VecExt;
+use bun_ast::{E, Expr, ExprNodeIndex, G};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
@@ -219,7 +218,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_key_after_spread {
                 flags.insert(flags::JSXElement::IsKeyAfterSpread);
             }
-            properties = G::PropertyList::move_from_list(props);
+            properties = bun_alloc::AstAlloc::vec_from_iter(props);
             if is_key_after_spread
                 && p.options.jsx.runtime == options::JSXRuntime::Automatic
                 && !p.has_classic_runtime_warned
@@ -364,7 +363,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(p.new_expr(
                         E::JSXElement {
                             tag: tag.data.as_expr(),
-                            children: ExprNodeList::move_from_list(children),
+                            children: bun_alloc::AstAlloc::vec_from_iter(children),
                             properties,
                             key_prop_index: key_prop_i,
                             flags,

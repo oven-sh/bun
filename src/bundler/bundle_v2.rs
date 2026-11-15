@@ -3548,7 +3548,7 @@ pub mod bv2_impl {
                                 ..Default::default()
                             })),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
+                                properties: bun_alloc::AstAlloc::vec_from_iter([
                                     G::Property {
                                         key: Some(id_string),
                                         value: Some(client_path),
@@ -3564,7 +3564,7 @@ pub mod bv2_impl {
                                         value: Some(empty_array),
                                         ..Default::default()
                                     },
-                                ])),
+                                ]),
                                 ..Default::default()
                             })),
                             ..Default::default()
@@ -3572,7 +3572,7 @@ pub mod bv2_impl {
                         *client_item = G::Property {
                             key: Some(export_name),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
+                                properties: bun_alloc::AstAlloc::vec_from_iter([
                                     G::Property {
                                         key: Some(name_string),
                                         value: Some(export_name),
@@ -3583,7 +3583,7 @@ pub mod bv2_impl {
                                         value: Some(ssr_path),
                                         ..Default::default()
                                     },
-                                ])),
+                                ]),
                                 ..Default::default()
                             })),
                             ..Default::default()
@@ -3593,9 +3593,7 @@ pub mod bv2_impl {
                     client_manifest_props.push(G::Property {
                         key: Some(client_path),
                         value: Some(server.new_expr(E::Object {
-                            properties: bun_ast::g::PropertyList::from_owned_slice(
-                                client_manifest_items,
-                            ),
+                            properties: bun_alloc::AstAlloc::vec_from_iter(client_manifest_items),
                             ..Default::default()
                         })),
                         ..Default::default()
@@ -3608,12 +3606,12 @@ pub mod bv2_impl {
             let server_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"serverManifest")?;
             let server_manifest_value = server.new_expr(E::Object {
-                properties: bun_ast::g::PropertyList::move_from_list(server_manifest_props),
+                properties: bun_alloc::AstAlloc::vec_from_iter(server_manifest_props),
                 ..Default::default()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                decls: bun_alloc::AstAlloc::vec_from_iter([G::Decl {
                     binding: Binding::alloc(
                         alloc,
                         bun_ast::b::Identifier {
@@ -3622,19 +3620,19 @@ pub mod bv2_impl {
                         bun_ast::Loc::EMPTY,
                     ),
                     value: Some(server_manifest_value),
-                }])),
+                }]),
                 is_export: true,
                 ..Default::default()
             })?;
             let ssr_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"ssrManifest")?;
             let ssr_manifest_value = server.new_expr(E::Object {
-                properties: bun_ast::g::PropertyList::move_from_list(client_manifest_props),
+                properties: bun_alloc::AstAlloc::vec_from_iter(client_manifest_props),
                 ..Default::default()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                decls: bun_alloc::AstAlloc::vec_from_iter([G::Decl {
                     binding: Binding::alloc(
                         alloc,
                         bun_ast::b::Identifier {
@@ -3643,7 +3641,7 @@ pub mod bv2_impl {
                         bun_ast::Loc::EMPTY,
                     ),
                     value: Some(ssr_manifest_value),
-                }])),
+                }]),
                 is_export: true,
                 ..Default::default()
             })?;

@@ -319,8 +319,14 @@ preserveDuplicates = true
   // Sorting a text collapses its whitespace, which changes the value of a string that isn't a class list.
   test("leaves strings and templates alone in a call of another function, as oxfmt 0.77 does", async () => {
     const rows: [string, string][] = [
-      ['cn("p-4  flex", other(`/admin  /x`), path.startsWith(`p-4  ${y}  m-2`));', 'cn("flex p-4", other(`/admin  /x`), path.startsWith(`p-4  ${y}  m-2`));'],
-      ['cn(x.includes(`${"p-4  flex"}  m-2`), other({ [`p-4  flex`]: 1 }));', 'cn(x.includes(`${"p-4  flex"}  m-2`), other({ [`p-4  flex`]: 1 }));'],
+      [
+        'cn("p-4  flex", other(`/admin  /x`), path.startsWith(`p-4  ${y}  m-2`));',
+        'cn("flex p-4", other(`/admin  /x`), path.startsWith(`p-4  ${y}  m-2`));',
+      ],
+      [
+        'cn(x.includes(`${"p-4  flex"}  m-2`), other({ [`p-4  flex`]: 1 }));',
+        'cn(x.includes(`${"p-4  flex"}  m-2`), other({ [`p-4  flex`]: 1 }));',
+      ],
       ['cn(x.a(`p-4  flex`).b("p-4  flex"), `p-4  flex`);', 'cn(x.a(`p-4  flex`).b("p-4  flex"), `flex p-4`);'],
       ["<a className={other(`p-4  flex`)} />;", "<a className={other(`p-4  flex`)} />;"],
     ];

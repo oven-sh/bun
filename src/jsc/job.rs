@@ -22,6 +22,7 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_io::{JsKeepAlive, KeepAlive};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
@@ -302,6 +303,8 @@ pub struct Job<C: JobContext> {
     /// from then on (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
+    /// What [`Completion::finish`] queues on the JS thread.
+    completion_node: ConcurrentTask,
     _keep_alive: JsKeepAlive,
     off: C::OffThread,
     js: C::Js,
@@ -346,6 +349,7 @@ impl<C: JobContext> Job<C> {
                 node: Default::default(),
                 callback: Self::run_on_pool,
             },
+            completion_node: ConcurrentTask::default(),
             _keep_alive: JsKeepAlive::active(),
             off,
             js,
@@ -420,11 +424,16 @@ impl<C: JobContext> Completion<C> {
     pub fn finish(self) {
         // Consumed: the obligation is met here, so its Drop check must not run.
         let me = ManuallyDrop::new(self);
-        // SAFETY: moving the field out of a value that is never dropped.
-        let ticket = unsafe { core::ptr::read(&raw const me.ticket) };
-        ticket.post(bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
-            me.job.as_ptr(),
-        ));
+        let job = me.job.as_ptr();
+        // SAFETY: the ticket moves out of a value that is never dropped. Nothing else touches the
+        // node of a job that is not finished, and the job is freed after its task left the queue.
+        let (ticket, node) = unsafe {
+            (
+                core::ptr::read(&raw const me.ticket),
+                (*job).completion_node.from(job),
+            )
+        };
+        ticket.post_intrusive(NonNull::from(node));
     }
     /// The job's ticket: its VM is alive while this is held.
     #[inline]

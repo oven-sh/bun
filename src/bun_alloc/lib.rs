@@ -553,15 +553,9 @@ pub struct WTFStringImplStruct {
     /// `std::atomic<uint32_t> m_refCount` (StringImpl.h:162).
     pub(crate) m_ref_count: AtomicU32,
     pub(crate) m_length: u32,
-    pub m_ptr: WTFStringImplPtr,
+    /// `m_data8` or `m_data16`.
+    m_ptr: NonNull<u8>,
     pub(crate) m_hash_and_flags: core::cell::Cell<u32>,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub union WTFStringImplPtr {
-    pub latin1: *const u8,
-    pub utf16: *const u16,
 }
 
 /// `*WTFStringImplStruct` — always non-null when `tag == WTFStringImpl`.
@@ -636,14 +630,20 @@ impl WTFStringImplStruct {
     /// Hot path is a single `lock xadd`; only the last-ref branch crosses FFI
     /// to `StringImpl::destroy`. `Relaxed` matches WebKit's
     /// `m_refCount.fetch_sub(s_refCountIncrement, std::memory_order_relaxed)`.
+    ///
+    /// # Safety
+    /// The caller owns a ref on `this` and gives it up.
     #[inline]
-    pub fn deref(&self) {
-        if self.is_static() {
-            return;
-        }
-        let old = self
-            .m_ref_count
-            .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
+    pub unsafe fn deref(this: *mut Self) {
+        // SAFETY: the caller's ref keeps `this` alive until the count is decremented.
+        let old = unsafe {
+            if (*this).is_static() {
+                return;
+            }
+            (*this)
+                .m_ref_count
+                .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed)
+        };
         debug_assert!(old > 0); // hasAtLeastOneRef
         if old != Self::S_REF_COUNT_INCREMENT {
             return;
@@ -651,33 +651,34 @@ impl WTFStringImplStruct {
         // Cold path: last reference dropped — hand the impl to C++ for
         // destruction (handles substring/symbol/external buffer ownership).
         // SAFETY: `old == s_refCountIncrement` ⇒ count is now 0 and we held
-        // the sole ref; `self` is not touched again after this call.
-        unsafe { Bun__WTFStringImpl__destroy(self) };
+        // the sole ref; `this` is not touched again after this call.
+        unsafe { Bun__WTFStringImpl__destroy(this) };
     }
-    /// Borrow `len` raw bytes from `m_ptr`. The `latin1` arm of the `repr(C)`
-    /// union is a valid byte pointer regardless of encoding (both arms share
-    /// the same offset). Centralises the `from_raw_parts(m_ptr.latin1, …)` used
-    /// by `byte_slice` / `latin1_slice` / `utf8_slice`.
-    #[inline(always)]
-    pub fn raw_bytes(&self, len: usize) -> &[u8] {
-        // SAFETY: `m_ptr.latin1` points at the impl's character buffer for the
-        // lifetime of `self`; every caller passes `len ≤ byte_length()`.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.latin1, len) }
+    /// The address of the character buffer.
+    #[inline]
+    pub fn as_ptr(&self) -> *const u8 {
+        self.m_ptr.as_ptr()
     }
     #[inline]
     pub fn byte_slice(&self) -> &[u8] {
-        self.raw_bytes(self.byte_length())
+        // SAFETY: the character buffer has that many bytes, and lives as long as `self`.
+        unsafe { core::slice::from_raw_parts(self.as_ptr(), self.byte_length()) }
     }
     #[inline]
     pub fn latin1_slice(&self) -> &[u8] {
         debug_assert!(self.is_8bit());
-        self.raw_bytes(self.m_length as usize)
+        // SAFETY: as in `byte_slice`; `m_length` is at most `byte_length()`.
+        unsafe { core::slice::from_raw_parts(self.as_ptr(), self.m_length as usize) }
     }
     #[inline]
-    pub fn utf16_slice(&self) -> &[u16] {
-        debug_assert!(!self.is_8bit());
-        // SAFETY: WebKit guarantees m_ptr.utf16 valid for m_length u16s when !8-bit.
-        unsafe { core::slice::from_raw_parts(self.m_ptr.utf16, self.m_length as usize) }
+    pub fn as_utf16(&self) -> Option<&[u16]> {
+        if self.is_8bit() {
+            return None;
+        }
+        // SAFETY: WebKit guarantees `m_ptr` valid for `m_length` u16s when !8-bit.
+        Some(unsafe {
+            core::slice::from_raw_parts(self.m_ptr.cast().as_ptr(), self.m_length as usize)
+        })
     }
     #[inline]
     pub fn utf16_byte_length(&self) -> usize {
@@ -719,7 +720,7 @@ unsafe extern "C" {
     // `ref`/`deref` are inlined in Rust above; only the cold last-ref
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
-    pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
+    fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadIsolated(this: &WTFStringImplStruct) -> bool;
     safe fn WTFStringImpl__isThreadShareable(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);

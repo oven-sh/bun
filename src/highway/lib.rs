@@ -982,13 +982,13 @@ pub fn copy_ascii_prefix(src: &[u8], dst: &mut [u8]) -> usize {
 
 /// Lowercase hex encode: writes exactly `2 * src.len()` bytes to `dst`.
 #[inline(always)]
-pub fn encode_hex_lower(src: &[u8], dst: &mut [u8]) {
+pub fn encode_hex_lower(src: &[u8], mut dst: BorrowedCursor<'_, u8>) {
     // Runtime check (not just debug): this is a safe wrapper around an FFI
     // write, so a too-small `dst` must panic instead of corrupting memory.
     assert!(
-        dst.len() / 2 >= src.len(),
+        dst.capacity() / 2 >= src.len(),
         "encode_hex_lower: destination too small ({} bytes for {} source bytes)",
-        dst.len(),
+        dst.capacity(),
         src.len()
     );
     if src.is_empty() {
@@ -997,8 +997,11 @@ pub fn encode_hex_lower(src: &[u8], dst: &mut [u8]) {
 
     // SAFETY: `src` is readable for `src.len()` bytes and `dst` is writable
     // for `2 * src.len()` bytes (asserted above); the kernel writes exactly
-    // that many bytes and the slices cannot overlap (`&`/`&mut`).
-    unsafe { highway_encode_hex_lower(src.as_ptr(), src.len(), dst.as_mut_ptr()) }
+    // that many bytes and the buffers cannot overlap (`&`/`&mut`).
+    unsafe {
+        highway_encode_hex_lower(src.as_ptr(), src.len(), dst.as_mut().as_mut_ptr().cast());
+        dst.advance(src.len() * 2);
+    }
 }
 
 /// Decode pairs of ASCII hex digits from `src` into bytes in `dst`, stopping at

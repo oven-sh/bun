@@ -766,15 +766,15 @@ impl Request {
                     }
 
                     if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
-                        let (new_url, bytes) =
-                            BunString::create_uninitialized_latin1(url_bytelength);
-                        self.url.set(new_url);
                         // exact space was counted above
-                        let (a, rest) = bytes.split_at_mut(protocol.len());
-                        let (b, c) = rest.split_at_mut(host.len());
-                        a.copy_from_slice(protocol);
-                        b.copy_from_slice(host);
-                        c.copy_from_slice(&req_url);
+                        let new_url =
+                            BunString::try_create_latin1_with(url_bytelength, |mut bytes| {
+                                bytes.append(protocol);
+                                bytes.append(host);
+                                bytes.append(&req_url);
+                                Ok::<_, AllocError>(())
+                            })?;
+                        self.url.set(new_url);
                     } else {
                         // slow path
                         let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
@@ -1198,7 +1198,7 @@ impl Request {
         cx: &bun_jsc::JsThread<'_>,
         url: Option<BunString>,
     ) -> JsResult<Request> {
-        let _ = self.ensure_url();
+        self.ensure_url()?;
         let body = body::hive_alloc(self.clone_body_value_via_cached_stream(cx)?);
         let headers = self.clone_headers(cx.global())?;
         Ok(Request {

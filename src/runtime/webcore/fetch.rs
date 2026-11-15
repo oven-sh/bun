@@ -451,7 +451,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_ref!() {
-            let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
+            req.ensure_url()?;
             break 'extract_url req.url.get().clone();
         }
 

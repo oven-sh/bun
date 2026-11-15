@@ -9,7 +9,7 @@ use bun_jsc::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsClass as _, JsError, JsResult, StringJsc as _, VM,
 };
-use bun_core::{strings, EncodedSlice, Utf8Bytes};
+use bun_core::{strings, EncodedSlice, EncodedUnits, Utf8Bytes};
 
 use super::expect;
 use super::snapshot::Format as SnapshotFormat;
@@ -986,10 +986,13 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 
         if !is_symbol {
             // TODO: make this one pass?
-            if (!key.is_16bit() && bun_ast::lexer_tables::is_latin1_identifier(key.slice()))
-                || (key.is_16bit()
-                    && bun_ast::lexer_tables::is_latin1_identifier_u16(key.utf16_slice()))
-            {
+            let is_identifier = match key.encoded_units() {
+                EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                    bun_ast::lexer_tables::is_latin1_identifier(bytes)
+                }
+                EncodedUnits::Utf16(units) => bun_ast::lexer_tables::is_latin1_identifier_u16(units),
+            };
+            if is_identifier {
                 this.add_for_new_line(key.len() + 2);
 
                 writer.print(format_args!(
@@ -999,9 +1002,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<d>"),
                     pretty_fmt_const!(ENABLE_ANSI_COLORS, "<r>"),
                 ));
-            } else if key.is_16bit() {
-                let utf16_slice = key.utf16_slice();
-
+            } else if let EncodedUnits::Utf16(utf16_slice) = key.encoded_units() {
                 this.add_for_new_line(utf16_slice.len() + 2);
 
                 if ENABLE_ANSI_COLORS {
@@ -1270,7 +1271,7 @@ impl<'a> Formatter<'a> {
                 }
                 Tag::BigInt => {
                     let view = value.to_js_string_view(self.global_this)?;
-                    let out_str = view.latin1();
+                    let out_str = view.byte_slice();
                     self.add_for_new_line(out_str.len());
 
                     writer.print(format_args!(

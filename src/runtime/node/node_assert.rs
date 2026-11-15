@@ -1,5 +1,4 @@
-use bun_core::String as BunString;
-use bun_core::strings::EncodingNonAscii;
+use bun_core::{EncodedUnits, String as BunString};
 use bun_jsc::js_object::PojoFields;
 use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult, StringJsc};
 
@@ -45,9 +44,7 @@ pub(crate) fn myers_diff(
 
     // JS strings arrive as Latin-1 or UTF-16. When the two sides differ, widen the
     // Latin-1 side so both diff over the same code unit.
-    let actual_is_16 = actual.encoding() == EncodingNonAscii::Utf16;
-    let expected_is_16 = expected.encoding() == EncodingNonAscii::Utf16;
-    if !actual_is_16 && !expected_is_16 {
+    if !actual.is_utf16() && !expected.is_utf16() {
         let (a, e) = (actual.byte_slice(), expected.byte_slice());
         return if lines {
             diff_lines::<u8>(global, a, e, check_comma_disparity, output)
@@ -60,14 +57,14 @@ pub(crate) fn myers_diff(
         |s: &BunString| -> Vec<u16> { s.byte_slice().iter().map(|&b| u16::from(b)).collect() };
     let actual_wide: Vec<u16>;
     let expected_wide: Vec<u16>;
-    let a: &[u16] = if actual_is_16 {
-        actual.utf16()
+    let a: &[u16] = if let EncodedUnits::Utf16(units) = actual.encoded_units() {
+        units
     } else {
         actual_wide = widen(actual);
         &actual_wide
     };
-    let e: &[u16] = if expected_is_16 {
-        expected.utf16()
+    let e: &[u16] = if let EncodedUnits::Utf16(units) = expected.encoded_units() {
+        units
     } else {
         expected_wide = widen(expected);
         &expected_wide

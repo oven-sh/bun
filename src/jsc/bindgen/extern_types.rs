@@ -9,13 +9,20 @@ use crate::{JSGlobalObject, JSValue};
 pub type ExternString = *mut bun_core::WTFStringImplStruct;
 
 /// A WTF-backed `String` is never empty, as in `Bun::toString`.
+///
+/// # Safety
+/// `ptr` came from C++, and no copy of it is used again.
 #[inline]
-pub fn adopt_string(ptr: ExternString) -> bun_core::String {
-    let string = bun_core::String::adopt_wtf_impl(ptr);
-    if string.is_empty() {
+pub unsafe fn adopt_string(ptr: ExternString) -> bun_core::String {
+    if ptr.is_null() {
         return bun_core::String::EMPTY;
     }
-    string
+    // SAFETY: not null, so it carries a ref, which the caller gives up.
+    let string = unsafe { bun_core::WTFString::adopt(ptr) };
+    if string.length() == 0 {
+        return bun_core::String::EMPTY;
+    }
+    string.into()
 }
 
 /// The characters of a JS string that the C++ host function's frame keeps alive until it returns.

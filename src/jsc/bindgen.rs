@@ -841,7 +841,8 @@ impl<'a> StringOrJsBytes<'a> {
         heap: &JsHeap<'a>,
     ) -> Self {
         if !argument.converted.is_null() {
-            return Self::String(extern_types::adopt_string(argument.converted));
+            // SAFETY: forwarded.
+            return Self::String(unsafe { extern_types::adopt_string(argument.converted) });
         }
         Self::Bytes(JsBytes {
             stable: None,

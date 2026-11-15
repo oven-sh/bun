@@ -16,7 +16,7 @@ use crate::node::{Encoding, StringOrBuffer};
 use crate::socket::NativeCallbacks;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, OnceMap, recycle_vec};
-use bun_core::strings;
+use bun_core::{EncodedUnits, strings};
 use bun_http::lshpack;
 use bun_jsc::ErrorCode as JscErrorCode;
 use bun_jsc::StringJsc as _;
@@ -503,10 +503,10 @@ fn is_valid_header_value(value: &[u8]) -> bool {
 /// its low byte, and object-form `respond()` drops the value in JS
 /// (`headerValueIsUnsendable`). ALTSVC and ORIGIN strings use the same rule.
 fn header_value_bytes<'a>(value: &'a bun_jsc::JSStringView<'_>) -> Cow<'a, [u8]> {
-    if !value.is_utf16() {
-        return Cow::Borrowed(value.latin1());
-    }
-    let units = value.utf16();
+    let units = match value.encoded_units() {
+        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => return Cow::Borrowed(bytes),
+        EncodedUnits::Utf16(units) => units,
+    };
     if units.iter().any(|&unit| unit > 0xFF) {
         return Cow::Owned(value.to_owned_slice());
     }

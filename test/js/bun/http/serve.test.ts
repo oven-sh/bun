@@ -717,6 +717,41 @@ it("request.url should log successfully", async () => {
   );
 });
 
+// `BUN_JSC_maxSingleAllocationSize` exists in debug WTF only.
+it.skipIf(!isDebug)("request.url throws when the string cannot be allocated", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      `--max-http-header-size=${8 * 1024 ** 2}`,
+      "-e",
+      `const { promise, resolve } = Promise.withResolvers();
+      using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch(req) {
+          try {
+            resolve(req.url.length);
+          } catch (e) {
+            resolve(e.name + ": " + e.message);
+          }
+          return new Response();
+        },
+      });
+      const socket = require("node:net").connect(server.port, "127.0.0.1");
+      socket.write("GET /");
+      socket.write(Buffer.alloc(5 * 1024 ** 2, "a"));
+      socket.write(" HTTP/1.1\\r\\nHost: localhost\\r\\n\\r\\n");
+      console.log(await promise);
+      socket.destroy();`,
+    ],
+    env: { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * 1024 ** 2) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "RangeError: Out of memory\n", stderr: "", exitCode: 0 });
+});
+
 it("request.url should be based on the Host header", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");

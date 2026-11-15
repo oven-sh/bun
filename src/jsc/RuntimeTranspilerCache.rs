@@ -6,6 +6,7 @@ use std::io::IoSlice;
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
+use bun_core::vec::BorrowedCursor;
 use bun_core::{FeatureFlags, env_var};
 use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::{CacheLookup, ParsedForCache, ParserOptions};
@@ -415,6 +416,13 @@ impl Entry {
             "this should be the default value"
         );
 
+        let read_output = |bytes: BorrowedCursor<'_, u8>| {
+            let read_bytes = file.pread_all_buf(bytes, self.metadata.output_byte_offset)?;
+            if read_bytes as u64 != self.metadata.output_byte_length {
+                return Err(crate::CrateError::MissingData);
+            }
+            Ok(())
+        };
         self.output_code = if self.metadata.output_byte_length == 0 {
             BunString::EMPTY
         } else {
@@ -439,16 +447,8 @@ impl Entry {
                     // bytes contain non-ASCII UTF-8 do we fall back to
                     // `clone_utf8` (transcode → UTF-16) and deref the scratch.
                     let len = self.metadata.output_byte_length as usize;
-                    let (scratch, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `(dead, &mut [])` on WTF allocation failure; `len > 0`
-                    // (handled above), so an empty slice means OOM.
-                    if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(crate::CrateError::MissingData);
-                    }
+                    let scratch = BunString::try_create_latin1_with(len, read_output)?;
+                    let bytes = scratch.byte_slice();
 
                     if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
@@ -466,17 +466,8 @@ impl Entry {
                 }
                 Encoding::LATIN1 => {
                     let len = self.metadata.output_byte_length as usize;
-                    let (latin1, bytes) = BunString::create_uninitialized_latin1(len);
-                    // `create_uninitialized_latin1` returns `(dead, &mut [])` on
-                    // WTF allocation failure; `len > 0` here (handled above), so
-                    // an empty slice means OOM.
-                    if bytes.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    let read_bytes = file.pread_all(bytes, self.metadata.output_byte_offset)?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
-                        return Err(crate::CrateError::MissingData);
-                    }
+                    let latin1 = BunString::try_create_latin1_with(len, read_output)?;
+                    let bytes = latin1.byte_slice();
 
                     if self.metadata.output_hash != 0 && hash(bytes) != self.metadata.output_hash {
                         return Err(crate::CrateError::InvalidHash);
@@ -486,24 +477,13 @@ impl Entry {
                 }
                 Encoding::UTF16 => {
                     let char_len = (self.metadata.output_byte_length / 2) as usize;
-                    let (string, chars) = BunString::create_uninitialized_utf16(char_len);
-                    // See LATIN1 branch above — empty slice for nonzero `char_len`
-                    // signals WTF allocation failure.
-                    if chars.is_empty() {
-                        return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
-                    }
-                    let read_bytes = file.pread_all(
-                        bun_core::slice_as_bytes_mut(chars),
-                        self.metadata.output_byte_offset,
-                    )?;
-                    if read_bytes as u64 != self.metadata.output_byte_length {
+                    let string = BunString::try_create_utf16_with(char_len, read_output)?;
+                    if string.is_empty() {
                         return Err(crate::CrateError::MissingData);
                     }
 
                     if self.metadata.output_hash != 0 {
-                        if hash(bun_core::slice_as_bytes(string.utf16()))
-                            != self.metadata.output_hash
-                        {
+                        if hash(string.byte_slice()) != self.metadata.output_hash {
                             return Err(crate::CrateError::InvalidHash);
                         }
                     }

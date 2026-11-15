@@ -175,8 +175,6 @@ enum NextAction {
     Finish,
 }
 
-// `runtime::dispatch::run_task`'s `task_tag::ShellAsync` arm casts the
-// enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
 impl bun_event_loop::BoxedTask for ShellAsyncTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
     fn release_unrun(self: Box<Self>) {}

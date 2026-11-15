@@ -573,6 +573,12 @@ enum RemoveFileResult {
     DirNotEmpty,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DirState {
+    Done,
+    Remains,
+}
+
 impl Operand {
     fn schedule(
         interp: &mut Interpreter<'_>,
@@ -612,7 +618,9 @@ impl DirTask {
         if self.operand.error_signal.load(Ordering::SeqCst) {
             return;
         }
-        let new_path = (self.operand).join(&[self.path.as_bytes(), path], is_absolute);
+        let new_path = self
+            .operand
+            .join(&[self.path.as_bytes(), path], is_absolute);
         self.enqueue_no_join(new_path);
     }
 
@@ -628,6 +636,7 @@ impl DirTask {
             path,
             kind_hint: EntryKindHint::Dir,
             deleted_entries: Vec::new(),
+            // Only `-v` output makes a child post to the main thread.
             task: if self.operand.opts.verbose {
                 ShellTask::new_child(&mut self.task)
             } else {
@@ -703,19 +712,19 @@ impl Operand {
 }
 
 impl DirTask {
-    /// Returns like [`Self::remove_entry_dir`].
-    fn remove_entry(&mut self) -> bun_sys::Maybe<bool> {
+    fn remove_entry(&mut self) -> bun_sys::Maybe<DirState> {
         if self.kind_hint == EntryKindHint::Idk
-            && (self.operand).remove_entry_file(&self.path, &mut self.deleted_entries)?
+            && self
+                .operand
+                .remove_entry_file(&self.path, &mut self.deleted_entries)?
                 == RemoveFileResult::Removed
         {
-            return Ok(false);
+            return Ok(DirState::Done);
         }
         self.remove_entry_dir()
     }
 
-    /// Returns `Ok(true)` if it went through the entries, and the directory itself is left to delete.
-    fn remove_entry_dir(&mut self) -> bun_sys::Maybe<bool> {
+    fn remove_entry_dir(&mut self) -> bun_sys::Maybe<DirState> {
         let operand = &*self.operand;
         let path = self.path.as_zstr();
         let dirfd = operand.cwd;
@@ -723,12 +732,12 @@ impl DirTask {
         // If `-d` is specified without `-r` then we can just use `rmdirat`.
         if operand.opts.remove_empty_dirs && !operand.opts.recursive {
             match bun_sys::rmdirat(dirfd, path) {
-                Ok(()) => return Ok(false),
+                Ok(()) => return Ok(DirState::Done),
                 Err(e) => match e.get_errno() {
                     E::ENOENT => {
                         if operand.opts.force {
                             operand.verbose_deleted(&mut self.deleted_entries, path.as_bytes());
-                            return Ok(false);
+                            return Ok(DirState::Done);
                         }
                         return Err(operand.error_with_path(&e, path.as_bytes()));
                     }
@@ -736,7 +745,7 @@ impl DirTask {
                         if operand.remove_entry_file(path, &mut self.deleted_entries)?
                             == RemoveFileResult::Removed
                         {
-                            return Ok(false);
+                            return Ok(DirState::Done);
                         }
                     }
                     _ => return Err(operand.error_with_path(&e, path.as_bytes())),
@@ -761,13 +770,13 @@ impl DirTask {
                 E::ENOENT => {
                     if operand.opts.force {
                         operand.verbose_deleted(&mut self.deleted_entries, path.as_bytes());
-                        return Ok(false);
+                        return Ok(DirState::Done);
                     }
                     return Err(operand.error_with_path(&e, path.as_bytes()));
                 }
                 E::ENOTDIR => {
                     operand.remove_entry_file(path, &mut self.deleted_entries)?;
-                    return Ok(false);
+                    return Ok(DirState::Done);
                 }
                 _ => return Err(operand.error_with_path(&e, path.as_bytes())),
             },
@@ -776,7 +785,7 @@ impl DirTask {
         let dir = bun_sys::File::from_fd(fd);
 
         if operand.error_signal.load(Ordering::SeqCst) {
-            return Ok(false);
+            return Ok(DirState::Done);
         }
 
         let mut iterator = dir_iterator::iterate(dir.fd());
@@ -816,7 +825,7 @@ impl DirTask {
         if let Err(e) = loop_result {
             self.operand.handle_err(e);
         }
-        Ok(true)
+        Ok(DirState::Remains)
     }
 
     /// For a directory whose children, if any, finished before `remove_entry_dir` did.
@@ -835,22 +844,20 @@ impl DirTask {
         Ok(())
     }
 
-    /// Returns `Ok(true)` if the
-    /// directory was deleted (or force-ignored), `Ok(false)` if it has entries again.
-    fn remove_entry_dir_after_children(&mut self) -> bun_sys::Maybe<bool> {
+    fn remove_entry_dir_after_children(&mut self) -> bun_sys::Maybe<DirState> {
         let operand = &*self.operand;
         let path = self.path.as_zstr();
         loop {
             match bun_sys::rmdirat(operand.cwd, path) {
                 Ok(()) => {
                     operand.verbose_deleted(&mut self.deleted_entries, path.as_bytes());
-                    return Ok(true);
+                    return Ok(DirState::Done);
                 }
                 Err(e) => match e.get_errno() {
                     E::ENOENT => {
                         if operand.opts.force {
                             operand.verbose_deleted(&mut self.deleted_entries, path.as_bytes());
-                            return Ok(true);
+                            return Ok(DirState::Done);
                         }
                         return Err(operand.error_with_path(&e, path.as_bytes()));
                     }
@@ -859,10 +866,10 @@ impl DirTask {
                 },
             }
             match operand.remove_entry_file(path, &mut self.deleted_entries)? {
-                RemoveFileResult::Removed => return Ok(true),
+                RemoveFileResult::Removed => return Ok(DirState::Done),
                 RemoveFileResult::IsDir => {}
                 #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                RemoveFileResult::DirNotEmpty => return Ok(false),
+                RemoveFileResult::DirNotEmpty => return Ok(DirState::Remains),
             }
         }
     }
@@ -964,14 +971,14 @@ impl Operand {
 
 impl OwnedTask for DirTask {
     fn run(mut self: Box<Self>) {
-        let dir_remains = self.remove_entry().unwrap_or_else(|err| {
+        let dir_state = self.remove_entry().unwrap_or_else(|err| {
             self.operand.handle_err(err);
-            false
+            DirState::Done
         });
         let Some(mut this) = self.hand_off_to_children() else {
             return;
         };
-        if dir_remains
+        if dir_state == DirState::Remains
             && !this.operand.error_signal.load(Ordering::SeqCst)
             && let Err(err) = this.remove_empty_dir()
         {
@@ -1007,10 +1014,10 @@ impl DirTask {
 
             // If we have a parent and we are the last child, now we can delete the parent.
             let parent = parent_task.and_then(Self::take_if_last);
-            match parent.and_then(Self::delete_after_waiting_for_children) {
-                Some(parent) => self = parent,
-                None => return,
-            }
+            let Some(parent) = parent.and_then(Self::delete_after_waiting_for_children) else {
+                return;
+            };
+            self = parent;
         }
     }
 
@@ -1019,8 +1026,8 @@ impl DirTask {
         if !self.operand.error_signal.load(Ordering::SeqCst) {
             match self.remove_entry_dir_after_children() {
                 Err(e) => self.operand.handle_err(e),
-                Ok(true) => {}
-                Ok(false) => {
+                Ok(DirState::Done) => {}
+                Ok(DirState::Remains) => {
                     WorkPool::schedule_owned(self);
                     return None;
                 }

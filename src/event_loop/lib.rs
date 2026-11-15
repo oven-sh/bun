@@ -31,9 +31,7 @@ pub use ConcurrentTask::{BoxedTask, ContextId, Task, TaskTag, Taskable, task_tag
 // the type/module namespace collision on the PascalCase form.
 pub use DeferredTaskQueue as deferred_task_queue;
 
-pub use any_event_loop::{
-    AnyEventLoop, EventLoopHandle, EventLoopTask, JsPoster, PostToJs, Posted,
-};
+pub use any_event_loop::{AnyEventLoop, EventLoopHandle, JsPoster, PostToJs, Posted};
 pub use bun_io::PipeReadScratch;
 
 // JS-event-loop arm of `AnyEventLoop` / `EventLoopHandle`. `bun_event_loop` is

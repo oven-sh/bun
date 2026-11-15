@@ -2023,7 +2023,7 @@ impl GitHandler {
                 bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
-            let env = DotEnv::Map::for_git_child()?.create_null_delimited_env_map()?;
+            let env = DotEnv::Map::for_git_child()?.to_envp();
             use spawn_sync::SyncStdio::{self, Buffer, Ignore, Inherit};
             let spawn = |args: &[&[u8]], output: SyncStdio| -> crate::Result<spawn_sync::Result> {
                 Ok(spawn_sync::spawn(&spawn_sync::Options {

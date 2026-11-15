@@ -397,27 +397,20 @@ impl Process {
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let watchfd = this.pid;
 
-            let ctx = this.event_loop_ctx();
-            let mut poll = match this.poller.replace(Poller::Detached) {
+            let poll = match this.poller.replace(Poller::Detached) {
                 Poller::Fd(poll) => poll,
-                Poller::WaiterThread(_) | Poller::Detached => OwnedFilePoll::new(
-                    ctx,
-                    Fd::from_native(watchfd),
-                    bun_io::Owner::new(
-                        bun_io::posix_event_loop::poll_tag::PROCESS,
-                        this.as_ptr().cast(),
-                    ),
-                ),
+                Poller::WaiterThread(_) | Poller::Detached => {
+                    let owner = bun_io::Owner::new(bun_io::PollTag::Process, this.as_ptr().cast());
+                    let ctx = this.event_loop_ctx();
+                    // SAFETY: the poll becomes a field of its owner.
+                    unsafe { OwnedFilePoll::new(ctx, Fd::from_native(watchfd), owner) }
+                }
             };
 
-            poll.enable_keeping_process_alive(ctx);
+            poll.enable_keeping_process_alive();
             let registered = poll
-                .register(
-                    this.event_loop.platform_event_loop(),
-                    bun_io::PollKind::Process,
-                    PROCESS_POLL_ONE_SHOT,
-                )
-                .inspect_err(|_| poll.disable_keeping_process_alive(ctx));
+                .register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT)
+                .inspect_err(|_| poll.disable_keeping_process_alive());
             this.poller.set(Poller::Fd(poll));
             registered
         }
@@ -437,13 +430,7 @@ impl Process {
             return Ok(());
         }
 
-        this.with_poll(|fd| {
-            fd.register(
-                this.event_loop.platform_event_loop(),
-                bun_io::PollKind::Process,
-                PROCESS_POLL_ONE_SHOT,
-            )
-        })
+        this.with_poll(|fd| fd.register(bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT))
         .expect(
             "Internal Bun error: poll_ref in Subprocess is null unexpectedly. Please file a bug report.",
         )
@@ -530,12 +517,11 @@ impl Process {
     pub fn disable_keeping_event_loop_alive(&self) {
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
-            self.poller.with_mut(|poller| match poller {
-                Poller::Fd(poll) => poll.disable_keeping_process_alive(ctx),
-                Poller::WaiterThread(keep_alive) => keep_alive.unref(ctx),
+            match self.poller.get() {
+                Poller::Fd(poll) => poll.disable_keeping_process_alive(),
+                Poller::WaiterThread(keep_alive) => keep_alive.unref(self.event_loop_ctx()),
                 Poller::Detached => {}
-            });
+            }
         }
         // `us_loop_pump` runs `uv_run` without active handles too, so `on_exit_uv` still fires.
         #[cfg(windows)]
@@ -548,12 +534,11 @@ impl Process {
         }
         #[cfg(unix)]
         {
-            let ctx = self.event_loop_ctx();
-            self.poller.with_mut(|poller| match poller {
-                Poller::Fd(poll) => poll.enable_keeping_process_alive(ctx),
-                Poller::WaiterThread(keep_alive) => keep_alive.ref_(ctx),
+            match self.poller.get() {
+                Poller::Fd(poll) => poll.enable_keeping_process_alive(),
+                Poller::WaiterThread(keep_alive) => keep_alive.ref_(self.event_loop_ctx()),
                 Poller::Detached => {}
-            });
+            }
         }
         #[cfg(windows)]
         self.with_handle(|p| p.ref_());
@@ -777,11 +762,11 @@ impl Process {
 
     /// Runs `f` on the poll, if there is one.
     #[inline]
-    fn with_poll<R>(&self, f: impl FnOnce(&mut FilePoll) -> R) -> Option<R> {
-        self.poller.with_mut(|poller| match poller {
+    fn with_poll<R>(&self, f: impl FnOnce(&FilePoll) -> R) -> Option<R> {
+        match self.poller.get() {
             Poller::Fd(poll) => Some(f(poll)),
             Poller::WaiterThread(_) | Poller::Detached => None,
-        })
+        }
     }
 }
 

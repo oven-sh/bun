@@ -96,8 +96,7 @@ export const mydep: Dependency = {
   // Omit if this dep shouldn't appear there.
   versionMacro: "MYDEP",
 
-  // Optional: .patch files applied after extraction, or overlay files
-  // copied into source root (e.g. inject a CMakeLists.txt).
+  // Optional: .patch files applied after extraction.
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds

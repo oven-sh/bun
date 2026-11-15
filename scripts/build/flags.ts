@@ -19,15 +19,7 @@ import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies: readonly DepName[] = [
-  "brotli",
-  "libdeflate",
-  "libjpeg-turbo",
-  "libwebp",
-  "lshpack",
-  "zlib",
-  "zstd",
-];
+export const safeStackDependencies: readonly DepName[] = ["brotli", "libdeflate", "libwebp", "lshpack", "zlib", "zstd"];
 
 export function usesSafeStack(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">): boolean {
   return c.hardened && c.x64 && c.abi === "gnu" && !c.asan;
@@ -1983,6 +1975,12 @@ export const fileOverrides: FileOverride[] = [
     extraFlags: "/EHsc",
     when: c => c.windows,
     desc: "Vendored electron/rcedit; VersionInfo ctor throws std::system_error caught in OnEnumResourceLanguage. Self-contained throw/catch — already excluded from PCH",
+  },
+  {
+    file: "src/jsc/bindings/highway_jpeg.cpp",
+    extraFlags: ["-O2"],
+    when: c => c.debug,
+    desc: "Same as highway_json.cpp below: the kernels run over every sample of a JPEG image.",
   },
   {
     file: "src/jsc/bindings/highway_png.cpp",

@@ -1,0 +1,15 @@
+[package]
+name = "bun_jpeg"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror.workspace = true
+bun_alloc.workspace = true
+bun_highway.workspace = true

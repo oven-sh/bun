@@ -327,19 +327,11 @@ async function fetchDep(
   // Github archives have a top-level directory <repo>-<commit>/. Strip it.
   await extractTarGz(tarballPath, dest);
 
-  // ─── Apply patches / overlays ───
+  // ─── Apply patches ───
   for (let i = 0; i < patches.length; i++) {
     const p = patches[i]!;
-    const name = basename(p);
-    if (p.endsWith(".patch")) {
-      console.log(`applying ${name}`);
-      applyPatch(dest, p, patchContents[i]!);
-    } else {
-      // Overlay file: copy into source root. Used for e.g. injecting a
-      // CMakeLists.txt into a project that doesn't have one (tinycc).
-      console.log(`overlay ${name}`);
-      await writeFile(join(dest, name), patchContents[i]!);
-    }
+    console.log(`applying ${basename(p)}`);
+    applyPatch(dest, p, patchContents[i]!);
   }
 
   // ─── Write stamp ───

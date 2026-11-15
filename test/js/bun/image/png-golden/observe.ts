@@ -23,11 +23,11 @@ export type EncodeCase = {
 
 export type Cases = { decode: DecodeCase[]; encode: EncodeCase[] };
 
-export async function loadCases(path: string): Promise<Cases> {
+export async function loadCases<T = Cases>(path: string): Promise<T> {
   return JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(path).bytes())).toString());
 }
 
-const sha256 = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+export const sha256 = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 
 export function* chunksOf(file: Uint8Array) {
   const bytes = Buffer.from(file);

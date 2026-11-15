@@ -102,8 +102,8 @@ export function registerCompileRules(n: Ninja, cfg: Config): void {
     pool: "compile",
   });
 
-  // ─── NASM assemble (x64 only) ───
-  // BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD are NASM syntax; clang can't assemble it.
+  // ─── NASM assemble (win-x64 only) ───
+  // BoringSSL's win-x64 assembly is NASM syntax; clang can't assemble it.
   // -MD writes a Make-style depfile; nasm 2.14+ supports it.
   if (cfg.nasm !== undefined) {
     n.rule("nasm", {
@@ -308,9 +308,8 @@ export function cc(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "
 }
 
 /**
- * Assemble a NASM-syntax `.asm` file (BoringSSL win-x64, libjpeg-turbo x86_64
- * SIMD). Returns absolute path to the object output. gas-syntax `.S` goes
- * through cc().
+ * Assemble a NASM-syntax `.asm` file (BoringSSL win-x64). Returns absolute
+ * path to the object output. gas-syntax `.S` goes through cc().
  */
 export function nasm(
   n: Ninja,

@@ -17,7 +17,6 @@ use crate::server::ServerLike as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
-use crate::webcore::response::HeadersRef;
 use crate::webcore::{
     self as WebCore, AbortSignal, AnyBlob, Blob, FetchHeaders, Request, Response, request,
 };
@@ -31,8 +30,8 @@ use bun_jsc::Debugger::DebuggerId;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsWrapper};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError, JsResult,
-    Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
+    self as jsc, ArrayBuffer, GlobalRef, HeadersInit, HeadersRef, JSGlobalObject, JSPromise,
+    JSValue, JsError, JsResult, Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
 use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr};
@@ -41,7 +40,7 @@ use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
 use bun_sys as sys;
 use bun_url::URL;
-use bun_uws::{self as uws, AnyWebSocket, ResponseKind, WebSocketUpgradeContext};
+use bun_uws::{self as uws, AnyWebSocket, WebSocketUpgradeContext};
 use bun_uws_sys as uws_sys;
 use bun_wyhash::hash;
 
@@ -270,6 +269,7 @@ where
 // actually needs is exposed.
 trait ReqLike {
     fn header(&mut self, name: &[u8]) -> Option<&[u8]>;
+    fn to_fetch_headers(&self) -> HeadersRef;
     /// Whether the transport frames the body with a Transfer-Encoding header.
     /// This is the parser's verdict, not a lookup of the first header field.
     fn has_transfer_encoding(&mut self) -> bool;
@@ -281,6 +281,10 @@ impl ReqLike for uws_sys::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::Request::header(self, name)
+    }
+    #[inline]
+    fn to_fetch_headers(&self) -> HeadersRef {
+        HeadersRef::create_from_uws(self)
     }
     #[inline]
     fn has_transfer_encoding(&mut self) -> bool {
@@ -303,6 +307,10 @@ impl ReqLike for uws_sys::h3::Request {
     #[inline]
     fn header(&mut self, name: &[u8]) -> Option<&[u8]> {
         uws_sys::h3::Request::header(self, name)
+    }
+    #[inline]
+    fn to_fetch_headers(&self) -> HeadersRef {
+        HeadersRef::create_from_h3(self)
     }
     /// HTTP/3 has no transfer codings (RFC 9114 4.2): the body ends at the
     /// QUIC stream FIN, and a request that carries the header is rejected
@@ -1137,14 +1145,10 @@ pub(crate) fn on_reject_plugins(
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
 struct UpgradeOptions {
     data: JSValue,
-    headers: Option<NonNull<FetchHeaders>>,
+    headers: Option<HeadersInit>,
     /// `Sec-WebSocket-Protocol` from `headers`. An empty value rejects every protocol the
     /// client offered.
     protocol: Option<bun_core::Utf8Bytes<'static>>,
-    /// These keep `headers` alive. It points into either the caller's `Headers` object or the
-    /// `FetchHeaders` converted from the caller's HeadersInit.
-    _headers_object: jsc::EnsureStillAlive,
-    _headers_converted: Option<HeadersRef>,
 }
 
 impl UpgradeOptions {
@@ -1153,8 +1157,6 @@ impl UpgradeOptions {
             data: JSValue::ZERO,
             headers: None,
             protocol: None,
-            _headers_object: jsc::EnsureStillAlive(JSValue::UNDEFINED),
-            _headers_converted: None,
         };
         if options.is_undefined_or_null() {
             return Ok(this);
@@ -1173,39 +1175,22 @@ impl UpgradeOptions {
         else {
             return Ok(this);
         };
-        if let Some(headers) = FetchHeaders::cast_(headers_value, global.vm()) {
-            this.headers = Some(headers);
-            this._headers_object = jsc::EnsureStillAlive(headers_value);
-        } else if headers_value.is_object() {
-            // `None` for an empty HeadersInit.
-            this._headers_converted = HeadersRef::create_from_js(global, headers_value)?;
-            this.headers = this
-                ._headers_converted
-                .as_ref()
-                .and_then(|headers| NonNull::new(headers.as_ptr()));
-        } else {
+        if !headers_value.is_object() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgrade options.headers must be a Headers or an object"
             )));
         }
-        if let Some(headers) = this.headers()
+        this.headers = HeadersInit::from_js(global, headers_value)?;
+        if let Some(headers) = &this.headers
             && headers.fast_has(jsc::HTTPHeaderName::SecWebSocketProtocol)
         {
             this.protocol = Some(
                 headers
                     .fast_get(jsc::HTTPHeaderName::SecWebSocketProtocol)
-                    .map_or(bun_core::Utf8Bytes::EMPTY, |protocol| {
-                        protocol.to_utf8().into_owned()
-                    }),
+                    .map_or(bun_core::Utf8Bytes::EMPTY, BunString::into_utf8),
             );
         }
         Ok(this)
-    }
-
-    fn headers<'a>(&self) -> Option<&'a mut FetchHeaders> {
-        // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
-        self.headers
-            .map(|headers| bun_opaque::opaque_deref_mut(headers.as_ptr()))
     }
 }
 
@@ -1580,13 +1565,12 @@ where
         let _upgrader_ref = upgrader.ref_guard();
 
         // Validate the handshake against `request.headers`, never the raw uWS request.
-        // Copy the values, because the option getters below can modify the headers.
         let Some(head) = request.get_fetch_headers_unless_empty() else {
             return Ok(false);
         };
-        let mut header = |name: HTTPHeaderName| {
+        let header = |name: HTTPHeaderName| {
             head.fast_get(name)
-                .map_or(Utf8Bytes::EMPTY, |value| value.to_utf8().into_owned())
+                .map_or(Utf8Bytes::EMPTY, BunString::into_utf8)
         };
         let upgrade_header = header(HTTPHeaderName::Upgrade);
         let sec_websocket_key = header(HTTPHeaderName::SecWebSocketKey);
@@ -1626,7 +1610,7 @@ where
         }
 
         // `CookieMapRef` releases the moved-out ref once `cookies_to_write` drops.
-        let mut cookies_to_write = upgrader.cookies.replace(None);
+        let cookies_to_write = upgrader.cookies.replace(None);
 
         let mut upgraded: JsResult<bool> = Ok(false);
         // Cork once for the whole 101 response. `HttpResponse::upgrade()` transfers the cork to
@@ -1634,20 +1618,11 @@ where
         resp.corked(|| {
             if options.headers.is_some() || cookies_to_write.is_some() {
                 resp.write_status(b"101 Switching Protocols");
-                if let Some(headers) = options.headers() {
-                    headers
-                        .to_uws_response_for_websocket_upgrade(SSL, resp.socket().cast::<c_void>());
+                if let Some(headers) = &options.headers {
+                    headers.to_uws_response_for_websocket_upgrade(resp);
                 }
-                if let Some(c) = cookies_to_write.as_mut()
-                    && let Err(err) = c.write(
-                        global,
-                        if SSL {
-                            ResponseKind::Ssl
-                        } else {
-                            ResponseKind::Tcp
-                        },
-                        resp.socket().cast::<c_void>(),
-                    )
+                if let Some(c) = &cookies_to_write
+                    && let Err(err) = c.write(global, resp)
                 {
                     upgraded = Err(err);
                     return;
@@ -1949,11 +1924,7 @@ where
                 if let Some(headers_) = init.fast_get(global, jsc::BuiltinName::Headers)? {
                     if let Some(headers__) = FetchHeaders::cast_(headers_, global.vm()) {
                         // Copy the headers like `new Request(url, { headers })` does.
-                        // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
-                        headers = bun_opaque::opaque_deref_mut(headers__.as_ptr())
-                            .clone_this(global)?
-                            // SAFETY: `clone_this` returns a +1 ref.
-                            .map(|p| unsafe { HeadersRef::adopt(p) });
+                        headers = headers__.clone_this(global)?;
                     } else {
                         headers = HeadersRef::create_from_js(global, headers_)?;
                     }
@@ -2542,12 +2513,7 @@ where
         // eagerly so the rest of the pipeline never needs to know which
         // transport delivered the bytes.
         if Ctx::IS_MUX {
-            // SAFETY: create_from_h3 returns a +1-ref FetchHeaders; adopt into RAII wrapper.
-            request_object.set_fetch_headers(Some(unsafe {
-                crate::webcore::response::HeadersRef::adopt(FetchHeaders::create_from_h3(
-                    std::ptr::from_mut(req).cast::<c_void>(),
-                ))
-            }));
+            request_object.set_fetch_headers_if_absent(ReqLike::to_fetch_headers(req));
             // NOTE: `ReqLike::{url,header}` both borrow `&mut req`; the
             // returned slices alias the same uWS-owned header buffer. Format
             // the `https://{host}` prefix while `host` is borrowed so the

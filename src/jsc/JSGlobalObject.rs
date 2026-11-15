@@ -1017,16 +1017,12 @@ impl JSGlobalObject {
     }
 
     pub fn vm(&self) -> &VM {
-        // JSC guarantees the VM outlives the global object; `VM` is an opaque
-        // ZST handle so the deref is the centralised `opaque_ref` proof.
-        VM::opaque_ref(JSC__JSGlobalObject__vm(self))
+        JSC__JSGlobalObject__vm(self)
     }
 
-    /// Raw `*mut JSC::VM` for FFI predicates that take a VM pointer
-    /// (e.g. [`JSValue::as_exception`]). C++ does not write through it.
     #[inline]
     pub fn vm_ptr(&self) -> *mut VM {
-        JSC__JSGlobalObject__vm(self)
+        self.vm().as_mut_ptr()
     }
 
     pub fn delete_module_registry_entry(&self, name_: &EncodedSlice) -> JsResult<()> {
@@ -1515,7 +1511,7 @@ unsafe extern "C" {
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
-    safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;
+    safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> &VM;
     safe fn JSC__JSGlobalObject__deleteModuleRegistryEntry(
         this: &JSGlobalObject,
         name_: &EncodedSlice,

@@ -14,8 +14,6 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use crate::webcore::jsc::{
     self as jsc, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
 };
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_core as bun;
 use bun_core::Output;
 use bun_core::{EncodedSlice, String as BunString, Utf8Bytes, WTFStringImplExt as _, strings};
 use bun_http_types::MimeType::MimeType;
@@ -182,7 +180,7 @@ pub(crate) trait BlobExt {
     ) -> Blob
     where
         Self: Sized;
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob
+    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &jsc::DOMFormData) -> Blob
     where
         Self: Sized;
     fn content_type(&self) -> &[u8];
@@ -633,7 +631,7 @@ impl BlobExt for Blob {
         blob
     }
 
-    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &mut jsc::DOMFormData) -> Blob {
+    fn from_dom_form_data(global_this: &JSGlobalObject, form_data: &jsc::DOMFormData) -> Blob {
         // "----WebKitFormBoundary" (22 bytes) + 32 lowercase-hex chars of a fresh UUID.
         const BOUNDARY_PREFIX: &[u8; 22] = b"----WebKitFormBoundary";
         let mut boundary_buf = [0u8; BOUNDARY_PREFIX.len() + 32];
@@ -654,66 +652,8 @@ impl BlobExt for Blob {
         // string entry 8, plus 3 for the closing boundary.
         context.joiner.reserve(form_data.count() * 13 + 3);
 
-        // Every raw deref is wrapped locally; the safe fn item coerces to the
-        // callback-pointer type at `DOMFormData__forEach`.
-        extern "C" fn for_each_thunk(
-            ctx_ptr: *mut c_void,
-            name_: *mut EncodedSlice,
-            value_ptr: *mut c_void,
-            filename: *mut EncodedSlice,
-            is_blob: u8,
-        ) {
-            // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
-            // erased lifetime is the caller's stack frame in `from_dom_form_data`.
-            let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
-            let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to an `EncodedSlice`. Its
-                // bytes are a string of the `DOMFormData`, which is borrowed past `joiner.done()`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<EncodedSlice>() })
-            } else {
-                FormDataEntry::File {
-                    // SAFETY: `value_ptr` is the `Blob` that the entry's `WebCore::Blob` holds a
-                    // ref on; the `DOMFormData` is borrowed past `joiner.done()`.
-                    blob: unsafe { &*value_ptr.cast::<Blob>() },
-                    filename: if filename.is_null() {
-                        EncodedSlice::EMPTY
-                    } else {
-                        // SAFETY: non-null `filename` is a valid `*EncodedSlice` for this call.
-                        // Its bytes are the file name that the same `WebCore::Blob` holds.
-                        unsafe { *filename }
-                    },
-                }
-            };
-            // SAFETY: `name_` is always a valid non-null `*EncodedSlice` for this callback.
-            // Its bytes are a string of the `DOMFormData` too.
-            ctx.on_entry(unsafe { *name_ }, entry);
-        }
-        unsafe extern "C" {
-            // `this` is the `&mut DOMFormData` param (coerced); `ctx`/`cb` are
-            // stored opaquely and only used synchronously. Module-private with
-            // one call site below — no caller-side precondition remains.
-            safe fn DOMFormData__forEach(
-                this: *mut jsc::DOMFormData,
-                ctx: *mut c_void,
-                // Safe fn-ptr: `for_each_thunk` is a safe `extern "C" fn` (its
-                // body localises every raw deref individually), so the callback
-                // type carries no caller-side precondition.
-                cb: extern "C" fn(
-                    *mut c_void,
-                    *mut EncodedSlice,
-                    *mut c_void,
-                    *mut EncodedSlice,
-                    u8,
-                ),
-            );
-        }
-        // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
-        // past this call.
-        DOMFormData__forEach(
-            form_data,
-            (&raw mut context).cast::<c_void>(),
-            for_each_thunk,
-        );
+        // SAFETY: nothing up to `joiner.done()` runs script or changes the form.
+        unsafe { form_data.for_each(|name, entry| context.on_entry(name, entry)) };
         if context.failed {
             // Drop the joiner (Drop runs StringJoiner::deinit) so every
             // heap-owned slice already pushed — escaped names, non-ASCII
@@ -2213,32 +2153,20 @@ impl BlobExt for Blob {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if let Some(store) = self.store.get() {
                         if let store::Data::Bytes(bytes) = &store.data {
-                            let store_bytes = bytes.slice();
-                            // SAFETY: `Clone` arm reads only; `buf` is store-backed.
-                            if bun::is_slice_in_buffer(unsafe { &*buf }, store_bytes) {
-                                if let Some(memfd) = bytes.memfd() {
-                                    let byte_offset = (buf.cast::<u8>() as usize)
-                                        .saturating_sub(store_bytes.as_ptr() as usize);
-                                    let result =
-                                        jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
-                                            memfd.native() as i64,
-                                            global,
-                                            byte_offset,
-                                            buf_len,
-                                            store_bytes.len(),
-                                            TYPED_ARRAY_VIEW,
-                                        );
-                                    let result = result?;
-                                    debug!(
-                                        "toArrayBuffer COW clone({}, {}) = {}",
-                                        byte_offset,
-                                        buf_len,
-                                        (result != JSValue::ZERO) as u8
-                                    );
-                                    if result != JSValue::ZERO {
-                                        return Ok(result);
-                                    }
-                                }
+                            let result = jsc::ArrayBuffer::to_array_buffer_from_shared_memfd(
+                                global,
+                                bytes,
+                                // SAFETY: `Clone` arm reads only.
+                                unsafe { &*buf },
+                                TYPED_ARRAY_VIEW,
+                            )?;
+                            debug!(
+                                "toArrayBuffer COW clone({}) = {}",
+                                buf_len,
+                                result.is_some() as u8
+                            );
+                            if let Some(result) = result {
+                                return Ok(result);
                             }
                         }
                     }
@@ -2703,13 +2631,11 @@ impl BlobExt for Blob {
     fn into_js(self, global_object: &JSGlobalObject) -> JSValue {
         self.calculate_estimated_byte_size();
 
-        let is_s3 = self.is_s3();
-        let this = Blob::new(self);
-        if is_s3 {
-            return crate::webcore::s3_file::to_js_unchecked(global_object, this);
+        if self.is_s3() {
+            return crate::webcore::s3_file::into_js(global_object, self);
         }
 
-        js::to_js(this, global_object)
+        js::to_js(Blob::new(self), global_object)
     }
 
     /// `Bun.file(pathOrFd)` core: wrap a path-or-fd in a `Store::File` and
@@ -2828,16 +2754,7 @@ use bun_bundler::options_impl::LoaderExt as _;
 use bun_core::string_joiner::StringJoiner;
 use bun_jsc::JsClass as _;
 use bun_jsc::SysErrorJsc as _;
-
-/// One entry of a `DOMFormData`, as `DOMFormData__forEach` hands it out.
-#[derive(Clone, Copy)]
-pub(crate) enum FormDataEntry<'a> {
-    String(EncodedSlice<'a>),
-    File {
-        blob: &'a Blob,
-        filename: EncodedSlice<'a>,
-    },
-}
+use bun_jsc::dom_form_data::FormDataEntry;
 
 // ──────────────────────────────────────────────────────────────────────────
 // FormDataContext

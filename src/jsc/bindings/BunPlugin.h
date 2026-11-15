@@ -137,12 +137,9 @@ public:
             String load;
         };
         Vector<ModuleMockWithTurn> moduleMocksWithTurn = {};
-        // A mock has a place in some load, and in each of its loads another factory has the turn. If another load comes to import its module,
-        // moduleLoaderResolve() ranks again.
+        // A mock has a place, and in each of its loads another factory has the turn. moduleLoaderResolve() ranks again if another load comes to import its module.
         bool hasModuleMockBehindTurn = false;
-        // An import() or vi.importActual() of a running factory that reached a module which another load is still fetching. Whether that module
-        // waits for the mock is not known yet. Once the loader has the module and has asked for its imports, the import is resolved again.
-        // See waitForFetchBeforeImport().
+        // An import() or vi.importActual() of a running factory that waits for a module which another load is still fetching. See waitForFetchBeforeImport().
         struct ImportWaitingForFetch {
             bool isReleased { false };
             // import() has `parameters` and `sourceOrigin`. vi.importActual() has `from`, the file of the call.
@@ -158,8 +155,7 @@ public:
             String moduleAhead;
         };
         Vector<ImportWaitingForFetch> importsWaitingForFetches = {};
-        // Set while moduleLoaderImportModule() or importModuleFrom() resolves an import for the loader of the test files: that import can wait.
-        // isWaitingForModule() then names the module that is being fetched in moduleAheadOfImport.
+        // Set while moduleLoaderImportModule() or importModuleFrom() resolves an import that can wait: isWaitingForModule() then names the module being fetched in moduleAheadOfImport.
         bool importCanWaitForFetch = false;
         String moduleAheadOfImport;
         // The reactions that rankWaitingModuleMocks() leaves behind carry the number it had then, and do nothing if it has moved on.

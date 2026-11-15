@@ -2472,8 +2472,7 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
     );
   });
 
-  // The price of the wait. The callback answers only after the test file has the mock, so the file can't load. Before, the factory got a
-  // second instance of the module, and the callback was called twice.
+  // The price of the wait: the callback answers only after the test file has the mock. Before, the factory got a second instance, and the callback was called twice.
   test("an import() that waits for a fetch that waits for its mock never settles", async () => {
     using dir = tempDir("mock-module-waits", {
       ...files,
@@ -6968,8 +6967,7 @@ describe.concurrent("a factory doesn't wait for an onLoad() callback in an unrel
     );
   });
 
-  // Another module calls import() for the factory, so only the async context of the call tells who asks. The test makes the loader
-  // go on in its own context before the callback answers.
+  // Another module calls import() for the factory, so only the async context tells who asks. The loader goes on in its own context before the callback answers.
   test("and so does a factory whose import() went on in another async context", async () => {
     await expectFixturesToPass(
       {

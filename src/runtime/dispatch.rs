@@ -14,15 +14,19 @@
 //! registration, no `AtomicPtr`, no init-order hazard.
 //!
 //! **Adding a variant** (do all four):
-//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
+//!   1. tag constant in `bun_event_loop::task_tag` (or a `bun_io::PollTag`);
 //!   2. `impl bun_event_loop::BoxedTask for YourType` if it is queued as a `Box`, otherwise `Taskable`;
 //!   3. a `run_task` arm and a `release_task_unrun` arm here, both through `in_features!` if only code of removable features (`src/trim/features`) queues it;
 //!   4. bump the `task_tag::COUNT` assertion below.
 
+use std::rc::Rc;
+
 use bun_event_loop::{BoxedTask, Task, task_tag};
+use bun_ptr::RefPtr;
 
 #[cfg(not(windows))]
-use bun_io::posix_event_loop::{Flags as PollFlag, IoEvent, Owner, poll_tag};
+use bun_io::posix_event_loop::Flags as PollFlag;
+use bun_io::{IoEvent, Owner, PollTag};
 
 use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, Timespec as ElTimespec,
@@ -111,11 +115,14 @@ use crate::shell::builtins::{
 };
 use crate::shell::dispatch_tasks::{ShellCondExprStatTask, ShellGlobTask, ShellRmDirTask};
 use crate::shell::interpreter::{PoolTask, ShellTask};
+use crate::shell::io_reader::IOReader as ShellIoReader;
 #[cfg(not(windows))]
 use crate::shell::io_writer::Poll as ShellBufferedWriterPoll;
 use crate::shell::states::r#async::Async as ShellAsync;
+use crate::shell::subproc::PipeReader as ShellPipeReader;
 
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
+use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
 use crate::webcore::file_sink::FileSink;
 #[cfg(not(windows))]
 use crate::webcore::file_sink::Poll as FileSinkPoll;
@@ -125,8 +132,10 @@ use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3H
 use crate::webcore::streams::{PendingRead as StreamPending, StreamResult};
 
 use crate::api::bun_subprocess::Subprocess;
+use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as SubprocessPipeReader;
 #[cfg(not(windows))]
 use crate::api::bun_terminal_body::Poll as TerminalPoll;
+use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
@@ -151,7 +160,12 @@ use crate::node::node_fs_stat_watcher::StatWatcherScheduler;
 use crate::node::node_fs_watcher::FSWatchTask;
 
 use crate::dns_jsc::Resolver as DNSResolver;
-use crate::server::{ServePluginsLoadTask, ServerAllConnectionsClosedTask};
+use crate::server::{FileResponseStream, ServePluginsLoadTask, ServerAllConnectionsClosedTask};
+
+use crate::cli::test::parallel::worker::Worker as TestWorker;
+use crate::cli::{filter_run, multi_run};
+use bun_install::git_runner::GitSubprocess;
+use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
 
 #[cfg(not(windows))]
 use crate::api::bun_process::Process;
@@ -867,32 +881,34 @@ pub(crate) fn tick_queue_with_count(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// FilePoll dispatch
+// Poll and pipe dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for a `bun_io::FilePoll` that fired. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`, which
+/// Hot-path dispatcher for a `bun_io::FilePoll` that fired, or a read that libuv completed. Declared
+/// `extern "Rust"` in `bun_io::posix_event_loop`. `bun_io`
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
 /// # Safety
 /// `owner.ptr()` is the live value that the arm of `owner.tag()` casts it to.
-#[cfg(not(windows))]
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
+    #[cfg(not(windows))]
     let (size_or_offset, hup) = (event.size_or_offset, event.is_hup());
 
-    /// One match-arm body of the poll-tag dispatch. Recovers the typed owner as
-    /// a RAW `*mut $Ty` (never `&mut` — re-entrant callees like `DNSResolver`
-    /// pick their own deref mode without aliasing UB) then runs `$body`.
-    macro_rules! poll_arm {
-        ($Ty:ty, |$h:ident| $body:expr) => {{
-            // SAFETY: tag was set together with this pointee type at `OwnedFilePoll::new`.
-            let $h: *mut $Ty = owner.ptr().cast::<$Ty>();
-            $body;
-        }};
+    /// `$body` through [`in_features!`], with the owner as `$cast` makes it of a `*mut $Ty`.
+    macro_rules! io_arm {
+        ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $key:pat, $event:ident| $body:expr) => {
+            in_features!($features, (owner: Owner = owner, $event: IoEvent = event) {
+                // SAFETY: the contract of `__bun_run_io`.
+                let $this = unsafe { $cast(owner.ptr().cast::<$Ty>()) };
+                let $key = owner.key();
+                $body
+            })
+        };
     }
-    /// The plain `on_poll(size_or_offset, hup)` call that covers most tags, through [`in_features!`].
+    /// The plain `on_poll(size_or_offset, hup)` call of the writers, through [`in_features!`].
+    #[cfg(not(windows))]
     macro_rules! feature_poll_arm {
         ($features:tt, $Ty:ty) => {
             in_features!(
@@ -911,49 +927,41 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
     }
 
     match owner.tag() {
-        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
-            // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-            // set at `OwnedFilePoll::new`. Passed raw: `on_poll`'s read loops run
-            // user JS that can re-enter the reader, so no `&mut` may span the
-            // dispatch.
-            unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
-        }),
-        poll_tag::PROCESS => {
+        #[cfg(not(windows))]
+        PollTag::Process => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr().cast::<Process>()) {
                 // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
                 Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
             })
         }
-        poll_tag::MEMORY_PRESSURE => {
+        #[cfg(not(windows))]
+        PollTag::MemoryPressure => {
             crate::node::memory_pressure::on_poll(event.flags, size_or_offset);
         }
-        poll_tag::PARENT_DEATH_WATCHDOG => {
-            // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).
-            #[cfg(target_os = "macos")]
-            bun_io::parent_death_watchdog::on_parent_exit();
-            #[cfg(not(target_os = "macos"))]
-            debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
-        }
+        #[cfg(target_os = "macos")]
+        PollTag::ParentDeathWatchdog => bun_io::parent_death_watchdog::on_parent_exit(),
 
         // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
-        poll_tag::FILE_SINK => feature_poll_arm!([FileSink, Spawn, Shell], FileSinkPoll),
-        poll_tag::STATIC_PIPE_WRITER => {
+        #[cfg(not(windows))]
+        PollTag::FileSink => feature_poll_arm!([FileSink, Spawn, Shell], FileSinkPoll),
+        #[cfg(not(windows))]
+        PollTag::StaticPipeWriter => {
             feature_poll_arm!([Spawn], StaticPipeWriterPoll<Subprocess<'_>>)
         }
-        poll_tag::SHELL_STATIC_PIPE_WRITER => {
+        #[cfg(not(windows))]
+        PollTag::ShellStaticPipeWriter => {
             feature_poll_arm!(
                 [Shell],
                 StaticPipeWriterPoll<crate::shell::subproc::ShellSubprocess>
             )
         }
-        poll_tag::SECURITY_SCAN_STATIC_PIPE_WRITER => {
-            feature_poll_arm!(
-                [Install],
-                StaticPipeWriterPoll<bun_install::SecurityScanSubprocess<'_>>
-            )
+        #[cfg(not(windows))]
+        PollTag::SecurityScanStaticPipeWriter => {
+            feature_poll_arm!([Install], StaticPipeWriterPoll<SecurityScanSubprocess<'_>>)
         }
         // `bun.shell.Interpreter.IOWriter.Poll`
-        poll_tag::SHELL_BUFFERED_WRITER => in_features!(
+        #[cfg(not(windows))]
+        PollTag::ShellBufferedWriter => in_features!(
             [Shell],
             (
                 h: *mut ShellBufferedWriterPoll = owner.ptr().cast::<ShellBufferedWriterPoll>(),
@@ -965,7 +973,8 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 unsafe { crate::shell::io_writer::on_poll(&mut *h, size, hup) };
             }
         ),
-        poll_tag::DNS_RESOLVER => in_features!(
+        #[cfg(not(windows))]
+        PollTag::DnsResolver => in_features!(
             [Dns],
             (
                 resolver: *const DNSResolver = owner.ptr().cast_const().cast::<DNSResolver>(),
@@ -980,30 +989,110 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 resolver.on_dns_poll(fd, readable, writable);
             }
         ),
-        poll_tag::GET_ADDR_INFO_REQUEST => {
-            #[cfg(target_os = "macos")]
-            {
-                let shared = owner
-                    .ptr()
-                    .cast::<crate::dns_jsc::dns_sd::SharedConnection>();
-                crate::dns_jsc::dns_sd::SharedConnection::on_readable(shared);
-            }
-            #[cfg(not(target_os = "macos"))]
-            {
-                debug_assert!(false, "dns_sd SharedConnection poll on non-mac");
-            }
+        #[cfg(target_os = "macos")]
+        PollTag::GetAddrInfoRequest => {
+            crate::dns_jsc::dns_sd::SharedConnection::on_readable(owner.ptr().cast());
         }
-        poll_tag::TERMINAL_POLL => feature_poll_arm!([Terminal], TerminalPoll),
-        // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
-        poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            poll_arm!(bun_io::BufferedReader, |h| {
-                // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
-                // set at `OwnedFilePoll::new`. Passed raw (see BUFFERED_READER above).
-                unsafe { bun_io::BufferedReader::on_poll(h, size_or_offset as isize, hup) }
+        #[cfg(not(windows))]
+        PollTag::TerminalPoll => feature_poll_arm!([Terminal], TerminalPoll),
+        #[cfg(windows)]
+        PollTag::FileSink
+        | PollTag::StaticPipeWriter
+        | PollTag::ShellStaticPipeWriter
+        | PollTag::SecurityScanStaticPipeWriter
+        | PollTag::ShellBufferedWriter => unreachable!("libuv calls these writers directly"),
+
+        // A ref is held across the handler, which may release every other one.
+        PollTag::FileReader => {
+            // SAFETY: fn contract.
+            let this = unsafe { RefPtr::init_ref(owner.ptr().cast::<FileReaderSource>()) };
+            FileReader::read(&this, Some(event));
+        }
+        PollTag::FileResponseStream => io_arm!(
+            [Serve],
+            RefPtr::init_ref,
+            FileResponseStream,
+            |this, _, event| this.read(Some(event))
+        ),
+        PollTag::TerminalReader => {
+            io_arm!([Terminal], RefPtr::init_ref, Terminal, |this, _, event| {
+                this.read(Some(event))
+            })
+        }
+        PollTag::InstallGit => io_arm!(
+            [Install],
+            RefPtr::init_ref,
+            GitSubprocess,
+            |this, key, event| GitSubprocess::on_io(&this, key, event)
+        ),
+        PollTag::ShellIoReader => {
+            io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {
+                this.on_io(event)
+            })
+        }
+        PollTag::ShellPipeReader => {
+            io_arm!([Shell], clone_rc, ShellPipeReader, |this, _, event| {
+                this.read(Some(event))
             })
         }
 
-        poll_tag::NULL => debug_assert!(false, "a poll with no owner fired"),
+        // Neither JS nor a nested tick runs under these.
+        PollTag::FilterRun => io_arm!(
+            [Tools],
+            <*mut _>::as_mut_unchecked,
+            filter_run::ProcessHandle<'_>,
+            |this, key, event| this.read(key, Some(event))
+        ),
+        PollTag::MultiRun => io_arm!(
+            [Tools],
+            <*mut _>::as_mut_unchecked,
+            multi_run::PipeReader<'_>,
+            |this, _, event| this.read(Some(event))
+        ),
+        PollTag::TestWorker => io_arm!(
+            [TestCommand],
+            <*mut _>::as_mut_unchecked,
+            TestWorker,
+            |this, key, event| this.on_io(key, event)
+        ),
+        PollTag::SecurityScanReader => io_arm!(
+            [Install],
+            <*mut _>::as_mut_unchecked,
+            SecurityScanSubprocess<'_>,
+            |this, _, event| this.on_io(event)
+        ),
+
+        // These free themselves once they have read to the end.
+        PollTag::SubprocessPipeReader => {
+            in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
+                // SAFETY: the contract of `__bun_run_io`.
+                unsafe { SubprocessPipeReader::on_io(owner.ptr().cast(), event) };
+            })
+        }
+        PollTag::LifecycleScript => {
+            in_features!([Install], (owner: Owner = owner, event: IoEvent = event) {
+                // SAFETY: the contract of `__bun_run_io`.
+                unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.key(), event) };
+            })
+        }
+        PollTag::CronRegister | PollTag::CronRemove => {
+            in_features!([Cron], (owner: Owner = owner, event: IoEvent = event) {
+                // SAFETY: the contract of `__bun_run_io`.
+                unsafe { crate::api::cron::on_io(owner, event) };
+            })
+        }
+
+        PollTag::Null => debug_assert!(false, "a poll with no owner fired"),
+    }
+}
+
+/// # Safety
+/// `ptr` is `Rc::as_ptr` of a live `Rc`.
+unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
+    // SAFETY: fn contract.
+    unsafe {
+        Rc::increment_strong_count(ptr);
+        Rc::from_raw(ptr)
     }
 }
 

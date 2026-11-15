@@ -43,7 +43,7 @@ pub fn from_fetch_headers(
     let needs_content_type = 'brk: {
         if let Some(body_ct) = body_content_type {
             let has_ct_header =
-                fetch_headers.is_some_and(|h| h.fast_has_(HTTPHeaderName::ContentType as u8));
+                fetch_headers.is_some_and(|h| h.fast_has(HTTPHeaderName::ContentType));
             if !has_ct_header {
                 let Some((new_count, new_len)) = header_count.checked_add(1).zip(
                     u32::try_from(b"Content-Type".len() + body_ct.len())

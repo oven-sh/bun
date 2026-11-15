@@ -221,29 +221,24 @@ impl StaticRoute {
                 }
             };
 
-            if let Some(h) = response.get_init_headers_mut() {
-                h.fast_remove(HTTPHeaderName::TransferEncoding);
-                h.fast_remove(HTTPHeaderName::ContentLength);
-            }
+            response.with_init_headers(|headers| {
+                if let Some(h) = headers {
+                    h.fast_remove(HTTPHeaderName::TransferEncoding);
+                    h.fast_remove(HTTPHeaderName::ContentLength);
+                }
+            });
 
             // Consuming the body left a plain `Blob` behind, which no longer implies
             // the `text/plain` a string body carried. Record it on the response's own
             // headers so re-registering the same `Response` serves the same type.
             if was_string {
-                let text_mime = bun_http_types::MimeType::TEXT;
-                response.get_or_create_headers(global_this)?.put_default(
-                    HTTPHeaderName::ContentType,
-                    &bun_core::StringView::ascii(text_mime.value.as_ref()),
-                    global_this,
-                )?;
+                response.put_default_content_type(global_this, &bun_http_types::MimeType::TEXT)?;
             }
 
-            return Ok(Some(Self::init_from_any_blob_with_headers(
-                global_this,
-                blob,
-                response.get_init_headers(),
-                response.status_code(),
-            )?));
+            let status_code = response.status_code();
+            return Ok(Some(response.with_init_headers(|headers| {
+                Self::init_from_any_blob_with_headers(global_this, blob, headers, status_code)
+            })?));
         }
 
         Ok(None)

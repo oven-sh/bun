@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -33,12 +34,12 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
-use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
+use crate::webcore::{AbortSignal, DrainResult, InternalBlob, Response, SinkHandle};
 use bun_jsc::AbortSignalRef;
+use bun_jsc::HeadersRef;
 
 // `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask callbacks at the tier-3 layer.
@@ -734,13 +735,13 @@ impl FetchTasklet {
                 if matches!(old, BodyValue::Locked(_)) {
                     bun_output::scoped_log!(FetchTasklet, "onBodyReceived old.resolve");
                     let mut old = old;
-                    // BodyValue::resolve takes `Option<NonNull<FetchHeaders>>` (opaque C++ handle
-                    // mutated via FFI); the inherent `get_fetch_headers` returns `Option<&_>`, so
-                    // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
-                    // response.body) and outlives this block.
-                    let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
                     let context = global_this.bun_vm().context_of(self.context);
-                    BodyValue::resolve(&mut old, body, &global_this.js_thread(context), headers)?;
+                    BodyValue::resolve(
+                        &mut old,
+                        body,
+                        &global_this.js_thread(context),
+                        Some(response),
+                    )?;
                 }
             }
         }
@@ -1486,12 +1487,7 @@ impl FetchTasklet {
             b"statusText".as_slice(),
             bun_string_jsc::create_utf8_for_js(global_this, response.status_text())?,
         );
-        // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
-        let mut headers = unsafe {
-            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers().list,
-            ))
-        };
+        let headers = HeadersRef::create_from_pico_headers(response.headers().list);
         error.put(
             global_this,
             b"headers".as_slice(),
@@ -1691,7 +1687,7 @@ impl FetchTasklet {
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(metadata.headers().list);
+        let headers = HeadersRef::create_from_pico_headers(metadata.headers().list);
         let status_code = metadata.status_code() as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
@@ -1712,8 +1708,7 @@ impl FetchTasklet {
         };
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                headers: Cell::new(Some(headers)),
                 status_code,
                 status_text,
                 ..Default::default()

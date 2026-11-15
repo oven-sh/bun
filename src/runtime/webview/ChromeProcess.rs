@@ -821,14 +821,11 @@ impl PipeEvent {
 }
 
 #[cfg(windows)]
-impl bun_event_loop::Taskable for QueuedEvent {
+impl bun_event_loop::BoxedTask for QueuedEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ChromePipeEvent;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `PipeEvent::post`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

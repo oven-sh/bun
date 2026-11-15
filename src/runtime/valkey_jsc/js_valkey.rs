@@ -1993,23 +1993,21 @@ impl ValkeyDeferredClose {
     }
 }
 
-impl bun_event_loop::Taskable for ValkeyDeferredClose {
+impl bun_event_loop::BoxedTask for ValkeyDeferredClose {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed at the enqueue site.
-        let task = unsafe { bun_core::heap::take(this) };
-        match task.what {
+    fn release_unrun(self: Box<Self>) {
+        match self.what {
             // Script-free bookkeeping; do it.
-            DeferredClose::Socket => task.run(),
+            DeferredClose::Socket => self.run(),
             // The VM is going away: `on_close()` would run `onclose`, so only
             // give back what `close_without_socket_next_tick` took.
             DeferredClose::WithoutSocket => {
-                task.ctx.poll_ref.disable();
+                self.ctx.poll_ref.disable();
             }
         }
     }
     /// The client's own close: `on_close` checks the client's context before it calls script.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

@@ -1420,12 +1420,7 @@ impl GitSubprocess {
             Step::Log => {
                 let commit = strings::trim(stdout, b" \t\r\n");
                 // With `--ignore-missing`, git prints nothing and exits with 0 if no HEAD resolves.
-                let result = if ok && !commit.is_empty() {
-                    Ok(commit.to_vec())
-                } else {
-                    Err(Error::InstallFailed)
-                };
-                Self::finish_commit(this, result);
+                Self::finish_commit(this, (ok && !commit.is_empty()).then(|| commit.to_vec()));
             }
             Step::ListTree(git_dir) => {
                 if ok {
@@ -1491,7 +1486,7 @@ impl GitSubprocess {
     /// Fails the task with `err`. Frees `this`.
     fn fail(this: ThisPtr<Self>, err: Error) {
         if matches!(this.task().job, Job::GitCommit { .. }) {
-            Self::finish_commit(this, Err(err));
+            Self::finish_commit(this, None);
         } else {
             let staging = this.staging.take();
             Self::finish_on_pool(this, Finalize::Failed { staging, err });
@@ -1518,7 +1513,7 @@ impl GitSubprocess {
     }
 
     /// Hands the finished commit lookup to `resolve_tasks`. Frees `this`.
-    fn finish_commit(this: ThisPtr<Self>, result: Result<Vec<u8>, Error>) {
+    fn finish_commit(this: ThisPtr<Self>, found: Option<Vec<u8>>) {
         let manager = this.manager;
         let task_ptr = this.task;
         {
@@ -1526,15 +1521,12 @@ impl GitSubprocess {
             let Job::GitCommit { sha, .. } = &mut task.job else {
                 unreachable!("not a commit task");
             };
-            match result {
-                Ok(found) => {
+            match found {
+                Some(found) => {
                     *sha = found;
                     task.status = Task::Status::Success;
                 }
-                Err(err) => {
-                    task.status = Task::Status::Fail;
-                    task.err = Some(err);
-                }
+                None => task.status = Task::Status::Fail,
             }
         }
         Self::release(this);

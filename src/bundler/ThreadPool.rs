@@ -2,7 +2,7 @@
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
-//! `Worker::create` / `initialize_transpiler` build the per-worker
+//! `Worker::create` builds the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
 //! bitwise struct copy).
 
@@ -559,34 +559,19 @@ impl Worker {
         self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
+        // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
         self.data = Some(WorkerData {
             log,
-            transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
+            transpiler: Transpiler::for_worker(self.ctx.transpiler(), arena_ref, log),
             other_transpiler: None,
             macro_load_states: Default::default(),
         });
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
-    }
-
-    /// Build a per-worker `Transpiler` from `from`.
-    ///
-    /// reshaped for borrowck — associated fn (no `&mut self`) so
-    /// callers can borrow `self.data.log` disjointly. The returned value is a
-    /// fully-owned `Transpiler` whose `Drop` is sound.
-    fn initialize_transpiler(
-        log: *mut bun_ast::Log,
-        from: &Transpiler<'_>,
-        arena: &'static ThreadLocalArena,
-    ) -> Transpiler<'static> {
-        // SAFETY: `from` is the `BundleV2`-owned transpiler (or its
-        // client transpiler), which outlives every worker; the
-        // `&'a`-carrying fields inside reference process-lifetime data.
-        unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
@@ -596,14 +581,14 @@ impl Worker {
             if data.other_transpiler.is_none() {
                 // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.
-                let client: &Transpiler<'_> = self.ctx.client_transpiler_ref().unwrap();
+                let client = self.ctx.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
                 // pinned for the worker's lifetime; detach to `'static` for the
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
                     unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
-                data.other_transpiler = Some(Box::new(Self::initialize_transpiler(
-                    data.log, client, arena_ref,
+                data.other_transpiler = Some(Box::new(Transpiler::for_worker(
+                    client, arena_ref, data.log,
                 )));
             }
             // Just populated above (or on a prior call) — `expect` is

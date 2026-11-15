@@ -44,7 +44,7 @@ RangeError: bad id -1
       at ./compiled.js:1:4
 ```
 
-`--sourcemap=external` moves function names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame then points into `compiled.js`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines. Keep the map of every build you deploy, and don't ship it.
+`--sourcemap=external` moves function names, paths, lines and columns out of the executable and into `repo.map`, next to it. Every frame of your program then points into `compiled.js`. That file doesn't exist. The line and column are a position in the map, and any source map library turns them back into your names, files and lines. Keep the map of every build you deploy, and don't ship it. A frame of a built-in module keeps its function name and file, such as `at emit (node:events:3869:6)`.
 
 The source text of functions moves out too, as with [`--no-compile-function-source`](/compiler/size). `handler.toString()` returns `function handler() { [native code] }`. `handler.name` stays. `--minify` shortens it, as in any minified build.
 

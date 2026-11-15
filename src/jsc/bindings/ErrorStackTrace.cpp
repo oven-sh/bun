@@ -515,27 +515,29 @@ String externalSourceMapDisplayPath()
     return String(path);
 }
 
-String sourceURL(const JSC::AOT::SourcePosition& position)
+static bool hasFileInExternalSourceMap(const JSC::AOT::FunctionDescription& function)
 {
-    if (position.source)
-        return JSC::AOT::sourceURLOf(position);
-    return hasExternalSourceMap() ? externalSourceMapFileURL() : String();
+    return hasExternalSourceMap() && function.isOfProgram();
 }
 
 String sourceURL(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
 {
-    if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+    JSC::AOT::FunctionDescription function(frame.function);
+    if (function.isHelperOfCompiler()) [[unlikely]]
         return JSC::AOT::compilerHelpersModule;
-    return sourceURL(position);
+    if (position.source)
+        return JSC::AOT::sourceURLOf(position);
+    return hasFileInExternalSourceMap(function) ? externalSourceMapFileURL() : String();
 }
 
 String displayPath(const JSC::AOT::TraceFrame& frame, const JSC::AOT::SourcePosition& position)
 {
-    if (JSC::AOT::FunctionDescription(frame.function).isHelperOfCompiler()) [[unlikely]]
+    JSC::AOT::FunctionDescription function(frame.function);
+    if (function.isHelperOfCompiler()) [[unlikely]]
         return JSC::AOT::compilerHelpersModule;
     if (position.source)
         return JSC::AOT::displayPathOf(position);
-    return hasExternalSourceMap() ? externalSourceMapDisplayPath() : String();
+    return hasFileInExternalSourceMap(function) ? externalSourceMapDisplayPath() : String();
 }
 #endif
 
@@ -580,7 +582,7 @@ String sourceURL(JSC::StackVisitor& visitor)
     case JSC::StackVisitor::Frame::Global: {
 #if ENABLE(AOT)
         if (visitor->isCompiledFrame())
-            return hasExternalSourceMap() ? externalSourceMapFileURL() : visitor->compiledFrame().sourceURL();
+            return hasFileInExternalSourceMap(JSC::AOT::FunctionDescription(visitor->compiledFrame().function)) ? externalSourceMapFileURL() : visitor->compiledFrame().sourceURL();
 #endif
         return sourceURL(visitor->codeBlock());
     }

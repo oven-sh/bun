@@ -51,14 +51,12 @@ fn create_page_outputs(
 ) -> Result<PageOutputs, Failed> {
     with_ast_scope(|heap| {
         let mut page_log = Log::init();
-        let transpiler = create_page_transpiler(context, heap, &raw mut page_log);
-        let transpiler_pointer: *mut Transpiler<'_> = transpiler;
+        let mut transpiler = create_page_transpiler(context, heap, &raw mut page_log);
         let any_loop = AnyEventLoop::default();
         let carrier = context.bundle();
 
         let mut bundle = BundleV2::init(
-            // SAFETY: `transpiler_pointer` is the unique slot `heap.alloc` returned, and it lives in `heap`.
-            unsafe { &mut *transpiler_pointer },
+            &mut transpiler,
             None,
             heap,
             Some(NonNull::from(&any_loop)),
@@ -73,10 +71,6 @@ fn create_page_outputs(
 
         let result = run(&mut bundle, pages, heap);
         drop(bundle);
-
-        // SAFETY: the bundle that borrowed the transpiler is gone, so this is the only pointer to it. The arena frees
-        // the struct's bytes, and `drop_in_place` releases what its fields own on the global heap. No double free.
-        unsafe { core::ptr::drop_in_place(transpiler_pointer) };
 
         let has_page_errors = page_log.errors > 0;
         page_log.append_to(log);
@@ -94,16 +88,12 @@ fn create_page_outputs(
     })
 }
 
-#[allow(clippy::mut_from_ref)] // allocated in the arena
 fn create_page_transpiler<'h>(
     context: &BuildContext,
     heap: &'h Arena,
     log: *mut Log,
-) -> &'h mut Transpiler<'h> {
-    // SAFETY: the carrier's transpiler outlives this one, which `create_page_outputs` destroys before it returns, and
-    // `log` is non-null and outlives it too.
-    let transpiler =
-        heap.alloc(unsafe { Transpiler::for_worker(context.bundle().transpiler(), heap, log) });
+) -> Transpiler<'h> {
+    let mut transpiler = Transpiler::for_worker(context.bundle().transpiler(), heap, log);
 
     let options = &mut transpiler.options;
     options.type_check = None;

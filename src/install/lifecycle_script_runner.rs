@@ -378,11 +378,8 @@ pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) process: Option<ProcessHandle>,
     pub(crate) stdout: OutputReader,
     pub(crate) stderr: OutputReader,
-    /// Stored as `BackRef` (not `&'a`) so
-    /// callbacks may mutate manager state (`active_lifecycle_scripts`,
-    /// `progress`, `scripts_node`) through the long-lived backref without
-    /// asserting unique-borrow over the whole `PackageManager`.
-    pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
+    /// `BackRef`, not `&'a`: the install loop holds `&mut PackageManager` while scripts run.
+    pub(crate) manager: bun_ptr::BackRef<PackageManager>,
     /// Owned by this
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed with it.
@@ -588,21 +585,14 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         let (log_level, foreground) = (self.manager().options.log_level, self.foreground);
         if foreground && log_level != crate::LogLevel::Silent {
             Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
-        } else if let Some(scripts_node) = self.manager().scripts_node_mut() {
-            let manager = self.manager.as_ptr();
-            // SAFETY: the manager outlives `self`, and only the main thread reports progress.
-            unsafe {
-                (*manager).set_node_name::<true>(
-                    scripts_node,
-                    &self.package_name,
-                    ProgressStrings::SCRIPT_EMOJI.as_bytes(),
-                );
-                // .monotonic is okay because because this value is only used by hoisted installs, which
-                // only use this type on the main thread.
-                if (*manager).finished_installing.load(Ordering::Relaxed) {
-                    scripts_node.activate();
-                    (*manager).progress.refresh();
-                }
+        } else if let Some(scripts_node) = self.manager().scripts_node {
+            let manager = self.manager();
+            let emoji = ProgressStrings::SCRIPT_EMOJI.as_bytes();
+            manager.set_node_name(scripts_node, &self.package_name, emoji);
+            // .monotonic is okay: only hoisted installs use this, and only on the main thread.
+            if manager.finished_installing.load(Ordering::Relaxed) {
+                manager.progress.activate(scripts_node);
+                manager.progress.refresh();
             }
         }
 
@@ -845,18 +835,17 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if !self.foreground
-                    && let Some(scripts_node) = self.manager().scripts_node_mut()
+                    && let Some(scripts_node) = self.manager().scripts_node
                 {
+                    let progress = &self.manager().progress;
                     // .monotonic is okay because because this value is only used by hoisted
                     // installs, which only use this type on the main thread.
                     if self.manager().finished_installing.load(Ordering::Relaxed) {
-                        scripts_node.complete_one();
+                        progress.complete_one(scripts_node);
                     } else {
-                        // .monotonic because this is what `completeOne` does. This is the same
-                        // as `completeOne` but doesn't update the parent.
-                        scripts_node
-                            .unprotected_completed_items
-                            .fetch_add(1, Ordering::Relaxed);
+                        // As `complete_one`, but it is not shown yet.
+                        let node = progress.node(scripts_node);
+                        node.completed_items.update(|items| items + 1);
                     }
                 }
 
@@ -1030,7 +1019,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     ) {
         let package_name = list.package_name.clone();
         let lss = Box::new(LifecycleScriptSubprocess {
-            manager: bun_ptr::BackRef::new_mut(manager),
+            manager: bun_ptr::BackRef::new(manager),
             envp,
             shell_bin,
             package_name,
@@ -1107,8 +1096,8 @@ bun_io::impl_buffered_reader_parent! {
         Self::print_reader_error((*this).current_script_index, &(*this).package_name, &err);
         Self::on_reader_done(this)
     };
-    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
+    loop_           = |this| (*this).manager.get().event_loop.native_loop();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
-        &(*(*this).manager.as_ptr()).event_loop,
+        &(*this).manager.get().event_loop,
     ).as_event_loop_ctx();
 }

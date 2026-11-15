@@ -7,8 +7,8 @@ use bun_boringssl as boringssl;
 
 use bun_sha_hmac::{SHA1, SHA256};
 
-use super::new_reader::PacketReader;
 use super::new_writer::{NewWriter, WriterContext};
+use super::packet_reader::PacketReader;
 
 bun_core::declare_scope!(Auth, hidden);
 

@@ -4,7 +4,7 @@ use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::decode_length_int;
 use crate::shared::stack_reader::{ShortRead, StackReader};
 
-/// The reader holds a whole packet: more bytes from the socket cannot complete a field.
+/// Fields are only read from a whole packet, so a short field is malformed.
 impl ShortRead for AnyMySQLError {
     const SHORT_READ: Self = AnyMySQLError::MalformedPacket;
 }

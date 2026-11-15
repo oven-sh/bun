@@ -6,7 +6,7 @@ use crate::mysql::capabilities::MariaDBCapabilities;
 use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::auth::{NONCE_LENGTH, Nonce};
-use crate::mysql::protocol::new_reader::PacketReader;
+use crate::mysql::protocol::packet_reader::PacketReader;
 
 pub struct HandshakeV10<'a> {
     pub(crate) protocol_version: u8,

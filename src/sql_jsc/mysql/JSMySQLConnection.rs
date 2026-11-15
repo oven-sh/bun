@@ -18,8 +18,8 @@ use bun_core::strings;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef, RefPtr};
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLErrorT;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;
-use bun_sql::mysql::protocol::new_reader::PacketReader;
 use bun_sql::mysql::protocol::new_writer::NewWriter;
+use bun_sql::mysql::protocol::packet_reader::PacketReader;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_my_sql_query::JSMySQLQuery;

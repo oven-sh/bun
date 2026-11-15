@@ -1,7 +1,7 @@
 // OK Packet
 use crate::mysql::StatusFlags;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
-use crate::mysql::protocol::new_reader::PacketReader;
+use crate::mysql::protocol::packet_reader::PacketReader;
 
 #[derive(Default)]
 pub struct OKPacket {

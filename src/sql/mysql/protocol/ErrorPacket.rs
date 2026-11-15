@@ -1,5 +1,5 @@
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::new_reader::PacketReader;
+use super::packet_reader::PacketReader;
 
 pub struct ErrorPacket<'a> {
     pub header: u8,

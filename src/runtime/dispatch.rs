@@ -124,8 +124,6 @@ use crate::shell::subproc::PipeReader as ShellPipeReader;
 use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::file_reader::{FileReader, Source as FileReaderSource};
 use crate::webcore::file_sink::FileSink;
-#[cfg(not(windows))]
-use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
 use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3HttpSimpleTask};
@@ -133,8 +131,6 @@ use crate::webcore::streams::{PendingRead as StreamPending, StreamResult};
 
 use crate::api::bun_subprocess::Subprocess;
 use crate::api::bun_subprocess::subprocess_pipe_reader::PipeReader as SubprocessPipeReader;
-#[cfg(not(windows))]
-use crate::api::bun_terminal_body::Poll as TerminalPoll;
 use crate::api::bun_terminal_body::Terminal;
 use crate::api::cron::CronJob;
 use crate::api::js_bundle_completion_task::JSBundleCompletionTask;
@@ -189,9 +185,6 @@ use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 use bun_jsc::web_worker::WebWorker;
-
-#[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch
@@ -742,7 +735,7 @@ pub(crate) fn run_task(
         task_tag::FlushPendingFileSinkTask => {
             feature_arm!([FileSink, Spawn, Shell], |sink: FileSink| {
                 // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
-                FileSink::run_pending_if_armed(&unsafe { bun_ptr::RefPtr::from_raw(sink) });
+                unsafe { RefPtr::from_raw(sink) }.run_pending_if_armed();
             })
         }
         task_tag::StreamPending => boxed_arm!(task, [WebStreams], |pending: StreamPending| {
@@ -892,9 +885,6 @@ pub(crate) fn tick_queue_with_count(
 /// `owner.ptr()` is the live value that the arm of `owner.tag()` casts it to.
 #[unsafe(no_mangle)]
 unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
-    #[cfg(not(windows))]
-    let (size_or_offset, hup) = (event.size_or_offset, event.is_hup());
-
     /// Runs `$body` through [`in_features!`] with `$this = $cast(owner.ptr().cast::<$Ty>())`.
     macro_rules! io_arm {
         ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $kind:pat, $event:ident| $body:expr) => {
@@ -906,7 +896,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             })
         };
     }
-    /// The plain `on_poll(size_or_offset, hup)` call of the writers, through [`in_features!`].
+    /// The plain `on_poll(event)` call of the buffered writers, through [`in_features!`].
     #[cfg(not(windows))]
     macro_rules! feature_poll_arm {
         ($features:tt, $Ty:ty) => {
@@ -914,12 +904,11 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
                 $features,
                 (
                     h: *mut $Ty = owner.ptr().cast::<$Ty>(),
-                    size: isize = size_or_offset as isize,
-                    hup: bool = hup,
+                    event: IoEvent = event,
                 ) {
                     // SAFETY: tag matched, so `owner.ptr` was stored as `*mut $Ty` at
                     // `OwnedFilePoll::new` and the owner outlives this dispatch (caller contract).
-                    unsafe { (*h).on_poll(size, hup) };
+                    unsafe { (*h).on_poll(event) };
                 }
             )
         };
@@ -935,14 +924,11 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         }
         #[cfg(not(windows))]
         PollTag::MemoryPressure => {
-            crate::node::memory_pressure::on_poll(event.flags, size_or_offset);
+            crate::node::memory_pressure::on_poll(event.flags, event.size_or_offset);
         }
         #[cfg(target_os = "macos")]
         PollTag::ParentDeathWatchdog => bun_io::parent_death_watchdog::on_parent_exit(),
 
-        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
-        #[cfg(not(windows))]
-        PollTag::FileSink => feature_poll_arm!([FileSink, Spawn, Shell], FileSinkPoll),
         #[cfg(not(windows))]
         PollTag::StaticPipeWriter => {
             feature_poll_arm!([Spawn], StaticPipeWriterPoll<Subprocess<'_>>)
@@ -964,12 +950,11 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Shell],
             (
                 h: *mut ShellBufferedWriterPoll = owner.ptr().cast::<ShellBufferedWriterPoll>(),
-                size: isize = size_or_offset as isize,
-                hup: bool = hup,
+                event: IoEvent = event,
             ) {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut ShellBufferedWriterPoll`
                 // set at `OwnedFilePoll::new`; exclusive for this dispatch.
-                unsafe { crate::shell::io_writer::on_poll(&mut *h, size, hup) };
+                unsafe { crate::shell::io_writer::on_poll(&mut *h, event) };
             }
         ),
         #[cfg(not(windows))]
@@ -992,11 +977,8 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::GetAddrInfoRequest => {
             crate::dns_jsc::dns_sd::SharedConnection::on_readable(owner.ptr().cast());
         }
-        #[cfg(not(windows))]
-        PollTag::TerminalPoll => feature_poll_arm!([Terminal], TerminalPoll),
         #[cfg(windows)]
-        PollTag::FileSink
-        | PollTag::StaticPipeWriter
+        PollTag::StaticPipeWriter
         | PollTag::ShellStaticPipeWriter
         | PollTag::SecurityScanStaticPipeWriter
         | PollTag::ShellBufferedWriter => unreachable!("libuv calls these writers directly"),
@@ -1017,6 +999,23 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             io_arm!([Terminal], RefPtr::init_ref, Terminal, |this, _, event| {
                 this.read(Some(event))
             })
+        }
+        PollTag::TerminalWriter => {
+            io_arm!([Terminal], RefPtr::init_ref, Terminal, |this, _, event| {
+                this.on_writer_io(event)
+            })
+        }
+        // A child's stdin pipe is a `FileSink` too, whether or not the program looks at it.
+        PollTag::FileSink => io_arm!(
+            [FileSink, Spawn, Shell],
+            RefPtr::init_ref,
+            FileSink,
+            |this, _, event| this.writer.on_io(&*this, event)
+        ),
+        #[cfg(windows)]
+        PollTag::WindowsNamedPipe => {
+            // SAFETY: fn contract.
+            unsafe { &*owner.ptr().cast::<WindowsNamedPipe>() }.on_writer_io(event);
         }
         PollTag::ShellIoReader => {
             io_arm!([Shell], clone_rc, ShellIoReader, |this, _, event| {

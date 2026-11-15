@@ -45,6 +45,10 @@ impl PipeHandle {
         self.with_poll(|poll| unsafe { poll.set_owner(owner) });
     }
 
+    pub(crate) fn owner(&self) -> Owner {
+        self.owner.get()
+    }
+
     pub(crate) fn get_fd(&self) -> Fd {
         self.fd.get()
     }
@@ -55,10 +59,6 @@ impl PipeHandle {
 
     pub fn has_poll(&self) -> bool {
         self.poll.is_some()
-    }
-
-    pub fn is_registered(&self) -> bool {
-        self.with_poll(FilePoll::is_registered) == Some(true)
     }
 
     pub fn is_watching(&self) -> bool {

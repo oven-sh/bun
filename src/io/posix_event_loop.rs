@@ -183,8 +183,9 @@ pub enum PollTag {
     #[cfg(not(windows))]
     Process,
     ShellBufferedWriter,
-    #[cfg(not(windows))]
-    TerminalPoll,
+    TerminalWriter,
+    #[cfg(windows)]
+    WindowsNamedPipe,
     #[cfg(target_os = "macos")]
     ParentDeathWatchdog,
     #[cfg(not(windows))]
@@ -241,6 +242,7 @@ impl Owner {
 #[cfg(windows)]
 pub enum IoEvent {
     Read(crate::pipe_reader::ReadEvent),
+    Write(crate::pipe_writer::WriteEvent),
 }
 
 /// What a poll that fired tells its owner.

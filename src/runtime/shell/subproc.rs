@@ -112,7 +112,6 @@ pub(crate) type SignalCode = bun_core::SignalCode;
 impl Drop for SubprocExec<'_> {
     fn drop(&mut self) {
         let child = &*self.child;
-        let _ = child.try_kill(SignalCode::SIGKILL as i32);
         child.unref();
         child.process.detach();
         child.stdout.deinit();
@@ -341,17 +340,14 @@ impl<'a> SubprocExec<'a> {
             None | Some(Ok(PipeState::Open)) => {}
             Some(Ok(PipeState::Closed)) => exec.stdin = None,
             Some(Err(err)) => {
+                // Nothing reports its exit from here on, so nothing would reap it either.
                 #[cfg(unix)]
-                {
-                    let process = &exec.child.process;
-                    // Nothing reports its exit from here on, so nothing would reap it either.
-                    let _ = Process::kill_and_reap(
-                        process.this_ptr(),
-                        &mut bun_process::rusage_zeroed(),
-                    );
-                    // So that dropping `exec` does not signal a pid that was reaped.
-                    process.detach();
-                }
+                let _ = Process::kill_and_reap(
+                    exec.child.process.this_ptr(),
+                    &mut bun_process::rusage_zeroed(),
+                );
+                #[cfg(windows)]
+                exec.kill();
                 return Err(ShellErr::Sys(err.to_shell_system_error()));
             }
         }
@@ -395,16 +391,15 @@ impl ShellSubprocess {
                     format_args!("{}\n", e),
                 )),
             });
-        match spawned {
-            Some(ControlFlow::Continue(spawned)) => spawned.start(shell_interp),
-            Some(ControlFlow::Break(y)) => return y,
-            None => return Yield::suspended(),
+        match spawned.expect("the script waits for this Cmd") {
+            ControlFlow::Continue(spawned) => spawned.start(shell_interp),
+            ControlFlow::Break(y) => return y,
         }
         let y = shell_interp.with_interp(|interp| {
             SubprocExec::of_mut(interp, cmd).spawning = false;
             interp.as_cmd_mut(cmd).finish_if_done(cmd)
         });
-        y.unwrap_or(Yield::suspended())
+        y.expect("the script waits for this Cmd")
     }
 
     fn reader(&self, kind: IoKind) -> &BufferedReader {

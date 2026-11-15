@@ -1,13 +1,14 @@
 //! Similar to `IOWriter` but for reading.
 
 use core::marker::PhantomData;
+use core::ops::ControlFlow;
 use std::rc::Rc;
 
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_sys::{self as sys, Fd};
 
 use crate::shell::interpreter::{EventLoopHandle, ExitCode, Interpreter, NodeId, ShellInterpreter};
-use crate::shell::yield_::Yield;
+use crate::shell::yield_::{DeferredStack, Yield};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ChildPtr
@@ -201,19 +202,24 @@ impl IOReader<'_> {
         }
     }
 
-    /// Passes `chunk` to `readers[i]`. `None` if there is no such listener.
+    /// Passes `chunk` to `readers[i]`. Past the last listener, breaks with whether to read on.
     fn on_read_chunk(
         interp: &mut Interpreter<'_>,
         id: IOReaderId,
         i: usize,
         chunk: &[u8],
-    ) -> Option<Yield> {
-        let me = interp.io_readers.get_mut(id)?;
+        has_more: bun_io::ReadState,
+    ) -> ControlFlow<bool, Yield> {
+        let Some(me) = interp.io_readers.get_mut(id) else {
+            return ControlFlow::Break(false);
+        };
         if i == 0 {
             me.set_reading(false);
         }
-        let child = me.readers.get(i)?.ptr;
-        Some(dispatch_read_chunk(child, chunk, interp))
+        match me.readers.get(i) {
+            Some(reader) => ControlFlow::Continue(dispatch_read_chunk(reader.ptr, chunk, interp)),
+            None => ControlFlow::Break(Self::should_continue(interp, id, has_more)),
+        }
     }
 
     fn should_continue(
@@ -221,13 +227,10 @@ impl IOReader<'_> {
         id: IOReaderId,
         has_more: bun_io::ReadState,
     ) -> bool {
-        let Some(me) = interp.io_readers.get(id) else {
-            return false;
-        };
         if has_more == bun_io::ReadState::Eof {
             return false;
         }
-        let nobody_ready = me.nobody_ready(interp);
+        let nobody_ready = interp.io_readers[id].nobody_ready(interp);
         let me = &mut interp.io_readers[id];
         if nobody_ready {
             me.paused = true;
@@ -296,14 +299,16 @@ impl ShellInterpreter {
             .read_chunks(evtloop, Some(event), |chunk, has_more| {
                 // A listener may add or remove listeners, remove the `IOReader` or finish the script.
                 let mut i = 0usize;
-                while let Some(Some(next)) =
-                    self.with_interp(|interp| IOReader::on_read_chunk(interp, id, i, &chunk))
-                {
-                    self.run_yield_with(|_| next);
+                loop {
+                    match self.with_interp(|interp| {
+                        IOReader::on_read_chunk(interp, id, i, &chunk, has_more)
+                    }) {
+                        Some(ControlFlow::Continue(y)) => self.run_yield(y, DeferredStack::new()),
+                        Some(ControlFlow::Break(should_continue)) => return should_continue,
+                        None => return false,
+                    }
                     i += 1;
                 }
-                self.with_interp(|interp| IOReader::should_continue(interp, id, has_more))
-                    == Some(true)
             });
         // So that removing the `IOReader` below closes the fd.
         drop(inner);

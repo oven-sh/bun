@@ -1,9 +1,11 @@
 use crate::string::WStr;
 use crate::string::immutable::{
     U3Fast, UNICODE_REPLACEMENT as unicode_replacement, eql_comptime_ignore_len as eql_ignore_len,
-    first_non_ascii, first_non_ascii16,
+    first_non_ascii, first_non_ascii16, truncate_to_char_boundary,
 };
 use bun_alloc::AllocError;
+use core::mem::MaybeUninit;
+use std::io::{BorrowedBuf, BorrowedCursor};
 
 use crate::string::immutable::CodePoint; // i32
 /// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
@@ -13,7 +15,7 @@ use crate::string::immutable::CodePoint; // i32
 fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
-use bun_simdutf_sys::simdutf;
+use bun_simdutf_sys::simdutf::{self, Measured};
 
 crate::declare_scope!(strings, hidden);
 
@@ -243,7 +245,6 @@ fn convert_utf8_bytes_into_utf16_with_length(
     len: U3Fast,
     remaining_len: usize,
 ) -> UTF16Replacement {
-    debug_assert!(sequence[0] > 127);
     match len {
         2 => {
             debug_assert!(sequence[0] >= 0xC0);
@@ -404,7 +405,6 @@ pub(super) fn convert_utf8_bytes_into_utf16(bytes: &[u8]) -> UTF16Replacement {
         3 => [bytes[0], bytes[1], bytes[2], 0],
         _ => bytes[..4].try_into().expect("infallible: size matches"),
     };
-    debug_assert!(sequence[0] > 127);
     let sequence_length = non_ascii_sequence_length(sequence[0]);
     convert_utf8_bytes_into_utf16_with_length(sequence, sequence_length, bytes.len())
 }
@@ -492,7 +492,7 @@ pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     debug_assert!(input.len() <= output.len());
     let count = input.len().min(output.len());
 
-    bun_highway::copy_u16_to_u8(&input[..count], &mut output[..count]);
+    bun_highway::copy_u16_to_u8(&input[..count], output);
 }
 
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
@@ -665,66 +665,120 @@ pub enum ToUTF16Error {
 
 crate::oom_from_alloc!(ToUTF16Error);
 
+const MAX_STACK_UTF16_LEN: usize = 4096;
+
+fn append_valid_utf8_through_stack(input: &[u8], mut output: BorrowedCursor<'_, u16>) -> bool {
+    let mut stack = [const { MaybeUninit::uninit() }; MAX_STACK_UTF16_LEN];
+    let mut units = BorrowedBuf::from(&mut stack[..]);
+    let fits = simdutf::convert::utf8::to::utf16::le(input, units.unfilled())
+        && units.len() <= output.capacity();
+    if fits {
+        output.append(units.filled());
+    }
+    fits
+}
+
+/// Appends a prefix of `input` and returns the rest, which is empty if `input` is valid UTF-8 and fits.
+pub(super) fn append_valid_utf8_as_utf16<'a>(
+    input: &'a [u8],
+    mut output: BorrowedCursor<'_, u16>,
+) -> &'a [u8] {
+    // A multiple of 64 bytes and of every character width, so that the next call stays aligned.
+    const STEP: usize = 192;
+    // Most simdutf kernels only notice an error at the end of their input.
+    const FIRST_CALL_MAX_LEN: usize = 64 * 1024;
+
+    let mut rest = input;
+    while !rest.is_empty() {
+        let room = output.capacity();
+        let max_len = room.min(FIRST_CALL_MAX_LEN.max(input.len() - rest.len()));
+        let mut chunk = rest;
+        if rest.len() > max_len {
+            // The copy costs less than the calls it takes to fill the remaining room in place.
+            if rest.len() <= MAX_STACK_UTF16_LEN
+                && (rest.len() <= 4 * STEP || room < rest.len() / 4 * 3)
+            {
+                let done = append_valid_utf8_through_stack(rest, output);
+                return if done { &[] } else { rest };
+            }
+            chunk = truncate_to_char_boundary(rest, max_len / STEP * STEP);
+        }
+        if !simdutf::convert::utf8::to::utf16::le(chunk, output.reborrow()) {
+            break;
+        }
+        rest = &rest[chunk.len()..];
+    }
+    rest
+}
+
+/// [`append_valid_utf8_as_utf16`] that reserves the room, and `spare` more units if `bytes` is valid.
+pub(super) fn extend_utf16_from_valid_utf8<'a>(
+    out: &mut Vec<u16>,
+    bytes: &'a [u8],
+    first_non_ascii: usize,
+    spare: usize,
+) -> Result<&'a [u8], ToUTF16Error> {
+    let non_ascii = &bytes[first_non_ascii..];
+    // Text in another encoding rarely gets past this.
+    if !matches!(non_ascii, [0xC2..=0xF4, 0x80..=0xBF, ..]) {
+        return Ok(bytes);
+    }
+
+    // Copying the units costs less than counting them, unless there are many and most are ASCII.
+    let is_dense = |&sample: &[u8; 16]| {
+        (u128::from_ne_bytes(sample) & u128::from_ne_bytes([0x80; 16])).count_ones() > 4
+    };
+    if bytes.len() <= 256
+        || (bytes.len() <= MAX_STACK_UTF16_LEN && non_ascii.first_chunk().is_some_and(is_dense))
+    {
+        let mut stack = [const { MaybeUninit::uninit() }; MAX_STACK_UTF16_LEN];
+        let mut units = BorrowedBuf::from(&mut stack[..]);
+        if !simdutf::convert::utf8::to::utf16::le(bytes, units.unfilled()) {
+            return Ok(bytes);
+        }
+        out.try_reserve_exact(units.len() + spare)
+            .map_err(|_| ToUTF16Error::OutOfMemory)?;
+        out.extend_from_slice(units.filled());
+        return Ok(&[]);
+    }
+
+    let mut len = first_non_ascii + simdutf::length::utf16::from::utf8(non_ascii);
+    // With one unit per byte, text that is nearly ASCII takes a single call.
+    if len + len / 16 >= bytes.len() {
+        len = bytes.len();
+    }
+    out.try_reserve_exact(len + spare)
+        .map_err(|_| ToUTF16Error::OutOfMemory)?;
+    Ok(crate::vec::append_with(out, |out| {
+        append_valid_utf8_as_utf16(bytes, out)
+    }))
+}
+
+/// Whether `utf8` is valid and its UTF-16 form, which `out` then holds, is exactly as long as `out`.
+pub fn fill_utf16_from_utf8(mut out: BorrowedBuf<'_, u16>, utf8: &[u8]) -> bool {
+    append_valid_utf8_as_utf16(utf8, out.unfilled()).is_empty() && out.len() == out.capacity()
+}
+
 pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
 ) -> Result<Option<(Vec<u16>, [u8; 3], u8)>, ToUTF16Error> {
     let Some(first_non_ascii_idx) = first_non_ascii(bytes) else {
         return Ok(None);
     };
-    let first_non_ascii_idx = first_non_ascii_idx as usize;
 
-    let mut output: Vec<u16> = if crate::FeatureFlags::USE_SIMDUTF {
-        'output: {
-            let out_length = simdutf::length::utf16::from::utf8(bytes);
+    let mut output: Vec<u16> = Vec::new();
+    let mut remaining =
+        extend_utf16_from_valid_utf8(&mut output, bytes, first_non_ascii_idx as usize, 0)?;
+    if remaining.is_empty() {
+        crate::scoped_log!(
+            strings,
+            "toUTF16 {} UTF8 -> {} UTF16",
+            bytes.len(),
+            output.len()
+        );
+        return Ok(Some((output, [0; 3], 0)));
+    }
 
-            if out_length == 0 {
-                break 'output Vec::new();
-            }
-
-            let mut out: Vec<u16> = Vec::new();
-            out.try_reserve_exact(out_length)
-                .map_err(|_| ToUTF16Error::OutOfMemory)?;
-            // SAFETY: `out` has >= `out_length` u16 of capacity (just reserved).
-            // simdutf never reads the output buffer and writes at most
-            // `out_length` code units, so passing uninitialised storage is
-            // sound; the length is only ever set to what simdutf has written.
-            let res = unsafe {
-                simdutf::simdutf__convert_utf8_to_utf16le_with_errors(
-                    bytes.as_ptr(),
-                    bytes.len(),
-                    out.as_mut_ptr(),
-                )
-            };
-            if res.is_successful() {
-                // SAFETY: on success simdutf initialised exactly `out_length` units.
-                unsafe { out.set_len(out_length) };
-                crate::scoped_log!(
-                    strings,
-                    "toUTF16 {} UTF8 -> {} UTF16",
-                    bytes.len(),
-                    out_length
-                );
-                return Ok(Some((out, [0; 3], 0)));
-            }
-
-            // SAFETY: simdutf converts sequentially and the first error is at or
-            // after the first non-ASCII byte, so the leading `first_non_ascii_idx`
-            // code units (one per ASCII prefix byte, `<= out_length`) are
-            // initialised; keep exactly those.
-            unsafe { out.set_len(first_non_ascii_idx) };
-            break 'output out;
-        }
-    } else {
-        Vec::new()
-    };
-    // errdefer output.deinit(allocator) — Vec drops on `?`
-
-    let start = if !output.is_empty() {
-        first_non_ascii_idx
-    } else {
-        0
-    };
-    let mut remaining = &bytes[start..];
     // The replacement decode emits at most one code unit per consumed byte, so
     // `remaining.len()` bounds the tail's growth (the bound `to_utf16_alloc`'s
     // slow path reserves too); the appends below stay inside this reservation.
@@ -732,8 +786,7 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
         .try_reserve(remaining.len())
         .map_err(|_| ToUTF16Error::OutOfMemory)?;
 
-    let mut non_ascii: Option<u32> = Some(0);
-    while let Some(i) = non_ascii {
+    while let Some(i) = first_non_ascii(remaining) {
         let i = i as usize;
         {
             append_u8_as_u16(&mut output, &remaining[..i]);
@@ -783,8 +836,6 @@ pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: b
 
         // #define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
         push_codepoint_utf16(&mut output, converted.code_point);
-
-        non_ascii = first_non_ascii(remaining);
     }
 
     if !remaining.is_empty() {
@@ -948,32 +999,6 @@ fn cp1252_to_codepoint_bytes_assume_not_ascii16(char: u32) -> u16 {
 // `_impl<const ALLOW_TRUNCATED>` variant below is what hot paths
 // (encoding.rs, Sink.rs, websocket_client.rs) call directly.
 
-/// See comment on `copy_utf16_into_utf8_with_buffer_impl` on what `allow_truncated_utf8_sequence` should do
-pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
-    buf: &mut [u8],
-    utf16: &[u16],
-) -> EncodeIntoResult {
-    if crate::FeatureFlags::USE_SIMDUTF {
-        if utf16.is_empty() {
-            return EncodeIntoResult {
-                read: 0,
-                written: 0,
-            };
-        }
-        let out_len = if buf.len() <= utf16.len().saturating_mul(3) {
-            simdutf::length::utf8::from::utf16::le(utf16)
-        } else {
-            buf.len()
-        };
-
-        return copy_utf16_into_utf8_with_buffer_impl::<ALLOW_TRUNCATED_UTF8_SEQUENCE>(
-            buf, utf16, out_len,
-        );
-    }
-
-    copy_utf16_into_utf8_with_buffer_impl::<ALLOW_TRUNCATED_UTF8_SEQUENCE>(buf, utf16, utf16.len())
-}
-
 /// Q: What does the `allow_truncated_utf8_sequence` parameter do?
 /// A: If the output buffer can't fit everything, this function will write
 ///    incomplete utf-8 byte sequences if `allow_truncated_utf8_sequence` is
@@ -989,25 +1014,39 @@ pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
 /// buffer.fill("Ȣ");
 /// expect(buffer[0]).toBe(0xc8);
 /// ```
-fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
+pub fn copy_utf16_into_utf8_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bool>(
     buf: &mut [u8],
     utf16: &[u16],
-    out_len: usize,
 ) -> EncodeIntoResult {
+    if utf16.is_empty() {
+        return EncodeIntoResult {
+            read: 0,
+            written: 0,
+        };
+    }
+
     let buf_total = buf.len();
     let mut remaining: &mut [u8] = buf;
     let mut utf16_remaining = utf16;
     let mut ended_on_non_ascii = false;
 
-    'brk: {
-        if crate::FeatureFlags::USE_SIMDUTF {
-            crate::scoped_log!(strings, "UTF16 {} -> UTF8 {}", utf16.len(), out_len);
-            if remaining.len() >= out_len {
-                let result = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, remaining);
-                if result.status == simdutf::Status::SURROGATE {
-                    break 'brk;
-                }
-
+    if crate::FeatureFlags::USE_SIMDUTF {
+        let mut measured = Measured::utf16_worst_case(utf16);
+        if measured.utf8_len() > buf_total {
+            measured = Measured::utf16(utf16);
+        }
+        crate::scoped_log!(
+            strings,
+            "UTF16 {} -> UTF8 {}",
+            utf16.len(),
+            measured.utf8_len()
+        );
+        if measured.utf8_len() <= buf_total {
+            let result = simdutf::convert::utf16::to::utf8::with_errors::le(
+                measured,
+                BorrowedBuf::from(&mut *remaining).unfilled(),
+            );
+            if result.is_successful() {
                 return EncodeIntoResult {
                     read: utf16.len(),
                     written: result.count,

@@ -72,13 +72,8 @@ static void free_global_string(void* str, void* ptr, unsigned len)
     EncodedSlice__freeGlobal(reinterpret_cast<const unsigned char*>(ptr), len);
 }
 
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes);
-
-static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
+static WTF::String convertInvalidUTF8ToString(std::span<const unsigned char> bytes)
 {
-    if (!bytes.empty() && simdutf::validate_utf8(reinterpret_cast<const char*>(bytes.data()), bytes.size())) [[likely]]
-        return tryConvertValidUTF8ToString(bytes);
-
     // fromUTF8ReplacingInvalidSequences CRASH()es past a ~2^30-byte input
     // (it sizes an intermediate Vector<char16_t> by byte count).
     if (!WTF::isValidCapacityForVector<char16_t>(bytes.size())) [[unlikely]]
@@ -86,14 +81,21 @@ static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
     return WTF::String::fromUTF8ReplacingInvalidSequences(bytes);
 }
 
-// `bytes` must be valid UTF-8. Returns null if the allocation fails or the result exceeds the max string length.
-static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> bytes)
+// Returns null if the allocation for valid UTF-8 fails or the result exceeds the max string length.
+static WTF::String convertUTF8ToString(std::span<const unsigned char> bytes)
 {
     const char* data = reinterpret_cast<const char*>(bytes.data());
     size_t utf16Length = simdutf::utf16_length_from_utf8(data, bytes.size());
     if (utf16Length > WTF::String::MaxLength) [[unlikely]]
         return {};
-    if (utf16Length == bytes.size()) {
+    if (utf16Length < bytes.size()) {
+        std::span<char16_t> out;
+        auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
+        if (!impl) [[unlikely]]
+            return {};
+        if (Bun__encoding__fillUTF16FromUTF8(bytes.data(), bytes.size(), out.data(), out.size())) [[likely]]
+            return WTF::String(WTF::move(impl));
+    } else if (!bytes.empty() && simdutf::validate_ascii(data, bytes.size())) [[likely]] {
         // all-ASCII: stays 8-bit
         std::span<Latin1Character> out;
         auto impl = WTF::StringImpl::tryCreateUninitialized(bytes.size(), out);
@@ -102,12 +104,7 @@ static WTF::String tryConvertValidUTF8ToString(std::span<const unsigned char> by
         memcpy(out.data(), bytes.data(), bytes.size());
         return WTF::String(WTF::move(impl));
     }
-    std::span<char16_t> out;
-    auto impl = WTF::StringImpl::tryCreateUninitialized(utf16Length, out);
-    if (!impl) [[unlikely]]
-        return {};
-    RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(data, bytes.size(), out.data()) == utf16Length);
-    return WTF::String(WTF::move(impl));
+    return convertInvalidUTF8ToString(bytes);
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.

@@ -31,7 +31,8 @@ use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::{StackCheck, strings};
-use bun_simdutf_sys::simdutf;
+use bun_simdutf_sys::simdutf::{self, Measured};
+use std::io::BorrowedBuf;
 
 use crate::xml_index::StructuralIndex;
 use crate::xml_index::byte_class::{CLASS_ALWAYS, CLASS_GT, CLASS_LT, CLASS_TAG, XML_BYTE_CLASS};
@@ -1281,16 +1282,13 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 }
             })
             .collect();
-        let len = simdutf::length::utf8::from::utf16::le(&units);
-        let slot = self.bump.alloc_uninit_slice::<u8>(len);
-        // SAFETY: simdutf only writes into `utf8`; only the `result.count` bytes it wrote are read.
-        let utf8: &'a mut [u8] =
-            unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) };
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, utf8);
+        let measured = Measured::utf16(&units);
+        let mut utf8 = BorrowedBuf::from(self.bump.alloc_uninit_slice::<u8>(measured.utf8_len()));
+        let result = simdutf::convert::utf16::to::utf8::with_errors::le(measured, utf8.unfilled());
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }
-        self.src = U::from_bytes(&utf8[..result.count]);
+        self.src = U::from_bytes(utf8.into_filled());
         self.pos = 0;
         self.transcoded = true;
         Ok(())
@@ -1354,8 +1352,13 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     "",
                 ));
             }
-            if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(&self.src[self.pos..])) {
-                self.src = U::from_bytes(self.bump.alloc_slice_copy(&utf8));
+            let latin1 = U::bytes(&self.src[self.pos..]);
+            if strings::first_non_ascii(latin1).is_some() {
+                let measured = Measured::latin1_worst_case(latin1);
+                let mut utf8 =
+                    BorrowedBuf::from(self.bump.alloc_uninit_slice::<u8>(measured.utf8_len()));
+                simdutf::convert::latin1::to::utf8(measured, utf8.unfilled());
+                self.src = U::from_bytes(utf8.into_filled());
                 self.pos = 0;
                 self.content_start = usize::MAX;
                 self.transcoded = true;

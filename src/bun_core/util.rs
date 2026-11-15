@@ -3400,6 +3400,7 @@ pub mod hash {
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
     use bun_simdutf_sys::simdutf;
+    use std::io::BorrowedBuf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
     /// padded). Port of `bun.base64.encodeLen`.
@@ -3411,8 +3412,9 @@ pub mod base64 {
 
     /// `bun.base64.encode` — standard alphabet, padded. Returns bytes written.
     pub fn encode(dest: &mut [u8], source: &[u8]) -> usize {
-        debug_assert!(dest.len() >= encode_len(source));
-        simdutf::base64::encode(source, dest, false)
+        let mut dest = BorrowedBuf::from(dest);
+        simdutf::base64::encode(source, dest.unfilled(), false);
+        dest.len()
     }
 
     /// Encoded output size for a standard-base64 input of `source_len` bytes.

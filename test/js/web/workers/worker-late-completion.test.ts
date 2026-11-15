@@ -150,7 +150,7 @@ const ROWS: Row[] = [
     // Subtasks created on the pool inherit the parent's ticket (new_child).
     name: "$ ls -R",
     worker: `Bun.$\`ls -R \${workerData.dir}\`.quiet().catch(() => {});`,
-    ticket: "interpreter.rs",
+    ticket: "ls.rs",
     files: { "a/b/c/d.txt": "x", "a/e.txt": "y", "f/g/h.txt": "z" },
   },
   {

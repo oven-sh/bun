@@ -14,7 +14,7 @@ use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
 use crate::posix_event_loop::__bun_run_io;
 #[cfg(windows)]
-use crate::source::{File, Source};
+use crate::source::{File, OpenFile, Source};
 use crate::{EventLoopHandle, IoEvent, Owner};
 #[cfg(unix)]
 use crate::{FilePoll, FilePollFlag, PipeReadScratchGuard};
@@ -937,13 +937,7 @@ impl WindowsBufferedReader {
 
     /// From now on a VM teardown stops the source through this reader, whether or not it ever reads.
     fn claim_source(&self) {
-        self.with_source(|source| {
-            // A file has no handle to close, so it is listed until `close_source`.
-            if let Some(file) = source.file_key() {
-                uv::open_handles::add_file(file);
-            }
-            source.set_owner(self.as_uv_data(), Self::stop_for_vm_teardown);
-        });
+        self.with_source(|source| source.set_owner(self.as_uv_data(), Self::stop_for_vm_teardown));
     }
 
     pub fn update_ref(&self, value: bool) {
@@ -969,7 +963,6 @@ impl WindowsBufferedReader {
 
     pub fn start_with_current_pipe(&self) -> sys::Result<()> {
         debug_assert!(self.has_open_source());
-        self.claim_source();
         self.with_buffer(Vec::clear);
         self.set_flags(WindowsFlags::IS_DONE, false);
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
@@ -992,6 +985,10 @@ impl WindowsBufferedReader {
     pub fn set_source(&self, source: Source) {
         debug_assert!(!self.has_source());
         self.close_source();
+        // A file has no handle to close, so it is listed until `close_source`.
+        if let Some(file) = source.file_key() {
+            uv::open_handles::add_file(file);
+        }
         self.source.set(Some(source));
         self.claim_source();
     }
@@ -1006,7 +1003,7 @@ impl WindowsBufferedReader {
     }
 
     pub fn start(&self, ev: EventLoopHandle, fd: Fd, _: bool) -> sys::Result<ReadStatus> {
-        self.set_source(Source::open(ev.native_loop(), fd)?);
+        self.set_source(Source::open(ev.loop_(), fd)?);
         self.start_with_current_pipe()?;
         sys::Result::Ok(ReadStatus::Pending)
     }
@@ -1122,7 +1119,7 @@ impl WindowsBufferedReader {
         };
         bun_sys::syslog!("onFileRead() = {}", result.int());
 
-        // SAFETY: what `read_file` or `claim_source` set, which dropping the file clears.
+        // SAFETY: what `claim_source` set, which dropping the file clears.
         // Not used once the owner runs, which may free it.
         let this = unsafe { &*this.cast::<Self>() };
         this.buffer.set(buffer);
@@ -1178,8 +1175,7 @@ impl WindowsBufferedReader {
     }
 
     /// Does nothing while a read is out.
-    fn read_file(&self, file: &mut File) -> sys::Result<()> {
-        file.fs.data = self.as_uv_data();
+    fn read_file(&self, file: &OpenFile) -> sys::Result<()> {
         if !file.can_start() {
             return sys::Result::Ok(());
         }
@@ -1253,9 +1249,9 @@ impl WindowsBufferedReader {
             return false;
         };
         match source {
-            Source::SyncFile(mut file) | Source::File(mut file) => {
+            Source::SyncFile(file) | Source::File(file) => {
                 uv::open_handles::remove_file(file.as_ptr().cast());
-                file.close_on_drop = self.has_flag(WindowsFlags::CLOSE_HANDLE);
+                (file.close_on_drop).set(self.has_flag(WindowsFlags::CLOSE_HANDLE));
                 file.stop();
             }
             Source::Tty(tty) => {

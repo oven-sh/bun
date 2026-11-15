@@ -252,40 +252,45 @@ describe("maxBuffer is a limit for each of stdout and stderr", () => {
     });
   });
 
-  // Each of the next two is the one call of a process of its own, and its child is a /bin/sh script.
-  async function inOwnProcess(sh: string, report: string) {
-    const script = `const result = Bun.spawnSync({ cmd: ["/bin/sh", "-c", ${JSON.stringify(sh)}], stdout: "pipe", stderr: "pipe", maxBuffer: ${maxBuffer} }); console.log(JSON.stringify(${report}));`;
+  // Each of the next two makes its calls in a process of its own. The child of a call is a /bin/sh script.
+  async function inOwnProcess(sh: string, report: string, calls: number) {
+    const script = `const results = []; for (let call = 0; call < ${calls}; call++) { const result = Bun.spawnSync({ cmd: ["/bin/sh", "-c", ${JSON.stringify(sh)}], stdout: "pipe", stderr: "pipe", maxBuffer: ${maxBuffer} }); results.push(${report}); } console.log(JSON.stringify(results));`;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { result: exitCode === 0 ? JSON.parse(stdout) : stdout + stderr, exitCode };
+    return { results: exitCode === 0 ? JSON.parse(stdout) : stdout + stderr, exitCode };
   }
 
   // A call that stops reading stderr at once loses this line when it finds both pipes readable, which is most
-  // likely in the first call of a slow process. So there are several.
+  // likely in the first call of a slow process. So there are several processes.
   test.concurrent.skipIf(isWindows)("Bun.spawnSync returns the stderr written before stdout went over", async () => {
     const runs = Array.from({ length: 4 }, () =>
       inOwnProcess(
         "echo warning >&2; printf '%02000d' 0; exec sleep 10",
         "{ exitedDueToMaxBuffer: result.exitedDueToMaxBuffer, signalCode: result.signalCode, stderr: result.stderr.toString() }",
+        1,
       ),
     );
     expect(await Promise.all(runs)).toEqual(
       Array(4).fill({
-        result: { exitedDueToMaxBuffer: true, signalCode: "SIGTERM", stderr: "warning\n" },
+        results: [{ exitedDueToMaxBuffer: true, signalCode: "SIGTERM", stderr: "warning\n" }],
         exitCode: 0,
       }),
     );
   });
 
-  // The descendant has the pipes. It writes 0.2 s after the call has reaped the child (`kill -0` fails then), so in
-  // a turn of the wait loop. stdout is its pid, padded. It then stays, as `sleep`, under that pid.
+  // The descendant has the pipes. It writes when the call has reaped the child (`kill -0` fails then). That is
+  // before or after the call reads the pipes for the exit, and only a write after it needs the close at the end of a
+  // loop turn. So there are several calls. stdout is the descendant's pid, padded. The descendant then stays, as
+  // `sleep`, under that pid.
   test.concurrent.skipIf(isWindows)("Bun.spawnSync returns when a descendant goes over after the child", async () => {
-    const result = await inOwnProcess(
-      `(while kill -0 $$ 2>/dev/null; do :; done; sleep 0.2; printf '%-1200s' "$(exec sh -c 'echo $PPID')"; exec sleep 10) &`,
+    const calls = 20;
+    const { results, exitCode } = await inOwnProcess(
+      `(while kill -0 $$ 2>/dev/null; do :; done; printf '%-1200s' "$(exec sh -c 'echo $PPID')"; exec sleep 10) &`,
       `(() => { let descendantAlive = false; try { process.kill(parseInt(result.stdout.toString(), 10), "SIGKILL"); descendantAlive = true; } catch {} return { exitedDueToMaxBuffer: result.exitedDueToMaxBuffer, exitCode: result.exitCode, stdout: result.stdout.length, descendantAlive }; })()`,
+      calls,
     );
-    expect(result).toEqual({
-      result: { exitedDueToMaxBuffer: true, exitCode: 0, stdout: 1200, descendantAlive: true },
+    expect({ results, exitCode }).toEqual({
+      results: Array(calls).fill({ exitedDueToMaxBuffer: true, exitCode: 0, stdout: 1200, descendantAlive: true }),
       exitCode: 0,
     });
   });

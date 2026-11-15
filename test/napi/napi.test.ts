@@ -863,6 +863,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("finalized: true");
     });
 
+    // Node leaves them waiting.
+    it("wakes every blocked producer of a queue with several slots", async () => {
+      const result = await runOn(bunExe(), "test_threadsafe_function_blocked_producers", []);
+      expect(result.match(/^calls: \d+/gm)).toEqual(["calls: 18"]);
+    });
+
     // An abort finalizes from its own dispatch, like Node: it does not wait for
     // the references other threads still hold (they are told to make no further
     // calls, so they may never release). The late release of such a reference

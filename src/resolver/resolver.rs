@@ -861,7 +861,7 @@ impl<'a> Resolver<'a> {
         let care_about_browser_field = opts.target == options::Target::Browser;
         Resolver {
             // allocator dropped
-            dir_cache: DirInfo::Cache::get(),
+            dir_cache: DirInfo::Cache::instance(),
             mutex: &RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
@@ -2478,8 +2478,7 @@ impl<'a> Resolver<'a> {
         global_cache: GlobalCache,
     ) -> ResultUnion<'r> {
         let mut import_path = unremapped_import_path;
-        let mut source_dir_info: &'static DirInfo::DirInfo = match self.dir_info_cached(source_dir)
-        {
+        let mut source_dir_info = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,
             Ok(Some(d)) => d,
             Ok(None) => 'dir: {
@@ -2781,12 +2780,11 @@ impl<'a> Resolver<'a> {
         &mut self,
         import_path: &[u8],
         kind: ast::ImportKind,
-        _dir_info: &'static DirInfo::DirInfo,
+        mut dir_info: &'static DirInfo::DirInfo,
         global_cache: GlobalCache,
         forbid_imports: bool,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let mut dir_info: &'static DirInfo::DirInfo = _dir_info;
         if let Some(debug) = self.debug_logs.as_mut() {
             debug.add_note_fmt(format_args!(
                 "Searching for {} in \"node_modules\" directories starting from \"{}\"",
@@ -2833,7 +2831,7 @@ impl<'a> Resolver<'a> {
         let mut is_self_reference = false;
 
         // Find the parent directory with the "package.json" file
-        let mut dir_info_package_json: Option<&'static DirInfo::DirInfo> = Some(dir_info);
+        let mut dir_info_package_json = Some(dir_info);
         while let Some(d) = dir_info_package_json {
             if d.package_json.is_some() {
                 break;
@@ -3952,9 +3950,7 @@ impl<'a> Resolver<'a> {
                     esm_resolution.status = Status::ModuleNotFound;
                     return MatchStatus::NotFound;
                 };
-                let entry_kind = entry_lookup
-                    .as_ref()
-                    .map(|q| q.kind(self.rfs_ref(), self.store_fd));
+                let entry_kind = entry_lookup.map(|q| q.kind(self.rfs_ref(), self.store_fd));
                 let entry_query = match entry_lookup {
                     Some(q) if entry_kind != Some(Fs::file_system::EntryKind::Dangling) => q,
                     _ => {
@@ -4188,11 +4184,11 @@ impl<'a> Resolver<'a> {
         resolved_dir_info: &'static DirInfo::DirInfo,
         dirname_fd: FD,
         package_json: &'static PackageJSON,
-        query: &crate::fs::Entry,
+        entry: &crate::fs::Entry,
         out: &mut MatchResult,
     ) -> bool {
-        let Ok(abs_path) = query.abs_path_or_try_fill(|| {
-            let parts = [query.dir, query.base()];
+        let Ok(abs_path) = entry.abs_path_or_try_fill(|| {
+            let parts = [entry.dir, entry.base()];
             let abs = self
                 .fs_ref()
                 .abs_buf_checked(&parts, bufs!(remap_path))
@@ -4219,7 +4215,7 @@ impl<'a> Resolver<'a> {
                 secondary: None,
             },
             dirname_fd,
-            file_fd: query.cache().fd,
+            file_fd: entry.cache().fd,
             dir_info: Some(resolved_dir_info),
             is_node_module: true,
             package_json: Some(resolved_dir_info.package_json.unwrap_or(package_json)),
@@ -4350,7 +4346,7 @@ impl<'a> Resolver<'a> {
                 include_scripts,
             )
         };
-        // A `DirInfo` holds it from here on.
+        // Never freed, like the `DirInfo` that points to it.
         Ok(pkg.map(|pkg| &*Box::leak(Box::new(pkg))))
     }
 
@@ -4536,7 +4532,7 @@ impl<'a> Resolver<'a> {
             if queue.len() == queue.capacity() {
                 return Ok(None);
             }
-            let mut slot = DirEntryResolveQueueItem {
+            let mut item = DirEntryResolveQueueItem {
                 unsafe_path: bun_ptr::RawSlice::new(top),
                 hash,
                 safe_path: b"",
@@ -4546,8 +4542,8 @@ impl<'a> Resolver<'a> {
             if let Some(top_entry) = rfs!().entries.get(top) {
                 match top_entry {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                        slot.safe_path = entries.dir;
-                        slot.fd = entries.fd;
+                        item.safe_path = entries.dir;
+                        item.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
                         debuglog!(
@@ -4560,44 +4556,45 @@ impl<'a> Resolver<'a> {
                     }
                 }
             }
-            queue.unfilled().append(&[slot]);
+            queue.unfilled().append(&[item]);
             top = Dirname::dirname(top);
         }
 
         if top == root_path {
             let hash = DirInfo::Cache::hash(root_path);
-            let cached = self.dir_cache.get_or_put(hash);
-            if let DirInfo::Cached::Exists(info) = cached {
-                top_parent = Some(info);
-            } else if let DirInfo::Cached::Unknown = cached {
-                if queue.len() == queue.capacity() {
-                    return Ok(None);
-                }
-                let mut slot = DirEntryResolveQueueItem {
-                    unsafe_path: bun_ptr::RawSlice::new(root_path),
-                    hash,
-                    safe_path: b"",
-                    fd: FD::INVALID,
-                };
-                if let Some(top_entry) = rfs!().entries.get(top) {
-                    match top_entry {
-                        Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
-                            slot.safe_path = entries.dir;
-                            slot.fd = entries.fd;
-                        }
-                        Fs::file_system::real_fs::EntriesOption::Err(err) => {
-                            debuglog!(
-                                "Failed to load DirEntry {}  {} - {}",
-                                bstr::BStr::new(top),
-                                bstr::BStr::new(err.original_err.name()),
-                                bstr::BStr::new(err.canonical_error.name())
-                            );
-                            return Err(err.canonical_error);
+            match self.dir_cache.get_or_put(hash) {
+                DirInfo::Cached::Exists(info) => top_parent = Some(info),
+                DirInfo::Cached::NotFound => {}
+                DirInfo::Cached::Unknown => {
+                    if queue.len() == queue.capacity() {
+                        return Ok(None);
+                    }
+                    let mut item = DirEntryResolveQueueItem {
+                        unsafe_path: bun_ptr::RawSlice::new(root_path),
+                        hash,
+                        safe_path: b"",
+                        fd: FD::INVALID,
+                    };
+                    if let Some(top_entry) = rfs!().entries.get(top) {
+                        match top_entry {
+                            Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
+                                item.safe_path = entries.dir;
+                                item.fd = entries.fd;
+                            }
+                            Fs::file_system::real_fs::EntriesOption::Err(err) => {
+                                debuglog!(
+                                    "Failed to load DirEntry {}  {} - {}",
+                                    bstr::BStr::new(top),
+                                    bstr::BStr::new(err.original_err.name()),
+                                    bstr::BStr::new(err.canonical_error.name())
+                                );
+                                return Err(err.canonical_error);
+                            }
                         }
                     }
-                }
 
-                queue.unfilled().append(&[slot]);
+                    queue.unfilled().append(&[item]);
+                }
             }
         }
 
@@ -5709,7 +5706,7 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        let dir_info: &'static DirInfo::DirInfo = match self.dir_info_cached(path) {
+        let dir_info = match self.dir_info_cached(path) {
             Ok(Some(d)) => d,
             Ok(None) => dec_ret!(MatchStatus::NotFound),
             Err(_err) => {
@@ -6431,8 +6428,8 @@ impl<'a> Resolver<'a> {
             .package_json
             .or_else(|| parent.and_then(|parent_| parent_.package_json_for_module_type));
 
+        let mut tsconfig_error = None;
         // Record if this directory has a tsconfig.json or jsconfig.json file
-        let mut result = Ok(());
         if self.opts.load_tsconfig_json {
             let mut tsconfig_path: Option<&[u8]> = None;
             if let Some(lookup) = entries!().get_comptime_query(b"tsconfig.json") {
@@ -6470,15 +6467,19 @@ impl<'a> Resolver<'a> {
                 }
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
                 self.log = log;
-                result = loaded.map(|loaded| {
-                    info.tsconfig_json = loaded.map(|it| &*Box::leak(it));
-                    info.enclosing_tsconfig_json = info.tsconfig_json;
-                });
+                match loaded {
+                    Ok(loaded) => {
+                        info.tsconfig_json = loaded.map(|it| &*Box::leak(it));
+                        info.enclosing_tsconfig_json = info.tsconfig_json;
+                    }
+                    Err(err) => tsconfig_error = Some(err),
+                }
             }
         }
 
+        // Cached even if its tsconfig did not load.
         let info = self.dir_cache.put(hash, info);
-        result.map(|()| info)
+        tsconfig_error.map_or(Ok(info), Err)
     }
 
     /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends.

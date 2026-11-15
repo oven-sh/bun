@@ -8,17 +8,15 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // `static STORAGE` inside the accessor fn at each declare site, and a `BSSList` or
 // `BSSStringList` is a `static` of its module. Two declarations with the same name are
 // two separate process-lifetime heaps, not two names for one store: a slice
-// interned through one reads as "not ours" to the other's
-// `as_interned()`, and the second store costs its own backing buffer (about
-// 532 KiB for file names).
+// interned through one reads as "not ours" to the other's `as_interned()`, and the
+// second store costs its own backing buffer (about 532 KiB for file names).
 //
 // The resolver once declared the file name store in both
 // `src/resolver/fs.rs` (the readdir basename appender) and
 // `src/resolver/lib.rs` (`FilenameStore::instance()`), so resolved paths and
 // directory-entry names were interned into different stores. Rust cannot
-// reject that at compile time: item names are
-// only unique per module. A declare site is the single owner of its storage;
-// every other user re-exports or imports the accessor.
+// reject that at compile time: item names are only unique per module. A declare
+// site is the single owner of its storage; every other user re-exports or imports the accessor.
 
 const root = path.resolve(import.meta.dir, "..", "..", "..");
 const rustSources = globAllSources().rust.filter(p => p.endsWith(".rs"));

@@ -653,34 +653,33 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
-        let root_dir_info: &'static bun_resolver::DirInfo =
-            match this_transpiler.resolver.read_dir_info(top_level_dir) {
-                Err(err) => {
-                    if !opts.log_errors {
-                        return Err(crate::Error::CouldntReadCurrentDirectory);
-                    }
-                    // SAFETY: `ctx.log` set in `create_context_data` (single-
-                    // threaded CLI startup), process-lifetime.
-                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
-                    pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
-                        bstr::BStr::new(err.name()),
-                        bun_core::fmt::QuotedFormatter {
-                            text: top_level_dir
-                        },
-                    );
-                    Output::flush();
-                    return Err(err.into());
-                }
-                Ok(None) => {
-                    // SAFETY: see `Err` arm above.
-                    let _ = unsafe { ctx.log() }.print(Output::error_writer());
-                    pretty_errorln!("error loading current directory");
-                    Output::flush();
+        let root_dir_info = match this_transpiler.resolver.read_dir_info(top_level_dir) {
+            Err(err) => {
+                if !opts.log_errors {
                     return Err(crate::Error::CouldntReadCurrentDirectory);
                 }
-                Ok(Some(info)) => info,
-            };
+                // SAFETY: `ctx.log` set in `create_context_data` (single-
+                // threaded CLI startup), process-lifetime.
+                let _ = unsafe { ctx.log() }.print(Output::error_writer());
+                pretty_errorln!(
+                    "<r><red>error<r><d>:<r> <b>{}<r> loading directory {}",
+                    bstr::BStr::new(err.name()),
+                    bun_core::fmt::QuotedFormatter {
+                        text: top_level_dir
+                    },
+                );
+                Output::flush();
+                return Err(err.into());
+            }
+            Ok(None) => {
+                // SAFETY: see `Err` arm above.
+                let _ = unsafe { ctx.log() }.print(Output::error_writer());
+                pretty_errorln!("error loading current directory");
+                Output::flush();
+                return Err(crate::Error::CouldntReadCurrentDirectory);
+            }
+            Ok(Some(info)) => info,
+        };
 
         this_transpiler.resolver.store_fd = false;
 

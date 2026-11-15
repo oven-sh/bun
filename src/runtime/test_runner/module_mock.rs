@@ -10,7 +10,7 @@ extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
     let Some(buntest) = bun_test::clone_active_strong() else {
         return false;
     };
-    if buntest.phase != bun_test::Phase::Execution
+    if buntest.phase.get() != bun_test::Phase::Execution
         || buntest.execution.active_group().is_none()
     {
         return false;

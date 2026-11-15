@@ -4,7 +4,7 @@
 #![forbid(unsafe_code)]
 #![allow(clippy::disallowed_methods)] // proc-macro: compile-time input
 use bun_simd_trusted::Target;
-use proc_macro::{Delimiter, Group, Ident, TokenStream, TokenTree};
+use proc_macro::{Delimiter, Group, Ident, Span, TokenStream, TokenTree};
 
 const LONG_RUNNING_ONLY: Target = Target::Avx512Skx;
 const IS_FOR_TESTS: bool = cfg!(feature = "test_support");
@@ -30,6 +30,10 @@ fn is_inline(attribute: &TokenTree) -> bool {
 }
 
 fn with_stream(group: &Group, stream: TokenStream) -> TokenTree {
+    assert!(
+        group.delimiter() != Delimiter::None || group.stream().into_iter().count() <= 1,
+        "`{group}` comes from a macro, and rustc would not keep its tokens together here"
+    );
     let mut new = Group::new(group.delimiter(), stream);
     new.set_span(group.span());
     new.into()
@@ -45,7 +49,8 @@ fn block(head: &str, body: TokenStream) -> TokenStream {
 /// Replaces the body of `mod name { .. }`.
 fn map_module(item: TokenStream, f: fn(TokenStream) -> TokenStream) -> TokenStream {
     let mut item: Vec<TokenTree> = item.into_iter().collect();
-    let Some(TokenTree::Group(body)) = item.pop() else {
+    let is_module = is(item.iter().nth_back(2), "mod");
+    let (true, Some(TokenTree::Group(body))) = (is_module, item.pop()) else {
         panic!("expected `mod name {{ .. }}`");
     };
     item.push(with_stream(&body, f(body.stream())));
@@ -68,7 +73,7 @@ fn replace_ident(
 }
 
 /// `before` has the tokens up to the `fn` of a function.
-fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str]) {
+fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str], span_of_fn: Span) {
     let start = match &before[..] {
         [.., a, b] if is(Some(a), "pub") && is_group(b, Delimiter::Parenthesis) => before.len() - 2,
         [.., a, _] if is(Some(a), "$") => before.len() - 2,
@@ -94,7 +99,12 @@ fn add_attributes(before: &mut Vec<TokenTree>, features: &[&str]) {
     for feature in features {
         attributes += &format!("#[target_feature(enable = {feature:?})]");
     }
-    before.splice(start..start, parse(&attributes));
+    let mut attributes: Vec<TokenTree> = parse(&attributes).into_iter().collect();
+    // With a `#` from here, a macro in the module could write any attribute of `rustc_attrs`.
+    for hash in attributes.iter_mut().step_by(2) {
+        hash.set_span(span_of_fn);
+    }
+    before.splice(start..start, attributes);
 }
 
 /// On every `fn` except `const fn` and trait methods, which cannot have them.
@@ -109,7 +119,7 @@ fn enable_features(stream: TokenStream, features: &[&str]) -> TokenStream {
         is_impl = !is_function && (is_impl || at("impl"));
         is_of_trait |= at("trait") || is_impl && at("for") && !is(rest.peek(), "<");
         if is_function && !is(out.last(), "const") {
-            add_attributes(&mut out, features);
+            add_attributes(&mut out, features, token.span());
         }
         let is_argument = is(rest.peek(), ">") || is(rest.peek(), ",");
         let ends_item = is_group(&token, Delimiter::Brace) && !is_argument || at(";");

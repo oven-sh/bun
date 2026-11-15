@@ -5,7 +5,7 @@
 #![forbid(unsafe_code)]
 // For `#[inline(always)]` in the copies.
 #![recursion_limit = "1024"]
-#![doc(test(attr(deny(unsafe_code), allow(unused))))]
+#![doc(test(attr(deny(unsafe_code, unfulfilled_lint_expectations), allow(unused))))]
 #![cfg_attr(miri, allow(dead_code, unused_imports))]
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 // The ops come before their first callers, and the copies for the targets look alike.

@@ -1,11 +1,10 @@
-use core::ffi::{CStr, c_uint};
+use core::ffi::CStr;
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
 
 pub(crate) struct EVP {
-    ctx: boringssl::EVP_MD_CTX,
-    md: &'static boringssl::EVP_MD,
+    ctx: boringssl::OwnedEvpMdCtx,
     algorithm: Algorithm,
 }
 
@@ -154,82 +153,35 @@ impl EVP {
     pub(crate) fn init(algorithm: Algorithm, md: &'static boringssl::EVP_MD) -> EVP {
         bun_boringssl::load();
 
-        let mut ctx: boringssl::EVP_MD_CTX = bun_core::ffi::zeroed();
-        let _ = boringssl::EVP_DigestInit(&mut ctx, md);
-        EVP { ctx, md, algorithm }
+        let ctx = boringssl::OwnedEvpMdCtx::new(md);
+        EVP { ctx, algorithm }
     }
 
-    pub(crate) fn reset(&mut self) {
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx was
-        // initialized in init() and remains valid for the lifetime of EVP; self.md is a
-        // static singleton. BoringSSL never reads the `ENGINE`.
-        unsafe {
-            boringssl::ERR_clear_error();
-            let _ = boringssl::EVP_DigestInit_ex(&raw mut self.ctx, self.md, core::ptr::null_mut());
-        }
-    }
-
-    pub(crate) fn hash(&mut self, input: &[u8], output: &mut [u8]) -> Option<u32> {
+    pub(crate) fn hash(&self, input: &[u8], output: &mut Digest) -> Option<usize> {
         boringssl::ERR_clear_error();
-        let mut outsize: c_uint = (output.len() as u16).min(self.size()) as c_uint;
-        // SAFETY: input/output point to valid slices of the given lengths; outsize bounded by output.len().
-        // BoringSSL never reads the `ENGINE`.
-        if unsafe {
-            boringssl::EVP_Digest(
-                input.as_ptr().cast(),
-                input.len(),
-                output.as_mut_ptr(),
-                &raw mut outsize,
-                self.md,
-                core::ptr::null_mut(),
-            )
-        } != 1
-        {
-            return None;
-        }
-
-        Some(outsize)
+        self.ctx.md().digest(input, output)
     }
 
     pub(crate) fn r#final<'a>(&mut self, output: &'a mut [u8]) -> &'a mut [u8] {
         boringssl::ERR_clear_error();
-        let mut outsize: u32 = (output.len() as u16).min(self.size()) as u32;
-        // SAFETY: output points to a valid mutable slice; outsize bounded by output.len().
-        if unsafe {
-            boringssl::EVP_DigestFinal_ex(&raw mut self.ctx, output.as_mut_ptr(), &raw mut outsize)
-        } != 1
-        {
-            return &mut output[..0];
-        }
-
-        self.reset();
-
-        &mut output[..outsize as usize]
+        self.ctx.final_and_init(output)
     }
 
     pub(crate) fn update(&mut self, input: &[u8]) {
-        // SAFETY: FFI into BoringSSL; ERR_clear_error has no preconditions. self.ctx is
-        // initialized; input.as_ptr() is valid for input.len() bytes.
-        unsafe {
-            boringssl::ERR_clear_error();
-            let _ =
-                boringssl::EVP_DigestUpdate(&raw mut self.ctx, input.as_ptr().cast(), input.len());
-        }
+        boringssl::ERR_clear_error();
+        self.ctx.update(input);
     }
 
     pub(crate) fn size(&self) -> u16 {
-        boringssl::EVP_MD_size(self.md) as u16
+        self.ctx.md().size() as u16
     }
 
     pub(crate) fn copy(&self) -> Result<EVP, AllocError> {
         boringssl::ERR_clear_error();
-        let mut new = EVP::init(self.algorithm, self.md);
-        // SAFETY: FFI into BoringSSL; both new.ctx and self.ctx are initialized EVP_MD_CTX
-        // values (new.ctx via EVP::init above, self.ctx via the invariant on EVP).
-        if unsafe { boringssl::EVP_MD_CTX_copy_ex(&raw mut new.ctx, &raw const self.ctx) } == 0 {
-            return Err(AllocError);
-        }
-        Ok(new)
+        Ok(EVP {
+            ctx: self.ctx.try_clone().ok_or(AllocError)?,
+            algorithm: self.algorithm,
+        })
     }
 
     pub(crate) fn by_name(name: &[u8]) -> Option<EVP> {
@@ -240,26 +192,12 @@ impl EVP {
 
             // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
             // explicit `tag_cstr()` table for the C-string FFI.
-            // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
-            // C string, which `tag_cstr()` guarantees.
-            let md = unsafe { boringssl::EVP_get_digestbyname(algorithm.tag_cstr().as_ptr()) };
-            if let Some(md) = md {
+            if let Some(md) = boringssl::EVP_MD::by_name(algorithm.tag_cstr()) {
                 return Some(EVP::init(algorithm, md));
             }
         }
 
         None
-    }
-}
-
-impl Drop for EVP {
-    fn drop(&mut self) {
-        // https://github.com/oven-sh/bun/issues/3250
-        // SAFETY: FFI into BoringSSL; self.ctx is valid for the lifetime of EVP and
-        // EVP_MD_CTX_cleanup is safe to call on any initialized ctx (idempotent).
-        unsafe {
-            let _ = boringssl::EVP_MD_CTX_cleanup(&raw mut self.ctx);
-        }
     }
 }
 

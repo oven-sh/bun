@@ -1636,9 +1636,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
             let sni = Self::configured_hostname(this);
             if !sni.is_empty()
                 && !bun_core::ip_address::is_ip_host(sni)
-                && let Some(ssl) = socket.ssl_mut()
+                // SAFETY: `socket` is live, and `ssl` is used at once.
+                && let Some(ssl) = unsafe { socket.ssl() }
             {
-                ssl.set_servername(bun_core::ZBox::from_bytes(sni).as_cstr());
+                ssl.set_servername(sni);
             }
         }
         this.client_mut().socket = Self::socket(socket);
@@ -1648,7 +1649,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
     /// `on_handshake`'s name check, asked inside the handshake.
     pub(crate) fn server_identity(
         this: &JSValkeyClient,
-        ssl: &mut boringssl::c::SSL,
+        ssl: &boringssl::c::SSL,
     ) -> boringssl::ServerIdentity {
         let client = this.client.get();
         let rejects = client.tls.reject_unauthorized(client.vm);
@@ -1711,7 +1712,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_guard();
         let _update = UpdatePollRefOnDrop(this);
         let vm = this.client.get().vm;
-        let ssl_ptr: *mut boringssl::c::SSL = socket.ssl().unwrap_or(core::ptr::null_mut());
         if handshake_success {
             if this.client.get().tls.reject_unauthorized(vm) {
                 // only reject the connection if reject_unauthorized == true
@@ -1724,13 +1724,13 @@ impl<const SSL: bool> SocketHandler<SSL> {
                 // certificate.
                 let hostname = Self::configured_hostname(this);
                 // With no `SSL*` there is no certificate to match: fail closed.
+                // SAFETY: this is the handshake handler of `socket`, and `ssl` is used at once.
                 let identity_ok = hostname.is_empty()
-                    || (!ssl_ptr.is_null()
-                        && uws::check_server_identity(
-                            // SAFETY: non-null, so the dispatched socket's live `SSL*`.
-                            unsafe { &mut *ssl_ptr },
-                            hostname,
-                        ));
+                    || unsafe {
+                        socket
+                            .ssl()
+                            .is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
+                    };
                 if !identity_ok {
                     return Self::fail_handshake_with_altname_error(this, vm, hostname);
                 }

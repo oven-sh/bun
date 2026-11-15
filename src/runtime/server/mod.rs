@@ -4018,18 +4018,12 @@ pub(crate) mod http_server_agent {
         instance.set_inspector_server_id(this.next_server_id.get());
         let url = bun_core::handle_oom(instance.get_url_as_string());
 
-        // SAFETY: `agent` is a non-null C++ InspectorHTTPServerAgent handle
-        // (set via `Bun__HTTPServerAgent__setEnabled`).
-        unsafe {
-            InspectorHTTPServerAgent::notify_server_started(
-                agent.as_ptr(),
-                this.next_server_id.get(),
-                instance.vm().hot_reload_counter.get() as i32,
-                &url,
-                bun_core::time::milli_timestamp() as f64,
-                instance.ptr.cast(),
-            );
-        }
+        InspectorHTTPServerAgent::notify_server_started(
+            agent.as_ptr(),
+            this.next_server_id.get(),
+            &url,
+            bun_core::time::milli_timestamp() as f64,
+        );
     }
 
     /// Tell the C++ inspector agent (if attached) that the server stopped,

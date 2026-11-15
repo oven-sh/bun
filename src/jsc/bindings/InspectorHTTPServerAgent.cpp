@@ -64,9 +64,8 @@ Protocol::ErrorStringOr<void> InspectorHTTPServerAgent::disable()
 
 // Event dispatchers
 
-void InspectorHTTPServerAgent::serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance)
+void InspectorHTTPServerAgent::serverStarted(int serverId, const String& url, double startTime)
 {
-    this->m_serverIdToServerInstance.set(serverId, serverInstance);
     if (!m_enabled || !m_frontendDispatcher) {
         return;
     }
@@ -75,8 +74,6 @@ void InspectorHTTPServerAgent::serverStarted(int serverId, const String& url, do
 }
 void InspectorHTTPServerAgent::serverStopped(int serverId, double timestamp)
 {
-    this->m_serverIdToServerInstance.remove(serverId);
-
     if (!m_enabled || !m_frontendDispatcher) {
         return;
     }
@@ -144,10 +141,10 @@ typedef int HotReloadId;
 typedef int RouteId;
 typedef int RequestId;
 
-[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, HotReloadId hotReloadId, const BunString* address, double startTime, void* serverInstance)
+[[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStarted(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, const BunString* address, double startTime)
 {
 
-    agent->serverStarted(serverId, address->toWTFString(), startTime, serverInstance);
+    agent->serverStarted(serverId, address->toWTFString(), startTime);
 }
 
 [[ZIG_EXPORT(nothrow)]] void Bun__HTTPServerAgent__notifyServerStopped(Inspector::InspectorHTTPServerAgent* agent, ServerId serverId, double timestamp)

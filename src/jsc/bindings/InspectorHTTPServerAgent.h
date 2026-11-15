@@ -17,8 +17,6 @@ class BackendDispatcher;
 class HTTPServerFrontendDispatcher;
 enum class DisconnectReason;
 
-using AnyServerPtr = void*;
-
 class InspectorHTTPServerAgent final : public InspectorAgentBase, public Inspector::HTTPServerBackendDispatcherHandler, public CanMakeThreadSafeCheckedPtr<InspectorHTTPServerAgent> {
     WTF_MAKE_NONCOPYABLE(InspectorHTTPServerAgent);
     WTF_MAKE_TZONE_ALLOCATED(InspectorHTTPServerAgent);
@@ -39,7 +37,7 @@ public:
     virtual Inspector::CommandResult<void> disable() final;
 
     // Events API
-    void serverStarted(int serverId, const String& url, double startTime, AnyServerPtr serverInstance);
+    void serverStarted(int serverId, const String& url, double startTime);
     void serverStopped(int serverId, double timestamp);
     void serverRoutesUpdated(int serverId, int hotReloadId, Ref<JSON::ArrayOf<Protocol::HTTPServer::Route>>&& routes);
     void requestWillBeSent(Ref<Protocol::HTTPServer::Request>&& request);
@@ -49,7 +47,6 @@ public:
     void requestHandlerException(Ref<Protocol::HTTPServer::RequestHandlerError>&& error);
 
 private:
-    WTF::HashMap<int, AnyServerPtr> m_serverIdToServerInstance;
     std::unique_ptr<HTTPServerFrontendDispatcher> m_frontendDispatcher;
     Ref<HTTPServerBackendDispatcher> m_backendDispatcher;
     bool m_enabled { false };

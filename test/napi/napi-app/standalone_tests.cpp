@@ -4685,6 +4685,37 @@ test_napi_external_string_args(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value
+test_napi_create_string_utf16_unaligned(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const char16_t text[] = u"odd address";
+  alignas(char16_t) char bytes[sizeof(text) + 1];
+  memcpy(bytes + 1, text, sizeof(text));
+  for (size_t length : {size_t{3}, size_t{NAPI_AUTO_LENGTH}}) {
+    napi_value string;
+    NODE_API_CALL(
+        env, napi_create_string_utf16(
+                 env, reinterpret_cast<char16_t *>(bytes + 1), length, &string));
+    printf("%s\n", Napi::String(env, string).Utf8Value().c_str());
+  }
+  return ok(env);
+}
+
+static napi_value test_napi_get_boolean_bytes(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  auto get_boolean =
+      reinterpret_cast<napi_status (*)(napi_env, uint8_t, napi_value *)>(
+          napi_get_boolean);
+  for (uint8_t byte : {0, 1, 2, 128, 255}) {
+    napi_value value;
+    bool result;
+    NODE_API_CALL(env, get_boolean(env, byte, &value));
+    NODE_API_CALL(env, napi_get_value_bool(env, value, &result));
+    printf("%d: %d\n", byte, result);
+  }
+  return ok(env);
+}
+
 // napi_get_buffer_info must reject a bare ArrayBuffer/SharedArrayBuffer like
 // Node's node::Buffer::HasInstance (IsArrayBufferView).
 static napi_value
@@ -4879,6 +4910,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_toobject_coercion_node26);
   REGISTER_FUNCTION(env, exports, test_napi_symbol_key_result_ordering);
   REGISTER_FUNCTION(env, exports, test_napi_external_string_args);
+  REGISTER_FUNCTION(env, exports, test_napi_create_string_utf16_unaligned);
+  REGISTER_FUNCTION(env, exports, test_napi_get_boolean_bytes);
   REGISTER_FUNCTION(env, exports, test_napi_get_buffer_info_gate);
   REGISTER_FUNCTION(env, exports, test_create_weak_ref_for_gc);
   REGISTER_FUNCTION(env, exports, test_weak_ref_is_collected);

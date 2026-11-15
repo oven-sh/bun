@@ -1,7 +1,17 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
-import { appendFileSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  bunEnv,
+  bunExe,
+  forEachLine,
+  isASAN,
+  isLinux,
+  isWindows,
+  tempDir,
+  tmpdirSync,
+  untilEveryThreadIs,
+} from "harness";
+import { appendFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
@@ -598,17 +608,7 @@ describe.skipIf(isWindows)("bun test --changed --watch", () => {
 
     // Stopped, so that the watcher gets them in one batch.
     proc.kill("SIGSTOP");
-    const tasks = `/proc/${proc.pid}/task`;
-    const isStopped = (task: string) => {
-      try {
-        return readFileSync(`${tasks}/${task}/status`, "utf8").includes("State:\tT");
-      } catch {
-        return true; // The thread has exited.
-      }
-    };
-    for (const deadline = Date.now() + 20_000; !readdirSync(tasks).every(isStopped); await Bun.sleep(1)) {
-      if (Date.now() > deadline) throw new Error("timed out waiting for every thread to stop");
-    }
+    await untilEveryThreadIs("T", proc.pid);
     for (const name of names) appendFileSync(join(String(dir), name), "// touched\n");
     proc.kill("SIGCONT");
     expect(await nextSummary()).toBe("Ran 12 tests across 12 files.");

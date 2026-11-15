@@ -2216,6 +2216,24 @@ export function waitForFileToExist(path: string, interval_ms: number) {
   }
 }
 
+/** Linux only. `state` is the third field of `/proc/<pid>/task/<tid>/stat`: "T" is stopped, "Z" is a zombie. */
+export async function untilEveryThreadIs(state: string, pid: number) {
+  const states = () =>
+    fs.readdirSync(`/proc/${pid}/task`).map(tid => {
+      try {
+        const stat = fs.readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
+        return stat[stat.lastIndexOf(")") + 2];
+      } catch {
+        return "X";
+      }
+    });
+  const deadline = performance.now() + 30_000;
+  while (states().some(other => other !== state)) {
+    if (performance.now() > deadline) throw new Error(`threads of ${pid}: ${states()}`);
+    await Bun.sleep(1);
+  }
+}
+
 export function libcPathForDlopen() {
   switch (process.platform) {
     case "linux":

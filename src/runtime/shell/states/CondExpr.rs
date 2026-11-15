@@ -5,7 +5,7 @@ use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::IoKind;
 use crate::shell::dispatch_tasks::ShellCondExprStatTask;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, PoolTask, ShellTask, ShellWork};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, PoolTask, ShellWork};
 use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
@@ -318,7 +318,7 @@ impl<'a> CondExpr<'a> {
 impl ShellWork for ShellCondExprStatTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
 
-    fn run_from_thread_pool(&mut self, _: &ShellTask) {
+    fn run_from_thread_pool(&mut self) {
         debug_assert!(self.path.last() == Some(&0));
         let z = bun_core::ZStr::from_buf(&self.path, self.path.len() - 1);
         self.stat = crate::shell::interpreter::shell_statat(self.cwd_fd, z);

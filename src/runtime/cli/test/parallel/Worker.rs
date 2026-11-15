@@ -3,6 +3,7 @@
 //! routes IPC frames); this file holds only the per-process state and the
 //! spawn/dispatch/shutdown mechanics.
 
+#[cfg(windows)]
 use core::ffi::c_void;
 
 #[cfg(unix)]
@@ -13,7 +14,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
-use bun_io::BufferedReader;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 #[cfg(windows)]
 use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -116,18 +117,20 @@ impl Worker {
 
     pub(crate) fn reset_pipes(&mut self) {
         self.ipc = Channel::default();
-        self.out = BufferedReader::init::<Worker>();
-        self.err = BufferedReader::init::<Worker>();
+        self.out = BufferedReader::init();
+        self.err = BufferedReader::init();
     }
 
     /// The caller counts the worker in `live_workers` on `Ok`.
     pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);
 
-        // The parent pointer stays valid: Coordinator holds the workers in a stable slice.
-        let parent = (&raw mut *self).cast::<c_void>();
-        self.out.set_parent(parent);
-        self.err.set_parent(parent);
+        let owner = (&raw mut *self).cast();
+        // SAFETY: fields of their owner. Coordinator holds the workers in a stable slice.
+        unsafe {
+            (self.out).set_owner(Owner::with_key(PollTag::TestWorker, 0, owner));
+            (self.err).set_owner(Owner::with_key(PollTag::TestWorker, 1, owner));
+        }
 
         // All resource cleanup on any error return — including watchOrReap
         // failure below. Each guard checks for null/unstarted so the order in
@@ -179,15 +182,12 @@ impl Worker {
                     coord.vm.event_loop_ptr(),
                 )),
             );
-            if let Some(fd) = stdout.map(bun_sys::File::into_raw) {
-                this.out
-                    .start(fd, true)
-                    .map_err(|_| crate::Error::PipeStartFailed)?;
-            }
-            if let Some(fd) = stderr.map(bun_sys::File::into_raw) {
-                this.err
-                    .start(fd, true)
-                    .map_err(|_| crate::Error::PipeStartFailed)?;
+            for (reader, file) in [(&this.out, stdout), (&this.err, stderr)] {
+                if let Some(fd) = file.map(bun_sys::File::into_raw) {
+                    let _ = reader
+                        .start(this.event_loop.as_event_loop_ctx(), fd, true)
+                        .map_err(|_| crate::Error::PipeStartFailed)?;
+                }
             }
             if let Some(pipe) = extra_pipes.into_iter().next() {
                 // adopt() mutates the loop's socket context via interior mutability on the C side.
@@ -282,6 +282,16 @@ impl Worker {
         Ok(())
     }
 
+    /// The exit of the process ends the worker, not the end of a reader.
+    pub(crate) fn on_io(&mut self, key: u32, event: IoEvent) {
+        let reader = if key == 0 { &self.out } else { &self.err };
+        let event_loop = self.event_loop.as_event_loop_ctx();
+        let _ = reader.read_chunks(event_loop, Some(event), |chunk, _| {
+            self.captured.extend_from_slice(&chunk);
+            true
+        });
+    }
+
     pub(crate) fn on_process_exit(&mut self, status: Status, rusage: &Rusage) {
         self.alive = false;
         self.peak_rss_mb = (self.peak_rss_mb).max((rusage.maxrss() / (1024.0 * 1024.0)) as u32);
@@ -323,16 +333,4 @@ bun_spawn::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
         on_process_exit(status, rusage) => (*this).on_process_exit(status, rusage),
     }
-}
-
-// Parent of both `out` and `err`. The callbacks touch only fields disjoint from the readers.
-bun_io::impl_buffered_reader_parent! {
-    TestParallelWorker for Worker;
-    feature = TestCommand;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, _state| { (*this).captured.extend_from_slice(&chunk); true };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
-    loop_           = |this| (*this).event_loop.native_loop();
-    event_loop      = |this| (*this).event_loop.as_event_loop_ctx();
 }

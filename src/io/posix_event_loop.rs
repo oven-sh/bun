@@ -162,15 +162,13 @@ const EV_EOF: u16 = 0x8000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
-// Low tier (here) stores `(tag: u8, ptr: *mut ())`; `bun_runtime::dispatch::__bun_run_io`
+// Low tier (here) stores a tag and a `*mut ()`; `bun_runtime::dispatch::__bun_run_io`
 // owns the per-tag `match` so the variant types are never named in this crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Closed set of `FilePoll` owner kinds. Variant types live in higher-tier
+/// Closed set of [`Owner`] kinds. Variant types live in higher-tier
 /// crates; `__bun_run_io` (link-time, in `bun_runtime::dispatch`)
-/// matches on this and calls the per-kind handler directly — same enum-dispatch
-/// shape as `EventLoopCtx`, with the match on the runtime side because there
-/// are 13 variants × 1 dispatch fn (vs 2 × 9 for `EventLoopCtx`).
+/// matches on this and calls the per-kind handler directly.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PollTag {
@@ -179,70 +177,71 @@ pub enum PollTag {
     StaticPipeWriter,
     ShellStaticPipeWriter,
     SecurityScanStaticPipeWriter,
-    BufferedReader,
+    #[cfg(not(windows))]
     DnsResolver,
+    #[cfg(target_os = "macos")]
     GetAddrInfoRequest,
+    #[cfg(not(windows))]
     Process,
     ShellBufferedWriter,
+    #[cfg(not(windows))]
     TerminalPoll,
+    #[cfg(target_os = "macos")]
     ParentDeathWatchdog,
-    LifecycleScriptSubprocessOutputReader,
+    #[cfg(not(windows))]
     MemoryPressure,
+    SubprocessPipeReader,
+    ShellPipeReader,
+    ShellIoReader,
+    FileReader,
+    FileResponseStream,
+    TerminalReader,
+    CronRegister,
+    CronRemove,
+    FilterRun,
+    MultiRun,
+    TestWorker,
+    LifecycleScript,
+    InstallGit,
+    SecurityScanReader,
 }
 
-/// Compatibility module — call sites in `bun_runtime`/`bun_install` still spell
-/// `poll_tag::FILE_SINK`. Re-export the enum variants under the old constant
-/// names; the literal values are unchanged. New code should use
-/// `PollTag::FileSink` directly.
-pub mod poll_tag {
-    use super::PollTag;
-    pub const NULL: PollTag = PollTag::Null;
-    pub const FILE_SINK: PollTag = PollTag::FileSink;
-    pub const STATIC_PIPE_WRITER: PollTag = PollTag::StaticPipeWriter;
-    pub const SHELL_STATIC_PIPE_WRITER: PollTag = PollTag::ShellStaticPipeWriter;
-    pub const SECURITY_SCAN_STATIC_PIPE_WRITER: PollTag = PollTag::SecurityScanStaticPipeWriter;
-    pub const BUFFERED_READER: PollTag = PollTag::BufferedReader;
-    pub const DNS_RESOLVER: PollTag = PollTag::DnsResolver;
-    pub const GET_ADDR_INFO_REQUEST: PollTag = PollTag::GetAddrInfoRequest;
-    pub const PROCESS: PollTag = PollTag::Process;
-    pub const SHELL_BUFFERED_WRITER: PollTag = PollTag::ShellBufferedWriter;
-    pub const TERMINAL_POLL: PollTag = PollTag::TerminalPoll;
-    pub const PARENT_DEATH_WATCHDOG: PollTag = PollTag::ParentDeathWatchdog;
-    pub const LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER: PollTag =
-        PollTag::LifecycleScriptSubprocessOutputReader;
-    pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
-}
-
-/// Who is told when a poll fires. Plain data: handing it to a poll is what takes a contract.
-#[cfg(not(windows))]
+/// Who is handed an [`IoEvent`]. Plain data: attaching it is what takes a contract.
 #[derive(Copy, Clone)]
 pub struct Owner {
     tag: PollTag,
+    /// Tells the readers of one owner apart.
+    key: u32,
     ptr: *mut (),
 }
 
-#[cfg(not(windows))]
 impl Owner {
-    pub(crate) const NULL: Owner = Owner {
-        tag: PollTag::Null,
-        ptr: core::ptr::null_mut(),
-    };
+    pub(crate) const NULL: Owner = Owner::new(PollTag::Null, core::ptr::null_mut());
     #[inline]
     pub const fn new(tag: PollTag, ptr: *mut ()) -> Owner {
-        Owner { tag, ptr }
+        Owner::with_key(tag, 0, ptr)
     }
     #[inline]
-    pub fn is_null(&self) -> bool {
-        self.ptr.is_null()
+    pub const fn with_key(tag: PollTag, key: u32, ptr: *mut ()) -> Owner {
+        Owner { tag, key, ptr }
     }
     #[inline]
     pub fn tag(&self) -> PollTag {
         self.tag
     }
     #[inline]
+    pub fn key(&self) -> u32 {
+        self.key
+    }
+    #[inline]
     pub fn ptr(&self) -> *mut () {
         self.ptr
     }
+}
+
+#[cfg(windows)]
+pub enum IoEvent {
+    Read(crate::pipe_reader::ReadEvent),
 }
 
 /// What a poll that fired tells its owner.
@@ -261,9 +260,8 @@ impl IoEvent {
     }
 }
 
-#[cfg(not(windows))]
 unsafe extern "Rust" {
-    fn __bun_run_io(owner: Owner, event: IoEvent);
+    pub(crate) fn __bun_run_io(owner: Owner, event: IoEvent);
 }
 
 /// Shared borrows only: the kernel holds its address.
@@ -382,11 +380,6 @@ impl FilePoll {
             flags: self.flags.get(),
             size_or_offset,
         }
-    }
-
-    #[inline]
-    pub(crate) fn is_active(&self) -> bool {
-        self.has_flag(Flags::HasIncrementedPollCount)
     }
 
     #[inline]

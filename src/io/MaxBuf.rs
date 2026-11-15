@@ -67,18 +67,14 @@ impl MaxBuf {
         true
     }
 
-    /// Trims `buf` to the remaining budget plus `OVERREAD_ALLOWANCE`: unclamped,
+    /// Trims `len` to the remaining budget plus `OVERREAD_ALLOWANCE`: unclamped,
     /// a 256 KB scratch read off a socketpair overshoots `maxBuffer` by hundreds
-    /// of KB. Never empties a non-empty `buf` (that would read as EOF).
-    pub(crate) fn clamp_read_buf<'a>(this: Option<&MaxBuf>, buf: &'a mut [u8]) -> &'a mut [u8] {
-        let Some(this) = this else {
-            return buf;
-        };
-        let remaining = u64::try_from(this.remaining_bytes.get()).unwrap_or(0);
+    /// of KB. Never makes it zero (that would read as EOF).
+    pub(crate) fn clamp_read_len(&self, len: usize) -> usize {
+        let remaining = u64::try_from(self.remaining_bytes.get()).unwrap_or(0);
         let limit =
             usize::try_from(remaining.saturating_add(OVERREAD_ALLOWANCE)).unwrap_or(usize::MAX);
-        let len = buf.len().min(limit);
-        &mut buf[..len]
+        len.min(limit)
     }
 }
 

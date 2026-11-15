@@ -219,7 +219,7 @@ public:
             drain();
         }
 
-        // Close the threadsafe functions, which addon threads can outlive a worker with (Node: ThreadSafeFunction::Cleanup).
+        // Addon threads can outlive the worker and still hold threadsafe functions: close them (Node: ThreadSafeFunction::Cleanup).
         // Their finalizers are native callbacks like the ones below, so they
         // start from a clean exception state too: a cleanup hook may have left one.
         clearExceptionsBetweenFinalizers();

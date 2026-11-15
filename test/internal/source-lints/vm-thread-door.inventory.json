@@ -126,7 +126,7 @@
   "src/runtime/napi/napi_body.rs": {
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
-      "PoolTrip"
+      "AsyncWorkOffThread"
     ],
     "unsafe impl Send": [
       "AddonData"
@@ -137,7 +137,7 @@
   },
   "src/runtime/napi/uv_posix.rs": {
     "unsafe impl Send": [
-      "QueuedWork"
+      "WorkRef"
     ]
   },
   "src/runtime/node/fs_events.rs": {

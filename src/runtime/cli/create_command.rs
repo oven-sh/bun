@@ -770,6 +770,7 @@ impl CreateCommand {
             }
         }
 
+        let source;
         let mut start_command: &[u8] = b"bun dev";
 
         'process_package_json: {
@@ -778,7 +779,7 @@ impl CreateCommand {
             }
 
             if let Some(package_json_file) = &package_json_file {
-                let source = bun_ast::Source::init_path_string(
+                source = bun_ast::Source::init_path_string(
                     b"package.json",
                     package_json_contents.list.as_slice(),
                 );
@@ -908,22 +909,18 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
-                        let arena_str = |s: &[u8]| -> &'static [u8] {
-                            // SAFETY: `s` points into the JSON arena, which lives for the rest of `exec`.
-                            unsafe { &*std::ptr::from_ref::<[u8]>(s) }
-                        };
                         for (name, tasks) in [
                             (b"postinstall".as_slice(), &mut postinstall_tasks),
                             (b"preinstall".as_slice(), &mut preinstall_tasks),
                         ] {
                             match value.as_property(name).map(|property| property.expr.data) {
                                 Some(LExprData::EString(single_task)) => {
-                                    tasks.push(arena_str(single_task.data.slice()));
+                                    tasks.push(single_task.data.slice());
                                 }
                                 Some(LExprData::EArray(array)) => {
                                     for task in array.slice() {
                                         if let Some(task_entry) = task.as_utf8_string_literal() {
-                                            tasks.push(arena_str(task_entry));
+                                            tasks.push(task_entry);
                                         }
                                     }
                                 }
@@ -935,7 +932,7 @@ impl CreateCommand {
                             && let Some(start_str) = start.expr.as_utf8_string_literal()
                             && !start_str.is_empty()
                         {
-                            start_command = arena_str(start_str);
+                            start_command = start_str;
                         }
 
                         i += 1;
@@ -958,6 +955,7 @@ impl CreateCommand {
 
                 if let Err(err) = JSPrinter::print_json(
                     &mut package_json_writer,
+                    bump,
                     package_json_expr,
                     &source,
                     JSPrinter::PrintJsonOptions {
@@ -1870,11 +1868,14 @@ impl Example {
             Global::exit(1);
         }
 
-        let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // Process-lifetime: the examples borrow from it.
         let bump: &'static bun_ast::AstArena = crate::cli::cli_arena();
+        let source = bump.alloc(bun_ast::Source::init_path_string(
+            b"examples.json",
+            mutable.list.as_slice(),
+        ));
         let log = ctx.log();
-        let examples_object = match JSON::parse_utf8(&source, log, bump) {
+        let examples_object = match JSON::parse_utf8(source, log, bump) {
             Ok(e) => e,
             Err(err) => {
                 if log.has_errors() {
@@ -1894,7 +1895,7 @@ impl Example {
         if let Some(q) = examples_object.as_property(b"examples")
             && let Some(object) = q.expr.data.e_object()
         {
-            let to_example = |property: &bun_ast::G::Property| {
+            let to_example = |property: &bun_ast::G::Property<'static>| {
                 let name: &'static [u8] = property
                     .key
                     .expect("infallible: prop has key")

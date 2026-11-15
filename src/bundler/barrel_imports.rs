@@ -52,15 +52,10 @@ impl RequestedExports {
     }
 }
 
-// `original_alias` is stored as the raw arena `*const [u8]` (the
-// `NamedImport.alias` representation) instead of a tied `&'a [u8]` so the BFS
-// loop can hold a `BarrelExportResolution` across a `&mut graph.ast` reborrow
-// without the borrow checker seeing an overlap. The pointee outlives the
-// bundler arena, so dereferencing later is sound.
-struct BarrelExportResolution {
+struct BarrelExportResolution<'a> {
     import_record_index: u32,
     /// The original alias in the source module (e.g. "d" for `export { d as c }`)
-    original_alias: Option<bun_ast::StoreStr>,
+    original_alias: Option<bun_ast::StoreStr<'a>>,
     /// True when the underlying import is `import * as ns` — propagation
     /// through this export must treat the target as needing all exports.
     alias_is_star: bool,
@@ -69,11 +64,11 @@ struct BarrelExportResolution {
 /// Look up an export name → import_record_index by chasing
 /// named_exports[alias].ref through named_imports.
 /// Also returns the original alias from the source module for BFS propagation.
-fn resolve_barrel_export(
+fn resolve_barrel_export<'a>(
     alias: &[u8],
     named_exports: &JSAst::NamedExports,
-    named_imports: &JSAst::NamedImports,
-) -> Option<BarrelExportResolution> {
+    named_imports: &JSAst::NamedImports<'a>,
+) -> Option<BarrelExportResolution<'a>> {
     let export_entry = named_exports.get(alias)?;
     let import_entry = named_imports.get(&export_entry.ref_)?;
     Some(BarrelExportResolution {
@@ -330,12 +325,12 @@ fn record_target(
 /// be read by, when the parser accounted for every use of it: the names read
 /// off it, and the one the call itself reads (`await` reads `then`; `require()`
 /// of an ES module returns its `module.exports` export). `None`: every export.
-fn call_reads(
-    uses: &bun_ast::ast_result::DynamicImportAliases,
+fn call_reads<'a>(
+    uses: &bun_ast::ast_result::DynamicImportAliases<'a>,
     dev_server: bool,
     idx: usize,
     kind: ImportKind,
-) -> Option<impl Iterator<Item = &'static [u8]>> {
+) -> Option<impl Iterator<Item = &'a [u8]> + use<'a>> {
     if dev_server {
         return None;
     }
@@ -548,7 +543,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
         if ni.alias_is_star {
             *value = RequestedExports::All;
         } else if let Some(alias_ptr) = ni.alias {
-            // SAFETY: arena-backed `*const [u8]` valid for the AST lifetime.
             let alias: &[u8] = alias_ptr.slice();
             match value {
                 RequestedExports::All => {}
@@ -822,9 +816,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
             // A namespace request covers every export: request each
             // re-exported name from its source module and `export *` targets
             // in full, so already-parsed inner barrels un-defer too.
-            struct StarPush {
+            struct StarPush<'a> {
                 target: u32,
-                alias: Option<bun_ast::StoreStr>,
+                alias: Option<bun_ast::StoreStr<'a>>,
                 is_star: bool,
             }
             let mut pushes: Vec<StarPush> = Vec::new();
@@ -883,7 +877,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
             for p in pushes {
                 queue.push(BarrelWorkItem {
                     barrel_source_index: p.target,
-                    // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
                     alias: match p.alias {
                         Some(a) => a.slice(),
                         None => b"",
@@ -978,7 +971,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
                             is_star: true,
                         });
                     } else if let Some(alias_ptr) = ni.alias {
-                        // Arena-backed `StoreStr`, valid for the bundler-arena lifetime.
                         queue.push(BarrelWorkItem {
                             barrel_source_index: rec_si.get(),
                             alias: alias_ptr.slice(),

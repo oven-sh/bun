@@ -49,21 +49,21 @@ macro_rules! string_bytes {
 }
 pub(crate) use {sbuf, string_bytes};
 
-/// YAML and package.json strings are backed by the Store. The `'static` is the field's own
-/// lifetime.
-pub(crate) fn as_str(expr: &Expr) -> Option<&'static [u8]> {
+pub(crate) fn as_str<'a>(expr: &Expr<'a>) -> Option<&'a [u8]> {
     match &expr.data {
         ExprData::EString(s) if s.is_utf8() => Some(s.data.slice()),
         _ => None,
     }
 }
 
-pub(crate) fn get_str(expr: &Expr, key: &[u8]) -> Option<&'static [u8]> {
+pub(crate) fn get_str<'a>(expr: &Expr<'a>, key: &[u8]) -> Option<&'a [u8]> {
     expr.get(key).and_then(|e| as_str(&e))
 }
 
 /// Returns the entries of a mapping, or nothing for any other value.
-pub(crate) fn props(expr: &Expr) -> impl Iterator<Item = (&Expr, &Expr)> {
+pub(crate) fn props<'a, 'ast>(
+    expr: &'a Expr<'ast>,
+) -> impl Iterator<Item = (&'a Expr<'ast>, &'a Expr<'ast>)> {
     let properties = match &expr.data {
         ExprData::EObject(object) => object.properties.slice(),
         _ => &[],

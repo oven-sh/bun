@@ -134,7 +134,7 @@ pub trait SourceProvider: Sync {
         log: &Log,
     ) -> FoldOptions<'s>;
 
-    fn define(&self) -> Option<&Define> {
+    fn define(&self) -> Option<&Define<'_>> {
         None
     }
 

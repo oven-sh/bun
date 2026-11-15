@@ -1,10 +1,3 @@
-//! NOTE on arena slices: this is the AST crate. Nearly every slice-typed
-//! struct field points into either the source text or the
-//! parser arena and is bulk-freed at end-of-parse. Per PORTING.md, lifetime
-//! params are not added to AST structs; arena-owned slices are typed as
-//! `StoreSlice<T>` / `StoreStr` here. A future refactor could thread a
-//! crate-wide `'bump` and rewrite these to `&'bump [T]` / `&'bump mut [T]`.
-
 #![feature(optimize_attribute)]
 
 pub mod error;
@@ -108,17 +101,17 @@ pub mod Macro {
 
     // Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`.
     unsafe extern "Rust" {
-        safe fn __bun_macro_context_call(
+        safe fn __bun_macro_context_call<'a>(
             ctx: MacroContext<'_>,
-            arena: &bun_ast::AstArena,
+            arena: &'a bun_ast::AstArena,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
-            caller: bun_ast::Expr,
+            caller: bun_ast::Expr<'a>,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, crate::Error>;
+        ) -> Result<bun_ast::Expr<'a>, crate::Error>;
         // See [`collect_vm_garbage`] for the call-site contract.
         safe fn __bun_macro_collect_vm_garbage();
     }
@@ -162,9 +155,9 @@ pub mod Macro {
             log: &bun_ast::Log,
             source: &bun_ast::Source,
             import_range: bun_ast::Range,
-            caller: bun_ast::Expr,
+            caller: bun_ast::Expr<'a>,
             function_name: &[u8],
-        ) -> Result<bun_ast::Expr, crate::Error> {
+        ) -> Result<bun_ast::Expr<'a>, crate::Error> {
             __bun_macro_context_call(
                 self,
                 arena,
@@ -210,11 +203,11 @@ pub enum AlreadyBundled {
 }
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
-impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
+impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser<'a>
     for crate::p::P<'a, '_, IS_TS, SCAN>
 {
     #[inline]
-    fn arena(&self) -> &bun_alloc::Arena {
+    fn arena(&self) -> &'a bun_alloc::Arena {
         self.arena
     }
     #[inline]
@@ -233,24 +226,25 @@ pub mod defines_table;
 // pure-global fallback table also lives at this tier (`defines_table`) so
 // `for_identifier` reads its own const — no cross-crate hook.
 pub mod defines {
+    use core::marker::PhantomData;
+
     use bun_collections::{StringArrayHashMap, StringHashMap};
     use bun_core::strings;
 
     use bun_ast::E;
-    use bun_ast::StoreRef;
     use bun_ast::expr::Data as ExprData;
 
     pub type RawDefines = StringArrayHashMap<Box<[u8]>>;
-    pub type UserDefines = StringHashMap<DefineData>;
-    pub type UserDefinesArray = StringArrayHashMap<DefineData>;
+    pub type UserDefines<'a> = StringHashMap<DefineData<'a>>;
+    pub type UserDefinesArray<'a> = StringArrayHashMap<DefineData<'a>>;
 
-    pub type IdentifierDefine = DefineData;
+    pub type IdentifierDefine<'a> = DefineData<'a>;
 
     #[derive(Clone)]
-    pub struct DotDefine {
+    pub struct DotDefine<'a> {
         // Owned part strings (small, allocated once at startup).
         pub parts: Vec<Box<[u8]>>,
-        pub data: DefineData,
+        pub data: DefineData<'a>,
     }
 
     /// Bit-packed flags (LSB-first): 3 padding bits, `valueless`,
@@ -326,10 +320,45 @@ pub mod defines {
         }
     }
 
-    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point at statics or into the arena of the transpiler that loaded it.
+    /// Covariant, unlike `ExprData`, so that a parse can borrow a table that outlives it.
+    #[derive(Clone, Copy)]
+    pub struct DefineExprData<'a>(DefineExprKind<'static>, PhantomData<&'a ()>);
+
+    #[derive(Clone, Copy)]
+    pub enum DefineExprKind<'a> {
+        /// A shared reference, so that the node can be a `static`.
+        String(E::JsonRef<'a, E::EString<'a>>),
+        Other(ExprData<'a>),
+    }
+
+    const _: () = assert!(size_of::<DefineExprData>() == size_of::<ExprData>());
+
+    impl<'a> DefineExprData<'a> {
+        pub fn new(value: ExprData<'a>) -> Self {
+            // SAFETY: only the lifetime differs. The marker keeps `'a`, here and in `Define`, and `with`
+            // does not hand out `'static`.
+            let value = unsafe { core::mem::transmute::<ExprData<'a>, ExprData<'static>>(value) };
+            let kind = match value {
+                ExprData::EString(str) => DefineExprKind::String(str.into()),
+                _ => DefineExprKind::Other(value),
+            };
+            DefineExprData(kind, PhantomData)
+        }
+
+        pub fn from_static_string(str: &'static E::EString<'static>) -> Self {
+            DefineExprData(DefineExprKind::String(E::JsonRef::new(str)), PhantomData)
+        }
+
+        /// `read` only knows that `'d` outlives `'s`, so it cannot store anything shorter-lived in the nodes.
+        pub fn with<'s, R>(&'s self, read: impl for<'d> FnOnce(&'s DefineExprKind<'d>) -> R) -> R {
+            read(&self.0)
+        }
+    }
+
+    /// Threads share it only through the read-only `Box<Define>`.
     #[derive(Clone)]
-    pub struct DefineData {
-        pub value: ExprData,
+    pub struct DefineData<'a> {
+        pub value: DefineExprData<'a>,
         // The `RawDefines` value bytes are owned (`Box<[u8]>`), so borrowing
         // would be a use-after-free once the `RawDefines` map is dropped after
         // `Define::init`. Own the bytes here instead — these are tiny
@@ -340,10 +369,10 @@ pub mod defines {
         pub flags: Flags,
     }
 
-    impl Default for DefineData {
+    impl Default for DefineData<'_> {
         fn default() -> Self {
             Self {
-                value: ExprData::EMissing(E::Missing),
+                value: DefineExprData::new(ExprData::EMissing(E::Missing)),
                 original_name: None,
                 flags: Flags::default(),
             }
@@ -354,7 +383,7 @@ pub mod defines {
     #[derive(Clone, Copy)]
     pub struct Options<'a> {
         pub original_name: Option<&'a [u8]>,
-        pub value: ExprData,
+        pub value: ExprData<'a>,
         pub valueless: bool,
         pub can_be_removed_if_unused: bool,
         pub call_can_be_unwrapped_if_unused: E::CallUnwrap,
@@ -373,10 +402,10 @@ pub mod defines {
         }
     }
 
-    impl DefineData {
-        pub fn init(options: Options<'_>) -> DefineData {
+    impl<'a> DefineData<'a> {
+        pub fn init(options: Options<'a>) -> Self {
             DefineData {
-                value: options.value,
+                value: DefineExprData::new(options.value),
                 flags: Flags::new(
                     options.valueless,
                     options.can_be_removed_if_unused,
@@ -414,27 +443,27 @@ pub mod defines {
             self.flags.valueless()
         }
 
-        pub fn init_boolean(value: bool) -> DefineData {
+        pub fn init_boolean(value: bool) -> Self {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
-                value: ExprData::EBoolean(E::Boolean { value }),
+                value: DefineExprData::new(ExprData::EBoolean(E::Boolean { value })),
                 flags,
                 ..Default::default()
             }
         }
 
-        pub fn init_static_string(str: &'static E::EString) -> DefineData {
+        pub fn init_static_string(str: &'static E::EString<'static>) -> DefineData<'static> {
             let mut flags = Flags::default();
             flags.set_can_be_removed_if_unused(true);
             DefineData {
-                value: ExprData::EString(StoreRef::from_static(str)),
+                value: DefineExprData::from_static_string(str),
                 flags,
                 ..Default::default()
             }
         }
 
-        pub(crate) fn merge(a: &DefineData, b: DefineData) -> DefineData {
+        pub(crate) fn merge(a: &DefineData, b: Self) -> Self {
             DefineData {
                 value: b.value,
                 flags: Flags::new(
@@ -451,10 +480,12 @@ pub mod defines {
         }
     }
 
-    #[derive(Default)]
-    pub struct Define {
-        pub identifiers: StringHashMap<IdentifierDefine>,
-        pub dots: StringHashMap<Vec<DotDefine>>,
+    #[derive(Clone, Default)]
+    pub struct Define<'a> {
+        /// `'static` stands for `'a`, here and in `dots`: a map that names `'a` cannot drop after `'a` ends.
+        identifiers: StringHashMap<IdentifierDefine<'static>>,
+        dots: StringHashMap<Vec<DotDefine<'static>>>,
+        _marker: PhantomData<DefineExprData<'a>>,
         /// Which `DotFilter::bit`s the keys of `dots` set. The visitor asks
         /// about every property access; nearly all miss, and this says so
         /// without hashing the name.
@@ -496,12 +527,9 @@ pub mod defines {
         }
     }
 
-    impl Define {
+    impl<'a> Define<'a> {
         /// A table with only the globals that are known to have no side effects.
-        pub fn with_pure_globals(
-            drop_debugger: bool,
-            omit_unused_global_calls: bool,
-        ) -> Box<Define> {
+        pub fn with_pure_globals(drop_debugger: bool, omit_unused_global_calls: bool) -> Box<Self> {
             use crate::defines_table::{
                 GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING,
                 GLOBAL_NO_SIDE_EFFECT_PROPERTY_ACCESSES,
@@ -540,7 +568,7 @@ pub mod defines {
             define
         }
 
-        fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData) {
+        fn insert_global(&mut self, global: &[&[u8]], value_define: &DefineData<'static>) {
             let key = global[global.len() - 1];
             let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
             self.dots_filter.insert(key);
@@ -555,10 +583,18 @@ pub mod defines {
             }
         }
 
+        pub fn identifiers(&self) -> &StringHashMap<IdentifierDefine<'a>> {
+            &self.identifiers
+        }
+
+        pub fn dots(&self) -> &StringHashMap<Vec<DotDefine<'a>>> {
+            &self.dots
+        }
+
         /// The dot defines whose last part is `name` (`NODE_ENV` for
         /// `process.env.NODE_ENV`).
         #[inline]
-        pub fn dots_for(&self, name: &[u8]) -> Option<&Vec<DotDefine>> {
+        pub fn dots_for(&self, name: &[u8]) -> Option<&Vec<DotDefine<'a>>> {
             if !self.dots_filter.may_contain(name) {
                 return None;
             }
@@ -602,16 +638,17 @@ pub mod defines {
             Some(hasher.final_())
         }
 
-        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine> {
+        pub(crate) fn for_identifier(&self, name: &[u8]) -> Option<&IdentifierDefine<'a>> {
             if let Some(data) = self.identifiers.get(name) {
                 return Some(data);
             }
             crate::defines_table::lookup_pure_global_identifier(name).map(|v| v.value())
         }
 
-        pub fn insert_from_iterator<'a, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
+        pub fn insert_from_iterator<'i, I>(&mut self, iter: I) -> Result<(), bun_alloc::AllocError>
         where
-            I: Iterator<Item = (&'a [u8], &'a DefineData)>,
+            I: Iterator<Item = (&'i [u8], &'i DefineData<'a>)>,
+            'a: 'i,
         {
             for (key, value) in iter {
                 self.insert(key, value.clone())?;
@@ -622,8 +659,14 @@ pub mod defines {
         pub fn insert(
             &mut self,
             key: &[u8],
-            value: DefineData,
+            value: DefineData<'a>,
         ) -> Result<(), bun_alloc::AllocError> {
+            let value = DefineData {
+                // The marker of `Define` keeps `'a`.
+                value: DefineExprData(value.value.0, PhantomData),
+                original_name: value.original_name,
+                flags: value.flags,
+            };
             // If it has a dot, then it's a DotDefine. e.g. process.env.NODE_ENV
             if let Some(last_dot) = strings::last_index_of_char(key, b'.') {
                 let tail = &key[last_dot + 1..key.len()];

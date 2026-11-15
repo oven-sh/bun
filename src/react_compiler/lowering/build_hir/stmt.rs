@@ -2,14 +2,15 @@
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    ArrayPattern, ArrayPatternElement, BinaryOperator, BlockKind, Case, Effect, EvaluationOrder,
-    GotoVariant, HirAlloc, HirVec, InstructionKind, InstructionValue, LValue, LValuePattern,
-    ObjectPattern, ObjectProperty, ObjectPropertyOrSpread, ObjectPropertyType, Pattern, Place,
-    PrimitiveValue, ReturnVariant, SourceLocation, SpreadPattern, Terminal, VariableBinding,
+    ArrayPattern, ArrayPatternElement, BinaryOperator, Binding, BlockKind, Case, Effect,
+    EvaluationOrder, Expr, GotoVariant, HirAlloc, HirVec, InstructionKind, InstructionValue,
+    LValue, LValuePattern, ObjectPattern, ObjectProperty, ObjectPropertyOrSpread,
+    ObjectPropertyType, Pattern, Place, PrimitiveValue, ReturnVariant, SourceLocation,
+    SpreadPattern, Stmt, Terminal, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data;
-use bun_ast::{self as ast, Binding, Expr, G, Ref, Stmt, b, s};
+use bun_ast::{self as ast, G, Ref, b, s};
 use smallvec::SmallVec;
 
 use crate::collections::FxHashMap as HashMap;
@@ -413,7 +414,12 @@ fn refs_in_binding(builder: &HirBuilder, binding: &Binding, in_function: bool, o
     }
 }
 
-fn refs_in_args_and_body(builder: &HirBuilder, args: &[G::Arg], body: &[Stmt], on_ref: OnRef) {
+fn refs_in_args_and_body(
+    builder: &HirBuilder,
+    args: &[G::Arg<'static>],
+    body: &[Stmt],
+    on_ref: OnRef,
+) {
     for a in args {
         if let Some(d) = &a.default {
             refs_in_expr(builder, d, true, on_ref);
@@ -425,13 +431,13 @@ fn refs_in_args_and_body(builder: &HirBuilder, args: &[G::Arg], body: &[Stmt], o
     }
 }
 
-fn refs_in_func(builder: &HirBuilder, func: &G::Fn, on_ref: OnRef) {
+fn refs_in_func(builder: &HirBuilder, func: &G::Fn<'static>, on_ref: OnRef) {
     refs_in_args_and_body(builder, func.args.slice(), func.body.stmts.slice(), on_ref);
 }
 
 fn refs_in_properties(
     builder: &HirBuilder,
-    properties: &[G::Property],
+    properties: &[G::Property<'static>],
     in_function: bool,
     on_ref: OnRef,
 ) {
@@ -456,7 +462,12 @@ fn refs_in_properties(
     }
 }
 
-fn refs_in_class(builder: &HirBuilder, class: &G::Class, in_function: bool, on_ref: OnRef) {
+fn refs_in_class(
+    builder: &HirBuilder,
+    class: &G::Class<'static>,
+    in_function: bool,
+    on_ref: OnRef,
+) {
     if let Some(e) = &class.extends {
         refs_in_expr(builder, e, in_function, on_ref);
     }

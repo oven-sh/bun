@@ -194,8 +194,8 @@ impl<'a> ReactCompiler<'a> {
 }
 
 fn writes_hook_name(define: &Define) -> bool {
-    let of_names = define.identifiers.values();
-    let of_paths = define.dots.values().flatten().map(|it| &it.data);
+    let of_names = define.identifiers().values();
+    let of_paths = define.dots().values().flatten().map(|it| &it.data);
     of_names.chain(of_paths).any(|it| {
         let written = it.original_name.as_deref().unwrap_or_default();
         (0..written.len()).any(|start| is_hook_name(&written[start..]))
@@ -246,7 +246,7 @@ impl CompilerOutput<'_, '_> {
 }
 
 impl Observer for CompilerOutput<'_, '_> {
-    fn function_compiled(&mut self, compiled: &CompiledFunction<'_>) {
+    fn function_compiled(&mut self, compiled: &CompiledFunction<'_, '_>) {
         if self.failure.is_some() {
             return;
         }

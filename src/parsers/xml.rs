@@ -28,7 +28,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, AstArena, E, Expr, Loc, Log, Source, StoreRef};
+use bun_ast::{self as ast, AstArena, E, Expr, Loc, Log, Source};
 use bun_collections::HashMap;
 use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
@@ -84,7 +84,7 @@ impl XML {
         log: &Log,
         bump: &'a AstArena,
         options: Options,
-    ) -> crate::Result<Expr> {
+    ) -> crate::Result<Expr<'a>> {
         let contents: &'a [u8] = source.contents.as_ref();
         Self::parse_units(source, contents, log, bump, options)
     }
@@ -98,7 +98,7 @@ impl XML {
         log: &Log,
         bump: &'a AstArena,
         mut options: Options,
-    ) -> crate::Result<Expr> {
+    ) -> crate::Result<Expr<'a>> {
         options.encoding = InputEncoding::Text;
         Self::parse_units(source, units, log, bump, options)
     }
@@ -109,7 +109,7 @@ impl XML {
         log: &Log,
         bump: &'a AstArena,
         options: Options,
-    ) -> crate::Result<Expr> {
+    ) -> crate::Result<Expr<'a>> {
         source.check_parseable_len(log, "XML document")?;
         let mut tape = Tape::new_in(bump, core::mem::size_of_val(contents));
         // SAFETY: see `Tape::object_from`.
@@ -2444,7 +2444,7 @@ trait Sink<'a, U: Unit> {
     /// `text` (the element's only content) then `end_element`, in one step.
     fn end_leaf(&mut self, text: &'a [U], loc: Loc);
     /// Called once, after the root element has ended.
-    fn finish(&mut self) -> Expr;
+    fn finish(&mut self) -> Expr<'a>;
 }
 
 /// Rows staged for the tape, in the two columns the tape appends them as.
@@ -2501,19 +2501,19 @@ impl<T: Copy> Rows<T> {
 /// until their object or array is complete (a node's rows are contiguous on
 /// the tape, so they can only be appended once all of them are known).
 struct Tape<'a> {
-    tape: core::ptr::NonNull<E::JsonTape>,
+    tape: core::ptr::NonNull<E::JsonTape<'a>>,
     bump: &'a AstArena,
-    props: Rows<E::PropertyJSON>,
-    items: Rows<E::JsonValue>,
+    props: Rows<E::PropertyJSON<'a>>,
+    items: Rows<E::JsonValue<'a>>,
     /// `{}` and `[]` are immutable and carry no data, so one row of each
     /// serves every empty object / array in the document.
-    empty_object: Option<StoreRef<E::ObjectJSON>>,
-    empty_array: Option<StoreRef<E::ArrayJSON>>,
+    empty_object: Option<E::ObjectJSONRef<'a>>,
+    empty_array: Option<E::ArrayJSONRef<'a>>,
 }
 
 impl<'a> Tape<'a> {
     fn new_in(bump: &'a AstArena, source_len: usize) -> Self {
-        let alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(bump.heap()));
+        let alloc = E::TapeAlloc::Arena(bump.heap());
         let tape = bump.alloc(E::JsonTape::empty_in(alloc));
         // A first guess so typical documents do not regrow the tape (each
         // growth step copies it); bounded so a huge text-heavy input does
@@ -2531,12 +2531,12 @@ impl<'a> Tape<'a> {
     }
 
     #[inline]
-    fn str<U: Unit>(units: &[U]) -> E::JsonValue {
+    fn str<U: Unit>(units: &'a [U]) -> E::JsonValue<'a> {
         E::JsonValue::String(E::Str::new(U::bytes(units)))
     }
 
     #[inline]
-    fn push_prop(&mut self, key: &[u8], value: E::JsonValue, loc: Loc) {
+    fn push_prop(&mut self, key: &'a [u8], value: E::JsonValue<'a>, loc: Loc) {
         self.props.push(
             E::PropertyJSON {
                 key: E::Str::new(key),
@@ -2548,13 +2548,13 @@ impl<'a> Tape<'a> {
     }
 
     #[inline]
-    fn push_item(&mut self, value: E::JsonValue, loc: Loc) {
+    fn push_item(&mut self, value: E::JsonValue<'a>, loc: Loc) {
         self.items.push(value, loc);
     }
 
     /// Moves the properties staged since `mark` to the tape as one object.
     #[inline]
-    fn object_from(&mut self, mark: usize, loc: Loc) -> StoreRef<E::ObjectJSON> {
+    fn object_from(&mut self, mark: usize, loc: Loc) -> E::ObjectJSONRef<'a> {
         let empty = mark == self.props.len();
         if empty && let Some(row) = self.empty_object {
             return row;
@@ -2566,7 +2566,7 @@ impl<'a> Tape<'a> {
         row
     }
 
-    fn object_from_rows(&mut self, mark: usize, loc: Loc) -> StoreRef<E::ObjectJSON> {
+    fn object_from_rows(&mut self, mark: usize, loc: Loc) -> E::ObjectJSONRef<'a> {
         // SAFETY: `tape` is the arena allocation's own pointer (`root_ptr`),
         // written only through here, and the arena outlives the AST.
         let tape = unsafe { self.tape.as_mut() };
@@ -2575,12 +2575,12 @@ impl<'a> Tape<'a> {
         self.props.truncate(mark);
         // SAFETY: as above — the tape's own pointer, and it outlives the node.
         let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, loc) };
-        self.bump.alloc_node(object)
+        self.bump.alloc_node(object).into()
     }
 
     /// Moves the items staged since `mark` to the tape as one array.
     #[inline]
-    fn array_from(&mut self, mark: usize, loc: Loc) -> StoreRef<E::ArrayJSON> {
+    fn array_from(&mut self, mark: usize, loc: Loc) -> E::ArrayJSONRef<'a> {
         if mark == self.items.len() {
             if let Some(empty) = self.empty_array {
                 return empty;
@@ -2596,20 +2596,20 @@ impl<'a> Tape<'a> {
     }
 
     fn array_of(
-        bump: &AstArena,
-        mut tape: core::ptr::NonNull<E::JsonTape>,
-        items: &[E::JsonValue],
+        bump: &'a AstArena,
+        mut tape: core::ptr::NonNull<E::JsonTape<'a>>,
+        items: &[E::JsonValue<'a>],
         locs: &[Loc],
         loc: Loc,
-    ) -> StoreRef<E::ArrayJSON> {
+    ) -> E::ArrayJSONRef<'a> {
         // SAFETY: see `object_from`.
         let (first, count) = unsafe { tape.as_mut() }.append_items(items, locs);
         // SAFETY: see `object_from`.
         let array = unsafe { E::ArrayJSON::new(tape, first, count, false, loc) };
-        bump.alloc_node(array)
+        bump.alloc_node(array).into()
     }
 
-    fn root(object: StoreRef<E::ObjectJSON>, loc: Loc) -> Expr {
+    fn root(object: E::ObjectJSONRef<'a>, loc: Loc) -> Expr<'a> {
         Expr {
             data: Data::EObjectJSON(object),
             loc,
@@ -2628,13 +2628,13 @@ struct CompactSink<'a, U: Unit> {
     text_runs: Vec<(&'a [U], bool)>,
     /// Recently built `@name` keys, direct-mapped by a cheap hash of the
     /// name: attribute names repeat, their keys need not be rebuilt.
-    key_cache: [Option<E::Str>; KEY_CACHE_SIZE],
+    key_cache: [Option<E::Str<'a>>; KEY_CACHE_SIZE],
     /// Scratch for `end_element`'s grouping of repeated child names.
     group_of: Vec<u32>,
     groups: Vec<Group>,
-    gathered: Rows<E::JsonValue>,
+    gathered: Rows<E::JsonValue<'a>>,
     group_index: HashMap<&'a [u8], u32>,
-    root: Option<(&'a [U], E::JsonValue, Loc)>,
+    root: Option<(&'a [U], E::JsonValue<'a>, Loc)>,
 }
 
 /// An open element. Its properties are staged on `Tape::props` from
@@ -2854,7 +2854,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
     /// An element with no child elements: its text if it has no attributes
     /// either, else `{ "@attr".., "#text" }` (`#text` only if there is any).
     #[inline]
-    fn leaf_value(&mut self, frame: &CompactFrame<'a, U>, text: &'a [U]) -> E::JsonValue {
+    fn leaf_value(&mut self, frame: &CompactFrame<'a, U>, text: &'a [U]) -> E::JsonValue<'a> {
         if frame.attribute_count == 0 {
             return Tape::str(text);
         }
@@ -2867,7 +2867,7 @@ impl<'a, U: Unit> CompactSink<'a, U> {
 
     /// Hands a finished element to its parent (or keeps it as the root).
     #[inline]
-    fn deliver(&mut self, name: &'a [U], value: E::JsonValue, loc: Loc) {
+    fn deliver(&mut self, name: &'a [U], value: E::JsonValue<'a>, loc: Loc) {
         match self.stack.last() {
             Some(_) => self.tape.push_prop(U::bytes(name), value, loc),
             None => self.root = Some((name, value, loc)),
@@ -2964,7 +2964,7 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
         self.deliver(frame.name, value, frame.loc);
     }
 
-    fn finish(&mut self) -> Expr {
+    fn finish(&mut self) -> Expr<'a> {
         let (name, value, loc) = self
             .root
             .take()
@@ -2980,7 +2980,7 @@ impl<'a, U: Unit> Sink<'a, U> for CompactSink<'a, U> {
 struct NodeSink<'a, U: Unit> {
     tape: Tape<'a>,
     stack: Vec<NodeFrame<'a, U>>,
-    root: Option<StoreRef<E::ObjectJSON>>,
+    root: Option<E::ObjectJSONRef<'a>>,
 }
 
 struct NodeFrame<'a, U: Unit> {
@@ -3079,7 +3079,7 @@ impl<'a, U: Unit> Sink<'a, U> for NodeSink<'a, U> {
         }
     }
 
-    fn finish(&mut self) -> Expr {
+    fn finish(&mut self) -> Expr<'a> {
         let root = self
             .root
             .take()
@@ -3335,7 +3335,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
     // ── document ───────────────────────────────────────────────────────────
 
     /// `document ::= prolog element Misc*` (§2.1 [1]).
-    fn parse_document(mut self) -> PResult<Expr> {
+    fn parse_document(mut self) -> PResult<Expr<'a>> {
         // An XML declaration has to be read before the encoding it declares
         // can be applied and the input validated (its tokens are checked
         // against ASCII names and values, so nothing mis-decoded survives).

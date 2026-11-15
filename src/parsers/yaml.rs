@@ -36,12 +36,12 @@ pub enum CyclicAliases {
 }
 
 impl YAML {
-    pub fn parse(
-        source: &bun_ast::Source,
+    pub fn parse<'a>(
+        source: &'a bun_ast::Source<'_>,
         log: &bun_ast::Log,
-        bump: &ast::AstArena,
+        bump: &'a ast::AstArena,
         cyclic_aliases: CyclicAliases,
-    ) -> Result<Expr, YamlParseError> {
+    ) -> Result<Expr<'a>, YamlParseError> {
         bun_core::analytics::Features::yaml_parse_inc();
         source.check_parseable_len(log, "YAML document")?;
 
@@ -1609,7 +1609,7 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub(crate) fn resolve_null(self, bump: &ast::AstArena, loc: bun_ast::Loc) -> Expr {
+    pub(crate) fn resolve_null(self, bump: &ast::AstArena, loc: bun_ast::Loc) -> Expr<'_> {
         match self {
             NodeTag::None
             | NodeTag::Bool
@@ -1634,7 +1634,12 @@ pub enum NodeScalar<Enc: Encoding> {
 }
 
 impl<Enc: Encoding> NodeScalar<Enc> {
-    pub(crate) fn to_expr(&self, pos: Pos, input: &[Enc::Unit], bump: &ast::AstArena) -> Expr {
+    pub(crate) fn to_expr<'a>(
+        &self,
+        pos: Pos,
+        input: &'a [Enc::Unit],
+        bump: &'a ast::AstArena,
+    ) -> Expr<'a> {
         match self {
             NodeScalar::Null => Expr::init(E::Null {}, pos.loc()),
             NodeScalar::Boolean(value) => Expr::init(E::Boolean { value: *value }, pos.loc()),
@@ -1674,15 +1679,15 @@ pub(crate) enum Directive {
     Other,
 }
 
-pub(crate) struct Document {
-    pub(crate) root: Expr,
+pub(crate) struct Document<'a> {
+    pub(crate) root: Expr<'a>,
 }
 
 /// Should only be used with expressions created with the YAML parser. It assumes
 /// only null, boolean, number, string, array, object are possible. It also only
 /// does pointer comparison with arrays and objects (so exponential merges are avoided).
 /// Operates on already-built `Expr`s, so it is independent of the input encoding.
-fn yaml_merge_key_expr_eql(l: &Expr, r: &Expr) -> bool {
+fn yaml_merge_key_expr_eql<'a>(l: &Expr<'a>, r: &Expr<'a>) -> bool {
     if core::mem::discriminant(&l.data) != core::mem::discriminant(&r.data) {
         return false;
     }
@@ -1728,7 +1733,7 @@ fn yaml_merge_key_expr_hash(key: &Expr) -> u64 {
 }
 
 pub struct Stream<'i, Enc: Encoding> {
-    pub(crate) docs: Vec<Document>,
+    pub(crate) docs: Vec<Document<'i>>,
     pub(crate) _input: core::marker::PhantomData<&'i [Enc::Unit]>,
 }
 
@@ -2181,10 +2186,10 @@ pub struct Parser<'i, Enc: Encoding> {
     pub(crate) explicit_document_start_line: Option<Line>,
 
     /// The node of each anchor and the stack it took to parse it; see `parse_node`.
-    pub(crate) anchors: StringHashMap<(Expr, usize)>,
+    pub(crate) anchors: StringHashMap<(Expr<'i>, usize)>,
     /// Anchored collections enclosing the current position, innermost last.
     /// Pushed/popped only by `parse_collection`.
-    pub(crate) open_collections: Vec<OpenCollection>,
+    pub(crate) open_collections: Vec<OpenCollection<'i>>,
     pub(crate) cyclic_aliases: CyclicAliases,
     /// An alias in this document resolved to an enclosing collection, so the
     /// graph has a cycle and `charge_alias_expansion` must watch for it.
@@ -2422,7 +2427,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         Err(ParseError::InvalidDirective)
     }
 
-    pub(crate) fn parse_document(&mut self) -> Result<Document, ParseError> {
+    pub(crate) fn parse_document(&mut self) -> Result<Document<'i>, ParseError> {
         self.anchors.clear();
         self.has_cyclic_alias = false;
         self.tag_handles.clear();
@@ -2509,7 +2514,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// Returns e-node `null` when nothing precedes `,` / `}` / `]` / `:`.
     /// The caller (parse_flow_mapping / parse_flow_sequence) then handles the
     /// optional `:` and value with its normal entry path.
-    fn parse_flow_explicit_key(&mut self) -> Result<Expr, ParseError> {
+    fn parse_flow_explicit_key(&mut self) -> Result<Expr<'i>, ParseError> {
         debug_assert!(matches!(self.token.data, TokenData::MappingKey));
         let start = self.token.start;
 
@@ -2584,7 +2589,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         k
     }
 
-    fn parse_flow_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
+    fn parse_flow_sequence(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+    ) -> Result<Expr<'i>, ParseError> {
         let sequence_start = self.token.start;
         self.parse_collection(
             anchor,
@@ -2593,7 +2601,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         )
     }
 
-    fn parse_flow_sequence_entries(&mut self) -> Result<E::Array, ParseError> {
+    fn parse_flow_sequence_entries(&mut self) -> Result<E::Array<'i>, ParseError> {
         let mut seq = ast::ExprNodeList::new();
 
         self.context.set(Context::FlowIn)?;
@@ -2672,7 +2680,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })
     }
 
-    fn parse_flow_mapping(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
+    fn parse_flow_mapping(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+    ) -> Result<Expr<'i>, ParseError> {
         let mapping_start = self.token.start;
         self.parse_collection(
             anchor,
@@ -2681,7 +2692,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         )
     }
 
-    fn parse_flow_mapping_entries(&mut self) -> Result<E::Object, ParseError> {
+    fn parse_flow_mapping_entries(&mut self) -> Result<E::Object<'i>, ParseError> {
         let mut props = MappingProps::init();
 
         self.context.set(Context::FlowIn)?;
@@ -2793,7 +2804,10 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         })
     }
 
-    fn parse_block_sequence(&mut self, anchor: Option<PendingAnchor>) -> Result<Expr, ParseError> {
+    fn parse_block_sequence(
+        &mut self,
+        anchor: Option<PendingAnchor>,
+    ) -> Result<Expr<'i>, ParseError> {
         let sequence_start = self.token.start;
         self.parse_collection(
             anchor,
@@ -2802,7 +2816,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         )
     }
 
-    fn parse_block_sequence_entries(&mut self) -> Result<E::Array, ParseError> {
+    fn parse_block_sequence_entries(&mut self) -> Result<E::Array<'i>, ParseError> {
         let sequence_indent = self.token.indent;
 
         // [200] s-l+block-collection requires s-l-comments (a line break)
@@ -2872,7 +2886,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<Expr<'i>, ParseError> {
         self.block_indents.push(mapping_indent)?;
 
         let key: Result<Expr, ParseError> = (|| {
@@ -2898,12 +2912,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     fn parse_block_mapping(
         &mut self,
         anchor: Option<PendingAnchor>,
-        first_key: Expr,
+        first_key: Expr<'i>,
         mapping_start: Pos,
         mapping_indent: Indent,
         mapping_line: Line,
         flow_pair_allowed: bool,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<Expr<'i>, ParseError> {
         self.parse_collection::<E::Object>(anchor, mapping_start.loc(), |p| {
             p.parse_block_mapping_entries(
                 first_key,
@@ -2917,11 +2931,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// The current token is the one after `first_key`.
     fn parse_block_mapping_entries(
         &mut self,
-        first_key: Expr,
+        first_key: Expr<'i>,
         mapping_indent: Indent,
         mapping_line: Line,
         flow_pair_allowed: bool,
-    ) -> Result<E::Object, ParseError> {
+    ) -> Result<E::Object<'i>, ParseError> {
         if let Some(explicit_document_start_line) = self.explicit_document_start_line {
             if mapping_line == explicit_document_start_line {
                 // TODO: more specific error
@@ -3167,13 +3181,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 // MappingProps
 // ───────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct MappingProps {
-    list: G::PropertyList,
+pub(crate) struct MappingProps<'a> {
+    list: G::PropertyList<'a>,
     merge_index: bun_collections::HashMap<u64, Vec<u32>>,
     merge_indexed: usize,
 }
 
-impl MappingProps {
+impl<'a> MappingProps<'a> {
     pub(crate) const MAX_MERGED_PROPERTIES: usize = 1024 * 1024;
 
     pub(crate) fn init() -> Self {
@@ -3186,8 +3200,8 @@ impl MappingProps {
 
     pub(crate) fn append(
         &mut self,
-        bump: &ast::AstArena,
-        mut prop: G::Property,
+        bump: &'a ast::AstArena,
+        mut prop: G::Property<'a>,
     ) -> Result<(), AllocError> {
         if let Some(key) = &prop.key {
             prop.flags |= E::own_key_property_flags(key);
@@ -3198,8 +3212,8 @@ impl MappingProps {
 
     pub(crate) fn merge(
         &mut self,
-        bump: &ast::AstArena,
-        merge_props: &[G::Property],
+        bump: &'a ast::AstArena,
+        merge_props: &[G::Property<'a>],
         budget: &mut usize,
     ) -> Result<(), AllocError> {
         self.list.reserve(bump, merge_props.len().min(*budget));
@@ -3237,7 +3251,7 @@ impl MappingProps {
         Ok(())
     }
 
-    pub(crate) fn move_list(&mut self) -> G::PropertyList {
+    pub(crate) fn move_list(&mut self) -> G::PropertyList<'a> {
         self.merge_index.clear();
         self.merge_indexed = 0;
         core::mem::take(&mut self.list)
@@ -3250,9 +3264,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// are not there yet).
     fn append_entry(
         &mut self,
-        props: &mut MappingProps,
-        key: Expr,
-        value: Expr,
+        props: &mut MappingProps<'i>,
+        key: Expr<'i>,
+        value: Expr<'i>,
     ) -> Result<(), ParseError> {
         let is_merge_key = match &key.data {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
@@ -3333,9 +3347,9 @@ pub(crate) struct PendingAnchor {
 /// `Parser::anchors` until the node completes, so it is only found here by
 /// aliases that would otherwise be unresolved — the cyclic ones.
 #[derive(Clone, Copy)]
-pub(crate) struct OpenCollection {
+pub(crate) struct OpenCollection<'a> {
     anchor: StringRange,
-    node: Expr,
+    node: Expr<'a>,
 }
 
 /// A collection node's identity, for pointer comparison.
@@ -3349,14 +3363,14 @@ fn collection_id(node: &Expr) -> Option<usize> {
 
 /// Collection node payloads. The node is allocated when its opening token is
 /// seen and filled in once its entries are parsed (`parse_collection`).
-trait CollectionData: Sized {
+trait CollectionData<'a>: Sized {
     /// Allocates an empty node, returning it with the slot to move the parsed
     /// entries into.
-    fn alloc_empty(bump: &ast::AstArena, loc: Loc) -> (Expr, ast::StoreRef<Self>);
+    fn alloc_empty(bump: &'a ast::AstArena, loc: Loc) -> (Expr<'a>, ast::StoreRef<'a, Self>);
 }
 
-impl CollectionData for E::Array {
-    fn alloc_empty(bump: &ast::AstArena, loc: Loc) -> (Expr, ast::StoreRef<Self>) {
+impl<'a> CollectionData<'a> for E::Array<'a> {
+    fn alloc_empty(bump: &'a ast::AstArena, loc: Loc) -> (Expr<'a>, ast::StoreRef<'a, Self>) {
         let slot = bump.alloc_node(E::Array::default());
         (
             Expr {
@@ -3368,8 +3382,8 @@ impl CollectionData for E::Array {
     }
 }
 
-impl CollectionData for E::Object {
-    fn alloc_empty(bump: &ast::AstArena, loc: Loc) -> (Expr, ast::StoreRef<Self>) {
+impl<'a> CollectionData<'a> for E::Object<'a> {
+    fn alloc_empty(bump: &'a ast::AstArena, loc: Loc) -> (Expr<'a>, ast::StoreRef<'a, Self>) {
         let slot = bump.alloc_node(E::Object::default());
         (
             Expr {
@@ -3412,7 +3426,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // By value so binding consumes the `#[must_use]` anchor token.
     #[allow(clippy::needless_pass_by_value)]
-    fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr) -> Result<(), AllocError> {
+    fn bind_anchor(&mut self, anchor: PendingAnchor, node: Expr<'i>) -> Result<(), AllocError> {
         let stack = self.close_anchor(&anchor);
         self.anchors
             .put(Enc::key_bytes(anchor.name.slice(self.input)), (node, stack))
@@ -3426,12 +3440,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// as for any other node. `body` returning the payload rather than an
     /// `Expr` is what guarantees every exit either fills the node or fails
     /// the parse.
-    fn parse_collection<T: CollectionData>(
+    fn parse_collection<T: CollectionData<'i> + 'i>(
         &mut self,
         anchor: Option<PendingAnchor>,
         loc: Loc,
         body: impl FnOnce(&mut Self) -> Result<T, ParseError>,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<Expr<'i>, ParseError> {
         let (node, mut slot) = T::alloc_empty(self.bump, loc);
 
         let Some(anchor) = anchor else {
@@ -3456,7 +3470,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// resolves exactly as it would without cycle support. Only a name that
     /// would otherwise be unresolved is looked up among the enclosing
     /// collections still being parsed (innermost first): a cyclic alias.
-    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr, usize), ParseError> {
+    fn resolve_alias(&mut self, name: StringRange) -> Result<(Expr<'i>, usize), ParseError> {
         if self.written.is_some() {
             return Ok((Expr::init(E::Boolean { value: false }, Loc::EMPTY), 0));
         }
@@ -3739,7 +3753,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         indicator_line: Line,
         indicator_start: Pos,
         kind: BlockIndentedKind,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<Expr<'i>, ParseError> {
         let mut value_tag: Option<Token<Enc>> = None;
         let mut value_anchor: Option<PendingAnchor> = None;
 
@@ -3867,7 +3881,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         tag: &Option<Token<Enc>>,
         anchor: Option<PendingAnchor>,
         loc: Loc,
-    ) -> Result<Expr, ParseError> {
+    ) -> Result<Expr<'i>, ParseError> {
         let resolved_tag = match tag {
             Some(Token {
                 data: TokenData::Tag(t),
@@ -3887,8 +3901,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     /// expanding the tree would visit it twice). An edge back to a collection
     /// on the current path — a cyclic alias — counts as a single reference.
     fn charge_alias_expansion(&mut self, root: Expr) -> Result<(), ParseError> {
-        enum Visit {
-            Enter(Expr),
+        enum Visit<'a> {
+            Enter(Expr<'a>),
             Exit(usize),
         }
         if collection_id(&root).is_none() {
@@ -3950,7 +3964,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     /// Walkers of the tree recurse through aliases, so an alias is charged its target's stack.
-    fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr, ParseError> {
+    fn parse_node(&mut self, opts: ParseNodeOptions<Enc>) -> Result<Expr<'i>, ParseError> {
         let stack_left = self.stack_check.remaining();
         if stack_left == 0 {
             return Err(ParseError::StackOverflow);

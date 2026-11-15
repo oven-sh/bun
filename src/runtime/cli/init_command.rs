@@ -469,9 +469,10 @@ impl InitCommand {
             b"project".to_vec()
         };
         let mut did_load_package_json = false;
+        let source;
         if !package_json_contents.list.is_empty() {
             'process_package_json: {
-                let source = bun_ast::Source::init_path_string(
+                source = bun_ast::Source::init_path_string(
                     b"package.json",
                     package_json_contents.list.as_slice(),
                 );
@@ -795,7 +796,7 @@ impl InitCommand {
         }
 
         if template.is_react() {
-            template.write_to_package_json(&mut fields, &bump)?;
+            template.write_to_package_json(fields.object.unwrap(), &bump)?;
         }
 
         'write_package_json: {
@@ -813,6 +814,7 @@ impl InitCommand {
 
             let print_result = js_printer::print_json(
                 &mut package_json_writer,
+                &bump,
                 bun_ast::Expr {
                     data: bun_ast::ExprData::EObject(fields.object.unwrap()),
                     loc: bun_ast::Loc::EMPTY,
@@ -1093,14 +1095,14 @@ impl Assets {
 // PackageJSONFields
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct PackageJSONFields {
+pub(crate) struct PackageJSONFields<'a> {
     pub name: Vec<u8>,
-    pub object: Option<StoreRef<bun_ast::E::Object>>,
+    pub object: Option<StoreRef<'a, bun_ast::E::Object<'a>>>,
     pub(crate) entry_point: Vec<u8>,
     pub(crate) private: bool,
 }
 
-impl Default for PackageJSONFields {
+impl Default for PackageJSONFields<'_> {
     fn default() -> Self {
         Self {
             name: b"project".to_vec(),
@@ -1370,13 +1372,12 @@ impl Template {
         )
     }
 
-    fn write_to_package_json(
+    fn write_to_package_json<'a>(
         self,
-        fields: &mut PackageJSONFields,
-        bump: &bun_ast::AstArena,
+        mut object: StoreRef<'a, bun_ast::E::Object<'a>>,
+        bump: &'a bun_ast::AstArena,
     ) -> Result<(), Error> {
         use bun_ast::E::Rope;
-        fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
         let key: &mut Rope<'_> = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::allocate(
@@ -1386,7 +1387,6 @@ impl Template {
             ),
             next: None,
         });
-        let mut object = fields.object.unwrap();
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,
@@ -1914,11 +1914,11 @@ fn exists(path: &[u8]) -> bool {
 /// key is absent or holds a value that is not an object (a string, an array,
 /// `null`). The caller `put`s the result back under `key`, which replaces a
 /// non-object value.
-fn dependency_map(
-    bump: &bun_ast::AstArena,
-    package_json: &bun_ast::E::Object,
+fn dependency_map<'a>(
+    bump: &'a bun_ast::AstArena,
+    package_json: &bun_ast::E::Object<'a>,
     key: &[u8],
-) -> bun_ast::Expr {
+) -> bun_ast::Expr<'a> {
     package_json
         .get(key)
         .filter(|value| value.data.is_e_object())

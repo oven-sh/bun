@@ -41,10 +41,15 @@ fn print_json_error(error: &str, spec: &[u8], property: Option<&[u8]>) {
     Output::flush();
 }
 
-fn to_json_text(value: ast::Expr, source: &bun_ast::Source) -> Result<Vec<u8>, crate::Error> {
+fn to_json_text<'a>(
+    bump: &'a AstArena,
+    value: ast::Expr<'a>,
+    source: &bun_ast::Source,
+) -> Result<Vec<u8>, crate::Error> {
     let mut printer = JSPrinter::BufferPrinter::init(JSPrinter::BufferWriter::init());
     let _ = JSPrinter::print_json(
         &mut printer,
+        bump,
         value,
         source,
         JSPrinter::PrintJsonOptions {
@@ -388,7 +393,7 @@ pub(crate) fn view(
                         ));
                     }
                 } else {
-                    let text = to_json_text(*value, source)?;
+                    let text = to_json_text(&bump, *value, source)?;
                     if json_output {
                         Output::print(format_args!("{}\n", BStr::new(&text)));
                     } else {
@@ -407,7 +412,7 @@ pub(crate) fn view(
                 }
                 Output::print(format_args!(
                     "{}\n",
-                    BStr::new(&to_json_text(object, source)?)
+                    BStr::new(&to_json_text(&bump, object, source)?)
                 ));
             }
             (labels, values) => {
@@ -415,7 +420,9 @@ pub(crate) fn view(
                     Output::print(format_args!(
                         "{} = {}\n",
                         escape_control_chars(label),
-                        bun_fmt::escape_control_chars_multiline(&to_json_text(*value, source)?),
+                        bun_fmt::escape_control_chars_multiline(&to_json_text(
+                            &bump, *value, source
+                        )?),
                     ));
                 }
             }
@@ -427,7 +434,7 @@ pub(crate) fn view(
     if json_output {
         Output::print(format_args!(
             "{}\n",
-            BStr::new(&to_json_text(manifest, source)?)
+            BStr::new(&to_json_text(&bump, manifest, source)?)
         ));
         Output::flush();
         return Ok(());

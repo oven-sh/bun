@@ -174,7 +174,7 @@ fn apply_to_target(
 ) -> crate::Result<()> {
     let root = fetch_entry_root(manager, target);
     {
-        let arena = &manager.ast_arena;
+        let arena = manager.workspace_package_json_cache.arena;
         for edit in edits {
             match &edit.site {
                 EditSite::Dependencies => {
@@ -204,7 +204,11 @@ fn apply_to_target(
     Ok(())
 }
 
-fn rewrite_property(arena: &bun_ast::AstArena, object: &mut Expr, edit: &PackageJsonEdit) {
+fn rewrite_property<'a>(
+    arena: &'a bun_ast::AstArena,
+    object: &mut Expr<'a>,
+    edit: &PackageJsonEdit,
+) {
     let Some(object) = object.data.e_object_mut() else {
         return;
     };
@@ -218,7 +222,11 @@ fn rewrite_property(arena: &bun_ast::AstArena, object: &mut Expr, edit: &Package
     }
 }
 
-fn rewrite_value(arena: &bun_ast::AstArena, value: &mut Option<Expr>, edit: &PackageJsonEdit) {
+fn rewrite_value<'a>(
+    arena: &'a bun_ast::AstArena,
+    value: &mut Option<Expr<'a>>,
+    edit: &PackageJsonEdit,
+) {
     let Some(literal) = value.as_ref().and_then(Expr::as_utf8_string_literal) else {
         return;
     };
@@ -232,7 +240,7 @@ fn rewrite_value(arena: &bun_ast::AstArena, value: &mut Option<Expr>, edit: &Pac
     ));
 }
 
-pub(super) fn root_package_json(manager: &mut PackageManager) -> Expr {
+pub(super) fn root_package_json(manager: &mut PackageManager) -> Expr<'static> {
     fetch_entry_root(manager, &WorkspaceTarget::root())
 }
 

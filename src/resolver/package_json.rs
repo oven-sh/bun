@@ -74,6 +74,41 @@ fn slice_in_source_buf<'a>(
 type DependencyHashMap =
     ArrayHashMap<SemverString, Dependency /* , SemverString::ArrayHashContext */>;
 
+mod string_tape {
+    use bun_ast::E::JsonTape;
+
+    /// A tape that outlives the arena of its objects and arrays, so only keys and strings can be read.
+    #[derive(Default)]
+    pub(crate) struct StringTape(Option<Box<JsonTape<'static>>>);
+
+    impl StringTape {
+        /// # Safety
+        /// The text that `tape` was parsed from outlives the result, and `tape` is `TapeAlloc::Global`.
+        pub(super) unsafe fn new(tape: Option<Box<JsonTape<'_>>>) -> Self {
+            // SAFETY: only the lifetime differs. Keys and strings point into the tape or the text.
+            Self(unsafe {
+                core::mem::transmute::<Option<Box<JsonTape<'_>>>, Option<Box<JsonTape<'static>>>>(
+                    tape,
+                )
+            })
+        }
+
+        /// The string values of the properties `name` in `rows`, last first.
+        pub(super) fn strings_named<'a>(
+            &'a self,
+            name: &'a [u8],
+            rows: core::ops::Range<u32>,
+        ) -> impl Iterator<Item = &'a [u8]> {
+            let tape = self.0.as_deref().filter(|_| !rows.is_empty());
+            let rows = tape.map_or(&[][..], |tape| tape.properties(rows));
+            (rows.iter().rev())
+                .filter(move |row| row.key.slice() == name)
+                .filter_map(|row| row.value.as_str())
+        }
+    }
+}
+use string_tape::StringTape;
+
 pub struct PackageJSON {
     pub name: Box<[u8]>,
     pub source: bun_ast::Source<'static>,
@@ -83,7 +118,7 @@ pub struct PackageJSON {
     /// The `PackageJSON` itself is the owner so the bytes free if it ever drops.
     /// (This owner field keeps that erased borrow, and the map values above, alive.)
     pub(crate) source_contents: Box<[u8]>,
-    pub(crate) json_tape: Option<Box<js_ast::E::JsonTape>>,
+    pub(crate) json_tape: StringTape,
     pub(crate) main_fields: MainFieldMap,
     pub module_type: ModuleType,
     pub version: Box<[u8]>,
@@ -143,7 +178,7 @@ impl Default for PackageJSON {
             name: Box::default(),
             source: bun_ast::Source::default(),
             source_contents: Box::default(),
-            json_tape: None,
+            json_tape: StringTape::default(),
             main_fields: MainFieldMap::default(),
             module_type: ModuleType::default(),
             version: Box::default(),
@@ -200,12 +235,8 @@ impl PackageJSON {
             .iter()
             .zip(&self.installed_dependency_rows);
         groups.rev().flat_map(move |(group, rows)| {
-            let tape = self.json_tape.as_deref().filter(|_| !rows.is_empty());
-            let rows = tape.map_or(&[][..], |tape| tape.properties(rows.clone()));
-            rows.iter()
-                .rev()
-                .filter(move |row| row.key.slice() == name)
-                .filter_map(move |row| Some((row.value.as_str()?, group.behavior)))
+            (self.json_tape.strings_named(name, rows.clone()))
+                .map(move |version| (version, group.behavior))
         })
     }
 
@@ -477,7 +508,7 @@ impl PackageJSON {
             source: bun_ast::Source::default(),
             // Filled at the bottom by moving `entry_contents` in (see SAFETY note above).
             source_contents: Box::default(),
-            json_tape: None,
+            json_tape: StringTape::default(),
             module_type: ModuleType::Unknown,
             browser_map: BrowserMap::default(),
             main_fields: MainFieldMap::default(),
@@ -1002,7 +1033,8 @@ impl PackageJSON {
         // backing buffer into the returned struct (replaces the prior
         // `mem::forget`, forbidden per docs/PORTING.md §Forbidden patterns).
         package_json.source_contents = entry_contents;
-        package_json.json_tape = parsed_json.into_tape();
+        // SAFETY: the tape is on the heap and was parsed from `source_contents`, which is not replaced.
+        package_json.json_tape = unsafe { StringTape::new(parsed_json.into_tape()) };
         Some(package_json)
     }
 }
@@ -1062,7 +1094,7 @@ impl ExportsMap {
     pub(crate) fn parse(
         source: &bun_ast::Source,
         log: &bun_ast::Log,
-        json: js_ast::JsonView<'_>,
+        json: js_ast::JsonView<'_, '_>,
     ) -> Option<ExportsMap> {
         let mut visitor = Visitor {
             source,

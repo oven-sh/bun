@@ -479,7 +479,10 @@ describe("spawn stdin ReadableStream edge cases", () => {
 
   // A direct stream is pulled from while Bun.spawn attaches it, which is after the child was started. The call then
   // fails with a child nobody was handed, which kept running.
-  test("a direct ReadableStream whose pull() throws inside Bun.spawn ends the child", async () => {
+  test.concurrent.each([
+    ["throws", ""],
+    ["fills the pipe and throws", "c.write(Buffer.alloc(8 * 1024 * 1024));"],
+  ])("a direct ReadableStream whose pull() %s inside Bun.spawn ends the child", async (_, write) => {
     await using proc = spawn({
       cmd: [
         bunExe(),
@@ -488,7 +491,7 @@ describe("spawn stdin ReadableStream edge cases", () => {
         try {
           Bun.spawn({
             cmd: [process.execPath, "-e", "setTimeout(() => {}, 30_000)"],
-            stdin: new ReadableStream({ type: "direct", pull() { throw new Error("from pull"); } }),
+            stdin: new ReadableStream({ type: "direct", pull(c) { ${write} throw new Error("from pull"); } }),
             stdout: "ignore",
             stderr: "inherit",
           });

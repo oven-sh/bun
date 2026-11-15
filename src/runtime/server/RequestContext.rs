@@ -6,11 +6,12 @@ use bun_core::String as BunString;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope};
-use bun_ptr::{AliasableBox, RefCount, RefCounted, RefPtr};
+use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _, RefCount, RefCounted, RefPtr};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use crate::server::{PendingRequest, RangeRequest, ServerLike};
+use crate::webcore::streams::{HTTPServerWritable, HTTPServerWritableOwnerRef};
 use crate::webcore::{
     self as WebCore, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders, Request, Response,
     blob::SizeType as BlobSizeType, body, readable_stream, request, response,
@@ -33,9 +34,6 @@ use crate::webcore::{
 // no `Transfer-Encoding`, no upgrade), and the response handle stays valid
 // after `end()` until its `onAborted` fires to say the stream is gone.
 pub(crate) type Req<const SSL_ENABLED: bool, const MUX: bool> = c_void;
-
-pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
-    crate::webcore::streams::HTTPServerWritable<SSL_ENABLED>;
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
@@ -161,7 +159,7 @@ pub(crate) struct RequestContext<
     /// chunked / H3 bodies consumed as a stream are capped against this.
     pub(crate) request_body_streamed_len: Cell<usize>,
 
-    sink: JsCell<Option<AliasableBox<ResponseStream<SSL_ENABLED>>>>,
+    sink: Cell<Option<HTTPServerWritableOwnerRef>>,
     pub(crate) byte_stream: Cell<Option<NonNull<ByteStream>>>,
     /// This keeps the Response body's ReadableStream alive.
     pub(crate) response_body_readable_stream_ref: Cell<readable_stream::Strong>,
@@ -499,25 +497,9 @@ where
             .map(|h| unsafe { &mut (*h.as_ptr()).value })
     }
 
-    /// Exclusive borrow of the heap [`ResponseStream`] this context owns.
-    ///
-    /// Returns an unbounded `&'r mut` because the sink is a separate heap
-    /// allocation (boxed in [`do_render_stream`]), **not** a sub-field
-    /// of `*self` (same pattern as [`request_body_mut`]).
-    ///
-    /// # Safety (encapsulated)
-    /// While `Some`, `sink` points to the sink allocated by
-    /// `do_render_stream`; this `RequestContext` is its sole owner until
-    /// it drops it. Single-threaded — no other `&mut` alias.
-    #[inline]
-    #[allow(
-        clippy::mut_from_ref,
-        reason = "the sink is a separate heap allocation owned by this ctx, not a field of *self"
-    )]
-    fn sink_mut(&self) -> Option<&mut ResponseStream<SSL_ENABLED>> {
-        // SAFETY: see fn doc — heap sink owned by this ctx, sole live
-        // mutable view, single-threaded.
-        (self.sink.get().as_ref()).map(|p| unsafe { &mut *p.as_ptr() })
+    fn sink(&self) -> Option<RefPtr<HTTPServerWritable>> {
+        self.sink
+            .with_taken(|sink| sink.as_ref().map(|sink| sink.0.clone()))
     }
 
     ///
@@ -878,12 +860,9 @@ where
         // whose reactions consume the sink (`handleResolveStream` / `handleRejectStream`),
         // so a client abort in that state reaches deinit with the sink still owned here.
         // This is the owner's last exit: release it exactly like the settle paths do.
-        if let Some(owned_sink) = last.sink.take() {
-            // SAFETY: this runs once, after `detach_response()` removed the uWS callbacks;
-            // the context is the sink's sole owner (see the `sink` field's doc comment).
-            let sink = unsafe { &mut *owned_sink.as_ptr() };
+        if let Some(sink) = last.sink.take() {
             sink.finalize();
-            sink.source.detach(&sink.global_this);
+            sink.source.take().detach(&sink.global_this);
         }
 
         // Taken out to drop last: it can free the dev server, which `deferred_request` points into.
@@ -1396,7 +1375,7 @@ where
             request_body_buf: JsCell::new(Vec::new()),
             request_body_content_len: Cell::new(0),
             request_body_streamed_len: Cell::new(0),
-            sink: JsCell::new(None),
+            sink: Cell::new(None),
             byte_stream: Cell::new(None),
             response_body_readable_stream_ref: Cell::default(),
             pathname: JsCell::new(BunString::EMPTY),
@@ -1432,9 +1411,11 @@ where
             // SAFETY: FFI handle
             if resp.has_responded() {
                 // The sink can outlive this call; `resp` dies with the stream.
-                if let Some(sink) = this.sink_mut() {
-                    sink.res = None;
-                }
+                this.sink.with_taken(|sink| {
+                    if let Some(sink) = sink {
+                        sink.res.set(None);
+                    }
+                });
                 this.end_already_responded_stream();
                 return;
             }
@@ -1470,13 +1451,10 @@ where
         }
 
         // if have sink, call onAborted on sink
-        if let Some(sink) = this.sink.get() {
+        if let Some(sink) = this.sink() {
             // The sink abort runs the stream's JS onClose through its signal.
             any_js_calls.set(true);
-            // SAFETY: `sink` is the live sink allocated by do_render_stream.
-            // `abort` takes the raw pointer because the teardown it can
-            // re-enter frees the sink.
-            unsafe { ResponseStream::<SSL_ENABLED>::abort(sink.as_ptr()) };
+            sink.abort();
             // Reject a parked request-body read while this abort still drains microtasks.
             let _ = this.end_request_streaming();
             this.reclaim_promise_cell();
@@ -1604,7 +1582,7 @@ where
         ctx_log!("onWritableResponseStream({})", write_offset);
         let pinned = RequestContextRef::pin(this);
         let this = pinned.ctx();
-        if let Some(sink) = this.sink_mut() {
+        if let Some(sink) = this.sink() {
             return sink.on_writable(write_offset, _resp);
         }
         true
@@ -1956,21 +1934,6 @@ where
         self.do_render_blob();
     }
 
-    fn handle_first_stream_write(&self) {
-        if !self.flags.has_written_status() {
-            self.render_metadata();
-        }
-    }
-
-    /// C-ABI thunk for `HTTPServerWritable::on_first_write` (`fn(?*anyopaque)`).
-    fn handle_first_stream_write_thunk(ctx: Option<*mut c_void>) {
-        let Some(ctx) = ctx else { return };
-        // SAFETY: ctx is the `*mut Self` stashed in `sink.ctx` by
-        // do_render_stream; the sink (and so this context) is live for the
-        // synchronous write that fires this.
-        Self::handle_first_stream_write(unsafe { &*ctx.cast::<Self>() });
-    }
-
     /// `on_abort` ran from inside the user code `do_render_stream` invoked
     /// (`server.stop(true)` in `pull()`): it aborted the sink, detached `resp`
     /// and took over the base ref, leaving only the sink and stream to drop.
@@ -1984,13 +1947,10 @@ where
     ) {
         stream_log!("aborted while attaching the stream");
         let _readable_ref = self.response_body_readable_stream_ref.take();
-        if let Some(owned_sink) = self.sink.take() {
-            // SAFETY: `on_abort` has returned, so nothing else borrows the sink.
-            let sink = unsafe { &mut *owned_sink.as_ptr() };
-            sink.source.detach(global_this);
+        if let Some(sink) = self.sink.take() {
+            sink.source.take().detach(global_this);
             crate::dispatch::fold(stream.cancel(global_this));
             sink.mark_done();
-            sink.on_first_write = None;
             sink.finalize();
         }
     }
@@ -2015,15 +1975,9 @@ where
 
         stream.value.ensure_still_alive();
 
-        let sink = AliasableBox::new(ResponseStream::<SSL_ENABLED>::new(
-            resp,
-            Self::handle_first_stream_write_thunk,
-            this.as_ctx_ptr().cast::<c_void>(),
-            global_this,
-        ));
-        // SAFETY: just allocated, and `this.sink` only frees it.
-        let response_stream = unsafe { &mut *sink.as_ptr() };
-        this.sink.set(Some(sink));
+        let response_stream = HTTPServerWritable::new(resp, SSL_ENABLED, global_this);
+        this.sink
+            .set(Some(HTTPServerWritableOwnerRef(response_stream.clone())));
 
         // we need to render metadata before assignToStream because the stream can call res.end
         // and this would auto write an 200 status
@@ -2037,11 +1991,8 @@ where
         );
 
         // We are already corked!
-        let assignment_result: JSValue = ReadableSinkController::assign_to_stream(
-            global_this,
-            stream.value,
-            NonNull::from(&mut *response_stream),
-        );
+        let assignment_result: JSValue =
+            ReadableSinkController::assign_to_stream(global_this, stream.value, &response_stream);
 
         assignment_result.ensure_still_alive();
 
@@ -2065,7 +2016,7 @@ where
         // writing a second chunked last-chunk.
         if resp.has_responded() {
             stream_log!("done");
-            response_stream.source.detach(global_this);
+            response_stream.source.take().detach(global_this);
             this.sink.set(None);
             stream.done();
             this.response_body_readable_stream_ref
@@ -2076,7 +2027,7 @@ where
 
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
-            response_stream.source.detach(global_this);
+            response_stream.source.take().detach(global_this);
             this.sink.set(None);
             return this.handle_reject(err_value);
         }
@@ -2122,11 +2073,6 @@ where
                         // keeps `handle_reject` from ending the response out
                         // from under the sink while the stream is in flight.
                         this.flags.set_has_marked_pending(true);
-                        if !this.flags.has_written_status() {
-                            response_stream.on_first_write = None;
-                            response_stream.ctx = None;
-                            this.render_metadata();
-                        }
 
                         // TODO: should this timeout?
                         let body_value = this.response_mut().unwrap().get_body_value();
@@ -2170,7 +2116,7 @@ where
             } else {
                 // if is not a promise we treat it as Error
                 stream_log!("returned an error");
-                response_stream.source.detach(global_this);
+                response_stream.source.take().detach(global_this);
                 this.sink.set(None);
                 return this.handle_reject(effective_result);
             }
@@ -2178,17 +2124,15 @@ where
 
         let readable_ref = this.response_body_readable_stream_ref.take();
 
-        let is_in_progress = response_stream.has_backpressure
-            || !(response_stream.wrote == 0 && response_stream.buffer.len() == 0);
+        let is_in_progress = response_stream.has_backpressure()
+            || !(response_stream.wrote.get() == 0 && response_stream.buffered_len() == 0);
 
         if !stream.is_locked(global_this) && !is_in_progress {
             if let Some(comparator) = WebCore::ReadableStream::from_js_direct(stream.value) {
                 if core::mem::discriminant(&comparator.ptr) == core::mem::discriminant(&stream.ptr)
                 {
                     stream_log!("is not locked");
-                    response_stream.on_first_write = None;
-                    response_stream.ctx = None;
-                    response_stream.source.detach(global_this);
+                    response_stream.source.take().detach(global_this);
                     response_stream.mark_done();
                     response_stream.finalize();
                     this.sink.set(None);
@@ -2200,9 +2144,7 @@ where
         }
 
         stream_log!("is in progress, but did not return a Promise. Finalizing request context");
-        response_stream.on_first_write = None;
-        response_stream.ctx = None;
-        response_stream.source.detach(global_this);
+        response_stream.source.take().detach(global_this);
         crate::dispatch::fold(stream.cancel(global_this));
         response_stream.mark_done();
         response_stream.finalize();
@@ -2327,9 +2269,11 @@ where
         let (resp, base_ref) = self.resp.take()?;
         self.request_body_buf.set(Vec::new());
         // The sink writes through its own handle to the response.
-        if let Some(sink) = self.sink_mut() {
-            sink.revoke_response();
-        }
+        self.sink.with_taken(|sink| {
+            if let Some(sink) = sink {
+                sink.revoke_response();
+            }
+        });
         if self.flags.request_body_paused() {
             self.flags.set_request_body_paused(false);
             resp.resume();
@@ -2658,7 +2602,7 @@ where
         // the flush to settle and re-enter. On abort, flushPromise() has
         // already settled pending_flush, so this never waits on a dead
         // socket.
-        if let Some(sink) = self.sink_mut() {
+        if let Some(sink) = self.sink() {
             if !self.flags.aborted() && !sink.is_aborted() {
                 // Only defer when there is still a live response to drain the
                 // flush through: on_writable (which resolves the flush via
@@ -2686,13 +2630,11 @@ where
 
         let mut wrote_anything = false;
         let mut ended_response = false;
-        if let Some(owned_sink) = self.sink.take() {
-            // SAFETY: the pump has settled, so nothing else borrows the sink.
-            let sink = unsafe { &mut *owned_sink.as_ptr() };
+        if let Some(sink) = self.sink.take() {
             let aborted = self.flags.aborted() || sink.is_aborted();
             self.flags.set_aborted(aborted);
-            wrote_anything = sink.wrote > 0;
-            ended_response = sink.ended_response;
+            wrote_anything = sink.wrote.get() > 0;
+            ended_response = sink.ended_response.get();
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear these
                 // before `detach()` below re-enters JS so any drain callback /
@@ -2702,7 +2644,7 @@ where
             }
 
             sink.finalize();
-            sink.source.detach(&sink.global_this);
+            sink.source.take().detach(&sink.global_this);
         }
 
         debug_assert!(self.server.get().is_some());
@@ -2769,10 +2711,8 @@ where
         stream_log!("handleRejectStream");
 
         let mut ended_response = false;
-        if let Some(owned_sink) = self.sink.take() {
-            // SAFETY: the pump has settled, so nothing else borrows the sink.
-            let sink = unsafe { &mut *owned_sink.as_ptr() };
-            ended_response = sink.ended_response;
+        if let Some(sink) = self.sink.take() {
+            ended_response = sink.ended_response.get();
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear before JS below.
                 self.flags.set_request_body_paused(false);
@@ -2784,7 +2724,7 @@ where
             let aborted = self.flags.aborted() || sink.is_aborted();
             self.flags.set_aborted(aborted);
             sink.finalize();
-            sink.source.detach(&sink.global_this);
+            sink.source.take().detach(&sink.global_this);
         }
 
         release_body_stream(&self.response_weakref, global_this);
@@ -2977,7 +2917,7 @@ where
                             let byte_stream_nn = NonNull::new(byte_stream_ptr)
                                 .expect("Source::Bytes payload is non-null");
                             let byte_stream = bun_ptr::BackRef::from(byte_stream_nn);
-                            debug_assert!(byte_stream.sink.get().is_none());
+                            debug_assert!(byte_stream.sink.is_none());
                             debug_assert!(this.byte_stream.get().is_none());
                             if this.resp.get().is_none() {
                                 // we don't have a response, so we can discard the stream
@@ -3004,9 +2944,9 @@ where
                             // body is in flight, so `handle_reject` must not
                             // fall through to render_missing() and end it.
                             this.flags.set_has_marked_pending(true);
-                            byte_stream.sink.set(WebCore::SinkHandle::ServerResponse(
+                            byte_stream.sink.set(Some(WebCore::SinkHandle::ServerResponse(
                                 AnyRequestContext::init(this.as_ctx_ptr()),
-                            ));
+                            )));
                             stream.lock_native(global_this);
                             byte_stream.signal_consumer_attached();
                             this.response_body_readable_stream_ref
@@ -3090,7 +3030,7 @@ where
     pub(crate) fn write_chunk(
         &self,
         stream: &WebCore::streams::Result<'_>,
-    ) -> WebCore::streams::Writable {
+    ) -> WebCore::streams::Writable<'static> {
         let this = self;
         if this.is_aborted_or_ended() {
             return WebCore::streams::Writable::Done;
@@ -3927,7 +3867,7 @@ where
                 // What `on_data` buffered; `on_stream_drained` resumes once it empties.
                 let buffered = bytes.buffered_len();
                 if bytes.buffer_action.get().is_some()
-                    || (bytes.sink.get().is_some() && !bytes.sink_paused.get())
+                    || (bytes.sink.is_some() && !bytes.sink_paused.get())
                 {
                     // buffer-action / draining sink: no `on_pull`; keep reading.
                     this.resume_request_body_socket();
@@ -4074,11 +4014,11 @@ where
     /// `us_socket_t` (see `end_already_responded_stream`; the sink resumed it).
     #[inline]
     fn live_resp(&self) -> Option<uws::AnyResponse> {
-        if let Some(sink) = self.sink.get() {
-            // SAFETY: `sink` is owned by this context and freed in `handle_resolve_stream`/`deinit`.
-            if unsafe { (*sink.as_ptr()).ended_response } {
-                return None;
-            }
+        let ended_response = self
+            .sink
+            .with_taken(|sink| sink.as_ref().is_some_and(|sink| sink.ended_response.get()));
+        if ended_response {
+            return None;
         }
         self.resp.get()
     }

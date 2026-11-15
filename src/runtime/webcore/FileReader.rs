@@ -6,7 +6,7 @@ use bun_io::FileType;
 use bun_io::pipe_reader::ReaderFlags;
 use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
 use bun_sys::{self as sys, Fd, FdExt};
 
 use crate::webcore::SinkHandle;
@@ -46,7 +46,7 @@ pub struct FileReader {
     /// Native sink attached by a hookup site (e.g. fetch request body). When
     /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
     /// path; `pull_into_sink` is the drain-ack resume.
-    pub(crate) sink: JsCell<SinkHandle>,
+    pub(crate) sink: Cell<Option<SinkHandle>>,
     pub(crate) sink_paused: Cell<bool>,
 }
 
@@ -69,7 +69,7 @@ impl Default for FileReader {
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
-            sink: JsCell::new(SinkHandle::None),
+            sink: Cell::new(None),
             sink_paused: Cell::new(false),
         }
     }
@@ -420,18 +420,16 @@ impl FileReader {
         }
     }
 
-    /// Drop the native sink and end the stream locked to it: errored with the reader's `err`, else closed.
-    fn detach_sink(&self, err: Option<&streams::StreamError>) {
-        self.sink_paused.set(false);
-        if self.sink.replace(SinkHandle::None).is_some() {
-            self.parent_const().end_locked_stream(err);
-        }
+    fn sink(&self) -> Option<SinkHandle> {
+        self.sink.with_taken(|sink| sink.clone())
     }
 
-    /// Detach the native sink without running the cancel path. Called by the
-    /// sink's `SourceHandle::close` when the sink closes first.
-    pub(crate) fn unpipe_without_deref(&self) {
-        self.detach_sink(None);
+    /// Take the native sink and end the stream locked to it: errored with the reader's `err`, else closed.
+    pub(crate) fn detach_sink(&self, err: Option<&streams::StreamError>) -> Option<SinkHandle> {
+        self.sink_paused.set(false);
+        let sink = self.sink.take()?;
+        self.parent_const().end_locked_stream(err);
+        Some(sink)
     }
 
     /// Sink's drain ack: unpause, push any buffered bytes, then resume reading.
@@ -439,10 +437,9 @@ impl FileReader {
         if !self.sink_paused.replace(false) {
             return;
         }
-        let sink = *self.sink.get();
-        if sink.is_none() {
+        let Some(sink) = self.sink() else {
             return;
-        }
+        };
         let reader_done = self.reader_finished();
         let buffered = self.drain();
         if !buffered.is_empty() {
@@ -492,9 +489,7 @@ impl FileReader {
         let _pin = self.ref_guard();
         let global = self.parent_const().global_this();
         let err = streams::StreamError::JSValue(jsc::strong::Optional::create(reason, global));
-        let sink = *self.sink.get();
-        if sink.is_some() {
-            self.detach_sink(Some(&err));
+        if let Some(sink) = self.detach_sink(Some(&err)) {
             sink.end(Some(err));
         } else {
             self.pending.run(streams::Result::Err(err));
@@ -503,9 +498,7 @@ impl FileReader {
 
     pub(crate) fn on_cancel(&self) {
         // A sink still wired here must fail, not see an EOF and commit a truncated body.
-        let sink = *self.sink.get();
-        self.unpipe_without_deref();
-        if sink.is_some() {
+        if let Some(sink) = self.detach_sink(None) {
             sink.end(Some(streams::StreamError::AbortReason(
                 jsc::CommonAbortReason::UserAbort,
             )));
@@ -536,9 +529,8 @@ impl FileReader {
         }
         let has_more = state != ReadState::Eof;
 
-        let sink = *self.sink.get();
-        if sink.is_some() {
-            self.write_chunk_to_sink(sink, &chunk, has_more)
+        if let Some(sink) = self.sink() {
+            self.write_chunk_to_sink(&sink, &chunk, has_more)
         } else if self.pending.is_pending() {
             // Pipes may return 0-byte reads short of EOF; keep reading.
             if chunk.is_empty() && state == ReadState::Drained {
@@ -563,7 +555,7 @@ impl FileReader {
         }
     }
 
-    fn write_chunk_to_sink(&self, sink: SinkHandle, chunk: &[u8], has_more: bool) -> bool {
+    fn write_chunk_to_sink(&self, sink: &SinkHandle, chunk: &[u8], has_more: bool) -> bool {
         if !chunk.is_empty() {
             let wrote = sink.write(&if has_more {
                 streams::Result::Temporary(chunk)
@@ -590,7 +582,7 @@ impl FileReader {
                 _ => {}
             }
         }
-        if !has_more && self.sink.get().is_some() {
+        if !has_more && self.sink.is_some() {
             self.detach_sink(None);
             sink.end(None);
         }
@@ -674,11 +666,11 @@ impl FileReader {
         // `pending.run()` and `on_close()` can run user JS, and the `self.buffered` /
         // `io_ref` reads below must not land on a freed box.
         let _pin = self.ref_guard();
-        let sink = *self.sink.get();
-        if sink.is_some() {
+        if self.sink.is_some() {
             self.consume_reader_buffer();
-            if !self.sink_paused.get() {
-                self.detach_sink(None);
+            if !self.sink_paused.get()
+                && let Some(sink) = self.detach_sink(None)
+            {
                 let buffered = self.buffered.replace(Vec::new());
                 if !buffered.is_empty() {
                     let _ = sink.write(&streams::Result::OwnedAndDone(buffered));
@@ -716,11 +708,11 @@ impl FileReader {
         // and drop the across-read ref before the read of it below.
         let _pin = self.ref_guard();
 
-        let sink = *self.sink.get();
-        if sink.is_some() {
+        if self.sink.is_some() {
             let err = streams::StreamError::Error(err);
-            self.detach_sink(Some(&err));
-            sink.end(Some(err));
+            if let Some(sink) = self.detach_sink(Some(&err)) {
+                sink.end(Some(err));
+            }
         } else if self.pending.is_pending() {
             self.pending
                 .run(streams::Result::Err(streams::StreamError::Error(err)));

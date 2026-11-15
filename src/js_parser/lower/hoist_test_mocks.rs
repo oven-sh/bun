@@ -220,11 +220,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     }
 
     /// Like babel-jest, `const a = "a"` is hoisted with the mocks so their factories can read it.
+    /// A `let` isn't: its writes aren't known before the visit pass, and they would stay below the imports.
     fn is_primitive_literal_declaration(&self, stmt: &Stmt) -> bool {
         let StmtData::SLocal(local) = stmt.data else {
             return false;
         };
-        matches!(local.kind, S::Kind::KConst | S::Kind::KLet)
+        local.kind == S::Kind::KConst
             && local.decls.slice().iter().all(|decl| {
                 matches!(decl.binding.data, js_ast::binding::Data::BIdentifier(_))
                     && decl

@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -1728,6 +1728,9 @@ describe.concurrent("test environment", () => {
 });
 
 describe.concurrent("test environment with the real", () => {
+  // A debug build needs 5 to 35 s to load a real package in each of these. The tests above use the fakes.
+  if (isDebug) setDefaultTimeout(120_000);
+
   function project(files: Record<string, string>) {
     const dir = tempDir("test-environment", files);
     mkdirSync(join(String(dir), "node_modules"));

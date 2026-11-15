@@ -193,7 +193,7 @@ impl Bin {
 
     /// Used for packages read from text lockfile / pnpm migration.
     pub(crate) fn parse_append(
-        bin_expr: JsonView<'_>,
+        bin_expr: JsonView<'_, '_>,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
@@ -266,7 +266,7 @@ impl Bin {
     }
 
     pub(crate) fn parse_append_from_directories(
-        bin_expr: JsonView<'_>,
+        bin_expr: JsonView<'_, '_>,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {

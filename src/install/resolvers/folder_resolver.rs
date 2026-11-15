@@ -117,14 +117,14 @@ impl ResolverContext for NewResolver<'_> {
         matches!(self.tag, ResolutionTag::Folder | ResolutionTag::Symlink)
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_, '_>) {
         builder.count(self.folder_path);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: JsonView<'_>,
+        _json: JsonView<'_, '_>,
     ) -> crate::Result<ResolutionType<u64>> {
         let appended = builder.append::<SemverString>(self.folder_path);
         Ok(ResolutionType::<u64>::init(match self.tag {
@@ -264,7 +264,7 @@ fn read_package_json_from_disk(
             &mut manager.lockfile,
             &mut fields,
             log,
-            &json.source,
+            json.source,
             JsonView::from(&json.root),
             resolver,
             features,
@@ -358,7 +358,7 @@ pub(crate) fn listed_dependencies(
         &mut listed.lockfile,
         &mut ParseFields::for_package(&manager.options, &mut manager.project),
         &log,
-        &entry.source,
+        entry.source,
         JsonView::from(&entry.root),
         &mut OnlyDependencies,
         Features::FOLDER,

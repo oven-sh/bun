@@ -2136,7 +2136,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
 
                 // Both the file-only and transpiled arms hit the same
-                // `parse_maybe_return_file_only_allow_shared_buffer` body, so
+                // `parse_internal` body, so
                 // dispatch at runtime via the const-generic bool.
                 let return_file_only = disable_transpilying || loader == L::Json;
                 let parse_result: Option<ParseResult> = if DATA_ONLY {
@@ -2248,10 +2248,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 if disable_transpilying {
                     let source_code = match args.flags {
                         FetchFlags::PrintSource => {
-                            // The file contents live in a Drop-carrying
-                            // `source_contents_backing` on `parse_result`, so a
-                            // borrow would dangle once `parse_result` drops on
-                            // return. Clone instead.
+                            // The file contents live in the arena of this parse.
                             bun_core::String::clone_utf8(&source.contents)
                         }
                         FetchFlags::Transpile => unreachable!(),
@@ -2293,9 +2290,6 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                         // the JS materialization is the `bun_js_parser_jsc`
                         // extension fn.
                         let part = &parse_result.ast.parts[0];
-                        // SAFETY: `Part.stmts` is an arena-owned slice; the
-                        // arena outlives this call (returned to the VM by the
-                        // scopeguard above only after we return).
                         let stmt = &(*part.stmts)[0];
                         let bun_ast::StmtData::SExpr(s_expr) = &stmt.data else {
                             // Parser guarantees JSON/TOML/YAML produce a single

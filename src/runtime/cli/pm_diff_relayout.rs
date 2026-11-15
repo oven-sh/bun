@@ -6,9 +6,9 @@
 use bun_ast::binding::Data as B;
 use bun_ast::expr::Data as E;
 use bun_ast::stmt::Data as S;
-use bun_ast::{AstArena, AstVec, Binding, Expr, Stmt, StoreSlice};
+use bun_ast::{AstArena, AstVec, Binding, Expr, Stmt, StmtNodeList, StoreSlice};
 
-pub(crate) fn relayout(arena: &AstArena, ast: &mut bun_ast::Ast<'_>, split: bool) {
+pub(crate) fn relayout<'a>(arena: &'a AstArena, ast: &mut bun_ast::Ast<'a>, split: bool) {
     let cx = Cx { arena, split };
     for part in ast.parts.iter_mut() {
         stmt_list(&cx, &mut part.stmts);
@@ -24,22 +24,27 @@ type C<'c, 'a> = &'c Cx<'a>;
 /// Short literals and clauses on one line, longer ones one entry per line — decided by count, never by source.
 const ONE_LINE_MAX: usize = 3;
 
-fn stmt_list(arena: C, list: &mut StoreSlice<Stmt>) {
-    let stmts = list.slice_mut();
-    let needs = arena.split
+fn stmt_list<'a>(arena: C<'_, 'a>, list: &mut StmtNodeList<'a>) {
+    for s in list.slice_mut() {
+        stmt(arena, s);
+    }
+    if needs_split(arena, list.slice()) {
+        *list = split_stmts(arena, list.slice());
+    }
+}
+
+fn needs_split(arena: C, stmts: &[Stmt]) -> bool {
+    arena.split
         && stmts.iter().any(|s| match &s.data {
             S::SLocal(l) => l.decls.len() > 1,
             S::SExpr(x) => {
                 matches!(&x.value.data, E::EBinary(b) if b.op == bun_ast::OpCode::BinComma)
             }
             _ => false,
-        });
-    for s in stmts.iter_mut() {
-        stmt(arena, s);
-    }
-    if !needs {
-        return;
-    }
+        })
+}
+
+fn split_stmts<'a>(arena: C<'_, 'a>, stmts: &[Stmt<'a>]) -> StmtNodeList<'a> {
     let mut out: Vec<Stmt> = Vec::with_capacity(stmts.len() * 2);
     for s in stmts.iter() {
         match &s.data {
@@ -71,11 +76,11 @@ fn stmt_list(arena: C, list: &mut StoreSlice<Stmt>) {
             _ => out.push(*s),
         }
     }
-    *list = StoreSlice::new_mut(arena.arena.alloc_slice_copy(&out));
+    StoreSlice::new_mut(arena.arena.alloc_slice_copy(&out))
 }
 
 /// `a, b, c, …` parses as a left-leaning spine; walk it with a stack, not the call stack.
-fn comma_leaves(e: &Expr, out: &mut Vec<Expr>) {
+fn comma_leaves<'a>(e: &Expr<'a>, out: &mut Vec<Expr<'a>>) {
     let mut rights = Vec::new();
     let mut cur = *e;
     loop {
@@ -92,18 +97,17 @@ fn comma_leaves(e: &Expr, out: &mut Vec<Expr>) {
 }
 
 /// A body position holds one statement; when splitting turns it into several, wrap them in a block.
-fn body(arena: C, s: &mut Stmt) {
+fn body<'a>(arena: C<'_, 'a>, s: &mut Stmt<'a>) {
     if let S::SBlock(b) = &mut s.data {
         stmt_list(arena, &mut b.stmts);
         return;
     }
-    let mut list = StoreSlice::new_mut(core::slice::from_mut(s));
-    stmt_list(arena, &mut list);
-    if list.len() > 1 {
+    stmt(arena, s);
+    if needs_split(arena, core::slice::from_ref(s)) {
         *s = Stmt::allocate(
             arena.arena,
             bun_ast::S::Block {
-                stmts: list,
+                stmts: split_stmts(arena, core::slice::from_ref(s)),
                 close_brace_loc: bun_ast::Loc::EMPTY,
             },
             s.loc,
@@ -111,7 +115,7 @@ fn body(arena: C, s: &mut Stmt) {
     }
 }
 
-fn func(arena: C, f: &mut bun_ast::G::Fn) {
+fn func<'a>(arena: C<'_, 'a>, f: &mut bun_ast::G::Fn<'a>) {
     for arg in f.args.slice_mut() {
         binding(arena, &mut arg.binding);
         opt_expr(arena, &mut arg.default);
@@ -119,16 +123,18 @@ fn func(arena: C, f: &mut bun_ast::G::Fn) {
     stmt_list(arena, &mut f.body.stmts);
 }
 
-fn class(arena: C, c: &mut bun_ast::G::Class) {
+fn class<'a>(arena: C<'_, 'a>, c: &mut bun_ast::G::Class<'a>) {
     opt_expr(arena, &mut c.extends);
     for p in c.properties.slice_mut() {
         opt_expr(arena, &mut p.key);
         opt_expr(arena, &mut p.value);
         opt_expr(arena, &mut p.initializer);
         if let Some(block) = &mut p.class_static_block {
-            let mut list = StoreSlice::new_mut(block.stmts.slice_mut());
-            stmt_list(arena, &mut list);
-            if list.len() != block.stmts.len() {
+            for s in block.stmts.slice_mut() {
+                stmt(arena, s);
+            }
+            if needs_split(arena, block.stmts.slice()) {
+                let list = split_stmts(arena, block.stmts.slice());
                 block.stmts.clear();
                 block.stmts.extend_from_slice(arena.arena, list.slice());
             }
@@ -136,7 +142,7 @@ fn class(arena: C, c: &mut bun_ast::G::Class) {
     }
 }
 
-fn binding(arena: C, b: &mut Binding) {
+fn binding<'a>(arena: C<'_, 'a>, b: &mut Binding<'a>) {
     match &mut b.data {
         B::BArray(a) => {
             a.is_single_line = a.items.len() <= 8;
@@ -157,13 +163,13 @@ fn binding(arena: C, b: &mut Binding) {
     }
 }
 
-fn opt_expr(arena: C, e: &mut Option<Expr>) {
+fn opt_expr<'a>(arena: C<'_, 'a>, e: &mut Option<Expr<'a>>) {
     if let Some(e) = e {
         expr(arena, e);
     }
 }
 
-fn stmt(arena: C, s: &mut Stmt) {
+fn stmt<'a>(arena: C<'_, 'a>, s: &mut Stmt<'a>) {
     match &mut s.data {
         S::SBlock(b) => stmt_list(arena, &mut b.stmts),
         S::SClass(c) => class(arena, &mut c.class),
@@ -245,7 +251,7 @@ fn stmt(arena: C, s: &mut Stmt) {
     }
 }
 
-fn expr(arena: C, e: &mut Expr) {
+fn expr<'a>(arena: C<'_, 'a>, e: &mut Expr<'a>) {
     match &mut e.data {
         E::EArray(x) => {
             x.is_single_line = x.items.len() <= 8;

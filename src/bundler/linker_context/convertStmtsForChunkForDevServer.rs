@@ -79,10 +79,10 @@ pub(crate) fn resolve_import_paths_for_dev_server<'a>(
 ///     }, false ],
 ///        ----- "is the module async?"
 pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
-    stmts: &mut StmtList,
-    part_stmts: &[bun_ast::Stmt],
+    stmts: &mut StmtList<'bump>,
+    part_stmts: &[bun_ast::Stmt<'bump>],
     bump: &'bump AstArena,
-    ast: &BundledAstRow<'_>,
+    ast: &BundledAstRow<'_, 'bump>,
 ) -> Result<(), AllocError> {
     let hmr_api_ref = ast.wrapper_ref;
     let module_ref = ast.module_ref;
@@ -104,7 +104,6 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                     // Barrel optimization: this import was deferred (unused submodule).
                     // Don't add to dep array, but declare the namespace ref as an
                     // empty object so body code referencing it doesn't throw.
-                    // SAFETY: `st.items` is an arena-owned fat ptr; len is always sound to read.
                     let items_len = st.items.len();
                     if !st.star_name_loc.is_empty() || items_len > 0 || st.default_name.is_some() {
                         stmts
@@ -236,15 +235,16 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             binding,
                             default_value: None,
                         });
-                        let arrow_args =
-                            bun_ast::StoreSlice::new(core::slice::from_ref(bump.alloc(G::Arg {
+                        let arrow_args = bun_ast::StoreSlice::new_mut(core::slice::from_mut(
+                            bump.alloc(G::Arg {
                                 binding: Binding::alloc(
                                     bump,
                                     b::Identifier { r#ref: module_ref },
                                     Loc::EMPTY,
                                 ),
                                 ..Default::default()
-                            })));
+                            }),
+                        ));
                         esm_callbacks.push(Expr::allocate(
                             bump,
                             E::Arrow {

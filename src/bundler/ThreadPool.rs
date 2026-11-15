@@ -274,7 +274,7 @@ pub struct Worker {
     pub(crate) macro_load_states: js_ast::Macro::MacroLoadStates,
 
     pub(crate) temporary_arena: AstArena,
-    pub(crate) stmt_list: StmtList,
+    pub(crate) stmt_list: StmtList<'static>,
 
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly

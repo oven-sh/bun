@@ -7,15 +7,15 @@ use crate::p::P;
 use crate::parser::{ReactRefresh, Ref};
 use bun_ast::{self as js_ast, AstBox, AstVec, B, Binding, E, Expr, G, S, Stmt};
 
-pub(crate) struct ConvertESMExportsForHmr<'a> {
-    pub last_part: &'a mut js_ast::Part,
+pub(crate) struct ConvertESMExportsForHmr<'a, 'ast> {
+    pub last_part: &'a mut js_ast::Part<'ast>,
     /// files in node modules will not get hot updates, so the code generation
     /// can be a bit more concise for re-exports
     pub is_in_node_modules: bool,
     pub imports_seen: StringArrayHashMap<ImportRef>,
-    pub export_star_props: Vec<G::Property>,
-    pub export_props: Vec<G::Property>,
-    pub stmts: Vec<Stmt>,
+    pub export_star_props: Vec<G::Property<'ast>>,
+    pub export_props: Vec<G::Property<'ast>>,
+    pub stmts: Vec<Stmt<'ast>>,
 }
 // Note: the consumers of the four collections
 // (an arena copy of `export_props` and `stmts`) want
@@ -33,13 +33,13 @@ struct DeduplicatedImportResult {
     pub import_record_index: u32,
 }
 
-impl<'a> ConvertESMExportsForHmr<'a> {
-    // Note: takes the concrete `P<'p, TS, SCAN>`; `AstBuilder` instead
+impl<'ast> ConvertESMExportsForHmr<'_, 'ast> {
+    // Note: takes the concrete `P<'ast, TS, SCAN>`; `AstBuilder` instead
     // open-codes the equivalent transform (see bundler/AstBuilder.rs).
-    pub(crate) fn convert_stmt<'p, const TS: bool, const SCAN: bool>(
+    pub(crate) fn convert_stmt<const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, '_, TS, SCAN>,
-        stmt: Stmt,
+        p: &mut P<'ast, '_, TS, SCAN>,
+        stmt: Stmt<'ast>,
     ) -> Result<(), AllocError> {
         let new_stmt: Stmt = match stmt.data {
             js_ast::StmtData::SLocal(mut st) => 'stmt: {
@@ -77,7 +77,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                                 self.export_props.push(G::Property {
                                     key: Some(Expr::allocate(
                                         p.ast_arena,
-                                        // SAFETY: arena-owned name slice valid for the parse.
                                         E::EString::init(symbol.original_name.slice()),
                                         binding.loc,
                                     )),
@@ -272,7 +271,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 self.export_props.push(G::Property {
                     key: Some(Expr::allocate(
                         p.ast_arena,
-                        // SAFETY: arena-owned name slice valid for the parse.
                         E::EString::init(
                             p.symbols[class_name_ref.inner_index() as usize]
                                 .original_name
@@ -367,7 +365,6 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 if let Some(alias) = &st.alias {
                     // 'export * as ns from' creates one named property.
                     self.export_props.push(G::Property {
-                        // SAFETY: arena-owned name slice valid for the parse.
                         key: Some(Expr::allocate(
                             p.ast_arena,
                             E::EString::init(alias.original_name.slice()),
@@ -412,12 +409,12 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
     /// Deduplicates imports, returning a previously used Ref and import record
     /// index if present.
-    fn deduplicated_import<'p, const TS: bool, const SCAN: bool>(
+    fn deduplicated_import<const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, '_, TS, SCAN>,
+        p: &mut P<'ast, '_, TS, SCAN>,
         import_record_index: u32,
         namespace_ref: Ref,
-        items: js_ast::StoreSlice<js_ast::ClauseItem>,
+        items: js_ast::StoreSlice<'ast, js_ast::ClauseItem<'ast>>,
         star_name_loc: bun_ast::Loc,
         default_name: Option<js_ast::LocRef>,
         loc: bun_ast::Loc,
@@ -519,9 +516,9 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         })
     }
 
-    fn visit_binding_to_export<'p, const TS: bool, const SCAN: bool>(
+    fn visit_binding_to_export<const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, '_, TS, SCAN>,
+        p: &mut P<'ast, '_, TS, SCAN>,
         binding: Binding,
     ) -> Result<(), AllocError> {
         match binding.data {
@@ -543,11 +540,11 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    fn visit_ref_to_export<'p, const TS: bool, const SCAN: bool>(
+    fn visit_ref_to_export<const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, '_, TS, SCAN>,
+        p: &mut P<'ast, '_, TS, SCAN>,
         ref_: Ref,
-        export_symbol_name: Option<js_ast::StoreStr>,
+        export_symbol_name: Option<js_ast::StoreStr<'ast>>,
         loc: bun_ast::Loc,
         is_live_binding_source: bool,
     ) -> Result<(), AllocError> {
@@ -645,14 +642,14 @@ impl<'a> ConvertESMExportsForHmr<'a> {
         Ok(())
     }
 
-    pub(crate) fn finalize<'p, const TS: bool, const SCAN: bool>(
+    pub(crate) fn finalize<const TS: bool, const SCAN: bool>(
         &mut self,
-        p: &mut P<'p, '_, TS, SCAN>,
+        p: &mut P<'ast, '_, TS, SCAN>,
         // Note: `self.last_part` must not alias into this slice
         // (Stacked Borrows: `&mut [Part]` asserts
         // exclusive access to every element). Caller passes the `[0..len-1]`
         // prefix obtained via `split_last_mut`, disjoint from `self.last_part`.
-        head_parts: &mut [js_ast::Part],
+        head_parts: &mut [js_ast::Part<'ast>],
     ) -> Result<(), AllocError> {
         if !self.export_star_props.is_empty() || !self.export_props.is_empty() {
             let star_props = core::mem::take(&mut self.export_star_props);

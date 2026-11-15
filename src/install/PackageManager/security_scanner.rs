@@ -1303,7 +1303,7 @@ impl SecurityScanSubprocess {
 
 fn parse_security_advisories_from_json(
     manager: &PackageManager,
-    advisories_expr: bun_ast::JsonView<'_>,
+    advisories_expr: bun_ast::JsonView<'_, '_>,
     package_paths: &ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();

@@ -2,6 +2,7 @@
 
 use core::alloc::Layout;
 use core::hash::BuildHasher;
+use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 use core::ptr::{self, NonNull};
@@ -17,25 +18,25 @@ use bun_collections::{AutoContext, hash_map};
 use crate::{AstArena, AstBox, AstVec, StoreStr};
 
 /// The arena that was passed to the last method that can allocate.
-struct TableAlloc(
+struct TableAlloc<'a>(
     /// `AtomicPtr`: `HashTable::allocator` returns `&A`, and tables are `Sync`. `Relaxed`: only stored through `&mut` to the table.
     AtomicPtr<AstArena>,
+    PhantomData<&'a ()>,
 );
 
-impl TableAlloc {
-    fn new(arena: &AstArena) -> Self {
-        TableAlloc(AtomicPtr::new(ptr::from_ref(arena).cast_mut()))
+impl<'a> TableAlloc<'a> {
+    fn new(arena: &'a AstArena) -> Self {
+        TableAlloc(AtomicPtr::new(ptr::from_ref(arena).cast_mut()), PhantomData)
     }
 
-    fn set(&self, arena: &AstArena) {
+    fn set(&self, arena: &'a AstArena) {
         self.0
             .store(ptr::from_ref(arena).cast_mut(), Ordering::Relaxed);
     }
 }
 
-// SAFETY: `alloc_layout` returns a new allocation that fits `layout`. It is valid until the arena resets, after which
-// the table, like any `StoreRef`, must not be used.
-unsafe impl allocator_api2::alloc::Allocator for TableAlloc {
+// SAFETY: `alloc_layout` returns a new allocation that fits `layout`. It is valid for `'a`, which outlives `self`.
+unsafe impl allocator_api2::alloc::Allocator for TableAlloc<'_> {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, allocator_api2::alloc::AllocError> {
         // SAFETY: a table only allocates inside `with_capacity_in` and `build_index`, and through the reference that
         // `table_mut` or `index_mut` returns. All borrow the stored arena, and the reference is not kept or sent to
@@ -50,16 +51,16 @@ unsafe impl allocator_api2::alloc::Allocator for TableAlloc {
     unsafe fn deallocate(&self, _: NonNull<u8>, _: Layout) {}
 }
 
-pub struct AstHashTable<T>(ManuallyDrop<HashTable<T, TableAlloc>>);
+pub struct AstHashTable<'a, T>(ManuallyDrop<HashTable<T, TableAlloc<'a>>>);
 
-impl<T> AstHashTable<T> {
+impl<'a, T> AstHashTable<'a, T> {
     const fn new() -> Self {
         const { assert!(!core::mem::needs_drop::<T>()) };
-        let alloc = TableAlloc(AtomicPtr::new(ptr::null_mut()));
+        let alloc = TableAlloc(AtomicPtr::new(ptr::null_mut()), PhantomData);
         AstHashTable(ManuallyDrop::new(HashTable::new_in(alloc)))
     }
 
-    pub(crate) fn with_capacity_in(capacity: usize, arena: &AstArena) -> Self {
+    pub(crate) fn with_capacity_in(capacity: usize, arena: &'a AstArena) -> Self {
         const { assert!(!core::mem::needs_drop::<T>()) };
         let table = HashTable::with_capacity_in(capacity, TableAlloc::new(arena));
         AstHashTable(ManuallyDrop::new(table))
@@ -67,7 +68,7 @@ impl<T> AstHashTable<T> {
 
     /// Every method that can allocate goes through this.
     #[inline]
-    fn table_mut<'t>(&'t mut self, arena: &'t AstArena) -> &'t mut HashTable<T, TableAlloc> {
+    fn table_mut(&mut self, arena: &'a AstArena) -> &mut HashTable<T, TableAlloc<'a>> {
         self.0.allocator().set(arena);
         &mut self.0
     }
@@ -93,7 +94,7 @@ impl<T> AstHashTable<T> {
     #[inline]
     pub(crate) fn reserve(
         &mut self,
-        arena: &AstArena,
+        arena: &'a AstArena,
         additional: usize,
         hasher: impl Fn(&T) -> u64,
     ) {
@@ -103,7 +104,7 @@ impl<T> AstHashTable<T> {
     #[inline]
     pub(crate) fn insert_unique(
         &mut self,
-        arena: &AstArena,
+        arena: &'a AstArena,
         hash: u64,
         value: T,
         hasher: impl Fn(&T) -> u64,
@@ -112,14 +113,14 @@ impl<T> AstHashTable<T> {
     }
 
     #[inline]
-    pub(crate) fn get_or_insert_with<'t>(
-        &'t mut self,
-        arena: &'t AstArena,
+    pub(crate) fn get_or_insert_with(
+        &mut self,
+        arena: &'a AstArena,
         hash: u64,
         eq: impl FnMut(&T) -> bool,
         hasher: impl Fn(&T) -> u64,
         value: impl FnOnce() -> T,
-    ) -> hash_map::GetOrPutResult<'t, T> {
+    ) -> hash_map::GetOrPutResult<'_, T> {
         let entry = self.table_mut(arena).entry(hash, eq, hasher);
         hash_map::GetOrPutResult {
             found_existing: matches!(entry, Entry::Occupied(_)),
@@ -129,9 +130,9 @@ impl<T> AstHashTable<T> {
 }
 
 /// Iterates in the same order as `StringHashMap`.
-pub struct AstStringHashMap<V>(AstHashTable<(StoreStr, V)>);
+pub struct AstStringHashMap<'a, V>(AstHashTable<'a, (StoreStr<'a>, V)>);
 
-impl<V> Default for AstStringHashMap<V> {
+impl<V> Default for AstStringHashMap<'_, V> {
     fn default() -> Self {
         AstStringHashMap(AstHashTable::new())
     }
@@ -141,9 +142,9 @@ fn hash_key(key: &[u8]) -> u64 {
     bun_wyhash::BuildHasher::default().hash_one(key)
 }
 
-impl<V> AstStringHashMap<V> {
-    pub fn iter(&self) -> impl Iterator<Item = (&[u8], &V)> {
-        self.0.iter().map(|(key, value)| (&**key, value))
+impl<'a, V> AstStringHashMap<'a, V> {
+    pub fn iter(&self) -> impl Iterator<Item = (&'a [u8], &V)> {
+        self.0.iter().map(|(key, value)| (key.slice(), value))
     }
 
     pub fn values(&self) -> impl Iterator<Item = &V> {
@@ -158,18 +159,13 @@ impl<V> AstStringHashMap<V> {
         Some(self.0.remove(hash_key(key), |entry| *entry.0 == *key)?.1)
     }
 
-    pub fn reserve(&mut self, arena: &AstArena, additional: usize) {
+    pub fn reserve(&mut self, arena: &'a AstArena, additional: usize) {
         self.0
             .reserve(arena, additional, |entry| hash_key(&entry.0));
     }
 
     /// Copies `key`.
-    pub fn get_or_put_value<'t>(
-        &'t mut self,
-        arena: &'t AstArena,
-        key: &[u8],
-        value: V,
-    ) -> &'t mut V {
+    pub fn get_or_put_value(&mut self, arena: &'a AstArena, key: &[u8], value: V) -> &mut V {
         let hash = hash_key(key);
         match self
             .0
@@ -189,7 +185,7 @@ impl<V> AstStringHashMap<V> {
     }
 
     /// Does not copy `key`.
-    pub fn put_borrowed(&mut self, arena: &AstArena, key: StoreStr, value: V)
+    pub fn put_borrowed(&mut self, arena: &'a AstArena, key: StoreStr<'a>, value: V)
     where
         V: Copy,
     {
@@ -204,10 +200,13 @@ impl<V> AstStringHashMap<V> {
     }
 }
 
-type Index = AstBox<ManuallyDrop<HashIndex<TableAlloc>>>;
+type Index<'a> = AstBox<'a, ManuallyDrop<HashIndex<TableAlloc<'a>>>>;
 
 /// Every method that can allocate goes through this.
-fn index_mut<'t>(index: &'t mut Index, arena: &'t AstArena) -> &'t mut HashIndex<TableAlloc> {
+fn index_mut<'t, 'ast>(
+    index: &'t mut Index<'ast>,
+    arena: &'ast AstArena,
+) -> &'t mut HashIndex<TableAlloc<'ast>> {
     index.allocator().set(arena);
     index
 }
@@ -215,21 +214,21 @@ fn index_mut<'t>(index: &'t mut Index, arena: &'t AstArena) -> &'t mut HashIndex
 // Out of line: one copy for every `K`, `V`.
 #[cold]
 #[inline(never)]
-fn build_index(arena: &AstArena, hashes: &AstVec<u32>) -> Index {
+fn build_index<'a>(arena: &'a AstArena, hashes: &AstVec<u32>) -> Index<'a> {
     let index = HashIndex::build(hashes, hashes.capacity(), TableAlloc::new(arena));
     AstBox::new_in(ManuallyDrop::new(index), arena)
 }
 
-pub struct AstArrayHashMap<K, V, C = AutoContext> {
-    keys: AstVec<K>,
-    values: AstVec<V>,
-    hashes: AstVec<u32>,
+pub struct AstArrayHashMap<'a, K, V, C = AutoContext> {
+    keys: AstVec<'a, K>,
+    values: AstVec<'a, V>,
+    hashes: AstVec<'a, u32>,
     /// `None` until there are more than [`INDEX_THRESHOLD`] entries.
-    index: Option<Index>,
+    index: Option<Index<'a>>,
     ctx: C,
 }
 
-impl<K, V, C: Default> Default for AstArrayHashMap<K, V, C> {
+impl<K, V, C: Default> Default for AstArrayHashMap<'_, K, V, C> {
     fn default() -> Self {
         AstArrayHashMap {
             keys: AstVec::new(),
@@ -241,7 +240,7 @@ impl<K, V, C: Default> Default for AstArrayHashMap<K, V, C> {
     }
 }
 
-impl<K, V, C> AstArrayHashMap<K, V, C> {
+impl<'a, K, V, C> AstArrayHashMap<'a, K, V, C> {
     #[inline]
     pub fn count(&self) -> usize {
         self.keys.len()
@@ -272,11 +271,11 @@ impl<K, V, C> AstArrayHashMap<K, V, C> {
         self.keys.iter().zip(self.values.iter())
     }
 
-    pub fn ensure_total_capacity(&mut self, arena: &AstArena, n: usize) {
+    pub fn ensure_total_capacity(&mut self, arena: &'a AstArena, n: usize) {
         self.reserve(arena, n.saturating_sub(self.count()));
     }
 
-    pub fn reserve(&mut self, arena: &AstArena, n: usize) {
+    pub fn reserve(&mut self, arena: &'a AstArena, n: usize) {
         self.keys.reserve(arena, n);
         self.values.reserve(arena, n);
         self.hashes.reserve(arena, n);
@@ -302,7 +301,7 @@ impl<K, V, C> AstArrayHashMap<K, V, C> {
     }
 
     #[inline]
-    fn push_entry(&mut self, arena: &AstArena, key: K, value: V, h: u32) -> usize {
+    fn push_entry(&mut self, arena: &'a AstArena, key: K, value: V, h: u32) -> usize {
         let i = self.keys.len();
         self.keys.push(arena, key);
         self.values.push(arena, value);
@@ -334,7 +333,7 @@ impl<K, V, C> AstArrayHashMap<K, V, C> {
     }
 }
 
-impl<K, V, C: ArrayHashContext<K>> AstArrayHashMap<K, V, C> {
+impl<'a, K, V, C: ArrayHashContext<K>> AstArrayHashMap<'a, K, V, C> {
     #[inline]
     fn get_index(&self, key: &K) -> Option<usize> {
         self.find_hash(self.ctx.hash(key), |k, i| self.ctx.eql(key, k, i))
@@ -353,7 +352,7 @@ impl<K, V, C: ArrayHashContext<K>> AstArrayHashMap<K, V, C> {
         self.get_index(key).map(|i| &mut self.values[i])
     }
 
-    pub fn put(&mut self, arena: &AstArena, key: K, value: V) {
+    pub fn put(&mut self, arena: &'a AstArena, key: K, value: V) {
         let h = self.ctx.hash(&key);
         match self.find_hash(h, |k, i| self.ctx.eql(&key, k, i)) {
             Some(i) => self.values[i] = value,
@@ -363,13 +362,13 @@ impl<K, V, C: ArrayHashContext<K>> AstArrayHashMap<K, V, C> {
         }
     }
 
-    pub fn put_no_clobber(&mut self, arena: &AstArena, key: K, value: V) {
+    pub fn put_no_clobber(&mut self, arena: &'a AstArena, key: K, value: V) {
         debug_assert!(!self.contains(&key), "put_no_clobber: key already present");
         let h = self.ctx.hash(&key);
         self.push_entry(arena, key, value, h);
     }
 
-    pub fn get_or_put(&mut self, arena: &AstArena, key: K) -> GetOrPutResult<'_, K, V>
+    pub fn get_or_put(&mut self, arena: &'a AstArena, key: K) -> GetOrPutResult<'_, K, V>
     where
         V: Default,
     {
@@ -378,7 +377,7 @@ impl<K, V, C: ArrayHashContext<K>> AstArrayHashMap<K, V, C> {
 
     pub fn get_or_put_value(
         &mut self,
-        arena: &AstArena,
+        arena: &'a AstArena,
         key: K,
         value: V,
     ) -> GetOrPutResult<'_, K, V> {
@@ -399,7 +398,7 @@ impl<K, V, C: ArrayHashContext<K>> AstArrayHashMap<K, V, C> {
     }
 
     /// Preserves the order of the other entries.
-    pub fn remove(&mut self, arena: &AstArena, key: &K) -> Option<V>
+    pub fn remove(&mut self, arena: &'a AstArena, key: &K) -> Option<V>
     where
         K: Copy,
     {
@@ -413,28 +412,28 @@ impl<K, V, C: ArrayHashContext<K>> AstArrayHashMap<K, V, C> {
 }
 
 /// Copies its keys into the arena.
-pub struct AstStringArrayHashMap<V>(AstArrayHashMap<StoreStr, V, ()>);
+pub struct AstStringArrayHashMap<'a, V>(AstArrayHashMap<'a, StoreStr<'a>, V, ()>);
 
-impl<V> Default for AstStringArrayHashMap<V> {
+impl<V> Default for AstStringArrayHashMap<'_, V> {
     fn default() -> Self {
         AstStringArrayHashMap(AstArrayHashMap::default())
     }
 }
 
-impl<V> Deref for AstStringArrayHashMap<V> {
-    type Target = AstArrayHashMap<StoreStr, V, ()>;
+impl<'a, V> Deref for AstStringArrayHashMap<'a, V> {
+    type Target = AstArrayHashMap<'a, StoreStr<'a>, V, ()>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-impl<V> DerefMut for AstStringArrayHashMap<V> {
+impl<V> DerefMut for AstStringArrayHashMap<'_, V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
-impl<V> AstStringArrayHashMap<V> {
+impl<'a, V> AstStringArrayHashMap<'a, V> {
     #[inline]
     pub fn get_index(&self, key: &[u8]) -> Option<usize> {
         self.0.find_hash(hash_string(key), |k, _| **k == *key)
@@ -453,7 +452,7 @@ impl<V> AstStringArrayHashMap<V> {
         self.get_index(key).map(|i| &mut self.0.values[i])
     }
 
-    pub fn put(&mut self, arena: &AstArena, key: &[u8], value: V) {
+    pub fn put(&mut self, arena: &'a AstArena, key: &[u8], value: V) {
         let h = hash_string(key);
         match self.0.find_hash(h, |k, _| **k == *key) {
             Some(i) => self.0.values[i] = value,
@@ -463,7 +462,11 @@ impl<V> AstStringArrayHashMap<V> {
         }
     }
 
-    pub fn get_or_put(&mut self, arena: &AstArena, key: &[u8]) -> GetOrPutResult<'_, StoreStr, V>
+    pub fn get_or_put(
+        &mut self,
+        arena: &'a AstArena,
+        key: &[u8],
+    ) -> GetOrPutResult<'_, StoreStr<'a>, V>
     where
         V: Default,
     {
@@ -553,7 +556,6 @@ mod tests {
         let mut table = AstHashTable::new();
         table.insert_unique(&first, 0, 0u64, |&value| value);
         table.reserve(&second, 100, |&value| value);
-        drop(first);
         assert_eq!(table.find(0, |&value| value == 0), Some(&0));
     }
 }

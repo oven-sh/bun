@@ -21,9 +21,8 @@ use crate::collections::IdMap;
 use crate::collections::sort_slice_by;
 use bun_alloc::ArenaVec;
 use bun_ast::{
-    self as ast, ArrayBinding, AstArena, AstVec, Binding, Case, Catch, E, Expr, ExprData,
-    ExprNodeList, Finally, G, Loc, LocRef, OpCode, OptionalChain, Ref, S, Stmt, StmtData,
-    StmtNodeList, StoreSlice, StoreStr, b, flags,
+    self as ast, ArrayBinding, AstArena, AstVec, Case, Catch, E, ExprData, ExprNodeList, Finally,
+    G, Loc, LocRef, OpCode, OptionalChain, Ref, S, StmtData, StmtNodeList, StoreSlice, b, flags,
 };
 
 use crate::diagnostics::{
@@ -37,11 +36,11 @@ use crate::hir::reactive::{
     ReactiveValue,
 };
 use crate::hir::{
-    ArrayElement, ArrayPattern, BlockId, DeclarationId, FunctionExpressionType, HirVec,
-    IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
+    ArrayElement, ArrayPattern, Binding, BlockId, DeclarationId, Expr, FunctionExpressionType,
+    HirVec, IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
     LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
     ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ScopeId,
+    PropertyLiteral, ScopeId, Stmt, StoreStr,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -57,7 +56,7 @@ pub struct CodegenFunction {
     pub(crate) id: Option<LocRef>,
     #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
     pub(crate) name_hint: Option<String>,
-    pub(crate) params: Vec<G::Arg>,
+    pub(crate) params: Vec<G::Arg<'static>>,
     pub(crate) has_rest_arg: bool,
     pub(crate) body: Vec<Stmt>,
     pub(crate) generator: bool,
@@ -106,8 +105,8 @@ impl WellKnown {
 /// same identifier name resolves to the same `Ref` everywhere in the compiled
 /// component.
 pub(crate) struct Codegen<'h> {
-    pub(crate) host: &'h mut dyn Host,
-    pub(crate) arena: &'h AstArena,
+    pub(crate) host: &'h mut dyn Host<'static>,
+    pub(crate) arena: &'static AstArena,
     id_to_ref: IdMap<IdentifierId, Ref>,
     well_known: [Option<Ref>; WellKnown::COUNT],
     name_to_ref: HashMap<StoreStr, Ref>,
@@ -115,7 +114,7 @@ pub(crate) struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h AstArena) -> Self {
+    pub(crate) fn new(host: &'h mut dyn Host<'static>, arena: &'static AstArena) -> Self {
         Codegen {
             host,
             arena,
@@ -569,7 +568,7 @@ fn convert_parameter(
     cx: &mut Context,
     param: &ParamPattern,
     has_rest: &mut bool,
-) -> Result<G::Arg, CompilerError> {
+) -> Result<G::Arg<'static>, CompilerError> {
     match param {
         ParamPattern::Place(place) => {
             let (r, loc) = convert_identifier(cx, place.identifier)?;
@@ -2841,7 +2840,7 @@ fn codegen_jsx_expression(
 fn codegen_create_element_call(
     cx: &mut Context,
     tag_value: Expr,
-    properties: G::PropertyList,
+    properties: G::PropertyList<'static>,
     children: &[Expr],
     loc: Loc,
     close_loc: Loc,
@@ -2893,8 +2892,8 @@ fn codegen_create_element_call(
 fn codegen_jsx_call(
     cx: &mut Context,
     tag_value: Expr,
-    mut properties: G::PropertyList,
-    children: ExprNodeList,
+    mut properties: G::PropertyList<'static>,
+    children: ExprNodeList<'static>,
     key_value: Option<Expr>,
     loc: Loc,
     close_loc: Loc,
@@ -3001,7 +3000,7 @@ fn codegen_jsx_call(
 fn codegen_jsx_attribute(
     cx: &mut Context,
     attr: &JsxAttribute,
-) -> Result<G::Property, CompilerError> {
+) -> Result<G::Property<'static>, CompilerError> {
     match attr {
         JsxAttribute::Attribute { name, place } => {
             let loc = convert_loc(place.loc);
@@ -3270,7 +3269,7 @@ fn convert_identifier(
 fn codegen_arguments(
     cx: &mut Context,
     args: &[PlaceOrSpread],
-) -> Result<ExprNodeList, CompilerError> {
+) -> Result<ExprNodeList<'static>, CompilerError> {
     let mut out: ExprNodeList = AstVec::with_capacity_in(args.len(), cx.cg.arena);
     for arg in args {
         out.push(cx.cg.arena, codegen_argument(cx, arg)?);
@@ -3451,21 +3450,21 @@ fn convert_loc(loc: Option<DiagSourceLocation>) -> Loc {
     }
 }
 
-fn estring_utf8(arena: &AstArena, s: &str) -> E::EString {
+fn estring_utf8(arena: &'static AstArena, s: &str) -> E::EString<'static> {
     if s.is_ascii() {
-        E::EString::init(&arena.dupe_str(s.as_bytes()))
+        E::EString::init(arena.dupe_str(s.as_bytes()).slice())
     } else {
-        E::EString::init_utf16(&AstVec::from_iter_in(s.encode_utf16(), arena))
+        E::EString::init_utf16(AstVec::from_iter_in(s.encode_utf16(), arena).leak())
     }
 }
 
 #[inline]
-fn string_expr(arena: &AstArena, s: &str, loc: Loc) -> Expr {
+fn string_expr(arena: &'static AstArena, s: &str, loc: Loc) -> Expr {
     Expr::allocate(arena, estring_utf8(arena, s), loc)
 }
 
 #[inline]
-fn comma_seq(arena: &AstArena, exprs: Vec<Expr>, loc: Loc) -> Expr {
+fn comma_seq(arena: &'static AstArena, exprs: Vec<Expr>, loc: Loc) -> Expr {
     let mut it = exprs.into_iter();
     let first = it.next().expect("comma_seq: nonempty");
     it.fold(first, |acc, next| {
@@ -3482,7 +3481,7 @@ fn comma_seq(arena: &AstArena, exprs: Vec<Expr>, loc: Loc) -> Expr {
 }
 
 #[inline]
-fn expr_stmt(arena: &AstArena, value: Expr, loc: Loc) -> Stmt {
+fn expr_stmt(arena: &'static AstArena, value: Expr, loc: Loc) -> Stmt {
     Stmt::allocate(
         arena,
         S::SExpr {
@@ -3501,7 +3500,7 @@ fn empty_stmt() -> Stmt {
     }
 }
 
-fn block_stmt(arena: &AstArena, body: Vec<Stmt>, loc: Loc) -> Stmt {
+fn block_stmt(arena: &'static AstArena, body: Vec<Stmt>, loc: Loc) -> Stmt {
     Stmt::allocate(
         arena,
         S::Block {
@@ -3513,18 +3512,21 @@ fn block_stmt(arena: &AstArena, body: Vec<Stmt>, loc: Loc) -> Stmt {
 }
 
 /// Unwrap only `SExpr` to avoid dangling-else and lexical-declaration-as-body.
-fn body_stmt(arena: &AstArena, mut body: Vec<Stmt>, loc: Loc) -> Stmt {
+fn body_stmt(arena: &'static AstArena, mut body: Vec<Stmt>, loc: Loc) -> Stmt {
     if body.len() == 1 && matches!(body[0].data, StmtData::SExpr(_)) {
         return body.pop().unwrap();
     }
     block_stmt(arena, body, loc)
 }
 
-fn decl_list(arena: &AstArena, iter: impl IntoIterator<Item = G::Decl>) -> G::DeclList {
+fn decl_list<'a>(
+    arena: &'a AstArena,
+    iter: impl IntoIterator<Item = G::Decl<'a>>,
+) -> G::DeclList<'a> {
     AstVec::from_iter_in(iter, arena)
 }
 
-fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
+fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents<'static> {
     match q.cooked {
         Some(cooked) => E::TemplateContents::Cooked(E::EString::init(cooked.slice())),
         None => E::TemplateContents::Raw(q.raw),
@@ -3532,7 +3534,7 @@ fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
 }
 
 fn property_access_expr(
-    arena: &AstArena,
+    arena: &'static AstArena,
     target: Expr,
     prop: &PropertyLiteral,
     loc: Loc,
@@ -3795,7 +3797,7 @@ fn is_hook_identifier(cx: &Context, identifier_id: IdentifierId) -> bool {
 }
 
 fn wrap_hook_call_with_guard(
-    arena: &AstArena,
+    arena: &'static AstArena,
     guard_ref: Ref,
     call_expr: Expr,
     before: u32,
@@ -3874,7 +3876,7 @@ fn wrap_hook_call_with_guard(
 }
 
 fn create_function_body_hook_guard(
-    arena: &AstArena,
+    arena: &'static AstArena,
     guard_ref: Ref,
     body_stmts: Vec<Stmt>,
     before: u32,

@@ -478,12 +478,12 @@ pub(crate) mod BunInfo {
     }
 
     #[inline]
-    fn str_expr(arena: &AstArena, s: &[u8]) -> Expr {
+    fn str_expr<'a>(arena: &'a AstArena, s: &'a [u8]) -> Expr<'a> {
         Expr::allocate(arena, EString::init(s), Loc::EMPTY)
     }
 
     #[inline]
-    fn prop(arena: &AstArena, key: &'static [u8], value: Expr) -> G::Property {
+    fn prop<'a>(arena: &'a AstArena, key: &'static [u8], value: Expr<'a>) -> G::Property<'a> {
         G::Property {
             key: Some(str_expr(arena, key)),
             value: Some(value),
@@ -491,7 +491,7 @@ pub(crate) mod BunInfo {
         }
     }
 
-    pub(crate) fn generate(arena: &AstArena) -> Result<Expr, crate::Error> {
+    pub(crate) fn generate(arena: &AstArena) -> Result<Expr<'_>, crate::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
@@ -2242,6 +2242,7 @@ where
         let arena = bun_ast::AstArena::new();
         let _ = bun_js_printer::print_json(
             &mut writer,
+            &arena,
             BunInfo::generate(&arena).expect("unreachable"),
             &source,
             bun_js_printer::PrintJsonOptions {

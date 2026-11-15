@@ -2,8 +2,7 @@
 //!
 //! All slice fields in this module are arena-owned by the parser's
 //! AST arena and are bulk-freed; they are represented as
-//! `StoreSlice<T>` / `StoreStr` (lifetime-erased arena slice newtypes — see
-//! `crate::StoreSlice` doc).
+//! `StoreSlice<T>` / `StoreStr`.
 
 use crate::g as G;
 use crate::{
@@ -12,12 +11,12 @@ use crate::{
 };
 use crate::{StoreSlice, StoreStr};
 
-pub struct Block {
-    pub stmts: StmtNodeList,
+pub struct Block<'a> {
+    pub stmts: StmtNodeList<'a>,
     pub close_brace_loc: crate::Loc, // = crate::Loc::EMPTY
 }
 
-impl Default for Block {
+impl Default for Block<'_> {
     fn default() -> Self {
         Self {
             stmts: StmtNodeList::EMPTY,
@@ -27,8 +26,8 @@ impl Default for Block {
 }
 
 #[derive(Default)]
-pub struct SExpr {
-    pub value: ExprNodeIndex,
+pub struct SExpr<'a> {
+    pub value: ExprNodeIndex<'a>,
 
     /// This is set to true for automatically-generated expressions that should
     /// not affect tree shaking. For example, calling a function from the runtime
@@ -36,37 +35,37 @@ pub struct SExpr {
     pub does_not_affect_tree_shaking: bool, // = false
 }
 
-pub struct Comment {
-    pub text: StoreStr, // arena-owned
+pub struct Comment<'a> {
+    pub text: StoreStr<'a>,
 }
 
-pub struct Directive {
-    pub value: StoreStr, // arena-owned
+pub struct Directive<'a> {
+    pub value: StoreStr<'a>,
 }
 
 #[derive(Default)]
-pub struct ExportClause {
-    pub items: StoreSlice<ClauseItem>, // arena-owned
+pub struct ExportClause<'a> {
+    pub items: StoreSlice<'a, ClauseItem<'a>>,
     pub is_single_line: bool,
 }
 
 #[derive(Clone, Copy, Default)]
 pub struct Empty {}
 
-pub struct ExportStar {
+pub struct ExportStar<'a> {
     pub namespace_ref: Ref,
-    pub alias: Option<G::ExportStarAlias>, // = None
+    pub alias: Option<G::ExportStarAlias<'a>>, // = None
     pub import_record_index: u32,
 }
 
 /// This is an "export = value;" statement in TypeScript
-pub struct ExportEquals {
-    pub value: ExprNodeIndex,
+pub struct ExportEquals<'a> {
+    pub value: ExprNodeIndex<'a>,
 }
 
-pub struct Label {
+pub struct Label<'a> {
     pub name: LocRef,
-    pub stmt: StmtNodeIndex,
+    pub stmt: StmtNodeIndex<'a>,
 }
 
 /// This is a stand-in for a TypeScript type declaration
@@ -76,19 +75,19 @@ pub struct TypeScript {}
 #[derive(Clone, Copy, Default)]
 pub struct Debugger {}
 
-pub struct ExportFrom {
-    pub items: StoreSlice<ClauseItem>, // arena-owned
+pub struct ExportFrom<'a> {
+    pub items: StoreSlice<'a, ClauseItem<'a>>,
     pub namespace_ref: Ref,
     pub import_record_index: u32,
     pub is_single_line: bool,
 }
 
-pub struct ExportDefault {
+pub struct ExportDefault<'a> {
     pub default_name: LocRef, // value may be a SFunction or SClass
-    pub value: StmtOrExpr,
+    pub value: StmtOrExpr<'a>,
 }
 
-impl ExportDefault {
+impl ExportDefault<'_> {
     pub fn can_be_moved(&self) -> bool {
         match &self.value {
             StmtOrExpr::Expr(e) => e.can_be_moved(),
@@ -101,89 +100,89 @@ impl ExportDefault {
     }
 }
 
-pub struct Enum {
+pub struct Enum<'a> {
     pub name: LocRef,
     pub arg: Ref,
-    pub values: StoreSlice<EnumValue>, // arena-owned
+    pub values: StoreSlice<'a, EnumValue<'a>>,
     pub is_export: bool,
 }
 
-pub struct Namespace {
+pub struct Namespace<'a> {
     pub name: LocRef,
     pub arg: Ref,
-    pub stmts: StmtNodeList,
+    pub stmts: StmtNodeList<'a>,
     pub is_export: bool,
 }
 
-pub struct Function {
-    pub func: G::Fn,
+pub struct Function<'a> {
+    pub func: G::Fn<'a>,
 }
 
 #[derive(Default)]
-pub struct Class {
-    pub class: G::Class,
+pub struct Class<'a> {
+    pub class: G::Class<'a>,
     pub is_export: bool, // = false
 }
 
-pub struct If {
-    pub test: ExprNodeIndex,
-    pub yes: StmtNodeIndex,
-    pub no: Option<StmtNodeIndex>,
+pub struct If<'a> {
+    pub test: ExprNodeIndex<'a>,
+    pub yes: StmtNodeIndex<'a>,
+    pub no: Option<StmtNodeIndex<'a>>,
     /// Where the `else` of `no` is. `Loc::EMPTY` in an `if` that the parser did not make.
     pub else_loc: crate::Loc,
 }
 
-pub struct For {
+pub struct For<'a> {
     /// May be a SConst, SLet, SVar, or SExpr
-    pub init: Option<StmtNodeIndex>, // = None
-    pub test: Option<ExprNodeIndex>,   // = None
-    pub update: Option<ExprNodeIndex>, // = None
-    pub body: StmtNodeIndex,
+    pub init: Option<StmtNodeIndex<'a>>, // = None
+    pub test: Option<ExprNodeIndex<'a>>,   // = None
+    pub update: Option<ExprNodeIndex<'a>>, // = None
+    pub body: StmtNodeIndex<'a>,
 }
 
-pub struct ForIn {
+pub struct ForIn<'a> {
     /// May be a SConst, SLet, SVar, or SExpr
-    pub init: StmtNodeIndex,
-    pub value: ExprNodeIndex,
-    pub body: StmtNodeIndex,
+    pub init: StmtNodeIndex<'a>,
+    pub value: ExprNodeIndex<'a>,
+    pub body: StmtNodeIndex<'a>,
 }
 
-pub struct ForOf {
+pub struct ForOf<'a> {
     pub is_await: bool, // = false
     /// May be a SConst, SLet, SVar, or SExpr
-    pub init: StmtNodeIndex,
-    pub value: ExprNodeIndex,
-    pub body: StmtNodeIndex,
+    pub init: StmtNodeIndex<'a>,
+    pub value: ExprNodeIndex<'a>,
+    pub body: StmtNodeIndex<'a>,
 }
 
-pub struct DoWhile {
-    pub body: StmtNodeIndex,
-    pub test: ExprNodeIndex,
+pub struct DoWhile<'a> {
+    pub body: StmtNodeIndex<'a>,
+    pub test: ExprNodeIndex<'a>,
 }
 
-pub struct While {
-    pub test: ExprNodeIndex,
-    pub body: StmtNodeIndex,
+pub struct While<'a> {
+    pub test: ExprNodeIndex<'a>,
+    pub body: StmtNodeIndex<'a>,
 }
 
-pub struct With {
-    pub value: ExprNodeIndex,
-    pub body: StmtNodeIndex,
+pub struct With<'a> {
+    pub value: ExprNodeIndex<'a>,
+    pub body: StmtNodeIndex<'a>,
     pub body_loc: crate::Loc, // = crate::Loc::EMPTY
 }
 
-pub struct Try {
+pub struct Try<'a> {
     pub body_loc: crate::Loc,
-    pub body: StmtNodeList,
+    pub body: StmtNodeList<'a>,
 
-    pub catch: Option<Catch>,     // = None
-    pub finally: Option<Finally>, // = None
+    pub catch: Option<Catch<'a>>,     // = None
+    pub finally: Option<Finally<'a>>, // = None
 }
 
-pub struct Switch {
-    pub test: ExprNodeIndex,
+pub struct Switch<'a> {
+    pub test: ExprNodeIndex<'a>,
     pub body_loc: crate::Loc,
-    pub cases: StoreSlice<Case>, // arena-owned
+    pub cases: StoreSlice<'a, Case<'a>>,
 }
 
 /// This object represents all of these types of import statements:
@@ -197,7 +196,7 @@ pub struct Switch {
 ///
 /// Many parts are optional and can be combined in different ways. The only
 /// restriction is that you cannot have both a clause and a star namespace.
-pub struct Import {
+pub struct Import<'a> {
     /// If this is a star import: This is a Ref for the namespace symbol. The Loc
     /// for the symbol is StarLoc.
     ///
@@ -205,9 +204,9 @@ pub struct Import {
     /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
-    pub default_name: Option<LocRef>,  // = None
-    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
-    pub star_name_loc: crate::Loc,     // = Loc::EMPTY
+    pub default_name: Option<LocRef>, // = None
+    pub items: StoreSlice<'a, ClauseItem<'a>>,
+    pub star_name_loc: crate::Loc, // = Loc::EMPTY
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
     /// "import defer * as ns from 'path'" — the TC39 Deferred Module Evaluation
@@ -216,7 +215,7 @@ pub struct Import {
     pub phase_defer: bool, // = false
 }
 
-impl Default for Import {
+impl Default for Import<'_> {
     fn default() -> Self {
         Self {
             namespace_ref: Ref::NONE,
@@ -231,22 +230,22 @@ impl Default for Import {
 }
 
 #[derive(Default)]
-pub struct Return {
-    pub value: Option<ExprNodeIndex>, // = None
+pub struct Return<'a> {
+    pub value: Option<ExprNodeIndex<'a>>, // = None
 }
 
-pub struct Throw {
-    pub value: ExprNodeIndex,
+pub struct Throw<'a> {
+    pub value: ExprNodeIndex<'a>,
 }
 
-pub struct Local {
-    pub kind: Kind,         // = Kind::KVar
-    pub decls: G::DeclList, // = .{}
-    pub is_export: bool,    // = false
+pub struct Local<'a> {
+    pub kind: Kind,             // = Kind::KVar
+    pub decls: G::DeclList<'a>, // = .{}
+    pub is_export: bool,        // = false
     pub origin: LocalOrigin,
 }
 
-impl Default for Local {
+impl Default for Local<'_> {
     fn default() -> Self {
         Self {
             kind: Kind::default(),
@@ -257,7 +256,7 @@ impl Default for Local {
     }
 }
 
-impl Local {
+impl Local<'_> {
     pub fn can_merge_with(&self, other: &Local) -> bool {
         // Don't merge "using" / "await using" declarations. Merging them is
         // spec-compliant but matches esbuild's behavior of keeping them

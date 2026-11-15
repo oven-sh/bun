@@ -185,6 +185,26 @@ impl<'a> DataURL<'a> {
         Ok(percent_decoded.to_vec())
     }
 
+    /// [`Self::decode_data`] into `arena`. Borrows the URL if there is nothing to decode.
+    pub fn decode_data_in(&self, arena: &'a bun_alloc::Arena) -> Result<&'a [u8], DecodeDataError> {
+        let percent_decoded_owned: Option<Vec<u8>> = PercentEncoding::decode_unstrict(self.data)?;
+
+        if self.is_base64 {
+            let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
+            let decoded = arena.alloc_slice_fill_copy(bun_base64::decode_len(percent_decoded), 0);
+            let result = bun_base64::decode(decoded, percent_decoded);
+            if !result.is_successful() || result.count != decoded.len() {
+                return Err(DecodeDataError::Base64DecodeError);
+            }
+            return Ok(decoded);
+        }
+
+        Ok(match percent_decoded_owned {
+            Some(percent_decoded) => arena.alloc_slice_copy(&percent_decoded),
+            None => self.data,
+        })
+    }
+
     /// Returns the shorter of either a base64-encoded or percent-escaped data URL
     pub fn encode_string_as_shortest_data_url(mime_type: &[u8], text: &[u8]) -> Vec<u8> {
         // Calculate base64 version

@@ -8,7 +8,7 @@ use bun_ast::op::Level;
 use bun_ast::{AstVec, E, Expr, ExprNodeIndex, ExprNodeList, G};
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
-    pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr> {
+    pub(crate) fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> crate::CrateResult<Expr<'a>> {
         let p = self;
         // Nested child elements (`<a><b><c>...`) recurse back into this function,
         // so guard the stack the same way the other recursive parse entry points do.
@@ -154,7 +154,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                         }
                                         ExprData::EDot(dot) => {
                                             break 'brk p.new_expr(
-                                                E::EString::init(&dot.name),
+                                                E::EString::init(dot.name.slice()),
                                                 dot.name_loc,
                                             );
                                         }

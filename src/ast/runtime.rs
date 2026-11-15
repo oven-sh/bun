@@ -9,7 +9,7 @@
 
 use bun_collections::StringArrayHashMap;
 
-use crate::{Expr, Ref};
+use crate::{AstArena, E, Expr, Loc, Ref};
 
 // ───────────────────────────── Runtime ─────────────────────────────
 
@@ -22,18 +22,31 @@ impl Runtime {
 }
 
 #[derive(Clone)]
-pub enum ReplaceableExport {
+pub enum ReplaceableExport<'a> {
     Delete,
-    Replace(Expr),
+    Replace(ReplacementValue<'a>),
     /// Owns the name bytes (constructed from an owned slice in
     /// `JSTranspiler`; the parser copies into its bump arena when consuming).
     Inject {
         name: Box<[u8]>,
-        value: Expr,
+        value: ReplacementValue<'a>,
     },
 }
 
-impl ReplaceableExport {
+/// Not an `Expr`: parses share it, and a parse writes to its nodes. `None` is `undefined`.
+#[derive(Clone, Copy)]
+pub struct ReplacementValue<'a>(pub Option<E::JsonValue<'a>>);
+
+impl<'a> ReplacementValue<'a> {
+    pub fn to_expr(self, arena: &'a AstArena, loc: Loc) -> Expr<'a> {
+        match self.0 {
+            Some(value) => Expr::from_json_value(arena, &value, loc),
+            None => Expr::init(E::Undefined, loc),
+        }
+    }
+}
+
+impl ReplaceableExport<'_> {
     #[inline]
     pub fn is_replace(&self) -> bool {
         matches!(self, Self::Replace(_))
@@ -49,28 +62,28 @@ impl ReplaceableExport {
 /// immutably) and expose a `.entries` accessor that satisfies the
 /// `replace_exports.entries.len` shape used by `visitStmt`.
 #[derive(Default)]
-pub struct ReplaceableExportMap {
+pub struct ReplaceableExportMap<'a> {
     /// Backing map. Named `entries` so `replace_exports.entries.len()`
     /// resolves (`StringArrayHashMap` derefs to `ArrayHashMap`, which has
     /// `.len()`).
-    pub entries: StringArrayHashMap<ReplaceableExport>,
+    pub entries: StringArrayHashMap<ReplaceableExport<'a>>,
 }
 
-impl core::ops::Deref for ReplaceableExportMap {
-    type Target = StringArrayHashMap<ReplaceableExport>;
+impl<'a> core::ops::Deref for ReplaceableExportMap<'a> {
+    type Target = StringArrayHashMap<ReplaceableExport<'a>>;
     #[inline]
     fn deref(&self) -> &Self::Target {
         &self.entries
     }
 }
-impl core::ops::DerefMut for ReplaceableExportMap {
+impl core::ops::DerefMut for ReplaceableExportMap<'_> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.entries
     }
 }
 
-impl ReplaceableExportMap {
+impl<'a> ReplaceableExportMap<'a> {
     #[inline]
     pub fn count(&self) -> usize {
         self.entries.count()
@@ -78,7 +91,7 @@ impl ReplaceableExportMap {
     /// Immutable lookup (`&V`); `get_ptr_mut` is the `&mut V` form. Call
     /// sites in the visitor only read through it.
     #[inline]
-    pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport> {
+    pub fn get_ptr(&self, key: &[u8]) -> Option<&ReplaceableExport<'a>> {
         self.entries.get(key)
     }
     #[inline]

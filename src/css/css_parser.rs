@@ -19,7 +19,7 @@ use bun_core::{StackCheck, strings};
 /// `bun.ast.Index` — bundler source-file index. Hoisted into
 /// `bun_options_types` to keep css below the parser tier.
 use bun_ast::Index as SrcIndex;
-type SymbolList = Vec<bun_ast::Symbol>;
+type SymbolList<'a> = Vec<bun_ast::Symbol<'a>>;
 use bun_ast::{ImportKind, ImportRecord};
 
 pub use crate::compat::{self, Feature};
@@ -2166,15 +2166,15 @@ pub type BundlerCssRule<'bump> = CssRule<'bump, BundlerAtRule>;
 
 /// Additional data we don't want stored on the stylesheet
 #[derive(Default)]
-pub struct StylesheetExtra {
+pub struct StylesheetExtra<'a> {
     /// Used when css modules is enabled
-    pub symbols: SymbolList,
+    pub symbols: SymbolList<'a>,
     /// A value holds `revert-rule`, which rolls back the style rule that holds it.
     pub(crate) may_revert_rule: bool,
 }
 
-pub struct ParserExtra {
-    pub(crate) symbols: SymbolList,
+pub struct ParserExtra<'a> {
+    pub(crate) symbols: SymbolList<'a>,
     pub(crate) local_scope: LocalScope,
     pub(crate) source_index: SrcIndex,
 }
@@ -2498,8 +2498,10 @@ mod stylesheet_impl {
             options: ParserOptions<'_>,
             import_records: Option<&mut Vec<ImportRecord<'bump>>>,
             source_index: SrcIndex,
-        ) -> Maybe<(StyleSheet<'bump, DefaultAtRule>, StylesheetExtra), Err<ParserError<'bump>>>
-        {
+        ) -> Maybe<
+            (StyleSheet<'bump, DefaultAtRule>, StylesheetExtra<'bump>),
+            Err<ParserError<'bump>>,
+        > {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
             // need a custom at-rule call `parse_with` directly.
             let mut at_rule_parser = BundlerAtRuleParser {
@@ -2528,7 +2530,7 @@ mod stylesheet_impl {
             at_rule_parser: &mut P,
             import_records: Option<&mut Vec<ImportRecord<'bump>>>,
             source_index: SrcIndex,
-        ) -> Maybe<(Self, StylesheetExtra), Err<ParserError<'bump>>> {
+        ) -> Maybe<(Self, StylesheetExtra<'bump>), Err<ParserError<'bump>>> {
             check_input_len(code)?;
             let mut composes = ComposesMap::default();
             let mut parser_extra = ParserExtra {
@@ -2693,7 +2695,7 @@ mod stylesheet_impl {
             options: ParserOptions<'_>,
             import_records: &mut Vec<ImportRecord<'bump>>,
             source_index: SrcIndex,
-        ) -> Maybe<(Self, StylesheetExtra), Err<ParserError<'bump>>> {
+        ) -> Maybe<(Self, StylesheetExtra<'bump>), Err<ParserError<'bump>>> {
             let mut at_rule_parser = BundlerAtRuleParser {
                 arena,
                 track_layers_and_imports: true,
@@ -2971,7 +2973,7 @@ pub struct Parser<'a, 'bump> {
     pub(crate) stop_before: Delimiters,
     pub(crate) flags: ParserOpts,
     pub(crate) import_records: Option<&'a mut Vec<ImportRecord<'bump>>>,
-    pub(crate) extra: Option<&'a mut ParserExtra>,
+    pub(crate) extra: Option<&'a mut ParserExtra<'bump>>,
 }
 
 impl<'a, 'bump> Parser<'a, 'bump> {
@@ -3067,7 +3069,7 @@ impl<'a, 'bump> Parser<'a, 'bump> {
         input: &'a mut ParserInput<'bump>,
         import_records: Option<&'a mut Vec<ImportRecord<'bump>>>,
         flags: ParserOpts,
-        extra: Option<&'a mut ParserExtra>,
+        extra: Option<&'a mut ParserExtra<'bump>>,
     ) -> Self {
         Parser {
             input,

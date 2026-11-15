@@ -655,7 +655,7 @@ impl BunxCommand {
     fn read_package_json<T>(
         transpiler: &mut Transpiler,
         path: &[u8],
-        read: impl FnOnce(bun_ast::JsonView<'_>) -> T,
+        read: impl FnOnce(bun_ast::JsonView<'_, '_>) -> T,
     ) -> Option<T> {
         let contents = bun_sys::File::read_from(Fd::cwd(), path).ok()?;
         let source = bun_ast::Source::init_path_string(path, contents.as_slice());

@@ -94,13 +94,13 @@ impl LatePasses {
 ///
 /// `is_more_recorded`: the caller has errors of its own for the function that are wanted, which
 /// an error that a pass throws drops like those that the passes record.
-pub fn lint_function(
-    arena: &AstArena,
-    func: &FunctionNode<'_>,
-    host: &dyn Host,
+pub fn lint_function<'a>(
+    arena: &'a AstArena,
+    func: &FunctionNode<'_, 'a>,
+    host: &dyn Host<'a>,
     fn_type: ReactFunctionType,
     config: &EnvironmentConfig,
-    import_bindings: &[(bun_ast::Ref, VariableBinding)],
+    import_bindings: &[(bun_ast::Ref, VariableBinding<'a>)],
     wanted: Categories,
     is_more_recorded: bool,
 ) -> Linted {
@@ -123,6 +123,16 @@ pub fn lint_function(
             config.validate_exhaustive_effect_dependencies = ExhaustiveEffectDepsMode::Off;
         }
     }
+    type Inputs<'a, 'ast> = (
+        &'a FunctionNode<'a, 'ast>,
+        &'a dyn Host<'ast>,
+        &'a [(bun_ast::Ref, VariableBinding<'ast>)],
+    );
+    // SAFETY: only lifetimes differ. The compiler stores what it gets from these in HIR, which is dropped before
+    // `with_arena` returns. `Linted` owns its strings.
+    let (func, host, import_bindings) = unsafe {
+        core::mem::transmute::<Inputs<'_, 'a>, Inputs<'_, 'static>>((func, host, import_bindings))
+    };
     with_arena(arena, || {
         let mut bindings = IndexMap::new();
         for (ref_, binding) in import_bindings {
@@ -151,11 +161,11 @@ pub fn lint_function(
 }
 
 fn run(
-    func: &FunctionNode<'_>,
-    host: &dyn Host,
+    func: &FunctionNode<'_, 'static>,
+    host: &dyn Host<'static>,
     env: &mut Environment,
     context: &mut ProgramContext,
-    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
+    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding<'static>>,
     late_passes: LatePasses,
     wants_thrown: bool,
 ) -> Result<(), CompilerError> {

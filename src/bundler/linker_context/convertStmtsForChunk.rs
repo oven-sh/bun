@@ -42,15 +42,15 @@ use crate::options::Format;
 /// In that case, when bundling, we still need to preserve that module
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
-pub(crate) fn convert_stmts_for_chunk(
-    c: &LinkerContext<'_, '_>,
+pub(crate) fn convert_stmts_for_chunk<'a>(
+    c: &LinkerContext<'_, 'a>,
     source_index: u32,
-    stmts: &mut StmtList,
-    part_stmts: &[bun_ast::Stmt],
+    stmts: &mut StmtList<'a>,
+    part_stmts: &[bun_ast::Stmt<'a>],
     chunk: &Chunk,
-    bump: &AstArena,
+    bump: &'a AstArena,
     wrap: WrapKind,
-    ast: &BundledAstRow<'_>,
+    ast: &BundledAstRow<'_, 'a>,
 ) -> Result<(), crate::Error> {
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough
@@ -655,7 +655,12 @@ pub(crate) fn convert_stmts_for_chunk(
 }
 
 /// `module.exports = value;`
-fn assign_module_exports(bump: &AstArena, module_ref: bun_ast::Ref, value: Expr, loc: Loc) -> Stmt {
+fn assign_module_exports<'a>(
+    bump: &'a AstArena,
+    module_ref: bun_ast::Ref,
+    value: Expr<'a>,
+    loc: Loc,
+) -> Stmt<'a> {
     Stmt::allocate(
         bump,
         S::SExpr {

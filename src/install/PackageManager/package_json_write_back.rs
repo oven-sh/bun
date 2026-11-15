@@ -342,7 +342,7 @@ fn edit_update_targets(
         ] {
             PackageJSONEditor::edit_update_entries(
                 &manager.lockfile,
-                &manager.ast_arena,
+                manager.workspace_package_json_cache.arena,
                 &mut updating,
                 target.name_hash,
                 update_to_latest,
@@ -602,7 +602,8 @@ fn sync_lockfile(
 
 fn unchanged_on_disk(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
     let printed: &[u8] = &fetch_entry(manager, target).source.contents;
-    let mut file = WorkspacePackageJSONCache::default();
+    let arena = bun_ast::AstArena::borrowing_default();
+    let mut file = WorkspacePackageJSONCache::new(&arena);
     let GetResult::Entry(on_disk) = file.get_with_path(
         &bun_ast::Log::init(),
         &target.package_json_path,
@@ -630,7 +631,7 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
         return Ok(());
     }
     let edited = core::mem::take(&mut manager.edited_package_jsons);
-    let mut trusted: Vec<Box<[u8]>> = if manager
+    let trusted: Vec<&[u8]> = if manager
         .options
         .do_
         .contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
@@ -645,11 +646,10 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
         if e.received_requests && !trusted.is_empty() {
             let mut root = fetch_entry_root(manager, &e.target);
             PackageJSONEditor::edit_trusted_dependencies(
-                &manager.ast_arena,
+                manager.workspace_package_json_cache.arena,
                 &mut root,
-                &mut trusted,
+                &mut trusted.iter().copied(),
             )?;
-            // The new nodes borrow their strings from `trusted`.
             store_entry(manager, &e.target, root);
         }
         if unchanged_on_disk(manager, &e.target) {

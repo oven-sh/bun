@@ -938,6 +938,55 @@ describe("zlib.brotli known answers", () => {
     `);
   });
 
+  it("compresses with a dictionary of more than 64 KiB", () => {
+    const dictionary = Buffer.concat([noise, text, samples]);
+    const input = Buffer.concat(Array.from(window(dictionary, 2500), part => part.subarray(0, 40)));
+    expect([5, 9, 11].map(quality => roundTrip(input, { [QUALITY]: quality }, dictionary))).toMatchInlineSnapshot(`
+      [
+        "151 d3cce7d8",
+        "151 d3cce7d8",
+        "148 bdba310a",
+      ]
+    `);
+  });
+
+  it("compresses about 64 KiB", () => {
+    const input = Buffer.concat([text, samples, text]);
+    const answers = [65535, 65536, 65537].map(length =>
+      [5, 6, 7, 9].map(quality => roundTrip(input.subarray(0, length), { [QUALITY]: quality })).join(),
+    );
+    expect(answers).toMatchInlineSnapshot(`
+      [
+        "13232 defb0db3,12990 04e511ea,12689 cc00c593,12634 f65eecea",
+        "13232 8c9f02f1,12990 f3f42c22,12689 b32b7e1a,12634 003a35ff",
+        "13232 60122f35,12990 a31ec9db,12690 c32ab6db,12634 e501a3a5",
+      ]
+    `);
+  });
+
+  it("finishes with up to three bytes after a flush", () => {
+    const answers = [0, 1, 2, 5, 11].map(quality =>
+      [0, 1, 2, 3].map(length => {
+        const steps = [
+          [FLUSH, text.subarray(0, 100)],
+          [FINISH, text.subarray(0, length)],
+        ];
+        return drive(zlib.createBrotliCompress({ params: { [QUALITY]: quality } }), steps, 1024)
+          .subarray(-8)
+          .toString("hex");
+      }),
+    );
+    expect(answers.map(String)).toMatchInlineSnapshot(`
+      [
+        "656470656f706c03,6f706c0000083103,706c080008313903,6c10000831393803",
+        "656470656f706c03,6f706c0000083103,706c080008313903,6c10000831393803",
+        "656470656f706c03,6f706c0000083103,706c080008313903,6c10000831393803",
+        "7034b946b5650303,b565030000083103,6503080008313903,0310000831393803",
+        "cd55325e0e030303,0e03030000083103,0303080008313903,0310000831393803",
+      ]
+    `);
+  });
+
   it("follows the other parameters", () => {
     const input = mixed.subarray(80000, 95000);
     const answers = {};
@@ -1094,9 +1143,15 @@ describe("zlib.brotli known answers", () => {
       [9, 61],
       [8192, 7],
     ]) {
-      const steps = Array.from(window(compressed, piece), chunk => [PROCESS, chunk]);
+      const steps = [Buffer.alloc(0), ...window(compressed, piece)].map(chunk => [PROCESS, chunk]);
       expect(drive(zlib.createBrotliDecompress(), steps, room)).toEqual(input);
     }
+  });
+
+  it("switches blocks in a stream that comes in pieces", () => {
+    const compressed = zlib.brotliCompressSync(mixed, { params: { [QUALITY]: 10 } });
+    const steps = Array.from(window(compressed, 97), chunk => [PROCESS, chunk]);
+    expect(digest(drive(zlib.createBrotliDecompress(), steps, 1 << 16))).toBe(digest(mixed));
   });
 
   it("reports the end of the input at every length of a stream", () => {
@@ -1150,6 +1205,27 @@ describe("zlib.brotli known answers", () => {
       return this.put([2, 1], [2, symbols.length - 1], ...symbols.map(symbol => [symbolBits, symbol]));
     }
 
+    /** Spells out each length in four bits. */
+    complexCode(lengths) {
+      this.put([2, 0], ...[1, 1, 1, 1, 1, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1].map(used => [2, used]));
+      for (const length of lengths) this.code(4, length);
+      return this;
+    }
+
+    /** Returns what writes a symbol. */
+    evenCode(size) {
+      const length = 32 - Math.clz32(size - 1);
+      const shorter = 2 ** length - size;
+      this.complexCode(Array.from({ length: size }, (_, symbol) => length - (symbol < shorter)));
+      return symbol => (symbol < shorter ? this.code(length - 1, symbol) : this.code(length, symbol + shorter));
+    }
+
+    /** Of block types or trees. */
+    number(value) {
+      const bits = 31 - Math.clz32(value - 1);
+      return value === 1 ? this.put([1, 0]) : this.put([4, 2 * bits + 1], [bits, value - 1 - 2 ** bits]);
+    }
+
     /** For 64 symbols, as the encoder describes it at quality 2. */
     sixBitCode() {
       return this.put([14, 0x1c03], [14, 0xda7]);
@@ -1162,11 +1238,15 @@ describe("zlib.brotli known answers", () => {
     }
 
     lastHeader(length) {
-      const nibbles = length > 1 << 16 ? 5 : 4;
+      const nibbles = Math.max(4, (35 - Math.clz32(length - 1)) >> 2);
       return this.put([2, 1], [2, nibbles - 4], [nibbles * 4, length - 1]);
     }
 
     /** With one block type of each category, no distance parameters and no contexts. */
+    plainHeader(length) {
+      return this.put([1, 0], [2, 0], [16, length - 1], [1, 0], [13, 0]);
+    }
+
     plainLastHeader(length) {
       return this.lastHeader(length).put([13, 0]);
     }
@@ -1177,10 +1257,10 @@ describe("zlib.brotli known answers", () => {
     }
 
     copy(length) {
-      const bases = [2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70];
-      const index = bases.findLastIndex(base => base <= length);
-      this.code(9, [128, 192, 384][index >> 3] + (index & 7));
-      return this.put([Math.max(0, (index - 6) >> 1), length - bases[index]]);
+      const extraBits = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24];
+      let [index, base] = [0, 2];
+      while (length >= base + 2 ** extraBits[index]) base += 2 ** extraBits[index++];
+      return this.code(9, [128, 192, 384][index >> 3] + (index & 7)).put([extraBits[index], length - base]);
     }
 
     distance(distance) {
@@ -1198,7 +1278,9 @@ describe("zlib.brotli known answers", () => {
     }
   }
 
-  const windowOf = bits => new Bits().put(bits === 16 ? [1, 0] : [7, ((bits - 8) << 4) | 1]);
+  const windowOf = bits =>
+    new Bits().put(bits > 17 ? [4, ((bits - 17) << 1) | 1] : bits === 16 ? [1, 0] : [7, (((bits - 8) % 9) << 4) | 1]);
+  const largeWindowOf = (bits, reserved = 0) => new Bits().put([7, 0x11], [1, reserved], [6, bits]);
   const WORD_INDEX_BITS = [10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5];
 
   /** `words` are `[length, index, transform]`, and come to `total` bytes. */
@@ -1267,8 +1349,7 @@ describe("zlib.brotli known answers", () => {
       const lengths = [2, 3, 8, 15, 16, 17, 31, 32, 33, 64, 100];
       const fresh = noise.subarray(distance * 40, distance * 40 + 40);
       for (const length of lengths) {
-        bits.uncompressed(fresh).put([1, 0], [2, 0], [16, length - 1], [1, 0], [13, 0]);
-        bits.fixedCodes().copy(length).distance(distance);
+        bits.uncompressed(fresh).plainHeader(length).fixedCodes().copy(length).distance(distance);
         expected.push(...fresh);
         for (let i = 0; i < length; i++) expected.push(expected.at(-distance));
       }
@@ -1290,17 +1371,381 @@ describe("zlib.brotli known answers", () => {
     expect(zlib.brotliDecompressSync(bits.finish()).toString()).toBe(expected);
   });
 
+  it("has every code for block types", () => {
+    const bits = windowOf(16).lastHeader(6);
+    bits.put([4, 3], [1, 0]).simpleCode(3, 0, 1, 4).simpleCode(5, 0).put([2, 0]);
+    bits.put([14, 0], [4, 3], [1, 0], [1, 0]).simpleCode(2, 0, 1, 2);
+    for (let context = 0; context < 192; context++) bits.code(1 + (context > 63), [0, 2, 3][context >> 6]);
+    bits.put([2, 0]).simpleCode(8, 97).simpleCode(8, 98).simpleCode(8, 99);
+    bits
+      .simpleCode(10, 6 << 3)
+      .simpleCode(6, 0)
+      .put([1, 0]);
+    // The second to last type, the next type, and the third type.
+    for (const code of ["0", "10", "10", "0", "11"]) bits.code(code.length, parseInt(code, 2)).put([2, 0]);
+    expect(zlib.brotliDecompressSync(bits.finish()).toString()).toBe("abcacc");
+  });
+
+  const upTo15 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 15];
+  const decodeInPieces = (stream, pieces, room) =>
+    pieces.map(piece => {
+      const steps = Array.from(window(stream, piece), chunk => [PROCESS, chunk]);
+      return digest(drive(zlib.createBrotliDecompress(), [...steps, [FINISH, Buffer.alloc(0)]], room));
+    });
+
+  it("decodes codes of up to 15 bits", () => {
+    const bits = windowOf(16)
+      .uncompressed(noise.subarray(0, 40))
+      .plainLastHeader(112 * 16);
+    const symbol = i => bits.code(upTo15[i], 2 ** upTo15[i] - (i < 15 ? 2 : 1));
+    // The commands insert one or two literals and copy two to nine bytes from a short distance.
+    bits
+      .complexCode(upTo15)
+      .complexCode([...Array(136).fill(0), ...upTo15])
+      .complexCode(upTo15);
+    for (let i = 0; i < 256; i++) {
+      for (const each of [i & 15, i >> 4, ...(i & 8 ? [i % 13] : []), (i * 3 + (i >> 4) + 1) & 15]) symbol(each);
+    }
+    expect(decodeInPieces(bits.finish(), [1, 5, 4096], 4096)).toEqual(Array(3).fill("1832 40335292"));
+  });
+
+  it.each([9, 10, 11, 12, 13, 14, 15])("decodes commands of 48 + %d bits at each alignment", length => {
+    // The code of one bit is for a literal and two bytes from the last distance.
+    const lengths = Array(704).fill(0).fill(length, 702);
+    lengths.splice(8, length - 1, ...upTo15.slice(0, length - 1));
+    const out = Buffer.alloc(1 << 18, "a");
+    function write(total) {
+      const bits = windowOf(20).uncompressed(noise.subarray(0, 40)).plainLastHeader(total);
+      bits.simpleCode(8, 97).complexCode(lengths).sixBitCode();
+      let [at, last] = [noise.copy(out, 0, 0, 40), 4];
+      for (let i = 0; i < 8; i++) {
+        for (; bits.count !== i; at += 3) {
+          bits.put([1, 0]);
+          out.copyWithin(at + 1, at + 1 - last, at + 3 - last);
+        }
+        last = at += 22594 + 37 * i;
+        bits
+          .code(length, 2 ** length - 1)
+          .put([24, 37 * i], [24, 800 - 99 * i])
+          .distance(last);
+        out.copyWithin(at, 0, 2118 + 800 - 99 * i);
+        at += 2118 + 800 - 99 * i;
+      }
+      return [bits.finish(), at];
+    }
+    const [stream, end] = write(write(1 << 17)[1] - 40);
+    expect(decodeInPieces(stream, [stream.length, 1], 1 << 18)).toEqual(Array(2).fill(digest(out.subarray(0, end))));
+  });
+
+  it.each([
+    [0xff0000, 5],
+    [5, 0xff0000],
+  ])("decodes a command with lengths of %d and %d in its extra bits", (insert, copy) => {
+    const total = 22594 + insert + 2118 + copy;
+    const bits = windowOf(16).plainLastHeader(total).simpleCode(8, 97);
+    bits.complexCode([...Array(688).fill(0), ...upTo15]).simpleCode(6, 0);
+    const stream = bits.code(15, 0x7fff).put([24, insert], [24, copy]).finish();
+    expect(decodeInPieces(stream, [stream.length, 1], 1 << 20)).toEqual(
+      Array(2).fill(digest(Buffer.alloc(total, "a"))),
+    );
+  });
+
+  it.each([
+    [[3, 1, 1], [], "3294 0dae9afc"],
+    [[3, 1, 1], [1], "3294 155c1ee4"],
+    [[1, 3, 1], [0], "3299 51017558"],
+    [[1, 1, 3], [], "3171 cb48c33e"],
+    [[3, 3, 3], [0, 2], "3597 6cd4667a"],
+    [[3, 3, 3], [0, 1, 2], "3597 fbeada8b"],
+  ])("switches between %p block types, with contexts in %p", (typeCounts, inContext, expected) => {
+    let next = 0;
+    const random = (fields, count, value = noise[next++] & (2 ** count - 1)) => (fields.push([count, value]), value);
+    /** From 1 to 48. */
+    function blockLength(fields) {
+      const code = [0, 4, 2, 6, 1, 5, 3, 7][random(fields, 3)];
+      return [1, 5, 9, 13, 17, 25, 33, 41][code] + random(fields, code < 4 ? 2 : 3);
+    }
+    const blocks = typeCounts.map(count => {
+      const first = [];
+      return { count, first, left: count > 1 ? blockLength(first) : Infinity, types: [0, 1] };
+    });
+    const body = [];
+    function typeOf(block) {
+      if (block.left-- === 0) {
+        const code = [0, 2, 1, 3][random(body, 2)];
+        block.types.unshift([block.types[1], (block.types[0] + 1) % 3, 0, 2][code]);
+        block.left = blockLength(body) - 1;
+      }
+      return block.types[0];
+    }
+    const commands = type => [8 + type, 66 + 8 * type, 131 + type, 170 - 8 * type];
+    let total = 0;
+    for (let i = 0; i < 400; i++) {
+      const command = commands(typeOf(blocks[1]))[[0, 2, 1, 3][random(body, 2)]];
+      total += ((command >> 3) & 7) + (command & 64 ? 14 + random(body, 2) : 2 + (command & 7));
+      for (let literals = (command >> 3) & 7; literals--; random(body, 2)) typeOf(blocks[0]);
+      if (command >= 128 && (typeOf(blocks[2]), random(body, 2) === 3)) random(body, 3);
+    }
+
+    const bits = windowOf(16).uncompressed(noise.subarray(0, 64)).lastHeader(total);
+    for (const { count, first } of blocks) {
+      if (bits.number(count) && count > 1) bits.simpleCode(3, 0, 1, 2, 4).put([1, 0]).evenCode(8);
+      bits.put(...first);
+    }
+    bits.put([2, 0], [4, 15], ...[0, 2, 3].slice(0, typeCounts[0]).map(mode => [2, mode]));
+    for (const [count, contexts, varies] of [
+      [typeCounts[0], 64, type => inContext.includes(type)],
+      [typeCounts[2], 4, () => true],
+    ]) {
+      bits.number(4).put([1, 0]).simpleCode(2, 0, 1, 2, 3).put([1, 0]);
+      for (let i = 0; i < count * contexts; i++) bits.put([2, varies(i >> 6) ? noise[next++] & 3 : i >> 6]);
+      bits.put([1, 0]);
+    }
+    for (let tree = 0; tree < 4; tree++) bits.simpleCode(8, tree, 32 + tree, 101 + tree, 200 + tree).put([1, 0]);
+    for (let type = 0; type < typeCounts[1]; type++) bits.simpleCode(10, ...commands(type)).put([1, 0]);
+    for (let tree = 0; tree < 4; tree++) bits.simpleCode(7, tree, 16 + tree, 25 + tree, 35 + (tree & 1)).put([1, 0]);
+    expect(decodeInPieces(bits.put(...body).finish(), [4096, 100, 13, 1], 1000)).toEqual(Array(4).fill(expected));
+  });
+
+  it("makes room for more trees in each meta-block", () => {
+    const [bits, expected] = [windowOf(16).uncompressed(noise.subarray(0, 15)), [...noise.subarray(0, 15)]];
+    for (const count of [2, 5, 33, 70, 256, 40]) {
+      const trees = Array.from({ length: count }, (_, i) => i);
+      const isDeep = tree => tree % 8 === 7;
+      bits.put([1, 0], [2, 0], [16, trees.reduce((sum, tree) => sum + 2 * (3 + (tree & 7)), -1)], [1, 0]);
+      // Blocks of one symbol, each of the next type.
+      for (let i = 0; i < 3; i++)
+        bits
+          .number(count)
+          .simpleCode(32 - Math.clz32(count + 1), 1)
+          .simpleCode(5, 0)
+          .put([2, 0]);
+      bits.put([2, 0], [4, 15], ...trees.map(() => [2, 0]));
+      // One tree for all contexts of a type.
+      for (const runCode of [5, 1]) {
+        const symbol = bits
+          .number(count)
+          .put([5, 2 * runCode - 1])
+          .evenCode(count + runCode);
+        for (const tree of trees) (symbol(tree && tree + runCode), symbol(runCode).put([runCode, 2 ** runCode - 1]));
+        bits.put([1, 1]);
+      }
+      for (const [symbolBits, skipped, symbol] of [
+        [8, 0, tree => tree],
+        [10, 128, tree => 136 + (tree & 7)],
+        [7, 15, tree => 16 + (tree % 15)],
+      ]) {
+        for (const tree of trees) {
+          if (isDeep(tree)) bits.complexCode([...Array(skipped).fill(0), ...upTo15]);
+          else bits.simpleCode(symbolBits, symbol(tree));
+        }
+      }
+      [...trees, ...trees].forEach((tree, i) => {
+        for (let kind = 0; kind < 3; kind++) bits.put([i ? 2 : 0, 0], isDeep(tree) ? [15, 0x7fff] : [0, 0]);
+        expected.push(isDeep(tree) ? 15 : tree);
+        for (let copied = 0; copied < 2 + (tree & 7); copied++)
+          expected.push(expected.at(isDeep(tree) ? -15 : -1 - (tree % 15)));
+      });
+    }
+    const stream = bits.put([2, 3]).finish();
+    expect(decodeInPieces(stream, [stream.length, 11], 1 << 13)).toEqual(Array(2).fill(digest(Buffer.from(expected))));
+  });
+
+  it.each([
+    [1, 1],
+    [256, 7],
+    [257, 7],
+    [65536, 1000],
+    [65537, 1000],
+  ])("skips %d bytes of metadata that come %d at a time", (length, piece) => {
+    const steps = [
+      [FLUSH, text.subarray(0, 50)],
+      [METADATA, mixed.subarray(0, length)],
+      [FINISH, text.subarray(50, 100)],
+    ];
+    const compressed = drive(zlib.createBrotliCompress(), steps, 1 << 17);
+    const pieces = Array.from(window(compressed, piece), chunk => [PROCESS, chunk]);
+    expect(drive(zlib.createBrotliDecompress(), pieces, 1024)).toEqual(text.subarray(0, 100));
+  });
+
+  const allowingLarge = { params: { [DECODER_LARGE_WINDOW]: 1 } };
+
+  it.each([
+    ["16 bits", windowOf(16), 6, "b"],
+    ["17 bits", windowOf(17), 6, "b"],
+    ["a large window of 10 bits", largeWindowOf(10), 8, "b"],
+    ["a large window of 30 bits", largeWindowOf(30), 8, "b"],
+    ["a large window of 9 bits", largeWindowOf(9), 8, "ERR__ERROR_FORMAT_WINDOW_BITS"],
+    ["a large window of 31 bits", largeWindowOf(31), 8, "ERR__ERROR_FORMAT_WINDOW_BITS"],
+    ["the reserved bit", largeWindowOf(10, 1), 8, "ERR__ERROR_FORMAT_WINDOW_BITS"],
+  ])("reads a header with %s if large windows are allowed", (_, bits, distanceBits, expected) => {
+    bits.plainLastHeader(1).simpleCode(8, 97, 98).simpleCode(10, 8).simpleCode(distanceBits, 0).put([1, 1]);
+    const answer = drive(zlib.createBrotliDecompress(allowingLarge), [[FINISH, bits.finish()]], 64);
+    expect(answer.code ?? answer.toString()).toBe(expected);
+  });
+
+  it.each([10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21])("finds the words behind a window of %d bits", size => {
+    for (const bits of [windowOf(size), largeWindowOf(size)]) {
+      const filled = 3000 + 2 ** size;
+      bits
+        .uncompressed([97])
+        .plainLastHeader(filled + 8)
+        .fixedCodes()
+        .copy(filled)
+        .distance(1);
+      bits
+        .copy(4)
+        .distance(2 ** size - 16)
+        .copy(4)
+        .distance(2 ** size - 15);
+      expect(zlib.brotliDecompressSync(bits.finish(), allowingLarge).latin1Slice(filled)).toBe("aaaaatime");
+    }
+  });
+
+  it.each([7, 1024, 8192])("copies from the dictionary across the end of the window into %d bytes", room => {
+    const [dictionary, head] = [noise.subarray(0, 3000), text.subarray(0, 1000)];
+    const bits = windowOf(10)
+      .uncompressed(head)
+      .plainLastHeader(24 + 100 + 2500)
+      .fixedCodes();
+    bits
+      .copy(24)
+      .distance(1000 + 50)
+      .copy(100)
+      .distance(1008 + 100)
+      .copy(2500)
+      .distance(1008 + 2600);
+    const copied = [dictionary.subarray(-50, -26), dictionary.subarray(-100), dictionary.subarray(-2600, -100)];
+    const answer = drive(zlib.createBrotliDecompress({ dictionary }), [[FINISH, bits.finish()]], room);
+    expect(answer).toEqual(Buffer.concat([head, ...copied]));
+  });
+
+  it.each([1023, 1024, 1025])("ends a meta-block %d bytes into a window of 1024", end => {
+    const start = () =>
+      windowOf(10)
+        .uncompressed(Buffer.alloc(end - 4, "b"))
+        .plainLastHeader(4);
+    const streams = [
+      start()
+        .simpleCode(8, 97)
+        .simpleCode(10, 4 << 3)
+        .simpleCode(6, 0),
+      ...[1, 1008 + 4, 1008 + 5].map(distance => start().fixedCodes().copy(4).distance(distance)),
+    ];
+    const decode = bits => zlib.brotliDecompressSync(bits.finish(), { dictionary: Buffer.from("cdef") });
+    expect(streams.map(bits => decode(bits).latin1Slice(end - 5))).toEqual(["baaaa", "bbbbb", "bcdef", "btime"]);
+  });
+
+  it.each([
+    [16, 0, 480, [10, 0], "ERR__ERROR_FORMAT_BLOCK_LENGTH_1"],
+    [16, 1, 480, [10, 0], "ERR__ERROR_FORMAT_BLOCK_LENGTH_2"],
+    [18, 1, 504, [24, 50000], "ERR__ERROR_FORMAT_BLOCK_LENGTH_2"],
+  ])(
+    "notices too many literals in a window of %d bits, allocated up front: %d",
+    (size, whole, command, extra, code) => {
+      const bits = windowOf(size).plainLastHeader(1).simpleCode(8, 0).simpleCode(10, command).simpleCode(6, 0);
+      const engine = zlib.createBrotliDecompress({ params: { [DECODER_WHOLE_WINDOW]: whole } });
+      expect(drive(engine, [[FINISH, bits.put(extra).finish()]], 64).code).toBe(code);
+    },
+  );
+
+  it.each([undefined, text])("takes two zeros for the context of the first literal", dictionary => {
+    const bits = windowOf(10).lastHeader(1090).put([9, 0], [2, 3], [4, 1], [1, 0]).simpleCode(1, 0, 1);
+    bits
+      .put([16, 2 ** 16 - 2], [24, 2 ** 24 - 1], [24, 2 ** 24 - 1], [2, 0])
+      .simpleCode(8, 0)
+      .simpleCode(8, 65);
+    bits.simpleCode(10, 480).simpleCode(6, 0).put([10, 0]);
+    expect(zlib.brotliDecompressSync(bits.finish(), { dictionary })).toEqual(Buffer.alloc(1090));
+  });
+
+  it("reads on without room for output until the window is full", () => {
+    const bits = windowOf(12).uncompressed(noise.subarray(0, 1000));
+    for (const length of [24, 3072]) bits.plainHeader(length).fixedCodes().copy(length).distance(1);
+    const stream = bits.uncompressed(noise.subarray(0, 100)).put([2, 3]).finish();
+    const engine = zlib.createBrotliDecompress();
+    engine._handle.writeSync(PROCESS, stream, 0, stream.length, Buffer.alloc(8), 0, 8);
+    expect([...engine._writeState]).toEqual([0, 103]);
+    engine.close();
+  });
+
+  it("limits the distance codes of a large window", () => {
+    function countCodes(postfix, direct) {
+      const symbolBits = 32 - Math.clz32(15 + ((direct + 124) << postfix));
+      let count = 0;
+      for (let step = 1 << (symbolBits - 1); step; step >>= 1) {
+        const bits = largeWindowOf(10).lastHeader(1).put([3, 0], [2, postfix], [4, direct], [4, 0]);
+        bits
+          .simpleCode(8, 97, 98)
+          .simpleCode(10, 8)
+          .simpleCode(symbolBits, count + step - 1)
+          .put([1, 1]);
+        const answer = drive(zlib.createBrotliDecompress(allowingLarge), [[FINISH, bits.finish()]], 64);
+        if (answer.toString() === "b") count += step;
+      }
+      return count;
+    }
+    expect([0, 1, 2, 3].map(postfix => [0, 1, 15].map(direct => countCodes(postfix, direct)).join()))
+      .toMatchInlineSnapshot(`
+      [
+        "74,74,88",
+        "128,130,156",
+        "232,236,288",
+        "432,440,544",
+      ]
+    `);
+  });
+
+  it("takes the longest distance of a large window for a word", () => {
+    const bits = largeWindowOf(10).plainLastHeader(4).simpleCode(8, 0).simpleCode(10, 130).simpleCode(8, 73);
+    const steps = [[FINISH, bits.put([24, 2 ** 24 - 1], [5, 31]).finish()]];
+    expect(drive(zlib.createBrotliDecompress(allowingLarge), steps, 64).code).toBe("ERR__ERROR_FORMAT_TRANSFORM");
+  });
+
+  it("repeats its error", () => {
+    const [engine, out, errors] = [zlib.createBrotliDecompress(), Buffer.alloc(64), []];
+    engine._handle.onerror = (_, errno) => errors.push(errno);
+    for (const bits of [windowOf(16).put([20, 1 << 19], [3, 7]), new Bits().uncompressed([97])]) {
+      const input = bits.finish();
+      engine._handle.writeSync(PROCESS, input, 0, input.length, out, 0, out.length);
+    }
+    expect({ errors, out }).toEqual({ errors: [-14, -14], out: Buffer.alloc(64) });
+  });
+
   it("accepts metadata as the last meta-block", () => {
     const bits = windowOf(16).uncompressed([97]).put([2, 1], [2, 3], [1, 0], [2, 1], [8, 1]).align();
     expect(zlib.brotliDecompressSync(bits.put([16, 0xffff]).finish()).toString()).toBe("a");
   });
 
+  it.each([
+    [1, "10121 e05b5c74", text.subarray(0, 300)],
+    [5, "9671 cadfd1e7", Buffer.concat([text.subarray(0, 250), samples.subarray(0, 40)])],
+    [11, "10228 e9269d46", Buffer.concat([text.subarray(0, 700), Buffer.alloc(900, samples.subarray(0, 24))])],
+  ])("has an answer for flipped bits in a stream of quality %d", (quality, expected, input) => {
+    const stream = zlib.brotliCompressSync(input, { params: { [QUALITY]: quality } });
+    const [out, state, answers] = [Buffer.alloc(4096), new Uint32Array(2), []];
+    const { constructor: Handle } = zlib.createBrotliDecompress()._handle;
+    for (let bit = 0; bit < stream.length * 8; bit += bit < 1200 ? 1 : 3) {
+      const handle = new Handle(zlib.constants.BROTLI_DECODE);
+      let answer;
+      handle.onerror = (_, errno) => (answer = errno);
+      handle.init(new Uint32Array(0), state, () => {});
+      stream[bit >> 3] ^= 1 << (bit & 7);
+      handle.writeSync(FINISH, stream, 0, stream.length, out, 0, out.length);
+      stream[bit >> 3] ^= 1 << (bit & 7);
+      handle.close();
+      answers.push(answer ?? [state[1], zlib.crc32(out.subarray(0, out.length - state[0]))]);
+    }
+    expect(digest(Buffer.from(answers.join()))).toBe(expected);
+  });
+
   const zeroLengths = count => Array(count).fill([2, 0]);
 
   it.each([
-    ["FORMAT_EXUBERANT_NIBBLE", -1, windowOf(16).put([1, 0], [2, 1], [20, 5])],
+    ["FORMAT_EXUBERANT_NIBBLE", -1, windowOf(16).put([1, 0], [2, 1], [20, 0xffff])],
+    ["FORMAT_EXUBERANT_NIBBLE", -1, windowOf(16).put([1, 0], [2, 2], [24, 0xfffff])],
     ["FORMAT_RESERVED", -2, windowOf(16).put([1, 0], [2, 3], [1, 1])],
-    ["FORMAT_EXUBERANT_META_NIBBLE", -3, windowOf(16).put([1, 0], [2, 3], [1, 0], [2, 2], [16, 5])],
+    ["FORMAT_EXUBERANT_META_NIBBLE", -3, windowOf(16).put([1, 0], [2, 3], [1, 0], [2, 2], [16, 0xff])],
     ["FORMAT_SIMPLE_HUFFMAN_ALPHABET", -4, windowOf(16).plainLastHeader(1).simpleCode(8, 0).simpleCode(10, 704)],
     ["FORMAT_SIMPLE_HUFFMAN_SAME", -5, windowOf(16).plainLastHeader(1).simpleCode(8, 7, 7)],
     [
@@ -1318,6 +1763,13 @@ describe("zlib.brotli known answers", () => {
         .put([2, 0], ...zeroLengths(11), [4, 7], ...zeroLengths(6)),
     ],
     [
+      "FORMAT_HUFFMAN_SPACE",
+      -7,
+      windowOf(16)
+        .plainLastHeader(1)
+        .put([2, 0], ...zeroLengths(4), [4, 7], ...zeroLengths(3), [4, 7], [1, 0], [3, 5], [3, 5], [3, 5], [3, 3]),
+    ],
+    [
       "FORMAT_CONTEXT_MAP_REPEAT",
       -8,
       windowOf(16).lastHeader(1).put([11, 0], [4, 1], [5, 11]).simpleCode(3, 6).put([6, 1]),
@@ -1326,6 +1778,11 @@ describe("zlib.brotli known answers", () => {
       "FORMAT_BLOCK_LENGTH_1",
       -9,
       windowOf(10).plainLastHeader(1).simpleCode(8, 0).simpleCode(10, 488).simpleCode(6, 0).put([12, 0]),
+    ],
+    [
+      "FORMAT_BLOCK_LENGTH_1",
+      -9,
+      windowOf(16).plainLastHeader(1).simpleCode(8, 0, 1).simpleCode(10, 488).simpleCode(6, 0).put([12, 0]),
     ],
     [
       "FORMAT_BLOCK_LENGTH_2",
@@ -1350,12 +1807,18 @@ describe("zlib.brotli known answers", () => {
       -16,
       windowOf(16).uncompressed([0]).plainLastHeader(4).fixedCodes().copy(2).distance(1).copy(2).code(6, 4),
     ],
+    [
+      "FORMAT_DISTANCE",
+      -16,
+      windowOf(16).uncompressed([0, 0]).plainLastHeader(9).fixedCodes().copy(2).distance(1).copy(2).code(6, 8),
+    ],
     ["COMPOUND_DICTIONARY", -18, windowOf(16).plainLastHeader(5).fixedCodes().copy(5).distance(4)],
-  ])("fails with ERR__ERROR_%s", (name, errno, bits) => {
+  ])("fails with ERR__ERROR_%s (%#)", (name, errno, bits) => {
     const expected = { message: "Decompression failed", errno, code: `ERR__ERROR_${name}` };
     const stream = Buffer.concat([bits.finish(), Buffer.alloc(40)]);
-    const engine = zlib.createBrotliDecompress({ dictionary: Buffer.from("abcd") });
-    expect(drive(engine, [[FINISH, stream]], 4096)).toEqual(expected);
+    for (const steps of [[[FINISH, stream]], Array.from(window(stream, 1), chunk => [PROCESS, chunk])]) {
+      expect(drive(zlib.createBrotliDecompress({ dictionary: Buffer.from("abcd") }), steps, 4096)).toEqual(expected);
+    }
   });
 });
 

@@ -12,7 +12,7 @@ use bun_jsc::{
     AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
     JsClass as _, JsError, JsResult, Strong,
 };
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 
 use super::{Expect, Flags, Promise};
 use crate::generated_bindgen::expect_deferred as generated;
@@ -87,10 +87,8 @@ pub(crate) struct Unclaimed {
 impl Unclaimed {
     fn add(&self, global: &JSGlobalObject, deferred: JSValue) -> usize {
         let call = Strong::create(deferred, global);
-        self.calls.with_taken(|calls| {
-            calls.push(Some(call));
-            calls.len() - 1
-        })
+        self.calls.push(Some(call));
+        self.calls.len() - 1
     }
 
     /// The first unfinished call from `*index` on. Moves `*index` past it.

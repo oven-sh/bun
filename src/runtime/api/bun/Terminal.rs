@@ -768,7 +768,8 @@ mod lib_util {
     }
 
     pub(super) fn get_open_pty() -> Option<OpenPtyFn> {
-        sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle())
+        // SAFETY: the handle is never closed, and `OpenPtyFn` is the signature of `openpty`.
+        unsafe { sys::dlsym_with_handle!(OpenPtyFn, "openpty", get_handle()) }
     }
 }
 

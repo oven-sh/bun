@@ -1288,32 +1288,31 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
             }
         };
 
-        extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
+        /// # Safety
+        /// `ptr` is in the first page of a mapping of `size` bytes, and nothing refers to it.
+        unsafe extern "C" fn munmap_dealloc(ptr: *mut c_void, size: *mut c_void) {
             // `ptr` is `map_base + delta` where `map_base` is page-aligned and
             // `delta < page_size`, so rounding down recovers the mmap base.
             let page = bun_sys::page_size();
             let addr = ptr as usize;
-            let _ = sys::munmap((addr - addr % page) as *mut u8, size as usize);
+            let map =
+                core::ptr::slice_from_raw_parts_mut((addr - addr % page) as *mut u8, size as usize);
+            // SAFETY: caller contract.
+            drop(unsafe { sys::Mmap::from_raw(map) });
         }
 
-        let map_len = map.len();
-        // SAFETY: `mmap_file` guarantees `map_len == view_size + delta` with
-        // `view_size > 0`, so `delta < map_len` and the add stays in-bounds.
-        let view_ptr = unsafe { map.as_ptr().add(delta) };
-        let view_len = map_len - delta;
-
-        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created
-        // (`&'static mut [u8]`, no drop guard); ownership moves to JSC, which
-        // unmaps it exactly once via `munmap_dealloc` with the full mapping
-        // length stuffed into the ctx pointer.
+        let map = map.into_raw();
+        // SAFETY: `map` is the live mapping `bun_sys::mmap_file` just created;
+        // ownership moves to JSC, which unmaps it exactly once via
+        // `munmap_dealloc` with the full mapping length stuffed into the ctx pointer.
         unsafe {
             jsc::array_buffer::make_typed_array_with_bytes_no_copy(
                 global_this,
                 jsc::TypedArrayType::TypeUint8,
-                view_ptr.cast_mut().cast::<c_void>(),
-                view_len,
+                map.cast::<u8>().wrapping_add(delta).cast(),
+                map.len() - delta,
                 Some(munmap_dealloc),
-                map_len as *mut c_void,
+                map.len() as *mut c_void,
             )
         }
     }

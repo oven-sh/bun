@@ -22,8 +22,8 @@ use bun_core::EncodedSlice;
 use bun_core::vec::{BorrowedCursor, append_with};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
-    ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong, ThreadIsolated,
-    ThreadIsolatedArg,
+    ArrayBuffer, ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong,
+    ThreadIsolated, ThreadIsolatedArg,
 };
 
 use bun_brotli::c as brotli;
@@ -638,7 +638,7 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transform(
             let chunk = if out.is_empty() {
                 JSUint8Array::create_empty(global)
             } else {
-                JSUint8Array::from_bytes_copy(global, &out)
+                ArrayBuffer::create_uint8_array(global, &out)
             };
             bun_jsc::to_js_host_fn_result(global, chunk)
         }

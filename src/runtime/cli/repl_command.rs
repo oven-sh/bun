@@ -17,11 +17,10 @@ use bun_core::{Global, Output};
 use bun_jsc as jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 
-// `repl.rs` is a sibling file with no other consumers; declare it as a child
-// module here so `Repl` resolves without touching `cli/mod.rs`.
 #[path = "repl.rs"]
 mod repl;
 use repl::Repl;
+pub(super) use repl::evaluate;
 
 use crate::Command;
 use crate::cli::Arguments;

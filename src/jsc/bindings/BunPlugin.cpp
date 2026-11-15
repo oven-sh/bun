@@ -8977,8 +8977,7 @@ bool isModuleMockFactoryRunning(Zig::GlobalObject* globalObject, const String& k
     });
 }
 
-// For the error of a test file that never finished loading. The loader fetches nothing for an import() of a mocked module whose factory runs, so no
-// entry of the registry names that module. Adds the mocked modules whose running factory a module of `evaluating` awaits an import() of.
+// The loader has no entry for a mocked module while an import() of it waits for the factory. Adds those that a module of `evaluating` awaits.
 __attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::GlobalObject* globalObject, std::span<JSC::CyclicModuleRecord* const> evaluating, Vector<String>& keys)
 {
     JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();

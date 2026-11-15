@@ -178,7 +178,7 @@ ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(Script
 JSGlobalObject* ScriptExecutionContext::globalObject()
 {
     auto& realm = this->realm();
-    if (realm.m_collectableGlobalObject && !*realm.m_collectableGlobalObject) [[unlikely]]
+    if (realm.m_weakGlobalObject && !*realm.m_weakGlobalObject) [[unlikely]]
         return nullptr;
     return realm.m_globalObject;
 }
@@ -362,13 +362,13 @@ void ScriptExecutionContext::globalObjectDestroyed()
     removeAllEventListeners();
     removeFromContextsMap();
     m_globalObject = nullptr;
-    m_collectableGlobalObject.reset();
+    m_weakGlobalObject.reset();
     m_vm = nullptr;
 }
 
-void ScriptExecutionContext::globalObjectCanBeCollected()
+void ScriptExecutionContext::makeGlobalObjectWeak()
 {
-    m_collectableGlobalObject.emplace(m_globalObject);
+    m_weakGlobalObject.emplace(m_globalObject);
 }
 
 bool ScriptExecutionContext::isContextThread()

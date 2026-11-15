@@ -4,7 +4,7 @@ use bun_io::{Owner, PollTag};
 #[cfg(not(windows))]
 use bun_jsc::SysErrorJsc as _;
 use bun_jsc::{JSGlobalObject, JSValue, JsCell, JsResult, event_loop::EventLoop};
-use bun_ptr::RefPtr;
+use bun_ptr::{OptionCellExt as _, RefPtr};
 use bun_sys::{self, Fd};
 
 use crate::api::bun_spawn::stdio::Stdio;
@@ -268,7 +268,7 @@ impl Writable {
                     subprocess
                         .weak_file_sink_stdin_ptr
                         .set(Some(pipe_ref.as_non_null()));
-                    if subprocess.stdin_sink_ref.get().is_none() {
+                    if subprocess.stdin_sink_ref.is_none() {
                         // `Writable::init()` already did this for fresh pipes;
                         // only take a new ref if `on_stdin_destroyed()` has since
                         // consumed it.

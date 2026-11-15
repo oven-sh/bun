@@ -17,8 +17,10 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_collections::VecExt;
+#[cfg(windows)]
 use bun_jsc::JsCell;
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_ptr::VecCellExt as _;
 use bun_sys::Fd;
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
@@ -39,11 +41,11 @@ use super::frame;
 #[derive(Default)]
 pub(crate) struct Channel {
     /// Incoming bytes that the owner has not read as frames yet.
-    r#in: JsCell<Vec<u8>>,
+    r#in: Cell<Vec<u8>>,
     /// `in` has grown since the owner last took it.
     has_incoming: Cell<bool>,
     /// Outgoing bytes the kernel didn't accept yet.
-    pub out: JsCell<Vec<u8>>,
+    pub out: Cell<Vec<u8>>,
     pub(crate) done: Cell<bool>,
     /// The peer's byte stream stopped decoding as frames, i.e. something in
     /// the peer wrote straight to fd 3: a length `next_frame` rejected, or on
@@ -241,8 +243,8 @@ impl Channel {
         }
         #[cfg(not(windows))]
         {
-            if !self.out.get().is_empty() {
-                self.out.with_mut(|out| out.extend_from_slice(frame_bytes));
+            if !self.out.is_empty() {
+                self.out.extend_from_slice(frame_bytes);
                 return;
             }
             let wrote = self.backend.socket.get().write(frame_bytes);
@@ -252,8 +254,7 @@ impl Channel {
                 0
             };
             if w < frame_bytes.len() {
-                self.out
-                    .with_mut(|out| out.extend_from_slice(&frame_bytes[w..]));
+                self.out.extend_from_slice(&frame_bytes[w..]);
             }
         }
     }
@@ -262,7 +263,7 @@ impl Channel {
     fn send_windows(&self, frame_bytes: &[u8]) {
         // A uv_write is in flight — queue behind it.
         if !self.backend.inflight.get().is_empty() {
-            self.out.with_mut(|out| out.extend_from_slice(frame_bytes));
+            self.out.extend_from_slice(frame_bytes);
             return;
         }
         // Try a synchronous write first. uv_try_write on a Windows
@@ -289,21 +290,20 @@ impl Channel {
         if w >= frame_bytes.len() {
             return;
         }
-        self.out
-            .with_mut(|out| out.extend_from_slice(&frame_bytes[w..]));
+        self.out.extend_from_slice(&frame_bytes[w..]);
         self.submit_windows_write();
     }
 
     #[cfg(windows)]
     fn submit_windows_write(&self) {
-        if self.out.get().is_empty() || !self.backend.inflight.get().is_empty() || self.done.get() {
+        if self.out.is_empty() || !self.backend.inflight.get().is_empty() || self.done.get() {
             return;
         }
         let Some(pipe) = self.backend.pipe.get() else {
             return;
         };
         // Swap: out → inflight (stable for uv_write), out becomes empty.
-        let out = self.out.replace(Vec::new());
+        let out = self.out.take();
         let prev_inflight = self.backend.inflight.replace(out);
         self.out.set(prev_inflight);
         self.backend
@@ -334,11 +334,11 @@ impl Channel {
     pub(crate) fn has_pending_writes(&self) -> bool {
         #[cfg(windows)]
         {
-            !self.out.get().is_empty() || !self.backend.inflight.get().is_empty()
+            !self.out.is_empty() || !self.backend.inflight.get().is_empty()
         }
         #[cfg(not(windows))]
         {
-            !self.out.get().is_empty()
+            !self.out.is_empty()
         }
     }
 
@@ -346,7 +346,7 @@ impl Channel {
     #[cfg(not(windows))]
     pub(crate) fn flush(&self) {
         while !self.done.get() {
-            let mut pending = self.out.replace(Vec::new());
+            let mut pending = self.out.take();
             let mut head = self.backend.out_head.get();
             debug_assert!(head <= pending.len());
             if pending.len() <= head {
@@ -368,10 +368,8 @@ impl Channel {
                 head = 0;
             }
             self.backend.out_head.set(head);
-            self.out.with_mut(|cur| {
-                pending.extend_from_slice(cur);
-                *cur = pending;
-            });
+            let queued_meanwhile = self.out.replace(pending);
+            self.out.extend_from_slice(&queued_meanwhile);
             if wrote <= 0 {
                 return;
             }
@@ -384,7 +382,7 @@ impl Channel {
         if self.done.get() {
             return;
         }
-        self.r#in.with_mut(|r#in| r#in.extend_from_slice(data));
+        self.r#in.extend_from_slice(data);
         self.has_incoming.set(true);
     }
 
@@ -402,7 +400,7 @@ impl Channel {
             return self.mark_corrupt();
         }
         incoming.bytes.drain_front(incoming.head);
-        debug_assert!(self.r#in.get().is_empty());
+        debug_assert!(self.r#in.is_empty());
         self.r#in.set(incoming.bytes);
     }
 

@@ -358,6 +358,43 @@ test("a macro that returns a JSON or text Response or Blob is inlined by its con
   expect(exitCode).toBe(0);
 });
 
+test("the JSON of a Blob or Response is still inlined after a later macro collects it", async () => {
+  using dir = tempDir("macro-json-collected", {
+    "m.ts": `
+      const json = (letter: string) => JSON.stringify({ text: Buffer.alloc(4096, letter).toString() });
+      export const blob = (letter: string) => new Blob([json(letter)], { type: "application/json" });
+      export const response = (letter: string) =>
+        new Response(json(letter), { headers: { "content-type": "application/json" } });
+      const kept: Blob[] = [];
+      export function collect() {
+        Bun.gc(true);
+        // These take the memory that was freed.
+        for (let i = 0; i < 64; i++) kept.push(blob("Z"));
+        return 0;
+      }
+    `,
+    "index.ts": `
+      import { blob, response, collect } from "./m.ts" with { type: "macro" };
+      const values = [blob("a"), response("b"), blob("c"), response("d"), blob("e"), response("f")];
+      collect();
+      console.log(values.map(({ text }) => text.length + [...new Set(text)].join("")).join());
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLine: stdout.trim().split("\n").pop(), stderr, exitCode }).toEqual({
+    lastLine: "4096a,4096b,4096c,4096d,4096e,4096f",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The classification follows the MIME essence, not the category table the runtime uses for blob types:
 // any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
 // The data URL keeps the raw content type, parameters included.

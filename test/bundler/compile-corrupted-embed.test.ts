@@ -213,6 +213,70 @@ test.skipIf(isMacOS)(
   TIMEOUT,
 );
 
+// A module is six { offset u32, length u32 } (name, contents, source map, bytecode, module info, bytecode origin path)
+// and four u8 (encoding, loader, module format, side). The modules are followed by one u32 hash each, the number of
+// builtin modules u32, { id u32, offset u32, length u32 } for each, and the bytecode string table's offset and length.
+// macOS is skipped because a patched Mach-O needs a new signature. Every platform uses the same reader.
+test.skipIf(isMacOS)(
+  "reports an out-of-range offset, length or enum value at startup",
+  async () => {
+    using dir = tempDir("compile-corrupted-records", {
+      "app.js": `import text from "./text.txt" with { type: "text" }; import "node:path"; console.log(text);`,
+      "text.txt": "€",
+    });
+    const exe = await compileApp(String(dir), ["--bytecode", "--format=esm"]);
+    expect(await run(exe)).toEqual({ stdout: "€\n", stderr: "", exitCode: 0 });
+
+    const bytes = readFileSync(exe);
+    const offsetsAt = bytes.lastIndexOf("\n---- Bun! ----\n") - 32;
+    const graphAt = offsetsAt - Number(bytes.readBigUInt64LE(offsetsAt));
+    const appAt = graphAt + bytes.readUInt32LE(offsetsAt + 8);
+    const builtinsAt = appAt + 2 * 52 + 2 * 4;
+    const builtinCount = bytes.readUInt32LE(builtinsAt);
+    expect(bytes.readUInt32LE(offsetsAt + 12)).toBe(2 * 52);
+    expect(builtinCount).toBeGreaterThan(0);
+
+    const withByte = (index: number, value: number) => {
+      const enums = Buffer.from(bytes.subarray(appAt + 48, appAt + 52));
+      enums[index] = value;
+      return enums.readUInt32LE();
+    };
+    const outside = 0x7fff0000;
+    for (const [field, at, value] of [
+      ["offset of the modules", offsetsAt + 8, outside],
+      ["length of the modules", offsetsAt + 12, outside],
+      ["length of the exec argv", offsetsAt + 24, outside],
+      ["offset of the name", appAt, outside],
+      ["length of the name", appAt + 4, 0xffffffff],
+      ["offset of the contents", appAt + 8, outside],
+      ["offset of the bytecode", appAt + 24, outside],
+      ["length of the module info", appAt + 36, outside],
+      ["offset of the bytecode origin path", appAt + 40, outside],
+      ["encoding", appAt + 48, withByte(0, 3)],
+      ["loader", appAt + 48, withByte(1, 200)],
+      ["module format", appAt + 48, withByte(2, 3)],
+      ["side", appAt + 48, withByte(3, 2)],
+      ["number of builtin modules", builtinsAt, outside],
+      ["offset of a builtin module's bytecode", builtinsAt + 8, outside],
+      ["offset of the bytecode string table", builtinsAt + 4 + 12 * builtinCount, outside],
+    ] as const) {
+      stompU32(exe, at, value);
+      expect({ field, ...(await run(exe)) }).toEqual({
+        field,
+        stdout: "",
+        stderr: expect.stringContaining("Corrupted module graph: invalid record"),
+        exitCode: 1,
+      });
+      stompU32(exe, at, bytes.readUInt32LE(at));
+    }
+
+    // The source map is not read at startup.
+    stompU32(exe, appAt + 20, outside);
+    expect(await run(exe)).toEqual({ stdout: "€\n", stderr: "", exitCode: 0 });
+  },
+  TIMEOUT,
+);
+
 // A module starts with three { offset u32, length u32 }: name, contents, source map. A source map starts with the
 // number of files u32 and the length of the mappings u32, then one { offset u32, length u32 } per file name.
 // macOS is skipped because a patched Mach-O needs a new signature. Every platform uses the same reader.

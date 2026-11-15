@@ -13,6 +13,8 @@ use bun_options_types::Format;
 use bun_paths::{MAX_PATH_BYTES, SEP};
 use bun_sys::{self as sys, Fd, O};
 
+use crate::resolved_source::Bytecode;
+
 pub const STATUS_FAILED: i32 = 0;
 pub const STATUS_ENABLED: i32 = 1;
 pub const STATUS_ALREADY_ENABLED: i32 = 2;
@@ -51,61 +53,26 @@ struct Entry {
     code: Option<Box<[u8]>>,
     /// Deserialized bytecode blob handed to JSC (the cache was accepted).
     /// Kept alive for the process — `ZigSourceProvider` wraps it, no copy.
-    blob: Option<AlignedBlob>,
+    blob: Option<&'static [u8]>,
     persisted: bool,
 }
-
-/// 128-byte-aligned blob. JSC's bytecode decoder reads the blob in place and
-/// requires the same alignment the standalone graph provides (see
-/// StandaloneModuleGraph.rs "Bytecode alignment" note). Either a heap buffer
-/// or a span inside a whole-file mapping.
-struct AlignedBlob {
-    backing: Backing,
-    /// The blob runs from here to the end of `backing`.
-    start: usize,
-}
-
-enum Backing {
-    Heap(Vec<u8>),
-    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `start` is
-    /// [`blob_file_offset`] inside it, 128-aligned because the mapping base
-    /// is page-aligned. Safe against entry rewrites: writers go through
-    /// tmpfile + rename, so a replaced file's old inode stays live under the
-    /// mapping.
-    Map(sys::Mmap),
-}
-
-// SAFETY: the buffer is plain bytes; ownership is unique to the entry map.
-unsafe impl Send for AlignedBlob {}
 
 /// Blobs displaced by an entry refresh. JSC providers hold raw spans into accepted blobs past the
 /// initial compile, so displaced blobs are retired (leaked), never freed — freeing is a UAF across
 /// the FFI boundary. Bounding this needs a JSC-side provider release hook first, not a cap here.
-static RETIRED_BLOBS: Mutex<Vec<AlignedBlob>> = Mutex::new(Vec::new());
+/// The list keeps them reachable for LeakSanitizer.
+static RETIRED_BLOBS: Mutex<Vec<&'static [u8]>> = Mutex::new(Vec::new());
 
+/// JSC's bytecode decoder reads the blob in place (see the "Bytecode alignment" note in StandaloneModuleGraph.rs).
 const BLOB_ALIGN: usize = 128;
 
-impl AlignedBlob {
-    fn copy_of(blob: &[u8]) -> Option<Self> {
-        let mut bytes = Vec::<u8>::new();
-        bytes.try_reserve_exact(blob.len() + BLOB_ALIGN - 1).ok()?;
-        let start = bytes.as_ptr().align_offset(BLOB_ALIGN);
-        bytes.resize(start, 0);
-        bytes.extend_from_slice(blob);
-        Some(Self {
-            backing: Backing::Heap(bytes),
-            start,
-        })
-    }
-
-    fn as_slice(&self) -> &[u8] {
-        let backing = match &self.backing {
-            Backing::Heap(bytes) => bytes,
-            // SAFETY: see `Backing::Map`.
-            Backing::Map(pages) => unsafe { pages.as_slice() },
-        };
-        &backing[self.start..]
-    }
+fn leak_aligned_copy(blob: &[u8]) -> Option<&'static [u8]> {
+    let mut bytes = Vec::<u8>::new();
+    bytes.try_reserve_exact(blob.len() + BLOB_ALIGN - 1).ok()?;
+    let start = bytes.as_ptr().align_offset(BLOB_ALIGN);
+    bytes.resize(start, 0);
+    bytes.extend_from_slice(blob);
+    Some(&bytes.leak()[start..])
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -528,12 +495,8 @@ pub fn get_dir() -> Option<Vec<u8>> {
 
 /// Module-fetch hook: register/refresh the entry for `filename`; returns the
 /// validated bytecode blob when the on-disk cache matches `code` (post-
-/// transpile text). The pointer stays valid for the process (entry map owns it).
-pub fn fetch(
-    filename: &[u8],
-    is_cjs: bool,
-    code: &[u8],
-) -> Option<crate::resolved_source::Bytecode> {
+/// transpile text).
+pub fn fetch(filename: &[u8], is_cjs: bool, code: &[u8]) -> Option<Bytecode> {
     if !is_enabled() || filename.is_empty() || !bun_paths::is_absolute(filename) {
         return None;
     }
@@ -549,10 +512,7 @@ pub fn fetch(
     if let Some(entry) = state.entries.get(&key) {
         if entry.code_hash == code_hash && entry.code_size == code_size {
             // Same module, unchanged code (e.g. re-required): reuse.
-            return entry
-                .blob
-                .as_ref()
-                .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()));
+            return entry.blob.map(|blob| Bytecode::persistent_at(blob, 0));
         }
     }
 
@@ -568,16 +528,13 @@ pub fn fetch(
 
     read_cache_file(state, key, &mut entry, Some(code));
 
-    let result = if entry.blob.is_some() {
+    let result = if let Some(blob) = entry.blob {
         cclog!(
             "[compile cache] code cache for {} {} was accepted, keeping the in-memory entry\n",
             type_name(is_cjs),
             display_name(filename, is_cjs)
         );
-        entry
-            .blob
-            .as_ref()
-            .map(|b| crate::resolved_source::Bytecode::persistent(b.as_slice()))
+        Some(Bytecode::persistent_at(blob, 0))
     } else {
         cclog!(
             "[compile cache] code cache for {} {} was not initialized, initializing the in-memory entry\n",
@@ -589,7 +546,6 @@ pub fn fetch(
     };
     if let Some(old) = state.entries.insert(key, entry) {
         if let Some(blob) = old.blob {
-            // Never freed; see RETIRED_BLOBS for the invariant.
             RETIRED_BLOBS.lock().push(blob);
         }
     }
@@ -692,7 +648,7 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     let mapped = sys::Mmap::new(total, prot, flags, file.fd(), 0).ok();
     let heap_contents;
     let bytes: &[u8] = match &mapped {
-        // SAFETY: see `Backing::Map`.
+        // SAFETY: writers go through tmpfile + rename, so a replaced file's old inode stays unchanged under the mapping.
         Some(mapped) => unsafe { mapped.as_slice() },
         None => {
             let mut contents: Vec<u8> = Vec::new();
@@ -806,12 +762,10 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     // be a JSC assert or segfault, so verify instead of assuming.
     let is_aligned = blob_bytes.as_ptr().addr().is_multiple_of(BLOB_ALIGN);
     let blob = match mapped {
-        Some(pages) if is_aligned => AlignedBlob {
-            backing: Backing::Map(pages),
-            start: blob_off as usize,
-        },
+        // SAFETY: as for `bytes`.
+        Some(pages) if is_aligned => unsafe { &pages.leak()[blob_off as usize..] },
         _ => {
-            let Some(blob) = AlignedBlob::copy_of(blob_bytes) else {
+            let Some(blob) = leak_aligned_copy(blob_bytes) else {
                 finish(line, &|| "allocation failed\n".into());
                 return;
             };

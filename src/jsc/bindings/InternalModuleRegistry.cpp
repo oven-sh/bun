@@ -216,7 +216,7 @@ static NEVER_INLINE JSC::JSValue generateInternalModuleFromText(JSC::JSGlobalObj
         size_t cachedSize = 0;
         uint32_t cachedEntryOffset = 0;
         if (Bun__standaloneInternalModuleBytecode(::bunVM(globalObject), id, &cachedBytes, &cachedSize, &cachedEntryOffset)) {
-            executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ const_cast<uint8_t*>(cachedBytes), cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
+            executable = JSC::decodeBuiltinFunction(vm, embeddedBytecode({ cachedBytes, cachedSize }, cachedEntryOffset), *source.provider(), bun_internal_modules_header.sourceStamp);
             if (executable)
                 s_internalModulesFromBytecode.fetch_add(1, std::memory_order_relaxed);
         }
@@ -590,7 +590,7 @@ static std::optional<JSC::SourceCode> internalModuleSourceCode(uint32_t id)
     return makeInternalModuleSource(internalModuleSource(id), internalModuleString(m.nameOffset, m.nameLength), internalModuleString(m.urlOffset, m.urlLength), internalModuleProvenance(id));
 }
 
-extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t id, uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)
+extern "C" bool Bun__BytecodeOrder__digestInternalModule(JSC::VM* vm, uint32_t id, const uint8_t* bytecode, size_t bytecodeSize, uint32_t entryOffset, uint64_t* digest, uint32_t* codeBlocks)
 {
     using namespace Bun;
     JSC::JSLockHolder locker(*vm);

@@ -1401,7 +1401,7 @@ impl<'a> ScanPassResult<'a> {
         self.named_imports.clear_retaining_capacity();
         self.used_symbols.clear_retaining_capacity();
         ScanPassResult {
-            import_records: bun_collections::recycle(self.import_records),
+            import_records: bun_collections::recycle_vec(self.import_records),
             named_imports: self.named_imports,
             used_symbols: self.used_symbols,
         }

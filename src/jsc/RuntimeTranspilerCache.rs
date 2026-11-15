@@ -565,13 +565,13 @@ impl Entry {
 #[derive(Default)]
 pub struct RuntimeTranspilerCache {
     /// `None` if the output is not to be saved.
-    to_save: Option<ToSave>,
+    pending_entry: Option<PendingEntry>,
     /// Set by the parser, or by `get()` when the entry it found has `vitest_features_hash`.
     pub imports_vitest: bool,
     pub entry: Option<Entry>,
 }
 
-struct ToSave {
+struct PendingEntry {
     input_hash: u64,
     input_byte_length: u64,
     /// The key. `set_parsed` replaces it with one of the next two if the file needs it.
@@ -871,12 +871,12 @@ impl RuntimeTranspilerCache {
     }
 
     /// For the printer. `None` if the output is not to be saved.
-    pub fn for_printer(&self) -> Option<&dyn bun_js_printer::RuntimeTranspilerCache> {
-        Some(self.to_save.as_ref()?)
+    pub fn for_printer(&self) -> Option<&dyn bun_js_printer::TranspilerCacheWriter> {
+        Some(self.pending_entry.as_ref()?)
     }
 }
 
-impl bun_js_parser::RuntimeTranspilerCache for RuntimeTranspilerCache {
+impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
     fn get(
         &mut self,
         source: &Source<'_>,
@@ -912,7 +912,7 @@ impl bun_js_parser::RuntimeTranspilerCache for RuntimeTranspilerCache {
         let test_features_hash = features_hasher.final_();
         features_hasher.update(b"vitest");
         let vitest_features_hash = features_hasher.final_();
-        self.to_save = Some(ToSave {
+        self.pending_entry = Some(PendingEntry {
             input_hash,
             input_byte_length: source.contents.len() as u64,
             features_hash,
@@ -972,21 +972,21 @@ impl bun_js_parser::RuntimeTranspilerCache for RuntimeTranspilerCache {
     }
 
     fn set_parsed(&mut self, parsed: Option<ParsedForCache>) {
-        let (Some(parsed), Some(to_save)) = (parsed, &mut self.to_save) else {
-            self.to_save = None;
+        let (Some(parsed), Some(pending_entry)) = (parsed, &mut self.pending_entry) else {
+            self.pending_entry = None;
             return;
         };
         self.imports_vitest = parsed.imports_vitest;
-        to_save.exports_kind = parsed.exports_kind;
+        pending_entry.exports_kind = parsed.exports_kind;
         if parsed.imports_vitest {
-            to_save.features_hash = to_save.vitest_features_hash;
+            pending_entry.features_hash = pending_entry.vitest_features_hash;
         } else if parsed.uses_test_api {
-            to_save.features_hash = to_save.test_features_hash;
+            pending_entry.features_hash = pending_entry.test_features_hash;
         }
     }
 }
 
-impl bun_js_printer::RuntimeTranspilerCache for ToSave {
+impl bun_js_printer::TranspilerCacheWriter for PendingEntry {
     fn put(&self, output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]) {
         // `Entry::load` rejects an entry with no sourcemap.
         if RuntimeTranspilerCache::is_disabled() || sourcemap.is_empty() {

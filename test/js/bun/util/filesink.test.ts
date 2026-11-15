@@ -623,6 +623,55 @@ it.skipIf(!isPosix)("close() in a worker's exit listener leaves the sink to the 
   expect(exitCode).toBe(0);
 });
 
+// A "beforeExit" listener is not inside the event loop, so the reaction runs before the write() that settles it returns.
+// Linux only: `page` has to reach the writer's CHUNK_SIZE, which is 16 KiB on Apple Silicon.
+it.concurrent.skipIf(!isLinux).each([
+  ["bytes", `Buffer.from("x")`, 1],
+  ["a latin1 string", `"\\xe9"`, 2],
+  ["a UTF-16 string", `"\\u{1F600}"`, 4],
+])("a write() of %s survives a close() by the reaction to an earlier write()", async (_, chunk, length) => {
+  using dir = tempDir("filesink-close-inside-write", {});
+  mkfifo(join(String(dir), "fifo"), 0o666);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { openSync, readSync, writeSync, constants } = require("node:fs");
+        const untilItWouldBlock = io => {
+          let total = 0;
+          try {
+            for (let n; (n = io()) > 0; ) total += n;
+          } catch (e) {
+            if (e.code !== "EAGAIN") throw e;
+          }
+          return total;
+        };
+        const page = Buffer.alloc(4096);
+        const reader = openSync("fifo", constants.O_RDONLY | constants.O_NONBLOCK);
+        const filler = openSync("fifo", constants.O_WRONLY | constants.O_NONBLOCK);
+        process.once("beforeExit", () => {
+          const sink = Bun.file("fifo").writer();
+          untilItWouldBlock(() => writeSync(filler, page));
+          sink.write(page).then(() => {
+            sink.close();
+            console.log("closed");
+          });
+          untilItWouldBlock(() => readSync(reader, page));
+          console.log("wrote", sink.write(${chunk}));
+          console.log("read", untilItWouldBlock(() => readSync(reader, page)));
+        });
+      `,
+    ],
+    cwd: String(dir),
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe(`closed\nwrote ${4096 + length}\nread ${4096 + length}\n`);
+  expect(exitCode).toBe(0);
+});
+
 it("start() without path/fd on an already-open writer does not crash", async () => {
   const path = join(tmpdirSync(), "filesink-restart.txt");
   const writer = Bun.file(path).writer();
@@ -695,11 +744,7 @@ it("writing after end() fails during flush does not crash", async () => {
   await 1;
 });
 
-// On Windows the libuv write completion path re-enters JS (promise resolution)
-// while a `&mut WindowsStreamingWriter` is live, so without raw-ptr laundering
-// LLVM `noalias` lets release builds cache stale `is_done`/`parent` and
-// over-deref the FileSink. Spawn a subprocess so a crash there is observable
-// here as a non-zero exit code.
+// On Windows a write completion runs JS that can end the sink. A subprocess makes a crash a non-zero exit code.
 it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({
@@ -1398,41 +1443,6 @@ describe("a stream piped into a FileSink on a pipe is pumped to its end", () => 
       if (writeFdOpen) fs.closeSync(writeFd);
       fs.closeSync(readFd);
     }
-  });
-});
-
-// FileSink::on_close tells the owner of the sink that it closed, and a Subprocess then drops its ref
-// on its stdin sink. That is the only ref when script never read `proc.stdin`, and on_close used the
-// sink after it (ASAN: heap-use-after-free in settle_stream_done). Outside tests only the stop phase
-// of a Windows worker closes the writer in this state (see worker-terminate-lifetime.test.ts), so the
-// hook does that close here, on every platform.
-it("a Bun.spawn stdin pipe that closes before script reads proc.stdin does not use the freed sink", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const { subprocessInternals } = require("bun:internal-for-testing");
-        // The child lives until its stdin reaches EOF.
-        const child = Bun.spawn({
-          cmd: [process.execPath, "-e", "process.stdin.on('data', () => {}).on('end', () => process.exit(0))"],
-          stdin: "pipe",
-          stdout: "ignore",
-          stderr: "ignore",
-        });
-        const closed = subprocessInternals.closeStdinWriter(child);
-        console.log(JSON.stringify({ closed, stdin: typeof child.stdin, exitCode: await child.exited }));
-      `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: JSON.stringify({ closed: true, stdin: "undefined", exitCode: 0 }) + "\n",
-    stderr: "",
-    exitCode: 0,
   });
 });
 

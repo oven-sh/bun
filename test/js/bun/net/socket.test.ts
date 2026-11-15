@@ -6839,4 +6839,91 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
       stderr: "",
     });
   });
+
+  // An immediate or a microtask runs outside of any tick of the loop.
+  const silentPeer = `Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } })`;
+  const webSockets = (count: number) =>
+    `for (let i = 0; i < ${count}; i++) new WebSocket("ws://127.0.0.1:" + server.port);`;
+  it.each([
+    [
+      "ws.cork()",
+      `const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: (req, server) => void server.upgrade(req),
+        websocket: { message() {}, open: ws => setImmediate(() => ws.cork(() => (ws.terminate(), wait()))) },
+      });
+      ${webSockets(1)}`,
+    ],
+    [
+      "server.stop()",
+      `const all = [];
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: (req, server) => void server.upgrade(req),
+        websocket: {
+          message() {},
+          open: ws => all.push(ws) === 3 && setImmediate(() => server.stop(true)),
+          close: () => (all.forEach(ws => ws.terminate()), wait()),
+        },
+      });
+      ${webSockets(3)}`,
+    ],
+    [
+      "server.upgrade()",
+      `const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req, server) {
+          await new Promise(setImmediate);
+          server.upgrade(req);
+        },
+        websocket: { message() {}, open: ws => (ws.terminate(), wait()) },
+      });
+      ${webSockets(1)}`,
+    ],
+    [
+      "the response of a direct stream",
+      `const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch() {
+          await new Promise(setImmediate);
+          return new Response(new ReadableStream({ type: "direct", pull: c => (c.end(), server.stop(true), wait()) }));
+        },
+      });
+      fetch(server.url).then(res => res.text()).catch(() => {});`,
+    ],
+    [
+      "socket.upgradeTLS()",
+      `const socket = await Bun.connect({ hostname: "127.0.0.1", port: ${silentPeer}.port, socket: { data() {} } });
+      setImmediate(() =>
+        socket.upgradeTLS({ tls: true, socket: { data() {}, handshake() {}, open: s => (s.terminate(), wait()) } }),
+      );`,
+    ],
+    [
+      "socket.terminate() during a handshake",
+      `Bun.connect({
+        hostname: "127.0.0.1",
+        port: ${silentPeer}.port,
+        tls: true,
+        socket: { data() {}, open: s => setImmediate(() => s.terminate()), handshake: s => (s.terminate(), wait()) },
+      }).catch(() => {});`,
+    ],
+  ])("doesn't crash %s, called outside of a dispatch", async (_, source) => {
+    const wait = `let waits = 0;
+    function wait() {
+      waits++;
+      void Bun.build({
+        entrypoints: ["/wait.js"],
+        files: { "/wait.js": "" },
+        plugins: [{ name: "wait", setup: () => Bun.sleep(20) }],
+      });
+      setImmediate(() => --waits || (console.log("done"), process.exit(0)));
+    }`;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", wait + source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  });
 });

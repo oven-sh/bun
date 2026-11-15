@@ -87,20 +87,15 @@ bun_io::impl_buffered_writer_parent! {
     // Deref the raw `*const [u8]` directly so `'a` is unbound from `P`'s
     // lifetime parameter.
     get_buffer = |this| &*(*this).buffer.as_ptr(),
-    event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*this).event_loop.uv_loop(),
+    event_loop = |this| (*this).event_loop.as_event_loop_ctx(),
+    uws_loop   = |this| (*this).event_loop.loop_(),
     ref_       = |this| RefCount::<Self>::ref_(this),
     deref      = |this| RefCount::<Self>::deref(this),
 }
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
-    #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        self.event_loop.as_event_loop_ctx()
-    }
-
     pub fn update_ref(&mut self, add: bool) {
-        self.writer.update_ref(self.io_evtloop(), add);
+        self.writer.update_ref(add);
     }
 
     pub fn close(&mut self) {
@@ -172,9 +167,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             self.writer.start(file.fd(), true)?;
             // The writer closes it from now on.
             file.into_raw();
-            if let Some(poll) = self.writer.handle.get_poll() {
-                poll.set_flag(bun_io::FilePollFlag::Socket);
-            }
+            self.writer
+                .handle
+                .set_poll_flag(bun_io::FilePollFlag::Socket);
         }
         self.start_ref = Some(start_ref);
         Ok(())

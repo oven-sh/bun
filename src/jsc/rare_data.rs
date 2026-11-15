@@ -15,7 +15,6 @@ use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
-use bun_io::{self as Async};
 use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_ptr::RefPtr;
@@ -194,7 +193,8 @@ pub struct RareData {
     /// Joins `cleanup_hooks` once `VirtualMachine::teardown` has everything back from other threads.
     pub(crate) cleanup_hooks_after_teardown_wait: JsCell<Vec<CleanupHook>>,
 
-    pub(crate) file_polls: OnceCell<Box<JsCell<FilePollStore>>>,
+    #[cfg(not(windows))]
+    pub(crate) file_polls: OnceCell<Box<FilePollStore>>,
 
     /// Embedded socket groups for kinds that aren't tied to a Listener / server.
     /// Lazily linked into the loop on first socket; never separately allocated.
@@ -250,7 +250,8 @@ pub struct RareData {
     pub path_buf: JsCell<PathBuf>,
 }
 
-pub(crate) type FilePollStore = Async::file_poll::Store;
+#[cfg(not(windows))]
+pub(crate) type FilePollStore = bun_io::file_poll::Store;
 
 impl Default for RareData {
     fn default() -> Self {
@@ -260,6 +261,7 @@ impl Default for RareData {
             hot_map: OnceCell::new(),
             cleanup_hooks: JsCell::new(Vec::new()),
             cleanup_hooks_after_teardown_wait: JsCell::new(Vec::new()),
+            #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
@@ -616,10 +618,10 @@ impl RareData {
         self.hot_map.get_or_init(HotMap::init)
     }
 
-    pub(crate) fn file_polls_ptr(&self) -> *mut FilePollStore {
+    #[cfg(not(windows))]
+    pub(crate) fn file_polls(&self) -> &FilePollStore {
         self.file_polls
-            .get_or_init(|| Box::new(JsCell::new(FilePollStore::init())))
-            .as_ptr()
+            .get_or_init(|| Box::new(FilePollStore::init()))
     }
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
@@ -748,11 +750,6 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    /// The loop a first `spawn_sync_event_loop` call made.
-    pub fn existing_spawn_sync_event_loop(&self) -> Option<&SpawnSyncEventLoop> {
-        self.spawn_sync_event_loop_.get().map(|el| &**el)
-    }
-
     /// `None` if the loop cannot be created; nothing is cached, so a later call retries.
     pub fn spawn_sync_event_loop(&self, vm: &VirtualMachine) -> Option<&SpawnSyncEventLoop> {
         if self.spawn_sync_event_loop_.get().is_none() {
@@ -760,7 +757,7 @@ impl RareData {
             let el = unsafe { SpawnSyncEventLoop::init(vm) }?;
             let _ = self.spawn_sync_event_loop_.set(el);
         }
-        self.existing_spawn_sync_event_loop()
+        self.spawn_sync_event_loop_.get().map(|el| &**el)
     }
 
     // ── watch-mode listen sockets ─────────────────────────────────────────

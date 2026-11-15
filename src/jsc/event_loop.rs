@@ -717,17 +717,10 @@ impl EventLoop {
             .expect("usockets_loop: uws_loop not initialized (call ensure_waker first)")
     }
 
-    /// [`usockets_loop`](Self::usockets_loop) as the platform-native loop
-    /// (`us_loop_t*` on POSIX, its `uv_loop_t*` on Windows).
-    #[inline]
-    pub fn native_loop(&self) -> Async::LoopRef {
-        Async::uws_to_native(self.usockets_loop())
-    }
-
     #[cfg(windows)]
     #[inline]
     pub fn uv_loop(&self) -> *mut crate::PlatformEventLoop {
-        self.native_loop()
+        self.usockets_loop().uv_loop()
     }
 
     #[inline]

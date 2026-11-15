@@ -146,15 +146,14 @@ pub(crate) type Poll = IOWriter;
 // the raw ptr; `ref_` only touches `ref_count: Cell<u32>`.
 bun_io::impl_streaming_writer_parent! {
     FileSink;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::FILE_SINK,
+    poll_tag   = bun_io::PollTag::FileSink,
     borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,
     on_ready   = on_ready,
     on_close   = on_close,
-    event_loop = |this| (*this).io_evtloop(),
+    event_loop = |this| (*this).event_loop_handle.as_event_loop_ctx(),
     uws_loop   = |this| (*this).event_loop_handle.r#loop(),
-    uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),
 }
@@ -368,11 +367,7 @@ impl FileSink {
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
             // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
-            // Hoist `io_evtloop()` out of the closure so no raw deref appears inside it.
-            let evtloop = (*this).io_evtloop();
-            (*this)
-                .writer
-                .with_mut(|w| w.update_ref(evtloop, has_pending_data));
+            (*this).writer.with_mut(|w| w.update_ref(has_pending_data));
 
             if has_pending_data {
                 if let Some(vm) = (*this).js_vm() {
@@ -794,7 +789,7 @@ impl FileSink {
                 file.into_raw();
                 self.writer.with_mut(|w| {
                     w.owns_fd = true;
-                    w.update_ref(self.io_evtloop(), false);
+                    w.update_ref(false);
                 });
                 return sys::Result::Ok(());
             }
@@ -813,40 +808,24 @@ impl FileSink {
                 self.writer.with_mut(|w| w.owns_fd = true);
                 // Only keep the event loop ref'd while there's a pending write in progress.
                 // If there's no pending write, no need to keep the event loop ref'd.
-                self.writer
-                    .with_mut(|w| w.update_ref(self.io_evtloop(), false));
+                self.writer.with_mut(|w| w.update_ref(false));
                 #[cfg(unix)]
                 {
                     // TTY writes are synchronous, as in Node.
                     let force_sync = self.force_sync.get() || is_tty_out;
                     self.writer.with_mut(|w| w.force_sync = force_sync);
 
+                    let handle = &self.writer.get().handle;
                     if self.nonblocking.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Nonblocking);
+                        handle.set_poll_flag(bun_io::FilePollFlag::Nonblocking);
                     }
 
                     if self.is_socket.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Socket);
+                        handle.set_poll_flag(bun_io::FilePollFlag::Socket);
                     } else if is_tty_out {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Tty);
+                        handle.set_poll_flag(bun_io::FilePollFlag::Tty);
                     } else if self.pollable.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Fifo);
+                        handle.set_poll_flag(bun_io::FilePollFlag::Fifo);
                     }
                 }
             }
@@ -857,17 +836,6 @@ impl FileSink {
 
     pub(crate) fn event_loop(&self) -> EventLoopHandle {
         self.event_loop_handle
-    }
-
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
-    /// can recover it.
-    #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; the vtable consumers treat the pointee as read-only
-        self.event_loop_handle.as_event_loop_ctx()
     }
 
     /// `EventLoopHandle::global_object()` returns an erased `*mut ()`; recover
@@ -1384,13 +1352,7 @@ impl FileSink {
         // `with_mut`: the Windows `BaseWindowsPipeWriter` impls take `&mut self`
         // (the posix `PosixStreamingWriter` impls are `&self`); `with_mut`
         // covers both. No JS re-entry — pure libuv ref/unref.
-        self.writer.with_mut(|w| {
-            if value {
-                w.enable_keeping_process_alive(self.io_evtloop());
-            } else {
-                w.disable_keeping_process_alive(self.io_evtloop());
-            }
-        });
+        self.writer.with_mut(|w| w.update_ref(value));
     }
 }
 
@@ -1718,8 +1680,7 @@ impl FileSink {
                 // A synchronous source (FileReader over a regular file) may have run to the
                 // end inside `wire_native_sink`; the promise is settled then.
                 if this.pipe.get().has_done() && !this.done.get() {
-                    this.writer
-                        .with_mut(|w| w.enable_keeping_process_alive(this.io_evtloop()));
+                    this.update_ref(true);
                     this.keep_alive_until_eof();
                 }
                 Ok(promise)
@@ -1772,8 +1733,7 @@ impl FileSink {
                 // A synchronous producer may have driven `end_from_stream`
                 // (clears `source`) inline; no keepalive then.
                 if !matches!(this.source.get(), streams::SourceHandle::None) {
-                    this.writer
-                        .with_mut(|w| w.enable_keeping_process_alive(this.io_evtloop()));
+                    this.update_ref(true);
                     this.keep_alive_until_eof();
                 }
                 return Ok(JSValue::UNDEFINED);
@@ -1831,8 +1791,7 @@ impl FileSink {
         };
         match promise.status() {
             bun_jsc::js_promise::Status::Pending => {
-                this.writer
-                    .with_mut(|w| w.enable_keeping_process_alive(this.io_evtloop()));
+                this.update_ref(true);
                 this.pump_promise_ref.set(Some(this.clone()));
                 promise_result.then(
                     global_this,

@@ -41,7 +41,7 @@ unsafe extern "C" {
     fn Bun__BytecodeOrder__digestInternalModule(
         vm: *mut VM,
         id: u32,
-        bytecode: *mut u8,
+        bytecode: *const u8,
         bytecode_size: usize,
         entry_offset: u32,
         digest: *mut u64,
@@ -55,7 +55,7 @@ unsafe extern "C" {
         source: &bun_core::String,
         origin_path: &bun_core::String,
         is_module: bool,
-        bytecode: *mut u8,
+        bytecode: *const u8,
         bytecode_size: usize,
         entry_offset: u32,
         digest: *mut u64,
@@ -83,7 +83,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
                 &module.source,
                 &origin_path,
                 module.is_esm,
-                module.bytecode.cast::<u8>(),
+                module.bytecode.as_ptr(),
                 module.bytecode.len(),
                 module.bytecode_entry_offset,
                 &raw mut digest,
@@ -104,7 +104,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
             Bun__BytecodeOrder__digestInternalModule(
                 vm.jsc_vm.get(),
                 id,
-                bytecode.cast::<u8>(),
+                bytecode.as_ptr(),
                 bytecode.len(),
                 entry_offset,
                 &raw mut digest,
@@ -142,7 +142,7 @@ pub(crate) fn init_vm(
         unsafe {
             Bun__BytecodeOrder__setLinkedPayload(
                 vm.jsc_vm.get(),
-                payload.cast::<u8>(),
+                payload.as_ptr(),
                 payload.len(),
                 region_ends.as_ptr(),
                 region_ends.len(),
@@ -194,7 +194,7 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
     let mut chunks: Vec<(bun_core::String, bool)> = Vec::new();
     graph.for_each_bytecode_module(&mut |module| {
         bytecode.push(RecordedSource {
-            payload: module.bytecode.cast::<u8>().cast_const(),
+            payload: module.bytecode.as_ptr(),
             entry_offset: module.bytecode_entry_offset,
         });
         module_names.push(module.origin_path);
@@ -224,7 +224,7 @@ fn write_order_file(graph: &'static dyn bun_resolver::StandaloneModuleGraph) {
     graph.for_each_builtin_bytecode(&mut |id, payload, entry_offset| {
         if let Some(module) = builtins.as_ref().and_then(|builtins| builtins.module(id)) {
             bytecode.push(RecordedSource {
-                payload: payload.cast::<u8>().cast_const(),
+                payload: payload.as_ptr(),
                 entry_offset,
             });
             module_names.push(module.name);

@@ -793,7 +793,7 @@ pub(crate) fn upload_stream(
     }
 
     if !assignment_result.is_empty_or_undefined_or_null() {
-        if let Some(promise) = assignment_result.as_any_promise() {
+        if let Some(promise) = assignment_result.as_promise() {
             match promise.status() {
                 bun_jsc::js_promise::Status::Pending => {
                     // `ctx` rides a cell the reaction owns: a pump that never
@@ -809,7 +809,7 @@ pub(crate) fn upload_stream(
                     ctx.detach_sink();
                 }
                 bun_jsc::js_promise::Status::Rejected => {
-                    promise.set_handled(cx.global().vm());
+                    promise.set_handled();
                     let result = promise.result(cx.global().vm());
                     ctx.handle_reject_stream(result);
                 }

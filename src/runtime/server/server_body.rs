@@ -983,7 +983,7 @@ impl ServePlugins {
         let promise = jsc::host_fn::from_js_host_call(global, || {
             plugin.load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        debug_assert!(promise.as_any_promise().is_some());
+        debug_assert!(promise.as_promise().is_some());
         this.pending.set(Some(PendingLoad {
             plugin,
             _promise: jsc::Strong::create(promise, global),
@@ -1955,7 +1955,7 @@ where
             .to_js());
         }
 
-        if response_value.as_any_promise().is_some() {
+        if response_value.as_promise().is_some() {
             return Ok(response_value);
         }
 

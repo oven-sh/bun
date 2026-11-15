@@ -396,16 +396,16 @@ type AddonBox<T> = ManuallyDrop<Box<T>>;
 /// you must use these functions rather than convert between napi_value and jsc::JSValue directly
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-pub(crate) struct napi_value(i64);
+pub(crate) struct napi_value(JSValue);
 
 impl napi_value {
     pub(crate) fn get(self) -> JSValue {
-        JSValue::from_encoded(self.0 as usize)
+        self.0
     }
 
     pub(crate) fn create(env: &NapiEnv, val: JSValue) -> napi_value {
         NapiHandleScope::append(env, val);
-        napi_value(val.encoded() as i64)
+        napi_value(val)
     }
 }
 
@@ -1727,7 +1727,7 @@ extern "C" fn napi_create_promise(
 fn conclude_deferred(
     env: &NapiEnv,
     deferred: Option<AddonBox<Deferred>>,
-    settle: impl FnOnce(&mut jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
+    settle: impl FnOnce(&jsc::JSPromise, &JSGlobalObject) -> JsResult<()>,
 ) -> napi_status {
     let Some(deferred) = deferred else {
         return env.invalid_arg();
@@ -1796,7 +1796,7 @@ extern "C" fn napi_is_promise(
         return env.invalid_arg();
     }
 
-    is_promise.write(value.as_any_promise().is_some());
+    is_promise.write(value.as_promise().is_some());
     env.ok()
 }
 
@@ -1822,10 +1822,7 @@ extern "C" fn napi_create_date(
     bun_output::scoped_log!(napi, "napi_create_date");
     let env = preamble!(env_);
     let result = get_out!(env, result_);
-    result.set(
-        env,
-        JSValue::from_date_number(env.to_js(), JSValue::purify_nan(time)),
-    );
+    result.set(env, JSValue::from_date_number(env.to_js(), time));
     env.ok()
 }
 
@@ -2895,7 +2892,7 @@ impl ThreadSafeFunction {
         // No func at creation => null js_callback (Node), not encoded undefined.
         let js = match target.callback.get() {
             Some(v) => napi_value::create(env, v),
-            None => napi_value(0),
+            None => napi_value(JSValue::ZERO),
         };
         env.complete_in_context(self.context, || {
             // SAFETY: the addon's callback, with its context and an item it queued.
@@ -2915,7 +2912,7 @@ impl ThreadSafeFunction {
         };
         while let Some(item) = items.read_item() {
             // SAFETY: as in `deliver`.
-            unsafe { call_js(ptr::null_mut(), napi_value(0), self.ctx, item) };
+            unsafe { call_js(ptr::null_mut(), napi_value(JSValue::ZERO), self.ctx, item) };
         }
     }
 

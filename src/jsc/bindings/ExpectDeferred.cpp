@@ -11,18 +11,18 @@
 
 using namespace JSC;
 
-extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue function, EncodedJSValue deferred)
+extern "C" void ExpectDeferred__callWhenSettled(JSGlobalObject* globalObject, JSPromise* promise, EncodedJSValue function, EncodedJSValue deferred)
 {
     JSValue callback = JSValue::decode(function);
-    uncheckedDowncast<JSPromise>(JSValue::decode(promise))->performPromiseThenWithContext(getVM(globalObject), globalObject, callback, callback, jsUndefined(), JSValue::decode(deferred));
+    promise->performPromiseThenWithContext(getVM(globalObject), globalObject, callback, callback, jsUndefined(), JSValue::decode(deferred));
 }
 
 // `promise.then(onFulfilled)` without going through Promise.prototype, which user code can patch.
-extern "C" EncodedJSValue ExpectDeferred__then(JSGlobalObject* globalObject, EncodedJSValue promise, EncodedJSValue onFulfilled)
+extern "C" EncodedJSValue ExpectDeferred__then(JSGlobalObject* globalObject, JSPromise* promise, EncodedJSValue onFulfilled)
 {
     auto& vm = getVM(globalObject);
     auto* result = JSPromise::create(vm, globalObject->promiseStructure());
-    uncheckedDowncast<JSPromise>(JSValue::decode(promise))->performPromiseThen(vm, globalObject, JSValue::decode(onFulfilled), jsUndefined(), result);
+    promise->performPromiseThen(vm, globalObject, JSValue::decode(onFulfilled), jsUndefined(), result);
     return JSValue::encode(result);
 }
 
@@ -55,9 +55,9 @@ extern "C" void ExpectDeferred__setCauseIfNone(JSGlobalObject* globalObject, Enc
         (void)scope.tryClearException();
 }
 
-extern "C" bool ExpectDeferred__isHandled(EncodedJSValue promise)
+extern "C" bool ExpectDeferred__isHandled(JSPromise* promise)
 {
-    return uncheckedDowncast<JSPromise>(JSValue::decode(promise))->isHandled();
+    return promise->isHandled();
 }
 
 // A JSC::Exception, because unlike an Error it keeps its stack frames' code alive.

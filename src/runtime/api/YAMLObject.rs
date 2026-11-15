@@ -314,7 +314,7 @@ impl<'a> Stringifier<'a> {
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
         let iter = JSPropertyIterator::init(
             global,
-            unwrapped.to_object(global)?,
+            &*unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,
@@ -531,7 +531,7 @@ impl<'a> Stringifier<'a> {
         // const generics: <SKIP_EMPTY_NAME, INCLUDE_VALUE>
         let iter = JSPropertyIterator::init(
             global,
-            unwrapped.to_object(global)?,
+            &*unwrapped.to_object(global)?,
             JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,

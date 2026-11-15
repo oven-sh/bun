@@ -10,7 +10,7 @@ use core::mem::ManuallyDrop;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult};
+use crate::{EventType, JSGlobalObject, JSValue, JsCell, JsResult};
 use bun_collections::HashMap;
 use bun_core::io::WriterStorage;
 use bun_core::{EncodedSlice, EncodedUnits, String as BunString, strings};
@@ -905,7 +905,7 @@ impl<'a> TablePrinter<'a> {
                 let tabular_obj = self.tabular_data.to_object(global_object)?;
                 let rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
-                    tabular_obj,
+                    &tabular_obj,
                     jsc::PropertyIteratorOptions {
                         skip_empty_name: false,
                         include_value: true,
@@ -3859,14 +3859,12 @@ pub mod formatter {
                 failed: false,
                 estimated_line_length: &mut self.estimated_line_length,
             };
-            // `JSCell` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null deref proof (tag only produced for cells).
-            let cell = jsc::JSCell::opaque_ref(value.to_cell().expect("GetterSetter is a cell"));
             let (has_getter, has_setter) = if CUSTOM {
-                let gs = cell.get_custom_getter_setter();
+                let gs = jsc::CustomGetterSetter::from_js(&value).expect("Tag::CustomGetterSetter");
                 (!gs.is_getter_null(), !gs.is_setter_null())
             } else {
-                let gs = cell.get_getter_setter();
+                let gs =
+                    jsc::getter_setter::GetterSetter::from_js(&value).expect("Tag::GetterSetter");
                 (!gs.is_getter_null(), !gs.is_setter_null())
             };
             if has_getter && has_setter {
@@ -3913,9 +3911,7 @@ pub mod formatter {
             writer.write_all(b"Promise { ");
             writer.write_all(pfmt!("<r><cyan>", C).as_bytes());
 
-            // `JSPromise` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-            // centralised non-null deref proof (Tag::Promise ⇒ value is a cell).
-            let promise: &JSPromise = JSPromise::opaque_ref(value.encoded() as *const JSPromise);
+            let promise = value.as_promise().expect("Tag::Promise is a promise");
             match promise.status() {
                 jsc::js_promise::Status::Pending => writer.write_all(b"<pending>"),
                 jsc::js_promise::Status::Fulfilled => writer.write_all(b"<resolved>"),

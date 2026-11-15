@@ -346,9 +346,8 @@ impl JSGlobalObject {
 
     #[inline]
     pub fn to_js_value(&self) -> JSValue {
-        // JSValue is #[repr(transparent)] over the encoded pointer-width word; a
-        // cell pointer is encoded as its address.
-        JSValue::from_encoded(std::ptr::from_ref::<Self>(self) as usize)
+        // SAFETY: a global object is a cell.
+        unsafe { JSValue::from_cell(self) }
     }
 
     #[cold]

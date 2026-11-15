@@ -21,6 +21,7 @@ use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
+use bun_jsc::bindgen::JsLocal;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::module_loader::{ArenaResetGuard, FetchFlags, TranspileArgs, TranspileExtra};
@@ -32,8 +33,8 @@ use bun_jsc::virtual_machine::{
     WorkerExecArgvFlags,
 };
 use bun_jsc::{
-    AnyPromise, ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSModuleLoader,
-    JSValue, JsCell, JsResult, ResolvedSource, StringJsc as _,
+    ErrorableResolvedSource, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsCell, JsResult,
+    ResolvedSource, StringJsc as _,
 };
 
 use bun_ast::ImportKind;
@@ -512,12 +513,12 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-/// preload promise if any, else null.
+/// preload promise if any.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `NotFound` returns `error.ModuleNotFound`,
 /// `JSModuleLoader.import` throwing returns a rejected promise.
-fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPromise> {
+fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<Option<JsLocal<'_, JSPromise>>> {
     // ── is_in_preload guard ─────────────────────────────────────────────
     let global = vm.global();
     vm.is_in_preload.set(true);
@@ -608,25 +609,19 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
             unsafe { (*transpiler).options.test_file_imports_vitest = imports_vitest };
             bun_core::StringView::from_bytes(path_text)
         };
-        // Note: use `import_ptr` (not `import`) so the `*mut` we store in
-        // `pending_internal_promise` keeps the FFI's mutable provenance instead
-        // of being laundered through `&JSInternalPromise -> *const -> *mut`
-        // (UB to write through under Stacked Borrows).
-        let promise: *mut JSInternalPromise = match JSModuleLoader::import_ptr(global, &module_name)
-        {
-            Ok(p) => p.as_ptr(),
+        let promise = match JSModuleLoader::import(global, &module_name) {
+            Ok(p) => p,
             // Report a preload that fails to resolve the same way as one that fails to load.
             Err(err) => {
-                let rejected =
-                    JSInternalPromise::rejected_promise_with_caught_exception(global, err)?;
+                let rejected = JSPromise::rejected_promise_with_caught_exception(global, err)?;
                 // The caller reports the error, so don't also report it as an unhandled rejection.
                 rejected.set_handled();
-                return Ok(ptr::from_mut(rejected));
+                return Ok(Some(rejected));
             }
         };
 
-        vm.set_pending_internal_promise(Some(promise));
-        let _protected = JSValue::from_cell(promise).protected();
+        vm.set_pending_internal_promise(Some(&promise));
+        let _protected = promise.to_js().protected();
 
         // ── wait ────────────────────────────────────────────────────────
         if crate::test_runner::jest::Jest::runner().is_some() {
@@ -634,21 +629,20 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
                 "preload {}",
                 bun_core::fmt::format_json_string_latin1(preload_slice),
             ));
-            if let Some(rejected) = never_loads {
-                return Ok(rejected);
+            if never_loads.is_some() {
+                return Ok(never_loads);
             }
         } else {
-            let _ = vm.wait_for_promise(AnyPromise::Internal(promise));
+            let _ = vm.wait_for_promise(&promise);
         }
 
-        // SAFETY: `promise` is a live (still-protected) JSC heap cell.
-        if unsafe { &*promise }.status() == PromiseStatus::Rejected {
-            return Ok(promise);
+        if promise.status() == PromiseStatus::Rejected {
+            return Ok(Some(promise));
         }
         // A stop was requested (worker terminate()/exit) while it loaded: the
         // caller checks the same and shuts down; load nothing more.
         if !vm.script_allowed() {
-            return Ok(core::ptr::null_mut());
+            return Ok(None);
         }
         // `_protected` drops here → unprotect.
     }
@@ -676,7 +670,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
         }
     }
 
-    Ok(ptr::null_mut())
+    Ok(None)
 }
 
 /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
@@ -918,9 +912,6 @@ fn print_exception(
     let global = vm_ref.global();
 
     if let Some(exception) = value.as_exception(vm_ref.jsc_vm()) {
-        // SAFETY: `as_exception` returned a live `*mut Exception` owned by the
-        // JSC heap; we only read through it for the duration of this call.
-        let exception = unsafe { &*exception };
         vm_ref.print_exception(exception, exception_list, writer, true);
     } else {
         let mut formatter = bun_jsc::console_object::Formatter::new(global);
@@ -2442,16 +2433,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `globalThis.wasmSourceBytes` so the wasi runner avoids
                 // reading the file twice.
                 if let Some(source) = args.virtual_source {
-                    // Spec — `DecodedJSValue{ .ptr = globalThis }.encode()`:
-                    // a JSGlobalObject is a JSCell, so its pointer encodes
-                    // directly as a JSValue.
-                    let global_value = bun_jsc::DecodedJSValue {
-                        u: bun_jsc::decoded_js_value::EncodedValueDescriptor {
-                            ptr: core::ptr::from_ref(global_object).cast_mut().cast(),
-                        },
-                    }
-                    .encode();
-                    global_value.put(
+                    global_object.to_js_value().put(
                         global_object,
                         b"wasmSourceBytes",
                         bun_jsc::ArrayBuffer::create_uint8_array(global_object, &source.contents)?,
@@ -3507,7 +3489,7 @@ fn refusal_of_what_loading_gives<const DATA_ONLY: bool>(
 /// Modules that must always transpile on-thread (see [`Bun__transpileFile`]).
 const ALWAYS_SYNC_MODULES: &[&[u8]] = &[b"reflect-metadata"];
 
-/// Concurrent-transpiler entry. Returns the in-flight `JSInternalPromise*`
+/// Concurrent-transpiler entry. Returns the in-flight `JSPromise*`
 /// when `allow_promise && async`, else null (result is in `*ret`).
 ///
 /// PERF: this is the per-`require()` / per-`import` hot-loop root.

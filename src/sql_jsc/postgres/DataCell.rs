@@ -152,9 +152,9 @@ impl<'a> ArrayParser<'a> {
                 }
                 _ => match self.bare_text()? {
                     b"NULL" => JSValue::NULL,
-                    text if is_float => JSValue::js_double_number(JSValue::purify_nan(
+                    text if is_float => JSValue::js_double_number(
                         parse_f64(text).ok_or(AnyPostgresError::InvalidCharacter)?,
-                    )),
+                    ),
                     text => JSValue::js_number_from_int32(
                         parse_decimal(text).ok_or(AnyPostgresError::InvalidCharacter)?,
                     ),
@@ -262,10 +262,6 @@ fn take<const SIZE: usize>(rest: &mut &[u8]) -> Result<[u8; SIZE]> {
     Ok(*head)
 }
 
-fn double(value: f64) -> JSValue {
-    JSValue::js_double_number(JSValue::purify_nan(value))
-}
-
 /// `length` elements: 4 bytes of size, -1 for a NULL, and the value.
 fn binary_numbers<const SIZE: usize>(
     length: usize,
@@ -314,9 +310,11 @@ fn binary_level(
             JSValue::js_number_from_int32(i32::from_be_bytes(bytes))
         }),
         T::float4 => binary_numbers(*length, rest, |bytes| {
-            double(f32::from_be_bytes(bytes).into())
+            JSValue::js_double_number(f32::from_be_bytes(bytes).into())
         }),
-        T::float8 => binary_numbers(*length, rest, |bytes| double(f64::from_be_bytes(bytes))),
+        T::float8 => binary_numbers(*length, rest, |bytes| {
+            JSValue::js_double_number(f64::from_be_bytes(bytes))
+        }),
         _ => Err(AnyPostgresError::UnknownFormatCode),
     }
 }

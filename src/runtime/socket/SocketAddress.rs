@@ -580,7 +580,7 @@ impl SocketAddress {
             port: JSValue::js_number(f64::from(self.port())),
             flowlabel: JSValue::js_number(f64::from(self.get_flowlabel())),
         };
-        Ok(bun_jsc::JSObject::create(&pojo, global)?.to_js())
+        bun_jsc::JSObject::create(&pojo, global)
     }
 }
 

@@ -1,9 +1,11 @@
 //! Entropy-coded pixels: literals, copies of earlier pixels and colors from the cache.
 
+use core::hint::{cold_path, select_unpredictable};
+
 use super::Rgba;
 use super::bit_reader::BitReader;
 use super::groups::{Group, Groups, Shortcut};
-use super::huffman::Entry;
+use super::huffman::{Entry, ROOT_BITS};
 use crate::array::At;
 use crate::error::{Error, Result};
 use crate::lossless::{
@@ -14,7 +16,7 @@ use crate::vec;
 const MAX_COPY_LEN: usize = 4096;
 /// Short copies are made this many pixels at a time, whether or not that is too many.
 const COPY_STEP: usize = 8;
-/// By how many pixels the image grows at least.
+/// How many pixels are read before the image grows again.
 const GROWTH: usize = 8192;
 
 /// What is kept of a pixel.
@@ -103,7 +105,8 @@ impl Coding {
             0 => read_pixels(&self.groups, reader, width, height, &mut NoCache),
             bits => {
                 let colors = vec::array([0; 4])?;
-                let mut cache = ColorCache { colors, bits };
+                let spare_bits = MAX_CACHE_BITS - bits;
+                let mut cache = ColorCache { colors, spare_bits };
                 read_pixels(&self.groups, reader, width, height, &mut cache)
             }
         }
@@ -112,22 +115,10 @@ impl Coding {
 
 trait Cache {
     fn remember(&mut self, pixel: Rgba);
-    fn recall(&self, key: usize) -> Rgba;
-
-    /// All but the first, which does not have to be, and those that are like the one before.
-    #[inline(always)]
-    fn remember_changes<P: Pixel>(&mut self, pixels: &[P]) {
-        let [first, rest @ ..] = pixels else { return };
-        let (steps, rest) = rest.as_chunks::<COPY_STEP>();
-        let mut last = *first;
-        for step in steps {
-            if *step != [last; COPY_STEP] {
-                step.iter().for_each(|it| self.remember(it.to_rgba()));
-                [.., last] = *step;
-            }
-        }
-        rest.iter().for_each(|it| self.remember(it.to_rgba()));
-    }
+    /// The last `count` of `pixels`.
+    fn remember_last<P: Pixel>(&mut self, pixels: &[P], count: usize);
+    /// Remembers it as well.
+    fn recall(&mut self, key: usize) -> Rgba;
 }
 
 struct NoCache;
@@ -136,29 +127,56 @@ impl Cache for NoCache {
     #[inline(always)]
     fn remember(&mut self, _: Rgba) {}
 
+    #[inline(always)]
+    fn remember_last<P: Pixel>(&mut self, _: &[P], _: usize) {}
+
     /// The alphabet has no keys.
     #[inline(always)]
-    fn recall(&self, _: usize) -> Rgba {
+    fn recall(&mut self, _: usize) -> Rgba {
         [0; 4]
     }
 }
 
 struct ColorCache {
     colors: Box<[Rgba; 1 << MAX_CACHE_BITS]>,
-    /// 1 to `MAX_CACHE_BITS`.
-    bits: u32,
+    /// How many zeros behind a key make it an index of `MAX_CACHE_BITS`.
+    spare_bits: u32,
 }
 
 impl Cache for ColorCache {
     #[inline(always)]
     fn remember(&mut self, pixel: Rgba) {
         let argb = u32::from_be_bytes(pixel).rotate_right(8);
-        *self.colors.at_mut(color_cache_key(argb, self.bits)) = pixel;
+        let key = color_cache_key(argb, MAX_CACHE_BITS) & usize::MAX << self.spare_bits;
+        *self.colors.at_mut(key) = pixel;
     }
 
     #[inline(always)]
-    fn recall(&self, key: usize) -> Rgba {
-        *self.colors.at(key)
+    fn remember_last<P: Pixel>(&mut self, pixels: &[P], count: usize) {
+        // A few more in front of them change nothing. The first is only there to compare with.
+        let count = count.next_multiple_of(COPY_STEP) + 1;
+        let Some([first, rest @ ..]) = pixels.get(pixels.len().wrapping_sub(count)..) else {
+            cold_path();
+            return pixels.iter().for_each(|it| self.remember(it.to_rgba()));
+        };
+        let mut last = *first;
+        for step in rest.as_chunks().0 {
+            if *step != [last; COPY_STEP] {
+                step.iter().for_each(|it| self.remember(it.to_rgba()));
+                [.., last] = *step;
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn recall(&mut self, key: usize) -> Rgba {
+        let pixel = *self.colors.at(key << self.spare_bits);
+        // Only the zeros from the start are not where they belong. One branch, which is not taken.
+        if u32::from_le_bytes(pixel) | u32::from(key == 0) == 0 {
+            cold_path();
+            self.remember(pixel);
+        }
+        pixel
     }
 }
 
@@ -171,32 +189,38 @@ fn read_pixels<P: Pixel>(
 ) -> Result<Vec<P>> {
     let len = width * height;
     let mut pixels = vec::with_room(len + COPY_STEP)?;
-    let mut run = Run {
-        reader: *reader,
-        second_tables: &groups.second_tables,
-        distances: core::array::from_fn(|code| neighbor_distance(code, width)),
-        len,
-    };
     let (mut x, mut y, mut at) = (0, 0, 0);
-    while at < len {
-        let (group, tile_end) = groups.at(x, y)?;
-        let end = at + tile_end.min(width) - x;
-        if pixels.len() < (end + MAX_COPY_LEN).min(len + COPY_STEP) {
-            if run.reader.is_past_end() {
-                return Err(Error::UnexpectedEof);
+    reader.refill();
+    while at < len && !reader.is_past_end() {
+        let goal = len.min(at + GROWTH);
+        pixels.resize(len.min(goal + MAX_COPY_LEN) + COPY_STEP, P::default());
+        while at < goal {
+            let (group, tables, count) = groups.at(x, y, width)?;
+            let (start, end) = (at, goal.min(at + count));
+            while at < end {
+                let run = pixels.get_mut(at..end).ok_or(Error::Internal)?;
+                let (count, prefix) = read_singles(group, tables, reader, run, cache);
+                at += count;
+                if at == end {
+                    break;
+                }
+                let count = read_prefixed(prefix, reader);
+                let prefix = group.distance.read_byte(tables, reader) as usize;
+                reader.ensure(18 + ROOT_BITS);
+                let distance = distance(read_prefixed(prefix, reader), width);
+                if distance > at || count > len - at {
+                    return Err(Error::InvalidLosslessBitstream);
+                }
+                copy(&mut pixels, at, distance, count, cache).ok_or(Error::Internal)?;
+                at += count;
             }
-            let room = end + MAX_COPY_LEN + GROWTH;
-            pixels.resize(room.min(len + COPY_STEP), P::default());
-        }
-        let next = run.read(group, &mut pixels, at, end, cache)?;
-        x += next - at;
-        at = next;
-        while x >= width {
-            x -= width;
-            y += 1;
+            x += at - start;
+            while x >= width {
+                x -= width;
+                y += 1;
+            }
         }
     }
-    *reader = run.reader;
     if reader.is_past_end() {
         return Err(Error::UnexpectedEof);
     }
@@ -204,126 +228,121 @@ fn read_pixels<P: Pixel>(
     Ok(pixels)
 }
 
-fn neighbor_distance(code: usize, width: usize) -> u32 {
-    let (left, up) = NEIGHBORS.get(code).copied().unwrap_or_default();
-    (i32::from(up) * width as i32 + i32::from(left)).max(1) as u32
-}
-
-struct Run<'a, 'b> {
-    reader: BitReader<'a>,
-    second_tables: &'b [Entry],
-    /// What the lowest distance codes stand for.
-    distances: [u32; NEIGHBORS.len()],
-    /// Of the image.
-    len: usize,
-}
-
-impl Run<'_, '_> {
-    /// Reads pixels from `at` to `end`, or further if a copy does not stop there. Returns where it got to.
-    #[inline(always)]
-    fn read<P: Pixel>(
-        &mut self,
-        group: &Group,
-        pixels: &mut [P],
-        mut at: usize,
-        end: usize,
-        cache: &mut impl Cache,
-    ) -> Result<usize> {
-        if group.shortcut == Shortcut::Constant {
-            let run = pixels.get_mut(at..end).ok_or(Error::Internal)?;
-            run.fill(P::from_rgba(group.constant));
-            cache.remember(group.constant);
-            return Ok(end);
-        }
-        let tables = self.second_tables;
-        let reader = &mut self.reader;
-        while at < end {
-            reader.refill();
-            let mut literal = group.constant;
-            let symbol = if group.shortcut == Shortcut::Packed {
-                let packed = group.packed(reader.peek());
-                reader.skip(packed.len.into());
-                literal = packed.pixel;
-                packed.symbol.into()
-            } else {
-                let symbol = group.green.read(tables, reader);
-                if symbol < LITERAL_CODES {
-                    let [red, green, blue, alpha] = &mut literal;
-                    *green = symbol as u8;
-                    if group.shortcut != Shortcut::GreenOnly {
-                        *red = group.red.read(tables, reader) as u8;
-                        *blue = group.blue.read(tables, reader) as u8;
-                        if group.shortcut != Shortcut::ConstantAlpha {
-                            reader.ensure(MAX_CODE_LENGTH as u32);
-                            *alpha = group.alpha.read(tables, reader) as u8;
-                        }
+/// Fills `run` up to the first copy. Returns how far it got and, unless that is the end, the prefix of the copy's
+/// length. The reader has `ROOT_BITS` at the start of a pixel.
+// Out of line, so that the loop has the registers to itself.
+#[inline(never)]
+fn read_singles<P: Pixel>(
+    group: &Group,
+    tables: &[Entry],
+    shared_reader: &mut BitReader,
+    run: &mut [P],
+    cache: &mut impl Cache,
+) -> (usize, usize) {
+    if group.shortcut == Shortcut::Constant {
+        run.fill(P::from_rgba(group.constant));
+        cache.remember(group.constant);
+        return (run.len(), 0);
+    }
+    let reader = &mut { *shared_reader };
+    for (count, place) in run.iter_mut().enumerate() {
+        // From before the refill, which the first lookup then does not have to wait for.
+        let bits = reader.peek();
+        reader.refill();
+        let mut pixel = u32::from_le_bytes(group.constant);
+        let symbol = if group.shortcut == Shortcut::Packed {
+            let packed = group.packed(bits);
+            reader.skip(packed.len.into());
+            pixel = u32::from_le_bytes(packed.pixel);
+            packed.symbol.into()
+        } else {
+            let symbol = group.green.read(bits, tables, reader);
+            if symbol < LITERAL_CODES {
+                pixel |= (symbol as u32) << 8;
+                if group.shortcut != Shortcut::GreenOnly {
+                    pixel |= group.red.read_byte(tables, reader);
+                    pixel |= group.blue.read_byte(tables, reader) << 16;
+                    if group.shortcut != Shortcut::ConstantAlpha {
+                        reader.ensure(MAX_CODE_LENGTH as u32 + ROOT_BITS);
+                        pixel |= group.alpha.read_byte(tables, reader) << 24;
                     }
                 }
-                symbol
-            };
-            let pixel = if symbol < LITERAL_CODES {
-                literal
-            } else if let Some(key) = symbol.checked_sub(LITERAL_CODES + LENGTH_CODES) {
-                cache.recall(key)
-            } else {
-                let count = read_prefixed(symbol - LITERAL_CODES, reader);
-                let symbol = group.distance.read(tables, reader);
-                reader.ensure(18);
-                let code = read_prefixed(symbol, reader);
-                let distance = match self.distances.get(code - 1) {
-                    Some(&distance) => distance as usize,
-                    None => code - self.distances.len(),
-                };
-                if distance > at || count > self.len - at {
-                    return Err(Error::InvalidLosslessBitstream);
-                }
-                copy(pixels, at, distance, count).ok_or(Error::Internal)?;
-                // What repeats counts the last time. The pixel in front has been remembered.
-                let unique = at + count - count.min(distance);
-                let copied = pixels.get(unique - 1..at + count).ok_or(Error::Internal)?;
-                cache.remember_changes(copied);
-                at += count;
-                continue;
-            };
-            cache.remember(pixel);
-            *pixels.get_mut(at).ok_or(Error::Internal)? = P::from_rgba(pixel);
-            at += 1;
-        }
-        Ok(at)
+            }
+            symbol
+        };
+        *place = P::from_rgba(if symbol < LITERAL_CODES {
+            cache.remember(pixel.to_le_bytes());
+            pixel.to_le_bytes()
+        } else if let Some(key) = symbol.checked_sub(LITERAL_CODES + LENGTH_CODES) {
+            cache.recall(key)
+        } else {
+            *shared_reader = *reader;
+            return (count, symbol - LITERAL_CODES);
+        });
     }
+    *shared_reader = *reader;
+    (run.len(), 0)
+}
+
+/// What a distance code stands for.
+#[inline(always)]
+fn distance(code: usize, width: usize) -> usize {
+    let (left, up) = *NEIGHBORS.at((code - 1).min(NEIGHBORS.len() - 1));
+    let neighbor = i32::from(up) * width as i32 + i32::from(left);
+    select_unpredictable(
+        code > NEIGHBORS.len(),
+        code.wrapping_sub(NEIGHBORS.len()),
+        neighbor.max(1) as usize,
+    )
 }
 
 /// A length or a distance code, 1 or more, from its prefix and the extra bits.
 #[inline(always)]
 fn read_prefixed(symbol: usize, reader: &mut BitReader) -> usize {
-    if symbol < 4 {
-        return symbol + 1;
-    }
-    let extra_bits = (symbol as u32 - 2) / 2;
-    ((2 + symbol % 2) << extra_bits) + reader.take(extra_bits) as usize + 1
+    let extra_bits = (symbol as u32).saturating_sub(2) / 2;
+    let first = select_unpredictable(symbol < 2, symbol, (2 + symbol % 2) << extra_bits);
+    first + reader.take(extra_bits) as usize + 1
 }
 
 /// `count` pixels from `distance` back to `at`, which may repeat what it has just written. Up to `COPY_STEP` more
 /// are changed.
 #[inline(always)]
-fn copy<P: Pixel>(pixels: &mut [P], at: usize, distance: usize, count: usize) -> Option<()> {
-    if distance >= COPY_STEP && count <= 4 * COPY_STEP {
-        for to in (at..at + count).step_by(COPY_STEP) {
-            let step = *pixels.get(to - distance..)?.first_chunk::<COPY_STEP>()?;
-            *pixels.get_mut(to..)?.first_chunk_mut()? = step;
-        }
+fn copy<P: Pixel>(
+    pixels: &mut [P],
+    at: usize,
+    distance: usize,
+    count: usize,
+    cache: &mut impl Cache,
+) -> Option<()> {
+    if distance == 1 {
+        let room = count.next_multiple_of(COPY_STEP);
+        let (first, rest) = pixels.get_mut(at - 1..at + room)?.split_first_mut()?;
+        rest.as_chunks_mut().0.fill([*first; COPY_STEP]);
         return Some(());
     }
-    copy_long(pixels.get_mut(at - distance..at + count)?, distance)
+    if distance >= COPY_STEP && count <= 4 * COPY_STEP {
+        let mut rest = pixels.get_mut(at - distance..)?;
+        let mut left = count;
+        loop {
+            let step = *rest.first_chunk::<COPY_STEP>()?;
+            *rest.get_mut(distance..)?.first_chunk_mut()? = step;
+            if left <= COPY_STEP {
+                break;
+            }
+            left -= COPY_STEP;
+            rest = rest.get_mut(COPY_STEP..)?;
+        }
+    } else {
+        repeat(pixels.get_mut(at - distance..at + count)?, distance)?;
+    }
+    // What repeats counts the last time.
+    cache.remember_last(pixels.get(..at + count)?, count.min(distance));
+    Some(())
 }
 
 /// Fills `pixels` with repetitions of the first `period`.
-fn copy_long<P: Pixel>(pixels: &mut [P], period: usize) -> Option<()> {
-    if period == 1 {
-        let (first, rest) = pixels.split_first_mut()?;
-        rest.fill(*first);
-        return Some(());
-    }
+#[inline(always)]
+fn repeat<P: Pixel>(pixels: &mut [P], period: usize) -> Option<()> {
     let mut done = period;
     while done < pixels.len() {
         let (from, to) = pixels.split_at_mut_checked(done)?;

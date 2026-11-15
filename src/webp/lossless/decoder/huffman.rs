@@ -1,5 +1,6 @@
 //! Prefix codes as lookup tables, indexed by the bits that come next.
 
+use core::hint::cold_path;
 use core::ops::Range;
 
 use super::bit_reader::BitReader;
@@ -10,36 +11,45 @@ use crate::lossless::{
 };
 use crate::vec;
 
-const ROOT_BITS: u32 = 8;
+pub(super) const ROOT_BITS: u32 = 8;
 
 /// A symbol and the length of its code. In a root table a length above `ROOT_BITS` is that of the longest code
-/// that starts with these bits, and the value is where their table starts.
+/// that starts with these bits, and the value is where their table starts among those of the group.
+///
+/// From the lowest bit: 4 for the length, the upper 4 of the value, its lower 8.
 #[derive(Clone, Copy, Default)]
 pub(super) struct Entry(u16);
 
 impl Entry {
     const fn new(value: usize, len: u32) -> Self {
-        // Both the alphabets and the room that the second tables of a code take are below 4096.
+        // Both the alphabets and the room that the second tables of a group take are below 4096.
         // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/dec/vp8l_dec.c#L89
-        Self((value as u16) << 4 | len as u16)
+        Self((value as u16) << 8 | (value as u16) >> 8 << 4 | len as u16)
     }
 
     #[inline(always)]
     pub(super) const fn value(self) -> usize {
-        (self.0 >> 4) as usize
+        (self.0 >> 8 | (self.0 & 0xf0) << 4) as usize
     }
 
     #[inline(always)]
     pub(super) const fn len(self) -> u32 {
         (self.0 & 15) as u32
     }
+
+    /// The entry that one in a root table refers to.
+    #[inline(always)]
+    fn long(self, second_tables: &[Self], reader: &BitReader) -> Self {
+        cold_path();
+        let index = (reader.peek() & ((1 << self.len()) - 1)) >> ROOT_BITS;
+        let entry = second_tables.get(self.value() + index);
+        entry.copied().unwrap_or_default()
+    }
 }
 
 #[derive(Clone, Copy)]
 pub(super) struct Code {
     root: [Entry; 1 << ROOT_BITS],
-    /// Where the tables for the codes longer than `ROOT_BITS` start, among those of all codes of the image.
-    second_tables: u32,
     /// Of the longest code. 0: there is one symbol.
     pub(super) max_len: u32,
 }
@@ -47,7 +57,6 @@ pub(super) struct Code {
 impl Code {
     pub(super) const EMPTY: Self = Self {
         root: [Entry(0); 1 << ROOT_BITS],
-        second_tables: 0,
         max_len: 0,
     };
 
@@ -57,18 +66,37 @@ impl Code {
         *self.root.at(bits % self.root.len())
     }
 
-    /// `reader` has `MAX_CODE_LENGTH` bits.
+    /// `reader` has `MAX_CODE_LENGTH` bits, of which the first `ROOT_BITS` have been `peeked`.
     #[inline(always)]
-    pub(super) fn read(&self, second_tables: &[Entry], reader: &mut BitReader) -> usize {
-        let bits = reader.peek();
-        let mut entry = self.short(bits);
+    pub(super) fn read(
+        &self,
+        peeked: usize,
+        second_tables: &[Entry],
+        reader: &mut BitReader,
+    ) -> usize {
+        let mut entry = self.short(peeked);
+        let [len, value] = entry.0.to_le_bytes();
+        if u32::from(len) <= ROOT_BITS {
+            reader.skip(len.into());
+            return value.into();
+        }
         if entry.len() > ROOT_BITS {
-            let index = (bits & ((1 << entry.len()) - 1)) >> ROOT_BITS;
-            let index = self.second_tables as usize + entry.value() + index;
-            entry = second_tables.get(index).copied().unwrap_or_default();
+            entry = entry.long(second_tables, reader);
         }
         reader.skip(entry.len());
         entry.value()
+    }
+
+    /// For an alphabet of up to 256 symbols. `reader` has `MAX_CODE_LENGTH` bits.
+    #[inline(always)]
+    pub(super) fn read_byte(&self, second_tables: &[Entry], reader: &mut BitReader) -> u32 {
+        let mut entry = self.short(reader.peek());
+        if u32::from(entry.0 as u8) > ROOT_BITS {
+            entry = entry.long(second_tables, reader);
+        }
+        let [len, value] = entry.0.to_le_bytes();
+        reader.skip(len.into());
+        value.into()
     }
 }
 
@@ -143,7 +171,7 @@ impl CodeLengths {
         }
         self.check()?;
         let mut code = Code::EMPTY;
-        self.build(&mut code, &mut Vec::new())?;
+        self.build(&mut code, &mut Vec::new(), 0)?;
 
         let mut codes_left = alphabet_len;
         if reader.read_flag() {
@@ -159,11 +187,11 @@ impl CodeLengths {
         while codes_left > 0 && symbol < alphabet_len {
             codes_left -= 1;
             reader.ensure(7 + 7);
-            let (len, repeat) = match code.read(&[], reader) {
+            let (len, repeat) = match code.read_byte(&[], reader) {
                 16 => (previous, 3 + reader.take(2)),
                 17 => (0, 3 + reader.take(3)),
                 18 => (0, 11 + reader.take(7)),
-                len => (len as u32, 1),
+                len => (len, 1),
             };
             let end = symbol + repeat as usize;
             if end > alphabet_len {
@@ -187,8 +215,13 @@ impl CodeLengths {
         }
     }
 
-    /// `code` is `Code::EMPTY`.
-    pub(super) fn build(&mut self, code: &mut Code, second_tables: &mut Vec<Entry>) -> Result<()> {
+    /// `code` is `Code::EMPTY`. The tables of its group start at `first` in `second_tables`.
+    pub(super) fn build(
+        &mut self,
+        code: &mut Code,
+        second_tables: &mut Vec<Entry>,
+        first: usize,
+    ) -> Result<()> {
         if let [only] = *self.symbols {
             code.root.fill(Entry::new(only.value(), 0));
             return Ok(());
@@ -225,8 +258,6 @@ impl CodeLengths {
             }
         }
 
-        let first = second_tables.len();
-        code.second_tables = u32::try_from(first).map_err(|_| Error::Internal)?;
         let mut root_key = usize::MAX;
         let mut table = first;
         let mut unplaced = long_counts;

@@ -12,6 +12,10 @@ use crate::lossless::{
 };
 use crate::vec;
 
+pub(crate) const MAX_BUNDLE_LEN: usize = 8;
+/// How many pixels at least go through one transform after the other.
+const BAND_LEN: usize = 1024;
+
 pub(super) enum Transform {
     Predictor(Tiles),
     CrossColor(Tiles),
@@ -48,14 +52,18 @@ impl Transform {
         })
     }
 
-    /// For all but the predictor, which needs the row above, and a palette that bundles.
-    fn undo_in_row(&self, row: &mut [Rgba], y: usize) -> Result<()> {
+    /// For all but the predictor, which needs the row above, and a palette that bundles. `rows` start with row `y`.
+    fn undo_in_rows(&self, rows: &mut [Rgba], width: usize, y: usize) -> Result<()> {
         match self {
-            Self::CrossColor(tiles) => undo_cross_color(row, tiles.row(y)?, tiles.bits),
-            Self::SubtractGreen => add_green(row),
+            Self::CrossColor(tiles) => {
+                for (row, y) in rows.chunks_exact_mut(width).zip(y..) {
+                    undo_cross_color(row, tiles.row(y)?, tiles.bits);
+                }
+            }
+            Self::SubtractGreen => add_green(rows),
             Self::ColorIndexing(palette) => {
                 let colors = palette.colors()?;
-                for pixel in row {
+                for pixel in rows {
                     let [_, index, ..] = *pixel;
                     *pixel = *colors.at(index.into());
                 }
@@ -68,27 +76,35 @@ impl Transform {
 
 /// Undoes `transforms`, the last one first, none of which changes the width.
 pub(super) fn undo(transforms: &[Transform], pixels: &mut [Rgba], width: usize) -> Result<()> {
-    let undo_in_row = |transforms: &[Transform], row: &mut [Rgba], y| {
+    let width = width.max(1);
+    let undo_in_rows = |transforms: &[Transform], rows: &mut [Rgba], y| {
         let mut transforms = transforms.iter().rev();
-        transforms.try_for_each(|transform| transform.undo_in_row(row, y))
+        transforms.try_for_each(|transform| transform.undo_in_rows(rows, width, y))
     };
-    let mut rows = pixels.chunks_exact_mut(width.max(1)).enumerate();
+    let band_height = BAND_LEN.div_ceil(width);
+    let bands = pixels.chunks_mut(band_height * width);
+    let mut bands = bands.zip((0..).step_by(band_height));
     let mut around = transforms.split_inclusive(|it| matches!(it, Transform::Predictor(_)));
     let Some([earlier @ .., Transform::Predictor(modes)]) = around.next() else {
-        return rows.try_for_each(|(y, row)| undo_in_row(transforms, row, y));
+        return bands.try_for_each(|(band, y)| undo_in_rows(transforms, band, y));
     };
     let later = around.next().unwrap_or_default();
-    // A row stays as the predictor left it until the row below has been predicted from it.
-    let (mut above_y, mut above) = rows.next().ok_or(Error::Internal)?;
-    undo_in_row(later, above, above_y)?;
-    add_up(above, BLACK.to_le_bytes());
-    for (y, row) in rows {
-        undo_in_row(later, row, y)?;
-        undo_prediction(row, above, modes.row(y)?, modes.bits);
-        undo_in_row(earlier, above, above_y)?;
-        (above_y, above) = (y, row);
+    // A band stays as the predictor left it until the one below has been predicted from it.
+    let (mut band_above, mut y_above): (&mut [Rgba], _) = (&mut [], 0);
+    for (band, y) in bands {
+        undo_in_rows(later, band, y)?;
+        let mut above = band_above.rchunks_exact(width).next();
+        for (row, y) in band.chunks_exact_mut(width).zip(y..) {
+            match above {
+                Some(above) => undo_prediction(row, above, modes.row(y)?, modes.bits),
+                None => add_up(row, BLACK.to_le_bytes()),
+            }
+            above = Some(row);
+        }
+        undo_in_rows(earlier, band_above, y_above)?;
+        (band_above, y_above) = (band, y);
     }
-    undo_in_row(earlier, above, above_y)
+    undo_in_rows(earlier, band_above, y_above)
 }
 
 impl Tiles {
@@ -152,32 +168,30 @@ pub(super) struct Lookup<T> {
 }
 
 impl<T: Copy> Lookup<T> {
-    pub(super) fn fill_row(&self, bundles: impl Iterator<Item = u8>, row: &mut [T]) -> Result<()> {
+    /// All colors of the bundles, the unused ones of the last in a row too. `to` has room for them.
+    pub(super) fn append<B>(
+        &self,
+        coded: &[B],
+        bundle: impl Fn(&B) -> u8,
+        to: &mut Vec<T>,
+    ) -> Result<()> {
         match self.bundle_bits {
-            0 => self.fill_row_by::<1>(bundles, row),
-            1 => self.fill_row_by::<2>(bundles, row),
-            2 => self.fill_row_by::<4>(bundles, row),
-            _ => self.fill_row_by::<8>(bundles, row),
+            0 => self.append_by::<B, 1>(coded, bundle, to),
+            1 => self.append_by::<B, 2>(coded, bundle, to),
+            2 => self.append_by::<B, 4>(coded, bundle, to),
+            _ => self.append_by::<B, MAX_BUNDLE_LEN>(coded, bundle, to),
         }
     }
 
-    fn fill_row_by<const N: usize>(
+    fn append_by<B, const N: usize>(
         &self,
-        mut bundles: impl Iterator<Item = u8>,
-        row: &mut [T],
+        coded: &[B],
+        bundle: impl Fn(&B) -> u8,
+        to: &mut Vec<T>,
     ) -> Result<()> {
         let table = self.table.as_chunks::<N>().0.first_chunk::<256>();
         let table = table.ok_or(Error::Internal)?;
-        let (whole, rest) = row.as_chunks_mut::<N>();
-        for (colors, bundle) in whole.iter_mut().zip(&mut bundles) {
-            *colors = *table.at(bundle.into());
-        }
-        if let Some(bundle) = bundles.next() {
-            let colors = table.at(bundle.into());
-            rest.iter_mut()
-                .zip(colors)
-                .for_each(|(to, from)| *to = *from);
-        }
+        to.extend(coded.iter().flat_map(|it| *table.at(bundle(it).into())));
         Ok(())
     }
 }

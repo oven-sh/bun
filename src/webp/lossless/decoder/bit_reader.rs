@@ -3,12 +3,12 @@
 /// Behind the end of the data are zeros, and `is_past_end()` says whether any were used.
 #[derive(Clone, Copy)]
 pub(super) struct BitReader<'a> {
-    unread: &'a [u8],
+    bytes: &'a [u8],
+    /// How many bytes have been put in `buffer`, made up ones too. No image has use for 4 GB.
+    next: u32,
     /// The lowest `len` bits count. Those above are zero or the bits that come next.
     buffer: u64,
     len: u32,
-    /// How many of the bits put in `buffer` so far were made up.
-    made_up: u32,
 }
 
 impl<'a> BitReader<'a> {
@@ -16,39 +16,25 @@ impl<'a> BitReader<'a> {
     pub(super) const REFILLED: u32 = 56;
 
     pub(super) fn new(bytes: &'a [u8]) -> Self {
-        let mut reader = Self {
-            unread: bytes,
+        Self {
+            bytes,
+            next: 0,
             buffer: 0,
             len: 0,
-            made_up: 0,
-        };
-        // Fewer than 8 bytes are read as 8.
-        // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/utils/bit_reader_utils.h#L175
-        if bytes.len() < 8 {
-            reader.buffer = bytes
-                .iter()
-                .rfold(0, |bits, &byte| bits << 8 | u64::from(byte));
-            reader.len = 64;
-            reader.unread = &[];
         }
-        reader
     }
 
     #[inline(always)]
     pub(super) fn refill(&mut self) {
-        match self.unread.first_chunk() {
+        let next = self.next as usize;
+        match self.bytes.get(next..next + 8).and_then(<[u8]>::first_chunk) {
             Some(&bytes) => {
                 self.buffer |= u64::from_le_bytes(bytes) << (self.len % 64);
-                let whole_bytes = (63 - self.len % 64) / 8;
-                self.unread = self.unread.get(whole_bytes as usize..).unwrap_or_default();
+                self.next += (63 - self.len % 64) / 8;
                 self.len |= Self::REFILLED;
             }
-            None => {
-                core::hint::cold_path();
-                if self.len < Self::REFILLED {
-                    *self = self.refilled_near_end();
-                }
-            }
+            None if self.len < Self::REFILLED => *self = self.refilled_near_end(),
+            None => {}
         }
     }
 
@@ -57,13 +43,9 @@ impl<'a> BitReader<'a> {
     #[inline(never)]
     fn refilled_near_end(mut self) -> Self {
         while self.len < Self::REFILLED {
-            match self.unread.split_first() {
-                Some((&byte, unread)) => {
-                    self.buffer |= u64::from(byte) << self.len;
-                    self.unread = unread;
-                }
-                None => self.made_up = self.made_up.saturating_add(8),
-            }
+            let byte = self.bytes.get(self.next as usize).copied();
+            self.buffer |= u64::from(byte.unwrap_or(0)) << self.len;
+            self.next += 1;
             self.len += 8;
         }
         self
@@ -108,6 +90,8 @@ impl<'a> BitReader<'a> {
 
     #[inline(always)]
     pub(super) fn is_past_end(&self) -> bool {
-        self.len < self.made_up
+        // Fewer than 8 bytes are read as 8.
+        // https://github.com/webmproject/libwebp/blob/4fa21912338357f89e4fd51cf2368325b59e9bd9/src/utils/bit_reader_utils.h#L175
+        (self.next - self.len / 8) as usize > self.bytes.len().max(8)
     }
 }

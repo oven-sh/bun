@@ -4,7 +4,7 @@ use bun_highway::webp::ROW_STEP;
 
 use super::{Filter, LOSSLESS_COMPRESSION, NO_COMPRESSION, gradient};
 use crate::error::{Error, Result};
-use crate::lossless::decoder::{Green, IndexedGreen, decode_green};
+use crate::lossless::decoder::{Green, IndexedGreen, MAX_BUNDLE_LEN, decode_green};
 use crate::vec;
 
 pub(crate) struct Rows<'a> {
@@ -52,7 +52,7 @@ impl<'a> Rows<'a> {
             },
             _ => return Err(Error::InvalidAlpha),
         };
-        let padded = width.next_multiple_of(ROW_STEP);
+        let padded = width + MAX_BUNDLE_LEN + ROW_STEP;
         let rows = Self {
             source,
             filter,
@@ -70,20 +70,21 @@ impl<'a> Rows<'a> {
     /// The alpha of the next row of the picture. `pixels` are those that are there already, from the start of that row.
     pub(crate) fn next(&mut self, pixels: &[[u8; 4]]) -> Result<&[u8]> {
         core::mem::swap(&mut self.row, &mut self.above);
-        let row = self.row.get_mut(..self.width).ok_or(Error::Internal)?;
+        self.row.clear();
         match &mut self.source {
             Source::Raw(unread) => {
-                let (raw, rest) = unread.split_at_checked(row.len()).ok_or(Error::Internal)?;
-                row.copy_from_slice(raw);
+                let (raw, rest) = unread.split_at_checked(self.width).ok_or(Error::Internal)?;
+                self.row.extend_from_slice(raw);
                 *unread = rest;
             }
-            Source::Indexed(green) => green.fill_row(self.y, row)?,
+            Source::Indexed(green) => green.append_row(self.y, &mut self.row)?,
             Source::InPlace => {
-                for (alpha, &[_, green, ..]) in row.iter_mut().zip(pixels) {
-                    *alpha = green;
-                }
+                let pixels = pixels.get(..self.width).ok_or(Error::Internal)?;
+                self.row.extend(pixels.iter().map(|&[_, green, ..]| green));
             }
         }
+        self.row.extend([0; ROW_STEP]);
+        let row = self.row.get_mut(..self.width).ok_or(Error::Internal)?;
         unfilter(self.filter, row, &self.above, self.y == 0);
         self.y += 1;
         Ok(&self.row)

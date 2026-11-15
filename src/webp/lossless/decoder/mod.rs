@@ -8,6 +8,7 @@ mod transform;
 
 use self::bit_reader::BitReader;
 use self::pixels::Coding;
+pub(crate) use self::transform::MAX_BUNDLE_LEN;
 use self::transform::{Lookup, Transform};
 use super::{IMAGE_SIZE_BITS, SIGNATURE, TransformType, VERSION_BITS, subsampled};
 use crate::error::{Error, Result};
@@ -61,11 +62,12 @@ pub(crate) struct IndexedGreen {
 }
 
 impl IndexedGreen {
-    pub(crate) fn fill_row(&self, y: usize, row: &mut [u8]) -> Result<()> {
+    /// And fewer than `MAX_BUNDLE_LEN` more. `to` has room for them.
+    pub(crate) fn append_row(&self, y: usize, to: &mut Vec<u8>) -> Result<()> {
         let start = y * self.bundles_per_row;
         let bundles = self.bundles.get(start..start + self.bundles_per_row);
         let bundles = bundles.ok_or(Error::Internal)?;
-        self.lookup.fill_row(bundles.iter().copied(), row)
+        self.lookup.append(bundles, |&bundle| bundle, to)
     }
 }
 
@@ -168,12 +170,11 @@ impl<'a> Stream<'a> {
         coded: &[T],
         bundle: impl Fn(&T) -> u8,
     ) -> Result<Vec<Rgba>> {
-        let mut pixels = vec::with_room(self.width * self.height)?;
+        let mut pixels = vec::with_room(self.width * self.height + MAX_BUNDLE_LEN)?;
         for coded_row in coded.chunks_exact(self.coded_width.max(1)) {
-            let start = pixels.len();
-            pixels.resize(start + self.width, [0; 4]);
-            let row = pixels.get_mut(start..).ok_or(Error::Internal)?;
-            lookup.fill_row(coded_row.iter().map(&bundle), row)?;
+            let end = pixels.len() + self.width;
+            lookup.append(coded_row, &bundle, &mut pixels)?;
+            pixels.truncate(end);
         }
         Ok(pixels)
     }

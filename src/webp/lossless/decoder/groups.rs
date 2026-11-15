@@ -7,7 +7,8 @@ use super::pixels;
 use crate::array::At;
 use crate::error::{Error, Result};
 use crate::lossless::{
-    DISTANCE_CODES, LENGTH_CODES, LITERAL_CODES, MIN_TILE_BITS, TILE_BITS_BITS, subsampled,
+    DISTANCE_CODES, IMAGE_SIZE_BITS, LENGTH_CODES, LITERAL_CODES, MIN_TILE_BITS, TILE_BITS_BITS,
+    subsampled,
 };
 use crate::vec;
 
@@ -21,6 +22,8 @@ pub(super) struct Group {
     pub(super) blue: Code,
     pub(super) alpha: Code,
     pub(super) distance: Code,
+    /// Where the tables for the codes longer than `ROOT_BITS` start in `Groups::second_tables`.
+    second_tables: usize,
     pub(super) shortcut: Shortcut,
     /// With the channels that have one symbol, and zeros for the others.
     pub(super) constant: Rgba,
@@ -54,6 +57,7 @@ impl Group {
         blue: Code::EMPTY,
         alpha: Code::EMPTY,
         distance: Code::EMPTY,
+        second_tables: 0,
         shortcut: Shortcut::None,
         constant: [0; 4],
         packed: [Packed {
@@ -119,7 +123,7 @@ impl Group {
 
 pub(super) struct Groups {
     groups: Vec<Group>,
-    pub(super) second_tables: Vec<Entry>,
+    second_tables: Vec<Entry>,
     /// For each tile the index of its group.
     tiles: Vec<u16>,
     tiles_per_row: usize,
@@ -136,7 +140,7 @@ impl Groups {
             second_tables,
             tiles,
             tiles_per_row: 1,
-            tile_bits: usize::BITS - 2,
+            tile_bits: IMAGE_SIZE_BITS,
         })
     }
 
@@ -163,17 +167,19 @@ impl Groups {
         })
     }
 
-    /// The group of the pixel, and where in the row its tile ends if the image does not end before.
+    /// The group of the pixel with its second tables, and for how many pixels from there on, unless the image ends.
     #[inline(always)]
-    pub(super) fn at(&self, x: usize, y: usize) -> Result<(&Group, usize)> {
-        let column = x >> self.tile_bits;
-        let tile = (y >> self.tile_bits) * self.tiles_per_row + column;
-        let index = self.tiles.get(tile).ok_or(Error::Internal)?;
-        let group = self.groups.get(usize::from(*index));
-        Ok((
-            group.ok_or(Error::Internal)?,
-            (column + 1) << self.tile_bits,
-        ))
+    pub(super) fn at(&self, x: usize, y: usize, width: usize) -> Result<(&Group, &[Entry], usize)> {
+        let (column, row) = (x >> self.tile_bits, y >> self.tile_bits);
+        let index = self.tiles.get(row * self.tiles_per_row + column);
+        let group = self.groups.get(usize::from(*index.ok_or(Error::Internal)?));
+        let end = match self.tiles_per_row {
+            1 => (((row + 1) << self.tile_bits) - y) * width,
+            _ => width.min((column + 1) << self.tile_bits),
+        };
+        let group = group.ok_or(Error::Internal)?;
+        let tables = self.second_tables.get(group.second_tables..);
+        Ok((group, tables.ok_or(Error::Internal)?, end - x))
     }
 }
 
@@ -218,9 +224,11 @@ fn read_groups(
         }
         groups.try_reserve(1)?;
         let group = groups.push_mut(Group::EMPTY);
+        let first = second_tables.len();
+        group.second_tables = first;
         for (code, alphabet_len) in group.codes_mut().into_iter().zip(alphabet_lens) {
             lengths.read(reader, alphabet_len)?;
-            lengths.build(code, &mut second_tables)?;
+            lengths.build(code, &mut second_tables, first)?;
         }
         group.find_shortcut();
     }

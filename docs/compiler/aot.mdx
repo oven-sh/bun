@@ -121,6 +121,42 @@ bun compile ./server.ts --aot-harden=proof-checks,ignore-told-ranges
 
 A check that fails prints `internal AOT error` with the place in your code, then Bun's crash report, and aborts the process. The program can't catch it. Neither name is on by default, and neither changes what a correct program does. `proof-checks` tests what the compiler believes about values and runs the compiler's own verifier over the build. It doesn't find every compiler mistake. In `Bun.build`, pass `compile: { aot: true, aotHarden: ["proof-checks"] }`.
 
+### Order the executable by a recorded start
+
+`--aot-order` is profile-guided optimization (PGO) for how the executable is laid out. Run it once to record which functions a start uses, then build again with that profile. Bun places the machine code of those functions next to each other, and the strings, constants and object layouts they use too, so a cold start reads less of the file from disk.
+
+In one large CLI application, cold start went from 1.67s to 0.69s and memory at startup dropped by 66 MB.
+
+```sh
+# 1. Build an executable that records
+bun compile ./cli.ts --aot-record-order --outfile myapp-recording
+
+# 2. Run it the way your users do
+BUN_AOT_ORDER_OUT=myapp.order ./myapp-recording --help
+
+# 3. Build again with the profile
+bun compile ./cli.ts --aot-order=myapp.order --outfile myapp
+```
+
+With `Bun.build`:
+
+```ts build.ts icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ["./cli.ts"],
+  compile: { aot: true, outfile: "./myapp", aotOrder: "./myapp.order" },
+});
+```
+
+- **Record the start you want to speed up.** A start of another kind gains less.
+- **Several profiles** cover several ways of starting the app: `--aot-order=interactive.order,oneshot.order`. List the most important one first. A function that more than one of them lists lies where the first one lists it.
+- **Profiles keep working as your code changes.** A function that is gone or renamed is skipped, and new code goes behind the recorded code. A build that differs in a version or a date alone finds every function.
+- **Only an executable built with `--aot-record-order` can record.** Every other one has no recorder and reads no environment variable for it.
+- **Only the layout changes.** No function is compiled differently, and builds stay reproducible. The profile contains module paths and function names, not source code.
+- **On Linux, the executable asks for that part of the file when it starts**, so a cold start waits for the disk once and not for one page after the other.
+- A profile that can't be read is an error. A file that isn't a profile prints a warning, and nothing is placed by it. A profile that was cut off is used as far as it goes.
+- `%p` in `BUN_AOT_ORDER_OUT` becomes the process id. `Worker` threads are recorded too. A run that records is several times slower.
+- Recording works on Linux.
+
 ## Read next
 
 - [Types](/compiler/types): how your types change the compiled program.

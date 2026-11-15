@@ -163,9 +163,13 @@ export const binding = b.value({ returns: NodeJSFS, capability: "js" });
 /** `fs.xSync` for compiled code (src/js/ahead-of-time/node/fs.ts). `bun run` binds a method of the binding instead. */
 const syncFunction = (name: string) => {
   const { uses, ...method } = parsesArguments(operations[name][1], resultOf(name));
-  return b.fn({ ...method, name: `${name}Sync`, uses: { args: uses.args } });
+  return b.fn({ ...method, name: `${name}Sync`, uses: { args: uses.args }, replacesBoundFunction: true });
 };
+export const appendFileSync = syncFunction("appendFile");
+export const chmodSync = syncFunction("chmod");
+export const closeSync = syncFunction("close");
 export const existsSync = syncFunction("exists");
+export const fstatSync = syncFunction("fstat");
 export const lstatSync = syncFunction("lstat");
 export const readdirSync = syncFunction("readdir");
 export const readFileSync = syncFunction("readFile");

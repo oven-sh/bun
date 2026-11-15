@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
-use bun_event_loop::{
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -218,11 +215,7 @@ pub struct FetchTasklet {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
-    Sendfile {
-        window: http::SendFile,
-        /// Owns `window.fd`.
-        _file: bun_sys::File,
-    },
+    Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
 }
 
@@ -247,6 +240,15 @@ impl HTTPRequestBody {
             HTTPRequestBody::AnyBlob(blob) => blob.slice(),
             _ => b"",
         }
+    }
+
+    fn take_sendfile(&mut self) -> Option<http::SendFile> {
+        if let HTTPRequestBody::Sendfile(_) = self
+            && let HTTPRequestBody::Sendfile(sendfile) = core::mem::take(self)
+        {
+            return Some(sendfile);
+        }
+        None
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
@@ -317,7 +319,7 @@ impl HTTPRequestBody {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
             HTTPRequestBody::ReadableStream(stream) => stream.has(),
-            HTTPRequestBody::Sendfile { .. } => true,
+            HTTPRequestBody::Sendfile(_) => true,
         }
     }
 }
@@ -1167,7 +1169,7 @@ impl FetchTasklet {
         if fail == http::Error::ProxyConnectFailed {
             if let Some(metadata) = &self.result.proxy_connect_response {
                 let global_this = self.global_this;
-                let error = Self::proxy_connect_error(&global_this, &metadata.response)
+                let error = Self::proxy_connect_error(&global_this, metadata)
                     .unwrap_or_else(|e| global_this.take_exception(e));
                 return BodyValueError::JSValue(StrongOptional::create(error, &global_this));
             }
@@ -1192,7 +1194,7 @@ impl FetchTasklet {
         // some times we don't have metadata so we also check the request's URL
         // Without the URL's userinfo: errors get logged.
         let href = match &self.metadata {
-            Some(metadata) => metadata.url.slice(),
+            Some(metadata) => metadata.url(),
             None => &self.url_proxy_buffer[..self.url_len],
         };
         let path = BunString::clone_utf8(&ZigURL::parse(href).href_without_userinfo());
@@ -1472,32 +1474,32 @@ impl FetchTasklet {
     /// proxy's reply to CONNECT.
     fn proxy_connect_error(
         global_this: &JSGlobalObject,
-        response: &bun_picohttp::Response<'_>,
+        response: &HTTPResponseMetadata,
     ) -> JsResult<JSValue> {
         let error = global_this
             .err(
                 jsc::ErrorCode::PROXY_TUNNEL,
                 format_args!(
                     "Proxy refused to open a tunnel: {} {}",
-                    response.status_code,
-                    bstr::BStr::new(response.status),
+                    response.status_code(),
+                    bstr::BStr::new(response.status_text()),
                 ),
             )
             .to_js();
         error.put(
             global_this,
             b"status".as_slice(),
-            JSValue::js_number_from_int32(response.status_code as i32),
+            JSValue::js_number_from_int32(response.status_code() as i32),
         );
         error.put(
             global_this,
             b"statusText".as_slice(),
-            bun_string_jsc::create_utf8_for_js(global_this, response.status)?,
+            bun_string_jsc::create_utf8_for_js(global_this, response.status_text())?,
         );
         // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
         let mut headers = unsafe {
             HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers.list,
+                response.headers().list,
             ))
         };
         error.put(
@@ -1698,20 +1700,19 @@ impl FetchTasklet {
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
-        let http_response = &metadata.response;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
-        let status_code = http_response.status_code as u16;
+        let headers = FetchHeaders::create_from_pico_headers(metadata.headers().list);
+        let status_code = metadata.status_code() as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
-            .filter(|canon| *canon == http_response.status)
+            .filter(|canon| *canon == metadata.status_text())
         {
             Some(canon) => BunString::static_(canon),
-            None => BunString::clone_utf8(http_response.status),
+            None => BunString::clone_utf8(metadata.status_text()),
         };
-        let url = BunString::clone_utf8(metadata.url.slice());
+        let url = BunString::clone_utf8(metadata.url());
         let redirected = self.result.redirected;
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value()
@@ -1877,6 +1878,8 @@ impl FetchTasklet {
             fetch_tasklet.signals.cert_errors = None;
         }
 
+        let sendfile = fetch_tasklet.request_body.take_sendfile();
+
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
@@ -1969,10 +1972,10 @@ impl FetchTasklet {
             .header_progress
             .store(true, Ordering::Relaxed);
 
-        if let HTTPRequestBody::Sendfile { window, .. } = fetch_tasklet.request_body {
+        if let Some(sendfile) = sendfile {
             debug_assert!(url_is_http);
             debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
-            http.request_body = http::HTTPRequestBody::Sendfile(window);
+            http.request_body = http::HTTPRequestBody::Sendfile(sendfile);
         }
 
         if let Some(signal) = fetch_options.signal {
@@ -2387,15 +2390,11 @@ impl FetchTasklet {
                 return;
             }
         }
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
+        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link. This thread's ref keeps the
         // tasklet (and the ticket in it) alive across the post.
-        task_ref.ticket().post(ct);
+        task_ref.ticket().post_intrusive(ct);
     }
 }
 
@@ -2517,16 +2516,12 @@ impl FetchTaskletPromiseSettle {
     }
 }
 
-impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
+impl bun_event_loop::BoxedTask for FetchTaskletPromiseSettle {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
     /// Drop the held value and promise handle without settling.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the completion queued.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The fetch() promise is settled for the script that fetched.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the box the completion queued.
-        unsafe { (*this).context }
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.context
     }
 }

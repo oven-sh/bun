@@ -242,8 +242,7 @@ test.skipIf(!isLinux)("uploading an empty slice closes the file", async () => {
       return false;
     }
   }).length;
-  // The last request may not be freed yet.
-  expect(timesOpen).toBeLessThan(5);
+  expect(timesOpen).toBe(0);
 });
 
 test("missing file throws the expected error", async () => {

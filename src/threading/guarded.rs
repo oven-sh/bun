@@ -58,7 +58,8 @@ impl<Value> GuardedBy<Value, Mutex> {
 
     /// Runs `f` under the lock, for a critical section that lets another thread free `*this`.
     ///
-    /// SAFETY: `this` stays live until the unlock after `f` returns.
+    /// # Safety
+    /// `this` stays live until the unlock after `f` returns.
     pub unsafe fn with_lock_raw<R>(
         this: *const Self,
         f: impl FnOnce(&mut GuardedLock<'_, Value, Mutex>) -> R,
@@ -154,6 +155,7 @@ impl RawMutex for Mutex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::sync::atomic::AtomicPtr;
     use std::sync::Arc;
 
     // Miri rejects the free if the other thread still holds a reference into the allocation.
@@ -166,11 +168,11 @@ mod tests {
 
         for _ in 0..ITERATIONS {
             let done = Arc::new(Guarded::new(false));
-            let address = core::sync::atomic::AtomicPtr::new(Arc::as_ptr(&done).cast_mut());
+            let address = AtomicPtr::new(Arc::as_ptr(&done).cast_mut());
             let thread = std::thread::Builder::new()
                 .spawn(move || {
                     // SAFETY: `done` is dropped only once it reads `true`.
-                    unsafe { Guarded::with_lock_raw(address.into_inner(), |done| **done = true) };
+                    unsafe { Guarded::with_lock_raw(address.into_inner(), |value| **value = true) };
                 })
                 .unwrap();
             while !*done.lock() {

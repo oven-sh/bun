@@ -6,7 +6,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult};
+use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult, WeakGlobalRef};
 use bun_ptr::{AliasableBox, RefPtr};
 
 // Re-exports (thin aliases)
@@ -1069,25 +1069,31 @@ fn download_stream(
 pub struct S3DownloadStreamWrapper {
     stream: crate::webcore::byte_stream::ProducerHold,
     pub path: Box<[u8]>,
-    pub global: bun_jsc::StrongGlobal,
+    global: WeakGlobalRef,
     /// Owns `self`, so it is live. Null until `download_stream` sets it and once the stream is cancelled.
     pub task: Cell<*mut S3HttpDownloadStreamingTask>,
 }
 
 impl S3DownloadStreamWrapper {
     pub(crate) fn on_error(&self, err: &Error::S3Error) {
+        let Some(global) = self.global.get() else {
+            return self.on_stream_cancelled();
+        };
         let Some(bytes) = self.stream.take() else {
             return;
         };
         bytes.on_data(crate::webcore::streams::StreamResult::Err(
             crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
-                s3_error_to_js(err, &self.global, Some(&self.path)),
-                &self.global,
+                s3_error_to_js(err, &global, Some(&self.path)),
+                &global,
             )),
         ));
     }
 
     pub(crate) fn on_chunk(&self, chunk: &MutableString, has_more: bool) {
+        if self.global.get().is_none() {
+            return self.on_stream_cancelled();
+        }
         if has_more {
             let Some(bytes) = self.stream.bytes() else {
                 return;
@@ -1213,7 +1219,7 @@ pub(crate) fn readable_stream(
     let wrapper = AliasableBox::new(S3DownloadStreamWrapper {
         stream: Default::default(),
         path: Box::<[u8]>::from(path),
-        global: bun_jsc::StrongGlobal::new(cx.global()),
+        global: WeakGlobalRef::new(cx.global()),
         task: Cell::new(core::ptr::null_mut()),
     });
     // SAFETY: `reader` is the live source made above.

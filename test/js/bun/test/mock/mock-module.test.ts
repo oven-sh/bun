@@ -4537,9 +4537,14 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       {
         "package.json": JSON.stringify({
           name: "project",
-          imports: { "#os": { import: "./os.mjs", require: "node:os" } },
+          imports: {
+            "#os": { import: "./os.mjs", require: "node:os" },
+            // The resolver answers with the key of the builtin module. Of this one the key, "internal:cluster/RoundRobinHandle", is none of its names.
+            "#handle": { import: "./handle.mjs", require: "internal/cluster/round_robin_handle" },
+          },
         }),
         "os.mjs": esm("#os"),
+        "handle.mjs": esm("#handle"),
         "helper.cjs": `module.exports = { read: () => require("os"), viaName: () => require("#os"), viaModule: () => module.require("#os") };`,
         // The functions whose mock answers require() of a name with two files.
         ...Object.fromEntries(
@@ -4598,9 +4603,13 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect((await import("#os")).which).toBe("builtin for the factory");
             expect(globalThis.loaded).toEqual(["#os esm"]);
           });
+          test("a builtin module whose key is none of its names", async () => {
+            mock.module("#handle", () => ({ which: "mock" }));
+            expect([typeof require("internal/cluster/round_robin_handle"), (await import("#handle")).which]).toEqual(["function", "mock"]);
+          });
         `,
       },
-      7,
+      8,
     );
   });
 

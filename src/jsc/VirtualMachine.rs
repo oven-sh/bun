@@ -5494,9 +5494,10 @@ impl VirtualMachine {
         transpiler.with_mut(|t| t.resolver.miss_is_an_answer = true);
         let for_require = resolve(&mut query_for_require, ResolveMode::Require, false);
         transpiler.with_mut(|t| t.resolver.miss_is_an_answer = false);
-        // "imports" of a package.json can map a name to a builtin module for `require()` alone. A module mock that took it for the second file of the name would answer whatever asks for that builtin module.
-        let is_builtin =
-            |path: &bun_core::String| ModuleLoader::bun_aliases_get(&path.to_utf8()).is_some();
+        // "imports" of a package.json can map a name to a builtin module for `require()` alone. A module mock that took it for the second file of the name would answer whatever asks for that builtin module. The resolver answers with the module's key, which is not always one of the names that resolve to it.
+        let is_builtin = |path: &bun_core::String| {
+            bun_resolve_builtins::Module::MAP.contains_key(&path.to_utf8())
+        };
         let mut for_require = match for_require? {
             Ok(path) if !path.eql(&for_import) && !is_builtin(&path) => path,
             _ => return Ok(Ok((for_import, None))),

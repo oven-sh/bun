@@ -1514,10 +1514,8 @@ export const linkerFlags: Flag[] = [
       // into `.text.unlikely` made ~84% of that section resident at startup
       // anyway, so the monolithic default `.text` has *better* RSS locality.
       //
-      // gnu, not both: `both` adds the SysV `.hash` table, which no loader
-      // this binary runs on reads (glibc since 2.5, musl, and bionic since
-      // API 23 all use `.gnu.hash`). The FreeBSD entry keeps `both`: it is a
-      // superset of `gnu`, and freebsdVersion can be set below the default.
+      // gnu only: every loader this binary runs on (glibc, musl, bionic) reads
+      // .gnu.hash, so the SysV .hash table is dead bytes. FreeBSD keeps both.
       "-Wl,--hash-style=gnu",
       "-Wl,--build-id=sha1",
     ],
@@ -1872,10 +1870,8 @@ export function linkDepends(cfg: Config): string[] {
  */
 export const stripFlags: Flag[] = [
   {
-    // --strip-all alone. Each of the two flags that used to follow it keeps
-    // .symtab and .strtab in the output of one of the tools cfg.strip can be:
-    // GNU strip has one strip level and the last flag sets it, so a trailing
-    // --strip-debug wins; llvm-strip keeps the table when --discard-all is set.
+    // --strip-all alone: GNU strip takes the last strip level it sees, so a
+    // trailing --strip-debug downgrades it and keeps .symtab/.strtab.
     flag: ["--strip-all"],
     desc: "Remove all symbols and debug info",
   },

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 
 const programHeaderType = { load: 1, dynamic: 2, stack: 0x6474e551 };
-const dynamicTag = { needed: 1, hash: 4, stringTable: 5, symbolTable: 6, libraryPath: 15, runPath: 29, earlyInitializersSize: 33, packedRelocationsSize: 35 };
+const dynamicTag = { needed: 1, hash: 4, stringTable: 5, symbolTable: 6, libraryPath: 15, runPath: 29, earlyInitializersSize: 33, packedRelocationsSize: 35, gnuHash: 0x6ffffef5 };
 const mayExecute = 1;
 const endOfPage = (address: number) => Math.ceil(address / 4096) * 4096;
 
@@ -45,11 +45,27 @@ export function readElfFile(path: string): ElfFile {
   const strings = valueOf(dynamicTag.stringTable);
   const namesOf = (tag: number) => entries.filter(entry => entry.tag === tag).map(entry => textAt(offsetOf(strings!) + entry.value));
 
+  // Only a hash table says how many symbols the symbol table has: the SysV one holds the count, the GNU one ends its last chain at the last symbol.
+  const symbolCount = (): number | undefined => {
+    const hash = valueOf(dynamicTag.hash);
+    if (hash !== undefined) return file.readUInt32LE(offsetOf(hash) + 4);
+    const gnuHash = valueOf(dynamicTag.gnuHash);
+    if (gnuHash === undefined) return undefined;
+    const at = offsetOf(gnuHash);
+    const [bucketCount, firstHashed, bloomWords] = [file.readUInt32LE(at), file.readUInt32LE(at + 4), file.readUInt32LE(at + 8)];
+    const bucketsAt = at + 16 + bloomWords * 8;
+    const chainsAt = bucketsAt + bucketCount * 4;
+    let last = 0;
+    for (let bucket = 0; bucket < bucketCount; bucket++) last = Math.max(last, file.readUInt32LE(bucketsAt + bucket * 4));
+    if (last < firstHashed) return firstHashed;
+    while ((file.readUInt32LE(chainsAt + (last - firstHashed) * 4) & 1) === 0) last++;
+    return last + 1;
+  };
+
   const importedSymbols = new Set<string>();
   const symbols = valueOf(dynamicTag.symbolTable);
-  const hash = valueOf(dynamicTag.hash);
-  if (symbols !== undefined && hash !== undefined) {
-    const count = file.readUInt32LE(offsetOf(hash) + 4);
+  const count = symbols === undefined ? undefined : symbolCount();
+  if (symbols !== undefined && count !== undefined) {
     for (let index = 1; index < count; index++) {
       const at = offsetOf(symbols) + index * 24;
       if (file.readUInt16LE(at + 6) === 0) importedSymbols.add(textAt(offsetOf(strings!) + file.readUInt32LE(at)));

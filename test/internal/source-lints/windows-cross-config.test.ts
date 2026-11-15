@@ -198,14 +198,18 @@ function resolveUnixRelease(os: "linux" | "freebsd"): Config {
 }
 
 describe("release binary-size flags", () => {
-  test("the always-on strip step passes --strip-all alone", () => {
-    // Either extra flag leaves .symtab and .strtab in the stripped binary:
-    // --strip-debug after --strip-all under GNU strip (the last strip level
-    // wins), --discard-all under llvm-strip.
-    const strip = computeFlags(resolveUnixRelease("linux")).stripflags;
-    expect(strip).toContain("--strip-all");
-    expect(strip).not.toContain("--strip-debug");
-    expect(strip).not.toContain("--discard-all");
+  test("the strip step passes --strip-all and no other strip level", () => {
+    // GNU strip takes the last strip level it sees, so any later level flag
+    // downgrades --strip-all. The exact array pins the order too.
+    expect(computeFlags(resolveUnixRelease("linux")).stripflags).toEqual([
+      "--strip-all",
+      "-R",
+      ".eh_frame",
+      "-R",
+      ".eh_frame_hdr",
+      "-R",
+      ".gcc_except_table",
+    ]);
   });
 
   test("linux links the GNU hash table only; FreeBSD keeps the SysV one too", () => {
@@ -213,8 +217,6 @@ describe("release binary-size flags", () => {
     expect(linux).toContain("-Wl,--hash-style=gnu");
     expect(linux).not.toContain("-Wl,--hash-style=both");
 
-    // FreeBSD keeps both on purpose: `both` is a superset of `gnu`, and
-    // freebsdVersion can be set below the default.
     expect(computeFlags(resolveUnixRelease("freebsd")).ldflags).toContain("-Wl,--hash-style=both");
   });
 });

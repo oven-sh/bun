@@ -5973,9 +5973,7 @@ impl VirtualMachine {
 
         // Loaded macros are functions of the outgoing realm, so the next file loads its own.
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
-        self.module_loader
-            .macro_load_states
-            .swap(&Default::default());
+        self.module_loader.macro_load_states.clear();
 
         let old_global = self.global.get();
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

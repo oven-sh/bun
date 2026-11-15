@@ -1461,8 +1461,6 @@ impl Terminal {
     }
 
     fn update_ref(&self, add: bool) {
-        // POSIX `update_ref` takes `&self`; Windows takes `&mut self` — route
-        // both through `with_mut` so the body is target-agnostic.
         self.reader.update_ref(add);
         self.writer.with_mut(|w| w.update_ref(add));
     }
@@ -1791,9 +1789,9 @@ impl bun_io::pipe_writer::WriterParent for Terminal {
 
 #[cfg(windows)]
 impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> *mut bun_libuv_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> &'static bun_uws::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.uv_loop() }
+        unsafe { (*this).event_loop_handle.r#loop() }
     }
 }
 

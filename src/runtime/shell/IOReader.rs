@@ -108,7 +108,7 @@ impl IOReader {
         (this.reader).set_flags(bun_io::PosixFlags::CLOSE_HANDLE, false);
         #[cfg(windows)]
         (this.reader).set_source(bun_io::Source::File(bun_io::Source::open_file(
-            evtloop.native_loop(),
+            evtloop.loop_(),
             fd,
         )));
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", ptr as usize, fd);

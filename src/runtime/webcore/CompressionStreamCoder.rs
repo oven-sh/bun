@@ -20,6 +20,7 @@ use core::ffi::c_int;
 use core::ptr;
 
 use bun_core::EncodedSlice;
+use bun_core::vec::{BorrowedCursor, append_with};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
 
@@ -63,20 +64,24 @@ impl Format {
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
-fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u8>], CodecError> {
+/// One codec call: grows `out` by up to [`CHUNK`], clamped to `cap`. Also returns whether `step` left room.
+fn append_step<R>(
+    out: &mut Vec<u8>,
+    cap: usize,
+    step: impl FnOnce(BorrowedCursor<'_, u8>) -> R,
+) -> Result<(R, bool), CodecError> {
     debug_assert!(out.len() < cap);
     let budget = cap - out.len();
     out.try_reserve(budget.min(CHUNK))
         .map_err(|_| CodecError::OutOfMemory)?;
-    let spare = out.spare_capacity_mut();
-    let len = spare.len().min(budget);
-    Ok(&mut spare[..len])
+    Ok(append_with(out, budget, |mut spare| {
+        let result = step(spare.reborrow());
+        (result, spare.capacity() != 0)
+    }))
 }
 
-/// `CodecError` for a `ZSTD_isError` return value.
-fn zstd_error(rc: usize, message: &'static str) -> CodecError {
-    if zstd::ZSTD_getErrorCode(rc) == zstd::ZSTD_error_memory_allocation {
+fn zstd_error(code: bun_zstd::ErrorCode, message: &'static str) -> CodecError {
+    if code.0 == zstd::ZSTD_error_memory_allocation {
         CodecError::OutOfMemory
     } else {
         CodecError::Message(message)
@@ -184,12 +189,7 @@ impl CompressionStreamCoder {
                 let mut p = bun_brotli::OwnedEncoder::new(bun_brotli::Allocator::Libc)
                     .ok_or(CodecError::Message("failed to initialize brotli encoder"))?;
                 if let Some(quality) = level {
-                    let ok = brotli::BrotliEncoderSetParameter(
-                        &mut p,
-                        brotli::BROTLI_PARAM_QUALITY,
-                        quality as u32,
-                    ) != 0;
-                    if !ok {
+                    if !p.set_parameter(brotli::BROTLI_PARAM_QUALITY, quality as u32) {
                         return Err(CodecError::Message("failed to set brotli quality"));
                     }
                 }
@@ -208,14 +208,10 @@ impl CompressionStreamCoder {
                 Backend::BrotliDecode(p)
             }
             (Format::Zstd, false) => {
-                let p = bun_zstd::OwnedCCtx::new()
+                let mut p = bun_zstd::OwnedCCtx::new()
                     .ok_or(CodecError::Message("failed to initialize zstd encoder"))?;
                 if let Some(lvl) = level {
-                    // SAFETY: `p` was just created and is exclusively owned here.
-                    let rc = unsafe {
-                        zstd::ZSTD_CCtx_setParameter(p.as_ptr(), zstd::ZSTD_c_compressionLevel, lvl)
-                    };
-                    if zstd::ZSTD_isError(rc) != 0 {
+                    if p.set_parameter(zstd::ZSTD_c_compressionLevel, lvl).is_err() {
                         return Err(CodecError::Message("failed to set zstd level"));
                     }
                 }
@@ -423,38 +419,20 @@ impl CompressionStreamCoder {
                 } else {
                     brotli::BrotliEncoderOperation::process
                 };
-                let mut next_in: *const u8 = input.as_ptr();
-                let mut avail_in: usize = input.len();
+                let mut remaining = input;
                 loop {
                     if out.len() >= cap {
                         return Ok(Progress::More {
-                            consumed: input.len() - avail_in,
+                            consumed: input.len() - remaining.len(),
                         });
                     }
-                    let spare = spare(out, cap)?;
-                    let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
-                    let mut avail_out: usize = spare.len();
-                    let before = avail_out;
-                    // SAFETY: `p` is a live encoder; the four ptrs borrow the
-                    // locals / spare for this one call.
-                    let ok = unsafe {
-                        brotli::BrotliEncoderCompressStream(
-                            p.as_mut_ptr(),
-                            op,
-                            &raw mut avail_in,
-                            &raw mut next_in,
-                            &raw mut avail_out,
-                            &raw mut next_out,
-                            ptr::null_mut(),
-                        )
-                    };
-                    let written = before - avail_out;
-                    // SAFETY: the encoder wrote exactly `written` bytes.
-                    unsafe { out.set_len(out.len() + written) };
-                    if ok == 0 {
+                    let ((consumed, ok), has_room) =
+                        append_step(out, cap, |spare| p.step(remaining, spare, op))?;
+                    remaining = &remaining[consumed..];
+                    if !ok {
                         return Err(CodecError::Message("brotli encode failed"));
                     }
-                    if avail_in == 0 && avail_out != 0 {
+                    if remaining.is_empty() && has_room {
                         return Ok(Progress::Done);
                     }
                 }
@@ -466,43 +444,28 @@ impl CompressionStreamCoder {
                     }
                     return Ok(Progress::Done);
                 }
-                let mut next_in: *const u8 = input.as_ptr();
-                let mut avail_in: usize = input.len();
+                let mut remaining = input;
                 loop {
-                    if out.len() >= cap {
+                    let len_before = out.len();
+                    if len_before >= cap {
                         return Ok(Progress::More {
-                            consumed: input.len() - avail_in,
+                            consumed: input.len() - remaining.len(),
                         });
                     }
-                    let spare = spare(out, cap)?;
-                    let mut next_out: *mut u8 = spare.as_mut_ptr().cast();
-                    let mut avail_out: usize = spare.len();
-                    let before = avail_out;
-                    // SAFETY: `p` is a live decoder; buffers as above.
-                    let result = unsafe {
-                        brotli::BrotliDecoderDecompressStream(
-                            p.as_mut_ptr(),
-                            &raw mut avail_in,
-                            &raw mut next_in,
-                            &raw mut avail_out,
-                            &raw mut next_out,
-                            ptr::null_mut(),
-                        )
-                    };
-                    let written = before - avail_out;
-                    // SAFETY: the decoder wrote exactly `written` bytes.
-                    unsafe { out.set_len(out.len() + written) };
+                    let ((consumed, result), _) =
+                        append_step(out, cap, |spare| p.step(remaining, spare))?;
+                    remaining = &remaining[consumed..];
                     match result {
                         brotli::BrotliDecoderResult::success => {
                             self.ended = true;
-                            if avail_in != 0 {
+                            if !remaining.is_empty() {
                                 return Err(CodecError::TrailingJunk);
                             }
                             return Ok(Progress::Done);
                         }
                         brotli::BrotliDecoderResult::needs_more_input => {
                             // Brotli reports `needs_more_input` even with output left in its ring buffer.
-                            if written > 0 && brotli::BrotliDecoder::has_more_output(p) {
+                            if out.len() > len_before && p.has_more_output() {
                                 continue;
                             }
                             if finish {
@@ -512,16 +475,12 @@ impl CompressionStreamCoder {
                         }
                         brotli::BrotliDecoderResult::needs_more_output => {}
                         brotli::BrotliDecoderResult::err => {
-                            let ec = brotli::BrotliDecoderGetErrorCode(p);
+                            let ec = p.error_code();
                             if ec.is_alloc_failure() {
                                 return Err(CodecError::OutOfMemory);
                             }
-                            // SAFETY: the error string is a static C string owned by the brotli library.
-                            let code = unsafe {
-                                core::ffi::CStr::from_ptr(brotli::BrotliDecoderErrorString(ec))
-                            };
                             return Err(CodecError::Brotli(
-                                code.to_str().unwrap_or("brotli decode failed"),
+                                ec.name().to_str().unwrap_or("brotli decode failed"),
                             ));
                         }
                     }
@@ -530,40 +489,19 @@ impl CompressionStreamCoder {
             Backend::ZstdEncode(p) => {
                 // ZSTD_EndDirective: 0 = ZSTD_e_continue, 2 = ZSTD_e_end.
                 let end: core::ffi::c_uint = if finish { 2 } else { 0 };
-                let mut input_buf = zstd::ZSTD_inBuffer {
-                    src: input.as_ptr().cast(),
-                    size: input.len(),
-                    pos: 0,
-                };
+                let mut rest = input;
                 loop {
                     if out.len() >= cap {
                         return Ok(Progress::More {
-                            consumed: input_buf.pos,
+                            consumed: input.len() - rest.len(),
                         });
                     }
-                    let spare = spare(out, cap)?;
-                    let mut output_buf = zstd::ZSTD_outBuffer {
-                        dst: spare.as_mut_ptr().cast(),
-                        size: spare.len(),
-                        pos: 0,
-                    };
-                    // SAFETY: `p` is a live CCtx; the buffers borrow locals /
-                    // spare for this one call.
-                    let remaining = unsafe {
-                        zstd::ZSTD_compressStream2(
-                            p.as_ptr(),
-                            &raw mut output_buf,
-                            &raw mut input_buf,
-                            end,
-                        )
-                    };
-                    // SAFETY: compressStream2 wrote exactly `output_buf.pos`
-                    // bytes.
-                    unsafe { out.set_len(out.len() + output_buf.pos) };
-                    if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(zstd_error(remaining, "zstd encode failed"));
-                    }
-                    if input_buf.pos == input_buf.size && (!finish || remaining == 0) {
+                    let ((consumed, remaining), _) =
+                        append_step(out, cap, |spare| p.step(rest, spare, end))?;
+                    rest = &rest[consumed..];
+                    let remaining =
+                        remaining.map_err(|code| zstd_error(code, "zstd encode failed"))?;
+                    if rest.is_empty() && (!finish || remaining == 0) {
                         return Ok(Progress::Done);
                     }
                 }
@@ -571,14 +509,9 @@ impl CompressionStreamCoder {
             Backend::ZstdDecode(p) => {
                 // After a frame completes, whatever follows must be another frame
                 // magic (see `zstd_head`); `step` has already re-attached a split one.
-                let mut input_buf = zstd::ZSTD_inBuffer {
-                    src: input.as_ptr().cast(),
-                    size: input.len(),
-                    pos: 0,
-                };
+                let mut rest = input;
                 loop {
                     if self.ended {
-                        let rest = &input[input_buf.pos..];
                         if rest.is_empty() {
                             return Ok(Progress::Done);
                         }
@@ -594,46 +527,22 @@ impl CompressionStreamCoder {
                             self.zstd_head_len = head.len() as u8;
                             return Ok(Progress::Done);
                         }
-                        // SAFETY: `p` is a live DCtx.
-                        unsafe {
-                            zstd::ZSTD_DCtx_reset(
-                                p.as_ptr(),
-                                zstd::ZSTD_reset_session_and_parameters,
-                            )
-                        };
+                        p.reset();
                         self.ended = false;
                     }
                     if out.len() >= cap {
                         return Ok(Progress::More {
-                            consumed: input_buf.pos,
+                            consumed: input.len() - rest.len(),
                         });
                     }
-                    let spare = spare(out, cap)?;
-                    let mut output_buf = zstd::ZSTD_outBuffer {
-                        dst: spare.as_mut_ptr().cast(),
-                        size: spare.len(),
-                        pos: 0,
-                    };
-                    // SAFETY: `p` is a live DCtx; buffers borrow locals / spare
-                    // for this one call.
-                    let remaining = unsafe {
-                        zstd::ZSTD_decompressStream(
-                            p.as_ptr(),
-                            &raw mut output_buf,
-                            &raw mut input_buf,
-                        )
-                    };
-                    // SAFETY: decompressStream wrote exactly `output_buf.pos`
-                    // bytes.
-                    unsafe { out.set_len(out.len() + output_buf.pos) };
-                    if zstd::ZSTD_isError(remaining) != 0 {
-                        return Err(zstd_error(remaining, "zstd decode failed"));
-                    }
-                    if remaining == 0 {
+                    let ((consumed, remaining), has_room) =
+                        append_step(out, cap, |spare| p.step(rest, spare))?;
+                    rest = &rest[consumed..];
+                    if remaining.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
                         self.ended = true;
                         continue;
                     }
-                    if input_buf.pos == input_buf.size && output_buf.pos < output_buf.size {
+                    if rest.is_empty() && has_room {
                         if finish {
                             return Err(CodecError::Message("unexpected end of file"));
                         }

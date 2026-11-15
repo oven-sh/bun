@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 
 // When a child process exits while its stdout/stderr pipe still has pending
 // activity, onProcessExit keeps the Subprocess JSRef Strong. The pipe later
-// drains and PipeReader.onReaderDone → Subprocess.onCloseIO converts the
+// drains and PipeReader.on_read_result → Subprocess.on_output_read converts the
 // Readable from `.pipe` to `.buffer`, but previously did not call
 // updateHasPendingActivity(), so the JSRef stayed Strong forever and the
 // JSSubprocess (plus its buffered output) leaked.
@@ -13,7 +13,7 @@ import { bunEnv, bunExe, isWindows } from "harness";
 // from onProcessExit normally drains the pipe to EOF synchronously, so we
 // force EAGAIN by having a grandchild inherit stdout and keep the write end
 // open past the direct child's exit. The exit notification then arrives
-// while the pipe is still pending, and onCloseIO runs later from the event
+// while the pipe is still pending, and on_output_read runs later from the event
 // loop — the path that leaked.
 //
 // Windows uses a different pipe/process model; the scenario is POSIX-shaped.
@@ -46,7 +46,7 @@ test.skipIf(isWindows)(
           stdin: "ignore",
         });
         await proc.exited;
-        // Intentionally never touch proc.stdout — onCloseIO will convert the
+        // Intentionally never touch proc.stdout — on_output_read will convert the
         // pipe to a buffered Readable that nobody references.
         registry.register(proc, undefined);
       }
@@ -56,7 +56,7 @@ test.skipIf(isWindows)(
       }
 
       // Give grandchildren time to write, exit, and for the pipes to reach
-      // EOF and fire onReaderDone → onCloseIO on the event loop. Then GC.
+      // EOF and fire on_read_result → on_output_read on the event loop. Then GC.
       // Under release-ASAN each grandchild is itself a full \`bun -e\` process
       // with ASAN startup + LSan-exit overhead; the loop exits as soon as all
       // are collected, so the upper bound only affects the failing case.

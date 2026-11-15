@@ -3013,14 +3013,14 @@ pub(crate) fn download_to_path(
         let url = bun_url::URL::parse(&url_str_copy);
         {
             // The unconditional
-            // `progress.end()` below is sufficient: no fallible call sits between
+            // `refresher.end()` below is sufficient: no fallible call sits between
             // `refresher.start` and it, so every exit path (including the
             // error returns after it) ends the node exactly once.
             // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
-            let progress = refresher.start(b"Downloading", 0);
+            refresher.start(b"Downloading", 0);
 
             let mut async_http = Box::new(bun_http::AsyncHTTP::init_sync(
                 bun_http::Method::GET,
@@ -3032,12 +3032,12 @@ pub(crate) fn download_to_path(
                 bun_http::ProxySettings::from_env(env),
                 bun_http::FetchRedirect::Follow,
             ));
-            async_http.client.progress_node =
-                core::ptr::NonNull::new(core::ptr::from_mut(progress));
+            async_http.client.progress = Some(&mut refresher);
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
             let send_result = async_http.send_sync(&mut compressed_archive_bytes);
+            drop(async_http);
 
-            progress.end();
+            refresher.end();
             let status_code = send_result?.status_code() as u16;
 
             match status_code {
@@ -3064,8 +3064,6 @@ pub(crate) fn download_to_path(
             }
 
             {
-                // Note: reshaped for borrowck — `refresher.start` borrows
-                // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
                 let gunzip_result = (|| -> crate::Result<()> {
                     let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
@@ -3078,7 +3076,7 @@ pub(crate) fn download_to_path(
                         .map_err(|_| crate::Error::InvalidResponse)?;
                     Ok(())
                 })();
-                refresher.root.end();
+                refresher.end();
                 gunzip_result?;
             }
             refresher.refresh();
@@ -3106,7 +3104,7 @@ pub(crate) fn download_to_path(
                     },
                 );
                 if extract_res.is_err() {
-                    refresher.root.end();
+                    refresher.end();
                     // Return error without printing - let caller handle the messaging
                     return Err(crate::Error::ExtractionFailed);
                 }
@@ -3130,14 +3128,14 @@ pub(crate) fn download_to_path(
 
                             // fallthrough, failed for another reason
                         }
-                        refresher.root.end();
+                        refresher.end();
                         // Return error without printing - let caller handle the messaging
                         return Err(crate::Error::ExtractionFailed);
                     }
                     break;
                 }
                 drop(tmpdir);
-                refresher.root.end();
+                refresher.end();
             }
             refresher.refresh();
         }

@@ -1,12 +1,11 @@
 use bun_collections::VecExt;
-use std::cell::Cell;
 use std::io::Write as _;
 
 use crate::api::bun_process::Status;
 use crate::api::bun_process::sync as spawn_sync;
 use bun_archive::{Archiver, archiver};
 use bun_clap as clap;
-use bun_core::Progress::{Node as ProgressNode, Progress};
+use bun_core::Progress::{NodeId, Progress};
 use bun_core::{Global, Output, pretty_error, pretty_errorln};
 use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
@@ -79,41 +78,6 @@ fn exec_task(
         false,
         use_system_shell,
     )
-}
-
-// Two buffers, used in turn: printing over the one on display would garble it.
-struct ProgressBuf;
-
-impl ProgressBuf {
-    thread_local! {
-        static BUFS: core::cell::RefCell<[[u8; 1024]; 2]> = const { core::cell::RefCell::new([[0u8; 1024]; 2]) };
-        static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
-    }
-
-    fn print(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
-        Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
-        let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
-        Self::BUFS.with_borrow_mut(|bufs| {
-            let buf = &mut bufs[idx];
-            let mut cursor: &mut [u8] = &mut buf[..];
-            let cap = cursor.len();
-            write!(&mut cursor, "{}", args)
-                .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
-            let written = cap - cursor.len();
-            // SAFETY: a thread-local static buffer; it is printed or copied before it is reused.
-            let out: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&buf[..written]) };
-            Ok(out)
-        })
-    }
-
-    /// `<tag>` sequences inside interpolated arguments are rewritten too.
-    fn pretty(args: core::fmt::Arguments<'_>) -> crate::Result<&'static [u8]> {
-        if Output::enable_ansi_colors_stdout() {
-            ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
-        } else {
-            ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<false>(args)))
-        }
-    }
 }
 
 struct CreateOptions {
@@ -374,19 +338,15 @@ impl CreateCommand {
                     bun_paths::platform::Loose,
                 >(filesystem.top_level_dir(), dirname))?;
 
-        let mut progress = Progress {
-            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
-            ..Default::default()
-        };
+        let mut progress = Progress::default();
+        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         let verb = if example_tag == ExampleTag::JslikeFile {
-            "Analyzing"
+            "Analyzing "
         } else {
-            "Loading"
+            "Loading "
         };
-        progress.start(
-            ProgressBuf::print(format_args!("{} {}", verb, bstr::BStr::new(template)))?,
-            0,
-        );
+        progress.start(verb.as_bytes(), 0);
+        progress.root().append_to_name(template);
 
         // alacritty is fast
         if env_loader.map.get(b"ALACRITTY_LOG").is_some() {
@@ -417,12 +377,7 @@ impl CreateCommand {
 
         match example_tag {
             ExampleTag::JslikeFile => {
-                return run_on_entry_point(
-                    ctx,
-                    create_options.overwrite,
-                    template,
-                    &mut progress.root,
-                );
+                return run_on_entry_point(ctx, create_options.overwrite, template, &progress);
             }
             ExampleTag::GithubRepository | ExampleTag::Official => {
                 let tarball_bytes: MutableString = match example_tag {
@@ -430,7 +385,7 @@ impl CreateCommand {
                         match Example::fetch(&ctx, env_loader, template, &mut progress) {
                             Ok(b) => b,
                             Err(err) => {
-                                progress.root.end();
+                                progress.end();
                                 progress.refresh();
 
                                 if !matches!(
@@ -458,7 +413,7 @@ impl CreateCommand {
                         match Example::fetch_from_github(env_loader, template, &mut progress) {
                             Ok(b) => b,
                             Err(err) => {
-                                progress.root.end();
+                                progress.end();
                                 progress.refresh();
 
                                 if matches!(
@@ -500,12 +455,10 @@ impl CreateCommand {
                     _ => unreachable!(),
                 };
 
-                progress.root.name = ProgressBuf::print(format_args!(
-                    "Decompressing {}",
-                    bstr::BStr::new(template)
-                ))?;
-                progress.root.set_completed_items(0);
-                progress.root.set_estimated_total_items(0);
+                progress.root().set_name(b"Decompressing ");
+                progress.root().append_to_name(template);
+                progress.root().completed_items.set(0);
+                progress.root().estimated_total_items.set(0);
 
                 progress.refresh();
 
@@ -517,10 +470,8 @@ impl CreateCommand {
                 gunzip.read_all(true)?;
                 drop(gunzip);
 
-                progress.root.name =
-                    ProgressBuf::print(format_args!("Extracting {}", bstr::BStr::new(template)))?;
-                progress.root.set_completed_items(0);
-                progress.root.set_estimated_total_items(0);
+                progress.root().set_name(b"Extracting ");
+                progress.root().append_to_name(template);
 
                 progress.refresh();
 
@@ -568,7 +519,7 @@ impl CreateCommand {
                     }
 
                     if !create_options.overwrite && archive_context.overwrite_list.count() > 0 {
-                        progress.root.end();
+                        progress.end();
                         progress.refresh();
                         exit_with_conflicts(
                             destination,
@@ -592,7 +543,7 @@ impl CreateCommand {
                     let plucker = &mut archive_context.pluckers[0];
 
                     if let Some(file) = plucker.file.take() {
-                        progress.root.name = b"Updating package.json";
+                        progress.root().set_name(b"Updating package.json");
                         progress.refresh();
 
                         package_json_contents = plucker.contents.clone()?;
@@ -601,14 +552,14 @@ impl CreateCommand {
                 }
             }
             ExampleTag::LocalFolder => {
-                progress.root.name = b"Copying files";
+                progress.root().set_name(b"Copying files");
                 progress.refresh();
 
                 let abs_template_path = crate::cli::cli_dupe(filesystem.abs(&[template]));
                 let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
-                        progress.root.end();
+                        progress.end();
                         progress.refresh();
 
                         pretty_errorln!(
@@ -621,7 +572,7 @@ impl CreateCommand {
                 };
 
                 if destination_is_inside_template(&template_dir, abs_template_path, destination) {
-                    progress.root.end();
+                    progress.end();
                     progress.refresh();
 
                     pretty_errorln!(
@@ -638,7 +589,7 @@ impl CreateCommand {
                     create_options.overwrite,
                 )?;
                 if !conflicts.is_empty() {
-                    progress.root.end();
+                    progress.end();
                     progress.refresh();
                     exit_with_conflicts(destination, conflicts.iter().map(Vec::as_slice));
                 }
@@ -646,7 +597,7 @@ impl CreateCommand {
                 let destination_dir = match bun_sys::Fd::cwd().make_open_path(destination) {
                     Ok(d) => d,
                     Err(err) => {
-                        progress.root.end();
+                        progress.end();
                         progress.refresh();
 
                         pretty_errorln!(
@@ -693,7 +644,7 @@ impl CreateCommand {
                 file_copier_copy(
                     &destination_dir,
                     &mut walker_,
-                    &mut progress,
+                    &progress,
                     #[cfg(windows)]
                     (destination_len + 1),
                     #[cfg(windows)]
@@ -724,7 +675,7 @@ impl CreateCommand {
                                 let stat = match pkg.stat() {
                                     Ok(s) => s,
                                     Err(err) => {
-                                        progress.root.end();
+                                        progress.end();
                                         progress.refresh();
 
                                         package_json_file = None;
@@ -741,7 +692,7 @@ impl CreateCommand {
                                     || stat.st_size == 0
                                 {
                                     package_json_file = None;
-                                    progress.root.end();
+                                    progress.end();
                                     progress.refresh();
                                     break 'read_package_json;
                                 }
@@ -763,7 +714,7 @@ impl CreateCommand {
                             pkg.pread_all(package_json_contents.list.as_mut_slice(), 0)
                         {
                             package_json_file = None;
-                            progress.root.end();
+                            progress.end();
                             progress.refresh();
 
                             pretty_errorln!(
@@ -783,7 +734,7 @@ impl CreateCommand {
             }
         }
 
-        progress.root.end();
+        progress.end();
         progress.refresh();
 
         let mut preinstall_tasks: Vec<&[u8]> = Vec::new();
@@ -1359,7 +1310,7 @@ pub(crate) struct ExtractedInfo {
 fn file_copier_copy(
     destination_dir_: &bun_sys::Dir,
     walker: &mut bun_sys::walker_skippable::Walker,
-    progress_: &mut Progress,
+    progress: &Progress,
     #[cfg(windows)] dst_base_len: usize,
     #[cfg(windows)] dst_buf: &mut bun_paths::WPathBuffer,
     #[cfg(windows)] src_base_len: usize,
@@ -1395,8 +1346,7 @@ fn file_copier_copy(
                     }
                 }
                 bun_sys::FileKind::File => {
-                    let mut progress_ =
-                        scopeguard::guard(&mut *progress_, |progress| progress.root.complete_one());
+                    scopeguard::defer! { progress.complete_one(NodeId::Root) }
                     // SAFETY: `src`/`dst` are NUL-terminated wide strings.
                     if unsafe { bun_sys::windows::CopyFileW(src.as_ptr(), dst.as_ptr(), 0) }
                         == bun_sys::windows::FALSE
@@ -1420,8 +1370,8 @@ fn file_copier_copy(
                                 bun_core::fmt::fmt_os_path(entry.path, Default::default())
                             ),
                         );
-                        progress_.root.end();
-                        progress_.refresh();
+                        progress.end();
+                        progress.refresh();
                         Global::crash();
                     }
                 }
@@ -1452,11 +1402,10 @@ fn file_copier_copy(
                 open_outfile()
             }) {
                 Ok(f) => f,
-                Err(err) => exit_copy_failed(err, entry.path.as_bytes(), progress_),
+                Err(err) => exit_copy_failed(err, entry.path.as_bytes(), progress),
             };
             let _close_out = bun_sys::CloseOnDrop::new(outfile);
-            let mut progress_ =
-                scopeguard::guard(&mut *progress_, |progress| progress.root.complete_one());
+            scopeguard::defer! { progress.complete_one(NodeId::Root) }
 
             let infile = bun_sys::openat(entry.dir, entry.basename, bun_sys::O::RDONLY, 0)?;
             let _close_in = bun_sys::CloseOnDrop::new(infile);
@@ -1467,7 +1416,7 @@ fn file_copier_copy(
             }
 
             if let Err(err) = CopyFile::copy_file(infile, outfile) {
-                exit_copy_failed(err, entry.path.as_bytes(), &mut progress_);
+                exit_copy_failed(err, entry.path.as_bytes(), progress);
             }
         }
     }
@@ -1476,8 +1425,8 @@ fn file_copier_copy(
 
 #[cfg(not(windows))]
 #[cold]
-fn exit_copy_failed(err: bun_sys::Error, path: &[u8], progress: &mut Progress) -> ! {
-    progress.root.end();
+fn exit_copy_failed(err: bun_sys::Error, path: &[u8], progress: &Progress) -> ! {
+    progress.end();
     progress.refresh();
     Output::err(
         err,
@@ -1490,7 +1439,7 @@ fn exit_copy_failed(err: bun_sys::Error, path: &[u8], progress: &mut Progress) -
 struct Analyzer<'a> {
     overwrite: bool,
     entry_point: &'a [u8],
-    node: &'a mut ProgressNode,
+    progress: &'a Progress,
 }
 
 impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
@@ -1498,7 +1447,7 @@ impl bun_bundler::bundle_v2::OnDependenciesAnalyze for Analyzer<'_> {
         &mut self,
         result: &mut bun_bundler::bundle_v2::DependenciesScannerResult<'_, '_>,
     ) -> Result<(), bun_bundler::Error> {
-        self.node.end();
+        self.progress.end();
 
         SourceFileProjectGenerator::generate(self.overwrite, self.entry_point, result)
             .map_err(Into::into)
@@ -1509,12 +1458,12 @@ fn run_on_entry_point(
     ctx: Command::Context<'_>,
     overwrite: bool,
     entry_point: &[u8],
-    node: &mut ProgressNode,
+    progress: &Progress,
 ) -> crate::Result<()> {
     let mut analyzer = Analyzer {
         overwrite,
         entry_point,
-        node,
+        progress,
     };
 
     let mut fetcher = bun_bundler::bundle_v2::DependenciesScanner {
@@ -1580,13 +1529,13 @@ impl Example {
 
     pub(crate) fn fetch_all_local_and_remote(
         ctx: &Command::Context,
-        mut node: Option<&mut ProgressNode>,
+        mut progress: Option<&mut Progress>,
         env_loader: &mut DotEnv::Loader,
         filesystem: &fs::FileSystem,
     ) -> crate::Result<Vec<Example>> {
-        let mut examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
-        if let Some(node_) = node {
-            node_.end();
+        let mut examples = Example::fetch_all(ctx, env_loader, progress.as_deref_mut())?;
+        if let Some(progress) = progress {
+            progress.end();
         }
 
         // SAFETY: single-threaded CLI access to module-level static path buffer
@@ -1645,11 +1594,18 @@ impl Example {
             repository = &repository[0..i];
         }
 
-        refresher.root.name = ProgressBuf::pretty(format_args!(
+        let name = format_args!(
             "<d>[github] <b>GET<r> <blue>{}/{}<r>",
             bstr::BStr::new(owner),
             bstr::BStr::new(repository),
-        ))?;
+        );
+        refresher
+            .root()
+            .set_name(&if Output::enable_ansi_colors_stdout() {
+                Output::pretty_fmt::<true>(name)
+            } else {
+                Output::pretty_fmt::<false>(name)
+            });
         refresher.refresh();
 
         let mut github_api_domain: &[u8] = b"api.github.com";
@@ -1718,10 +1674,11 @@ impl Example {
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         ));
-        async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut refresher.root));
+        async_http.client.progress = Some(refresher);
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         let response = async_http.send_sync(&mut mutable)?;
+        drop(async_http);
 
         match response.status_code() {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
@@ -1734,7 +1691,7 @@ impl Example {
 
         let content_type: &[u8] = response.header(b"content-type").unwrap_or(b"");
         if content_type != b"application/x-gzip" {
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             if !content_type.is_empty() {
@@ -1751,7 +1708,7 @@ impl Example {
         }
 
         if mutable.list.is_empty() {
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             bun_core::pretty_errorln!(
@@ -1769,7 +1726,7 @@ impl Example {
         name: &[u8],
         refresher: &mut Progress,
     ) -> crate::Result<MutableString> {
-        refresher.root.name = b"Fetching package.json";
+        refresher.root().set_name(b"Fetching package.json");
         refresher.refresh();
 
         // SAFETY: single-threaded CLI access to static buffer.
@@ -1802,10 +1759,11 @@ impl Example {
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
-        async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut refresher.root));
+        async_http.client.progress = Some(refresher);
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         let mut response = async_http.send_sync(&mut mutable)?;
+        drop(async_http);
 
         match response.status_code() {
             404 => return Err(crate::Error::ExampleNotFound),
@@ -1816,7 +1774,7 @@ impl Example {
             _ => return Err(crate::Error::HTTPError),
         }
 
-        refresher.root.name = b"Parsing package.json";
+        refresher.root().set_name(b"Parsing package.json");
         refresher.refresh();
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
@@ -1826,7 +1784,7 @@ impl Example {
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
                 if log.errors > 0 {
@@ -1839,7 +1797,7 @@ impl Example {
         };
 
         if log.errors > 0 {
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -1852,7 +1810,7 @@ impl Example {
         {
             crate::cli::cli_dupe(s)
         } else {
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             bun_core::pretty_errorln!(
@@ -1861,7 +1819,7 @@ impl Example {
             Global::exit(1);
         };
 
-        refresher.root.name = b"Downloading tarball";
+        refresher.root().set_name(b"Downloading tarball");
         refresher.refresh();
 
         // The tarball url was copied out of it.
@@ -1873,7 +1831,9 @@ impl Example {
             .get_http_proxy_for(&parsed_tarball_url)
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
-        async_http = HTTP::AsyncHTTP::init_sync(
+        refresher.maybe_refresh();
+
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             parsed_tarball_url,
             Default::default(),
@@ -1883,17 +1843,16 @@ impl Example {
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
-        async_http.client.progress_node = Some(core::ptr::NonNull::from(&mut refresher.root));
+        async_http.client.progress = Some(refresher);
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
-        refresher.maybe_refresh();
-
         response = async_http.send_sync(&mut mutable)?;
+        drop(async_http);
 
         refresher.maybe_refresh();
 
         if response.status_code() != 200 {
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
             bun_core::pretty_errorln!(
                 "Error fetching tarball: <r><red>{}<r>",
@@ -1910,7 +1869,7 @@ impl Example {
     pub(crate) fn fetch_all(
         ctx: &Command::Context,
         env_loader: &mut DotEnv::Loader,
-        progress_node: Option<&mut ProgressNode>,
+        progress: Option<&mut Progress>,
     ) -> crate::Result<Vec<Example>> {
         let url = URL::parse(Self::EXAMPLES_URL);
         let http_proxy = env_loader.get_http_proxy_for(&url);
@@ -1936,7 +1895,7 @@ impl Example {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if Output::enable_ansi_colors_stdout() {
-            async_http.client.progress_node = progress_node.map(core::ptr::NonNull::from);
+            async_http.client.progress = progress;
         }
 
         let response = match async_http.send_sync(mutable) {
@@ -2032,16 +1991,14 @@ impl CreateListExamplesCommand {
 
         env_loader.load_process()?;
 
-        let mut progress = Progress {
-            supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
-            ..Default::default()
-        };
+        let mut progress = Progress::default();
+        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         progress.start(b"Fetching manifest", 0);
         progress.refresh();
 
         let examples = Example::fetch_all_local_and_remote(
             ctx,
-            Some(&mut progress.root),
+            Some(&mut progress),
             &mut env_loader,
             filesystem,
         )?;

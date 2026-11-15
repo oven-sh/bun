@@ -552,6 +552,48 @@ test.skipIf(isWindows)("responds to a framework request queued behind the reload
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("server.reload() keeps the DevServer routes while a rejected plugin load fails a request", async () => {
+  using dir = tempDir("serve-plugins-devserver-reject-reload", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "plugin.ts": parkedPlugin,
+    "render.ts": `export function render() { return new Response("rendered"); }`,
+    "routes/index.ts": `export default {};`,
+    "server.ts": `
+      const entered = Promise.withResolvers();
+      const release = Promise.withResolvers();
+      globalThis.__setup = { entered: entered.resolve, release: release.promise, finished() {} };
+
+      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./render.ts" };
+      const app = { framework: { fileSystemRouterTypes: [fsr] } };
+      const server = Bun.serve({ port: 0, hostname: "127.0.0.1", development: true, app });
+      const closed = Promise.withResolvers();
+      const handlers = { data() {}, close: closed.resolve };
+      const socket = await Bun.connect({ hostname: server.hostname, port: server.port, socket: handlers });
+      // Failing a request whose body is incomplete drains microtasks, so the last of these awaits resume there.
+      socket.write("POST / HTTP/1.1\\r\\nHost: localhost\\r\\nContent-Length: 2\\r\\n\\r\\nx");
+      await entered.promise;
+      release.resolve("reject");
+      for (let i = 0; i < 100; i++) await null;
+      server.reload({ fetch: () => new Response("fetch") });
+      await closed.promise;
+      console.log(await fetch(server.url).then(res => res.text()));
+      await server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout, stderr).toBe("Plugin Error\n");
+  expect(exitCode).toBe(0);
+});
+
 describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s", development => {
   async function run(files: Record<string, string>) {
     using dir = tempDir("serve-plugins-first-request", {

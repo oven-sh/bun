@@ -417,7 +417,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     assignHeadersFromUWebSocketsForCall(request, methodString, args, flatHeaders, globalObject, vm);
 
     auto* httpResponseData = response->getHttpResponseData();
-    httpResponseData->state &= ~uWS::HttpResponseData<isSSL>::HTTP_NODE_OTHER_HANDLER;
+    httpResponseData->state &= ~uWS::HttpResponseData<isSSL>::HTTP_NODE_BUN_SERVE_HANDLER;
     // Pipelined: an earlier response is in flight, so this one is queued and gets the connection at its turn (startPipelinedResponse).
     const bool isPipelinedDispatch = (httpResponseData->state & uWS::HttpResponseData<isSSL>::HTTP_NODE_PIPELINED_DISPATCH) != 0;
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;

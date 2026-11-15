@@ -43,7 +43,7 @@ struct HttpFlags {
      * or queued responses keeps the connection open until they drain (Node's
      * socketOnEnd); when false (the default), the connection ends right away. */
     bool httpAllowHalfOpen: 1 = false;
-    /* Every route calls node:http's handler, the only handler that can queue behind the response in flight. */
+    /* Every route but /bun:info, which yields, calls node:http's handler, the only one that can queue a response. */
     bool queuesPipelinedResponses: 1 = false;
 };
 

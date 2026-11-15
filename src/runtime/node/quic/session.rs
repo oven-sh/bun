@@ -1914,7 +1914,7 @@ impl QuicSession {
         obj.put(global, b"qpackBlockedStreams", big(0)?);
         obj.put(global, b"enableConnectProtocol", JSValue::js_boolean(false));
         obj.put(global, b"enableDatagrams", JSValue::js_boolean(true));
-        self.application_options_js.set(Strong::create(obj, global));
+        self.application_options_js.set(global, obj);
         Ok(obj)
     }
     /// Build the `{__proto__: null, ...BigInt fields, disableActiveMigration}`

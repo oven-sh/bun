@@ -24,8 +24,8 @@ use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-    Strong, StrongCell, StrongOptional,
+    AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, StrongCell,
+    StrongOptional,
 };
 use bun_ptr::{AliasableBox, CellExt as _, OptionCellExt as _, RefPtr, VecCellExt as _};
 use bun_uws_sys::UsIoVec;
@@ -951,7 +951,7 @@ pub(crate) struct H2FrameParser {
     /// A session is closed from script (`detach_from_js`, when its socket closes). The script of a
     /// `Bun.ModuleGraph` that was disposed is told nothing, so the graph's context closes it.
     abort_handle: bun_jsc::AbortHandle,
-    strong_this: JsCell<JsRef>,
+    strong_this: JsRef,
     global_this: GlobalRef, // JSC_BORROW — read-only after construction
     // allocator field dropped — global mimalloc
     handlers: Handlers,
@@ -1608,7 +1608,7 @@ impl Stream {
     }
 
     pub(crate) fn set_context(&self, value: JSValue, global_object: &JSGlobalObject) {
-        self.js_context.set(Strong::create(value, global_object));
+        self.js_context.set(global_object, value);
     }
 
     pub(crate) fn get_identifier(&self) -> JSValue {
@@ -2073,7 +2073,7 @@ impl H2FrameParser {
 
     pub(crate) fn dispatch(&self, event: GetCached, value: JSValue) {
         value.ensure_still_alive();
-        let Some(this_value) = self.strong_this.get().try_get() else {
+        let Some(this_value) = self.strong_this.try_get() else {
             return;
         };
         let Some(ctx_value) = js::context_get_cached(this_value) else {
@@ -2085,7 +2085,7 @@ impl H2FrameParser {
 
     /// `onWrite(context, bytes, transportClosed)`. The flag is true once the native socket closed.
     fn call_on_write(&self, bytes: JSValue) -> JSValue {
-        let Some(this_value) = self.strong_this.get().try_get() else {
+        let Some(this_value) = self.strong_this.try_get() else {
             return JSValue::ZERO;
         };
         let Some(ctx_value) = js::context_get_cached(this_value) else {
@@ -2110,7 +2110,7 @@ impl H2FrameParser {
     }
 
     pub(crate) fn dispatch_with_extra(&self, event: GetCached, value: JSValue, extra: JSValue) {
-        let Some(this_value) = self.strong_this.get().try_get() else {
+        let Some(this_value) = self.strong_this.try_get() else {
             return;
         };
         let Some(ctx_value) = js::context_get_cached(this_value) else {
@@ -2148,7 +2148,7 @@ impl H2FrameParser {
     }
 
     fn dispatch_values<const N: usize>(&self, event: GetCached, values: [JSValue; N]) {
-        let Some(this_value) = self.strong_this.get().try_get() else {
+        let Some(this_value) = self.strong_this.try_get() else {
             return;
         };
         let Some(ctx_value) = js::context_get_cached(this_value) else {
@@ -2975,7 +2975,7 @@ impl H2FrameParser {
 
     /// Whether `dispatch*(event, ..)` reaches JS: the wrapper, its context and the handler exist.
     fn can_dispatch(&self, event: GetCached) -> bool {
-        self.strong_this.get().try_get().is_some_and(|this_value| {
+        self.strong_this.try_get().is_some_and(|this_value| {
             js::context_get_cached(this_value).is_some() && event(this_value).is_some()
         })
     }
@@ -3030,7 +3030,7 @@ impl H2FrameParser {
             streams.get_or_insert(stream_identifier, new_stream)
         });
 
-        let Some(this_value) = self.strong_this.get().try_get() else {
+        let Some(this_value) = self.strong_this.try_get() else {
             return Some(stream);
         };
         let Some(ctx_value) = js::context_get_cached(this_value) else {
@@ -6771,7 +6771,7 @@ impl H2FrameParser {
             ref_count: bun_ptr::RefCount::init(),
             handlers: Handlers::new(global_object),
             global_this: GlobalRef::from(global_object),
-            strong_this: JsCell::new(JsRef::empty()),
+            strong_this: JsRef::empty(),
             native_socket: NativeSocket::default(),
             local_settings: Cell::new(FullSettingsPayload::default()),
             explicit_settings: Cell::new(0),
@@ -6982,9 +6982,7 @@ impl H2FrameParser {
         this_ref.is_server.set(is_server);
         js::context_set_cached(js_value, global_object, context_obj);
 
-        this_ref
-            .strong_this
-            .with_mut(|s| s.set_strong(js_value, global_object));
+        this_ref.strong_this.set_strong(js_value, global_object);
         let vm = global_object.bun_vm();
         if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
             // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
@@ -7023,10 +7021,10 @@ impl H2FrameParser {
             stream.free_resources(this);
         }
         this.detach();
-        if let Some(this_value) = this.strong_this.get().try_get() {
+        if let Some(this_value) = this.strong_this.try_get() {
             // `global_this` is `GlobalRef` (JSC_BORROW) — Deref gives `&JSGlobalObject`.
             js::context_set_cached(this_value, &this.global_this, JSValue::ZERO);
-            this.strong_this.with_mut(|s| s.set_weak(this_value));
+            this.strong_this.downgrade();
         }
     }
 
@@ -7087,7 +7085,7 @@ impl Drop for H2FrameParser {
 impl H2FrameParser {
     pub(crate) fn finalize(&self) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        self.strong_this.set(JsRef::empty());
+        self.strong_this.finalize();
         if VirtualMachine::get().is_shutting_down() {
             self.release_refs_stranded_by_exit();
         }

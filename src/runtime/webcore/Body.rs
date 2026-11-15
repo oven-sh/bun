@@ -358,7 +358,7 @@ impl PartialEq for Action {
 /// JS-side properties, plus the weak `JsRef` back-pointer. Both `Request` and
 /// `Response` forward these 1:1 to `js_Request` / `js_Response`.
 pub(crate) trait BodyOwnerJs {
-    /// `self.js_ref.get().try_get()` — the live JS wrapper, if any.
+    /// `self.js_ref.try_get()` — the live JS wrapper, if any.
     fn js_ref(&self) -> Option<JSValue>;
 
     fn body_get_cached(this: JSValue) -> Option<JSValue>;

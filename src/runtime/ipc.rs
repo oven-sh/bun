@@ -928,7 +928,6 @@ impl SendQueueOwner {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }
                 .this_value
-                .get()
                 .try_get()
                 .unwrap_or_default(),
             SendQueueOwner::Instance => JSValue::ZERO,

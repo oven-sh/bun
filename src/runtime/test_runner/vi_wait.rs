@@ -6,7 +6,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsClass as _,
-    JsError, JsResult, JsThread, Strong, StrongCell,
+    JsError, JsResult, JsThread, StrongCell,
 };
 
 use super::expect_core::expect_deferred::RunningEntry;
@@ -199,7 +199,7 @@ impl ViWait {
         let this_ptr = ViWait::from_js(this_value).expect("to_js returns the wrapper");
         // SAFETY: the wrapper owns the payload, and `this_value` is kept alive to the end of this function.
         let this = unsafe { &*this_ptr };
-        this.root.set(Strong::create(this_value, global));
+        this.root.set(global, this_value);
         this.keep_alive.ref_(bun_io::js_vm_ctx());
         // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };

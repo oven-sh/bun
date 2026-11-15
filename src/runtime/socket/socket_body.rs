@@ -213,7 +213,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// Reference to the JS wrapper. Held strong while the socket is active so the
     /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
-    pub this_value: JsCell<JsRef>,
+    pub this_value: JsRef,
     pub poll_ref: JsKeepAlive,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
@@ -1056,9 +1056,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Connection failed before open; allow the wrapper to be GC'd
             // regardless of whether this path is promise-backed (e.g. the
             // duplex TLS upgrade flow has no connect promise).
-            if !matches!(this.this_value.get(), JsRef::Finalized) {
-                this.this_value.with_mut(|r| r.downgrade());
-            }
+            this.this_value.downgrade();
             if let Some(promise) = handlers.take_promise() {
                 // reject the promise on connect() error
                 let js_promise = jsc::JSPromise::opaque_mut(promise.as_promise().unwrap());
@@ -1073,7 +1071,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_value.ensure_still_alive();
         // Connection failed before open; allow the wrapper to be GC'd once this
         // callback returns. The on-stack `this_value` keeps it alive for the call.
-        this.this_value.with_mut(|r| r.downgrade());
+        this.this_value.downgrade();
 
         let mut err_for_promise = PendingSystemError(Some(err.clone()));
         let err_value = err.to_error_instance(&global);
@@ -1127,9 +1125,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `getThisValue` may not have been called yet (e.g. server-side
             // sockets without default data), in which case the ref is still
             // empty and there's nothing to upgrade.
-            if self.this_value.get().is_not_empty() {
-                self.this_value
-                    .with_mut(|r| r.upgrade(&handlers.global_object));
+            if self.this_value.is_not_empty() {
+                self.this_value.upgrade(&handlers.global_object);
             }
         }
     }
@@ -1226,9 +1223,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Do this before touching `handlers`: for the last server-side
             // connection on a stopped listener, `mark_inactive` releases the
             // listener's own strong ref.
-            if !matches!(self.this_value.get(), JsRef::Finalized) {
-                self.this_value.with_mut(|r| r.downgrade());
-            }
+            self.this_value.downgrade();
             if let Some(handlers) = self.handlers_opt() {
                 if handlers.mark_inactive() {
                     // Nothing else is using these handlers. Drop this socket's
@@ -1431,10 +1426,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_this_value(&self, global: &JSGlobalObject) -> JSValue {
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.this_value.try_get() {
             return value;
         }
-        if matches!(self.this_value.get(), JsRef::Finalized) {
+        if self.this_value.is_finalized() {
             // The JS wrapper was already garbage-collected. Creating a new one
             // here would result in a second `finalize` later.
             return JSValue::UNDEFINED;
@@ -1448,15 +1443,15 @@ impl<const SSL: bool> NewSocket<SSL> {
             Self::handlers_set_cached(value, global, handlers.cell());
         }
         // Hold strong until the socket is closed / marked inactive.
-        self.this_value.with_mut(|r| r.set_strong(value, global));
+        self.this_value.set_strong(value, global);
         value
     }
 
     /// `get_this_value`, pinned: a Weak `node:net` handle GC'd mid-connect never fires `on_open`.
     pub(crate) fn this_value_for_connect(&self, global: &JSGlobalObject) -> JSValue {
         let value = self.get_this_value(global);
-        if self.this_value.get().is_not_empty() {
-            self.this_value.with_mut(|r| r.upgrade(global));
+        if self.this_value.is_not_empty() {
+            self.this_value.upgrade(global);
         }
         value
     }
@@ -1467,9 +1462,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// [`get_this_value`](Self::get_this_value).
     pub(crate) fn set_handlers(&self, global: &JSGlobalObject, handlers: Option<Rc<Handlers>>) {
         self.handlers.set(handlers);
-        if let (Some(handlers), Some(wrapper)) =
-            (self.handlers.get(), self.this_value.get().try_get())
-        {
+        if let (Some(handlers), Some(wrapper)) = (self.handlers.get(), self.this_value.try_get()) {
             Self::handlers_set_cached(wrapper, global, handlers.cell());
         }
     }
@@ -2078,7 +2071,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let Some(listener) = handlers.listener() else {
             return JsLocal::UNDEFINED;
         };
-        match listener.this_value.get().try_get() {
+        match listener.this_value.try_get() {
             Some(listener) => JsLocal::new(heap, listener),
             None => JsLocal::UNDEFINED,
         }
@@ -2971,7 +2964,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub(crate) fn finalize(&self) {
         log!("finalize() {}", core::ptr::from_ref(self) as usize);
         self.update_flags(|f| f.insert(Flags::FINALIZING));
-        self.this_value.with_mut(|r| r.finalize());
+        self.this_value.finalize();
         if !self.socket.get().is_closed() {
             self.socket.get().prepare_for_finalize();
             self.close_and_detach(uws::CloseCode::Failure);
@@ -3215,7 +3208,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
             flags: Cell::new(initial_flags),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: BufferedData::default(),
@@ -3299,7 +3292,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             // Do NOT mark_inactive raw_handlers — ownership of the
             // active_connections=1 it holds is transferring to `raw`.
-            self.this_value.with_mut(|r| r.downgrade());
+            self.this_value.downgrade();
         }
         // SAFETY: the adopted socket's slot still holds what our own socket's did.
         let _retired = unsafe { NativeRef::<SSL>::of(new_raw.as_ptr()).take() };
@@ -3328,7 +3321,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // alive. active_connections=1 was already on raw_handlers from
             // `self`.
             flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: BufferedData::default(),
@@ -4188,7 +4181,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
             socket_config.and_then(|cfg| cfg.server_name_bytes().map(Box::<[u8]>::from)),
         ),
         flags: Cell::new(initial_flags),
-        this_value: JsCell::new(JsRef::empty()),
+        this_value: JsRef::empty(),
         poll_ref: JsKeepAlive::default(),
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: BufferedData::default(),

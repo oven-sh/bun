@@ -846,7 +846,7 @@ impl FakeTimers {
             return originals;
         }
         let originals = Bun__FakeTimers__createOriginals(global);
-        self.originals.set(Strong::create(originals, global));
+        self.originals.set(global, originals);
         originals
     }
 

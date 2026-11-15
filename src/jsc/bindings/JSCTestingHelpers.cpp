@@ -69,7 +69,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionStartOfFixedExecutableMemoryPool,
 }
 #endif
 
-// Test-only stand-in for JsRef::Weak; the address is only meaningful until that cell is swept.
+// Test-only stand-in for a weak JsRef; the address is only meaningful until that cell is swept.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRawCellAddress, (JSGlobalObject * globalObject, CallFrame* callframe))
 {
     auto& vm = JSC::getVM(globalObject);

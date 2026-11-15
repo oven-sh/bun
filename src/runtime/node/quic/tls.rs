@@ -226,22 +226,12 @@ unsafe extern "C" fn alpn_select_cb(
     }
     // SAFETY: non-null `arg` is the Vec<u8> the context owns and keeps alive for
     // the SSL_CTX's life; `inbuf[..inlen]` is the client's wire-format ALPN
-    // list, valid for this callback.
+    // list, valid for this callback, and `out` and `outlen` are writable.
     unsafe {
         let server: &Vec<u8> = &*arg.cast::<Vec<u8>>();
-        if ssl::SSL_select_next_proto(
-            out.cast_mut().cast(),
-            outlen,
-            server.as_ptr(),
-            server.len() as u32,
-            inbuf,
-            inlen,
-        ) == ssl::OPENSSL_NPN_NEGOTIATED
-        {
-            ssl::SSL_TLSEXT_ERR_OK
-        } else {
-            ssl::SSL_TLSEXT_ERR_ALERT_FATAL
-        }
+        let offered = core::slice::from_raw_parts(inbuf, inlen as usize);
+        bun_boringssl::AlpnSelection::select_next_proto(server, offered)
+            .write_to(&mut *out, &mut *outlen)
     }
 }
 
@@ -287,7 +277,7 @@ const X509_V_FLAG_IGNORE_EXPIRED_TRUST_ANCHORS: core::ffi::c_ulong = 0x2000000;
 
 /// SAFETY: `ctx` is not shared yet.
 unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
+    let store = &*ctx.cert_store().expect("a new SSL_CTX has a store");
     let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CRL")?;
     let mut added = 0;
     while let Some(crl) = bio.read_x509_crl() {
@@ -307,7 +297,7 @@ unsafe fn load_crl_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static 
 }
 
 fn load_ca_store(ctx: &ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str> {
-    let store = ssl::SSL_CTX_get_cert_store(ctx).expect("a new SSL_CTX has a store");
+    let store = &*ctx.cert_store().expect("a new SSL_CTX has a store");
     let bio = ssl::MemBio::new(pem).ok_or("failed to allocate BIO for CA")?;
     let mut added = 0;
     while let Some(cert) = bio.read_x509() {
@@ -559,14 +549,12 @@ pub(super) fn local_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
     // `load_cert_chain` only installs certificates on the context. The context parses its
     // leaf once, but `SSL_get_certificate` parses a copy for each SSL.
     // SAFETY: returns a borrowed X509 owned by `ssl`'s context.
-    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)) };
-    if cert.is_null() {
-        return None;
-    }
-    Some(ssl::X509::opaque_ref(cert).to_der()?.to_vec())
+    let cert = unsafe { ssl::SSL_CTX_get0_certificate(ssl::SSL_get_SSL_CTX(ssl)).as_ref() }?;
+    Some(cert.to_der()?.to_vec())
 }
 
 pub(super) fn peer_certificate_der(conn: &Conn) -> Option<Vec<u8>> {
-    let cert = ssl::SSL::opaque_ref(conn_ssl(conn)?).peer_certificate()?;
+    // SAFETY: lsquic guarantees the SSL outlives the conn.
+    let cert = unsafe { &*conn_ssl(conn)? }.peer_certificate()?;
     Some(cert.to_der()?.to_vec())
 }

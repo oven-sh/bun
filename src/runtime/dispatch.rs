@@ -884,8 +884,7 @@ pub(crate) fn tick_queue_with_count(
 // Poll and pipe dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for a `bun_io::FilePoll` that fired, or a read that libuv completed. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`. `bun_io`
+/// Hot-path dispatcher for polls and libuv completions. `bun_io` declares it `extern "Rust"` and
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
@@ -1086,8 +1085,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
     }
 }
 
-/// # Safety
-/// `ptr` is `Rc::as_ptr` of a live `Rc`.
+/// SAFETY: `ptr` is `Rc::as_ptr` of a live `Rc`.
 unsafe fn clone_rc<T>(ptr: *mut T) -> Rc<T> {
     // SAFETY: fn contract.
     unsafe {

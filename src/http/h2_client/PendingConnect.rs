@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 
 use bun_core::strings;
 
-use crate::HTTPClient;
+use crate::InFlightRequest;
 use crate::NewHTTPContext;
 use crate::PeerVerification;
 use crate::ssl_config::SSLConfig;
@@ -23,26 +23,12 @@ pub struct PendingConnect {
     /// exists, so a strict caller never waits on a connect started by a lax one.
     pub(crate) verification: PeerVerification,
     pub(crate) pool_id: u64,
-    // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
-    pub(crate) waiters: Vec<NonNull<HTTPClient<'static>>>,
+    pub(crate) waiters: Vec<InFlightRequest>,
 }
 
 impl PendingConnect {
     pub(crate) fn new(init: Self) -> Box<Self> {
         Box::new(init)
-    }
-
-    /// Upgrade a `waiters` back-ref to `&mut HTTPClient`.
-    ///
-    /// INVARIANT: every entry in `waiters` is a back-ref to a live
-    /// `HTTPClient` embedded in its `AsyncHTTP`, registered via
-    /// `HTTPContext::connect` and removed before that client's terminal
-    /// callback. HTTP-thread-only, so the returned `&mut` is the sole live
-    /// borrow. Routes through the crate-wide
-    /// [`HTTPClient::from_erased_backref`] accessor.
-    #[inline]
-    pub(crate) fn waiter_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPClient<'static> {
-        HTTPClient::from_erased_backref(p)
     }
 
     pub(crate) fn matches(
@@ -73,8 +59,4 @@ impl PendingConnect {
             .position(|p| core::ptr::eq(&raw const **p, this))
             .map(|i| list.swap_remove(i))
     }
-
-    // Cleanup is handled by dropping `Box<PendingConnect>` — `Box<[u8]>`
-    // and `Vec<_>` fields free themselves, and the Box frees the allocation.
-    // No explicit `Drop` impl needed.
 }

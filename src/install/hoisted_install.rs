@@ -9,67 +9,37 @@ use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{NodeId, Progress};
+use crate::bun_progress::NodeId;
 
 use crate::PackageManager;
 use crate::bin_real as bin;
 use crate::lockfile::tree;
 use crate::package_install;
 use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
-use crate::package_manager::{self, WorkspaceFilter};
+use crate::package_manager::{self, WorkspaceFilter, install_fields};
 use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::prune::LinkedNodeModules;
 use crate::{DependencyID, PackageID};
 
-/// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
-/// bar.
-struct RestoreManager {
-    manager: *mut PackageManager,
-    trees: Vec<tree::Tree>,
-    hoisted_dependencies: Vec<DependencyID>,
-    log_level: package_manager::Options::LogLevel,
-}
-
-impl Drop for RestoreManager {
-    fn drop(&mut self) {
-        // SAFETY: `manager` is the provenance root for every access of
-        // `install_hoisted_packages` to its `this`; this runs after all of
-        // its borrows have ended.
-        let this = unsafe { &mut *self.manager };
-        if self.log_level.show_progress() {
-            this.progress.end();
-            this.progress = Progress::default();
-        }
-        this.scripts_node = None;
-        this.downloads_node = None;
-        this.lockfile.buffers.trees = core::mem::take(&mut self.trees);
-        this.lockfile.buffers.hoisted_dependencies =
-            core::mem::take(&mut self.hoisted_dependencies);
-    }
-}
-
 /// Runs tasks whenever the event loop wakes up, until `links` is 0 or (`None`) nothing is pending or links wait.
 fn run_tasks_until_done(
-    mgr: *mut PackageManager,
     installer: &mut PackageInstaller<'_>,
     links: Option<&AtomicUsize>,
 ) -> crate::Result<()> {
     // Not `sleep()`, which would run no task until all current lifecycle scripts have finished.
     Output::flush();
     loop {
-        // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow.
-        let manager = unsafe { &mut *mgr };
-        let log_level = manager.options.log_level;
-        run_tasks(manager, Caller::HoistedLinker(installer), true, log_level)?;
+        let log_level = installer.manager.options.log_level;
+        run_tasks(Caller::HoistedLinker(installer), true, log_level)?;
 
         // A script that has ended makes room for one that waits.
         installer.run_available_scripts(log_level);
-        manager.report_slow_lifecycle_scripts();
+        installer.manager.report_slow_lifecycle_scripts();
 
-        let pending_task_count = manager.pending_task_count();
+        let pending_task_count = installer.manager.state.pending_task_count();
         if pending_task_count > 0
             && PackageManager::verbose_install()
-            && manager.has_enough_time_passed_between_waiting_messages()
+            && (installer.manager.state).has_enough_time_passed_between_waiting_messages()
         {
             bun_core::pretty_errorln!(
                 "<d>[PackageManager]<r> waiting for {} tasks\n",
@@ -81,21 +51,20 @@ fn run_tasks_until_done(
             Some(links) => links.load(Ordering::Acquire) == 0,
             None => {
                 installer.has_deferred_links()
-                    || (manager.pending_task_count() == 0
-                        && manager.has_no_more_pending_lifecycle_scripts())
+                    || (installer.manager.state.pending_task_count() == 0
+                        && installer.manager.has_no_more_pending_lifecycle_scripts())
             }
         };
         if is_done {
             return Ok(());
         }
-        installer.manager().event_loop.tick(core::ptr::null_mut());
+        installer.manager.tick();
     }
 }
 
 /// Has the thread pool link the waiting packages, including the ones that start waiting in the
 /// meantime. Must not be called from inside `run_tasks`.
 fn link_deferred(
-    mgr: *mut PackageManager,
     installer: &mut PackageInstaller<'_>,
     log_level: package_manager::Options::LogLevel,
 ) -> crate::Result<()> {
@@ -104,11 +73,11 @@ fn link_deferred(
         let mut ran_tasks = Ok(());
         links.run(&mut |until| {
             if ran_tasks.is_ok() {
-                ran_tasks = run_tasks_until_done(mgr, installer, Some(until));
+                ran_tasks = run_tasks_until_done(installer, Some(until));
             }
         });
         ran_tasks?;
-        if !installer.manager().options.do_.install_packages() {
+        if !installer.manager.effective_do().install_packages() {
             return Err(crate::Error::InstallFailed);
         }
         installer.finish_links(links, events, log_level);
@@ -125,56 +94,40 @@ pub(crate) fn install_hoisted_packages(
 ) -> crate::Result<package_install::Summary> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    let mgr_ptr: *mut PackageManager = this;
-    // SAFETY: `mgr_ptr` is freshly derived from the unique `&mut` fn param;
-    // shadowing `this` with a reborrow through it makes every body access a
-    // child of `mgr_ptr`, so the guard's later derefs keep provenance.
-    let this = unsafe { &mut *mgr_ptr };
-
-    // `filter()` repopulates the live ones in-place.
+    // `filter_lockfile` repopulates the live ones in-place.
     let original_trees = this.lockfile.buffers.trees.clone();
     let original_tree_dep_ids = this.lockfile.buffers.hoisted_dependencies.clone();
 
-    let places = {
-        // `lockfile` is `Box<Lockfile>` so the heap object
-        // is disjoint from the `PackageManager` struct; snapshot raw `*mut
-        // Lockfile` first so `filter` can hold `&mut Lockfile`
-        // and `&mut PackageManager` simultaneously through `mgr_ptr`'s
-        // provenance root.
-        let log = this.log();
-        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
-        // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
-        // SAFETY: `mgr_ptr` see shadow-reborrow above.
-        unsafe {
-            (*lockfile_ptr)
-                .filter(
-                    log,
-                    &mut *mgr_ptr,
-                    install_root_dependencies,
-                    workspace_filters,
-                    packages_to_install,
-                )?
-                .places
-        }
-    };
-    // SAFETY: `mgr_ptr` is the provenance root derived from the unique `&mut`
-    // fn param; the first reborrow's tag was popped by `&mut *mgr_ptr` in the
-    // block above, so no other borrow of `*mgr_ptr` is live here.
-    let this = unsafe { &mut *mgr_ptr };
+    let places = this
+        .filter_lockfile(
+            false, // all_rows
+            install_root_dependencies,
+            workspace_filters,
+            packages_to_install,
+            tree::Layout::Locked,
+        )?
+        .places;
 
     if log_level.show_progress() {
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
-        this.start_install_progress_bar(hoisted_len);
+        this.state.start_install_progress_bar(hoisted_len);
     }
 
-    let _restore_manager = RestoreManager {
-        manager: mgr_ptr,
-        trees: original_trees,
-        hoisted_dependencies: original_tree_dep_ids,
-        log_level,
-    };
+    let summary = link_trees(this, places, log_level, packages_to_install);
 
+    this.finish_linking();
+    this.state.unfinished_scripts.clear();
+    this.lockfile.buffers.trees = original_trees;
+    this.lockfile.buffers.hoisted_dependencies = original_tree_dep_ids;
+    summary
+}
+
+fn link_trees(
+    this: &mut PackageManager,
+    places: Vec<(u64, PackageID)>,
+    log_level: package_manager::Options::LogLevel,
+    packages_to_install: Option<&[PackageID]>,
+) -> crate::Result<package_install::Summary> {
     // A partial install (for the security scanner) runs before the real one, so it leaves the
     // layout alone.
     let has_isolated_store = packages_to_install.is_none()
@@ -262,28 +215,21 @@ pub(crate) fn install_hoisted_packages(
     };
 
     {
-        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
-        // via `Box`, so deref the Box for the heap addr.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
-        // BACKREF — outlives this install pass; `PackageInstaller` reaches `this` at the same time.
-        let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
-            core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),
-        );
+        let trusted_deps = this.find_trusted_dependencies_from_update_requests();
+        let lockfile = &*this.lockfile;
 
-        // `filter()` (the only mutator of these buffers) has already run.
         let mut iterator = tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::from_slices(
-            lockfile_ref.buffers.trees.as_slice(),
-            lockfile_ref.buffers.hoisted_dependencies.as_slice(),
-            lockfile_ref.buffers.dependencies.as_slice(),
-            lockfile_ref.buffers.string_bytes.as_slice(),
+            lockfile.buffers.trees.as_slice(),
+            lockfile.buffers.hoisted_dependencies.as_slice(),
+            lockfile.buffers.dependencies.as_slice(),
+            lockfile.buffers.string_bytes.as_slice(),
         );
 
-        // Outlives `installer`, whose bin queues point at it.
-        let direct_packages = bin::LinkOrder::direct_packages(&lockfile_ref)?;
+        let direct_packages = bin::LinkOrder::direct_packages(lockfile)?;
 
         let mut installer: PackageInstaller = 'brk: {
             let (completed_trees, tree_ids_to_trees_the_id_depends_on) = 'trees: {
-                let trees = this.lockfile.buffers.trees.as_slice();
+                let trees = lockfile.buffers.trees.as_slice();
                 let completed_trees = Bitset::init_empty(trees.len())?;
                 let mut tree_ids_to_trees_the_id_depends_on = DynamicBitSetList::init_empty(
                     trees.len(),
@@ -315,38 +261,28 @@ pub(crate) fn install_hoisted_packages(
                 break 'trees (completed_trees, tree_ids_to_trees_the_id_depends_on);
             };
 
-            // These slices potentially get resized during iteration
-            // so we want to make sure they're not accessible to the rest of this function
-            // to make mistakes harder
-            //
-            // RawSlice invariant: on growth `fix_cached_lockfile_package_slices` re-snapshots.
-            let parts = &lockfile_ref.packages;
-            let metas = bun_ptr::RawSlice::new(parts.items_meta());
-            let bins = bun_ptr::RawSlice::new(parts.items_bin());
-            let names = bun_ptr::RawSlice::new(parts.items_name());
-            let pkg_name_hashes = bun_ptr::RawSlice::new(parts.items_name_hash());
-            let resolutions = bun_ptr::RawSlice::new(parts.items_resolution());
-
-            let pkg_len = this.lockfile.packages.len();
-            let trees_count = this.lockfile.buffers.trees.len();
-            let trusted_deps = this.find_trusted_dependencies_from_update_requests();
+            let parts = &lockfile.packages;
+            let pkg_len = parts.len();
+            let trees_count = lockfile.buffers.trees.len();
 
             break 'brk PackageInstaller {
-                manager: mgr_ptr,
-                metas,
-                bins,
-                names,
-                pkg_name_hashes,
-                resolutions,
-                lockfile: lockfile_ptr,
                 log: this.log(),
+                manager: install_fields!(this),
+                postinstall_optimizer: &this.project.postinstall_optimizer,
+                patched_dependencies_to_remove: &this.patched_dependencies_to_remove,
+                added_trusted_dependencies: &this.summary.added_trusted_dependencies,
+                metas: parts.items_meta(),
+                bins: parts.items_bin(),
+                names: parts.items_name(),
+                pkg_name_hashes: parts.items_name_hash(),
+                resolutions: parts.items_resolution(),
                 root_node_modules_folder: node_modules_folder,
                 staging_lock: None,
                 tree_dir: None,
                 // Disabled on Windows, where the hardlink backend has its own queue. A batch keeps
                 // up to 64 directories open.
                 deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
-                    .then(|| DeferredLinks::init(&lockfile_ref)),
+                    .then(|| DeferredLinks::init(lockfile)),
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
                         .to_vec(),
@@ -365,8 +301,8 @@ pub(crate) fn install_hoisted_packages(
                     for _i in 0..trees_count {
                         trees.push(TreeContext {
                             binaries: bin::PriorityQueue::init(bin::PriorityQueueContext {
-                                lockfile: lockfile_ref,
-                                direct_packages: bun_ptr::BackRef::new(&direct_packages),
+                                lockfile,
+                                direct_packages: &direct_packages,
                             }),
                             pending_installs: Vec::new(),
                             bins_after_scripts: Vec::new(),
@@ -384,14 +320,13 @@ pub(crate) fn install_hoisted_packages(
                 folder_path_buf: bun_paths::PathBuffer::ZEROED,
                 current_tree_id: tree::INVALID_ID,
                 pending_lifecycle_scripts: Vec::new(),
-                unfinished_scripts: Default::default(),
-                direct_packages: bun_ptr::BackRef::new(&direct_packages),
+                direct_packages: &direct_packages,
                 copy_trees: {
-                    let self_contained = this.lockfile.self_contained_workspace_ids();
+                    let self_contained = lockfile.self_contained_workspace_ids();
                     let mut set = Bitset::init_empty(trees_count)?;
                     if !self_contained.is_empty() {
                         for tid in 0..trees_count {
-                            let owner = this.lockfile.owning_workspace_of_tree(tid as tree::Id);
+                            let owner = lockfile.owning_workspace_of_tree(tid as tree::Id);
                             if owner != 0 && self_contained.contains(&owner) {
                                 set.set(tid);
                             }
@@ -409,7 +344,7 @@ pub(crate) fn install_hoisted_packages(
 
         while let Some(node_modules) = iterator.next(Some(&mut installer.completed_trees)) {
             if installer.must_link_before(node_modules.tree_id) {
-                link_deferred(mgr_ptr, &mut installer, log_level)?;
+                link_deferred(&mut installer, log_level)?;
             }
 
             installer.node_modules.path.truncate(top_level_len);
@@ -438,39 +373,41 @@ pub(crate) fn install_hoisted_packages(
 
                 // We want to minimize how often we call this function
                 // That's part of why we unroll this loop
-                if this.pending_task_count() > 0 {
-                    run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
-                    if !this.options.do_.install_packages() {
+                if installer.manager.state.pending_task_count() > 0 {
+                    run_tasks(Caller::HoistedLinker(&mut installer), true, log_level)?;
+                    if !installer.manager.effective_do().install_packages() {
                         return Err(crate::Error::InstallFailed);
                     }
                 }
-                this.tick_lifecycle_scripts();
-                this.report_slow_lifecycle_scripts();
+                installer.manager.tick_lifecycle_scripts();
+                installer.manager.report_slow_lifecycle_scripts();
             }
 
             for dependency_id in remaining {
                 installer.install_package(*dependency_id, log_level);
             }
 
-            run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
-            if !this.options.do_.install_packages() {
+            run_tasks(Caller::HoistedLinker(&mut installer), true, log_level)?;
+            if !installer.manager.effective_do().install_packages() {
                 return Err(crate::Error::InstallFailed);
             }
 
-            this.tick_lifecycle_scripts();
-            this.report_slow_lifecycle_scripts();
+            installer.manager.tick_lifecycle_scripts();
+            installer.manager.report_slow_lifecycle_scripts();
         }
 
         loop {
-            link_deferred(mgr_ptr, &mut installer, log_level)?;
-            if this.pending_task_count() == 0 || !this.options.do_.install_packages() {
+            link_deferred(&mut installer, log_level)?;
+            if installer.manager.state.pending_task_count() == 0
+                || !installer.manager.effective_do().install_packages()
+            {
                 break;
             }
-            run_tasks_until_done(mgr_ptr, &mut installer, None)?;
+            run_tasks_until_done(&mut installer, None)?;
         }
         installer.deferred = None;
-        this.tick_lifecycle_scripts();
-        this.report_slow_lifecycle_scripts();
+        installer.manager.tick_lifecycle_scripts();
+        installer.manager.report_slow_lifecycle_scripts();
 
         // A tree never completes if one of its packages failed to download. Install everything
         // that was still waiting on it (force = true).
@@ -479,13 +416,12 @@ pub(crate) fn install_hoisted_packages(
         installer.staging_lock = None;
         installer.tree_dir = None;
 
-        // .monotonic is okay because this value is only accessed on this thread.
-        this.finished_installing.store(true, Ordering::Relaxed);
+        installer.manager.state.finished_installing = true;
         if log_level.show_progress() {
-            this.progress.activate(NodeId::Scripts);
+            installer.manager.state.progress.activate(NodeId::Scripts);
         }
 
-        if !this.options.do_.install_packages() {
+        if !installer.manager.effective_do().install_packages() {
             return Err(crate::Error::InstallFailed);
         }
 
@@ -494,11 +430,10 @@ pub(crate) fn install_hoisted_packages(
         installer.link_remaining_bins();
         installer.complete_remaining_scripts(log_level);
 
-        // .monotonic is okay because this value is only accessed on this thread.
-        while this.pending_lifecycle_script_tasks.load(Ordering::Relaxed) > 0 {
-            this.report_slow_lifecycle_scripts();
+        while installer.manager.state.active_lifecycle_script_count() > 0 {
+            installer.manager.report_slow_lifecycle_scripts();
 
-            this.sleep();
+            installer.manager.sleep();
         }
         installer.link_bins_after_scripts();
         // Bin linking reads `successfully_installed`, so move it into the summary only afterwards.
@@ -506,7 +441,7 @@ pub(crate) fn install_hoisted_packages(
             Some(core::mem::take(&mut installer.successfully_installed));
 
         if log_level.show_progress() {
-            this.progress.end_child(NodeId::Scripts);
+            installer.manager.state.progress.end_child(NodeId::Scripts);
         }
     }
 

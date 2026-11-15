@@ -285,13 +285,9 @@ fn entries_object(
     object_property(container, b"catalog", create)
 }
 
-fn request_literal(request: &UpdateRequest) -> &[u8] {
-    request.version.literal.slice(request.version_buf())
-}
-
 /// `bun add foo` parses as a DistTag with an empty literal, so the tag alone cannot tell a bare name from `foo@latest`.
 fn has_explicit_version(request: &UpdateRequest) -> bool {
-    request.version.tag() != dependency::Tag::Uninitialized && !request_literal(request).is_empty()
+    request.version.tag() != dependency::Tag::Uninitialized && !request.input_literal().is_empty()
 }
 
 fn collect_root_entries(root: &Expr, group: &[u8], out: &mut Vec<RootEntry>) {
@@ -361,12 +357,12 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
                 if request.is_aliased {
                     Output::err_generic(
                         "--catalog cannot add \"{s}@{s}\": a local path in the catalog would resolve from the workspace root, not from the package that added it",
-                        (BStr::new(request.name), BStr::new(request_literal(request))),
+                        (BStr::new(request.name), BStr::new(request.input_literal())),
                     );
                 } else {
                     Output::err_generic(
                         "--catalog cannot add \"{s}\": a local path in the catalog would resolve from the workspace root, not from the package that added it",
-                        (BStr::new(request_literal(request)),),
+                        (BStr::new(request.input_literal()),),
                     );
                 }
                 Global::crash();
@@ -374,7 +370,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
             if request.version.tag() == dependency::Tag::Workspace {
                 Output::err_generic(
                     "--catalog cannot add a workspace package, but got \"{s}@{s}\"",
-                    (BStr::new(request.name), BStr::new(request_literal(request))),
+                    (BStr::new(request.name), BStr::new(request.input_literal())),
                 );
                 Global::crash();
             }
@@ -431,7 +427,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
         let Some(entry_text) = q.expr.as_utf8_string_literal() else {
             continue;
         };
-        if !has_explicit_version(request) || request_literal(request) == entry_text {
+        if !has_explicit_version(request) || request.input_literal() == entry_text {
             manager.catalog_add.auto_use.push(request.name_hash);
         }
     }
@@ -509,7 +505,7 @@ fn record_add(
         if find_add(&mut state.adds, request.name_hash, group).is_none() {
             push(
                 &mut state.adds,
-                Candidate::Explicit(request_literal(request).into()),
+                Candidate::Explicit(request.input_literal().into()),
             );
         }
         let add =
@@ -571,7 +567,7 @@ fn drop_already_cataloged(
         let request = &updates[i];
         let already = !request.is_aliased
             && root_entries.iter().any(|(entry_name, text)| {
-                &text[..] == request_literal(request)
+                &text[..] == request.input_literal()
                     && existing_slot(package_json, entry_name)
                         .is_some_and(|slot| references_flag_group(slot.slice(), flag))
             });
@@ -624,7 +620,7 @@ pub(crate) fn refuse_declared_positionals(manager: &PackageManager) {
         .iter()
         .filter(|request| !request.is_aliased)
     {
-        let literal = request_literal(request);
+        let literal = request.input_literal();
         for (pkg_id, list) in dependency_lists.iter().enumerate() {
             if !matches!(
                 resolutions[pkg_id].tag,

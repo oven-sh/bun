@@ -466,10 +466,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    pub fn write_item_assume_capacity(&mut self, item: T) {
-        self.write_at_tail(item);
-    }
-
     /// Appends the data in `src` to the fifo.
     /// Allocates more memory as necessary
     pub fn write(&mut self, src: &[T]) -> Result<(), AllocError> {

@@ -35,7 +35,7 @@
 //! | [`MultiArrayList::reset_to_zeroed`] | `ptr::write_bytes` |
 //! | [`__mal_split_mut_impl`] macro  | N-way disjoint `from_raw_parts_mut` |
 //!
-//! plus `unsafe impl Send` and the `pub unsafe fn` caller-contract
+//! plus `unsafe impl Send`/`Sync` and the `pub unsafe fn` caller-contract
 //! signatures on [`set_len`](MultiArrayList::set_len) and
 //! `column_bytes{,_mut}`. All row-level mutations
 //! (insert/remove/swap/append/grow/clone) are rebuilt on safe
@@ -50,6 +50,7 @@ use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
 
 use bun_alloc::AllocError;
+use bun_core::Freeze;
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
 /// element struct.
@@ -548,6 +549,9 @@ pub struct MultiArrayList<T> {
 
 // SAFETY: `bytes` is uniquely owned.
 unsafe impl<T: Send> Send for MultiArrayList<T> {}
+// SAFETY: `&self` only reads `bytes`, which nothing writes to through a reference to a field of a
+// `Freeze` type. It hands out such references, and copies of a `T`.
+unsafe impl<T: Send + Sync + Freeze> Sync for MultiArrayList<T> {}
 
 /// The start of each column, for the operations on whole rows. It does not borrow its list.
 struct Columns<T> {

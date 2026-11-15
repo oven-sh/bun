@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -16,43 +15,50 @@ use bun_sys as Syscall;
 use crate::bun_fs::FileSystem;
 use crate::bun_json;
 
-use super::directories;
-use crate::lifecycle_script_runner::{
-    InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
-};
+use super::{InstallFields, InstallState, directories};
+use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptRunner, ScriptCaller};
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
 use bun_install::{Behavior, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
+/// Indexed by package id.
+#[derive(Default)]
+pub(crate) struct PreinstallStates(Vec<PreinstallState>);
+
+impl PreinstallStates {
+    pub(crate) fn get(&self, package_id: PackageID) -> PreinstallState {
+        (self.0.get(package_id as usize).copied()).unwrap_or(PreinstallState::Unknown)
+    }
+
+    pub(crate) fn set(
+        &mut self,
+        lockfile: &Lockfile,
+        package_id: PackageID,
+        value: PreinstallState,
+    ) {
+        self.ensure_len(lockfile.packages.len())[package_id as usize] = value;
+    }
+
+    /// Returns all the states, at least `len`.
+    pub(crate) fn ensure_len(&mut self, len: usize) -> &mut [PreinstallState] {
+        if self.0.len() < len {
+            self.0.reserve(len - self.0.len());
+            self.0.resize(self.0.capacity(), PreinstallState::Unknown);
+        }
+        &mut self.0
+    }
+}
+
+impl InstallState {
+    pub fn active_lifecycle_script_count(&self) -> usize {
+        self.active_lifecycle_scripts.len()
+    }
+}
+
 impl PackageManager {
-    pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
-        if self.preinstall_state.len() >= count {
-            return;
-        }
-
-        self.preinstall_state
-            .reserve(count - self.preinstall_state.len());
-        self.preinstall_state
-            .resize(self.preinstall_state.capacity(), PreinstallState::Unknown);
-    }
-
-    /// A separate `lockfile` parameter would only feed `lockfile.packages.len` into
-    /// `ensurePreinstallStateListCapacity`. Every caller passes
-    /// `self.lockfile` (or an alias of it), which would alias `&mut self`;
-    /// `self.lockfile` is read directly instead to keep
-    /// borrowck happy.
     pub(crate) fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
-        let count = self.lockfile.packages.len();
-        self.ensure_preinstall_state_list_capacity(count);
-        self.preinstall_state[package_id as usize] = value;
-    }
-
-    pub(crate) fn get_preinstall_state(&self, package_id: PackageID) -> PreinstallState {
-        if (package_id as usize) >= self.preinstall_state.len() {
-            return PreinstallState::Unknown;
-        }
-        self.preinstall_state[package_id as usize]
+        (self.state.preinstall_state).set(&self.lockfile, package_id, value);
     }
 
     /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
@@ -66,7 +72,7 @@ impl PackageManager {
         out_name_and_version_hash: &mut Option<u64>,
         out_patchfile_hash: &mut Option<u64>,
     ) -> PreinstallState {
-        match self.get_preinstall_state(pkg.meta.id) {
+        match self.state.preinstall_state.get(pkg.meta.id) {
             PreinstallState::Unknown => {
                 // Do not automatically start downloading packages which are disabled
                 // i.e. don't download all of esbuild's versions or SWCs
@@ -127,13 +133,13 @@ impl PackageManager {
                 let mut buf = bun_paths::path_buffer_pool::get();
                 let folder_path: &ZStr = match pkg.resolution.tag {
                     ResolutionTag::Git => directories::cached_git_folder_name_print_auto(
-                        self,
+                        &self.lockfile,
                         &mut buf,
                         pkg.resolution.git(),
                         patch_hash,
                     ),
                     ResolutionTag::Github => directories::cached_github_folder_name_print_auto(
-                        self,
+                        &self.lockfile,
                         &mut buf,
                         pkg.resolution.github(),
                         patch_hash,
@@ -143,7 +149,7 @@ impl PackageManager {
                             .name
                             .slice(self.lockfile.buffers.string_bytes.as_slice());
                         directories::cached_npm_package_folder_name(
-                            self,
+                            &self.options,
                             &mut buf,
                             name,
                             pkg.resolution.npm().version,
@@ -151,8 +157,7 @@ impl PackageManager {
                         )
                     }
                     ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                        directories::cached_tarball_folder_name(
-                            self,
+                        self.install_fields().cached_tarball_folder_name(
                             &mut buf,
                             &pkg.meta.integrity,
                             &pkg.resolution,
@@ -168,7 +173,7 @@ impl PackageManager {
                 }
 
                 let in_cache = if patch_hash.is_some() {
-                    directories::is_folder_in_cache(self, folder_path)
+                    directories::is_folder_in_cache(&self.install_fields(), folder_path)
                 } else {
                     directories::is_package_in_cache(self, folder_path, pkg.resolution.tag)
                 };
@@ -210,27 +215,29 @@ impl PackageManager {
             val => val,
         }
     }
+}
 
+impl InstallFields<'_> {
     pub(crate) fn has_no_more_pending_lifecycle_scripts(&mut self) -> bool {
         self.report_slow_lifecycle_scripts();
-        self.pending_lifecycle_script_tasks.load(Ordering::Relaxed) == 0
+        self.state.active_lifecycle_scripts.is_empty()
     }
 
     pub(crate) fn tick_lifecycle_scripts(&mut self) {
-        // reshaped for borrowck — `self.event_loop.tick_once(self)`
-        // would borrow `self` twice. Erase `self` to a raw context pointer
-        // first; `tick_once` only forwards it opaquely to task callbacks.
-        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        self.event_loop.tick_once(ctx);
+        self.state.event_loop.tick_once(core::ptr::null_mut());
+        ScriptCaller::Manager(self.reborrow()).finish_exited_subprocesses();
     }
 
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
-        self.sleep_until(Self::has_no_more_pending_lifecycle_scripts);
+        Output::flush();
+        while !self.has_no_more_pending_lifecycle_scripts() {
+            self.tick();
+        }
     }
 
     pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
-        let log_level = self.options.log_level;
+        let (log_level, state) = (self.options.log_level, &mut *self.state);
         if log_level == LogLevel::Silent {
             return;
         }
@@ -241,19 +248,15 @@ impl PackageManager {
             return;
         }
 
-        let longest_running = self.active_lifecycle_scripts.peek();
-        if longest_running.is_null() {
+        let Some((_, longest_running)) = state.active_lifecycle_scripts.first() else {
             return;
-        }
-        if self.cached_tick_for_slow_lifecycle_script_logging == self.event_loop.iteration_number()
+        };
+        if state.cached_tick_for_slow_lifecycle_script_logging
+            == state.event_loop.iteration_number()
         {
             return;
         }
-        self.cached_tick_for_slow_lifecycle_script_logging = self.event_loop.iteration_number();
-        // SAFETY: `peek()` returned a non-null intrusive heap node owned by
-        // `active_lifecycle_scripts`; only read for its `started_at` /
-        // `package_name` fields below.
-        let longest_running = unsafe { &*longest_running };
+        state.cached_tick_for_slow_lifecycle_script_logging = state.event_loop.iteration_number();
         let current_time = bun_core::Timespec::now_allow_mocked_time().ns();
         let time_running = current_time.saturating_sub(longest_running.started_at);
         const NS_PER_S: u64 = 1_000_000_000;
@@ -263,10 +266,10 @@ impl PackageManager {
             NS_PER_S * 30
         };
         if time_running > interval
-            && current_time.saturating_sub(self.last_reported_slow_lifecycle_script_at) > interval
+            && current_time.saturating_sub(state.last_reported_slow_lifecycle_script_at) > interval
         {
-            self.last_reported_slow_lifecycle_script_at = current_time;
-            let package_name: &[u8] = &longest_running.package_name;
+            state.last_reported_slow_lifecycle_script_at = current_time;
+            let package_name: &[u8] = &longest_running.scripts.package_name;
 
             let ends_in_s = package_name.len() > 1 && package_name.ends_with(b"s");
             bun_core::warn!(
@@ -278,7 +281,9 @@ impl PackageManager {
             Output::flush();
         }
     }
+}
 
+impl PackageManager {
     pub(crate) fn load_root_lifecycle_scripts(&mut self, root_package: &Package) {
         let buf = self.lockfile.buffers.string_bytes.as_slice();
         // need to clone because this is a copy before Lockfile.cleanWithLogger
@@ -300,22 +305,39 @@ impl PackageManager {
             );
         }
     }
+}
 
-    /// Used to be called from multiple threads; now single-threaded
-    /// TODO: re-evaluate whether some variables still need to be atomic
+impl InstallFields<'_> {
     pub fn spawn_package_lifecycle_scripts(
         &mut self,
         list: ScriptsList,
         optional: bool,
         foreground: bool,
-        install_ctx: Option<InstallCtx<'_>>,
+        install_ctx: Option<InstallCtx>,
     ) -> Result<(), crate::Error> {
-        let log_level = self.options.log_level;
+        ScriptCaller::Manager(self.reborrow()).spawn_package_lifecycle_scripts(
+            list,
+            optional,
+            foreground,
+            install_ctx,
+        )
+    }
+}
+
+impl ScriptCaller<'_, '_> {
+    pub(crate) fn spawn_package_lifecycle_scripts(
+        mut self,
+        list: ScriptsList,
+        optional: bool,
+        foreground: bool,
+        install_ctx: Option<InstallCtx>,
+    ) -> Result<(), crate::Error> {
         if !list.items.iter().any(Option::is_some) {
             return Ok(());
         }
 
-        self.ensure_temp_node_gyp_script()?;
+        let mut manager = self.install_fields();
+        manager.ensure_temp_node_gyp_script()?;
 
         // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.
@@ -324,9 +346,9 @@ impl PackageManager {
         if cwd.len() + "/node_modules/.bin".len() >= bun_paths::MAX_PATH_BYTES {
             return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
         }
-        self.configure_env_for_scripts()?;
+        manager.state.configure_env_for_scripts()?;
 
-        let mut script_env = self.env().map.clone_with_allocator()?;
+        let mut script_env = manager.state.env().map.clone_with_allocator()?;
 
         // `script_env.put` below needs `&mut`; copy PATH out so the
         // shared borrow does not span it.
@@ -344,7 +366,7 @@ impl PackageManager {
             append_path_without_ancestor_bins(&mut env_path, &original_path, cwd)?;
         }
         crate::bin::link_conflicting_bins(
-            &self.lockfile,
+            manager.lockfile,
             &list.bin_conflicts,
             cwd,
             env_path.slice(),
@@ -376,33 +398,30 @@ impl PackageManager {
 
         put_npm_package_env(&mut script_env, cwd, &list.package_name)?;
 
-        // Ownership transfers to `LifecycleScriptSubprocess`, which
-        // re-uses it across every `spawn_next_script` in the chain. Move the
-        // owning `CStringList` by value so its `K=V\0` strings outlive
-        // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.to_envp();
 
         #[cfg(windows)]
         let shell_bin: Option<&ZStr> = None;
         // `find_shell` includes the trailing NUL in its `'static` storage.
         #[cfg(not(windows))]
-        let shell_bin: Option<&ZStr> = (self.env().get(b"PATH"))
+        let shell_bin: Option<&ZStr> = (manager.state.env().get(b"PATH"))
             .and_then(|env_path| crate::RunCommand::find_shell(env_path, cwd))
             .map(ZStr::from_slice_with_nul);
 
-        RealLifecycleScriptSubprocess::spawn_package_scripts(
-            self,
+        LifecycleScriptRunner::spawn_package_scripts(
+            &mut self,
             list,
             envp,
             shell_bin,
             optional,
-            log_level,
             foreground,
             install_ctx,
         );
         Ok(())
     }
+}
 
+impl PackageManager {
     pub(crate) fn find_trusted_dependencies_from_update_requests(
         &mut self,
     ) -> ArrayHashMap<PackageID, ()> {

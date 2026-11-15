@@ -118,7 +118,7 @@ pub fn update_package_json_and_install_with_manager(
     )?;
 
     // `bun patch` prepares the patch first, and its caller exits.
-    if manager.any_failed_to_install
+    if manager.state.any_failed_to_install
         && !matches!(manager.options.patch_features, PatchFeatures::Patch)
     {
         Global::exit(1);
@@ -415,7 +415,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON)
         && !any_changes
     {
-        Global::exit(u32::from(manager.any_failed_to_install));
+        Global::exit(u32::from(manager.state.any_failed_to_install));
     }
     remove_leftover_node_modules(manager);
 
@@ -433,7 +433,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
         Subcommand::Remove => None,
         // `-d` with `--production`: the install skips the group that the entry is in now.
         Subcommand::Add
-            if manager.options.do_.contains(Do::INSTALL_PACKAGES)
+            if manager.effective_do().install_packages()
                 && !manager
                     .options
                     .update
@@ -561,7 +561,7 @@ pub fn update_package_json_and_install_and_cli(
         patch_package::prepare_patch(manager)?;
     }
 
-    if manager.any_failed_to_install {
+    if manager.state.any_failed_to_install {
         Global::exit(1);
     }
 

@@ -132,7 +132,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
 
         for (index, request) in requests.iter().enumerate() {
             // An entry that already had this literal took the request, so there is no second row.
-            if request.is_aliased || written.expr.as_property(request.get_name()).is_none() {
+            if request.is_aliased || written.expr.as_property(request.input_literal()).is_none() {
                 continue;
             }
             let buf = lockfile.buffers.string_bytes.as_slice();
@@ -146,7 +146,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
             let name = rows[positional].name.slice(buf);
             // It isn't resolved, or its package.json has no name, which two unrelated packages can
             // have in common.
-            if name.is_empty() || name == request.get_name() {
+            if name.is_empty() || name == request.input_literal() {
                 continue;
             }
 
@@ -170,7 +170,7 @@ pub(crate) fn fold_resolved_positionals(manager: &mut PackageManager) {
                 {
                     Output::flush();
                     let shown = |request: &UpdateRequest| {
-                        bun_core::fmt::redacted(bstr::BStr::new(request.version_buf())).to_string()
+                        bun_core::fmt::redacted(bstr::BStr::new(request.input)).to_string()
                     };
                     Output::err_generic(
                         "{} and {} both resolve to {}",
@@ -546,7 +546,7 @@ fn sync_lockfile(
             continue;
         }
 
-        let known = &mut manager.known_npm_aliases;
+        let known = &mut manager.project.known_npm_aliases;
         let (mut builder, lf) = manager.lockfile.string_builder_split();
         for &(_, si) in &changed {
             scratch_deps[si].count(sbuf, &mut builder);
@@ -572,7 +572,7 @@ fn sync_lockfile(
         && scratch.catalogs.has_any()
         && edited.iter().all(|e| e.target.name_hash.is_some())
     {
-        let known = &mut manager.known_npm_aliases;
+        let known = &mut manager.project.known_npm_aliases;
         let (mut builder, lf) = manager.lockfile.string_builder_split();
         scratch.catalogs.count(sbuf, &mut builder);
         builder.allocate()?;
@@ -581,7 +581,7 @@ fn sync_lockfile(
     }
     // A `$name` of the root can name a literal that only a member declares.
     if overrides_changed && edited.iter().all(|e| e.target.name_hash.is_some()) {
-        let known = &mut manager.known_npm_aliases;
+        let known = &mut manager.project.known_npm_aliases;
         let (mut builder, lf) = manager.lockfile.string_builder_split();
         scratch.overrides.count(sbuf, &mut builder);
         builder.allocate()?;
@@ -632,7 +632,7 @@ pub(crate) fn flush(manager: &mut PackageManager) -> Result<(), crate::Error> {
         .do_
         .contains(Do::TRUST_DEPENDENCIES_FROM_ARGS)
     {
-        core::mem::take(&mut manager.trusted_deps_to_add_to_package_json)
+        core::mem::take(&mut manager.state.trusted_deps_to_add_to_package_json)
     } else {
         Vec::new()
     };

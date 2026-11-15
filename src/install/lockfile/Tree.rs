@@ -499,12 +499,8 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub(crate) resolution_lists: &'a [DependencyIDSlice],
     pub(crate) queue: TreeFiller,
     pub(crate) log: &'a bun_ast::Log,
-    /// Stored as `ParentRef` (raw
-    /// non-null backref) so the construction site (`Lockfile::hoist`) can
-    /// split-borrow `resolutions` mutably without borrowck rejecting the
-    /// overlap; reads go through [`Builder::lockfile()`] which never touches
-    /// `buffers.resolutions`.
-    pub lockfile: bun_ptr::ParentRef<Lockfile>,
+    /// Its `buffers.resolutions` is empty: see `resolutions`.
+    pub lockfile: &'a Lockfile,
     // Unresolved peers that might resolve later. if they do we will want to assign
     // builder.resolutions[peer.dep_id] to the resolved pkg_id. A dependency ID set is used because there
     // can be multiple instances of the same package in the tree, so the same unresolved dependency ID
@@ -827,12 +823,6 @@ pub(crate) fn bind_served_peers(
 }
 
 impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
-    /// MUST NOT be used to read `buffers.resolutions`: `self.resolutions` is a live `&mut` to it.
-    #[inline]
-    fn lockfile(&self) -> &Lockfile {
-        self.lockfile.get()
-    }
-
     fn bind_pending_peers(&mut self, name_hash: PackageNameHash, pkg_id: PackageID) {
         if let Some((_, peers)) = self.pending_peers.fetch_swap_remove(&name_hash) {
             for &dep_id in peers.keys() {
@@ -842,14 +832,14 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     fn buf(&self) -> &[u8] {
-        self.lockfile().buffers.string_bytes.as_slice()
+        self.lockfile.buffers.string_bytes.as_slice()
     }
 
     /// The package that loading `bun.lock` first resolves a peer to, going by its version range.
     /// `None` means the dependency keeps the package it resolves to now.
     #[inline]
     fn peer_by_version(&self, dep_id: DependencyID) -> Option<PackageID> {
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
         bun_lock::resolve_peer_dep_version_based(
             &self.dependencies[dep_id as usize],
             &lockfile.catalogs,
@@ -882,7 +872,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         dependency_id: DependencyID,
         period: usize,
     ) -> ! {
-        let lockfile = self.lockfile();
+        let lockfile = self.lockfile;
         let buf = self.buf();
         let pkg_names = lockfile.packages.items_name();
         let pkg_resolutions = lockfile.packages.items_resolution();
@@ -922,7 +912,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     fn linked_rows(&mut self) -> Option<LinkedRows<'_>> {
         Some(LinkedRows {
             manager: self.manager?,
-            lockfile: self.lockfile.get(),
+            lockfile: self.lockfile,
             trees: self.list.items_tree(),
             dependencies: self.dependencies,
             resolutions: &*self.resolutions,
@@ -1298,9 +1288,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Builder` holds a live `&mut [PackageID]` over the resolutions buffer (see
-// `Builder.lockfile` safety contract), so callers must thread `resolutions`
-// explicitly to avoid an aliasing read through the shared `&Lockfile`.
+// `resolutions` is passed separately, because `Builder::lockfile` has none.
 pub(crate) fn is_filtered_dependency_or_workspace(
     dep_id: DependencyID,
     parent_pkg_id: PackageID,
@@ -1422,7 +1410,7 @@ impl Tree {
             && !builder.dependencies[dependency_id as usize]
                 .behavior
                 .is_workspace()
-            && builder.lockfile().packages.items_resolution()[parent_pkg_id as usize].tag
+            && builder.lockfile.packages.items_resolution()[parent_pkg_id as usize].tag
                 == crate::resolution::Tag::Workspace
         {
             let mut tree_id = self.id;
@@ -1468,8 +1456,7 @@ impl Tree {
         builder.walked.set(parent_pkg_id as usize);
 
         // Copied out, so that neither keeps `builder` borrowed.
-        let lockfile_ref = builder.lockfile;
-        let lockfile: &Lockfile = lockfile_ref.get();
+        let lockfile = builder.lockfile;
         let pkgs = &lockfile.packages;
         let pkg_resolutions = pkgs.items_resolution();
         let dependencies: &[Dependency] = builder.dependencies;
@@ -1788,7 +1775,7 @@ impl Tree {
         if !AS_DEFINED
             && !builder.peer_probes.0.is_empty()
             && builder.peer_probes.is_hidden_by(
-                builder.lockfile.get(),
+                builder.lockfile,
                 deps,
                 &*builder.resolutions,
                 &builder.placed,
@@ -1859,9 +1846,9 @@ impl Tree {
             }
 
             let is_in_peer_range = || {
-                let range = (builder.lockfile().catalogs).resolve_range(builder.buf(), dependency);
+                let range = (builder.lockfile.catalogs).resolve_range(builder.buf(), dependency);
                 let resolution: &Resolution =
-                    &builder.lockfile().packages.items_resolution()[res_id as usize];
+                    &builder.lockfile.packages.items_resolution()[res_id as usize];
                 range.try_npm().is_some_and(|range| {
                     resolution.tag == crate::resolution::Tag::Npm
                         && (range.version).satisfies(
@@ -1928,9 +1915,9 @@ impl Tree {
             if dependency.behavior.is_peer() {
                 // An override chose this peer's package, so an alias of a different package can't
                 // stand in for it.
-                let pkg_name_hashes = builder.lockfile().packages.items_name_hash();
+                let pkg_name_hashes = builder.lockfile.packages.items_name_hash();
                 if pkg_name_hashes[res_id as usize] != pkg_name_hashes[package_id as usize]
-                    && builder.lockfile().is_overridden_dependency(input_dep_id)
+                    && builder.lockfile.is_overridden_dependency(input_dep_id)
                 {
                     return HoistDependencyResult::DependencyLoop; // 3
                 }
@@ -1944,7 +1931,7 @@ impl Tree {
                         HoistDependencyResult::Hoisted
                     }
                 };
-                let is_root_dependency = builder.lockfile().is_workspace_root_dependency(dep_id);
+                let is_root_dependency = builder.lockfile.is_workspace_root_dependency(dep_id);
                 let own_dependency_shares_it = || {
                     !dependency.behavior.is_optional_peer()
                         && (input_dep_range.begin()..input_dep_range.end()).any(|own| {
@@ -1982,7 +1969,7 @@ impl Tree {
         if this.parent != INVALID_ID && this.id != hoist_root_id {
             if AS_DEFINED {
                 builder.peer_probes.begin(
-                    builder.lockfile.get(),
+                    builder.lockfile,
                     deps,
                     &*builder.resolutions,
                     input_dep_range,

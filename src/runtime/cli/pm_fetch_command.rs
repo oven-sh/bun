@@ -1,9 +1,7 @@
 use bstr::BStr;
 
 use bun_core::{Global, Output};
-use bun_install::package_manager_real::{
-    PackageManager, get_cache_directory, populate_package_cache,
-};
+use bun_install::package_manager_real::{PackageManager, populate_package_cache};
 use bun_paths::string_paths::without_trailing_slash_windows_path;
 
 use crate::cli::Command;
@@ -30,7 +28,7 @@ pub(crate) fn exec(
     let summary = populate_package_cache::fetch(pm, ctx, original_cwd)?;
 
     let _ = pm.log().print(Output::error_writer());
-    if pm.log().has_errors() || pm.any_failed_to_install {
+    if pm.log().has_errors() || pm.state.any_failed_to_install {
         Global::exit(1);
     }
 
@@ -64,7 +62,7 @@ pub(crate) fn exec(
     Output::print_start_end_stdout(start_time, bun_core::time::nano_timestamp());
     bun_core::pretty!("<r>\n");
 
-    let cache_dir = without_trailing_slash_windows_path(&get_cache_directory(pm).path);
+    let cache_dir = without_trailing_slash_windows_path(&pm.get_cache_directory().path);
     bun_core::prettyln!("<d>Cache: {}<r>", BStr::new(cache_dir));
     Output::flush();
 

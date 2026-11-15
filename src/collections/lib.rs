@@ -11,6 +11,7 @@
 #![warn(unused_must_use)]
 
 pub mod hive_array;
+mod hive_box;
 pub mod index_sort;
 mod multi_array_list;
 mod once_map;
@@ -32,6 +33,7 @@ pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
 pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveRefHandle, HiveSlot};
+pub use hive_box::{AtomicHiveArray, HasStaticHive, HiveBox};
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;
 pub use once_map::OnceMap;

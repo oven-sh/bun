@@ -18,7 +18,9 @@ use bun_ptr::Interned;
 use super::frame::{self, Frame};
 use super::worker::{SpawnContext, Worker};
 use crate::cli::run_compiled::log_first_time_in_test_run;
+use crate::cli::test::timings::Timings;
 use crate::test_command::CommandLineReporter;
+use crate::test_runner::cells::CellExt as _;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
@@ -26,7 +28,9 @@ use crate::api::bun::process::Status as SpawnStatus;
 
 pub(crate) struct Coordinator<'a> {
     pub(crate) vm: &'a VirtualMachine,
-    pub(crate) reporter: &'a mut CommandLineReporter,
+    pub(crate) reporter: &'a CommandLineReporter,
+    /// `reporter.timings`, until `drive` returns.
+    pub(crate) timings: Option<Box<Timings>>,
     pub(crate) files: Vec<Interned>,
     /// `--timings`: recorded cost per `files` index; stealing then goes by remaining time and takes the victim's slowest file.
     pub(crate) costs: Option<Vec<u64>>,
@@ -292,8 +296,7 @@ impl<'a> Coordinator<'a> {
             .filter_map(|w| w.inflight.map(|idx| (idx, now - w.dispatched_at)))
             .collect();
         for (idx, ms) in &running {
-            self.reporter.summary().fail += 1;
-            self.reporter.summary().files += 1;
+            self.reporter.count_failed_file();
             self.mark_cut_short(
                 *idx,
                 *ms,
@@ -408,7 +411,7 @@ impl<'a> Coordinator<'a> {
     }
 
     fn is_heavy(&self, file_idx: u32) -> bool {
-        let timings = self.reporter.timings.as_ref();
+        let timings = self.timings.as_ref();
         self.keeps_heavy_files_apart
             && timings.is_some_and(|t| t.is_heavy(self.files[file_idx as usize].as_bytes()))
     }
@@ -416,7 +419,7 @@ impl<'a> Coordinator<'a> {
     /// In megabytes. 0 for a file that is not heavy.
     fn heavy_growth_of(&self, file_idx: u32) -> u32 {
         let path = self.files[file_idx as usize].as_bytes();
-        let growth = (self.reporter.timings.as_ref()).and_then(|t| t.growth_of(path));
+        let growth = (self.timings.as_ref()).and_then(|t| t.growth_of(path));
         growth.filter(|_| self.is_heavy(file_idx)).unwrap_or(0)
     }
 
@@ -435,7 +438,7 @@ impl<'a> Coordinator<'a> {
 
     /// What the files that run and are not heavy took together.
     fn growth_running_beside_heavy_files(&self) -> u32 {
-        let Some(timings) = self.reporter.timings.as_ref() else {
+        let Some(timings) = self.timings.as_ref() else {
             return 0;
         };
         let growths = self.workers.iter().filter_map(|w| {
@@ -455,7 +458,7 @@ impl<'a> Coordinator<'a> {
         let is_chosen =
             self.keeps_heavy_files_apart && (running > 0 || self.has_heavy_files_left());
         if !range.is_empty() && is_chosen {
-            let timings = self.reporter.timings.as_ref()?;
+            let timings = self.timings.as_ref()?;
             // Most files take next to nothing, so one without a record counts as light. A table may then hold the large ones alone.
             let growth_of = |file_idx: &u32| {
                 let growth = timings.growth_of(self.files[*file_idx as usize].as_bytes());
@@ -565,13 +568,13 @@ impl<'a> Coordinator<'a> {
     }
 
     fn record_timing(&mut self, file_idx: u32, dispatched_at: i64) {
-        if let Some(t) = self.reporter.timings.as_mut() {
+        if let Some(t) = self.timings.as_mut() {
             t.record_since(self.files[file_idx as usize].as_bytes(), dispatched_at);
         }
     }
 
     fn keep_timing(&mut self, file_idx: u32) {
-        if let Some(t) = self.reporter.timings.as_mut() {
+        if let Some(t) = self.timings.as_mut() {
             t.keep(self.files[file_idx as usize].as_bytes());
         }
     }
@@ -721,12 +724,7 @@ impl<'a> Coordinator<'a> {
                 w.first_loads.extend_from_slice(first_loads);
                 let dispatched_at = w.dispatched_at;
 
-                // Reshaped for borrowck — `summary()` mutably borrows
-                // `self.reporter`, so the unhandled-errors counter (also on
-                // `self.reporter.jest`) and `bail_out()` must run after the
-                // summary borrow is released.
-                {
-                    let summary = self.reporter.summary();
+                self.reporter.update_summary(|summary| {
                     summary.pass += pass;
                     summary.fail += fail;
                     summary.skip += skip;
@@ -735,10 +733,10 @@ impl<'a> Coordinator<'a> {
                     summary.skipped_because_label += skipped_label;
                     summary.files += files;
                     summary.shuffled += shuffled;
-                }
-                self.reporter.jest.unhandled_errors_between_tests += unhandled;
+                });
+                (self.reporter.jest.unhandled_errors_between_tests).update(|n| n + unhandled);
                 self.record_timing(idx, dispatched_at);
-                if let Some(timings) = self.reporter.timings.as_mut().filter(|_| growth > 0) {
+                if let Some(timings) = self.timings.as_mut().filter(|_| growth > 0) {
                     timings.record_growth(self.files[idx as usize].as_bytes(), growth);
                 }
 
@@ -756,17 +754,13 @@ impl<'a> Coordinator<'a> {
                 }
             }
             frame::Kind::RepeatBufs => {
-                // Unrolled because an array of disjoint &mut fields needs
-                // explicit splitting.
-                self.reporter
-                    .failures_to_repeat_buf
-                    .extend_from_slice(rd.str());
-                self.reporter
-                    .skips_to_repeat_buf
-                    .extend_from_slice(rd.str());
-                self.reporter
-                    .todos_to_repeat_buf
-                    .extend_from_slice(rd.str());
+                for to_repeat in [
+                    &self.reporter.failures_to_repeat_buf,
+                    &self.reporter.skips_to_repeat_buf,
+                    &self.reporter.todos_to_repeat_buf,
+                ] {
+                    to_repeat.with_taken(|buf| buf.extend_from_slice(rd.str()));
+                }
             }
             frame::Kind::CoverageFile => {
                 use bun_sourcemap_jsc::code_coverage::wire;
@@ -981,8 +975,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
             bstr::BStr::new(reason),
         );
-        self.reporter.summary().fail += 1;
-        self.reporter.summary().files += 1;
+        self.reporter.count_failed_file();
         self.files_done += 1;
         if let Some(file) = self.test_records.get_mut(file_idx as usize) {
             file.unfinished = Some((b"(aborted)", reason.into()));
@@ -1016,8 +1009,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(self.rel_path(file_idx)),
             detail,
         );
-        self.reporter.summary().fail += 1;
-        self.reporter.summary().files += 1;
+        self.reporter.count_failed_file();
         self.mark_cut_short(
             file_idx,
             bun_core::time::milli_timestamp() - dispatched_at,
@@ -1080,7 +1072,7 @@ impl<'a> Coordinator<'a> {
             bstr::BStr::new(describe_status(&mut buf, status)),
         );
         Output::flush();
-        self.reporter.jest.unhandled_errors_between_tests += 1;
+        (self.reporter.jest.unhandled_errors_between_tests).update(|n| n + 1);
         self.terminate_workers_after_panic(b"aborted: worker panicked between files");
     }
 
@@ -1134,8 +1126,7 @@ impl<'a> Coordinator<'a> {
                     )),
                     bstr::BStr::new(reason),
                 );
-                self.reporter.summary().fail += 1;
-                self.reporter.summary().files += 1;
+                self.reporter.count_failed_file();
                 self.files_done += 1;
                 if let Some(file) = self.test_records.get_mut(idx as usize) {
                     file.unfinished = Some((b"(aborted)", reason.into()));

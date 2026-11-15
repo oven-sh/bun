@@ -1374,13 +1374,10 @@ pub(crate) extern "C" fn Bun__AOT__runsTestFilesAgain() -> bool {
 pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
     global: &bun_jsc::JSGlobalObject,
 ) -> bool {
-    let Some(runner) = crate::test_runner::jest::Jest::runner() else {
+    let Some(file) = crate::test_runner::bun_test::clone_active_strong() else {
         return false;
     };
-    let Some(file) = runner.bun_test_root.clone_active_file() else {
-        return false;
-    };
-    file.get().is_loading
+    file.is_loading.get()
         && global
             .bun_vm()
             .pending_internal_promise()

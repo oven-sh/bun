@@ -562,6 +562,25 @@ const cases: Record<string, Case> = {
       `tool.config.ts {"mode":"test","plugins":[{"name":"local"}]} local:X\ntool.config.mjs {"mode":"mjs"} undefined\n` +
       `tool.config.cjs {"mode":"cjs","plugins":[{"name":"inline"}]} inline:xx\n.toolrc.json {"mode":"json"} undefined\n`,
   },
+  // An executable that is built to read no .env file still hands its files the environment of the moment they read it.
+  "a file from disk reads NODE_ENV, BUN_ENV and process.browser as they are when it runs": {
+    program: {
+      "main.ts":
+        prelude +
+        `const esm: { read(): string } = await import(at("reads.mjs"));
+        const cjs: { read(): string } = require(at("reads.cjs"));
+        console.log(esm.read(), cjs.read());
+        process.env.NODE_ENV = "assigned";
+        console.log(esm.read(), cjs.read());`,
+    },
+    flags: ["--no-compile-autoload-dotenv"],
+    env: { NODE_ENV: "production", BUN_ENV: "staging" },
+    disk: {
+      "reads.mjs": `export const read = () => [process.env.NODE_ENV, process.env.BUN_ENV, process.browser].join();`,
+      "reads.cjs": `exports.read = () => [process.env.NODE_ENV, process.env.BUN_ENV, process.browser].join();`,
+    },
+    prints: "production,staging,false production,staging,false\nassigned,staging,false assigned,staging,false\n",
+  },
   "a program that loads files takes the options that load a file in front of it": {
     program: {
       "main.ts":

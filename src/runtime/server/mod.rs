@@ -322,6 +322,29 @@ pub(crate) struct UserRoute<const SSL: bool, const DEBUG: bool> {
     pub(crate) route: server_config::RouteDeclaration,
 }
 
+impl<const SSL: bool, const DEBUG: bool> UserRoute<SSL, DEBUG> {
+    /// The server, id and method, copied out because the handler can reload the server and free the route.
+    ///
+    /// # Safety
+    /// `this` is an entry of `user_routes` of a server that lives for `'a`.
+    unsafe fn read_fields<'a>(
+        this: *const Self,
+    ) -> (
+        &'a NewServer<SSL, DEBUG>,
+        u32,
+        Option<bun_http_types::Method::Method>,
+    ) {
+        // SAFETY: caller contract, and `server` points to the server that holds the entry.
+        unsafe {
+            (
+                &*(*this).server,
+                (*this).id,
+                (*this).route.method.specific(),
+            )
+        }
+    }
+}
+
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         httplog!("deinit");
@@ -1134,22 +1157,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         // SAFETY: `user_route` is the live entry in `server.user_routes` whose
         // address was registered as the uws callback userdata.
-        let user_route = unsafe { &*user_route };
-        // SAFETY: `server` is the live backref stored in `user_route`.
-        let server = unsafe { &*user_route.server };
-        let index = user_route.id;
+        let (server, index, method) = unsafe { UserRoute::read_fields(user_route) };
 
         let Some(server_js) = server.js_value_for_dispatch() else {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
 
-        let Some(mut prepared) = server.prepare_js_request_context(
-            req,
-            resp,
-            CreateJsRequest::No,
-            user_route.route.method.specific(),
-        ) else {
+        let Some(mut prepared) =
+            server.prepare_js_request_context(req, resp, CreateJsRequest::No, method)
+        else {
             return;
         };
 

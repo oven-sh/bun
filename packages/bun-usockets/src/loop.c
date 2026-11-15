@@ -598,6 +598,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
                         s->send_rejected = 0;
+                        us_internal_socket_clear_ext(s, listen_socket->socket_ext_size);
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

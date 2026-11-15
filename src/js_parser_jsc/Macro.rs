@@ -779,57 +779,33 @@ impl Runner {
         // exception-reporting path); a thread-local sentinel suffices.
         EXCEPTION_HOLDER.with(|h| h.set(true));
 
-        // An RAII guard *owns* the
-        // `Vec<JSValue>` + processed count. All mutation goes through the
-        // guard's fields so there is no aliasing of a raw pointer with later
-        // direct writes (the previous `*mut Vec` capture popped its
-        // Stacked-Borrows tag on reassignment).
-        struct JsArgs {
-            args: Vec<JSValue>,
-            processed_len: usize,
-            has_js_object: bool,
+        /// Unprotects every argument on drop.
+        struct JsArgs(Vec<JSValue>);
+        impl JsArgs {
+            fn push(&mut self, value: JSValue) {
+                value.protect();
+                self.0.push(value);
+            }
         }
         impl Drop for JsArgs {
             fn drop(&mut self) {
-                let n = self
-                    .processed_len
-                    .saturating_sub(usize::from(self.has_js_object));
-                for arg in &self.args[0..n] {
+                for arg in &self.0 {
                     arg.unprotect();
                 }
-                // `allocator.free(js_args)` — Vec drops with `self`.
             }
         }
-        let mut js_args = JsArgs {
-            args: Vec::new(),
-            processed_len: 0,
-            has_js_object: javascript_object != JSValue::ZERO,
-        };
+        let mut js_args = JsArgs(Vec::new());
 
         let global_object = vm.global();
 
         match &caller.data {
             ExprData::ECall(call) => {
                 let call_args: &[Expr] = call.args.slice();
-                js_args.args = vec![
-                    JSValue::ZERO;
-                    call_args.len()
-                        + usize::from(javascript_object != JSValue::ZERO)
-                ];
-                js_args.processed_len = js_args.args.len();
-
-                for (i, in_) in call_args.iter().enumerate() {
-                    let value = match in_.to_js(global_object) {
-                        Ok(v) => v,
-                        Err(e) => {
-                            // Keeping a separate variable instead of modifying js_args.len
-                            // due to allocator.free call in defer
-                            js_args.processed_len = i;
-                            return Err(e.into());
-                        }
-                    };
-                    value.protect();
-                    js_args.args[i] = value;
+                js_args.0.reserve_exact(
+                    call_args.len() + usize::from(javascript_object != JSValue::ZERO),
+                );
+                for in_ in call_args {
+                    js_args.push(in_.to_js(global_object)?);
                 }
             }
             ExprData::ETemplate(_) => {
@@ -846,11 +822,7 @@ impl Runner {
         }
 
         if javascript_object != JSValue::ZERO {
-            if js_args.args.is_empty() {
-                js_args.args = vec![JSValue::ZERO; 1];
-            }
-            let last = js_args.args.len() - 1;
-            js_args.args[last] = javascript_object;
+            js_args.push(javascript_object);
         }
 
         // The `extern "C" fn()` trampoline (no userdata) reaches the call args +
@@ -892,7 +864,7 @@ impl Runner {
             log,
             bump,
             caller,
-            js_args: &js_args.args,
+            js_args: &js_args.0,
             source,
             id,
             result: Err(MacroError::MacroFailed),

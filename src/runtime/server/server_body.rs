@@ -2231,24 +2231,41 @@ where
 
     /// Route handler for the HTTP/2 and HTTP/3 apps (`R` = `uws::H2::Response`
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
-    pub(super) fn on_mux_request<R: RespLike>(&self, req: &mut uws::H3::Request, resp: &mut R) {
-        if self.config.get().on_request.is_empty() {
-            return Self::on_mux_404(self, req, resp);
-        }
-        self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
-    }
-
-    pub(super) fn on_mux_user_route_request<R: RespLike>(
-        user_route: &UserRoute<SSL, DEBUG>,
+    ///
+    /// # Safety
+    /// `this` must be the live server that `set_routes` registered.
+    pub(super) fn on_mux_request<R: RespLike>(
+        this: *mut Self,
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
-        Self::on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
-            user_route, req, resp,
+        // SAFETY: the server that `set_routes` registered, which outlives its apps.
+        let server = unsafe { &*this };
+        if server.config.get().on_request.is_empty() {
+            return Self::on_mux_404(this, req, resp);
+        }
+        server.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
+    }
+
+    /// # Safety
+    /// `user_route` must be a live entry of `server.user_routes`.
+    pub(super) fn on_mux_user_route_request<R: RespLike>(
+        user_route: *mut UserRoute<SSL, DEBUG>,
+        req: &mut uws::H3::Request,
+        resp: &mut R,
+    ) {
+        // SAFETY: the entry that `set_routes` registered, whose server outlives the request.
+        let (server, index, method) = unsafe { UserRoute::read_fields(user_route) };
+        server.on_user_route_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(
+            index, method, req, resp,
         );
     }
 
-    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
+    pub(super) fn on_mux_404<R: RespLike>(
+        _this: *mut Self,
+        _req: &mut uws::H3::Request,
+        resp: &mut R,
+    ) {
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
     }
@@ -2309,31 +2326,24 @@ where
     // been removed.
 
     fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        user_route: &UserRoute<SSL, DEBUG>,
+        &self,
+        index: u32,
+        method: Option<http::Method>,
         req: &mut Ctx::Req,
         resp: &mut R,
     ) {
-        debug_assert!(!user_route.server.is_null());
-        // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
-        // which outlives every route it registered.
-        let server = unsafe { &*user_route.server };
-        let index = user_route.id;
-
-        let Some(server_js) = server.js_value_for_dispatch() else {
+        let Some(server_js) = self.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
-        let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx, R>(
-            req,
-            resp,
-            CreateJsRequest::No,
-            user_route.route.method.specific(),
-        ) else {
+        let Some(mut prepared) =
+            self.prepare_js_request_context_for::<Ctx, R>(req, resp, CreateJsRequest::No, method)
+        else {
             return;
         };
 
-        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_MUX {
             Bun__ServerRouteList__callRouteH3
@@ -2341,7 +2351,7 @@ where
             Bun__ServerRouteList__callRoute
         };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server.global_this);
+        let global = bun_opaque::opaque_deref(self.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             call_route(
                 global,
@@ -2357,7 +2367,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request_for::<Ctx>(prepared, req, response_value);
+        self.handle_request_for::<Ctx>(prepared, req, response_value);
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
@@ -2623,28 +2633,20 @@ where
     }
 
     fn upgrade_web_socket_user_route(
-        this: &UserRoute<SSL, DEBUG>,
+        &self,
+        index: u32,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         method: Option<http::Method>,
     ) {
-        // BACKREF: `UserRoute.server` is set at construction from the owning
-        // `NewServer` (which outlives every `UserRoute` in its `user_routes`
-        // vec); non-null by invariant.
-        debug_assert!(!this.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `NewServer`, set at
-        // construction and non-null while the route is registered.
-        let server = unsafe { &*this.server };
-        let index = this.id;
-
-        let Some(server_js) = server.js_value_for_dispatch() else {
+        let Some(server_js) = self.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
         let Some(mut prepared) =
-            server.prepare_js_request_context(req, resp, CreateJsRequest::No, method)
+            self.prepare_js_request_context(req, resp, CreateJsRequest::No, method)
         else {
             return;
         };
@@ -2652,10 +2654,10 @@ where
             .ctx
             .upgrade_context
             .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
-        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server.global_this);
+        let global = bun_opaque::opaque_deref(self.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             Bun__ServerRouteList__callRoute(
                 global,
@@ -2671,7 +2673,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request(prepared, req, response_value);
+        self.handle_request(prepared, req, response_value);
     }
 
     /// # Safety
@@ -2691,13 +2693,9 @@ where
     ) {
         jsc::mark_binding!();
         if id == 1 {
-            // SAFETY: for `id == 1` the registered user-data IS
-            // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`);
-            // live for the request's duration. Raw-ptr cast only — no
-            // intermediate `&mut Self` was ever created; shared suffices (the
-            // route entry is only read).
-            let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
-            Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
+            // SAFETY: `app.ws(path, ud, 1, ..)` registered a `UserRoute`, whose server outlives the request.
+            let (server, index, _) = unsafe { UserRoute::read_fields(this.cast()) };
+            server.upgrade_web_socket_user_route(index, resp, req, upgrade_ctx, None);
             return;
         }
         // Access `this` as *ThisServer only if id is 0

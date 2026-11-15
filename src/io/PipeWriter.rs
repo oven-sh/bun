@@ -8,7 +8,10 @@ use core::ptr::NonNull;
 
 use bun_collections::ByteVecExt;
 use bun_core::OOM;
+use bun_ptr::CellExt as _;
 use bun_ptr::LaunderedSelf; // brings `Self::r` into scope for the buffered writers
+#[cfg(windows)]
+use bun_ptr::OptionCellExt as _;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -50,21 +53,21 @@ pub enum WriteStatus {
 /// What a writer reports to, from inside the call that it is passed to. It may call the writer again.
 pub trait WriteHandler {
     fn on_write(&self, amount: usize, status: WriteStatus);
-    /// Comes with `on_close`.
+    /// The writer also closes: `on_close` runs after this or, on Windows, may run before.
     fn on_error(&self, err: sys::Error);
     fn on_close(&self);
     #[cfg(windows)]
     fn on_writable(&self);
-    /// From `true` to `false` libuv uses the writer, and dropping it panics.
+    /// `true` when a write is submitted, `false` when it ends. Dropping the writer in between panics.
     #[cfg(windows)]
-    fn on_write_in_flight(&self, in_flight: bool);
+    fn set_has_inflight_write(&self, value: bool);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // PosixPipeWriter
 // ──────────────────────────────────────────────────────────────────────────
 
-/// What both writers write through.
+/// State and syscalls shared by `PosixBufferedWriter` and `PosixStreamingWriter`.
 #[cfg(unix)]
 struct PosixPipeWriter {
     handle: PipeHandle,
@@ -76,8 +79,8 @@ struct PosixPipeWriter {
 }
 
 #[cfg(unix)]
-impl PosixPipeWriter {
-    const fn closed() -> Self {
+impl Default for PosixPipeWriter {
+    fn default() -> Self {
         Self {
             handle: PipeHandle::closed(),
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -86,7 +89,10 @@ impl PosixPipeWriter {
             closed_without_reporting: Cell::new(false),
         }
     }
+}
 
+#[cfg(unix)]
+impl PosixPipeWriter {
     fn get_file_type(&self) -> FileType {
         self.handle
             .with_poll(FilePoll::file_type)
@@ -177,16 +183,21 @@ impl PosixPipeWriter {
     }
 
     /// Writes as much of `buf` as `event` says there is room for. `None` if there is nothing to do.
-    fn write_on(&self, event: IoEvent, force_sync: bool, buf: &[u8]) -> Option<WriteResult> {
+    fn try_write_on_poll(
+        &self,
+        event: IoEvent,
+        force_sync: bool,
+        buf: &[u8],
+    ) -> Option<WriteResult> {
         log!("onPoll({})", buf.len());
         if buf.is_empty() {
             return event.is_hup().then_some(WriteResult::Wrote(0));
         }
-        let room = match usize::try_from(event.size_or_offset) {
-            Ok(room) if room > 0 && self.get_file_type().is_blocking() => room,
+        let max_write = match usize::try_from(event.size_or_offset) {
+            Ok(size) if size > 0 && self.get_file_type().is_blocking() => size,
             _ => usize::MAX,
         };
-        Some(self.try_write(force_sync, &buf[..buf.len().min(room)]))
+        Some(self.try_write(force_sync, &buf[..buf.len().min(max_write)]))
     }
 
     fn register_poll(&self) -> sys::Result<()> {
@@ -331,7 +342,7 @@ pub trait PosixBufferedWriterParent: WriterParent {
 
 #[cfg(unix)]
 pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
-    pipe: PosixPipeWriter,
+    base: PosixPipeWriter,
     /// `None` only between `Default` and `set_parent`; every dispatch path
     /// assumes it is set (see SAFETY comments at the call sites).
     pub parent: Option<bun_ptr::ParentRef<Parent, bun_ptr::Mut>>,
@@ -343,7 +354,7 @@ pub struct PosixBufferedWriter<Parent: PosixBufferedWriterParent> {
 impl<Parent: PosixBufferedWriterParent> Default for PosixBufferedWriter<Parent> {
     fn default() -> Self {
         Self {
-            pipe: PosixPipeWriter::closed(),
+            base: PosixPipeWriter::default(),
             parent: None,
             pollable: false,
             close_fd: true,
@@ -399,11 +410,14 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn handle(&self) -> &PipeHandle {
-        &self.pipe.handle
+        &self.base.handle
     }
 
     pub fn on_poll(&mut self, event: IoEvent) {
-        match (self.pipe).write_on(event, false, self.get_buffer_internal()) {
+        match self
+            .base
+            .try_write_on_poll(event, false, self.get_buffer_internal())
+        {
             None => {}
             Some(WriteResult::Pending(wrote)) => {
                 if wrote > 0 {
@@ -439,12 +453,12 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         // `self.close()` without reload. Launder so post-call accesses see
         // fresh state.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        let was_done = Self::r(this).pipe.is_done.get();
+        let was_done = Self::r(this).base.is_done.get();
         let parent = Self::r(this).parent();
 
         if status == WriteStatus::EndOfFile && !was_done {
             let writer = Self::r(this);
-            writer.pipe.close_without_reporting(writer.close_fd);
+            writer.base.close_without_reporting(writer.close_fd);
         }
 
         // SAFETY: parent BACKREF valid.
@@ -460,7 +474,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn register_poll(&mut self) {
-        match self.pipe.register_poll() {
+        match self.base.register_poll() {
             sys::Result::Err(err) => {
                 // Same report as a failed write (the streaming writer does the
                 // same): parents expect every error to be followed by `on_close`.
@@ -477,20 +491,20 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn end(&mut self) {
-        if !self.pipe.is_done.replace(true) {
+        if !self.base.is_done.replace(true) {
             self.close();
         }
     }
 
     pub fn close(&mut self) {
-        if Parent::HAS_ON_CLOSE && self.pipe.close(self.close_fd) {
+        if Parent::HAS_ON_CLOSE && self.base.close(self.close_fd) {
             // SAFETY: parent BACKREF valid.
             unsafe { Parent::on_close(self.parent()) };
         }
     }
 
     pub fn update_ref(&self, value: bool) {
-        self.pipe.update_ref(value);
+        self.base.update_ref(value);
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
@@ -501,12 +515,12 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent = Some(unsafe { bun_ptr::ParentRef::from_raw_mut(parent.as_ptr()) });
         let owner = Owner::new(Parent::POLL_OWNER_TAG, std::ptr::from_mut(self).cast());
         // SAFETY: `handle` is a field of its owner.
-        unsafe { self.pipe.handle.set_owner(owner) };
+        unsafe { self.base.handle.set_owner(owner) };
     }
 
     pub fn watch(&mut self) {
         if self.pollable {
-            let handle = &self.pipe.handle;
+            let handle = &self.base.handle;
             if !handle.has_poll() && !handle.is_closed() {
                 handle.set_poll(self.parent_event_loop(), handle.get_fd());
             }
@@ -523,11 +537,11 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         let fd = rawfd;
         self.pollable = pollable;
         if !pollable {
-            debug_assert!(!self.pipe.handle.has_poll());
-            self.pipe.handle.set_fd(fd);
+            debug_assert!(!self.base.handle.has_poll());
+            self.base.handle.set_fd(fd);
             return sys::Result::Ok(());
         }
-        self.pipe.start_polling(self.parent_event_loop(), fd)?;
+        self.base.start_polling(self.parent_event_loop(), fd)?;
         self.update_ref(true);
         sys::Result::Ok(())
     }
@@ -539,34 +553,22 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 
 /// Shared borrows only: a handler can reach the writer again.
 #[cfg(unix)]
+#[derive(Default)]
 pub struct PosixStreamingWriter {
-    pipe: PosixPipeWriter,
+    base: PosixPipeWriter,
     outgoing: Cell<StreamBuffer>,
     force_sync: Cell<bool>,
     /// Last reported `WriteStatus == Pending` (i.e. write(2) returned EAGAIN).
     backed_up: Cell<bool>,
 }
 
-#[cfg(unix)]
-impl Default for PosixStreamingWriter {
-    fn default() -> Self {
-        Self {
-            pipe: PosixPipeWriter::closed(),
-            outgoing: Cell::default(),
-            force_sync: Cell::new(false),
-            backed_up: Cell::new(false),
-        }
-    }
-}
-
 /// The result of a write, and what `report` does about it.
 #[cfg(unix)]
-enum Written {
+enum WriteOutcome {
     /// Waits in `outgoing` for more.
-    Coalesced(usize),
+    Buffered(usize),
     Tried(WriteResult),
-    /// The writer has ended.
-    Refused,
+    Ended,
 }
 
 #[cfg(unix)]
@@ -580,19 +582,21 @@ impl PosixStreamingWriter {
     };
 
     /// `owner` is handed the events, to pass on to [`Self::on_io`].
-    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until `self` is dropped. `self` does
-    /// not move, and is not borrowed mutably, until then.
+    ///
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until `self`
+    /// is dropped. `self` does not move, and is not borrowed mutably, until then.
     pub unsafe fn set_owner(&self, owner: Owner) {
         // SAFETY: caller contract.
-        unsafe { self.pipe.handle.set_owner(owner) };
+        unsafe { self.base.handle.set_owner(owner) };
     }
 
     pub fn owner(&self) -> Owner {
-        self.pipe.handle.owner()
+        self.base.handle.owner()
     }
 
     pub fn memory_cost(&self) -> usize {
-        mem::size_of::<Self>() + with_buffer(&self.outgoing, |outgoing| outgoing.memory_cost())
+        mem::size_of::<Self>() + self.outgoing.with_taken(|outgoing| outgoing.memory_cost())
     }
 
     pub fn set_force_sync(&self, value: bool) {
@@ -600,7 +604,7 @@ impl PosixStreamingWriter {
     }
 
     pub fn set_poll_flag(&self, flag: FilePollFlag) {
-        self.pipe.handle.set_poll_flag(flag);
+        self.base.handle.set_poll_flag(flag);
     }
 
     pub fn has_pending_data(&self) -> bool {
@@ -614,7 +618,7 @@ impl PosixStreamingWriter {
 
     /// Bytes accepted from callers that have not reached the fd yet.
     pub fn buffered_len(&self) -> usize {
-        with_buffer(&self.outgoing, |outgoing| outgoing.size())
+        self.outgoing.with_taken(|outgoing| outgoing.size())
     }
 
     /// The part of `buffered_len` that `flush` would send.
@@ -626,8 +630,8 @@ impl PosixStreamingWriter {
         !self.force_sync.get() && len < Self::CHUNK_SIZE
     }
 
-    fn has_ended(&self) -> bool {
-        self.pipe.is_done.get() || self.pipe.closed_without_reporting.get()
+    fn is_done(&self) -> bool {
+        self.base.is_done.get() || self.base.closed_without_reporting.get()
     }
 
     fn report_write(&self, handler: &impl WriteHandler, amount: usize, status: WriteStatus) {
@@ -636,19 +640,19 @@ impl PosixStreamingWriter {
         handler.on_write(amount, status);
     }
 
-    fn report_error(&self, handler: &impl WriteHandler, err: sys::Error) {
+    fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
         handler.on_error(err);
         self.close(handler);
     }
 
     fn register_poll(&self, handler: &impl WriteHandler) {
-        if let sys::Result::Err(err) = self.pipe.register_poll() {
-            self.report_error(handler, err);
+        if let sys::Result::Err(err) = self.base.register_poll() {
+            self.report_error_and_close(handler, err);
         }
     }
 
     pub fn on_io(&self, handler: &impl WriteHandler, event: IoEvent) {
-        match self.drain_on(event) {
+        match self.drain_on_poll(event) {
             None => {}
             Some(WriteResult::Pending(wrote)) => {
                 if wrote > 0 {
@@ -658,14 +662,16 @@ impl PosixStreamingWriter {
             }
             // If the handler buffers more data, `write()` registers the poll.
             Some(WriteResult::Wrote(amt)) => self.report_write(handler, amt, WriteStatus::Drained),
-            Some(WriteResult::Err(err)) => self.report_error(handler, err),
+            Some(WriteResult::Err(err)) => self.report_error_and_close(handler, err),
             Some(WriteResult::Done(amt)) => self.report_write(handler, amt, WriteStatus::EndOfFile),
         }
     }
 
-    fn drain_on(&self, event: IoEvent) -> Option<WriteResult> {
-        with_buffer(&self.outgoing, |outgoing| {
-            let rc = (self.pipe).write_on(event, self.force_sync.get(), outgoing.slice())?;
+    fn drain_on_poll(&self, event: IoEvent) -> Option<WriteResult> {
+        self.outgoing.with_taken(|outgoing| {
+            let rc = self
+                .base
+                .try_write_on_poll(event, self.force_sync.get(), outgoing.slice())?;
             match rc {
                 WriteResult::Pending(amt) => outgoing.wrote(amt),
                 WriteResult::Wrote(amt) => {
@@ -676,14 +682,14 @@ impl PosixStreamingWriter {
                 }
                 WriteResult::Done(amt) => {
                     outgoing.wrote(amt);
-                    if !self.pipe.is_done.get() {
-                        self.pipe.close_without_reporting(true);
+                    if !self.base.is_done.get() {
+                        self.base.close_without_reporting(true);
                     }
                 }
                 WriteResult::Err(ref err) => {
                     debug_assert!(!err.is_retry());
-                    self.pipe.close_without_reporting(true);
-                    self.pipe.is_done.set(true);
+                    self.base.close_without_reporting(true);
+                    self.base.is_done.set(true);
                     outgoing.reset();
                 }
             }
@@ -691,10 +697,10 @@ impl PosixStreamingWriter {
         })
     }
 
-    fn report(&self, handler: &impl WriteHandler, written: Written) -> WriteResult {
-        match written {
-            Written::Refused => WriteResult::Done(0),
-            Written::Coalesced(amt) => {
+    fn report(&self, handler: &impl WriteHandler, outcome: WriteOutcome) -> WriteResult {
+        match outcome {
+            WriteOutcome::Ended => WriteResult::Done(0),
+            WriteOutcome::Buffered(amt) => {
                 // Lets the handler schedule a flush.
                 self.report_write(handler, amt, WriteStatus::Drained);
                 self.register_poll(handler);
@@ -702,7 +708,7 @@ impl PosixStreamingWriter {
                 // it's buffered, but should be reported as written to callers
                 WriteResult::Wrote(amt)
             }
-            Written::Tried(rc) => {
+            WriteOutcome::Tried(rc) => {
                 match rc {
                     WriteResult::Pending(amt) => {
                         self.report_write(handler, amt, WriteStatus::Pending);
@@ -722,105 +728,108 @@ impl PosixStreamingWriter {
     }
 
     pub fn write_utf16(&self, handler: &impl WriteHandler, buf: &[u16]) -> WriteResult {
-        self.report(handler, self.accept_utf16(buf))
+        self.report(handler, self.write_utf16_without_reporting(buf))
     }
 
     pub fn write_latin1(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
-        self.report(handler, self.accept_latin1(buf))
+        self.report(handler, self.write_latin1_without_reporting(buf))
     }
 
     pub fn write(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
-        self.report(handler, self.accept(buf))
+        self.report(handler, self.write_without_reporting(buf))
     }
 
-    fn accept_utf16(&self, buf: &[u16]) -> Written {
-        self.accept_encoded(|outgoing| outgoing.write_utf16(buf))
+    fn write_utf16_without_reporting(&self, buf: &[u16]) -> WriteOutcome {
+        self.write_encoded_without_reporting(|outgoing| outgoing.write_utf16(buf))
     }
 
-    fn accept_latin1(&self, buf: &[u8]) -> Written {
+    fn write_latin1_without_reporting(&self, buf: &[u8]) -> WriteOutcome {
         if bun_core::strings::is_all_ascii(buf) {
-            return self.accept(buf);
+            return self.write_without_reporting(buf);
         }
 
         const CHECK_ASCII: bool = false;
-        self.accept_encoded(|outgoing| outgoing.write_latin1::<CHECK_ASCII>(buf))
+        self.write_encoded_without_reporting(|outgoing| outgoing.write_latin1::<CHECK_ASCII>(buf))
     }
 
-    fn accept_encoded(&self, encode: impl FnOnce(&mut StreamBuffer) -> Result<(), OOM>) -> Written {
-        if self.has_ended() {
-            return Written::Refused;
+    fn write_encoded_without_reporting(
+        &self,
+        encode: impl FnOnce(&mut StreamBuffer) -> Result<(), OOM>,
+    ) -> WriteOutcome {
+        if self.is_done() {
+            return WriteOutcome::Ended;
         }
-        with_buffer(&self.outgoing, |outgoing| {
+        self.outgoing.with_taken(|outgoing| {
             let before_len = outgoing.size();
             if encode(outgoing).is_err() {
-                return Written::Tried(WriteResult::Err(sys::Error::oom()));
+                return WriteOutcome::Tried(WriteResult::Err(sys::Error::oom()));
             }
             if self.should_buffer(outgoing.size()) {
-                return Written::Coalesced(outgoing.size() - before_len);
+                return WriteOutcome::Buffered(outgoing.size() - before_len);
             }
             self.try_write_newly_buffered_data(outgoing)
         })
     }
 
-    fn try_write_newly_buffered_data(&self, outgoing: &mut StreamBuffer) -> Written {
-        let rc = self.pipe.try_write(self.force_sync.get(), outgoing.slice());
+    fn try_write_newly_buffered_data(&self, outgoing: &mut StreamBuffer) -> WriteOutcome {
+        let rc = self.base.try_write(self.force_sync.get(), outgoing.slice());
         match rc {
             WriteResult::Wrote(_) | WriteResult::Done(_) => outgoing.reset(),
             WriteResult::Pending(amt) => outgoing.wrote(amt),
             WriteResult::Err(_) => {}
         }
-        Written::Tried(rc)
+        WriteOutcome::Tried(rc)
     }
 
-    fn accept(&self, buf: &[u8]) -> Written {
-        if self.has_ended() {
-            return Written::Refused;
+    fn write_without_reporting(&self, buf: &[u8]) -> WriteOutcome {
+        if self.is_done() {
+            return WriteOutcome::Ended;
         }
-        with_buffer(&self.outgoing, |outgoing| {
+        self.outgoing.with_taken(|outgoing| {
             // this is streaming, but we buffer the data below `chunk_size` to
             // reduce the number of writes
             let should_buffer = self.should_buffer(outgoing.size() + buf.len());
             // make sure write is in-order
             if should_buffer || outgoing.is_not_empty() {
                 if outgoing.write(buf).is_err() {
-                    return Written::Tried(WriteResult::Err(sys::Error::oom()));
+                    return WriteOutcome::Tried(WriteResult::Err(sys::Error::oom()));
                 }
                 if should_buffer {
-                    return Written::Coalesced(buf.len());
+                    return WriteOutcome::Buffered(buf.len());
                 }
                 return self.try_write_newly_buffered_data(outgoing);
             }
 
-            let rc = self.pipe.try_write(self.force_sync.get(), buf);
+            let rc = self.base.try_write(self.force_sync.get(), buf);
             match rc {
                 WriteResult::Pending(amt) => {
                     if outgoing.write(&buf[amt..]).is_err() {
-                        return Written::Tried(WriteResult::Err(sys::Error::oom()));
+                        return WriteOutcome::Tried(WriteResult::Err(sys::Error::oom()));
                     }
                 }
                 WriteResult::Wrote(_) | WriteResult::Done(_) => outgoing.reset(),
                 WriteResult::Err(_) => {}
             }
-            Written::Tried(rc)
+            WriteOutcome::Tried(rc)
         })
     }
 
-    /// Only Windows reports from here.
+    /// Takes the handler to match `WindowsStreamingWriter::flush`.
     pub fn flush(&self, _: &impl WriteHandler) -> WriteResult {
         self.drain()
     }
 
     fn drain(&self) -> WriteResult {
-        if self.has_ended() {
+        if self.is_done() {
             return WriteResult::Done(0);
         }
-        with_buffer(&self.outgoing, |outgoing| {
+        self.outgoing.with_taken(|outgoing| {
             if outgoing.is_empty() {
                 outgoing.reset();
                 return WriteResult::Wrote(0);
             }
 
-            let rc = self.pipe.try_write(self.force_sync.get(), outgoing.slice());
+            let rc = self.base.try_write(self.force_sync.get(), outgoing.slice());
             match rc {
                 WriteResult::Pending(written) => outgoing.wrote(written),
                 _ => outgoing.reset(),
@@ -832,20 +841,20 @@ impl PosixStreamingWriter {
     }
 
     pub fn update_ref(&self, value: bool) {
-        if value && self.pipe.is_done.get() {
+        if value && self.base.is_done.get() {
             return;
         }
-        self.pipe.update_ref(value);
+        self.base.update_ref(value);
     }
 
     pub fn end(&self, handler: &impl WriteHandler) {
-        if !self.pipe.is_done.replace(true) {
+        if !self.base.is_done.replace(true) {
             self.close(handler);
         }
     }
 
     pub fn close(&self, handler: &impl WriteHandler) {
-        if self.pipe.close(true) {
+        if self.base.close(true) {
             handler.on_close();
         }
     }
@@ -859,10 +868,10 @@ impl PosixStreamingWriter {
         is_pollable: bool,
     ) -> sys::Result<()> {
         if is_pollable {
-            return self.pipe.start_polling(ev, fd);
+            return self.base.start_polling(ev, fd);
         }
         self.close(handler);
-        self.pipe.handle.set_fd(fd);
+        self.base.handle.set_fd(fd);
         sys::Result::Ok(())
     }
 }
@@ -870,9 +879,13 @@ impl PosixStreamingWriter {
 #[cfg(unix)]
 impl Drop for PosixStreamingWriter {
     fn drop(&mut self) {
-        self.pipe.handle.close();
+        self.base.handle.close();
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// WindowsPipeWriter
+// ──────────────────────────────────────────────────────────────────────────
 
 /// What libuv completed.
 #[cfg(windows)]
@@ -895,42 +908,42 @@ struct WindowsPipeWriter {
     owns_fd: Cell<bool>,
     is_done: Cell<bool>,
     closed_without_reporting: Cell<bool>,
-    /// libuv reads the bytes of `payload`, and for a stream uses `write_req`.
-    in_flight: Cell<bool>,
+    /// libuv reads the bytes of `current_payload`, and for a stream uses `write_req`.
+    has_inflight_write: Cell<bool>,
     write_req: UnsafeCell<uv::uv_write_t>,
-    /// Of the write in flight, or of one that failed.
-    payload: Cell<StreamBuffer>,
+    /// Bytes of the write in flight, or of one that failed.
+    current_payload: Cell<StreamBuffer>,
 }
 
 #[cfg(windows)]
-impl WindowsPipeWriter {
-    fn closed() -> Self {
+impl Default for WindowsPipeWriter {
+    fn default() -> Self {
         Self {
             source: Cell::new(None),
             owner: Cell::new(Owner::NULL),
             owns_fd: Cell::new(true),
             is_done: Cell::new(false),
             closed_without_reporting: Cell::new(false),
-            in_flight: Cell::new(false),
+            has_inflight_write: Cell::new(false),
             write_req: UnsafeCell::new(bun_core::ffi::zeroed()),
-            payload: Cell::default(),
+            current_payload: Cell::default(),
         }
     }
+}
 
-    /// `None` without a source. `f` finds `self` without one.
+#[cfg(windows)]
+impl WindowsPipeWriter {
+    /// `None` without a source. The cell is empty while `f` runs.
     fn with_source<R>(&self, f: impl FnOnce(&mut Source) -> R) -> Option<R> {
-        let mut source = self.source.take()?;
-        let result = f(&mut source);
-        self.source.set(Some(source));
-        Some(result)
+        self.source.with_taken(|source| source.as_mut().map(f))
     }
 
     fn has_source(&self) -> bool {
-        self.with_source(|_| ()).is_some()
+        self.source.is_some()
     }
 
     fn payload_len(&self) -> usize {
-        with_buffer(&self.payload, |payload| payload.size())
+        self.current_payload.with_taken(|payload| payload.size())
     }
 
     /// `self` for libuv to keep, which `set_owner`'s contract allows.
@@ -941,7 +954,7 @@ impl WindowsPipeWriter {
 
     /// From now on a VM teardown closes `source` through this writer.
     fn set_source(&self, mut source: Source) {
-        assert!(!self.has_source() && !self.in_flight.get());
+        assert!(!self.has_source() && !self.has_inflight_write.get());
         source.set_owner(self.as_uv_data().cast(), Self::stop_for_vm_teardown);
         self.source.set(Some(source));
     }
@@ -951,7 +964,9 @@ impl WindowsPipeWriter {
     }
 
     /// The owner may free `self`.
-    /// SAFETY: `this` is `as_uv_data` of a live writer.
+    ///
+    /// # Safety
+    /// `this` is `as_uv_data` of a live writer.
     unsafe fn dispatch(this: *mut Self, completion: Completion) {
         let event = IoEvent::Write(WriteEvent(completion));
         // SAFETY: fn contract, and `set_owner`'s.
@@ -959,8 +974,11 @@ impl WindowsPipeWriter {
     }
 
     /// `uv::open_handles` closes this writer's stream through here at teardown.
+    ///
+    /// # Safety
+    /// `this` is the pointer that `set_source` recorded.
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
-        // SAFETY: recorded by `set_source`. Closing the source takes it off the list.
+        // SAFETY: fn contract. Closing the source takes it off the list.
         unsafe { Self::dispatch(this.cast(), Completion::VmTeardown) };
     }
 
@@ -971,13 +989,15 @@ impl WindowsPipeWriter {
         };
         // SAFETY: set by `submit`. `Drop` does not return while the write is in flight.
         unsafe {
-            (*this).in_flight.set(false);
+            (*this).has_inflight_write.set(false);
             Self::dispatch(this, completion);
         }
     }
 
+    /// # Safety
+    /// `fs` is what libuv passes to the callback of `submit_write`.
     unsafe extern "C" fn on_file_write(fs: *mut uv::fs_t) {
-        // SAFETY: the callback of `submit_write`.
+        // SAFETY: fn contract.
         let Some((result, this)) = (unsafe { File::on_complete(fs) }) else {
             return;
         };
@@ -988,26 +1008,26 @@ impl WindowsPipeWriter {
         let this = this.cast::<Self>();
         // SAFETY: set by `set_source`, and cleared by dropping the file.
         unsafe {
-            (*this).in_flight.set(false);
+            (*this).has_inflight_write.set(false);
             Self::dispatch(this, completion);
         }
     }
 
     /// Returns the length it had.
     fn reset_payload(&self) -> usize {
-        assert!(!self.in_flight.get());
-        with_buffer(&self.payload, |payload| {
+        assert!(!self.has_inflight_write.get());
+        self.current_payload.with_taken(|payload| {
             let len = payload.size();
             payload.reset();
             len
         })
     }
 
-    /// Writes the payload that `fill` leaves, which does not run without a source.
+    /// Runs `fill` on the payload and submits it. Without a source: `EPIPE`, and `fill` does not run.
     fn submit(&self, fill: impl FnOnce(&mut StreamBuffer)) -> sys::Result<()> {
-        assert!(!self.in_flight.get());
+        assert!(!self.has_inflight_write.get());
         let submitted = self.with_source(|source| {
-            let buf = with_buffer(&self.payload, |payload| {
+            let buf = self.current_payload.with_taken(|payload| {
                 fill(payload);
                 uv::uv_buf_t::init(payload.slice())
             });
@@ -1027,7 +1047,7 @@ impl WindowsPipeWriter {
             }
         });
         submitted.unwrap_or_else(|| Err(sys::Error::from_code(sys::E::PIPE, sys::Tag::pipe)))?;
-        self.in_flight.set(true);
+        self.has_inflight_write.set(true);
         sys::Result::Ok(())
     }
 
@@ -1041,8 +1061,8 @@ impl WindowsPipeWriter {
             Source::SyncFile(file) | Source::File(file) => {
                 if file.is_busy() {
                     // The write still reads the payload, and its callback will not get back here.
-                    file.buffer.set(self.payload.take().list);
-                    self.in_flight.set(false);
+                    file.buffer.set(self.current_payload.take().list);
+                    self.has_inflight_write.set(false);
                 }
                 file.close_on_drop.set(self.owns_fd.get());
                 if cancel_inflight_write {
@@ -1056,12 +1076,12 @@ impl WindowsPipeWriter {
     }
 
     fn close(&self, handler: &impl WriteHandler, cancel_inflight_write: bool) {
-        let was_in_flight = self.in_flight.get();
+        let had_inflight_write = self.has_inflight_write.get();
         if !self.close_source(cancel_inflight_write) {
             return;
         }
-        if was_in_flight && !self.in_flight.get() {
-            handler.on_write_in_flight(false);
+        if had_inflight_write && !self.has_inflight_write.get() {
+            handler.set_has_inflight_write(false);
         }
         if !self.closed_without_reporting.get() {
             handler.on_close();
@@ -1069,20 +1089,21 @@ impl WindowsPipeWriter {
     }
 
     /// Closes the old source before a restart, like the POSIX writer.
-    fn close_for_restart(&self, handler: &impl WriteHandler) -> sys::Result<()> {
+    fn close_current_source(&self, handler: &impl WriteHandler) -> sys::Result<()> {
         // The callback of a cancelled `uv_write` would close the new source.
-        if self.in_flight.get() && self.with_source(|source| source.file().is_some()) != Some(true)
+        if self.has_inflight_write.get()
+            && self.with_source(|source| source.file().is_some()) != Some(true)
         {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
         // Canceling an in-flight write would drop its bytes, so let it finish writing to the old file.
         self.close(handler, false);
-        // The handler has started the writer.
-        if self.has_source() || self.in_flight.get() {
+        // `on_close` started the writer again.
+        if self.has_source() || self.has_inflight_write.get() {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
         // Free a failed write's payload.
-        self.payload.take();
+        self.current_payload.take();
         self.is_done.set(false);
         sys::Result::Ok(())
     }
@@ -1092,7 +1113,10 @@ impl WindowsPipeWriter {
 impl Drop for WindowsPipeWriter {
     fn drop(&mut self) {
         self.close_source(true);
-        assert!(!self.in_flight.get(), "writer dropped under a uv_write");
+        assert!(
+            !self.has_inflight_write.get(),
+            "writer dropped under a uv_write"
+        );
     }
 }
 
@@ -1660,7 +1684,7 @@ impl StreamBuffer {
         self.list.clear();
     }
 
-    pub(crate) fn maybe_shrink(&mut self) {
+    fn maybe_shrink(&mut self) {
         // Runtime page size of the host.
         let page = bun_core::page_size();
         if self.list.capacity() > page {
@@ -1760,14 +1784,6 @@ impl StreamBuffer {
     }
 }
 
-/// `f` finds `cell` empty.
-fn with_buffer<R>(cell: &Cell<StreamBuffer>, f: impl FnOnce(&mut StreamBuffer) -> R) -> R {
-    let mut buffer = cell.take();
-    let result = f(&mut buffer);
-    cell.set(buffer);
-    result
-}
-
 #[cfg(windows)]
 enum WriteChunk<'a> {
     Bytes(&'a [u8]),
@@ -1781,49 +1797,44 @@ enum WriteChunk<'a> {
 
 /// Shared borrows only: a handler can reach the writer again.
 #[cfg(windows)]
+#[derive(Default)]
 pub struct WindowsStreamingWriter {
-    pipe: WindowsPipeWriter,
+    base: WindowsPipeWriter,
     /// Becomes the payload once the write in flight has ended.
     outgoing: Cell<StreamBuffer>,
 }
 
 #[cfg(windows)]
-impl Default for WindowsStreamingWriter {
-    fn default() -> Self {
-        Self {
-            pipe: WindowsPipeWriter::closed(),
-            outgoing: Cell::default(),
-        }
-    }
-}
-
-#[cfg(windows)]
 impl WindowsStreamingWriter {
-    /// SAFETY: see `PosixStreamingWriter::set_owner`.
+    /// # Safety
+    /// See `PosixStreamingWriter::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
-        self.pipe.owner.set(owner);
+        self.base.owner.set(owner);
     }
 
     pub fn owner(&self) -> Owner {
-        self.pipe.owner.get()
+        self.base.owner.get()
     }
 
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>()
-            + with_buffer(&self.pipe.payload, |payload| payload.memory_cost())
-            + with_buffer(&self.outgoing, |outgoing| outgoing.memory_cost())
+            + self
+                .base
+                .current_payload
+                .with_taken(|payload| payload.memory_cost())
+            + self.outgoing.with_taken(|outgoing| outgoing.memory_cost())
     }
 
     pub fn owns_fd(&self) -> bool {
-        self.pipe.owns_fd.get()
+        self.base.owns_fd.get()
     }
 
     pub fn set_owns_fd(&self, value: bool) {
-        self.pipe.owns_fd.set(value);
+        self.base.owns_fd.set(value);
     }
 
     pub fn is_done(&self) -> bool {
-        self.pipe.is_done.get()
+        self.base.is_done.get()
     }
 
     pub fn has_pending_data(&self) -> bool {
@@ -1837,17 +1848,17 @@ impl WindowsStreamingWriter {
 
     /// Bytes accepted from callers that have not reached the fd yet.
     pub fn buffered_len(&self) -> usize {
-        self.queued_len() + self.pipe.payload_len()
+        self.queued_len() + self.base.payload_len()
     }
 
     /// See `PosixStreamingWriter::queued_len`.
     pub fn queued_len(&self) -> usize {
-        with_buffer(&self.outgoing, |outgoing| outgoing.size())
+        self.outgoing.with_taken(|outgoing| outgoing.size())
     }
 
     /// For the next `start` or `flush` to send.
     pub fn enqueue(&self, bytes: &[u8]) -> Result<(), OOM> {
-        with_buffer(&self.outgoing, |outgoing| outgoing.write(bytes))
+        self.outgoing.with_taken(|outgoing| outgoing.write(bytes))
     }
 
     pub fn discard_queued(&self) {
@@ -1855,7 +1866,7 @@ impl WindowsStreamingWriter {
     }
 
     pub fn update_ref(&self, value: bool) {
-        self.pipe.update_ref(value);
+        self.base.update_ref(value);
     }
 
     /// `false` if the source is not a stream that can block.
@@ -1867,23 +1878,29 @@ impl WindowsStreamingWriter {
     }
 
     pub fn get_stream(&self) -> Option<*mut uv::uv_stream_t> {
-        (self.pipe).with_source(|source| source.file().is_none().then(|| source.to_stream()))?
+        self.base
+            .with_source(|source| source.file().is_none().then(|| source.to_stream()))?
     }
 
     fn sync_fd(&self) -> Option<Fd> {
-        (self.pipe)
+        self.base
             .with_source(|source| matches!(source, Source::SyncFile(_)).then(|| source.get_fd()))?
     }
 
     pub fn set_pipe(&self, pipe: uv::Owned<uv::Pipe>) {
-        self.pipe.set_source(Source::Pipe(pipe));
+        self.base.set_source(Source::Pipe(pipe));
     }
 
-    pub fn start_with_current_pipe(&self, handler: &impl WriteHandler) {
-        debug_assert!(self.pipe.has_source());
-        self.pipe.is_done.set(false);
+    pub fn start_with_pipe(&self, handler: &impl WriteHandler, pipe: uv::Owned<uv::Pipe>) {
+        self.set_pipe(pipe);
+        self.start_with_current_pipe(handler);
+    }
+
+    fn start_with_current_pipe(&self, handler: &impl WriteHandler) {
+        debug_assert!(self.base.has_source());
+        self.base.is_done.set(false);
         // The old source's write never reports completion, so send the queued chunks here.
-        if self.is_backed_up() && self.sync_fd().is_none() {
+        if self.queued_len() > 0 && self.sync_fd().is_none() {
             self.process_send(handler);
         }
     }
@@ -1895,11 +1912,12 @@ impl WindowsStreamingWriter {
         fd: Fd,
     ) -> sys::Result<()> {
         // A `SyncFile` writes each chunk synchronously and can't drain a queue.
-        if self.is_backed_up() {
+        if self.queued_len() > 0 {
             return sys::Result::Err(sys::Error::from_code(sys::E::BUSY, sys::Tag::write));
         }
-        self.pipe.close_for_restart(handler)?;
-        (self.pipe).set_source(Source::SyncFile(Source::open_file(ev.loop_(), fd)));
+        self.base.close_current_source(handler)?;
+        self.base
+            .set_source(Source::SyncFile(Source::open_file(ev.loop_(), fd)));
         sys::Result::Ok(())
     }
 
@@ -1911,8 +1929,8 @@ impl WindowsStreamingWriter {
         fd: Fd,
         _pollable: bool,
     ) -> sys::Result<()> {
-        self.pipe.close_for_restart(handler)?;
-        self.pipe.set_source(Source::open(ev.loop_(), fd)?);
+        self.base.close_current_source(handler)?;
+        self.base.set_source(Source::open(ev.loop_(), fd)?);
         self.start_with_current_pipe(handler);
         sys::Result::Ok(())
     }
@@ -1922,11 +1940,11 @@ impl WindowsStreamingWriter {
             unreachable!("a read was passed to a writer");
         };
         if !matches!(completion, Completion::VmTeardown) {
-            handler.on_write_in_flight(false);
+            handler.set_has_inflight_write(false);
         }
         match completion {
-            Completion::Wrote => self.on_write_complete(handler, self.pipe.reset_payload()),
-            Completion::StreamFailed(err) => self.report_error(handler, err),
+            Completion::Wrote => self.on_write_complete(handler, self.base.reset_payload()),
+            Completion::StreamFailed(err) => self.report_error_and_close(handler, err),
             Completion::FileFailed(err) => {
                 self.close(handler);
                 handler.on_error(err);
@@ -1935,7 +1953,7 @@ impl WindowsStreamingWriter {
         }
     }
 
-    fn report_error(&self, handler: &impl WriteHandler, err: sys::Error) {
+    fn report_error_and_close(&self, handler: &impl WriteHandler, err: sys::Error) {
         log!("onWrite() = {}", bstr::BStr::new(err.name()));
         handler.on_error(err);
         self.close(handler);
@@ -1944,7 +1962,7 @@ impl WindowsStreamingWriter {
     fn on_write_complete(&self, handler: &impl WriteHandler, written: usize) {
         log!("onWrite({}) ({} left)", written, self.queued_len());
 
-        if self.is_backed_up() {
+        if self.queued_len() > 0 {
             handler.on_write(written, WriteStatus::Pending);
         } else if self.is_done() {
             // we already call .end lets close the connection
@@ -1963,38 +1981,37 @@ impl WindowsStreamingWriter {
     /// this tries to send more data returning if we are writable or not after this
     fn process_send(&self, handler: &impl WriteHandler) -> WriteResult {
         log!("processSend");
-        if self.pipe.payload_len() > 0 {
+        if self.base.payload_len() > 0 {
             // we have some pending async request, the next outgoing data will be processed after this finish
             return WriteResult::Pending(0);
         }
         // nothing todo (we assume we are writable until we try to write something)
-        if !self.is_backed_up() {
+        if self.queued_len() == 0 {
             return WriteResult::Wrote(0);
         }
         match self.submit_outgoing() {
             sys::Result::Ok(()) => {
-                handler.on_write_in_flight(true);
+                handler.set_has_inflight_write(true);
                 WriteResult::Pending(0)
             }
             sys::Result::Err(err) => {
-                self.report_error(handler, err.clone());
+                self.report_error_and_close(handler, err.clone());
                 WriteResult::Err(err)
             }
         }
     }
 
     fn submit_outgoing(&self) -> sys::Result<()> {
-        with_buffer(&self.outgoing, |outgoing| {
-            self.pipe.submit(|payload| mem::swap(payload, outgoing))
-        })
+        self.outgoing
+            .with_taken(|outgoing| self.base.submit(|payload| mem::swap(payload, outgoing)))
     }
 
-    /// `None` if `chunk` is first in the queue.
-    fn accept(&self, chunk: WriteChunk<'_>) -> Option<WriteResult> {
+    /// `None`: `chunk` was queued and the caller has to `process_send`.
+    fn write_without_reporting(&self, chunk: WriteChunk<'_>) -> Option<WriteResult> {
         if self.is_done() {
             return Some(WriteResult::Done(0));
         }
-        with_buffer(&self.outgoing, |outgoing| {
+        self.outgoing.with_taken(|outgoing| {
             if let Some(fd) = self.sync_fd() {
                 let result = match outgoing.write_or_fallback(chunk) {
                     Ok(bytes) => write_sync(fd, bytes),
@@ -2017,16 +2034,21 @@ impl WindowsStreamingWriter {
         })
     }
 
+    fn write_chunk(&self, handler: &impl WriteHandler, chunk: WriteChunk<'_>) -> WriteResult {
+        self.write_without_reporting(chunk)
+            .unwrap_or_else(|| self.process_send(handler))
+    }
+
     pub fn write_utf16(&self, handler: &impl WriteHandler, buf: &[u16]) -> WriteResult {
-        (self.accept(WriteChunk::Utf16(buf))).unwrap_or_else(|| self.process_send(handler))
+        self.write_chunk(handler, WriteChunk::Utf16(buf))
     }
 
     pub fn write_latin1(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
-        (self.accept(WriteChunk::Latin1(buf))).unwrap_or_else(|| self.process_send(handler))
+        self.write_chunk(handler, WriteChunk::Latin1(buf))
     }
 
     pub fn write(&self, handler: &impl WriteHandler, buf: &[u8]) -> WriteResult {
-        (self.accept(WriteChunk::Bytes(buf))).unwrap_or_else(|| self.process_send(handler))
+        self.write_chunk(handler, WriteChunk::Bytes(buf))
     }
 
     pub fn flush(&self, handler: &impl WriteHandler) -> WriteResult {
@@ -2037,23 +2059,22 @@ impl WindowsStreamingWriter {
     }
 
     pub fn end(&self, handler: &impl WriteHandler) {
-        if self.pipe.is_done.replace(true) {
+        if self.base.is_done.replace(true) {
             return;
         }
-        self.pipe.closed_without_reporting.set(false);
+        self.base.closed_without_reporting.set(false);
         if !self.has_pending_data() && self.owns_fd() {
             self.close(handler);
         }
     }
 
     pub fn close(&self, handler: &impl WriteHandler) {
-        self.pipe.close(handler, true);
+        self.base.close(handler, true);
     }
 
-    /// `close` without `on_close`.
     pub fn close_without_reporting(&self, handler: &impl WriteHandler) {
-        if self.pipe.has_source() {
-            self.pipe.closed_without_reporting.set(true);
+        if self.base.has_source() {
+            self.base.closed_without_reporting.set(true);
             self.close(handler);
         }
     }

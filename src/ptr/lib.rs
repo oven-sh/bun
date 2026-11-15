@@ -15,7 +15,7 @@
 //! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
 
 mod cell_ext;
-pub use cell_ext::{CellExt, OptionCellExt, VecCellExt, VecDequeCellExt};
+pub use cell_ext::{CellExt, OptionCellExt, RefPtrDequeCellExt, VecCellExt, VecDequeCellExt};
 
 mod js_cell;
 pub use js_cell::JsCell;

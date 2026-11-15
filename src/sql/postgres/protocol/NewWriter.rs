@@ -1,69 +1,66 @@
 use crate::postgres::any_postgres_error::AnyPostgresError;
 use crate::postgres::types::int_types::{PostgresInt32, PostgresInt64, int32};
 
-/// Trait expressing the structural requirements `NewWriter` places on its
-/// wrapped context.
-pub trait WriterContext: Copy {
-    fn offset(self) -> usize;
-    fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;
-    fn pwrite(self, bytes: &[u8], offset: usize) -> Result<(), AnyPostgresError>;
+pub struct NewWriter<'a> {
+    buffer: &'a mut Vec<u8>,
 }
 
 #[derive(Copy, Clone)]
-pub struct NewWriter<C: WriterContext> {
-    pub wrapped: C,
-}
-
-#[derive(Copy, Clone)]
-pub struct LengthWriter<C: WriterContext> {
+pub struct LengthWriter {
     pub(crate) index: usize,
-    pub(crate) context: NewWriter<C>,
 }
 
-impl<C: WriterContext> LengthWriter<C> {
-    pub fn write(self) -> Result<(), AnyPostgresError> {
-        self.context
-            .pwrite(&int32(self.context.offset() - self.index)?, self.index)
+impl LengthWriter {
+    #[inline]
+    pub fn write(self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
+        writer.pwrite(&int32(writer.offset() - self.index)?, self.index)
     }
 
-    pub fn write_excluding_self(self) -> Result<(), AnyPostgresError> {
-        self.context.pwrite(
-            &int32(self.context.offset().saturating_sub(self.index + 4))?,
+    #[inline]
+    pub fn write_excluding_self(self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
+        writer.pwrite(
+            &int32(writer.offset().saturating_sub(self.index + 4))?,
             self.index,
         )
     }
 }
 
 #[derive(Copy, Clone)]
-pub struct FormatCodes<C: WriterContext> {
+pub struct FormatCodes {
     index: usize,
-    context: NewWriter<C>,
 }
 
-impl<C: WriterContext> FormatCodes<C> {
-    pub fn set_binary(self, slot: usize) -> Result<(), AnyPostgresError> {
-        self.context
-            .pwrite(&1u16.to_be_bytes(), self.index + slot * 2)
+impl FormatCodes {
+    #[inline]
+    pub fn set_binary(
+        self,
+        slot: usize,
+        writer: &mut NewWriter<'_>,
+    ) -> Result<(), AnyPostgresError> {
+        writer.pwrite(&1u16.to_be_bytes(), self.index + slot * 2)
     }
 }
 
-impl<C: WriterContext> NewWriter<C> {
+impl<'a> NewWriter<'a> {
     #[inline]
-    pub fn write(self, data: &[u8]) -> Result<(), AnyPostgresError> {
-        C::write(self.wrapped, data)
+    pub fn new(buffer: &'a mut Vec<u8>) -> Self {
+        Self { buffer }
     }
 
     #[inline]
-    pub fn length(self) -> Result<LengthWriter<C>, AnyPostgresError> {
+    pub fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
+        self.buffer.extend_from_slice(data);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn length(&mut self) -> Result<LengthWriter, AnyPostgresError> {
         let i = self.offset();
         self.int4(0)?;
-        Ok(LengthWriter {
-            index: i,
-            context: self,
-        })
+        Ok(LengthWriter { index: i })
     }
 
-    pub fn format_codes(self, count: u16) -> Result<FormatCodes<C>, AnyPostgresError> {
+    pub fn format_codes(&mut self, count: u16) -> Result<FormatCodes, AnyPostgresError> {
         const TEXT: [u8; 64] = [0; 64];
         let index = self.offset();
         let mut remaining = usize::from(count) * 2;
@@ -72,35 +69,41 @@ impl<C: WriterContext> NewWriter<C> {
             self.write(&TEXT[..n])?;
             remaining -= n;
         }
-        Ok(FormatCodes {
-            index,
-            context: self,
-        })
+        Ok(FormatCodes { index })
     }
 
     #[inline]
-    pub(crate) fn offset(self) -> usize {
-        C::offset(self.wrapped)
+    pub fn offset(&self) -> usize {
+        self.buffer.len()
     }
 
     #[inline]
-    pub(crate) fn pwrite(self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
-        C::pwrite(self.wrapped, data, i)
+    pub fn truncate(&mut self, offset: usize) {
+        self.buffer.truncate(offset);
     }
 
-    pub fn int4(self, value: PostgresInt32) -> Result<(), AnyPostgresError> {
+    #[inline]
+    pub(crate) fn pwrite(&mut self, data: &[u8], i: usize) -> Result<(), AnyPostgresError> {
+        self.buffer[i..][..data.len()].copy_from_slice(data);
+        Ok(())
+    }
+
+    #[inline]
+    pub fn int4(&mut self, value: PostgresInt32) -> Result<(), AnyPostgresError> {
         self.write(&value.to_be_bytes())
     }
 
-    pub fn int8(self, value: PostgresInt64) -> Result<(), AnyPostgresError> {
+    #[inline]
+    pub fn int8(&mut self, value: PostgresInt64) -> Result<(), AnyPostgresError> {
         self.write(&value.to_be_bytes())
     }
 
-    pub fn f64(self, value: f64) -> Result<(), AnyPostgresError> {
+    #[inline]
+    pub fn f64(&mut self, value: f64) -> Result<(), AnyPostgresError> {
         self.write(&value.to_bits().to_be_bytes())
     }
 
-    pub fn short<T>(self, value: T) -> Result<(), AnyPostgresError>
+    pub fn short<T>(&mut self, value: T) -> Result<(), AnyPostgresError>
     where
         T: TryInto<u16>,
     {
@@ -110,7 +113,8 @@ impl<C: WriterContext> NewWriter<C> {
         self.write(&v.to_be_bytes())
     }
 
-    pub fn string(self, value: &[u8]) -> Result<(), AnyPostgresError> {
+    #[inline]
+    pub fn string(&mut self, value: &[u8]) -> Result<(), AnyPostgresError> {
         self.write(value)?;
         self.write(&[0u8])
     }

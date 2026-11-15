@@ -284,6 +284,65 @@ test.concurrent("wire order equals queue order", async () => {
   });
 });
 
+describe.concurrent("user code that runs while a Bind is written", () => {
+  const sent = (prepare: boolean, ...values: string[]) =>
+    values.flatMap(v => [...(prepare ? [] : ["P", "D"]), `B(${v},-)`, "E", "S"]);
+  const after = ok({ v: "after" });
+
+  // The last read of the values is the one of the Bind.
+  describe.each([
+    { prepare: true, reads: 3 },
+    { prepare: false, reads: 4 },
+  ])("a getter among the values (prepare: $prepare)", ({ prepare, reads }) => {
+    test.each([
+      ["cancel", "ERR_POSTGRES_QUERY_CANCELLED"],
+      ["throw", "boom"],
+    ])("%s: nothing is written for the query", async (action, err) => {
+      const expected: Record<string, object> = {};
+      for (let read = 1; read <= reads + 1; read++) {
+        expected[`${action}, prepare: ${prepare}, read ${read}`] =
+          read <= reads
+            ? { outer: { err }, after, frames: sent(prepare, "before", "after") }
+            : { outer: ok({ v: "outer" }), after, frames: sent(prepare, "before", "outer", "after") };
+      }
+      await run(wireFixture, expected);
+    });
+
+    test("close: the query is rejected", async () => {
+      await run(wireFixture, {
+        [`close, prepare: ${prepare}, read ${reads}`]: {
+          outer: closed,
+          after: closed,
+          frames: prepare ? [] : sent(prepare, "before"),
+        },
+      });
+    });
+  });
+
+  test("a getter that cancels the running query: the Bind waits for the CancelRequest", async () => {
+    await run(wireFixture, {
+      "cancel the running query, prepare: true, read 3": {
+        outer: ok({ v: "outer" }),
+        after,
+        frames: [...sent(true, "held"), "CancelRequest", ...sent(true, "outer", "after")],
+      },
+    });
+  });
+
+  test("toString() of a parameter that is no longer bytea can close the client", async () => {
+    await run(wireFixture, {
+      "toString() after the statement was prepared again": {
+        outer: closed,
+        frames: ["B(AAAA)", "E", "S", "C", "P", "D", "S"],
+      },
+    });
+  });
+});
+
+test.concurrent("a setter on Array.prototype can run the statement whose row is added", async () => {
+  await run(wireFixture, { "a setter on Array.prototype": wire("nested", "B(outer)", "E", "S", ...nestedBind) });
+});
+
 // A reply has no name on it: it goes to the request at the head of the queue. A broken server or proxy can send a
 // message that cannot belong to that request. Whatever the client makes of it, every query settles and the next one runs.
 describe("a message that is out of place", () => {
@@ -341,6 +400,15 @@ describe("a message that is out of place", () => {
     await using sql = new SQL(server.url, { max: 1 });
     expect([await settled(sql`select ${"a"} as v`), await settled(sql`select ${"b"} as v`)]).toEqual([
       first,
+      [{ v: "b" }],
+    ]);
+  });
+
+  test("a named statement that is described twice is prepared again", async () => {
+    using server = await strayAfterParse([pgRowDescription([{ name: "w", typeOid: 25 }])]);
+    await using sql = new SQL(server.url, { max: 1 });
+    expect([await settled(sql`select ${"a"} as v`), await settled(sql`select ${"b"} as v`)]).toEqual([
+      [{ w: "a" }],
       [{ v: "b" }],
     ]);
   });

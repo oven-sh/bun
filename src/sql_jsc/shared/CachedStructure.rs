@@ -5,7 +5,6 @@ use crate::jsc::{
     StrongOptional, bun_string_jsc,
 };
 use bun_collections::BoundedArray;
-use bun_jsc::Weak;
 use bun_sql::shared::ColumnIdentifier;
 
 #[derive(Default)]
@@ -13,8 +12,6 @@ pub struct CachedStructure {
     pub(crate) structure: StrongOptional, // Strong.Optional = .empty
     /// only populated if more than jsc.JSC__JSObject__maxInlineCapacity fields otherwise the structure will contain all fields inlined
     pub(crate) fields: Option<Box<[ExternColumnIdentifier]>>,
-    /// `result.statement`, kept alive only by the results that hold it.
-    description: Weak<()>,
 }
 
 impl CachedStructure {
@@ -24,18 +21,6 @@ impl CachedStructure {
 
     pub(crate) fn js_value(&self) -> Option<JSValue> {
         self.structure.get()
-    }
-
-    pub(crate) fn description(&self) -> Option<JSValue> {
-        self.description.get()
-    }
-
-    pub(crate) fn set_description(&mut self, global_object: &JSGlobalObject, description: JSValue) {
-        self.description = Weak::create_passive(description, global_object);
-    }
-
-    pub(crate) fn clear_description(&mut self) {
-        self.description = Weak::default();
     }
 
     pub(crate) fn set(
@@ -51,7 +36,7 @@ impl CachedStructure {
     }
 
     /// Populate this `CachedStructure` from a column-identifier sequence —
-    /// the shared body of `{Postgres,MySQL}SQLStatement::structure()`.
+    /// the shared body of `build_structure()` of Postgres and MySQL.
     ///
     /// Builds an `ExternColumnIdentifier` array on the stack when the
     /// non-duplicate count fits in `JSObject::max_inline_capacity()` (then
@@ -181,7 +166,7 @@ pub(crate) fn column_name_to_js(
     }
 }
 
-/// Runs user code that can close the connection: hold no reference into it or its statements.
+/// Runs user code that can close the connection.
 pub(crate) fn transform_name(
     global_object: &JSGlobalObject,
     transform: JSValue,

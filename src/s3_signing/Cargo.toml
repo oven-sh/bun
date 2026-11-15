@@ -18,5 +18,4 @@ bun_core.workspace = true
 bun_collections.workspace = true
 bun_http_types.workspace = true
 bun_picohttp.workspace = true
-bun_ptr.workspace = true
 bun_sha_hmac.workspace = true

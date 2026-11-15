@@ -166,7 +166,7 @@ impl ProducerHold {
         // SAFETY: fn contract.
         let source = unsafe {
             let source = Source::from_context_ptr(bytes);
-            // Before the ref, so `increment_count` only roots a wrapper that stays rooted.
+            // Before the ref, so `NewSource::did_ref` only roots a wrapper that stays rooted.
             Self::sync_root(&*source);
             RefPtr::init_ref(source)
         };

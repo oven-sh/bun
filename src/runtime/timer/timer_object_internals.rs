@@ -183,20 +183,20 @@ impl TimerObjectInternals {
     fn ref_(&self) {
         match self.parent_ptr() {
             // SAFETY: `p` is a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => unsafe { ImmediateObject::ref_(p) },
+            TimerParent::Immediate(p) => _ = unsafe { RefPtr::init_ref(p) }.into_raw(),
             // SAFETY: as above.
-            TimerParent::Timeout(p) => unsafe { TimeoutObject::ref_(p) },
+            TimerParent::Timeout(p) => _ = unsafe { RefPtr::init_ref(p) }.into_raw(),
         }
     }
 
-    /// Decrement the parent container's intrusive refcount; frees on 0.
+    /// Decrement the parent container's intrusive refcount; the last ref frees.
     /// After this returns, `self` may be dangling — do not touch.
     fn deref(&self) {
         match self.parent_ptr() {
             // SAFETY: `p` is a live container per `parent_ptr()`.
-            TimerParent::Immediate(p) => unsafe { ImmediateObject::deref(p) },
+            TimerParent::Immediate(p) => drop(unsafe { RefPtr::from_raw(p) }),
             // SAFETY: as above.
-            TimerParent::Timeout(p) => unsafe { TimeoutObject::deref(p) },
+            TimerParent::Timeout(p) => drop(unsafe { RefPtr::from_raw(p) }),
         }
     }
 

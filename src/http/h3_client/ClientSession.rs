@@ -3,7 +3,6 @@
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
 //! checks `closed` first.
 
-use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
@@ -22,10 +21,10 @@ use crate::{HTTPClient, HeaderResult, Protocol};
 
 use crate::h3_client::h3_client;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct ClientSession {
     /// Held by the `ClientContext.sessions` registry, and by `PendingConnect` while DNS is in flight.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
     pub(crate) qsocket: Option<NonNull<quic::Socket>>,
@@ -52,7 +51,7 @@ impl ClientSession {
     ) -> RefPtr<ClientSession> {
         H3::live_sessions.fetch_add(1, Ordering::Relaxed);
         RefPtr::new(ClientSession {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             qsocket: None,
             hostname,
             port,

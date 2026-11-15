@@ -1631,7 +1631,7 @@ pub(crate) struct RefData {
     pub(crate) phase: RefDataValue,
     /// The callback ran into its time limit. As in Vitest and Jest, a later rejection of its promise isn't an error.
     pub(crate) timed_out: Cell<bool>,
-    pub(crate) ref_count: bun_ptr::RefCount<RefData>,
+    pub(crate) ref_count: bun_ptr::RefCount,
 }
 impl Drop for RefData {
     fn drop(&mut self) {

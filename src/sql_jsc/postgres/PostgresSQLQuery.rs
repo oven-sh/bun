@@ -26,7 +26,7 @@ bun_core::declare_scope!(Postgres, visible);
 pub(crate) use crate::generated_bindgen::postgres_sql_query::js_PostgresSQLQuery as js;
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct PostgresSQLQuery {
     /// Shared with the connection's named-statement map (each holder owns one ref).
     pub(crate) statement: JsCell<Option<RefPtr<PostgresSQLStatement>>>,
@@ -39,7 +39,7 @@ pub struct PostgresSQLQuery {
 
     pub(crate) status: Cell<Status>,
 
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
 
     pub(crate) flags: Cell<Flags>,
 }
@@ -53,7 +53,7 @@ impl Default for PostgresSQLQuery {
             undescribed: JsCell::new(Undescribed::default()),
             this_value: JsCell::new(JsRef::empty()),
             status: Cell::new(Status::Pending),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             flags: Cell::new(Flags::default()),
         }
     }

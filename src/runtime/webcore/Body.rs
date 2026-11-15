@@ -1022,7 +1022,6 @@ impl Value {
             Value::Blob(b) => {
                 let new_blob = core::mem::take(b);
                 *self = Value::Used;
-                debug_assert!(!new_blob.is_heap_allocated()); // owned by Body
                 new_blob
             }
             Value::InternalBlob(ib) => {
@@ -1293,11 +1292,7 @@ impl Value {
 
 // https://github.com/WebKit/webkit/blob/main/Source/WebCore/Modules/fetch/FetchBody.cpp#L45
 pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Body> {
-    let body_value = Value::from_js(global_this, value)?;
-    if let Value::Blob(b) = &body_value {
-        debug_assert!(!b.is_heap_allocated()); // owned by Body
-    }
-    Ok(Body::new(body_value))
+    Ok(Body::new(Value::from_js(global_this, value)?))
 }
 
 // ────────────────────────────────────────────────────────────────────────────

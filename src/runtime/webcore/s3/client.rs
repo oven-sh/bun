@@ -415,7 +415,7 @@ pub(crate) fn writable_stream(
         queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         ended: Cell::new(false),
         options: Cell::new(options),
         acl: None,
@@ -461,10 +461,10 @@ pub(crate) fn writable_stream(
 }
 
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[repr(align(16))]
 pub(crate) struct S3UploadStreamWrapper {
-    pub(crate) ref_count: core::cell::Cell<u32>,
+    pub(crate) ref_count: bun_ptr::RefCount,
 
     pub sink: Option<AliasableBox<NetworkSink>>,
     pub task: RefPtr<MultiPartUpload>,
@@ -681,7 +681,7 @@ pub(crate) fn upload_stream(
         queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         ended: Cell::new(false),
         options: Cell::new(options),
         acl,
@@ -714,7 +714,7 @@ pub(crate) fn upload_stream(
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
     let pump_ref = RefPtr::new(S3UploadStreamWrapper {
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         sink: None,
         callback,
         task,

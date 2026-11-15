@@ -1,4 +1,3 @@
-use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::generated_bindgen::js_my_sql_query::js_MySQLQuery as js;
@@ -25,10 +24,10 @@ use super::my_sql_statement::{MySQLStatement, describe};
 bun_core::define_scoped_log!(debug, MySQLQuery);
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct JSMySQLQuery {
     this_value: JsCell<JsRef>,
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     global_object: BackRef<JSGlobalObject>,
     query: JsCell<MySQLQuery>,
     undescribed: JsCell<Undescribed<Vec<ColumnDefinition41>>>,
@@ -66,7 +65,7 @@ impl JSMySQLQuery {
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(query, bigint, simple)),
             undescribed: JsCell::new(Undescribed::default()),

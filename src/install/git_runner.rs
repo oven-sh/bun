@@ -752,9 +752,9 @@ pub(crate) fn bare_repo_folder_name(clone_id: Task::Id) -> Vec<u8> {
 // `finish_*` release the owning ref (freeing `this`), so everything on a path to
 // them takes `ThisPtr<Self>` rather than `&self` and touches nothing afterwards;
 // mutable state sits in cells so every access is a short shared borrow.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct GitSubprocess {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// The single owning ref; `release` drops it and frees the runner.
     owner: Cell<Option<RefPtr<GitSubprocess>>>,
     manager: BackRef<PackageManager, bun_ptr::Mut>,
@@ -801,7 +801,7 @@ impl GitSubprocess {
         };
         manager.running_git_tasks.fetch_add(1, Ordering::Relaxed);
         let runner = RefPtr::new(GitSubprocess {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             owner: Cell::new(None),
             manager: BackRef::new_mut(manager),
             task,

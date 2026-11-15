@@ -48,7 +48,7 @@ pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 /// 4. A write in flight, on Windows
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Terminal {
-    ref_count: bun_ptr::RefCount<Terminal>,
+    ref_count: bun_ptr::RefCount,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
     #[cfg(unix)]

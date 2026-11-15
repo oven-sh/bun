@@ -4,9 +4,9 @@ use core::ptr::NonNull;
 use bun_ptr::RefPtr;
 
 /// The bytes that a subprocess may still write to its stdout or stderr pipe.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct MaxBuf {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     kind: Kind,
     /// Not the reader's owner, which is a `FileReader` once script has asked for the stream.
     owner: Cell<Option<Owner>>,
@@ -32,7 +32,7 @@ impl OwnerRef {
     /// SAFETY: `owner.on_overflow` can be called with `owner.ptr` until the returned ref is dropped.
     pub unsafe fn new(bytes: i64, kind: Kind, owner: Owner) -> OwnerRef {
         OwnerRef(RefPtr::new(MaxBuf {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             kind,
             owner: Cell::new(Some(owner)),
             remaining_bytes: Cell::new(bytes),

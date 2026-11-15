@@ -181,6 +181,11 @@ impl<const SSL: bool> Response<SSL> {
         self.state().is_http_connection_close()
     }
 
+    /// The response belongs to an earlier request, which node:http has not finished answering.
+    pub fn is_node_pipelined_dispatch(&self) -> bool {
+        self.state().contains(State::HTTP_NODE_PIPELINED_DISPATCH)
+    }
+
     /// Valid after the close callback: uSockets frees a closed socket only when the outermost tick ends.
     pub(crate) fn is_closed(&self) -> bool {
         // Same view as `downcast_socket`: the response handle is the socket.
@@ -1227,6 +1232,7 @@ bitflags::bitflags! {
         const HTTP_RESPONSE_PENDING            = 8;
         const HTTP_CONNECTION_CLOSE            = 16;
         const HTTP_WROTE_CONTENT_LENGTH_HEADER = 32;
+        const HTTP_NODE_PIPELINED_DISPATCH     = 1 << 11;
         const HTTP_NODE_RECEIVED_FIN           = 1 << 15;
         const HTTP_NODE_CLOSE_AFTER_MESSAGE    = 1 << 20;
     }

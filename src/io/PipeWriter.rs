@@ -719,7 +719,6 @@ pub struct WriteEvent(Completion);
 #[cfg(windows)]
 enum Completion {
     Wrote,
-    Canceled,
     StreamFailed(sys::Error),
     FileFailed(sys::Error),
     VmTeardown,
@@ -827,7 +826,6 @@ impl WindowsPipeWriter {
             return;
         };
         let completion = match result.to_error(sys::Tag::write) {
-            _ if result.int() == uv::UV_ECANCELED as i64 => Completion::Canceled,
             Some(err) => Completion::FileFailed(err),
             None => Completion::Wrote,
         };
@@ -1049,7 +1047,6 @@ impl WindowsBufferedWriter {
                 };
                 handler.on_write(written, status);
             }
-            Completion::Canceled => {}
             Completion::StreamFailed(err) | Completion::FileFailed(err) => {
                 self.report_error(handler, err);
             }
@@ -1414,7 +1411,6 @@ impl WindowsStreamingWriter {
         }
         match completion {
             Completion::Wrote => self.on_write_complete(handler, self.pipe.reset_payload()),
-            Completion::Canceled => _ = self.pipe.reset_payload(),
             Completion::StreamFailed(err) => self.report_error(handler, err),
             Completion::FileFailed(err) => {
                 self.close(handler);

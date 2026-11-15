@@ -1024,7 +1024,7 @@ enum WriteOutcome {
 
 bun_io::impl_buffered_writer_parent! {
     IOWriter;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::SHELL_BUFFERED_WRITER,
+    poll_tag   = bun_io::PollTag::ShellBufferedWriter,
     // UnsafeCell aliasing model — child callbacks may re-enter `enqueue(&self)`.
     borrow     = shared,
     on_write   = on_write_pollable,

@@ -1,0 +1,28 @@
+// A member of a built-in object that is read through the global object is added to it at that read, where the answer is known too, and where nothing takes it.
+const list = object => Reflect.ownKeys(object).map(String).join();
+const texts = typeof globalThis.String.raw;
+({ ...String });
+console.log(texts, list(String));
+const numbers = globalThis.Number.isSafeInteger !== undefined;
+({ ...Number });
+console.log(numbers, list(Number));
+const wide = !globalThis["BigInt"].asUintN;
+Object.assign({}, BigInt);
+console.log(wide, list(BigInt));
+const symbols = globalThis.Symbol.keyFor ? 1 : 2;
+({ ...Symbol });
+console.log(symbols, list(Symbol));
+const asked = void globalThis.Promise.race;
+({ ...Promise });
+console.log(asked, list(Promise));
+globalThis.Reflect.setPrototypeOf;
+({ ...Reflect });
+console.log(list(Reflect));
+if (typeof globalThis?.Object?.fromEntries !== "function") throw new Error("not there");
+const last = (globalThis.Object.seal, 1);
+({ ...Object });
+console.log(last, list(Object));
+void Date.parse;
+void Math.max;
+({ ...Math });
+console.log(list(Math));

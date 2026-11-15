@@ -8,21 +8,18 @@ use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
 use crate::bun_progress::{NodeId, Progress};
 
-use crate::lockfile::tree;
-use crate::{DependencyID, PackageID};
-// Bring the `items_<field>{,_mut}()` column accessors for
-// `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
 use crate::bin_real as bin;
+use crate::lockfile::tree;
 use crate::package_install;
 use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
 use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::prune::LinkedNodeModules;
+use crate::{DependencyID, PackageID};
 
 /// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
 /// bar.
@@ -121,7 +118,6 @@ fn link_deferred(
 
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
-    ctx: Command::Context,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
@@ -320,7 +316,7 @@ pub(crate) fn install_hoisted_packages(
             // to make mistakes harder
             //
             // RawSlice invariant: on growth `fix_cached_lockfile_package_slices` re-snapshots.
-            let parts = lockfile_ref.packages.slice();
+            let parts = &lockfile_ref.packages;
             let metas = bun_ptr::RawSlice::new(parts.items_meta());
             let bins = bun_ptr::RawSlice::new(parts.items_bin());
             let names = bun_ptr::RawSlice::new(parts.items_name());
@@ -356,7 +352,6 @@ pub(crate) fn install_hoisted_packages(
                 workspaces_seen: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
-                command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
                 pending_install_count: 0,

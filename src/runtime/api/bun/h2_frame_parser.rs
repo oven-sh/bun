@@ -1295,7 +1295,7 @@ pub(crate) struct Stream {
     remote_window_size: u64,
     // remote used window size for the stream
     remote_used_window_size: u64,
-    signal: Option<Box<SignalRef>>,
+    signal: Option<AliasableBox<SignalRef>>,
     // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
     // replenishing the stream's receive window until reading resumes, backpressuring the peer.
     reading_paused: bool,
@@ -1839,16 +1839,13 @@ impl Stream {
     }
 
     pub(crate) fn attach_signal(&mut self, parser: &H2FrameParser, signal: &mut AbortSignal) {
-        let signal_ref = bun_core::heap::into_raw(Box::new(SignalRef {
+        let signal_ref = AliasableBox::new(SignalRef {
             abort_handle: bun_jsc::AbortHandle::for_owner::<SignalRef>(),
             parser: parser.ref_guard(),
             stream_id: self.id,
-        }));
-        // SAFETY: `signal_ref` is a live heap allocation; both calls keep its provenance.
-        let signal_ref = unsafe {
-            bun_jsc::AbortHandle::follow_owner(signal_ref, signal.ref_());
-            bun_core::heap::take(signal_ref)
-        };
+        });
+        // SAFETY: on the heap until it drops.
+        unsafe { bun_jsc::AbortHandle::follow_owner(signal_ref.as_ptr(), signal.ref_()) };
         self.signal = Some(signal_ref);
     }
 

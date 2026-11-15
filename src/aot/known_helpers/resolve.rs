@@ -268,7 +268,15 @@ pub fn resolve_callee(
         }
         return match bound.binding(callee) {
             Binding::Symbol(symbol) => match input.helpers.binding(file, symbol) {
-                Some(values) => Some(KnownCallee::new(file, values)),
+                Some(values) => Some(KnownCallee {
+                    holds_from_the_start: KnownHelpers::holds_at_call(
+                        input.files,
+                        file,
+                        values,
+                        callee,
+                    ),
+                    ..KnownCallee::new(file, values)
+                }),
                 None if bound.binding_kind(symbol) == BindingKind::Import => {
                     resolve_import(input, input.modules.import_binding(file, symbol))
                 }

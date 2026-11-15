@@ -257,8 +257,8 @@ test("fetch() compress option does not leak bodies or compressor state", async (
   //  - the custom-level path (allocates a temporary libdeflate compressor that
   //    must be freed each call)
   //  - a small body (HTTP-thread LibdeflateState shared_buffer fast path)
-  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed in
-  //    on_async_http_callback_raw)
+  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed
+  //    with the request)
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
@@ -1136,3 +1136,42 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
     server.close();
   }
 }, 60000);
+
+test.concurrent("a read that replaces a pending read unroots its promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { heapStats } = require("bun:jsc");
+      const { Readable } = require("node:stream");
+      const server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({ start: c => c.enqueue(new Uint8Array(1)) })),
+      });
+      const rooted = () => heapStats().protectedObjectTypeCounts.Promise ?? 0;
+      async function once() {
+        const { body } = await fetch(server.url);
+        const reader = body.getReader();
+        await reader.read();
+        reader.read().catch(() => {});
+        reader.releaseLock();
+        const readable = Readable.fromWeb(body).on("error", () => {}).resume();
+        await new Promise(setImmediate);
+        await new Promise(resolve => readable.on("close", resolve).destroy());
+      }
+      await once();
+      const before = rooted();
+      for (let i = 0; i < 4; i++) await once();
+      console.log(rooted() - before);
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("0\n");
+  expect(exitCode).toBe(0);
+});

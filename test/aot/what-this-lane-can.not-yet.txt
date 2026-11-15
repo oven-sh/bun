@@ -56,6 +56,7 @@ names-that-only-types-spell-in-executables.test.ts
 napi-addon.test.ts
 native-addons.test.ts
 no-thread-can-be-started.test.ts
+order-file.test.ts
 packed-relocations.test.ts
 pages-64k.test.ts
 perf/a-file-compared-with-the-disk.test.ts

@@ -15,7 +15,7 @@ use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt};
 use bun_core::{ZStr, strings};
 use bun_dns::{
-    self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
+    self, AddrInfoList, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultList as GetAddrInfoResultList,
 };
 use bun_io::JsKeepAlive;
@@ -98,6 +98,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 // ──────────────────────────────────────────────────────────────────────────
 
 const IANA_DNS_PORT: i32 = 53;
+const CARES_TIMEOUT_CHECK_INTERVAL_MS: i64 = 1000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
@@ -129,7 +130,6 @@ mod lib_c {
             },
             get_addr_info_request::LibcRequest(Some(pending)),
         );
-        this.request_sent(this.vm());
     }
 }
 
@@ -164,17 +164,16 @@ pub(crate) mod lib_uv_backend {
             self.query.complete_native(Ok(list));
         }
     }
-    impl bun_event_loop::Taskable for LibuvRequest {
+    impl bun_event_loop::BoxedTask for LibuvRequest {
         const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::GetAddrInfoLibuvComplete;
         /// A uv_getaddrinfo the stop phase cancelled and drained into the queue:
         /// its completion is what frees the request and its cache slot, and it
         /// only settles promises (no callback runs; script is forbidden), so run it.
-        unsafe fn release_unrun(this: *mut Self) {
-            // SAFETY: fn contract — the box `on_raw_libuv_complete` queued.
-            unsafe { bun_core::heap::take(this) }.run();
+        fn release_unrun(self: Box<Self>) {
+            self.run();
         }
         /// A lookup is shared by the realm; each promise waiting on it is settled for its own context.
-        unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        fn context(&self) -> bun_event_loop::ContextId {
             bun_event_loop::ContextId::NONE
         }
     }
@@ -185,7 +184,9 @@ pub(crate) mod lib_uv_backend {
         _res: *mut libuv::addrinfo,
     ) {
         // TODO: We schedule a task to run because otherwise the promise will not be solved, we need to investigate this
-        VirtualMachine::get().enqueue_task(jsc::Task::init(uv_info.cast::<LibuvRequest>()));
+        // SAFETY: `uv_info` is the first field of the box that `start` left to libuv. The task keeps it in place for `pending_uv_requests`.
+        let request = unsafe { bun_core::heap::take(uv_info.cast::<LibuvRequest>()) };
+        VirtualMachine::get().enqueue_task(jsc::Task::from_boxed(request));
     }
 
     pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) {
@@ -409,47 +410,22 @@ pub(crate) mod get_addr_info_request {
             let cap = hostname.len() - 1;
             let copied_len = strings::copy(&mut hostname[..cap], &query_name).len();
             hostname[copied_len] = 0;
-            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
             // SAFETY: hostname[copied_len] == 0
             let host = ZStr::from_buf(&hostname[..], copied_len);
             let debug_timer = Output::DebugTimer::start();
-            // SAFETY: FFI; all pointers valid for the call duration
-            let err = unsafe {
-                libc::getaddrinfo(
-                    host.as_ptr().cast::<c_char>(),
-                    if port_len > 0 {
-                        port_z.as_ptr().cast::<c_char>()
-                    } else {
-                        ptr::null()
-                    },
-                    hints
-                        .as_ref()
-                        .map(std::ptr::from_ref)
-                        .unwrap_or(ptr::null()),
-                    &raw mut addrinfo,
-                )
-            };
+            let result =
+                AddrInfoList::lookup(Some(host), (port_len > 0).then_some(port_z), hints.as_ref());
             sys::syslog!(
                 "getaddrinfo({}, {}) = {} ({})",
                 bstr::BStr::new(&query_name),
                 bstr::BStr::new(port_z.as_bytes()),
-                err,
+                result.as_ref().err().unwrap_or(&0),
                 debug_timer,
             );
-            if err != 0 || addrinfo.is_null() {
-                *self = LibcBackend::Err(err);
-                return;
-            }
-
-            // do not free addrinfo when err != 0: getaddrinfo only allocates the
-            // result list on success, so the out-pointer is unspecified on error.
-            let _free = scopeguard::guard(addrinfo, |a| {
-                // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
-                unsafe { bun_dns::freeaddrinfo(a) }
-            });
-
-            // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
-            *self = LibcBackend::Success(GetAddrInfoResult::to_list(unsafe { &*addrinfo }));
+            *self = match result {
+                Ok(list) => LibcBackend::Success(GetAddrInfoResult::to_list(&list)),
+                Err(err) => LibcBackend::Err(err),
+            };
         }
     }
 }
@@ -1209,8 +1185,8 @@ pub(crate) mod internal {
         .filter(|ip| family == netc::AF_UNSPEC || ip.is_ipv6() == (family == netc::AF_INET6))
         .map(|ip| bun_dns::Address::from_ip(ip, port).into_storage())
         .collect();
-        let mut chain = addrinfo_chain(&mut addrs);
-        process_results(chain.as_mut_ptr())
+        let chain = addrinfo_chain(&mut addrs);
+        process_results(chain.as_ptr())
     }
 
     /// Chrome's `IsAllLocalhostOfOneFamily`: every address is loopback and only one family is present, the shape glibc's AI_ADDRCONFIG produces for a hosts-file loopback name (crbug 42058 / 49024).
@@ -1333,7 +1309,7 @@ pub(crate) mod internal {
     // Pack getaddrinfo results into one allocation with address families
     // interleaved (RFC 8305 §4) so an unroutable family can never fill all
     // CONCURRENT_CONNECTIONS parallel connect attempts. See #4938 / #33278.
-    fn process_results(info: *mut AddrInfo) -> Box<[ResultEntry]> {
+    fn process_results(info: *const AddrInfo) -> Box<[ResultEntry]> {
         let mut count: usize = 0;
         let mut n_first: usize = 0;
         let first_family = if info.is_null() {
@@ -1342,7 +1318,7 @@ pub(crate) mod internal {
             // SAFETY: info is a live addrinfo node; freed by caller after we return.
             unsafe { (*info).ai_family }
         };
-        let mut info_: *mut AddrInfo = info;
+        let mut info_: *const AddrInfo = info;
         while !info_.is_null() {
             // SAFETY: info_ walks the libc-allocated addrinfo list; freed by caller after we return.
             unsafe {
@@ -1438,21 +1414,6 @@ pub(crate) mod internal {
         nodes
     }
 
-    fn after_result(req: *mut Request, info: *mut AddrInfo, err: c_int) {
-        let results: Option<Box<[ResultEntry]>> = if !info.is_null() {
-            let res = process_results(info);
-            // ws2_32!getaddrinfo-allocated on Windows — free via the matching
-            // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
-            // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
-            // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
-            unsafe { bun_dns::freeaddrinfo(info.cast()) };
-            Some(res)
-        } else {
-            None
-        };
-        after_result_entries(req, results, err);
-    }
-
     fn after_result_entries(req: *mut Request, results: Option<Box<[ResultEntry]>>, err: c_int) {
         let guard = global_cache().lock();
 
@@ -1483,68 +1444,43 @@ pub(crate) mod internal {
     fn work_pool_callback(req: *mut Request) {
         let mut service_buf = [0u8; 21];
         // SAFETY: `req` is the heap-allocated cache entry; `key` is set at construction and read-only.
-        let port = unsafe { (*req).key.port };
-        let service: *const c_char = if port > 0 {
-            bun_fmt::itoa_z(&mut service_buf, port as u64).as_ptr()
-        } else {
-            ptr::null()
-        };
+        let key = unsafe { &(*req).key };
+        let host = key.host.as_deref();
+        let service = (key.port > 0)
+            .then(|| ZStr::from_cstr(bun_fmt::itoa_z(&mut service_buf, key.port as u64)));
 
         #[cfg(windows)]
-        unsafe {
+        let result = {
             use bun_sys::windows::ws2_32 as wsa;
             libuv::uv__winsock_ensure();
-            let mut wsa_hints: wsa::addrinfo = bun_core::ffi::zeroed();
-            wsa_hints.ai_family = wsa::AF_UNSPEC;
-            wsa_hints.ai_socktype = wsa::SOCK_STREAM;
-
-            let mut addrinfo: *mut wsa::addrinfo = ptr::null_mut();
-            let err = wsa::getaddrinfo(
-                (*req)
-                    .key
-                    .host
-                    .as_ref()
-                    .map(|h| h.as_ptr().cast::<c_char>())
-                    .unwrap_or(ptr::null()),
-                service,
-                &wsa_hints,
-                &mut addrinfo,
-            );
-            after_result(req, addrinfo.cast(), err);
-        }
+            let mut hints: wsa::addrinfo = bun_core::ffi::zeroed();
+            hints.ai_family = wsa::AF_UNSPEC;
+            hints.ai_socktype = wsa::SOCK_STREAM;
+            AddrInfoList::lookup(host, service, Some(&hints))
+        };
         #[cfg(not(windows))]
-        // SAFETY: FFI getaddrinfo; `req.key.host` is the owned NUL-terminated host
-        // set at construction, `hints`/`addrinfo` are stack locals.
-        unsafe {
-            let mut addrinfo: *mut AddrInfo = ptr::null_mut();
+        let result = {
             let mut hints = get_hints();
-
-            let host_ptr = (*req)
-                .key
-                .host
-                .as_ref()
-                .map(|h| h.as_ptr().cast::<c_char>())
-                .unwrap_or(ptr::null());
-            let mut err = libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut addrinfo);
+            let mut result = AddrInfoList::lookup(host, service, Some(&hints));
 
             // Chrome's retries: AI_ADDRCONFIG left nothing, or only one family's loopback.
             if (hints.ai_flags & netc::AI_ADDRCONFIG) != 0
-                && (err == netc::EAI_NONAME
-                    || (err == 0 && is_all_loopback_of_one_family(addrinfo)))
+                && match &result {
+                    Ok(list) => is_all_loopback_of_one_family(&raw const **list),
+                    Err(err) => *err == netc::EAI_NONAME,
+                }
             {
                 hints.ai_flags &= !netc::AI_ADDRCONFIG;
-                let mut unfiltered: *mut AddrInfo = ptr::null_mut();
-                let retry_err =
-                    libc::getaddrinfo(host_ptr, service, &raw const hints, &raw mut unfiltered);
-                if retry_err == 0 || err != 0 {
-                    if !addrinfo.is_null() {
-                        bun_dns::freeaddrinfo(addrinfo);
-                    }
-                    addrinfo = unfiltered;
-                    err = retry_err;
+                let unfiltered = AddrInfoList::lookup(host, service, Some(&hints));
+                if unfiltered.is_ok() || result.is_err() {
+                    result = unfiltered;
                 }
             }
-            after_result(req, addrinfo, err);
+            result
+        };
+        match result.map(|list| process_results(&raw const *list)) {
+            Ok(results) => after_result_entries(req, Some(results), 0),
+            Err(err) => after_result_entries(req, None, err),
         }
     }
 
@@ -1603,8 +1539,8 @@ pub(crate) mod internal {
                 storage
             })
             .collect();
-        let mut chain = addrinfo_chain(&mut addrs);
-        let results = process_results(chain.as_mut_ptr());
+        let chain = addrinfo_chain(&mut addrs);
+        let results = process_results(chain.as_ptr());
         after_result_entries(req, Some(results), 0);
     }
 
@@ -1685,8 +1621,8 @@ pub(crate) mod internal {
         if addrs.is_empty() {
             return Err(global.throw_invalid_arguments(format_args!("addresses must not be empty")));
         }
-        let mut chain = addrinfo_chain(&mut addrs);
-        let results = process_results(chain.as_mut_ptr());
+        let chain = addrinfo_chain(&mut addrs);
+        let results = process_results(chain.as_ptr());
 
         let mut families = [0i32; MAX_ADDRESSES_FOR_TESTING];
         for (family, entry) in families.iter_mut().zip(results.iter()) {
@@ -1940,7 +1876,7 @@ pub(crate) mod internal {
         socket: *mut ConnectingSocket,
     ) -> c_int {
         let _guard = global_cache().lock();
-        // afterResult sets result and moves the notify list out under this same
+        // `after_result_entries` sets result and moves the notify list out under this same
         // lock, so once result is non-null the socket is no longer cancellable
         // (the callback has fired or is about to fire on the worker thread).
         // SAFETY: `request` is a live cache entry; `result`/`notify` are only
@@ -2474,7 +2410,7 @@ impl Resolver {
                 c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
-                    let _ = self.add_timer(Some(now));
+                    let _ = self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS);
                 } else {
                     self.remove_timer();
                 }
@@ -2483,12 +2419,11 @@ impl Resolver {
         crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
     }
 
+    /// Whether c-ares has a query to time out.
     fn any_requests_pending(&self) -> bool {
-        if self
-            .pending
-            .values()
-            .any(|cache| cache.used.get().mask != 0)
-        {
+        if self.pending.iter().any(|(kind, cache)| {
+            !matches!(kind, QueryKind::HostNative) && cache.used.get().mask != 0
+        }) {
             return true;
         }
         // A query that found its cache full has no slot; c-ares' own
@@ -2504,18 +2439,24 @@ impl Resolver {
     }
 
     fn request_sent(&self, _vm: &VirtualMachine) {
-        let _ = self.add_timer(None);
+        if self.any_requests_pending() {
+            let _ = self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
+        } else {
+            // c-ares answered inside the call (cache, hosts file, error). As in Node, that takes a turn of the loop.
+            self.remove_timer();
+            let _ = self.add_timer(None, 0);
+        }
     }
 
     fn request_completed(&self) {
         if self.any_requests_pending() {
-            let _ = self.add_timer(None);
+            let _ = self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
             self.remove_timer();
         }
     }
 
-    fn add_timer(&self, now: Option<&bun::timespec>) -> bool {
+    fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64) -> bool {
         if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             return false;
         }
@@ -2524,7 +2465,7 @@ impl Resolver {
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
-        let next = now_ts.add_ms(1000);
+        let next = now_ts.add_ms(delay_ms);
         self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop();
         let timers = crate::jsc_hooks::timer_all();
@@ -2967,7 +2908,7 @@ impl Resolver {
         lib_uv_backend::start(self, &query, pending);
         #[cfg(target_os = "macos")]
         let pending = match opts.backend {
-            GetAddrInfoBackend::System => match dns_sd::start(self, &query, pending) {
+            GetAddrInfoBackend::System => match dns_sd::start(&query, pending) {
                 Ok(()) => return Ok(promise),
                 Err(refused) => refused,
             },
@@ -3477,21 +3418,18 @@ impl Resolver {
     }
 
     pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
-        let global_this = cx.global();
-        Self::set_channel_servers(
-            Self::get_channel_from_vm(global_this)?,
-            global_this,
-            servers.to_js(),
-        )
+        global_resolver(cx.global()).set_servers(cx, servers)
     }
 
     pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        Self::set_channel_servers(
+        let result = Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
             servers.to_js(),
-        )
+        );
+        self.request_completed();
+        result
     }
 
     pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
@@ -3514,6 +3452,7 @@ impl Resolver {
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
         c_ares::ares_cancel(self.get_channel_or_error(cx.global())?);
+        self.request_completed();
         Ok(())
     }
 

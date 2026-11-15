@@ -690,9 +690,7 @@ pub(crate) fn compute_chunks<'a>(
         }
     }
 
-    // The caller-owned
-    // `Box<[Chunk]>` transfers the `sorted_chunks` Vec backing storage.
-    Ok(sorted_chunks.to_owned_slice())
+    Ok(sorted_chunks.into_boxed_slice())
 }
 
 // Local type aliases referenced above.

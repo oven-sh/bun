@@ -130,7 +130,7 @@ impl ThreadCaches {
 }
 
 /// The allocator retains a thread's free pages for that thread, and only that thread can release them. Each thread of
-/// `pool` does so when it's next idle, like the bundler's `ThreadPool::deinit`.
+/// `pool` does so when it's next idle, like the bundler's `ThreadPool::drop`.
 fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
     use bun_threading::thread_pool::{Node, Task};
     unsafe fn release(task: *mut Task) {

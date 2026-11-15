@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
-use bun_event_loop::{
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -136,9 +133,9 @@ use http::signals::BodyReceiveMode;
 pub struct FetchTasklet {
     /// The JS controller holds a detachable back-pointer into it.
     sink: Option<AliasableBox<FetchRequestBodySink>>,
-    // Self-referential: borrows from `request_body` / `request_headers` owned
-    // by sibling fields, so the lifetime is erased to `'static`.
-    pub(crate) http: Option<Box<AsyncHTTP<'static>>>,
+    /// `None` while it drops.
+    async_http_id: Option<u32>,
+    method: Method,
     pub(crate) result: HTTPClientResult<'static>,
     pub(crate) metadata: Option<HTTPResponseMetadata>,
     /// Held while the request is out on the HTTP thread (`queue` until its
@@ -178,7 +175,8 @@ pub struct FetchTasklet {
 
     /// This is url + proxy memory buffer and is owned by FetchTasklet
     /// We always clone url and proxy (if informed)
-    _url_proxy_buffer: Box<[u8]>,
+    url_proxy_buffer: Box<[u8]>,
+    url_len: usize,
 
     /// The context whose script called `fetch()`, and its `signal` option.
     pub(crate) abort_handle: jsc::AbortHandle,
@@ -217,11 +215,7 @@ pub struct FetchTasklet {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
-    Sendfile {
-        window: http::SendFile,
-        /// Owns `window.fd`.
-        _file: bun_sys::File,
-    },
+    Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
 }
 
@@ -246,6 +240,15 @@ impl HTTPRequestBody {
             HTTPRequestBody::AnyBlob(blob) => blob.slice(),
             _ => b"",
         }
+    }
+
+    fn take_sendfile(&mut self) -> Option<http::SendFile> {
+        if let HTTPRequestBody::Sendfile(_) = self
+            && let HTTPRequestBody::Sendfile(sendfile) = core::mem::take(self)
+        {
+            return Some(sendfile);
+        }
+        None
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
@@ -316,7 +319,7 @@ impl HTTPRequestBody {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
             HTTPRequestBody::ReadableStream(stream) => stream.has(),
-            HTTPRequestBody::Sendfile { .. } => true,
+            HTTPRequestBody::Sendfile(_) => true,
         }
     }
 }
@@ -340,8 +343,7 @@ impl Drop for FetchTasklet {
     fn drop(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
         self.ref_count.assert_no_refs();
-        // It borrows `_url_proxy_buffer`, `unix_socket_path`, `request_headers` and `request_body`.
-        self.http = None;
+        self.async_http_id = None;
         self.response.clear();
         self.native_response.set(None);
         self.clear_stream_handlers();
@@ -798,8 +800,8 @@ impl FetchTasklet {
             // HTTP-thread socket instead of leaving it occupying an active
             // request slot until the idle timeout.
             if self.result.certificate_info.take().is_some() {
-                if let Some(http_) = self.http.as_mut() {
-                    http::http_thread().schedule_shutdown(http_);
+                if let Some(id) = self.async_http_id {
+                    http::HTTPThread::schedule_shutdown(id);
                 }
             }
             return Ok(());
@@ -923,8 +925,8 @@ impl FetchTasklet {
             // so the request is finally written to the now-verified peer. If
             // the connection already closed/failed the resume is a no-op
             // (keyed through the abort tracker).
-            if let Some(http_) = self.http.as_mut() {
-                http::http_thread().schedule_cert_check_resume(http_);
+            if let Some(id) = self.async_http_id {
+                http::HTTPThread::schedule_cert_check_resume(id);
             }
             // Fall through. The common case (certificate-only update) returns
             // at the metadata-less early return below; the #27275 coalesced
@@ -1095,8 +1097,8 @@ impl FetchTasklet {
             }
             Err(None) => {
                 // Every false return must have scheduled the parked socket's shutdown.
-                if let Some(http_) = self.http.as_mut() {
-                    http::http_thread().schedule_shutdown(http_);
+                if let Some(id) = self.async_http_id {
+                    http::HTTPThread::schedule_shutdown(id);
                 }
                 self.result.fail = Some(http::Error::ERR_TLS_CERT_ALTNAME_INVALID);
                 false
@@ -1189,15 +1191,13 @@ impl FetchTasklet {
             return BodyValueError::JSValue(StrongOptional::create(err, &self.global_this));
         }
 
-        // some times we don't have metadata so we also check http.url
+        // some times we don't have metadata so we also check the request's URL
         // Without the URL's userinfo: errors get logged.
-        let path = if let Some(metadata) = &self.metadata {
-            BunString::clone_utf8(&ZigURL::parse(metadata.url.slice()).href_without_userinfo())
-        } else if let Some(http_) = &self.http {
-            BunString::clone_utf8(&http_.url.href_without_userinfo())
-        } else {
-            BunString::EMPTY
+        let href = match &self.metadata {
+            Some(metadata) => metadata.url.slice(),
+            None => &self.url_proxy_buffer[..self.url_len],
         };
+        let path = BunString::clone_utf8(&ZigURL::parse(href).href_without_userinfo());
 
         // The hostname never resolved: report the resolver error (`ENOTFOUND`,
         // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,
@@ -1208,8 +1208,7 @@ impl FetchTasklet {
             if let Some(dns_err) = c_ares::Error::init_eai(self.result.dns_error) {
                 // `dns_hostname` is the owned copy of the exact name the
                 // connect resolved (proxy or post-redirect target), captured
-                // on the HTTP thread; never reconstruct it from `self.http`,
-                // whose post-redirect URL slices are freed by then.
+                // on the HTTP thread.
                 let hostname: &[u8] = self.result.dns_hostname.as_deref().unwrap_or(b"");
                 let mut err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
                     dns_err,
@@ -1642,8 +1641,8 @@ impl FetchTasklet {
     }
 
     fn schedule_receive_resume(&self) {
-        if let Some(http_) = self.http.as_ref() {
-            http::http_thread().schedule_receive_resume(http_.async_http_id);
+        if let Some(id) = self.async_http_id {
+            http::HTTPThread::schedule_receive_resume(id);
         }
     }
 
@@ -1683,10 +1682,7 @@ impl FetchTasklet {
     /// requested upgrade, and the upgraded connection is then the body.
     fn response_body_is_null(&self, status_code: u16) -> bool {
         (crate::server::http_status_text::is_null_body(status_code) && status_code != 101)
-            || self
-                .http
-                .as_deref()
-                .is_some_and(|http_| http_.method() == Method::HEAD)
+            || self.method == Method::HEAD
     }
 
     /// Content the server frames anyway (a 205 with content) is dropped and the connection
@@ -1788,12 +1784,11 @@ impl FetchTasklet {
         cx: &bun_jsc::JsThread<'_>,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
-    ) -> crate::Result<*mut FetchTasklet> {
+    ) -> crate::Result<(*mut FetchTasklet, Box<AsyncHTTP<'static>>)> {
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
-            // `AsyncHTTP` has no `Default`/zero-init; defer the Box until
-            // `AsyncHTTP::init` produces the value.
-            http: None,
+            async_http_id: None,
+            method: fetch_options.method,
             result: HTTPClientResult::default(),
             metadata: None,
             http_ref: None,
@@ -1813,7 +1808,8 @@ impl FetchTasklet {
             concurrent_task: ConcurrentTask::default(),
             poll_ref: KeepAlive::default(),
             body_size: http::BodySize::Unknown,
-            _url_proxy_buffer: fetch_options.url_proxy_buffer,
+            url_proxy_buffer: fetch_options.url_proxy_buffer,
+            url_len: fetch_options.url.href.len(),
             abort_handle: jsc::AbortHandle::for_owner::<FetchTasklet>(),
             context: cx.context().id(),
             signals: Signals::default(),
@@ -1883,12 +1879,14 @@ impl FetchTasklet {
             fetch_tasklet.signals.cert_errors = None;
         }
 
+        let sendfile = fetch_tasklet.request_body.take_sendfile();
+
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
         // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
-        // lifetime of the request, and `drop` drops the `AsyncHTTP` first.
+        // lifetime of the request, whose ref on the tasklet goes after `callback` has dropped it.
         let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
@@ -1902,7 +1900,7 @@ impl FetchTasklet {
         // post-move query (`is_http()`, debug-assert only) up front.
         let url_is_http = url.is_http();
 
-        fetch_tasklet.http = Some(Box::new(AsyncHTTP::init(
+        let mut http = AsyncHTTP::init(
             fetch_options.method,
             url,
             header_entries,
@@ -1935,16 +1933,16 @@ impl FetchTasklet {
                 pool: fetch_options.pool,
                 bypass_pool: fetch_options.bypass_pool,
             },
-        )));
+        );
+        fetch_tasklet.async_http_id = Some(http.async_http_id);
         // enable streaming the write side
         let is_stream = matches!(
             fetch_tasklet.request_body,
             HTTPRequestBody::ReadableStream(_)
         );
-        let http_client = fetch_tasklet.http.as_mut().unwrap();
-        http_client.client.flags.is_streaming_request_body = is_stream;
-        http_client.client.flags.forced_protocol = fetch_options.forced_protocol;
-        http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
+        http.client.flags.is_streaming_request_body = is_stream;
+        http.client.flags.forced_protocol = fetch_options.forced_protocol;
+        http.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
             // An upgraded connection tunnels its "body", so those bytes are not counted.
@@ -1952,30 +1950,21 @@ impl FetchTasklet {
             if !fetch_tasklet.upgraded_connection {
                 fetch_tasklet.declared_request_body_len = framing.content_length;
             }
-            // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
-            // thread), so the same raw pointer can be handed to both sides.
-            let buffer = ThreadSafeStreamBuffer::new(
+            let [ours, theirs] = ThreadSafeStreamBuffer::new(
                 FetchTasklet::on_write_request_data_drain,
                 fetch_tasklet_ptr,
             );
-            // SAFETY: adopts one of the two initial refs.
-            fetch_tasklet.request_body_streaming_buffer = Some(unsafe { RefPtr::from_raw(buffer) });
-            fetch_tasklet.http.as_mut().unwrap().request_body =
-                http::HTTPRequestBody::Stream(http::http_request_body::Stream {
-                    buffer: core::ptr::NonNull::new(buffer),
-                    ended: false,
-                    framing,
-                });
+            fetch_tasklet.request_body_streaming_buffer = Some(ours);
+            http.request_body = http::HTTPRequestBody::Stream(http::http_request_body::Stream {
+                buffer: Some(theirs),
+                ended: false,
+                framing,
+            });
         }
         // TODO is this necessary? the http client already sets the redirect type,
         // so manually setting it here seems redundant
         if fetch_options.redirect_type != FetchRedirect::Follow {
-            fetch_tasklet
-                .http
-                .as_mut()
-                .unwrap()
-                .client
-                .remaining_redirect_count = 0;
+            http.client.remaining_redirect_count = 0;
         }
 
         // we want to return after headers are received
@@ -1984,18 +1973,17 @@ impl FetchTasklet {
             .header_progress
             .store(true, Ordering::Relaxed);
 
-        if let HTTPRequestBody::Sendfile { window, .. } = fetch_tasklet.request_body {
+        if let Some(sendfile) = sendfile {
             debug_assert!(url_is_http);
             debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
-            fetch_tasklet.http.as_mut().unwrap().request_body =
-                http::HTTPRequestBody::Sendfile(window);
+            http.request_body = http::HTTPRequestBody::Sendfile(sendfile);
         }
 
         if let Some(signal) = fetch_options.signal {
             // SAFETY: the tasklet is heap-allocated and drops its handle with itself.
             unsafe { jsc::AbortHandle::follow_owner(fetch_tasklet_ptr, signal) };
         }
-        Ok(fetch_tasklet_ptr)
+        Ok((fetch_tasklet_ptr, http))
     }
 
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
@@ -2051,9 +2039,11 @@ impl FetchTasklet {
     fn report_content_length_mismatch(&mut self, written: u64) {
         self.request_body_len_written = written;
         self.request_body_mismatched = true;
-        if let Some(http_) = self.http.as_mut() {
-            http::http_thread()
-                .schedule_request_write(http_, http::http_thread::WriteMessageType::LengthMismatch);
+        if let Some(id) = self.async_http_id {
+            http::HTTPThread::schedule_request_write(
+                id,
+                http::http_thread::WriteMessageType::LengthMismatch,
+            );
         }
     }
 
@@ -2130,8 +2120,8 @@ impl FetchTasklet {
 
         if needs_schedule {
             // wakeup the http thread to write the data
-            http::http_thread().schedule_request_write(
-                self.http.as_mut().unwrap(),
+            http::HTTPThread::schedule_request_write(
+                self.async_http_id.unwrap(),
                 http::http_thread::WriteMessageType::Data,
             );
         }
@@ -2179,9 +2169,11 @@ impl FetchTasklet {
                     .buffer
                     .write(http::END_OF_CHUNKED_HTTP1_1_ENCODING_RESPONSE_BODY); // OOM/capacity: fire-and-forget
             }
-            if let Some(http_) = self.http.as_mut() {
-                http::http_thread()
-                    .schedule_request_write(http_, http::http_thread::WriteMessageType::End);
+            if let Some(id) = self.async_http_id {
+                http::HTTPThread::schedule_request_write(
+                    id,
+                    http::http_thread::WriteMessageType::End,
+                );
             }
         }
     }
@@ -2198,8 +2190,8 @@ impl FetchTasklet {
         if self.signal_store.aborted.swap(true, Ordering::Relaxed) {
             return false;
         }
-        if let Some(http_) = self.http.as_deref() {
-            http::http_thread().schedule_shutdown(http_);
+        if let Some(id) = self.async_http_id {
+            http::HTTPThread::schedule_shutdown(id);
         }
         true
     }
@@ -2262,11 +2254,9 @@ impl FetchTasklet {
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
-        let node = Self::get(cx, fetch_options, promise)?;
+        let (node, request) = Self::get(cx, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
-        let mut batch = bun_threading::thread_pool::Batch::default();
-        node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 
         // SAFETY: the ref that `get` made it with.
@@ -2279,7 +2269,7 @@ impl FetchTasklet {
         });
         // SAFETY: as in `get`.
         unsafe { jsc::AbortHandle::arm_owner(node, cx.context()) };
-        http::HTTPThread::schedule(batch);
+        http::HTTPThread::schedule([request]);
 
         Ok(node)
     }
@@ -2288,17 +2278,13 @@ impl FetchTasklet {
     ///
     /// # Safety
     /// `task` must be a live heap-allocated `FetchTasklet` with the
-    /// HTTP-thread ref still held; `async_http` must point to the HTTP
-    /// thread's live `AsyncHTTP` for the duration of the call.
-    fn callback(
-        task: *mut FetchTasklet,
-        async_http: *mut AsyncHTTP<'static>,
-        result: HTTPClientResult,
-    ) {
+    /// HTTP-thread ref still held.
+    fn callback(task: *mut FetchTasklet, finished: http::Finished, result: HTTPClientResult) {
+        drop(finished);
         let is_done = !result.has_more;
         // SAFETY: fn contract; `http_ref` is HTTP-thread-only.
         unsafe {
-            Self::store_result(task, &*async_http, result);
+            Self::store_result(task, result);
             if is_done {
                 drop((*task).http_ref.take().expect(Self::HOLDS_REF));
             }
@@ -2306,24 +2292,11 @@ impl FetchTasklet {
     }
 
     /// SAFETY: as [`Self::callback`].
-    unsafe fn store_result(
-        task: *mut FetchTasklet,
-        async_http: &AsyncHTTP<'static>,
-        mut result: HTTPClientResult,
-    ) {
+    unsafe fn store_result(task: *mut FetchTasklet, mut result: HTTPClientResult) {
         let task_ref = Self::from_raw_mut(task);
         // Before the lock, so that it is freed after the unlock.
         let body_owned = core::mem::take(&mut result.body_owned);
         let _lock = task_ref.mutex.lock_guard();
-        // Sync HTTP-thread state back into the JS-side instance via an
-        // explicit field-subset copy (`AsyncHTTP` is not `Copy`:
-        // `HTTPClient: Drop`, owned Vecs); see `AsyncHTTP::sync_progress_from`
-        // for the field list.
-        task_ref
-            .http
-            .as_mut()
-            .unwrap()
-            .sync_progress_from(async_http);
 
         bun_output::scoped_log!(
             FetchTasklet,
@@ -2418,15 +2391,11 @@ impl FetchTasklet {
                 return;
             }
         }
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
+        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link. This thread's ref keeps the
         // tasklet (and the ticket in it) alive across the post.
-        task_ref.ticket().post(ct);
+        task_ref.ticket().post_intrusive(ct);
     }
 }
 
@@ -2548,16 +2517,12 @@ impl FetchTaskletPromiseSettle {
     }
 }
 
-impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
+impl bun_event_loop::BoxedTask for FetchTaskletPromiseSettle {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
     /// Drop the held value and promise handle without settling.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the completion queued.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The fetch() promise is settled for the script that fetched.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the box the completion queued.
-        unsafe { (*this).context }
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.context
     }
 }

@@ -27,7 +27,7 @@ use std::io::Write as _;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
-use bun_core::{self, ZBox, env_var, getenv_z, strings, zstr};
+use bun_core::{self, CStrList, CStrRef, ZBox, env_var, getenv_z, strings, zstr};
 use bun_jsc::JSGlobalObject;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
@@ -123,9 +123,9 @@ extern "C" fn Bun__Chrome__retire() {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__Chrome__ensure(
     global: &JSGlobalObject,
-    user_data_dir: *const c_char,     // ?[*:0]const u8
-    path: *const c_char,              // ?[*:0]const u8
-    extra_argv: *const *const c_char, // ?[*]const [*:0]const u8
+    user_data_dir: *const c_char,   // ?[*:0]const u8
+    path: *const c_char,            // ?[*:0]const u8
+    extra_argv: *const CStrRef<'_>, // ?[*]const [*:0]const u8
     extra_argv_len: u32,
     stdout_inherit: bool,
     stderr_inherit: bool,
@@ -135,10 +135,10 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             return -1; // C++ already holds the transport
         }
 
-        let extra: &[*const c_char] = if extra_argv.is_null() {
+        let extra: &[CStrRef<'_>] = if extra_argv.is_null() {
             &[]
         } else {
-            // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
+            // SAFETY: caller guarantees extra_argv points to extra_argv_len C strings.
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
         let vm = global.bun_vm();
@@ -470,7 +470,7 @@ fn spawn(
     vm: &VirtualMachine,
     user_data_dir: Option<&CStr>,
     explicit_path: Option<&CStr>,
-    extra_argv: &[*const c_char],
+    extra_argv: &[CStrRef<'_>],
     stdout_inherit: bool,
     stderr_inherit: bool,
 ) -> crate::Result<i32> {
@@ -522,48 +522,41 @@ fn spawn(
             ZBox::from_vec(v)
         };
 
-        let mut argv: Vec<*const c_char> = vec![
-            chrome.as_ptr(),
-            data_dir.as_ptr(),
-            c"--remote-debugging-pipe".as_ptr(),
-            c"--headless".as_ptr(),
-            c"--no-first-run".as_ptr(),
-            c"--no-default-browser-check".as_ptr(),
-            c"--disable-gpu".as_ptr(), // headless CI has no GPU context
+        let mut argv: Vec<Option<CStrRef<'_>>> = vec![
+            Some(chrome.as_zstr().into()),
+            Some(data_dir.as_zstr().into()),
+            Some(c"--remote-debugging-pipe".into()),
+            Some(c"--headless".into()),
+            Some(c"--no-first-run".into()),
+            Some(c"--no-default-browser-check".into()),
+            Some(c"--disable-gpu".into()), // headless CI has no GPU context
             // Enterprise policy can force-install extensions (webRequest spam on
             // stderr). --disable-extensions is best-effort; mandatory extensions
             // may still load. --disable-background-networking shuts up GCM/update.
-            c"--disable-extensions".as_ptr(),
-            c"--disable-background-networking".as_ptr(),
+            Some(c"--disable-extensions".into()),
+            Some(c"--disable-background-networking".into()),
             // Throttling suite (playwright's chromiumSwitches.ts subset). These
             // gate rAF/setTimeout firing when the tab thinks it's backgrounded.
             // A headless target is "occluded" by definition; without these Chrome
             // throttles timers to 1 Hz and pauses rAF entirely.
-            c"--disable-background-timer-throttling".as_ptr(),
-            c"--disable-backgrounding-occluded-windows".as_ptr(),
-            c"--disable-renderer-backgrounding".as_ptr(),
+            Some(c"--disable-background-timer-throttling".into()),
+            Some(c"--disable-backgrounding-occluded-windows".into()),
+            Some(c"--disable-renderer-backgrounding".into()),
             // CDP message rate limiter — a burst of evaluates/clicks in a test
             // loop hits it otherwise. Playwright and puppeteer both ship this.
-            c"--disable-ipc-flooding-protection".as_ptr(),
+            Some(c"--disable-ipc-flooding-protection".into()),
             // No startup window — targets are Target.createTarget'd, not the
             // default about:blank. Saves one tab and the visual-complete wait.
-            c"--no-startup-window".as_ptr(),
+            Some(c"--no-startup-window".into()),
         ];
         // User extras last so they can override built-in flags (Chrome's
         // CommandLine last-wins for duplicate switches). Memory is the caller's
         // CString Vector — lives until Bun__Chrome__ensure returns, after which
         // posix_spawn has copied argv into the child.
-        for a in extra_argv {
-            argv.push(*a);
-        }
-        argv.push(core::ptr::null());
+        argv.extend(extra_argv.iter().copied().map(Some));
+        let argv = CStrList::terminate(&mut argv);
 
-        // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
-        let env = unsafe {
-            (*vm.transpiler.get().env)
-                .map
-                .create_null_delimited_env_map()
-        }?;
+        let env = vm.env_loader().map.create_null_delimited_env_map()?;
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,
@@ -578,7 +571,7 @@ fn spawn(
                 Stdio::Ignore
             },
             extra_fds: endpoints.child_fds(), // dup2'd to child fd 3 and 4, in order
-            argv0: Some(chrome.as_ptr()),
+            argv0: argv.first(),
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
                 loop_: event_loop,
@@ -587,10 +580,7 @@ fn spawn(
             ..SpawnOptions::default()
         };
 
-        // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
-        // argv[0] non-null; valid for this call.
-        let spawned =
-            unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
+        let spawned = bun_spawn::spawn_process(&opts, argv, Some(env.as_list()))??;
         #[cfg(windows)]
         let mut spawned = spawned;
 
@@ -831,14 +821,11 @@ impl PipeEvent {
 }
 
 #[cfg(windows)]
-impl bun_event_loop::Taskable for QueuedEvent {
+impl bun_event_loop::BoxedTask for QueuedEvent {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ChromePipeEvent;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed in `PipeEvent::post`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }

@@ -88,13 +88,13 @@ impl ExtractTarball {
 
 pub(crate) fn build_url(
     registry_: &[u8],
-    full_name_: &StringOrTinyString,
+    full_name: &[u8],
     version: Version,
     string_buf: &[u8],
 ) -> Result<&'static [u8], bun_alloc::AllocError> {
     build_url_with_printer(
         registry_,
-        full_name_,
+        full_name,
         version,
         string_buf,
         // Format directly into the store's tail; no intermediate `String`.
@@ -105,13 +105,12 @@ pub(crate) fn build_url(
 /// Generic URL builder; the closure carries its own context.
 pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
-    full_name_: &StringOrTinyString,
+    full_name: &[u8],
     version: Version,
     string_buf: &[u8],
     mut print: impl FnMut(fmt::Arguments<'_>) -> Result<R, E>,
 ) -> Result<R, E> {
     let registry = strings::trim_right(registry_, b"/");
-    let full_name = full_name_.slice();
 
     let mut name = full_name;
     if name[0] == b'@' {

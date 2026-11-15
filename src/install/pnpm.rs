@@ -999,7 +999,7 @@ pub(crate) fn migrate_pnpm_lockfile(
                 None => {
                     let url = crate::extract_tarball::build_url(
                         registry,
-                        &strings::StringOrTinyString::init(name.slice(string_bytes!(lockfile))),
+                        name.slice(string_bytes!(lockfile)),
                         res.npm().version,
                         string_bytes!(lockfile),
                     )?;

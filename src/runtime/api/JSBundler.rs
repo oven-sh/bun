@@ -23,6 +23,7 @@ use bun_options_types::schema::api; // bun.schema.api
 use bun_options_types::trim::TrimRequest;
 use bun_standalone_graph::StandaloneModuleGraph;
 
+use crate::api::js_bundle_completion_task::{BuildOwner, JSBundleCompletionTask};
 use crate::cli::compile_command::RequestOrigin;
 use crate::cli::compile_options::{self, CompileFlags, OptionError, TrimFlags};
 
@@ -488,6 +489,8 @@ pub(crate) mod js_bundler {
         harden: Vec<Vec<u8>>,
         testing: Vec<Vec<u8>>,
         out: Vec<Vec<u8>>,
+        order: Vec<Vec<u8>>,
+        record_order: Vec<Vec<u8>>,
         omits_function_source: bool,
         obfuscates: bool,
         admits_inspector: bool,
@@ -548,6 +551,10 @@ pub(crate) mod js_bundler {
             self.harden = read_names(global_this, compile, "aotHarden")?;
             self.testing = read_names(global_this, compile, "aotTesting")?;
             self.out = read_names(global_this, compile, "aotOut")?;
+            self.order = read_names(global_this, compile, "aotOrder")?;
+            if compile.get_boolean_loose(global_this, "aotRecordOrder")? == Some(true) {
+                self.record_order.push(Vec::new());
+            }
             Ok(())
         }
 
@@ -616,6 +623,8 @@ pub(crate) mod js_bundler {
                     .chain(with_key("harden", &self.harden))
                     .chain(with_key("testing", &self.testing))
                     .chain(with_key("out", &self.out))
+                    .chain(with_key("order", &self.order))
+                    .chain(with_key("record-order", &self.record_order))
                     .collect(),
                 is_cross_compile: !compile.compile_target.is_this_bun(),
                 exec_argv: &compile.exec_argv.list,
@@ -1901,20 +1910,13 @@ pub(crate) mod js_bundler {
         let mut plugins = None;
         let config = Config::from_js(global_this, config, &mut plugins)?;
 
-        // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
-        // `crate::api::js_bundle_completion_task` (bun_runtime owns it because its
-        // fields name `Config`/`Plugin`/`HTMLBundle::Route`; lower-tier crates
-        // cannot depend on those).
-        let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
-            config,
-            plugins.as_ref().map(OwnedPlugin::as_non_null),
-            global_this,
-            context,
-        );
-        completion.owned_plugins = plugins;
-        completion.promise = jsc::JSPromiseStrong::init(global_this);
-        let promise = completion.promise.value();
-        completion.schedule();
+        let strong = jsc::JSPromiseStrong::init(global_this);
+        let promise = strong.value();
+        let owner = BuildOwner::Promise {
+            promise: strong,
+            plugins,
+        };
+        JSBundleCompletionTask::schedule(config, global_this, context, owner);
         Ok(promise)
     }
 
@@ -1963,7 +1965,6 @@ pub(crate) mod js_bundler {
     #[unsafe(no_mangle)]
     extern "C" fn JSBundlerPlugin__onResolveAsync(
         resolve: &mut Resolve,
-        _unused: *mut c_void,
         path_value: JSValue,
         namespace_value: JSValue,
         external_value: JSValue,
@@ -2052,10 +2053,8 @@ pub(crate) mod js_bundler {
                             .js_poster
                             .as_ref()
                             .expect("JS-owned bundle has a poster");
-                        if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                            // Owning JS VM torn down mid-bundle: the notify never runs.
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
-                        }
+                        // Refused: the VM was torn down mid-bundle, the notify never runs.
+                        let _ = poster.post(ct);
                     }
                     bun_event_loop::AnyEventLoop::Mini(mini) => {
                         mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
@@ -2089,7 +2088,6 @@ pub(crate) mod js_bundler {
     #[unsafe(no_mangle)]
     extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
-        _unused: *mut c_void,
         source_code_value: JSValue,
         loader_as_int: JSValue,
     ) {
@@ -2163,7 +2161,6 @@ pub(crate) mod js_bundler {
         // sound and discharges the deref obligation at the type level.
         safe fn JSBundlerPlugin__globalObject(plugin: &Plugin) -> &JSGlobalObject;
         safe fn JSBundlerPlugin__appendDeferPromise(plugin: &mut Plugin) -> JSValue;
-        safe fn JSBundlerPlugin__setConfig(plugin: &mut Plugin, config: *mut c_void);
         safe fn JSBundlerPlugin__runSetupFunction(
             plugin: &Plugin,
             object: JSValue,
@@ -2240,7 +2237,6 @@ pub(crate) mod js_bundler {
             is_last: bool,
             is_bake: bool,
         ) -> JsResult<JSValue>;
-        fn set_config(&mut self, config: *mut c_void);
         /// Thin FFI forward; the host-call wrapper / exception check is the
         /// caller's responsibility (`jsc::host_fn::from_js_host_call`).
         fn load_and_resolve_plugins_for_serve(
@@ -2321,11 +2317,6 @@ pub(crate) mod js_bundler {
                     JSValue::from(is_bake),
                 )
             })
-        }
-
-        fn set_config(&mut self, config: *mut c_void) {
-            jsc::mark_binding();
-            JSBundlerPlugin__setConfig(self, config);
         }
 
         fn load_and_resolve_plugins_for_serve(
@@ -2420,8 +2411,6 @@ pub(crate) mod js_bundler {
         }
     }
 }
-
-pub(crate) use js_bundler as JSBundler;
 
 /// `bun:internal-for-testing`: bundler `Worker`s (one per pool thread a build ran on) not yet torn down.
 pub(crate) fn worker_live_count() -> usize {

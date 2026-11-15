@@ -77,8 +77,7 @@ fn start_manifest_task(
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
     unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref) };
-    // SAFETY: `write_init` populated every field with a drop-safe value;
-    // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_manifest`.
+    // SAFETY: `write_init` populated every field.
     let task = unsafe { &mut *net_ptr };
     // `scope` points into `manager.options` which is not mutated by
     // `for_manifest` (it only writes the pool slot and `manager.log`).
@@ -137,7 +136,7 @@ pub fn populate_manifest_cache(
     let resolutions = lockfile.buffers.resolutions.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let string_buf = lockfile.buffers.string_bytes.as_slice();
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
     let pkg_dependencies = pkgs.items_dependencies();
@@ -335,7 +334,7 @@ pub fn print_fetch_failures(manager: &PackageManager) -> crate::Result<bool> {
     let failed_required = log.has_errors();
     if !log.msgs.is_empty() {
         Output::flush();
-        log.print(core::ptr::from_mut(Output::error_writer()))?;
+        log.print(Output::error_writer())?;
         log.reset();
     }
     Ok(failed_required)

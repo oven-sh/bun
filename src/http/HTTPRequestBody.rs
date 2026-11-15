@@ -1,5 +1,6 @@
 use bun_http_types::ETag::StringPointer;
 use bun_http_types::parse_content_length_strict;
+use bun_ptr::RefPtr;
 
 use crate::Encoding;
 use crate::Headers;
@@ -10,9 +11,6 @@ use crate::fold_transfer_encoding;
 /// Request body payload. Parameterized over `'a` so callers can hand in
 /// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
 /// at every `AsyncHTTP::init` call site.
-// No `Owned(Vec<u8>)` variant — the body is bitwise-copied across threads via
-// `core::ptr::read` in `start_queued_task`, so every arm must be
-// trivially-droppable.
 pub enum HTTPRequestBody<'a> {
     /// Borrowed bytes — caller guarantees they outlive the request.
     Bytes(&'a [u8]),
@@ -21,11 +19,7 @@ pub enum HTTPRequestBody<'a> {
 }
 
 pub struct Stream {
-    // ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and is
-    // round-tripped as a raw pointer between the main thread and the HTTP
-    // thread, so we keep the intrusive form (raw pointer + manual ref/deref)
-    // instead of `Arc<T>`.
-    pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
+    pub buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
     pub ended: bool,
     pub framing: StreamFraming,
 }
@@ -87,43 +81,7 @@ impl StreamFraming {
     }
 }
 
-impl Stream {
-    /// Access to the JS-side `ThreadSafeStreamBuffer` while attached.
-    ///
-    /// INVARIANT: while `buffer` is `Some`, this `Stream` holds an intrusive
-    /// ref on the `ThreadSafeStreamBuffer` (taken on attach, released in
-    /// `detach`); the buffer is a separate heap allocation that outlives the
-    /// returned borrow.
-    #[inline]
-    pub(crate) fn buffer_ref(&self) -> Option<&ThreadSafeStreamBuffer> {
-        // Route through the shared `from_attached` accessor (one centralised
-        // unsafe); see INVARIANT above.
-        self.buffer.map(ThreadSafeStreamBuffer::from_attached)
-    }
-
-    pub(crate) fn detach(&mut self) {
-        if let Some(buffer) = self.buffer.take() {
-            // Intrusive refcount decrement.
-            // `buffer` is a live `ThreadSafeStreamBuffer::new` heap allocation;
-            // this side holds the intrusive ref taken at attach, released here.
-            ThreadSafeStreamBuffer::deref(buffer);
-        }
-    }
-}
-
-// No `Drop` for `Stream`: the body is bitwise-copied across threads
-// (`core::ptr::read` in `start_queued_task`), so auto-dropping the
-// JS-thread original would over-deref the shared buffer;
-// `HTTPRequestBody::deinit()` is explicit instead.
-
 impl<'a> HTTPRequestBody<'a> {
-    /// `HTTPRequestBody.deinit()` — only the `Stream` arm owns a ref.
-    pub(crate) fn deinit(&mut self) {
-        if let HTTPRequestBody::Stream(stream) = self {
-            stream.detach();
-        }
-    }
-
     pub(crate) fn is_stream(&self) -> bool {
         matches!(self, HTTPRequestBody::Stream(_))
     }

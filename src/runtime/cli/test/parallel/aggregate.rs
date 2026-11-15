@@ -6,10 +6,12 @@ use bun_core::Output;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_sourcemap_jsc::code_coverage::Report;
 
-use super::coordinator::Coordinator;
+use super::coordinator::{Coordinator, FileTestRecords};
 use super::frame::Reader;
 use super::runner;
-use crate::test_command::{TestCaseReport, TestFailure, junit_file_name, print_coverage_reports};
+use crate::test_command::{
+    JunitReporter, TestCaseReport, TestFailure, junit_file_name, print_coverage_reports,
+};
 use crate::test_runner::execution::Result as TestResult;
 
 /// Feed every worker's per-test records through the coordinator's own
@@ -17,9 +19,10 @@ use crate::test_runner::execution::Result as TestResult;
 /// serial run would have written.
 pub(crate) fn replay_test_records(coord: &mut Coordinator) {
     let files = core::mem::take(&mut coord.test_records);
-    let Some(junit) = coord.reporter.reporters.junit.as_deref_mut() else {
-        return;
-    };
+    (coord.reporter).with_junit(|junit| replay_into(junit, coord, &files));
+}
+
+fn replay_into(junit: &mut JunitReporter, coord: &Coordinator, files: &[FileTestRecords]) {
     for (idx, file) in files.iter().enumerate() {
         let rel = junit_file_name(coord.files[idx].as_bytes());
         junit.file_start_unix_ms = if file.started_unix_ms != 0 {

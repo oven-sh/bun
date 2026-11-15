@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_char;
 #[cfg(unix)]
 use core::ffi::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,7 +62,7 @@ struct Shared {
 }
 
 impl Shared {
-    fn write_prefix(&self, config: &ScriptConfig, writer: &mut OutputWriter) -> Result<(), Error> {
+    fn write_prefix(&self, config: &ScriptConfig, writer: &OutputWriter) -> Result<(), Error> {
         if self.use_colors {
             writer.write_all(COLORS[config.group % COLORS.len()])?;
         }
@@ -93,7 +92,7 @@ pub(crate) struct Lines<'a> {
 
 impl Lines<'_> {
     /// Child stdout -> parent stdout, child stderr -> parent stderr
-    fn writer(&self) -> &'static mut OutputWriter {
+    fn writer(&self) -> &'static OutputWriter {
         if self.is_stderr {
             Output::error_writer()
         } else {
@@ -190,7 +189,7 @@ pub(crate) struct ProcessHandle<'a> {
     stderr_reader: PipeReader<'a>,
 
     process: Option<ProcessSlot>,
-    options: SpawnOptions,
+    options: SpawnOptions<'static>,
 
     /// Counted out of `remaining_scripts`.
     finished: bool,
@@ -218,16 +217,8 @@ impl<'a> ProcessHandle<'a> {
                 &self.config.cwd,
                 |env| env.map.create_null_delimited_env_map(),
             )?;
-            // SAFETY: `argv` and `envp` are null-terminated C-string arrays
-            // (argv[0] non-null) owned by locals that outlive this call.
-            unsafe {
-                spawn::spawn_process(
-                    &self.options,
-                    argv.as_ptr(),
-                    envp.as_ptr().cast::<*const c_char>(),
-                )
-            }?
-            .map_err(Error::from)?
+            spawn::spawn_process(&self.options, argv.as_list(), Some(envp.as_list()))?
+                .map_err(Error::from)?
         };
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(self.shared.event_loop));

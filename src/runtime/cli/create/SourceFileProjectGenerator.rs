@@ -352,7 +352,7 @@ fn has_any_tailwind_classes_in_source_files(
     bundler: &BundleV2,
     reachable_files: &[bun_ast::Index],
 ) -> bool {
-    let input_files = bundler.graph.input_files.slice();
+    let input_files = &bundler.graph.input_files;
     let sources = input_files.items_source();
     let loaders = input_files.items_loader();
 
@@ -426,7 +426,7 @@ fn get_shadcn_components(
     bundler: &BundleV2,
     reachable_files: &[bun_ast::Index],
 ) -> Result<StringSet, bun_alloc::AllocError> {
-    let input_files = bundler.graph.input_files.slice();
+    let input_files = &bundler.graph.input_files;
     let loaders = input_files.items_loader();
     let all = bundler.graph.ast.items_import_records();
     let mut icons = StringSet::new();
@@ -451,7 +451,7 @@ fn find_react_component_export<'r>(
     bundler: &'r BundleV2<'_>,
     linker_graph: &'r LinkerGraph<'_>,
 ) -> Option<&'r [u8]> {
-    let input_files = bundler.graph.input_files.slice();
+    let input_files = &bundler.graph.input_files;
     let loaders = input_files.items_loader();
     let resolved_exports: &[ResolvedExports] = linker_graph.meta.items_resolved_exports();
     let sources = input_files.items_source();

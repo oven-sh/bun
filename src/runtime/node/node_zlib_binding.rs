@@ -712,31 +712,46 @@ fn async_job_run<T: CompressionStreamImpl>(this: *mut T) {
     ticket.post(ConcurrentTask::create(Task::init(this)));
 }
 
+/// The ref and the keep-alive that `write()` took.
+pub(crate) struct PendingWrite<T: CompressionStreamImpl>(RefPtr<T>);
+
+impl<T: CompressionStreamImpl> PendingWrite<T> {
+    /// SAFETY: `this` is what `async_job_run` posted.
+    pub(crate) unsafe fn from_raw(this: *mut T) -> Self {
+        // SAFETY: fn contract.
+        Self(unsafe { RefPtr::from_raw(this) })
+    }
+}
+
+impl<T: CompressionStreamImpl> Drop for PendingWrite<T> {
+    fn drop(&mut self) {
+        self.0.poll_ref().unref();
+    }
+}
+
 /// VM teardown, JS thread, heap alive: a completion that was queued but
 /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
-pub(crate) fn release_unrun<T: CompressionStreamImpl>(this: RefPtr<T>) {
+pub(crate) fn release_unrun<T: CompressionStreamImpl>(write: PendingWrite<T>) {
+    let this = &*write.0;
     this.write_in_progress().set(false);
     if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
         this.unpin_pending_buffers(this_value);
     }
-    this.poll_ref().unref();
-    drop(this);
+    drop(write);
 }
 
 /// Dispatched from `dispatch.rs` when the worker-thread `do_work()` posts
-/// the completion task back to the JS thread. `this` is the ref `write()` took.
-pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
+/// the completion task back to the JS thread.
+pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(write: PendingWrite<T>) {
+    let this = &*write.0;
     let global: &JSGlobalObject = this.global_this();
     let vm = global.bun_vm();
-    // `this.poll_ref.unref()` must run on every return path, before `this` is dropped.
 
     this.write_in_progress().set(false);
 
     // Clear the strong handle before we call any callbacks.
     let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
         bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
-        this.poll_ref().unref();
-        drop(this);
         return;
     };
 
@@ -747,8 +762,6 @@ pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
     if !this.check_error(global, this_value) {
-        this.poll_ref().unref();
-        drop(this);
         return;
     }
 
@@ -776,9 +789,7 @@ pub(crate) fn run_from_js_thread<T: CompressionStreamImpl>(this: RefPtr<T>) {
     if this.pending_close().get() {
         this.close();
     }
-
-    this.poll_ref().unref();
-    drop(this);
+    drop(write);
 }
 
 /// Implements [`CompressionContext`] for a `Context` type and
@@ -800,9 +811,10 @@ macro_rules! __impl_compression_stream {
             /// An async write whose completion will not run: unpin, unref, drop
             /// the write's ref — no callbacks.
             unsafe fn release_unrun(this: *mut Self) {
+                use $crate::node::node_zlib_binding::PendingWrite;
                 // SAFETY: fn contract — the stream the pool posted (write's ref held).
-                let this = unsafe { ::bun_ptr::RefPtr::from_raw(this) };
-                $crate::node::node_zlib_binding::release_unrun(this)
+                let write = unsafe { PendingWrite::from_raw(this) };
+                $crate::node::node_zlib_binding::release_unrun(write)
             }
             /// The write always completes (its buffers are unpinned); the callbacks it reports to carry
             /// the async context of the script that set them.

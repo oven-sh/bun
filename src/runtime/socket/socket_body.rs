@@ -3796,7 +3796,6 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract; the single queue entry for `this`.
         let ctx = unsafe { bun_ptr::ThisPtr::new(this) };
-        ctx.queued.set(false);
         if let Some(tls) = ctx.tls.replace(None) {
             // An entry point on the stack keeps the context past this call.
             // Neuter the listener thunks now, while the wrapper is still
@@ -3806,13 +3805,12 @@ impl bun_event_loop::Taskable for DuplexUpgradeContext {
             // `Err` is left pending for the release dispatcher's fold.
             let _ = TLSSocket::on_close(tls, socket, 0, None);
         }
-        // Not `release_connection`: at zero that queues the hop this call stands in for.
-        if ctx.take_connection_ref() {
-            ctx.ref_count.set(ctx.ref_count.get() - 1);
-        }
+        // Still `queued`, so at zero `queue_free` leaves the free to this call.
+        Self::release_connection(ctx);
+        ctx.queued.set(false);
         if ctx.ref_count.get() == 0 {
             // SAFETY: fn contract; nothing holds the context and no borrow of it is live.
-            unsafe { Self::deinit(this) };
+            unsafe { bun_core::heap::destroy(this) };
         }
     }
     /// The hop continues the script that upgraded the duplex: once that context has stopped, a
@@ -3835,9 +3833,7 @@ pub(crate) struct DuplexUpgradeContext {
     /// `Close` hop is queued, which frees the context. No ref is taken after
     /// that.
     ref_count: Cell<u32>,
-    /// The connection's ref is still held. Cleared by [`Self::take_connection_ref`].
-    connection_ref: Cell<bool>,
-    pub upgrade: UpgradedDuplex,
+    connection_ref: JsCell<Option<RefPtr<Self>>>,
     // We only us a tls and not a raw socket when upgrading a Duplex, Duplex dont support socketpairs
     pub tls: JsCell<Option<RefPtr<TLSSocket>>>,
     /// JSC_BORROW: process-lifetime per-thread VM (immortal).
@@ -3852,8 +3848,9 @@ pub(crate) struct DuplexUpgradeContext {
     pub ssl_config: JsCell<Option<SSLConfig>>,
     /// Prebuilt `SSL_CTX` (from `opts.tls.secureContext` — the memoised
     /// `tls.createSecureContext` path). Moved into `start_tls_with_ctx`;
-    /// dropped in `deinit` if Close races ahead of StartTLS.
+    /// dropped with the context if Close races ahead of StartTLS.
     pub owned_ctx: JsCell<Option<boringssl_sys::OwnedSslCtx>>,
+    pub upgrade: UpgradedDuplex,
     pub is_open: Cell<bool>,
     /// Server-side `requestCert`/`rejectUnauthorized`, applied to the `SSL*`
     /// when `StartTLS` builds it. Unused for client upgrades.
@@ -3866,9 +3863,16 @@ pub(crate) struct DuplexUpgradeContext {
     context: bun_jsc::ContextId,
 }
 
+impl Drop for DuplexUpgradeContext {
+    fn drop(&mut self) {
+        debug_assert_eq!(self.ref_count.get(), 0);
+        DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 // `close` may re-enter (`on_close`) and schedule the free of `this`.
 bun_jsc::impl_abort_handle_owner!(DuplexUpgradeContext, abort_handle, |this, _cause| {
-    // SAFETY: trait contract — `this` is live (armed ⇒ `deinit` has not run).
+    // SAFETY: trait contract — `this` is live (armed ⇒ not dropped).
     unsafe { bun_ptr::ThisPtr::new(this) }.upgrade.close()
 });
 
@@ -3901,7 +3905,7 @@ impl DuplexUpgradeContext {
     #[inline]
     pub(in crate::socket) fn debug_assert_kept_alive(&self) {
         debug_assert!(
-            self.ref_count.get() > u32::from(self.connection_ref.get()),
+            self.ref_count.get() > u32::from(self.connection_ref.get().is_some()),
             "DuplexUpgradeContext dispatch with no keep_alive() on the stack"
         );
     }
@@ -3916,23 +3920,11 @@ impl DuplexUpgradeContext {
         RefPtr::from_this(this)
     }
 
-    /// The connection is over. True the first time: the caller then releases
-    /// the connection's ref.
-    fn take_connection_ref(&self) -> bool {
-        if !self.connection_ref.replace(false) {
-            return false;
-        }
-        // Nothing is left for the owning context to close, and its hook would
-        // take a ref.
-        self.abort_handle.leave();
-        true
-    }
-
     /// The transport closed, or `StartTLS` could not start it.
     fn release_connection(this: bun_ptr::ThisPtr<Self>) {
-        if this.take_connection_ref() {
-            // SAFETY: `this` is live and the ref released is the connection's.
-            unsafe { Self::deref(this.as_ptr()) };
+        if let Some(_connection_ref) = this.connection_ref.take() {
+            // Nothing is left for the owning context to close, and its hook would take a ref.
+            this.abort_handle.leave();
         }
     }
 
@@ -3942,10 +3934,6 @@ impl DuplexUpgradeContext {
     fn queue_free(this: *mut Self) {
         // SAFETY: the count just reached zero; `this` is live until that hop runs.
         let this = unsafe { bun_ptr::ThisPtr::new(this) };
-        debug_assert!(
-            !this.queued.get(),
-            "DuplexUpgradeContext released its last ref with a hop still queued"
-        );
         this.task_event.set(EventState::Close);
         Self::enqueue_self_task(this);
     }
@@ -4041,7 +4029,7 @@ impl DuplexUpgradeContext {
             // `has_handlers() == false` in `onOpen`.
             //
             // Neuter the JS listener thunks now, while the wrapper is still
-            // strongly held, so the `deinit` → `Drop` teardown later (the
+            // strongly held, so the `Drop` teardown later (the
             // queued `StartTLS` releases the connection's ref, after
             // `handle_connect_error` downgrades the wrapper) is a no-op on
             // already-cleared shadows.
@@ -4081,8 +4069,7 @@ impl DuplexUpgradeContext {
         Self::release_connection(this);
     }
 
-    /// Takes `ThisPtr<Self>` because it may free `this` (via
-    /// [`Self::deinit`]); nothing touches `this` after that call.
+    /// Takes `ThisPtr<Self>` because it may free `this`.
     pub(crate) fn run_event(this: bun_ptr::ThisPtr<Self>) {
         this.queued.set(false);
         match this.task_event.get() {
@@ -4131,7 +4118,7 @@ impl DuplexUpgradeContext {
                     let errno = sys::SystemErrno::ECONNREFUSED as c_int;
                     if let Some(tls) = this.tls.replace(None) {
                         // Neuter the JS listener thunks now, while the wrapper
-                        // is still strongly held, so the `deinit` → `Drop`
+                        // is still strongly held, so the `Drop`
                         // teardown later is a no-op on already-cleared shadows.
                         this.upgrade.teardown();
                         crate::dispatch::fold(TLSSocket::handle_connect_error(tls, errno, 0));
@@ -4155,11 +4142,8 @@ impl DuplexUpgradeContext {
                 // the peer's ClientHello lands before this side starts.
                 this.upgrade.drain_pending();
             }
-            // Previously this only called `upgrade.close()` and never `deinit`,
-            // leaking the SSLWrapper, the strong refs, and this struct itself
-            // for every duplex-upgraded TLS socket.
             // SAFETY: `this` is the task's live context; its last ref queued this hop and no borrow of `*this` is live.
-            EventState::Close => unsafe { Self::deinit(this.as_ptr()) },
+            EventState::Close => unsafe { bun_core::heap::destroy(this.as_ptr()) },
         }
     }
 
@@ -4179,33 +4163,6 @@ impl DuplexUpgradeContext {
     fn start_tls(this: bun_ptr::ThisPtr<Self>) {
         this.task_event.set(EventState::StartTLS);
         Self::enqueue_self_task(this);
-    }
-
-    /// # Safety
-    /// `this` must be the unique live pointer to the heap allocation produced
-    /// in `upgrade_duplex_to_tls`, with a ref count of zero. Frees the
-    /// allocation; callers must not
-    /// hold a `&`/`&mut Self` across this call (taking `&mut self` here would
-    /// be a Stacked Borrows protector violation when the backing `Box` is
-    /// reclaimed below).
-    unsafe fn deinit(this: *mut Self) {
-        {
-            // SAFETY: `this` is live; this borrow ends with the block, before the `heap::take` free below.
-            let ctx = unsafe { &*this };
-            debug_assert_eq!(ctx.ref_count.get(), 0);
-            DUPLEX_UPGRADE_CONTEXT_LIVE_COUNT.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-            ctx.abort_handle.leave();
-            ctx.tls.set(None);
-            // Close raced ahead of StartTLS — drop the unconsumed config / ctx.
-            ctx.ssl_config.set(None);
-            ctx.owned_ctx.set(None);
-        }
-        // `UpgradedDuplex` cleanup
-        // runs via `Drop` when `heap::take(this)` frees the containing
-        // struct below; an explicit call here would double-free.
-        // SAFETY: heap-allocated in `upgrade_duplex_to_tls`; this is the
-        // matching free. No `&`/`&mut Self` survives past this point.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
@@ -4410,11 +4367,11 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     ))
     .cast();
     // SAFETY: fresh heap allocation; every field is `ptr::write`-initialized
-    // below before any read or `&mut DuplexUpgradeContext` is formed.
+    // below before any read or `&mut DuplexUpgradeContext` is formed. `from_raw` adopts the first ref and reads nothing.
     unsafe {
-        // The connection's ref.
         ptr::addr_of_mut!((*duplex_context).ref_count).write(Cell::new(1));
-        ptr::addr_of_mut!((*duplex_context).connection_ref).write(Cell::new(true));
+        ptr::addr_of_mut!((*duplex_context).connection_ref)
+            .write(JsCell::new(Some(RefPtr::from_raw(duplex_context))));
         ptr::addr_of_mut!((*duplex_context).tls).write(JsCell::new(Some(tls)));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         ptr::addr_of_mut!((*duplex_context).task_event).write(Cell::new(EventState::StartTLS));
@@ -4508,7 +4465,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
     // dangling still exits. If the underlying stream is a real socket, that
     // socket's own handle keeps the loop alive.
 
-    // SAFETY: non-null, fully initialised, heap-pinned; leaves its context in `deinit`.
+    // SAFETY: non-null, fully initialised, heap-pinned; leaves its context with the connection.
     unsafe { bun_jsc::AbortHandle::arm_owner(duplex_context, context) };
     DuplexUpgradeContext::start_tls(duplex_context_ref);
 

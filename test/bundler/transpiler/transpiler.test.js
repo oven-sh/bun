@@ -2869,7 +2869,7 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
-  // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
+  // Non-bundle transpile without `minify.identifiers` uses `Renamer::no_op`
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision
   // guard against a user local of the same name in the first JSX element's

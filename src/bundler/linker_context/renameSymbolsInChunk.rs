@@ -4,7 +4,6 @@ use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
 use bun_ast::StmtData;
-use bun_ast::symbol;
 use bun_ast::{Part, Ref, SlotCounts};
 
 use crate::bun_renamer as renamer;
@@ -18,10 +17,10 @@ use crate::{Chunk, LinkerContext, StableRef, ThreadPool, WrapKind};
 /// esbuild does parallelize it.
 // CONCURRENCY: called from `LinkerContext::generate_js_renamer` (`each_ptr`
 // callback) — runs on worker threads, one task per chunk.
-pub(crate) fn rename_symbols_in_chunk(
-    c: &LinkerContext,
+pub(crate) fn rename_symbols_in_chunk<'a>(
+    c: &LinkerContext<'_, 'a>,
     chunk: &mut Chunk,
-) -> Result<ChunkRenamer, crate::Error> {
+) -> Result<ChunkRenamer<'a>, crate::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
     let Content::Javascript(js) = &chunk.content else {
@@ -30,7 +29,7 @@ pub(crate) fn rename_symbols_in_chunk(
     let files_in_order: &[u32] = &js.files_in_chunk_order;
     let symbols = &c.graph.symbols;
 
-    let ast = c.graph.ast.slice();
+    let ast = &c.graph.ast;
     let all_module_scopes = ast.items_module_scope();
     let all_parts = ast.items_parts();
     let all_wrapper_refs = ast.items_wrapper_ref();
@@ -55,17 +54,6 @@ pub(crate) fn rename_symbols_in_chunk(
         &cjs_export_copies_col[chunk.entry_point.source_index() as usize]
     } else {
         &[]
-    };
-
-    // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
-    // `from_borrowed_slice_dangerous` so the renamer's `Map` does not free graph storage on
-    // drop.
-    let make_symbols_view = || symbol::Map {
-        // SAFETY: `c.graph.symbols` outlives the returned `ChunkRenamer`, which
-        // only reads through this view and never grows or drops it.
-        symbols_for_source: core::mem::ManuallyDrop::into_inner(unsafe {
-            <Vec<_> as VecExt<_>>::from_borrowed_slice_dangerous(&symbols.symbols_for_source)
-        }),
     };
 
     let mut reserved_names = renamer::compute_initial_reserved_names(c.options.output_format)?;
@@ -116,8 +104,7 @@ pub(crate) fn rename_symbols_in_chunk(
             slots
         };
 
-        let mut minify_renamer =
-            MinifyRenamer::init(make_symbols_view(), &first_top_level_slots, reserved_names)?;
+        let mut minify_renamer = MinifyRenamer::init(&first_top_level_slots, reserved_names)?;
 
         let mut top_level_symbols: Vec<StableSymbolCount> = Vec::new();
         let mut top_level_symbols_all: Vec<StableSymbolCount> = Vec::new();
@@ -143,6 +130,7 @@ pub(crate) fn rename_symbols_in_chunk(
 
             if uses_exports_ref {
                 minify_renamer.accumulate_symbol_use_count(
+                    symbols,
                     &mut top_level_symbols,
                     exports_ref,
                     1,
@@ -151,6 +139,7 @@ pub(crate) fn rename_symbols_in_chunk(
             }
             if uses_module_ref {
                 minify_renamer.accumulate_symbol_use_count(
+                    symbols,
                     &mut top_level_symbols,
                     module_ref,
                     1,
@@ -165,6 +154,7 @@ pub(crate) fn rename_symbols_in_chunk(
                 }
 
                 minify_renamer.accumulate_symbol_use_counts(
+                    symbols,
                     &mut top_level_symbols,
                     &part.symbol_uses,
                     stable_source_indices,
@@ -172,6 +162,7 @@ pub(crate) fn rename_symbols_in_chunk(
 
                 for declared_ref in part.declared_symbols.refs() {
                     minify_renamer.accumulate_symbol_use_count(
+                        symbols,
                         &mut top_level_symbols,
                         *declared_ref,
                         1,
@@ -189,6 +180,7 @@ pub(crate) fn rename_symbols_in_chunk(
             // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
             let ref_ = { stable_ref.r#ref };
             minify_renamer.accumulate_symbol_use_count(
+                symbols,
                 &mut top_level_symbols,
                 ref_,
                 1,
@@ -197,6 +189,7 @@ pub(crate) fn rename_symbols_in_chunk(
         }
         for &copy in entry_point_cjs_export_copies {
             minify_renamer.accumulate_symbol_use_count(
+                symbols,
                 &mut top_level_symbols,
                 copy,
                 1,
@@ -204,7 +197,7 @@ pub(crate) fn rename_symbols_in_chunk(
             )?;
         }
         top_level_symbols_all.extend_from_slice(&top_level_symbols);
-        minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols_all)?;
+        minify_renamer.allocate_top_level_symbol_slots(symbols, &top_level_symbols_all)?;
 
         minify_renamer.name_minifier = Some(freq.compile());
         // With code splitting, names are assigned (`MinifyRenamer::finish`)
@@ -216,25 +209,19 @@ pub(crate) fn rename_symbols_in_chunk(
         return Ok(ChunkRenamer::Minify(minify_renamer));
     }
 
-    let mut r = NumberRenamer::init(
-        make_symbols_view(),
-        &reserved_names,
-        files_in_order,
-        c.renamer_rows.as_deref(),
-        &c.cross_chunk_names,
-    )?;
+    let mut r = NumberRenamer::init(symbols, &reserved_names, files_in_order, c.renamer_rows)?;
     // Bindings that cross chunks carry one bundle-wide name
     // (`assign_cross_chunk_names`); everything else is numbered around them.
     for &ref_ in js.exports_to_other_chunks.keys() {
         if let Some(name) = c.cross_chunk_names.get(&ref_) {
-            r.pin_top_level_symbol(ref_, name);
+            r.pin_top_level_symbol(symbols, ref_, name);
         }
     }
     for stable_ref in &sorted_imports_from_other_chunks {
         // `StableRef` is `repr(packed)`; copy the field to avoid an unaligned ref.
         let ref_ = { stable_ref.r#ref };
         if let Some(name) = c.cross_chunk_names.get(&ref_) {
-            r.pin_top_level_symbol(ref_, name);
+            r.pin_top_level_symbol(symbols, ref_, name);
         }
     }
 
@@ -263,7 +250,7 @@ pub(crate) fn rename_symbols_in_chunk(
             // scope to this new top-level scope) but it's good enough for the
             // renaming code.
             WrapKind::Cjs => {
-                r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
+                r.add_top_level_symbol(symbols, all_wrapper_refs[source_index as usize]);
 
                 // External import statements will be hoisted outside of the CommonJS
                 // wrapper if the output format supports import statements. We need to
@@ -279,16 +266,16 @@ pub(crate) fn rename_symbols_in_chunk(
                                         .source_index
                                         .is_valid()
                                     {
-                                        r.add_top_level_symbol(import.namespace_ref);
+                                        r.add_top_level_symbol(symbols, import.namespace_ref);
                                         if let Some(default_name) = &import.default_name {
                                             if let Some(ref_) = default_name.ref_.to_nullable() {
-                                                r.add_top_level_symbol(ref_);
+                                                r.add_top_level_symbol(symbols, ref_);
                                             }
                                         }
 
                                         for item in import.items.slice() {
                                             if let Some(ref_) = item.name.ref_.to_nullable() {
-                                                r.add_top_level_symbol(ref_);
+                                                r.add_top_level_symbol(symbols, ref_);
                                             }
                                         }
                                     }
@@ -298,7 +285,7 @@ pub(crate) fn rename_symbols_in_chunk(
                                         .source_index
                                         .is_valid()
                                     {
-                                        r.add_top_level_symbol(export_.namespace_ref);
+                                        r.add_top_level_symbol(symbols, export_.namespace_ref);
                                     }
                                 }
                                 StmtData::SExportFrom(export_) => {
@@ -306,11 +293,11 @@ pub(crate) fn rename_symbols_in_chunk(
                                         .source_index
                                         .is_valid()
                                     {
-                                        r.add_top_level_symbol(export_.namespace_ref);
+                                        r.add_top_level_symbol(symbols, export_.namespace_ref);
 
                                         for item in export_.items.slice() {
                                             if let Some(ref_) = item.name.ref_.to_nullable() {
-                                                r.add_top_level_symbol(ref_);
+                                                r.add_top_level_symbol(symbols, ref_);
                                             }
                                         }
                                     }
@@ -342,7 +329,7 @@ pub(crate) fn rename_symbols_in_chunk(
             // minify everything inside the closure without introducing a new scope
             // since all top-level variables will be hoisted outside of the closure.
             WrapKind::Esm => {
-                r.add_top_level_symbol(all_wrapper_refs[source_index as usize]);
+                r.add_top_level_symbol(symbols, all_wrapper_refs[source_index as usize]);
             }
 
             WrapKind::None => {}
@@ -354,7 +341,7 @@ pub(crate) fn rename_symbols_in_chunk(
                 continue;
             }
 
-            r.add_top_level_declared_symbols(&part.declared_symbols);
+            r.add_top_level_declared_symbols(symbols, &part.declared_symbols);
             // `part.scopes` lists every scope visited for the part; the walk
             // below recurses, so only the module scope's children go in.
             for &scope in part.scopes.iter() {
@@ -370,7 +357,7 @@ pub(crate) fn rename_symbols_in_chunk(
     // After the files, so a user binding with the same name keeps it and the
     // copy takes the numbered one.
     for &copy in entry_point_cjs_export_copies {
-        r.add_top_level_symbol(copy);
+        r.add_top_level_symbol(symbols, copy);
     }
 
     chunk.nested_scopes_to_rename = nested_scopes;
@@ -380,8 +367,9 @@ pub(crate) fn rename_symbols_in_chunk(
 bun_core::declare_scope!(ChunkRenamer, hidden);
 
 /// Source index -> the file's row in its chunk's renamer. `None`: a file is in several chunks.
-pub(crate) fn renamer_rows(file_count: usize, chunks: &[Chunk]) -> Option<Box<[u32]>> {
-    let mut rows = vec![u32::MAX; file_count];
+pub(crate) fn renamer_rows<'a>(c: &LinkerContext<'_, 'a>, chunks: &[Chunk]) -> Option<&'a [u32]> {
+    let file_count = c.graph.symbols.symbols_for_source.len();
+    let rows = c.arena().alloc_slice_fill_copy(file_count, u32::MAX);
     let mut next_row: u32 = 0;
     for chunk in chunks {
         let Content::Javascript(js) = &chunk.content else {
@@ -396,7 +384,7 @@ pub(crate) fn renamer_rows(file_count: usize, chunks: &[Chunk]) -> Option<Box<[u
             next_row += 1;
         }
     }
-    Some(rows.into_boxed_slice())
+    Some(rows)
 }
 
 /// What each chunk's renamer holds, on `BUN_DEBUG_ChunkRenamer=1`.
@@ -469,7 +457,13 @@ pub(crate) fn run_nested_rename_task(
     let worker = ThreadPool::Worker::get(c.bundle);
     // Made-up names go in this thread's worker arena, which lives until the
     // bundle is done.
-    let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);
+    let mut nested = NestedRenamer::new(
+        root,
+        &c.cross_chunk_names,
+        &uses,
+        source_index,
+        &worker.arena,
+    );
     let mut sorted: Vec<u32> = Vec::new();
     for &(_, scope) in scopes {
         // SAFETY: live arena-allocated scope (see `rename_symbols_in_chunk`).

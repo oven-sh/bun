@@ -1601,13 +1601,7 @@ extern "C" void Bun__ensureSignalHandler();
 extern "C" bool Bun__isMainThreadVM();
 extern "C" void Bun__onPosixSignal(int signalNumber);
 extern "C" void Bun__onSignalListenerCountChanged(int signalNumber, int listenerCount);
-
-__attribute__((noinline)) static void forwardSignal(int signalNumber)
-{
-    // We want a function that's equivalent to Bun__onPosixSignal but whose address is different.
-    // This is so that we can be sure not to uninstall signal handlers that we didn't install here.
-    Bun__onPosixSignal(signalNumber);
-}
+extern "C" bool Bun__AOT__isRecordingOrder();
 
 // `bun run --watch` keeps this signal's handler installed for the process
 // lifetime (node's watcher process owns SIGINT the same way), so the
@@ -1615,6 +1609,14 @@ __attribute__((noinline)) static void forwardSignal(int signalNumber)
 static int watchModeStickySignal = 0;
 
 #if !OS(WINDOWS)
+__attribute__((noinline)) static void forwardSignal(int signalNumber, siginfo_t* info, void* context)
+{
+    Bun::reportOwnCrash(signalNumber, info, context);
+    // We want a function that's equivalent to Bun__onPosixSignal but whose address is different.
+    // This is so that we can be sure not to uninstall signal handlers that we didn't install here.
+    Bun__onPosixSignal(signalNumber);
+}
+
 #if OS(LINUX)
 // Tells the seccomp SIGSYS handler in c-bindings.cpp whether to forward a SIGSYS sent with kill(2).
 extern "C" bool Bun__forwardSIGSYSToJS(bool enabled);
@@ -1628,10 +1630,10 @@ static void installForwardSignalHandler(int signalNumber)
 #endif
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
-    action.sa_handler = forwardSignal;
+    action.sa_sigaction = forwardSignal;
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, signalNumber);
-    action.sa_flags = SA_RESTART;
+    action.sa_flags = SA_RESTART | SA_SIGINFO | (Bun::mayReportOwnCrash(signalNumber) ? SA_ONSTACK : 0);
     Bun::setSignalAction(signalNumber, &action, nullptr);
 }
 
@@ -1641,10 +1643,9 @@ static void uninstallForwardSignalHandler(int signalNumber)
     if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(false))
         return;
 #endif
-    if (void (*oldHandler)(int) = Bun::setSignalHandler(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
-        // Don't uninstall the old handler if it's not the one we installed.
-        Bun::setSignalHandler(signalNumber, oldHandler);
-    }
+    struct sigaction current;
+    if (Bun::setSignalAction(signalNumber, nullptr, &current) == 0 && current.sa_sigaction == forwardSignal)
+        Bun::setDefaultSignalAction(signalNumber);
 }
 
 extern "C" void Bun__installWatchModeSignalHandler(int signalNumber)
@@ -1729,7 +1730,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
 #if OS(LINUX)
             // SIGKILL and SIGSTOP cannot be handled, and JSC needs its own signal handler to
             // suspend and resume the JS thread which we must not override.
-            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume) {
+            if (signalNumber != SIGKILL && signalNumber != SIGSTOP && signalNumber != g_wtfConfig.sigThreadSuspendResume && !(eventEmitter.scriptExecutionContext()->vm().hasCompiledCode() && signalNumber == SIGTRAP && Bun__AOT__isRecordingOrder())) {
 #elif OS(DARWIN) || OS(FREEBSD)
             // these signals cannot be handled
             if (signalNumber != SIGKILL && signalNumber != SIGSTOP) {
@@ -5982,7 +5983,7 @@ static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalN
     if (!CrashHandler__isCrashSignal(signalNumber) || !killReachesThisProcess(pid, ownPid))
         return;
     struct sigaction current;
-    if (Bun::setSignalAction(signalNumber, nullptr, &current) != 0 || current.sa_handler == forwardSignal)
+    if (Bun::setSignalAction(signalNumber, nullptr, &current) != 0 || current.sa_sigaction == forwardSignal)
         return;
     restoreDefaultSignalDisposition(signalNumber);
 }

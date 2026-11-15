@@ -3230,7 +3230,7 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 if (!variable.record && (!loaded.compiledModule || JSC::AOT::isEvicted(globalObject, *loaded.compiledModule))) {
                     auto resolution = moduleNamespaceObject->moduleRecord()->resolveExport(globalObject, name);
                     RETURN_IF_EXCEPTION(scope, );
-                    JSValue compiledOriginal = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readExportOfRecord(resolution.moduleRecord, resolution.localName) : JSValue();
+                    JSValue compiledOriginal = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readExportOfRecord(resolution.moduleRecord, resolution.localName, overwritten) : JSValue();
                     RETURN_IF_EXCEPTION(scope, );
                     if (compiledOriginal) {
                         overwritten->putDirectMayBeIndex(globalObject, name, compiledOriginal);
@@ -3957,6 +3957,18 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         // so only a builtin's lazy export has to be forced here.
         ExportVariable variable = findExportVariable(globalObject, moduleNamespace, name);
         RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+        if (!variable.record && vm.hasCompiledCode()) {
+            auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, );
+            original = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readDeferredExportOfRecord(resolution.moduleRecord, resolution.localName) : JSValue();
+            RETURN_IF_EXCEPTION(scope, );
+            if (original) {
+                moduleNamespace->overrideExportValue(globalObject, name, original);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
+#endif
         if (!variable.record || !variable.record->inherits<JSC::SyntheticModuleRecord>())
             continue;
         BunString builtinKey = Bun::toString(variable.record->moduleKey().string());

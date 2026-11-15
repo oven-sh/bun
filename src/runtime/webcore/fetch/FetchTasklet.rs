@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
-use bun_event_loop::{
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -2493,15 +2490,11 @@ impl FetchTasklet {
                 return;
             }
         }
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
+        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link. This thread's ref keeps the
         // tasklet (and the ticket in it) alive across the post.
-        task_ref.ticket().post(ct);
+        task_ref.ticket().post_intrusive(ct);
     }
 }
 
@@ -2623,16 +2616,12 @@ impl FetchTaskletPromiseSettle {
     }
 }
 
-impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
+impl bun_event_loop::BoxedTask for FetchTaskletPromiseSettle {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
     /// Drop the held value and promise handle without settling.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the completion queued.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The fetch() promise is settled for the script that fetched.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the box the completion queued.
-        unsafe { (*this).context }
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.context
     }
 }

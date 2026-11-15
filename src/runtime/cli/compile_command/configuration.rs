@@ -228,7 +228,6 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         .is_some_and(|aot| aot.missing_tsconfig_override.is_some());
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
-    // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.
     let this_transpiler: &'static mut Transpiler<'static> =
         arena.alloc(Transpiler::init(arena, ctx.log, ctx.args.clone(), None)?);
     if reads_no_configuration {

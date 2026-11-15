@@ -906,7 +906,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         handlers
             .vm
             .event_loop()
-            .enqueue_task(jsc::Task::init(bun_core::heap::into_raw(task)));
+            .enqueue_task(jsc::Task::from_boxed(task));
     }
 
     /// A send failed for good. The transport reads on and closes by itself, and the write ends with that close.
@@ -3443,19 +3443,15 @@ impl<const SSL: bool> DeferredWriteCompletion<SSL> {
     }
 }
 
-impl<const SSL: bool> bun_event_loop::Taskable for DeferredWriteCompletion<SSL> {
+impl<const SSL: bool> bun_event_loop::BoxedTask for DeferredWriteCompletion<SSL> {
     const TAG: bun_event_loop::TaskTag = if SSL {
         bun_event_loop::task_tag::TLSSocketWriteCompletion
     } else {
         bun_event_loop::task_tag::TCPSocketWriteCompletion
     };
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract. Boxed in `complete_write_later`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract. The queued task is live.
-        unsafe { (*this).handlers.context() }
+    fn release_unrun(self: Box<Self>) {}
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.handlers.context()
     }
 }
 

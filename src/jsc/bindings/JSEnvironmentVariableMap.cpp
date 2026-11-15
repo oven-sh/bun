@@ -261,6 +261,36 @@ bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalOb
     RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
 }
 
+static bool isHandedBackByCompiledObjects(JSObject* environment, JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    VM& vm = globalObject->vm();
+    if (!vm.hasCompiledCode()) [[likely]]
+        return false;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (!uid || uid->isSymbol() || uid->isEmpty() || WTF::equal(uid, "TZ"_s) || WTF::equal(uid, "NODE_TLS_REJECT_UNAUTHORIZED"_s) || isProxyEnvVarName(vm, uid))
+        return false;
+    if (isValidOffset(environment->structure()->get(vm, propertyName)))
+        return false;
+
+    bool isBelowCompiledObject = false;
+    for (JSValue above = environment->getPrototypeDirect(); above.isObject(); above = asObject(above)->getPrototypeDirect()) {
+        JSObject* object = asObject(above);
+        Structure* structure = object->structure();
+        if (structure->isCompiledStructure())
+            isBelowCompiledObject = true;
+        else if (structure->typeInfo().overridesPut())
+            return false;
+        PropertySlot slot(environment, PropertySlot::InternalMethodType::Get);
+        bool hasProperty = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (hasProperty)
+            return isBelowCompiledObject && !(slot.attributes() & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+    }
+    return isBelowCompiledObject;
+}
+
 bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
@@ -279,6 +309,15 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
             && descriptor.enumerablePresent() && descriptor.enumerable())) {
         throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
         return false;
+    }
+
+    bool isHandedBack = isHandedBackByCompiledObjects(object, globalObject, propertyName);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (isHandedBack) [[unlikely]] {
+        JSString* string = coerceEnvValue(globalObject, scope, descriptor.value());
+        RETURN_IF_EXCEPTION(scope, false);
+        PropertyDescriptor variable(string, 0);
+        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(object, globalObject, propertyName, variable, shouldThrow));
     }
 
     // Node's EnvDefiner delegates to EnvSetter (plain assignment). put() keeps TZ/proxy

@@ -60,7 +60,7 @@ impl PackageManager {
     /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
     /// `dependency` is the dependency `pkg` is being resolved for.
-    pub fn determine_preinstall_state(
+    pub(crate) fn determine_preinstall_state(
         &mut self,
         pkg: &Package,
         dependency: Behavior,

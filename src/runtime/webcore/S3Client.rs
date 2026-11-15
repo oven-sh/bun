@@ -268,16 +268,8 @@ pub(crate) struct S3Client {
 impl S3Client {
     pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
         let global = cx.global();
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
-        // only to lazily memoize — single-threaded JS event-loop discipline applies.
         let env_creds = crate::webcore::fetch::s3_credentials_from_env(
-            global
-                .bun_vm()
-                .transpiler
-                .get()
-                .env_mut()
-                .get_s3_credentials(),
+            global.bun_vm().env_loader().get_s3_credentials(),
         );
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
@@ -697,15 +689,9 @@ impl S3Client {
         let global = cx.global();
         let options = opt_js(options.to_js());
 
-        // get credentials from env — `Transpiler::env_mut` is the safe accessor
-        // for the process-singleton dotenv loader (set during init).
+        // get credentials from env
         let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
-            global
-                .bun_vm()
-                .transpiler
-                .get()
-                .env_mut()
-                .get_s3_credentials(),
+            global.bun_vm().env_loader().get_s3_credentials(),
         );
 
         let blob = S3File::construct_s3_file_with_s3_credentials(

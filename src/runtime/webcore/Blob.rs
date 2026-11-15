@@ -2648,7 +2648,7 @@ impl BlobExt for Blob {
                     // reference; lift it into the refcounted
                     // `bun_s3_signing::S3Credentials` here at the T6 call site
                     // (dotenv cannot name the s3_signing type — upward dep).
-                    let env_creds = vm.transpiler.get().env_mut().get_s3_credentials();
+                    let env_creds = vm.env_loader().get_s3_credentials();
                     let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
                     let copy = core::mem::replace(
                         path_or_fd,

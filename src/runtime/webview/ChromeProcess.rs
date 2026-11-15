@@ -556,7 +556,7 @@ fn spawn(
         argv.extend(extra_argv.iter().copied().map(Some));
         let argv = CStrList::from_unterminated(&mut argv);
 
-        let env = vm.env_loader().map.to_envp();
+        let env = vm.env_loader().snapshot().map.to_envp();
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,

@@ -67,7 +67,7 @@ impl Editor {
         NAME_MAP.get(name).copied()
     }
 
-    pub(crate) fn detect(env: &mut dot_env::Loader) -> Option<Editor> {
+    pub(crate) fn detect(env: &dot_env::Loader) -> Option<Editor> {
         const VARS: [&[u8]; 2] = [b"EDITOR", b"VISUAL"];
         for name in VARS {
             if let Some(value) = env.get(name) {
@@ -81,7 +81,7 @@ impl Editor {
     }
 
     fn by_path_for_editor<'a>(
-        env: &mut dot_env::Loader,
+        env: &dot_env::Loader,
         editor: Editor,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
@@ -103,7 +103,7 @@ impl Editor {
 
     /// Looks in `PATH` first, then in the usual install locations.
     fn find<'a>(
-        env: &mut dot_env::Loader,
+        env: &dot_env::Loader,
         editor: Editor,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
@@ -113,7 +113,7 @@ impl Editor {
     }
 
     fn by_fallback<'a>(
-        env: &mut dot_env::Loader,
+        env: &dot_env::Loader,
         buf: &'a mut PathBuffer,
         cwd: &[u8],
     ) -> Option<(Editor, &'a [u8])> {
@@ -336,9 +336,7 @@ fn auto_close(argv: Vec<Box<[u8]>>) {
         stdin: sync::SyncStdio::Inherit,
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None,
-            )),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global()),
             ..Default::default()
         },
         ..Default::default()
@@ -361,13 +359,13 @@ impl EditorContext {
         self.editor.filter(|e| *e != Editor::None)
     }
 
-    pub(crate) fn auto_detect_editor(&mut self, env: &mut dot_env::Loader) {
+    pub(crate) fn auto_detect_editor(&mut self, env: &dot_env::Loader) {
         if self.editor.is_none() {
             self.detect_editor(env);
         }
     }
 
-    pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
+    pub(crate) fn detect_editor(&mut self, env: &dot_env::Loader) {
         // first: choose from user preference
         // /usr/bin/vim
         if bun_paths::is_absolute(&self.name) {

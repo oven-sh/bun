@@ -1,4 +1,5 @@
 use core::cell::{Cell, OnceCell, RefCell};
+use std::sync::Arc;
 
 use bun_io::Write as _;
 
@@ -2688,9 +2689,6 @@ impl TestCommand {
             Output::flush();
         }
 
-        // `exec()` never returns before process exit, so the heap allocation
-        // outlives all observers.
-        let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate
@@ -2808,7 +2806,6 @@ impl TestCommand {
             transform_options: ctx.args.clone(),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
             smol: ctx.runtime_options.smol,
             is_main_thread: true,
             graph: run_compiled::graph(),
@@ -2845,18 +2842,24 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
-        if !node_env_entry.found_existing {
-            *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
-            *node_env_entry.value_ptr = DotEnv::HashTableValue {
-                value: Box::<[u8]>::from(b"test" as &[u8]),
-            };
-        }
+        vm.transpiler.with_mut(|t| -> crate::Result<()> {
+            let node_env_entry = t.env_mut().map.get_or_put_without_value(b"NODE_ENV")?;
+            if !node_env_entry.found_existing {
+                *node_env_entry.key_ptr = Box::<[u8]>::from(&**node_env_entry.key_ptr);
+                *node_env_entry.value_ptr = DotEnv::HashTableValue {
+                    value: Box::<[u8]>::from(b"test" as &[u8]),
+                };
+            }
 
-        vm.transpiler.with_mut(|t| t.configure_defines())?;
-        if run_compiled::is_requested(ctx) {
-            run_compiled::hand_on_environment(&env_loader.map);
-        }
+            t.configure_defines()?;
+            if run_compiled::is_requested(ctx) {
+                run_compiled::hand_on_environment(&t.env().map);
+            }
+            if !ctx.test_options.test_worker {
+                ParallelRunner::set_ids_of_this_process(t.env_mut(), ctx.test_options.parallel > 0);
+            }
+            Ok(())
+        })?;
 
         vm.load_extra_env();
         VirtualMachine::set_is_main_thread_vm(true);
@@ -2889,8 +2892,7 @@ impl TestCommand {
             // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
             b"Etc/UTC";
 
-        // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-        if let Some(tz) = unsafe { (*vm.transpiler.get().env).get(b"TZ") } {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
             tz_name = tz;
         }
 
@@ -2901,9 +2903,6 @@ impl TestCommand {
         }
         let _ = vm.test_isolation_state.time_zone.set(Box::from(tz_name));
         if vm.test_isolation_enabled.get() {
-            let _ = vm.test_isolation_state.proxy_env.set(
-                bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
-            );
             vm.test_isolation_state
                 .synthetic_allocation_limit
                 .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
@@ -3210,6 +3209,7 @@ impl TestCommand {
                 aot.replaced_by_tests.preloads =
                     preloads.iter().map(|path| path.to_vec()).collect();
             }
+            ctx.env_loader = Some(Arc::clone(vm.env_loader()));
             run_compiled::start(ctx, entry_points, file_count);
         }
 
@@ -3258,9 +3258,6 @@ impl TestCommand {
                     &mut *ctx,
                     &mut coverage_options,
                 )?;
-            } else {
-                // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-                ParallelRunner::set_ids_without_workers(unsafe { &mut *vm.transpiler.get().env });
             }
             if !ran_parallel {
                 crate::run_command::start_profilers(vm, ctx);

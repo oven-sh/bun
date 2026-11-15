@@ -2289,7 +2289,7 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
             endpoint: endpoint.url.href,
           });
 
-          // Thrash HTTP_PROXY so the original RefCountedEnvValue is freed
+          // Thrash HTTP_PROXY so the original value is freed
           // and its bytes reallocated before the HTTP thread reads them.
           for (let i = 0; i < 64; i++) {
             process.env.HTTP_PROXY = "http://" + Buffer.alloc(32 + i, "z").toString() + ".invalid:1/";

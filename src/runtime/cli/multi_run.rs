@@ -325,7 +325,7 @@ struct State<'a> {
     aborted: bool,
     no_exit_on_error: bool,
     sequential: bool,
-    env: *mut DotEnvLoader,
+    env: &'a mut DotEnvLoader,
 }
 
 impl<'a> State<'a> {
@@ -335,9 +335,7 @@ impl<'a> State<'a> {
 
     fn start(&mut self, index: usize) {
         self.remaining_scripts += 1;
-        // SAFETY: the process-lifetime DotEnv loader; nothing else reaches it during `start`.
-        let env = unsafe { &mut *self.env };
-        if self.handles[index].start(self.shell_bin, env).is_err() {
+        if self.handles[index].start(self.shell_bin, self.env).is_err() {
             bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
             Global::exit(1);
         }
@@ -746,12 +744,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     )?;
     let cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-    // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
-    let env_ptr: *mut DotEnvLoader = this_transpiler.env;
-    let event_loop = bun_event_loop::MiniEventLoop::init_global(
-        // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
-        Some(unsafe { &mut *env_ptr }),
-    );
+    let event_loop = bun_event_loop::MiniEventLoop::init_global();
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
@@ -762,9 +755,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         EventLoopHandle::init_mini(event_loop),
     ));
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
-        // SAFETY: env_ptr is the process-lifetime DotEnv loader; the &mut borrow passed to
-        // init_global above has been released, so this read does not alias a live &mut.
-        let path_env = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
+        let path_env = this_transpiler.env().get(b"PATH").unwrap_or(b"");
         Some(RunCommand::find_shell(path_env, cwd).ok_or(crate::Error::MissingShell)?)
     } else {
         None
@@ -995,7 +986,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         aborted: false,
         no_exit_on_error: ctx.no_exit_on_error,
         sequential: ctx.sequential,
-        env: env_ptr,
+        env: this_transpiler.env_mut(),
     };
 
     state.start(0);

@@ -851,3 +851,37 @@ test("udpSocket({ hostname }) does not leak the hostname", async () => {
   // Unfixed: ~100 MiB. Fixed: allocator slack only.
   await expectRssDeltaBelow(["--smol", "-e", code], { release: 40, debug: 55 });
 });
+
+test("a handler that runs the event loop keeps the rest of its batch", async () => {
+  const seen: string[] = [];
+  const nested = Promise.withResolvers<void>();
+  const done = Promise.withResolvers<void>();
+  let built: Promise<unknown> | undefined;
+  const other = await udpSocket({
+    hostname: "127.0.0.1",
+    socket: { data: (_, data) => `${data}` === "y" && nested.resolve() },
+  });
+  const first = await udpSocket({
+    hostname: "127.0.0.1",
+    socket: {
+      data(_, data) {
+        if (seen.push(`${data}`) === 2) return done.resolve();
+        // Bun.build() runs the event loop until an async setup() settles.
+        const setup = () => {
+          client.sendMany(["x", other.port, "127.0.0.1", "y", other.port, "127.0.0.1"]);
+          return nested.promise;
+        };
+        built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+      },
+    },
+  });
+  const client = await udpSocket({ hostname: "127.0.0.1" });
+  try {
+    client.sendMany(["a", first.port, "127.0.0.1", "b", first.port, "127.0.0.1"]);
+    await done.promise;
+    expect(seen).toEqual(["a", "b"]);
+    await built;
+  } finally {
+    for (const socket of [client, first, other]) socket.close();
+  }
+});

@@ -1408,6 +1408,19 @@ extern "C" void Bun__sendPendingSignalIfNecessary()
     kill(pid, sig);
 }
 
+extern "C" void Bun__forwardSignal(int sig)
+{
+    int64_t pid = Bun__currentSyncPID.load();
+    if (pid == 0) {
+        Bun__pendingSignalToSend.store(sig);
+        pid = Bun__currentSyncPID.load();
+        if (pid == 0 || Bun__pendingSignalToSend.exchange(0) == 0)
+            return;
+    }
+
+    kill(pid, sig);
+}
+
 extern "C" void Bun__registerSignalsForForwarding()
 {
     WTF::Locker locker { signalForwardingLock };
@@ -1420,17 +1433,7 @@ extern "C" void Bun__registerSignalsForForwarding()
     sigemptyset(&sa.sa_mask);
     // Not SA_RESETHAND: a nested runner sees the signal more than once and must not die on a repeat delivery.
     sa.sa_flags = 0;
-    sa.sa_handler = [](int sig) {
-        int64_t pid = Bun__currentSyncPID.load();
-        if (pid == 0) {
-            Bun__pendingSignalToSend.store(sig);
-            pid = Bun__currentSyncPID.load();
-            if (pid == 0 || Bun__pendingSignalToSend.exchange(0) == 0)
-                return;
-        }
-
-        kill(pid, sig);
-    };
+    sa.sa_handler = Bun__forwardSignal;
 
 #define REGISTER_SIGNAL(SIG)                                 \
     if (sigaction(SIG, &sa, &previous_actions[SIG]) == -1) { \

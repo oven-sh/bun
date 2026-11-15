@@ -2390,7 +2390,7 @@ mod spawn_process_body {
         // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
         #[cfg(unix)]
         use bun_spawn_sys::ffi::{
-            Bun__currentSyncPID, Bun__registerSignalsForForwarding,
+            Bun__currentSyncPID, Bun__forwardSignal, Bun__registerSignalsForForwarding,
             Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding, kill,
         };
         #[cfg(target_os = "macos")]
@@ -2434,6 +2434,7 @@ mod spawn_process_body {
             /// weren't the foreground pgroup to begin with.
             prev: libc::pid_t,
             script_pgid: libc::pid_t,
+            previous_tstp: Option<libc::sighandler_t>,
         }
 
         #[cfg(unix)]
@@ -2461,6 +2462,30 @@ mod spawn_process_body {
                 self.prev > 0
             }
 
+            /// Until `give` has run, Ctrl-Z reaches our own pgroup and the script gets it from us.
+            fn forward_stops(&mut self) {
+                let sees_stops = cfg!(any(
+                    target_os = "linux",
+                    target_os = "android",
+                    target_os = "macos"
+                ));
+                if sees_stops && isatty(0) != 0 {
+                    let forward = Bun__forwardSignal as *const () as libc::sighandler_t;
+                    self.previous_tstp = Some(Self::set_tstp(forward));
+                }
+            }
+
+            fn set_tstp(handler: libc::sighandler_t) -> libc::sighandler_t {
+                // SAFETY: an async-signal-safe handler, or what this returned.
+                unsafe { libc::signal(libc::SIGTSTP, handler) }
+            }
+
+            fn restore_tstp(&mut self) {
+                if let Some(previous) = self.previous_tstp.take() {
+                    Self::set_tstp(previous);
+                }
+            }
+
             fn give(&mut self, pgid: libc::pid_t) {
                 self.script_pgid = pgid;
                 if isatty(0) == 0 {
@@ -2475,6 +2500,7 @@ mod spawn_process_body {
                 // Same gate as `onChildStopped`'s resume path below; real shells
                 // (bash `give_terminal_to`, zsh `attachtty`) do the same.
                 if fg <= 0 || fg != getpgrp() {
+                    self.restore_tstp();
                     return;
                 }
                 self.prev = fg;
@@ -2482,6 +2508,7 @@ mod spawn_process_body {
             }
 
             fn restore(&mut self) {
+                self.restore_tstp();
                 if self.prev <= 0 {
                     return;
                 }
@@ -2495,15 +2522,23 @@ mod spawn_process_body {
             /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
             /// the script runs as a background pgroup like any other job).
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-            fn on_child_stopped(&self) {
-                if self.prev <= 0 {
+            fn on_child_stopped(&self, signal: c_int) {
+                let Some(previous_tstp) = self.previous_tstp else {
                     return; // non-TTY: never asked for stop reports
+                };
+                let foreground = tcgetpgrp(0);
+                // The script can use the terminal before `give` has made it the foreground pgroup.
+                let may_use_terminal = matches!(signal, libc::SIGTTIN | libc::SIGTTOU)
+                    && (foreground == self.prev || foreground == self.script_pgid);
+                if !may_use_terminal {
+                    if foreground == self.script_pgid {
+                        Self::ttou_blocked(self.prev);
+                    }
+                    let forward = Self::set_tstp(previous_tstp);
+                    let _ = raise(libc::SIGTSTP);
+                    // — resumed by the shell's SIGCONT —
+                    Self::set_tstp(forward);
                 }
-                Self::ttou_blocked(self.prev);
-                // SIGTSTP is not in `Bun__registerSignalsForForwarding`'s set, so
-                // default disposition (stop) applies and we suspend right here.
-                let _ = raise(libc::SIGTSTP);
-                // — resumed by the shell's SIGCONT —
                 if tcgetpgrp(0) == getpgrp() {
                     Self::ttou_blocked(self.script_pgid);
                 }
@@ -2524,6 +2559,13 @@ mod spawn_process_body {
                     let _ = tcsetpgrp(0, pgid);
                     libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
                 }
+            }
+        }
+
+        #[cfg(unix)]
+        impl Drop for JobControl {
+            fn drop(&mut self) {
+                self.restore();
             }
         }
 
@@ -2631,6 +2673,14 @@ mod spawn_process_body {
 
             Bun__currentSyncPID.store(0, core::sync::atomic::Ordering::SeqCst);
             let _signals = SignalForwarding::register();
+            let mut jc = JobControl {
+                prev: 0,
+                script_pgid: 0,
+                previous_tstp: None,
+            };
+            if no_orphans {
+                jc.forward_stops();
+            }
 
             // SAFETY: caller-built argv/envp are null-terminated C-string
             // arrays with argv[0] non-null; valid for this call.
@@ -2653,10 +2703,6 @@ mod spawn_process_body {
                 core::sync::atomic::Ordering::SeqCst,
             );
 
-            let mut jc = JobControl {
-                prev: 0,
-                script_pgid: 0,
-            };
             let pgid_pushed = no_orphans && ParentDeathWatchdog::push_sync_pgid(process.pid);
             if no_orphans {
                 // Script is now a background pgroup; if stdin is a TTY hand it the
@@ -3003,6 +3049,10 @@ mod spawn_process_body {
             if ppid > 1 && getppid() != ppid {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
             }
+            // A stop that came before the EVFILT_SIGNAL registration made no event.
+            if jc.is_active() {
+                let _ = raise(libc::SIGCHLD);
+            }
             // Initial scan: `child` may have forked between `posix_spawn`
             // returning (in spawnPosix) and the NOTE_FORK registration above
             // taking effect; that fork produced no event. `begin()` already
@@ -3057,7 +3107,7 @@ mod spawn_process_body {
                         if let Ok(ref w) = r {
                             if w.pid == child {
                                 if libc::WIFSTOPPED(w.status as i32) {
-                                    jc.on_child_stopped();
+                                    jc.on_child_stopped(libc::WSTOPSIG(w.status as i32));
                                 } else {
                                     child_status = Status::from(child, &r);
                                     child_exited = true;
@@ -3242,7 +3292,7 @@ mod spawn_process_body {
                         continue; // subreaper-adopted orphan reaped
                     }
                     if libc::WIFSTOPPED(w.status as i32) {
-                        jc.on_child_stopped();
+                        jc.on_child_stopped(libc::WSTOPSIG(w.status as i32));
                     } else {
                         child_status = Status::from(child, &r);
                     }

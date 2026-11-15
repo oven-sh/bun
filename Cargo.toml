@@ -523,7 +523,7 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
-# checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.
+# checks stay on.
 [profile.dev.package.bun_png]
 opt-level = 3
 
@@ -535,8 +535,14 @@ opt-level = 3
 [profile.dev.package.bun_simd]
 opt-level = 3
 
+# LLVM does not inline `core`'s generics from another unit.
 [profile.dev.package.bun_simd_kernels]
 opt-level = 3
+codegen-units = 1
+
+# scripts/build/rust.ts raises the number for this profile in ASan builds.
+[profile.release.package.bun_simd_kernels]
+codegen-units = 1
 
 [profile.release.package.bun_react_compiler]
 opt-level = "s"

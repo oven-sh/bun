@@ -24,7 +24,7 @@ use super::DuplexUpgradeContext;
 use super::ssl_wrapper::SSLWrapper;
 use crate::generated_bindgen::socket_body::js_TLSSocket;
 use crate::generated_bindgen::upgraded_duplex::{self as listeners, DuplexChunk};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
@@ -47,7 +47,7 @@ pub(crate) struct UpgradedDuplex {
     pub on_end_callback: Cell<JSValue>,
     pub on_writable_callback: Cell<JSValue>,
     pub on_close_callback: Cell<JSValue>,
-    pub event_loop_timer: EventLoopTimer,
+    pub event_loop_timer: OwnedTimer<{ EventLoopTimerTag::UpgradedDuplex }>,
     pub current_timeout: Cell<u32>,
     /// Transport bytes that arrived before the TLS engine existed.
     ///
@@ -68,8 +68,6 @@ pub(crate) struct UpgradedDuplex {
     /// `pause_stream` paused the wrapped stream and `resume_stream` has not run since.
     paused_origin: Cell<bool>,
 }
-
-bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
 
 #[derive(Default)]
 pub(crate) struct CertError {
@@ -458,14 +456,9 @@ impl UpgradedDuplex {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(UpgradedDuplex, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || self.vm.is_none_or(|vm| {
-                vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
-            });
-
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared {
+        if self.vm.is_none_or(|vm| {
+            vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running
+        }) {
             return;
         }
 
@@ -492,7 +485,7 @@ impl UpgradedDuplex {
             on_end_callback: Cell::new(JSValue::ZERO),
             on_writable_callback: Cell::new(JSValue::ZERO),
             on_close_callback: Cell::new(JSValue::ZERO),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::UpgradedDuplex),
+            event_loop_timer: OwnedTimer::init_paused(),
             current_timeout: Cell::new(0),
             pending_data: JsCell::new(Vec::new()),
             pending_close: Cell::new(false),
@@ -708,8 +701,7 @@ impl UpgradedDuplex {
         // reschedule the timer
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.next.set(next);
-        timer_all().insert(&raw const self.event_loop_timer);
+        timer_all().update(self.event_loop_timer.timer_ref(), &next);
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]
@@ -718,7 +710,7 @@ impl UpgradedDuplex {
         self.set_timeout_in_milliseconds(seconds * 1000);
     }
 
-    /// Side-effecting teardown shared by `on_close` (early) and `Drop` (final).
+    /// Side-effecting teardown shared by `on_close` (early) and `DuplexUpgradeContext::deinit` (final).
     /// Idempotent: resets to empty state. Also invoked by
     /// `DuplexUpgradeContext`'s connect-error branches so the listener thunks
     /// are neutered while the wrapper is still strongly reachable.
@@ -751,12 +743,6 @@ impl UpgradedDuplex {
         self.pending_data.set(Vec::new());
         self.pending_close.set(false);
         self.pending_shutdown.set(false);
-    }
-}
-
-impl Drop for UpgradedDuplex {
-    fn drop(&mut self) {
-        self.teardown();
     }
 }
 

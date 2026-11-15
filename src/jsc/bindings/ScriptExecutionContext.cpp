@@ -471,12 +471,4 @@ void ScriptExecutionContext::postTaskAfterYield(Function<void(ScriptExecutionCon
     Bun__VM__queueTaskAfterYield(m_bunVM, new EventLoopTask(WTF::move(lambda)));
 }
 
-// Native bindings
-extern "C" JSC::JSGlobalObject* ScriptExecutionContextIdentifier__getGlobalObject(ScriptExecutionContextIdentifier id)
-{
-    auto* context = ScriptExecutionContext::getScriptExecutionContext(id);
-    if (!context) return nullptr;
-    return context->globalObject();
-}
-
 } // namespace WebCore

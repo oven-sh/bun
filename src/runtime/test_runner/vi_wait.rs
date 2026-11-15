@@ -2,19 +2,20 @@ use core::cell::Cell;
 
 use bun_core::{String as BunString, Timespec, TimespecMockMode};
 use bun_io::KeepAlive;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, StrongWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsClass as _,
-    JsError, JsResult, JsThread, StrongCell,
+    JsError, JsResult, JsThread,
 };
+use bun_ptr::{CellExt as _, OptionCellExt as _};
 
 use super::expect_core::expect_deferred::RunningEntry;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};
 use crate::generated_bindgen::vi_wait as generated;
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Kind {
@@ -43,13 +44,14 @@ pub(crate) struct ViWait {
     test_file: Option<u32>,
     /// For `Kind::Poll`, the wait is also dropped once this test ends.
     test: Option<RunningEntry>,
-    pub(crate) timer: EventLoopTimer,
+    timer: OwnedTimer<{ EventLoopTimerTag::ViWait }>,
     abort_handle: AbortHandle,
     keep_alive: KeepAlive,
     /// Roots the wrapper until the wait settles or is cancelled.
-    root: StrongCell,
+    root: Cell<Option<StrongWrapper<ViWait>>>,
 }
 
+bun_event_loop::impl_timer_owner!(ViWait; timer: OwnedTimer<ViWait>);
 bun_jsc::impl_abort_handle_owner!(ViWait, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live.
     unsafe { (*this).finish() }
@@ -171,19 +173,20 @@ impl ViWait {
     ) -> JsResult<JSValue> {
         let global = cx.global();
         let promise = JSPromise::create(global).to_js();
-        let this_value = ViWait {
+        let wrapper = ViWait {
             kind,
             interval_ms,
             deadline: Cell::new(Timespec::EPOCH),
             callback_pending: Cell::new(false),
             test_file: running_test_file(),
             test,
-            timer: EventLoopTimer::init_paused(EventLoopTimerTag::ViWait),
+            timer: OwnedTimer::init_paused(),
             abort_handle: AbortHandle::for_owner::<ViWait>(),
             keep_alive: KeepAlive::default(),
-            root: StrongCell::default(),
+            root: Cell::new(None),
         }
-        .to_js(global);
+        .into_js_wrapper(global);
+        let this_value = wrapper.to_js();
         js::callback_set_cached(
             this_value,
             global,
@@ -196,12 +199,14 @@ impl ViWait {
             global.create_error_instance(format_args!("{}", kind.timeout_message())),
         );
 
-        let this_ptr = ViWait::from_js(this_value).expect("to_js returns the wrapper");
+        let this_ptr = wrapper.payload_ptr().as_ptr();
         // SAFETY: the wrapper owns the payload, and `this_value` is kept alive to the end of this function.
         let this = unsafe { &*this_ptr };
-        this.root.set(global, this_value);
+        let root = StrongWrapper::new(wrapper, global);
+        OwnedTimer::mark_pinned(root.as_pin_ref());
+        this.root.set(Some(root));
         this.keep_alive.ref_(bun_io::js_vm_ctx());
-        // SAFETY: heap-allocated by `to_js`; `finish` leaves the context before `root` releases the wrapper.
+        // SAFETY: heap-allocated by `into_js_wrapper`; `finish` leaves the context before `root` releases the wrapper.
         unsafe { AbortHandle::arm_owner(this_ptr, cx.context()) };
 
         if let Err(err) = this.poll(global, this_value, true) {
@@ -234,7 +239,7 @@ impl ViWait {
         } else {
             deadline
         };
-        timer_all().update(&raw const self.timer, &next);
+        timer_all().update(self.timer.timer_ref(), &next);
     }
 
     /// Idempotent. The wrapper may be collected afterwards.
@@ -242,7 +247,7 @@ impl ViWait {
         self.timer.disarm();
         self.abort_handle.leave();
         self.keep_alive.unref(bun_io::js_vm_ctx());
-        self.root.clear();
+        self.root.set(None);
     }
 
     #[optimize(size)]
@@ -390,8 +395,7 @@ impl ViWait {
     }
 
     pub(crate) fn on_timer_fire(&self, now: &Timespec, vm: &VirtualMachine) -> JsResult<()> {
-        self.timer.state.set(EventLoopTimerState::FIRED);
-        let Some(this_value) = self.root.get() else {
+        let Some(this_value) = self.root.with_taken(|root| root.as_ref().map(StrongWrapper::to_js)) else {
             return Ok(());
         };
         if self.test_file != running_test_file()
@@ -407,7 +411,7 @@ impl ViWait {
             .abort_handle
             .context_id()
             .map(|context| vm.enter_context(context));
-        let result = if self.timer.next.get().order(&self.deadline.get()).is_lt() {
+        let result = if self.timer.next().order(&self.deadline.get()).is_lt() {
             self.poll(global, this_value, false)
         } else {
             self.time_out(global, this_value)

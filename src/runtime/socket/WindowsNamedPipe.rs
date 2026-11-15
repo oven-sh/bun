@@ -35,7 +35,7 @@ use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::ssl_wrapper::{self, SSLWrapper};
 use crate::socket::{SSLConfig, WindowsNamedPipeContext};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimerTag, OwnedTimer};
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
@@ -65,12 +65,10 @@ pub(crate) struct WindowsNamedPipe {
     /// Held while libuv has `connect_req`.
     connect_ref: Cell<Option<RefPtr<WindowsNamedPipeContext>>>,
 
-    pub(crate) event_loop_timer: EventLoopTimer,
+    pub(crate) event_loop_timer: OwnedTimer<{ EventLoopTimerTag::WindowsNamedPipe }>,
     pub(crate) current_timeout: Cell<u32>,
     pub(crate) flags: Cell<Flags>,
 }
-
-bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -390,12 +388,7 @@ impl WindowsNamedPipe {
     pub(crate) fn on_timeout(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "onTimeout");
 
-        let has_been_cleared = self.event_loop_timer.state.get() == EventLoopTimerState::CANCELLED
-            || self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running;
-
-        self.event_loop_timer.state.set(EventLoopTimerState::FIRED);
-
-        if has_been_cleared {
+        if self.vm.script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
             return;
         }
 
@@ -416,7 +409,7 @@ impl WindowsNamedPipe {
             ssl_error: JsCell::new(CertError::default()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
             connect_ref: Cell::new(None),
-            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::WindowsNamedPipe),
+            event_loop_timer: OwnedTimer::init_paused(),
             current_timeout: Cell::new(0),
             flags: Cell::new(Flags::DISCONNECTED), // disconnected: bool = true is the only non-false default
         }
@@ -748,8 +741,7 @@ impl WindowsNamedPipe {
 
         // reschedule the timer
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, ms as i64);
-        self.event_loop_timer.next.set(next);
-        timer_all().insert(&raw const self.event_loop_timer);
+        timer_all().update(self.event_loop_timer.timer_ref(), &next);
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
@@ -759,10 +751,10 @@ impl WindowsNamedPipe {
     }
 
     /// Free internal resources, it can be called multiple times.
-    // Private idempotent helper invoked from on_close and Drop.
+    // Idempotent helper invoked from on_close and `WindowsNamedPipeContext::deinit`.
     // Owned fields (writer, wrapper, ssl_error) free themselves via their own Drop impls; only
     // the side effects (timer cancel, read_stop, take()) remain explicit here.
-    fn release_resources(&self) {
+    pub(super) fn release_resources(&self) {
         bun_output::scoped_log!(WindowsNamedPipe, "deinit");
         // clear the timer
         self.set_timeout(0);
@@ -778,12 +770,6 @@ impl WindowsNamedPipe {
             wrapper.stop();
         }
         self.ssl_error.set(CertError::default());
-    }
-}
-
-impl Drop for WindowsNamedPipe {
-    fn drop(&mut self) {
-        self.release_resources();
     }
 }
 

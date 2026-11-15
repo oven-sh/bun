@@ -6935,7 +6935,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_dev_server_module(
             &mut self,
             source: &bun_ast::Source,
-            ast: &BundledFile,
+            ast: &BundledAstView,
             part: &js_ast::Part,
         ) {
             self.indent();
@@ -7660,7 +7660,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let char_freq = tree.char_freq.as_deref().copied().unwrap_or_default();
         minify_renamer.assign_names_by_frequency(&char_freq.compile())?;
 
-        minify_renamer.to_renamer(&symbols)
+        minify_renamer.as_renamer(&symbols)
     } else {
         rename::Renamer::no_op(&symbols, source)
     };
@@ -7826,7 +7826,7 @@ pub fn print_json<W: WriterTrait>(
 }
 
 /// What printing a file's statements into a chunk reads from the file's AST.
-pub struct BundledFile<'a> {
+pub struct BundledAstView<'a> {
     pub approximate_newline_count: usize,
     pub has_lazy_export: bool,
     pub has_top_level_await: bool,
@@ -7838,7 +7838,7 @@ pub struct BundledFile<'a> {
 pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &BundledFile,
+    ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7869,7 +7869,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
-    ast: &BundledFile,
+    ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],
@@ -7910,7 +7910,7 @@ pub(crate) fn print_with_writer_and_platform<
 >(
     mut writer: W,
     bump: &'a bun_alloc::Arena,
-    ast: &BundledFile,
+    ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
     import_records: &'a [ImportRecord<'a>],

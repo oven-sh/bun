@@ -6,7 +6,6 @@
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include "JSBufferEncodingType.h"
 #include "ncrypto.h"
 #include "CryptoUtil.h"
 #include "JSBuffer.h"

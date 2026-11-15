@@ -1480,10 +1480,6 @@ _bun_test_param_script_completion() {
     _alternative "files:file:_files -g '*(_|.)(test|spec).(js|ts|jsx|tsx)'"
 }
 
-_set_remove() {
-    comm -23 <(echo $1 | sort | tr " " "\n") <(echo $2 | sort | tr " " "\n") 2>/dev/null
-}
-
 _bun_add_param_package_completion() {
 
     IFS=$'\n' inexact=($(history -n bun | grep -E "^bun add " | cut -c 9- | uniq))
@@ -1511,23 +1507,6 @@ _bun_add_param_package_completion() {
         return
     fi
 
-}
-
-__bun_dynamic_comp() {
-    local comp=""
-
-    for arg in scripts; do
-        local line
-        while read -r line; do
-            local name="$line"
-            local desc="$line"
-            name="${name%$'\t'*}"
-            desc="${desc/*$'\t'/}"
-            echo
-        done <<<"$arg"
-    done
-
-    return $comp
 }
 
 if ! command -v compinit >/dev/null; then

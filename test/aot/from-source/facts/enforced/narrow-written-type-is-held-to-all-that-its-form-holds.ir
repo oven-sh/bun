@@ -1,0 +1,16 @@
+# `true` is held to both booleans and a listed text to every text: no single value and no list of texts is ever written into the record of a layout. What the one value was is for linked() to tell a read.
+# one member of an enum is held to every int32.
+# -- source: narrow-written-type-is-held-to-all-that-its-form-holds.ts
+# declare function sink(...values: unknown[]): void;
+# const enum SyntaxKind { Unknown, SourceFile, Block }
+# class SourceFile { kind: SyntaxKind.SourceFile; flag: true; mode: "open" | "shut"; constructor() { this.kind = SyntaxKind.SourceFile; this.flag = true; this.mode = "open"; } }
+# sink(SourceFile);
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "kind" source=written type=i32 markers spares-test slot=OptionalInt32
+# CHECK-NEXT: field {{*}} "flag" source=written type=boolean markers spares-test
+# CHECK-NEXT: field {{*}} "mode" source=written type=undefined|null|string
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: type=true
+# NEVER-NOT: "open"
+# NEVER-NOT: differs-from-table

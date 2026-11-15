@@ -1,0 +1,26 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# type Box = { lid: number; rim: number };
+# const holder: { inner: Box | null } = { inner: null };
+# function keep(box: Box): number { holder.inner = box; return 1; }
+# function make(i: number): number {
+#   let n = 0;
+#   if (i & 1) { const box = { lid: i, rim: i + 1 }; n = keep(box); } else { const box = { lid: -i, rim: i + 2 }; n = keep(box); }
+#   return n + i;
+# }
+# print(make(4));
+# print(make(7));
+# print(Object.keys(holder.inner!).length);
+# print("went on");
+# -- end of source
+# testing=CheckProofsAtRunTime: where two paths join, the state drops a fresh cell that the other path lacks, so such a cell reaches no return as a fresh cell.
+# Its life is ended at the jump after which the last value that names it is dead.
+# Fault injection, testing=AssumeCalleesRetainNothing: the compiler assumes that nothing retains what is passed to a function that is called directly.
+# OPTIONS: testing=CheckProofsAtRunTime,AssumeCalleesRetainNothing
+# RUN(CALL): run-in-shell mechanisms=-Inlining
+# CALL: 5
+# CALL: 8
+# CALL: bun: internal AOT error: lifetime check failed
+# CALL-NEXT: an object that this function allocated was used after the compiler ended its lifetime
+# CALL-NOT: went on
+# CALL: crashed with

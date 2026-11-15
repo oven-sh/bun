@@ -28,7 +28,10 @@ import {
 } from "node:fs";
 import { builtinModules } from "node:module";
 import { isAbsolute, join, sep } from "path";
-import { isHardened } from "../aot/hardened";
+import { isHardened, locksEnvironment } from "../aot/hardened";
+
+// harness.ts takes the variable out of bunEnv where the environment is locked. An executable that is not compiled ahead of time reads it there too.
+const envWithInternals = { ...bunEnv, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" };
 
 describe("Bun.build compile", () => {
   test("compile with current platform target string", async () => {
@@ -139,6 +142,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
   // BUN_BYTECODE_ORDER_OUT records which functions, strings and modules a run read out of the embedded bytecode;
   // --bytecode-order lays the next build's bytecode out by it: one payload for every chunk, what the run read first.
   // The program must not be able to tell, whatever it loads and calls, and in whatever order.
+  // A build with a locked environment never reads that variable: what needs a recording skips itself there.
   describe("--compile --bytecode laid out by an order file", () => {
     const moduleNames = ["a", "b", "c", "d", "e", "f"];
     const files: Record<string, string> = {
@@ -552,7 +556,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
     });
 
     // Programs that are not like the one recorded below.
-    describe("in a program", () => {
+    describe.skipIf(locksEnvironment)("in a program", () => {
       const buildIn = async (dir: string, args: string[], outfile: string, env: Record<string, string> = {}) => {
         await using proc = Bun.spawn({
           cmd: [bunExe(), "build", "--compile", "--bytecode", ...args, "--outfile", outfile],
@@ -860,7 +864,7 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
       );
     });
 
-    describe("with a recorded run", () => {
+    describe.skipIf(locksEnvironment)("with a recorded run", () => {
       // What every test starts from, made once, in a hook so that no test's clock includes it: the plain build, two
       // recordings of it (the second is another way of starting the program) and the build ordered by the first. One build
       // at a time: each links an executable the size of bun, and CI has few cores. For the same reason the tests that
@@ -1583,13 +1587,15 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
 
     // process.kill(process.pid, signal) with no handler ends the process without the usual exit: the recording is written
     // before the signal is sent, like the profiles and the compile cache.
-    describe.skipIf(isWindows)("a process that sends itself a fatal signal still writes the order file", () => {
-      let selfKillDir: ReturnType<typeof tempDir> | undefined;
-      let built: string;
-      afterAll(() => selfKillDir?.[Symbol.dispose]());
-      beforeAll(async () => {
-        selfKillDir = tempDir("build-compile-bytecode-order-self-kill", {
-          "app.js": `
+    describe.skipIf(isWindows || locksEnvironment)(
+      "a process that sends itself a fatal signal still writes the order file",
+      () => {
+        let selfKillDir: ReturnType<typeof tempDir> | undefined;
+        let built: string;
+        afterAll(() => selfKillDir?.[Symbol.dispose]());
+        beforeAll(async () => {
+          selfKillDir = tempDir("build-compile-bytecode-order-self-kill", {
+            "app.js": `
             function used() {
               return "ran";
             }
@@ -1609,71 +1615,72 @@ console.log(JSON.stringify({ n, anonKB: anon }));`,
             console.log(after());
             if (signal !== "SIGWINCH") setInterval(() => {}, 1000);
           `,
-        });
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "app.js", "--outfile", exe("app")],
-          env: bunEnv,
-          cwd: String(selfKillDir),
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
-        built = String(selfKillDir);
-      }, 120_000);
+          });
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "build", "--compile", "--bytecode", "--format=esm", "app.js", "--outfile", exe("app")],
+            env: bunEnv,
+            cwd: String(selfKillDir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect({ stderr: stderr.includes("error"), exitCode }).toEqual({ stderr: false, exitCode: 0 });
+          built = String(selfKillDir);
+        }, 120_000);
 
-      // A signal that does not end the process does not end the recording either: the file is written at the real exit.
-      test.concurrent(
-        "SIGWINCH: the recording goes on",
-        async () => {
-          const dir = built;
-          const record = async (argv: string[], name: string) => {
-            await using proc = Bun.spawn({
-              cmd: [join(dir, exe("app")), ...argv],
-              env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: join(dir, name) },
-              stdout: "pipe",
-              stderr: "pipe",
-            });
-            const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-            const lines = (await Bun.file(join(dir, name)).text()).split("\n");
-            return { stdout, exitCode, decoded: lines.filter(line => line.startsWith("F ")).length };
-          };
-          const winch = await record(["SIGWINCH"], "SIGWINCH.order");
-          expect({ stdout: winch.stdout, exitCode: winch.exitCode }).toEqual({ stdout: "ran\nafter\n", exitCode: 0 });
-          // One more function than a run that ends at the signal: the one that ran after it.
-          const term = await record(["SIGTERM"], "SIGTERM-compared.order");
-          expect(winch.decoded).toBeGreaterThan(term.decoded);
-        },
-        60_000,
-      );
-
-      describe.each(["SIGINT", "SIGTERM"] as const)("%s", signal => {
-        // "on a terminal": Bun then has a handler of its own for the signal (it restores the terminal and lets the
-        // signal end the process), which is where a recording is usually made from.
-        test.concurrent.each(["directly", "from its handler", "directly, on a terminal"] as const)(
-          "sent %s: the recording is there",
-          async how => {
+        // A signal that does not end the process does not end the recording either: the file is written at the real exit.
+        test.concurrent(
+          "SIGWINCH: the recording goes on",
+          async () => {
             const dir = built;
-            const out = join(dir, `${signal}-${how.replaceAll(" ", "-")}.order`);
-            const onTerminal = how.endsWith("on a terminal");
-            await using proc = Bun.spawn({
-              cmd: [join(dir, exe("app")), signal, how],
-              env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out },
-              ...(onTerminal ? { terminal: { data() {} } } : { stdout: "pipe", stderr: "pipe" }),
-            });
-            if (onTerminal) await proc.exited;
-            else await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-            proc.terminal?.close();
-            expect(proc.signalCode).toBe(signal);
-            const lines = (await Bun.file(out).text()).split("\n");
-            expect(lines[0]).toBe("v2");
-            expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
-            expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
+            const record = async (argv: string[], name: string) => {
+              await using proc = Bun.spawn({
+                cmd: [join(dir, exe("app")), ...argv],
+                env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: join(dir, name) },
+                stdout: "pipe",
+                stderr: "pipe",
+              });
+              const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+              const lines = (await Bun.file(join(dir, name)).text()).split("\n");
+              return { stdout, exitCode, decoded: lines.filter(line => line.startsWith("F ")).length };
+            };
+            const winch = await record(["SIGWINCH"], "SIGWINCH.order");
+            expect({ stdout: winch.stdout, exitCode: winch.exitCode }).toEqual({ stdout: "ran\nafter\n", exitCode: 0 });
+            // One more function than a run that ends at the signal: the one that ran after it.
+            const term = await record(["SIGTERM"], "SIGTERM-compared.order");
+            expect(winch.decoded).toBeGreaterThan(term.decoded);
           },
           60_000,
         );
-      });
-    });
+
+        describe.each(["SIGINT", "SIGTERM"] as const)("%s", signal => {
+          // "on a terminal": Bun then has a handler of its own for the signal (it restores the terminal and lets the
+          // signal end the process), which is where a recording is usually made from.
+          test.concurrent.each(["directly", "from its handler", "directly, on a terminal"] as const)(
+            "sent %s: the recording is there",
+            async how => {
+              const dir = built;
+              const out = join(dir, `${signal}-${how.replaceAll(" ", "-")}.order`);
+              const onTerminal = how.endsWith("on a terminal");
+              await using proc = Bun.spawn({
+                cmd: [join(dir, exe("app")), signal, how],
+                env: { ...bunEnv, BUN_BYTECODE_ORDER_OUT: out },
+                ...(onTerminal ? { terminal: { data() {} } } : { stdout: "pipe", stderr: "pipe" }),
+              });
+              if (onTerminal) await proc.exited;
+              else await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+              proc.terminal?.close();
+              expect(proc.signalCode).toBe(signal);
+              const lines = (await Bun.file(out).text()).split("\n");
+              expect(lines[0]).toBe("v2");
+              expect(lines.filter(line => line.startsWith("F ")).length).toBeGreaterThan(0);
+              expect(lines.filter(line => line.startsWith("M ")).length).toBeGreaterThan(0);
+            },
+            60_000,
+          );
+        });
+      },
+    );
 
     // Internal modules the app imports are modules of the link like the app's chunks: recorded, laid out by the file, and
     // loaded from the payload. "cross": their sources come out of the target executable (this same bun under another
@@ -1695,7 +1702,7 @@ server.close();`;
         stats: null | { hot: number; cold: number };
       };
     };
-    describe("internal modules in an ordered build", () => {
+    describe.skipIf(locksEnvironment)("internal modules in an ordered build", () => {
       let internalsDir: ReturnType<typeof tempDir> | undefined;
       let internalsRecorded: { directory: string; order: string; unordered: { joined: string; fromBytecode: number } };
       afterAll(() => internalsDir?.[Symbol.dispose]());
@@ -1890,7 +1897,7 @@ server.close();`;
     expect(buildExit).toBe(0);
     await using proc = Bun.spawn({
       cmd: [outfile],
-      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
+      env: { ...envWithInternals, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1932,7 +1939,7 @@ server.close();`,
         target: "bun",
       });
       expect(result.success).toBe(true);
-      await using proc = Bun.spawn({ cmd: [outfile], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      await using proc = Bun.spawn({ cmd: [outfile], env: envWithInternals, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       const { joined, fromBytecode } = JSON.parse(stdout.trim());
@@ -1994,7 +2001,7 @@ export function inOther() {
       expect(result.success).toBe(true);
       await using proc = Bun.spawn({
         cmd: [outfile],
-        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        env: { ...envWithInternals, BUN_JSC_verboseDiskCache: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });

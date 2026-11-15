@@ -12,7 +12,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -27,7 +27,7 @@ fn cli_start_time() -> i128 {
 /// such method yet; loop on `write_all`.
 #[inline]
 fn splat_byte_all(
-    writer: &mut bun_core::io::Writer,
+    writer: &bun_core::io::Writer,
     byte: u8,
     count: usize,
 ) -> Result<(), crate::Error> {
@@ -39,6 +39,10 @@ fn splat_byte_all(
         remaining -= n;
     }
     Ok(())
+}
+
+pub(crate) fn has_only_html_entry_points(entry_points: &[Box<[u8]>]) -> bool {
+    !entry_points.is_empty() && entry_points.iter().all(|path| path.ends_with(b".html"))
 }
 
 pub(crate) struct BuildCommand;
@@ -56,7 +60,7 @@ impl BuildCommand {
     #[inline(never)]
     pub(crate) fn exec(
         ctx: Context,
-        fetcher: Option<&bundle_v2::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner<'_>>,
     ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
@@ -87,7 +91,9 @@ impl BuildCommand {
         }
 
         if ctx.bundler_options.compile && ctx.bundler_options.aot.is_some() {
-            if !user_requested_browser_target {
+            if !(user_requested_browser_target
+                && has_only_html_entry_points(&ctx.args.entry_points))
+            {
                 return super::compile_command::CompileCommand::exec(ctx);
             }
             ctx.bundler_options.aot = None;
@@ -141,7 +147,7 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
-        if let Some(fetch) = fetcher {
+        if let Some(fetch) = &fetcher {
             this_transpiler
                 .options
                 .entry_points
@@ -222,9 +228,7 @@ impl BuildCommand {
                 sources: &mut core::iter::empty(),
             };
             if !type_check(checked, log_ref) {
-                log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ))?;
+                log_ref.print(Output::error_writer())?;
                 Output::flush();
                 exit_or_watch(1, ctx.debug.hot_reload == HotReload::Watch);
             }
@@ -650,9 +654,7 @@ impl BuildCommand {
                 let result = this_transpiler.transform(ctx.log, ctx.args.clone())?;
 
                 if log_ref.has_errors() {
-                    log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                        Output::error_writer(),
-                    ))?;
+                    log_ref.print(Output::error_writer())?;
 
                     if !result.errors.is_empty() || result.output_files.is_empty() {
                         Output::flush();
@@ -685,12 +687,12 @@ impl BuildCommand {
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            let event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(&mut event_loop)),
+                Some(core::ptr::NonNull::from(&event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
@@ -700,9 +702,7 @@ impl BuildCommand {
                 Ok(r) => r,
                 Err(err) => {
                     if !log_ref.msgs.is_empty() {
-                        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                            Output::error_writer(),
-                        ))?;
+                        log_ref.print(Output::error_writer())?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
                     }
@@ -966,6 +966,25 @@ impl BuildCommand {
                     }
                 }
 
+                if ctx.bundler_options.keeps_entry_points {
+                    let is_entry_point = |file: &&options::OutputFile| {
+                        file.output_kind == options::OutputKind::EntryPoint
+                    };
+                    let entry_points = output_files.iter().filter(is_entry_point);
+                    let sources = entry_points.map(|file| file.src_path.text);
+                    let written = ctx.args.entry_points.iter().map(|path| &path[..]);
+                    let checked = super::compile_command::check_entry_points_are_kept(
+                        outfile, written, sources,
+                    );
+                    if let Err(failure) = checked {
+                        super::compile_command::exit_with_failure(
+                            log_ref,
+                            super::compile_command::RequestOrigin::CompileCommand,
+                            compile_target,
+                            &failure,
+                        );
+                    }
+                }
                 let flags = {
                     use bun_standalone_module_graph::StandaloneModuleGraph::Flags;
                     let mut flags = Flags::default();
@@ -1299,9 +1318,7 @@ impl BuildCommand {
             Output::flush();
         }
 
-        log_ref.print(std::ptr::from_mut::<bun_core::io::Writer>(
-            Output::error_writer(),
-        ))?;
+        log_ref.print(Output::error_writer())?;
         exit_or_watch(
             if had_err { 1 } else { 0 },
             ctx.debug.hot_reload == HotReload::Watch,
@@ -1492,11 +1509,10 @@ pub(crate) fn collect_compile_assets(
         };
         if bun_core::S::ISDIR(st.st_mode as _) {
             let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
-                Ok(d) => d,
+                Ok(d) => bun_sys::File::from_fd(d),
                 Err(e) => return fail(e.with_path(asset)),
             };
-            let _close = scopeguard::guard(dir, |fd| fd.close());
-            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+            let mut walker = match bun_sys::walker_skippable::walk(dir.fd(), &[], &[]) {
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };

@@ -1,0 +1,20 @@
+# `while (at) { c = this.order(key, at.key); ..`: the loop reads its callee out of a field of `this` in every turn. The program stores two closures into that field, both by its name, at construction: Link holds the set; it is no proof (unseen code might store another), so it is an expectation to be tested at the run. A callee that stands in front of a loop was told apart there already and the loop built once for each closure; a callee read IN the loop was passed over: one head, a call by value in every turn. Now the field is read once in front of the loop and the closure told apart there: a loop with `a - b` in line, a loop with the comparison of texts in line, and the loop as written for whatever else the field holds.
+# f1 = Shelf, f2 = put, f3 = depth, f4 = (a, b) => a - b, f5 = the other
+# -- source: a-callee-read-in-the-turns-out-of-a-field-of-this-is-told-apart-in-front-of-the-loop.js
+# class Shelf {
+#   constructor(order) { this.order = order; this.top = null; }
+#   put(key) { const node = { key, low: null, high: null }; if (!this.top) { this.top = node; return; } let at = this.top; for (;;) { const c = this.order(key, at.key); if (c === 0) return; const next = c < 0 ? at.low : at.high; if (!next) { if (c < 0) at.low = node; else at.high = node; return; } at = next; } }
+#   depth(key) { let at = this.top, n = 0; while (at) { n++; const c = this.order(key, at.key); if (c === 0) return n; at = c < 0 ? at.low : at.high; } return -n; }
+# }
+# const numbers = new Shelf((a, b) => a - b), texts = new Shelf((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+# for (const key of [8, 4, 12, 2, 6, 10, 14, 1]) numbers.put(key);
+# for (const key of ["m", "f", "t", "c"]) texts.put(key);
+# let sum = 0; for (let t = 0; t < 16; t++) sum = sum * 3 % 1000003 + numbers.depth(t) + texts.depth("cfmtz"[t % 5]) + 9; print(sum);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 994020
+# RUN(FORM): walk f3 mechanisms=all
+# FORM-LABEL: code f3:Body
+# FORM: = TypeTest {{*}} testedType=f4
+# FORM: = TypeTest {{*}} testedType=f5
+# FORM: = Sub

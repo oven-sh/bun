@@ -1,0 +1,18 @@
+# -- source: main.js
+# function lengths(a) { if (a === 0) return "zero" + arguments.length; if (a === 1) { var all = Array.prototype.slice.call(arguments); return "one" + all.join(); } return "other" + arguments.length; }
+# function strict(a) { "use strict"; a = 5; if (arguments.length < 2) return a + ":" + arguments.length; return arguments[0] + ":" + a + ":" + arguments.length; }
+# globalThis.fs = { lengths, strict };
+# const fs = globalThis.fs;
+# print(fs.lengths(0), fs.lengths(0, 1, 2), fs.lengths(1, 2, 3), fs.lengths(2), fs.lengths(2, 3, 4, 5, 6, 7, 8, 9, 10));
+# print(fs.strict(1), fs.strict(1, 2), fs.lengths.apply(null, [0, 1, 2, 3]), [0, 1].map(fs.lengths).join(" "));
+# -- end of source
+# The object `arguments` is written in the first block and names the hidden list. Where it is made cannot be observed: it is put off to the block where something other than a read of its length first names it; in front of that, and on ways that never come there, its length is the count that the entry was handed. What it holds are the arguments as they came, whatever was stored into a parameter since.
+# RUN: run-in-shell
+# CHECK: zero1 zero3 one1,2,3 other1 other9
+# CHECK-NEXT: 5:1 1:5:2 zero4 zero3 one1,1,0,1
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f1:GenericCallEntry mechanisms=all
+# FORM-NOT: CreateRest
+# FORM: Branch
+# FORM: CreateRest
+# FORM-NOT: CallDirect {{*}} function=f1

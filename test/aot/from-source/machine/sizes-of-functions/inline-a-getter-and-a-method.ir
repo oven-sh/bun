@@ -1,0 +1,28 @@
+# f1 = squaredLengthOf
+# -- source: inline-a-getter-and-a-method.ts
+# class Vector {
+#   x: number;
+#   y: number;
+#   constructor(x: number, y: number) {
+#     this.x = x;
+#     this.y = y;
+#   }
+#   get squaredLength(): number {
+#     return this.dot(this);
+#   }
+#   dot(other: Vector): number {
+#     return this.x * other.x + this.y * other.y;
+#   }
+# }
+# function squaredLengthOf(vector: Vector): number {
+#   return vector.squaredLength;
+# }
+# declare const input: any;
+# (globalThis as any).answer = squaredLengthOf(new Vector(+input, +input));
+# -- end of source
+# The compiler before this one: 6 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 11, patches 1, moves 0, unlikely or rare 1.
+# RUN(X64): steps most:11 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 11

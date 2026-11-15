@@ -17,15 +17,7 @@ pub fn is_message_report(kind: ExplainSet) -> bool {
 }
 
 pub(super) fn has_line_label(kind: ExplainSet) -> bool {
-    kind.intersects(
-        ExplainSet::RUNTIME_USE
-            | ExplainSet::DECLINES
-            | ExplainSet::ALLOCATIONS
-            | ExplainSet::ONLY_UNKNOWN_CODE
-            | ExplainSet::ONLY_UNPROVEN_TYPE
-            | ExplainSet::ONLY_MUTATION
-            | ExplainSet::ONLY_LIMIT,
-    )
+    kind.intersects(ExplainSet::RUNTIME_USE | ExplainSet::ALLOCATIONS | ExplainSet::FORMS)
 }
 
 pub fn write_lines<'m>(

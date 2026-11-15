@@ -1,0 +1,32 @@
+# -- source: main.js
+# function F(n) { this.n = n; }
+# F.prototype.m = function () { return 1; };
+# F.of = function (n) { return n + 1; };
+# function early(count) { var total = 0; for (var i = 0; i < count; i++) total += F.of(i); return total; }
+# function inner(count) { var total = 0; for (var i = 0; i < count; i++) { var made = new F(i); total += made.m(); } return total; }
+# first(F);
+# print(early(3));
+# change(F);
+# var sum = 0;
+# for (var turn = 0; turn < 10; turn++) sum += inner(2) + early(2);
+# print(sum);
+# print(report());
+# -- end of source
+# early() and inner() begin the guards of F in front of what they ask of them, each time they are entered. The run time is asked once, whatever comes of it: guards that have ended, or were refused, never begin again,
+# and code that went on asking would pay for a guess that fails more than for no guess.
+# In the run REPLACED the guards have begun and end with the object that `prototype` held. In the run REFUSED they are never armed: a list is no object that the run time takes for the prototype of a class.
+# RUN: run-in-shell --aotCountsPath=/dev/null const calls = () => aotOperationCount("operationAOTBeginMemberGuards"); globalThis.report = () => calls() < 2 ? "asked at most once" : "asked again and again"; globalThis.first = () => { }; globalThis.change = () => { };
+# CHECK: 6
+# CHECK-NEXT: 50
+# CHECK-NEXT: asked at most once
+# CHECK-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell --aotCountsPath=/dev/null const calls = () => aotOperationCount("operationAOTBeginMemberGuards"); globalThis.report = () => calls() < 2 ? "asked at most once" : "asked again and again"; globalThis.first = () => { }; globalThis.change = (F) => { F.prototype = { m() { return 2; } }; };
+# REPLACED: 6
+# REPLACED-NEXT: 70
+# REPLACED-NEXT: asked at most once
+# REPLACED-NEXT: exited with 0
+# RUN(REFUSED): run-in-shell --aotCountsPath=/dev/null const calls = () => aotOperationCount("operationAOTBeginMemberGuards"); globalThis.report = () => calls() < 2 ? "asked at most once" : "asked again and again"; globalThis.first = (F) => { const list = []; list.m = () => 3; F.prototype = list; }; globalThis.change = () => { };
+# REFUSED: 6
+# REFUSED-NEXT: 90
+# REFUSED-NEXT: asked at most once
+# REFUSED-NEXT: exited with 0

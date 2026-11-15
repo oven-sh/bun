@@ -1393,7 +1393,7 @@ impl BunxCommand {
 
         let spawn_result = match proc_sync::spawn(&proc_sync::Options {
             argv: args.iter().map(|s| Box::<[u8]>::from(*s)).collect(),
-            envp: Some(envp.as_ptr().cast::<*const ::core::ffi::c_char>()),
+            envp: Some(envp.as_list()),
             cwd: Box::<[u8]>::from(bunx_cache_dir),
             stderr: proc_sync::SyncStdio::Inherit,
             stdout: proc_sync::SyncStdio::Inherit,
@@ -1405,7 +1405,6 @@ impl BunxCommand {
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: a reborrow through the live `env_loader`, not a second `env_mut()` aliasing it.
                         Some(unsafe { &mut *(env_loader as *mut _) }),
-                        None,
                     ),
                 ),
                 ..Default::default()

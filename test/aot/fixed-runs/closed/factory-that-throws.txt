@@ -1,0 +1,31 @@
+A mock's factory throws: each import() and require() asks it again, an importer by a statement keeps its error, and the next test file loads both.
+#### a.test.mjs
+import { test, mock } from "bun:test";
+const log = (...words) => console.log("| CASE " + words.join(" "));
+const caught = async (how, load) => { try { await load(); log(how, "no error"); } catch (error) { log(how, "caught", error.message); } };
+test("a", async () => {
+  let calls = 0;
+  mock.module("./lib.mjs", () => { log("factory runs", ++calls); throw new Error("boom " + calls); });
+  for (let turn = 0; turn < 2; turn++) {
+    await caught("import()", () => import("./lib.mjs"));
+    await caught("require()", () => import.meta.require("./lib.mjs"));
+  }
+  await caught("import() of a user", () => import("./user.mjs"));
+  await caught("the user again", () => import("./user.mjs"));
+  await caught("import() behind that", () => import("./lib.mjs"));
+});
+#### b.test.mjs
+import { test } from "bun:test";
+import { v } from "./lib.mjs";
+test("b", async () => {
+  console.log("| CASE the next file", v, import.meta.require("./lib.mjs").v, (await import("./user.mjs")).read());
+});
+#### lib.mjs
+console.log("| CASE lib runs");
+export const v = "real v";
+#### package.json
+{}
+#### user.mjs
+import { v } from "./lib.mjs";
+console.log("| CASE user runs", v);
+export const read = () => v;

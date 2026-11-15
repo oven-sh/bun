@@ -1,0 +1,52 @@
+# const o = {}; process.on.call(o, "x", () => {}); Object.getPrototypeOf(o._events).removeListener = (type, target) => target(); process.removeListener("tick", second)
+# Handed another receiver native code makes an emitter for it and lays it under `_events`: its link is the prototype on which `removeListener` lies: a program can come by that prototype.
+# Its members are locked: the run time refuses the store by name, so the call is the table's whoever has the object, and `second`, at which the row only looks, is left out.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK: function f2 unreached
+
+layout L0 fields=[{key="mark" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = Integer integer=1
+    v2 = NewObject -, v1 layout=L0 fields=[0]
+    v3 = FinishObject v2
+    v4 = PropGet v0 key="on"
+    v5 = Convert v4 declared={type=builtin(EventEmitterPrototypeOn) flags=[IsExpected]}
+    v6 = PropGet v5 key="call"
+    v7 = Convert v6 declared={type=builtin(FunctionPrototypeCall) flags=[IsExpected]}
+    v8 = String string="x"
+    v9 = NewClosure function=f3
+    v10 = Call v7, v5, v3, v8, v9 calleeKey="call" calleeName="process.on.call"
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectGetPrototypeOf
+    v13 = PropGet v3 key="_events"
+    v14 = Call v12, v11, v13 calleeName="Object.getPrototypeOf"
+    v15 = NewClosure function=f1
+    PropSet v14, v15 key="removeListener"
+    v17 = PropGet v0 key="removeListener"
+    v18 = Convert v17 declared={type=builtin(EventEmitterPrototypeRemoveListener) flags=[IsExpected]}
+    v19 = String string="tick"
+    v20 = NewClosure function=f2
+    v21 = Call v18, v0, v19, v20 calleeKey="removeListener" calleeName="process.removeListener"
+    v22 = Undefined
+    Return v22
+}
+function f1 module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Call v1, -
+    Return v2
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

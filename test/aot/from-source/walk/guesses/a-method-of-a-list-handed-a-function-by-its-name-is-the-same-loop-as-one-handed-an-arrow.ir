@@ -1,0 +1,18 @@
+# -- source: main.ts
+# declare function print(value: unknown): void;
+# function twice(row: any) { return row.qty * 2; }
+# function big(value: any) { return value > 2; }
+# function add(total: any, value: any) { return total + value; }
+# function run(rows: any, turns: number) { let sum = 0; for (let turn = 0; turn < turns; turn++) sum += rows.map(twice).filter(big).reduce(add, 0); return sum; }
+# const table: any = { run };
+# print(table[JSON.parse('"run"')](JSON.parse('[{"qty":1},{"qty":2},{"qty":3}]'), 3));
+# -- end of source
+# `xs.map(arrow)` is a loop, and so is `xs.map(twice)`: the guess at the list was opened for a call that copies the library's text only where the function handed over was a closure written in place: with the functions given by their
+# names filter and reduce went by value into the library's own bodies behind the map. f1 = twice, f2 = big, f3 = add, f4 = run: all three are built into the copies of the library's texts in the loop of run.
+# RUN: walk f4 mechanisms=all
+# CHECK: callee=f1 callPosition=
+# CHECK: callee=f2 callPosition=
+# CHECK: callee=f3 callPosition=
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 30
+# RIGHT-NEXT: exited with 0

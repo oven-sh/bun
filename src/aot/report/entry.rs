@@ -10,17 +10,11 @@ use crate::diagnostics::new_driver_diagnostic;
 use crate::engine::Position;
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub struct EntryNote {
-    pub text: Vec<u8>,
-    pub position: Option<Position>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ReportEntry {
     pub kind: ExplainSet,
     pub text: Vec<u8>,
     pub position: Option<Position>,
-    pub notes: Vec<EntryNote>,
+    pub notes: Vec<Vec<u8>>,
 }
 
 impl ReportEntry {
@@ -38,10 +32,7 @@ impl ReportEntry {
     }
 
     pub fn add_note(&mut self, text: Vec<u8>) {
-        self.notes.push(EntryNote {
-            text,
-            position: None,
-        });
+        self.notes.push(text);
     }
 }
 
@@ -49,10 +40,8 @@ pub fn to_messages(texts: &SourceTexts, entries: &[ReportEntry]) -> Vec<ReportMe
     let mut parts: Vec<(&[u8], Option<Position>)> = Vec::new();
     for entry in entries {
         parts.push((&entry.text[..], entry.position));
-        let notes = entry.notes.iter();
-        parts.extend(notes.map(|note| (&note.text[..], note.position)));
+        parts.extend(entry.notes.iter().map(|note| (&note[..], None)));
     }
-    // Ascending, so the locator scans the text of each module once. Entries arrive by rank.
     let mut order: Vec<usize> = (0..parts.len()).collect();
     order.shared_sort_unstable_by_key(|&index| parts[index].1);
 
@@ -96,19 +85,15 @@ mod tests {
     use super::*;
     use crate::ir::ids::{Id, ModuleId};
 
-    const KINDS: [(ExplainSet, bool, bool, bool); 12] = [
+    const KINDS: [(ExplainSet, bool, bool, bool); 8] = [
         (ExplainSet::TEXT, false, true, false),
         (ExplainSet::JSON, true, false, false),
         (ExplainSet::CHECKS, false, true, false),
         (ExplainSet::CHECKS_JSON, true, false, false),
         (ExplainSet::RUNTIME_USE, false, false, true),
-        (ExplainSet::DECLINES, false, false, true),
         (ExplainSet::ALLOCATIONS, false, false, true),
-        (ExplainSet::ONLY_UNKNOWN_CODE, false, false, true),
-        (ExplainSet::ONLY_UNPROVEN_TYPE, false, false, true),
-        (ExplainSet::ONLY_MUTATION, false, false, true),
+        (ExplainSet::FORMS, false, false, true),
         (ExplainSet::STATISTICS, false, false, false),
-        (ExplainSet::ONLY_LIMIT, false, false, true),
     ];
 
     fn texts() -> SourceTexts {
@@ -144,12 +129,12 @@ mod tests {
     #[test]
     fn line_reports_have_label() {
         let entries = [
-            (ExplainSet::DECLINES, "missed optimizations: none"),
+            (ExplainSet::ALLOCATIONS, "allocations: none"),
             (ExplainSet::STATISTICS, "TypesInterned 3"),
         ];
         assert_eq!(
             lines(&entries, false),
-            "aot: missed optimizations: none\nTypesInterned 3\n"
+            "aot: allocations: none\nTypesInterned 3\n"
         );
     }
 
@@ -159,9 +144,9 @@ mod tests {
             (ExplainSet::TEXT, "heading"),
             (ExplainSet::JSON, r#"{"rank":1}"#),
             (ExplainSet::CHECKS_JSON, r#"{"aot":"type-check"}"#),
-            (ExplainSet::ONLY_MUTATION, "mutation: field-deleted"),
+            (ExplainSet::FORMS, "1 function"),
         ];
-        assert_eq!(lines(&entries, false), "aot: mutation: field-deleted\n");
+        assert_eq!(lines(&entries, false), "aot: 1 function\n");
         assert_eq!(
             lines(&entries, true),
             "{\"rank\":1}\n{\"aot\":\"type-check\"}\n"
@@ -194,7 +179,7 @@ mod tests {
         let entries = [
             ReportEntry::line(ExplainSet::TEXT, b"a".to_vec()),
             ReportEntry::line(ExplainSet::JSON, b"{}".to_vec()),
-            ReportEntry::line(ExplainSet::DECLINES, b"b".to_vec()),
+            ReportEntry::line(ExplainSet::ALLOCATIONS, b"b".to_vec()),
             ReportEntry::line(ExplainSet::CHECKS, b"c".to_vec()),
         ];
         let mut log = Log::init();

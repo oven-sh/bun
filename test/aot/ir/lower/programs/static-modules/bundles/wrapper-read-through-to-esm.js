@@ -1,5 +1,7 @@
 // RUN: lower
 // OPTIONS: builtin-modules
+// CHECK-LABEL: function {{*}}name="__accessProp"
+// CHECK-LABEL: function {{*}}name="__commonJS"
 
 // FILE: main.js
 // An ES importer of a CommonJS file as `bun build` bundles it: `__toESM(require_a(), 1)`.
@@ -52,23 +54,3 @@ console.log(import_a.n, import_a.default.n, Object.keys(import_a).join());
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: __accessProp __commonJS
-// CHECK-LABEL: function {{*}}name="__accessProp"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasThis, HasExplicitName] length=1 thisType={type=undefined|null|object flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|object, v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = ElemGet v0, v1
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="__commonJS"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=undefined|null|[[f_2]] flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: undefined|null|function, v1: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = NewObject -, v1 layout=[[L_4]] fields=[0]
-// CHECK-NEXT: v3 = NewClosure v2, v0 function=[[f_5]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[f_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }

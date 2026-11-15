@@ -1,9 +1,11 @@
 // RUN: lower
+// OPTIONS: builtin-modules
 // CHECK-LABEL: function {{*}}name="eachResource"
 // CHECK: [[iterator]] = IteratorOpen
 // CHECK: LoopHint
-// CHECK: builtin=CompilerHelpersGetDisposeMethod
-// CHECK-NEXT: = Call {{*}}, -, [[resource]]
+// CHECK: TypeTest [[resource]] testedType=undefined|null
+// CHECK: [[read]] = PropGet {{*}} key=@@dispose
+// CHECK-NEXT: TypeTest [[read]] testedType=function
 // CHECK: integer=1
 // CHECK: role=DisposalCleanup subject=[[resource]] handler=[[closing]](
 // CHECK: [[closing]]({{*}}) role=IterationCleanup subject=[[iterator]]:

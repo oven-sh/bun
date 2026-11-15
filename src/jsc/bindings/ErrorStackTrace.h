@@ -66,6 +66,9 @@ private:
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
     bool m_isAOTCompiled = false;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID m_compiledModule;
+#endif
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -86,6 +89,9 @@ public:
     intptr_t sourceID() const;
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID compiledModule() const { return m_compiledModule; }
+#endif
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
@@ -204,9 +210,12 @@ inline bool hasExternalSourceMap()
 
 // The file that every compiled frame of such an executable names. The line and column of a frame are a position in the map.
 String externalSourceMapFileURL();
+// The same file, as a stack trace prints it.
+String externalSourceMapDisplayPath();
 
 String sourceURL(const JSC::AOT::SourcePosition&);
 String sourceURL(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
+String displayPath(const JSC::AOT::TraceFrame&, const JSC::AOT::SourcePosition&);
 #endif
 
 // The position of a compiled frame was recorded at build time, in the original source or in an external source map: no source map applies to it at run time.
@@ -229,6 +238,8 @@ String sourceURL(const JSC::SourceCode& sourceCode);
 String sourceURL(JSC::CodeBlock* codeBlock);
 String sourceURL(JSC::CodeBlock& codeBlock);
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
+// The path that stack traces print. In an --aot executable it is relative to the build folder, so no file or module can be found by it.
+String displayPath(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 

@@ -1,0 +1,19 @@
+# A store by name at a site asks the table of fields in front of its site. Where no layout of the program has a field under the name the table can never say yes, and the store calls the stub that leaves the question out.
+# parts.js writes the layouts; elsewhere.js writes none and stores under `rank`, which parts.js lists, and under `weight`, which nobody lists. Both stubs store rightly whatever comes.
+# f5 = setsRankElsewhere, f6 = setsWeightElsewhere
+# -- source: main.js
+# import { make } from "./parts.js";
+# import { setsRankElsewhere, setsWeightElsewhere } from "./elsewhere.js";
+# sink(setsRankElsewhere, setsWeightElsewhere, make(1));
+# -- source: parts.js
+# class Part { constructor(rank) { this.rank = rank; } }
+# class Pair { constructor(rank) { this.left = 0; this.rank = rank; } }
+# export function make(rank) { return [new Part(rank), new Pair(rank)]; }
+# -- source: elsewhere.js
+# export function setsRankElsewhere(thing, value) { thing.rank = value; }
+# export function setsWeightElsewhere(thing, value) { thing.weight = value; }
+# -- end of source
+# RUN: bytes f5:Body mechanisms=all
+# CHECK: Stub PutByIdAtSite.Strict count 0 under (Name "rank")
+# RUN(NOBODY): bytes f6:Body mechanisms=all
+# NOBODY: Stub PutByIdAtSite.Strict count 2

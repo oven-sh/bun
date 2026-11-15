@@ -1,5 +1,6 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
+#![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
 #![allow(non_snake_case)]
@@ -16,6 +17,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod c_str_list;
 pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
@@ -25,6 +27,7 @@ pub mod thread_id;
 pub mod tty;
 pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
+pub use c_str_list::{CStrList, CStrRef, CStringList};
 
 /// Shared state-machine tag for the streaming (de)compressors in
 /// `bun_brotli` / `bun_zlib` / `bun_zstd`.
@@ -42,6 +45,7 @@ pub mod heap;
 pub mod current_work;
 pub mod debug;
 pub mod env;
+pub mod file_steps;
 #[cfg(windows)]
 pub mod windows_sys;
 pub mod wtf;
@@ -344,41 +348,18 @@ pub fn powf(x: f32, y: f32) -> f32 {
     libm_powf(x, y)
 }
 
-/// Safe `Vec` growth helpers — consolidate the
-/// `reserve(n); spare_capacity_mut(); MaybeUninit::write…; unsafe set_len(n)`
-/// pattern (S025) so the single `unsafe { set_len }` lives here behind a
-/// locally-proven invariant instead of being open-coded at every fill site.
+/// `Vec` growth helpers.
 pub mod vec {
     /// Extend `v` by `n` elements, each produced by `f(i)` for `i in 0..n`.
     ///
-    /// Equivalent to `for i in 0..n { v.push(f(i)) }` but reserves once and
-    /// writes through `spare_capacity_mut()` so no per-element capacity check
-    /// or length bump occurs in the hot loop.
+    /// Like `for i in 0..n { v.push(f(i)) }`, but the iterator is `TrustedLen`, so `extend` reserves once.
     ///
     /// Panic-safety: if `f` panics at index `k`, `v.len()` is left at its
     /// original value plus `k` — every exposed element is initialized, and the
     /// partially-written tail stays in spare capacity (never dropped).
     #[inline]
-    pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, mut f: impl FnMut(usize) -> T) {
-        v.reserve(n);
-        let prev = v.len();
-        let spare = v.spare_capacity_mut();
-        debug_assert!(spare.len() >= n);
-        for (i, slot) in spare[..n].iter_mut().enumerate() {
-            // `MaybeUninit::write` never drops the (uninitialized) prior
-            // contents — it is a raw `ptr::write`.
-            slot.write(f(i));
-        }
-        // SAFETY:
-        // - `reserve(n)` guarantees `capacity >= prev + n`.
-        // - Every slot in `spare[..n]` (i.e. `v[prev .. prev+n]`) was just
-        //   initialized via `MaybeUninit::write` in the loop above, so the
-        //   newly-exposed range contains only valid `T`.
-        // Panic note: if `f` panics mid-loop, `len` is still `prev`, so the
-        // already-written prefix stays in spare capacity and is *leaked* (not
-        // dropped) — sound, and acceptable for the constant/`Default`/index
-        // fills this helper targets.
-        unsafe { v.set_len(prev + n) };
+    pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, f: impl FnMut(usize) -> T) {
+        v.extend((0..n).map(f));
     }
 
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice
@@ -395,8 +376,6 @@ pub mod vec {
 
     /// Reserve `additional`, advance `len` by `additional`, and return the
     /// newly-exposed (uninitialized) tail.
-    /// Generic free-fn form of `bun_collections::VecExt::writable_slice` so
-    /// `bun_core::string` can call it without a `bun_collections` edge.
     ///
     /// # Safety
     /// Caller must fully write the returned slice before any read of
@@ -406,24 +385,6 @@ pub mod vec {
         v.reserve(additional);
         let prev = v.len();
         // SAFETY: caller contract — slice is fully written before any read.
-        unsafe { v.set_len(prev + additional) };
-        &mut v[prev..]
-    }
-
-    /// As [`writable_slice`] but skips `reserve`; caller must guarantee
-    /// `len + additional <= capacity` (debug-asserted).
-    ///
-    /// # Safety
-    /// `v.len() + additional <= v.capacity()`, and the returned slice must be
-    /// fully written before any read.
-    #[inline]
-    pub(crate) unsafe fn writable_slice_assume_capacity<T>(
-        v: &mut Vec<T>,
-        additional: usize,
-    ) -> &mut [T] {
-        debug_assert!(v.len() + additional <= v.capacity());
-        let prev = v.len();
-        // SAFETY: caller contract — capacity asserted; slice fully written before any read.
         unsafe { v.set_len(prev + additional) };
         &mut v[prev..]
     }
@@ -452,7 +413,7 @@ pub mod vec {
     // ── Spare-capacity fill helpers ────────────────────────────────────────
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
-    // `MaybeUninit<u8>` and every C-ABI fill site (read/recv/pread, simdutf,
+    // `MaybeUninit<u8>` and every C-ABI fill site (simdutf,
     // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
 
     /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
@@ -550,6 +511,25 @@ pub mod vec {
         }
     }
 
+    pub use core::io::{BorrowedBuf, BorrowedCursor};
+
+    /// Appends what `fill` writes to its cursor: the spare capacity of `v`, up to `max` items.
+    #[inline]
+    pub fn append_with<T: Copy, R>(
+        v: &mut Vec<T>,
+        max: usize,
+        fill: impl FnOnce(BorrowedCursor<'_, T>) -> R,
+    ) -> R {
+        let spare = v.spare_capacity_mut();
+        let max = max.min(spare.len());
+        let mut buf = BorrowedBuf::from(&mut spare[..max]);
+        let result = fill(buf.unfilled());
+        let filled = buf.len();
+        // SAFETY: the filled part of a `BorrowedBuf` is initialized, and starts where `v` ends.
+        unsafe { v.set_len(v.len() + filled) };
+        result
+    }
+
     /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
     pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
 
@@ -596,10 +576,7 @@ bun_dispatch::link_interface! {
         fn stderr() -> output::File;
         fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
         fn create_file(cwd: Fd, path: &[u8]) -> core::result::Result<Fd, Error>;
-        fn quiet_writer_from_fd(fd: Fd) -> output::QuietWriter;
-        fn quiet_writer_adapt(qw: output::QuietWriter, buf: *mut u8, len: usize) -> output::QuietWriterAdapter;
-        fn quiet_writer_write_all(qw: &mut output::QuietWriter, bytes: &[u8]) -> bool;
-        fn quiet_writer_fd(qw: &output::QuietWriter) -> Fd;
+        fn write_all_quiet(fd: Fd, bytes: &[u8]) -> bool;
         fn tty_winsize(fd: Fd) -> Option<Winsize>;
         fn is_terminal(fd: Fd) -> bool;
         fn read(fd: Fd, buf: &mut [u8]) -> core::result::Result<usize, Error>;
@@ -648,17 +625,17 @@ pub mod build_options {
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
 pub use bun_alloc::oom_from_alloc;
 pub use bun_alloc::{
-    Alignment, AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory,
-    page_size, range_of_slice_in_buffer,
+    AllocError, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, page_size,
+    range_of_slice_in_buffer,
 };
 // FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
 // that hosts both the opaque-handle macro and the layout-assert macro, so all
 // "FFI shape invariant" tooling lives in one file. Re-exported here so callers
 // can write `bun_core::assert_ffi_layout!(...)` without naming `bun_opaque`.
 pub use Global::*;
-pub use bun_opaque::{FfiLayout, assert_ffi_discr, assert_ffi_layout};
+pub use bun_opaque::{assert_ffi_discr, assert_ffi_layout};
 pub use error::{Error, Error as CrateError, Result as CrateResult};
-pub use ffi::{Zeroable, boxed_zeroed, boxed_zeroed_unchecked};
+pub use ffi::{Zeroable, boxed_zeroed};
 pub use result::coreutils_error_map;
 pub use tty::Winsize;
 pub use util::*;
@@ -1688,16 +1665,11 @@ pub(crate) mod strings_impl {
         }
     }
 
-    pub fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Vec<u8> {
+    pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
-        list.reserve(need + 16);
+        let mut list = Vec::with_capacity(need + 16);
         convert_utf16_to_utf8_append(&mut list, utf16);
         list
-    }
-
-    #[inline]
-    pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
-        convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
     /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh
@@ -1710,31 +1682,13 @@ pub(crate) mod strings_impl {
     /// `Vec<u8>` / `&[u8]` of LE bytes (e.g. BOM-stripping a file buffer) MUST
     /// route through this helper instead of casting.
     ///
-    /// The bytes are first copied into a freshly-allocated, properly-aligned
-    /// `Vec<u16>` via a raw byte `memcpy` (no per-element decode — simdutf
-    /// interprets the buffer as little-endian and Bun targets only LE hosts),
-    /// then handed to `to_utf8_alloc`. An odd trailing byte is dropped, which
-    /// matches the prior `len() / 2` truncation.
+    /// An odd trailing byte is dropped.
     pub fn to_utf8_alloc_from_le_bytes(le_bytes: &[u8]) -> Vec<u8> {
-        let n_u16 = le_bytes.len() / 2;
-        if n_u16 == 0 {
+        let (units, _) = le_bytes.as_chunks::<2>();
+        if units.is_empty() {
             return Vec::new();
         }
-        let mut aligned: Vec<u16> = Vec::with_capacity(n_u16);
-        // SAFETY: `aligned.as_mut_ptr()` is a fresh `Vec<u16>` allocation, so it
-        // is 2-byte-aligned and has `n_u16 * 2` writable bytes of capacity. We
-        // copy exactly that many bytes from `le_bytes` (which has at least
-        // `n_u16 * 2` readable bytes) into it as raw `u8`, then expose them as
-        // initialized `u16` via `set_len`. No `&[u16]` is ever formed over the
-        // possibly-misaligned source.
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                le_bytes.as_ptr(),
-                aligned.as_mut_ptr().cast::<u8>(),
-                n_u16 * 2,
-            );
-            aligned.set_len(n_u16);
-        }
+        let aligned: Vec<u16> = units.iter().map(|&unit| u16::from_le_bytes(unit)).collect();
         to_utf8_alloc(&aligned)
     }
 
@@ -2600,18 +2554,6 @@ pub mod ffi {
         unsafe { Box::<T>::new_zeroed().assume_init() }
     }
 
-    /// Heap-allocate a `T` filled with zero bytes without the [`Zeroable`]
-    /// bound. Prefer [`boxed_zeroed`]; this is for orphan-rule cases where the
-    /// caller cannot `unsafe impl Zeroable` for a foreign type.
-    ///
-    /// # Safety
-    /// `T` must be valid at the all-zero bit pattern.
-    #[inline]
-    pub unsafe fn boxed_zeroed_unchecked<T>() -> Box<T> {
-        // SAFETY: caller guarantees T is valid at the all-zero bit pattern.
-        unsafe { Box::<T>::new_zeroed().assume_init() }
-    }
-
     /// Safe `uname(2)` wrapper: zero-init a `utsname`, call `libc::uname`, return
     /// it by value. On the (theoretical) error path the struct stays all-zero,
     /// so every `c_char[]` field reads as an empty NUL-terminated string.
@@ -2880,16 +2822,15 @@ pub fn return_address() -> usize {
     // Miri cannot execute `frame_address`'s inline asm, and an address read out
     // of a register is not a pointer it can dereference. 0 = "no trim", the
     // same value the arches without an asm! mapping return. `cfg!` rather than
-    // `#[cfg]` so the read below stays compiled (and `PC_OFFSET` live).
+    // `#[cfg]` so the read below stays compiled.
     if cfg!(miri) {
         return 0;
     }
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     {
-        let fp = debug::frame_address();
-        // SAFETY: `fp` is this function's own valid frame pointer; the
-        // return-address slot at `[fp + PC_OFFSET]` is always mapped.
-        unsafe { *((fp + debug::PC_OFFSET) as *const usize) }
+        // SAFETY: this is inlined, so the frame pointer is the address of the
+        // caller's frame record.
+        unsafe { debug::return_address_of_frame(debug::frame_address()) }
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     {

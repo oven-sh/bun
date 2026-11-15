@@ -1,0 +1,13 @@
+# -- source: main.ts
+# function inside(c: any): string { const whole = c | 0; if (whole >= 65 && whole <= 90) return "in"; return "out"; }
+# (globalThis as any).kept = inside;
+# console.log(inside(64), inside(65), inside(90), inside(91));
+# -- end of source
+# f1 = inside
+# Two Branches followed one another, `whole >= 65` and `whole <= 90`, and both left for the same return: four instructions and two jumps where the value lies inside.
+# They are one unsigned comparison of whole - 65 with 25.
+# RUN: allocate f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK: Add {{*}}, -65
+# CHECK-NEXT: Branch BelowEqual({{*}}, 25)
+# CHECK-NOT: Branch

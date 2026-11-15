@@ -13,6 +13,7 @@ use crate::bind::{
     ClassOwner, Decl, JsDeclarationKind, MemberOwner, Parent, SymbolId,
     assignment_declaration_kind, flags_of_member,
 };
+use crate::program::ReadingNoTrees;
 use smallvec::SmallVec;
 
 /// A declaration of a symbol as in TypeScript: its location, and whether that symbol is the declaration's own symbol,
@@ -716,10 +717,14 @@ impl Checker<'_, '_> {
         let files = self.files();
         let before = files.rank_of_file(file) as usize;
         files.order.iter().take(before).any(|&other| {
-            // A file with an `export *` isn't a leaf, and a leaf's data is freed after its task.
-            !files.module(other).is_leaf
-                && !self.bound(other).export_stars.is_empty()
-                && files.module(other).is_module()
+            // The trees of an earlier file may be gone, but never those of a file with an `export *`. Such a file isn't a
+            // leaf either, and a leaf's data is freed after its task.
+            let has_export_star = {
+                let _reading = ReadingNoTrees::begin();
+                let module = files.module(other);
+                !module.is_leaf && !module.bound.export_stars.is_empty() && module.is_module()
+            };
+            has_export_star
                 && self.is_checked_no_later_than(other, file)
                 && (files.exports_of_module(files.file_symbol(other))).contains(&(id, symbol))
         })
@@ -833,7 +838,7 @@ impl Checker<'_, '_> {
         // `instanceNames`, `staticNames`: 1 for a property, 2 for an accessor, 3 once errors have been reported.
         let mut names: SmallVec<[(Atom, bool, u8); 4]> = SmallVec::new();
         // 1 for an instance member, 2 for a static member.
-        let mut private_names: SmallVec<[(Atom, u8); 4]> = SmallVec::new();
+        let mut private_names: FxHashMap<Atom, u8> = FxHashMap::default();
         for m in members.iter() {
             let member = &hir[m];
             let is_static = member.flags.contains(Flags::STATIC);
@@ -892,14 +897,10 @@ impl Checker<'_, '_> {
                 }
             }
             if check_private_names && let (Some(name), PropKey::Private(_)) = (name, member.key) {
-                let at = private_names.iter().position(|it| it.0 == name);
-                let at = at.unwrap_or_else(|| {
-                    private_names.push((name, 0));
-                    private_names.len() - 1
-                });
-                let before = private_names[at].1;
-                private_names[at].1 |= if is_static { 2 } else { 1 };
-                if before != 3 && private_names[at].1 == 3 {
+                let sides = private_names.entry(name).or_insert(0);
+                let before = *sides;
+                *sides |= if is_static { 2 } else { 1 };
+                if before != 3 && *sides == 3 {
                     let class = DiagnosticClass::EarlyError;
                     self.report_duplicate_member_errors(file, members, name, None, 2804, class);
                 }

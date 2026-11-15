@@ -1,0 +1,18 @@
+`bun test` hands every file the names of the test runner: a suite says jest.mock() or vi.mock() without an import, and the layers below are told of the mock: jest.mock() in a CommonJS test file.
+#### node_modules/validator/index.js
+exports.isEmail = text => /@/.test(text);
+#### node_modules/validator/package.json
+{ "name": "validator", "main": "index.js" }
+#### package.json
+{ "name": "p" }
+#### src/index.ts
+import { report } from "./report.ts";
+import validator from "validator";
+export const run = () => [report(1), validator.isEmail("x")].join();
+#### src/report.ts
+export const report = (error?: unknown) => "real";
+#### test/a.test.cjs
+
+    const { run } = require("../src");
+    jest.mock("../src/report.ts", () => ({ report: () => "mocked" }));
+    test("t", () => { console.error("| CASE", run(), require("../src/report.ts").report()); });

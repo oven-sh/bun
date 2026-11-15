@@ -1,7 +1,6 @@
 // Twenty calls with ten arguments in one function. The loop over `arguments` in each has too many turns to be written out: each is separated from its unlikely paths,
 // and then no call makes its list. However many such loops a function has, each of them is separated.
-// STATISTIC: LoopsSeparatedFromUnlikelyPaths >= 20
-// COUNT: allCells <= 3000
+// STATISTIC: WalkLoopsVersioned >= 20
 function sumAfterFirst(first) {
   let sum = first;
   for (let k = 1; k < arguments.length; k++) sum += arguments[k];

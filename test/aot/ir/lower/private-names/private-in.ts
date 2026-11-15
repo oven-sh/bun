@@ -21,24 +21,26 @@
 
 // RUN(THROWS): lower
 // THROWS-LABEL: function {{*}}name="hasStaticField"
-// THROWS: frequency=Unlikely:
-// THROWS-NEXT: = PropHas {{*}}key="#s"
+// THROWS: Branch {{*}}notTaken [[otherBlock]](| 0)
+// THROWS: [[otherBlock]]([[other]]):
+// THROWS-NEXT: = PropHas [[other]] key="#s"
 // THROWS-NEXT: Unreachable
 // THROWS-LABEL: function {{*}}name="hasStaticAccessorField"
-// THROWS: frequency=Unlikely:
-// THROWS-NEXT: = PropHas {{*}}key="#a"
+// THROWS: Branch {{*}}notTaken [[accessorOtherBlock]](| 0)
+// THROWS: [[accessorOtherBlock]]([[accessorOther]]):
+// THROWS-NEXT: = PropHas [[accessorOther]] key="#a"
 // THROWS-NEXT: Unreachable
 
 // A static method or accessor has a message of its own, and is there as soon as the class is.
 // RUN(BRAND): lower
 // BRAND-LABEL: function {{*}}name="hasStaticMethod"
 // BRAND-NOT: TypeTest
-// BRAND: [[method]] = RequireObject {{*}}runtimeError=PrivateStaticTestOfNonObject
+// BRAND: [[method]] = RequireObject {{*}}runtimeError=StaticPrivateInNotObject
 // BRAND: = StrictEq [[method]],
 // BRAND-NOT: TypeTest
 // BRAND-LABEL: function {{*}}name="hasStaticGetter"
 // BRAND-NOT: TypeTest
-// BRAND: [[getter]] = RequireObject {{*}}runtimeError=PrivateStaticTestOfNonObject
+// BRAND: [[getter]] = RequireObject {{*}}runtimeError=StaticPrivateInNotObject
 // BRAND: = StrictEq [[getter]],
 // BRAND-NOT: TypeTest
 
@@ -73,3 +75,6 @@ export class C {
     return #sg in o;
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.hasField, o.hasMethod, o.hasStaticAccessorField, o.hasStaticField, o.hasStaticGetter, o.hasStaticMethod]; }

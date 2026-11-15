@@ -1,0 +1,16 @@
+# f1 = sum
+# -- source: read-a-parameter-that-may-be-null.ts
+# type Entry = { follower: Entry | null; weight: number };
+# function sum(entry: Entry, other: Entry | null): number {
+#   return other === null ? entry.weight : entry.weight + other.weight;
+# }
+# declare const input: any;
+# const last: Entry = { follower: null, weight: +input };
+# (globalThis as any).answer = sum(last, last) + sum(last, input ? last : null);
+# -- end of source
+# The compiler before this one: 7 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 9, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:9 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 9

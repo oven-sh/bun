@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: AotFilesUsed = 1
 
 // FILE: app.ts
 import { after } from "lenient";

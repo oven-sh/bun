@@ -1,0 +1,56 @@
+# `process[name] = 1` under a name that nobody can read: no member of `process` is locked, so the place of `process.env` is no constant. The instance keeps what the first read found all the same, under a watch of the engine that empties the word
+# as soon as anybody puts something else there: the read is a load of the word, typed `anything`, and it is made each time: two reads with a call between them are two loads
+# `process.execArgv = list` in the same program: a member that is seen to be written under its own name is read by name as before: behind that write nothing could be kept
+# Both were once `PropGet`
+# function open(name) { process[name] = 1; }  function twice(f) { const a = process.env; f(); return a === process.env; }  function written(list) { process.execArgv = list; return process.execArgv; }
+# RUN: walk f2 f3 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: PropGet
+# CHECK: [[a]]: anything{{*}} = GetWatchedBuiltinValue builtin=ProcessEnv
+# CHECK: = Call
+# CHECK: [[b]]: anything{{*}} = GetWatchedBuiltinValue builtin=ProcessEnv
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: GetWatchedBuiltinValue
+# CHECK: = PropGet {{*}}key="execArgv"
+# RUN(LOCKS): locks open
+# LOCKS: open ProcessEnv holder-written-under-any-name
+# LOCKS: open ProcessExecArgv written-under-its-name
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4
+    Return v5
+}
+function f1 name="open" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Process
+    v2 = Integer integer=1
+    ElemSet v1, v0, v2
+    v4 = Undefined
+    Return v4
+}
+function f2 name="twice" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Process
+    v2 = PropGet v1 key="env"
+    v3 = Call v0, -
+    v4 = Builtin builtin=Process
+    v5 = PropGet v4 key="env"
+    v6 = StrictEq v2, v5
+    Return v6
+}
+function f3 name="written" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Process
+    PropSet v1, v0 key="execArgv"
+    v3 = Builtin builtin=Process
+    v4 = PropGet v3 key="execArgv"
+    Return v4
+}

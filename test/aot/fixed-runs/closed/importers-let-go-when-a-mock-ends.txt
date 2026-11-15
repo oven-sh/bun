@@ -1,0 +1,128 @@
+`bun test` takes whoever imports a module out of its loader when a mock of the module ends, and when a mock is laid over what an earlier test file loaded. A mock of such an importer in a later test file comes ahead of its load and stands for the whole module. The mock that ends may be one of a built-in module, laid over what an import had loaded (built-in-laid-over).
+#### imported-again/leaf.mjs
+export const leaf = "real leaf";
+#### imported-again/dep.mjs
+export * from "./leaf.mjs";
+export const real = "real";
+#### imported-again/body.mjs
+export * from "./dep.mjs";
+export const ofBody = "of body";
+#### imported-again/above.mjs
+export * from "./body.mjs";
+#### imported-again/reader.mjs
+import { ofBody, real } from "./above.mjs";
+export const read = () => ofBody + " " + real;
+#### imported-again/a.test.mjs
+import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./leaf.mjs", () => ({ leaf: "mock leaf" })); console.log("| CASE imported-again: a", (await import("./reader.mjs")).read());
+});
+#### imported-again/b.test.mjs
+import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./body.mjs", () => ({ ofBody: "mock of body" })); console.log("| CASE imported-again: b", (await import("./reader.mjs")).read());
+});
+#### imported-again/c.test.mjs
+import { mock, test } from "bun:test";
+test("t", async () => {
+  console.log("| CASE imported-again: c", (await import("./reader.mjs")).read());
+});
+#### original/leaf.mjs
+export const leaf = "real leaf";
+#### original/dep.mjs
+export * from "./leaf.mjs";
+export const real = "real";
+#### original/barrel.mjs
+export * from "./dep.mjs";
+#### original/outer.mjs
+export * from "./barrel.mjs";
+#### original/body.mjs
+export * from "./dep.mjs";
+export const ofBody = "of body";
+#### original/above.mjs
+export * from "./body.mjs";
+#### original/first.mjs
+import { real, leaf } from "./outer.mjs";
+import { ofBody } from "./above.mjs";
+console.log("| CASE original: first", real, leaf, ofBody);
+#### original/a.test.mjs
+import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./leaf.mjs", () => ({ leaf: "mock leaf" })); await import("./first.mjs");
+});
+#### original/b.test.mjs
+import { test, vi } from "bun:test";
+test("t", async () => {
+  vi.doMock("./body.mjs", async importOriginal => ({ ...(await importOriginal()), ofBody: "mock of body" }));
+  const space = await import("./above.mjs");
+  console.log("| CASE original: original", space.ofBody, space.real, space.leaf, Object.keys(space).join());
+});
+#### automock/leaf.mjs
+export const leaf = "real leaf";
+#### automock/dep.mjs
+export * from "./leaf.mjs";
+export const real = "real";
+#### automock/barrel.mjs
+export * from "./dep.mjs";
+#### automock/outer.mjs
+export * from "./barrel.mjs";
+#### automock/body.mjs
+export * from "./dep.mjs";
+export const ofBody = "of body";
+#### automock/above.mjs
+export * from "./body.mjs";
+#### automock/first.mjs
+import { real, leaf } from "./outer.mjs";
+import { ofBody } from "./above.mjs";
+console.log("| CASE automock: first", real, leaf, ofBody);
+#### automock/a.test.mjs
+import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./leaf.mjs", () => ({ leaf: "mock leaf" })); await import("./first.mjs");
+});
+#### automock/b.test.mjs
+import { test, vi } from "bun:test";
+test("t", async () => {
+  vi.doMock("./body.mjs");
+  const space = await import("./body.mjs");
+  console.log("| CASE automock: made", space.ofBody, space.real, space.leaf, Object.keys(space).join());
+});
+#### built-in-laid-over/leaf.mjs
+import { EOL } from "node:os";
+export const leaf = "leaf " + EOL;
+#### built-in-laid-over/dep.mjs
+export * from "./leaf.mjs";
+export const real = "real";
+#### built-in-laid-over/barrel.mjs
+export * from "./dep.mjs";
+#### built-in-laid-over/outer.mjs
+export * from "./barrel.mjs";
+#### built-in-laid-over/body.mjs
+export * from "./dep.mjs";
+export const ofBody = "of body";
+#### built-in-laid-over/above.mjs
+export * from "./body.mjs";
+#### built-in-laid-over/first.mjs
+import { real, leaf } from "./outer.mjs";
+import { ofBody } from "./above.mjs";
+console.log("| CASE built-in-laid-over: first", real, leaf, ofBody);
+#### built-in-laid-over/whole.mjs
+import * as space from "./outer.mjs";
+import { own, real } from "./outer.mjs";
+import { own as ownOfBarrel, real as realOfBarrel } from "./barrel.mjs";
+import * as spaceAbove from "./above.mjs";
+import { own as ownAbove, ofBody } from "./above.mjs";
+import { own as ownOfBody, real as realOfBody } from "./body.mjs";
+console.log("| CASE built-in-laid-over: whole", own, real, ownOfBarrel, realOfBarrel, Object.keys(space).join(), space.leaf);
+console.log("| CASE built-in-laid-over: whole", ownAbove, ofBody, ownOfBody, realOfBody, Object.keys(spaceAbove).join(), spaceAbove.leaf);
+#### built-in-laid-over/a.test.mjs
+import { mock, test } from "bun:test";
+import "node:os";
+test("t", async () => {
+  mock.module("node:os", () => ({ EOL: "mock EOL" })); await import("./first.mjs");
+});
+#### built-in-laid-over/b.test.mjs
+import { mock, test } from "bun:test";
+test("t", async () => {
+  mock.module("./barrel.mjs", () => ({ own: "mock own" })); mock.module("./body.mjs", () => ({ own: "own of body" })); await import("./whole.mjs");
+});

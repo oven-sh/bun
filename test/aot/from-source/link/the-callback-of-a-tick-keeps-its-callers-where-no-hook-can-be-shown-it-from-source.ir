@@ -1,0 +1,10 @@
+# process.nextTick's row hands the callback and its arguments to the function that shows ticks to the init hooks of node:async_hooks. The host finds that function at `whileHooked.push` of the library's queue of ticks; node:async_hooks alone stores there.
+# Without node:async_hooks in the program nothing lies there: the callback goes nowhere else, its callers are known and its parameter is an integer.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# -- source: the-callback-of-a-tick-keeps-its-callers-where-no-hook-can-be-shown-it-from-source.cjs
+# function told(count) { console.log(typeof count, count + 1); }
+# process.nextTick(told, 7);
+# process.nextTick(told, 8);
+# -- end of source

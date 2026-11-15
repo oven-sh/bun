@@ -1,0 +1,46 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function declared(list: number[], depth: number): number { if (!depth) return list.length; return declared(list.filter(x => x & 1), depth - 1) + declared(list.filter(x => !(x & 1)), depth - 1); }
+# function callsAnother(list: number[], depth: number): number { return other(list.filter(x => x > depth), depth); }
+# function other(list: number[], depth: number): number { return depth ? callsAnother(list, depth - 1) : list.length; }
+# function throughAnArrow(list: number[], depth: number): number { return depth ? [1].map(() => throughAnArrow(list, depth - 1))[0]! + list.filter(x => x > depth).length : 0; }
+# function holder() {
+#   const local = (list: number[], depth: number): number => depth ? local(list.filter(x => x > depth), depth - 1) : list.length;
+#   return local;
+# }
+# function once(list: number[]): number { return list.filter(x => x & 1).length; }
+# class Sieve { run(list: number[], depth: number): number { return depth ? this.run(list.filter(x => x > depth), depth - 1) : list.length; } }
+# class Heap { items: number[] = []; filter(f: (x: number) => boolean): number[] { return this.items.filter(x => f(x)); } }
+# const named = function own(list: number[], depth: number): number { return depth ? own(list.filter(x => x > depth), depth - 1) : list.length; };
+# const list = [1, 2, 3, 4, 5, 6, 7, 8], heap = new Heap();
+# heap.items = list;
+# print(declared(list, 2), holder()(list, 3), named(list, 3), new Sieve().run(list, 3), heap.filter(x => x > 6).length, callsAnother(list, 2), throughAnArrow(list, 2), once(list));
+# -- end of source
+# f1 = declared, f2 = callsAnother, f4 = throughAnArrow, f6 = once, f8 = run, f10 = filter, f11 = own, f18 = local
+# A function that calls itself gets what loops get: what stands in its body runs again and again. That it calls itself is read off its own text: a declaration called by its name, a local function
+# called by its binding, a function expression called by its own name, `this.run()` in run. There a method of lists that is handed a leaf made for the call is copied to the site, as inside a loop.
+# NOT TAKEN: a method that calls its own name on another receiver (Heap.filter calls the list's filter) . two functions that call each other.
+# The calls in throughAnArrow() and once(), which do not call themselves, are copied too.
+# RUN: walk f1 f2 f4 f6 f8 f10 f11 f18 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: isLoopHead=true
+# CHECK-LABEL: code f4:Body
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f6:Body
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f8:Body
+# CHECK: frame 1 callee=
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f10:Body
+# CHECK-NOT: isLoopHead=true
+# CHECK-LABEL: code f11:Body
+# CHECK: frame 1 callee=
+# CHECK: isLoopHead=true
+# CHECK-LABEL: code f18:Body
+# CHECK: frame 1 callee=
+# CHECK: isLoopHead=true
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 8 5 5 5 2 6 13 4

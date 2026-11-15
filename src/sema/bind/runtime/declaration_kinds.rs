@@ -40,6 +40,13 @@ pub(super) struct Declaration {
 }
 
 impl Declaration {
+    pub(super) fn is_import(&self) -> bool {
+        matches!(
+            self.kind,
+            DeclarationKind::Import | DeclarationKind::ImportEquals
+        )
+    }
+
     pub(super) fn new(hir: &File<'_>, bound: &BoundBuilder, decl: Decl) -> Declaration {
         Declaration {
             decl,
@@ -111,8 +118,6 @@ pub(super) fn is_block_level(bound: &BoundBuilder, scope: ScopeId) -> bool {
     scope.is_some() && bound.container_scope(scope) != scope
 }
 
-/// `export default Name` exports nothing where the file declares `Name` as an interface, a type alias or a namespace without values, and as nothing that has a value.
-/// What stands in `declare global` counts as declared by the file.
 fn exports_type(hir: &File<'_>, bound: &BoundBuilder, statement: StmtId) -> bool {
     let StmtKind::ExportDefault(value) = hir[statement].kind else {
         return false;

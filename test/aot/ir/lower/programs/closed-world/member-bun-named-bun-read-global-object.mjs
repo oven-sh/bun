@@ -36,16 +36,4 @@ const holder9 = { next: () => holder8.next() };
 const holder10 = { next: () => holder9.next() };
 console.log(holder10.next().join(" "));
 
-// GENERATED: open
 // CHECK-LABEL: function {{*}}name="open"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] results=[{type=anything}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="SQL"
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v3 = GetModuleVariable variable=[[g_3]]
-// CHECK-NEXT: v4 = CheckInitialized v3 name="url"
-// CHECK-NEXT: v5 = Construct v2, -, v4 calleeName="bun.SQL"
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

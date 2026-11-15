@@ -1,8 +1,8 @@
 // RUN: link
-// CHECK: function {{*}}name="own"{{*}}parameters=[{type=i32 site={{*}} flags=[IsInt32Promise]}]
+// CHECK: function {{*}}name="own"{{*}}parameters=[{type=i32 flags=[IsInt32Promise]}]
 
 // RUN(PACKAGE): link
-// PACKAGE: function {{*}}name="twice"{{*}}parameters=[{type=i32 site={{*}} flags=[IsInt32Promise, IsDeclaredByDependency]}]
+// PACKAGE: function {{*}}name="twice"{{*}}parameters=[{type=i32 flags=[IsInt32Promise, IsDeclaredByDependency]}]
 
 // Who builds the program cannot mend a package. The engine is told which promises are a package's: where it cannot prove one of them the build goes on.
 

@@ -1,1 +1,0 @@
-module.exports = { name: "another-name.bin", strict: (function () { return this === undefined; })() };

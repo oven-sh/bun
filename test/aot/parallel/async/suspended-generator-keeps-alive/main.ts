@@ -1,5 +1,4 @@
 // A suspended generator or async generator holds its parameters, its receiver and the locals it reads again. It lets go of a local that it does not read again.
-// Alone: it measures time, memory or what is collected, and that hangs on what the compiler knows about the whole executable
 import "../../../fixtures/jsc-shell-functions.ts";
 import "./program.ts";
 /* Output:

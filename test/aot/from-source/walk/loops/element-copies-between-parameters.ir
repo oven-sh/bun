@@ -1,0 +1,12 @@
+# f1 = copy
+# -- source: main.mjs
+# function copy(d, s) { for (let i = 0; i < 100; i++) d[i & 7] = s[i & 7]; return d[3]; }
+# const a = JSON.parse('[1.5,2.5,3.5,4.5,5.5,6.5,7.5,8.5]'), b = JSON.parse('[0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]');
+# print(copy(a, b), copy(b, JSON.parse('[1,2,3,4,5,6,7,8]')));
+# -- end of source
+# Arrays of doubles on both sides have a version of their own. The target alone is not told apart: the source would stay unknown.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Double [isWritable]
+# CHECK: PutDoubleIndex
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 0.5 4

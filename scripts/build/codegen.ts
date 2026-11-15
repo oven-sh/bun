@@ -266,8 +266,6 @@ export interface CodegenOutputs {
   /** What src/builtin_sources/archive.S `.incbin`s. Undefined in a graph without an engine. */
   builtinSourcesArchive?: string;
 
-  /** What the bundled text of src/js calls the functions that it does not call as src/js does. */
-  bundledNamesOfModules: string;
   /** The bundled text of src/runtime.bun.js. */
   bundledHelpers: string;
 
@@ -305,7 +303,6 @@ export function emitCodegen(n: Ninja, cfg: CodegenFields, sources: Sources, engi
     cppAll: [],
     internalModulesAsm: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.S"),
     internalModulesBin: resolve(cfg.codegenDir, "InternalModuleRegistryConstants.bin"),
-    bundledNamesOfModules: resolve(cfg.codegenDir, "bundled_names_of_modules.txt"),
     bundledHelpers: resolve(cfg.codegenDir, "runtime.out.js"),
     rootInstall,
   };
@@ -846,7 +843,6 @@ function emitJsModules({ n, cfg, sources, o, dirStamp, engine }: Ctx): void {
     resolve(cfg.codegenDir, "generated_builtin_module_key_index.rs"),
     o.internalModulesAsm,
     o.internalModulesBin,
-    o.bundledNamesOfModules,
   ];
   // generated.d.ts from bundle-modules.ts, WebCoreJSBuiltins.d.ts from the bundle-functions.ts it calls.
   const types = [resolve(cfg.typesDir, "generated.d.ts"), resolve(cfg.typesDir, "WebCoreJSBuiltins.d.ts")];

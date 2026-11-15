@@ -1,5 +1,4 @@
-// The options come out of code without types. `limit === 0` holds for a number alone, whatever that code has stored, so the first arrow captures a number: a validating build must not stop here.
-// Flags: --aot-validate
+// The options come out of code without types. `limit === 0` holds for a number alone, whatever that code has stored, so the first arrow captures a number.
 function report(limit: number, strict: boolean): string { return limit + " " + strict; }
 function start({ limit = 0, strict = false }: { limit?: number; strict?: boolean } = {}): () => string {
   if (limit === 0) return () => report(limit, strict);

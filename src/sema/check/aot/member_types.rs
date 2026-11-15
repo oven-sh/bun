@@ -3,7 +3,7 @@ use super::answers::{
     ObjectMember, ObjectMemberKind, PositionTypes, SymbolCreation, WrittenType,
 };
 use super::queries::Queries;
-use crate::atom::Atom;
+use crate::atom::{Atom, SymbolNameKind};
 use crate::bind::{Decl, MemberOwner, PatParent};
 use crate::hir::{ExprId, ExprKind, MemberKind, TypeNodeId};
 use crate::program::{FileId, Sym};
@@ -62,6 +62,7 @@ fn written_as_checked(written: WrittenType, checked: CheckedType) -> WrittenType
     }
 }
 
+#[inline]
 fn member_kind(flags: PropFlags) -> ObjectMemberKind {
     if flags.contains(PropFlags::METHOD) {
         ObjectMemberKind::Method
@@ -86,18 +87,16 @@ fn index_key(key: TypeId) -> IndexKey {
 }
 
 impl<'c, 'p, 's> Queries<'c, 'p, 's> {
+    #[inline]
     pub(super) fn member_name(&self, name: Atom) -> MemberName {
-        let atoms = self.c.atoms();
-        if atoms.is_symbol_name(name) {
-            MemberName::Symbol(name)
-        } else if atoms.is_private_symbol_name(name) {
-            MemberName::Private(name)
-        } else {
-            MemberName::String(name)
+        match self.c.atoms().symbol_name_kind(name) {
+            Some(SymbolNameKind::Symbol) => MemberName::Symbol(name),
+            Some(SymbolNameKind::Private) => MemberName::Private(name),
+            None => MemberName::String(name),
         }
     }
 
-    pub(super) fn symbol_member_name(&mut self, file: FileId, key: ExprId) -> Option<Atom> {
+    pub fn symbol_member_name(&mut self, file: FileId, key: ExprId) -> Option<Atom> {
         if !matches!(self.c.hir(file)[key].kind, ExprKind::Ident(_)) {
             return None;
         }
@@ -107,6 +106,17 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 symbol: UniqueSymbolDeclaration::Variable(_),
                 ..
             } => self.c.property_name_of_type(ty),
+            _ => None,
+        }
+    }
+
+    pub fn member_of_symbol_constructor(&mut self, name: Atom) -> Option<Atom> {
+        let key = self.c.key_type_of_name(name)?;
+        match *self.c.data(key) {
+            TypeData::UniqueSymbol {
+                symbol: UniqueSymbolDeclaration::SymbolConstructor,
+                name,
+            } => Some(name),
             _ => None,
         }
     }
@@ -132,13 +142,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         };
         let callee = hir[call].callee;
-        if !matches!(hir[callee].kind, ExprKind::Ident(_))
-            || !self
-                .c
-                .is_symbol_or_symbol_for_call(variable.file, initializer)
+        if !self
+            .c
+            .is_symbol_or_symbol_for_call(variable.file, initializer)
         {
             return None;
         }
+        let is_registered = !matches!(hir[callee].kind, ExprKind::Ident(_));
         let mut arguments = hir.ids(hir[call].args);
         let description = match (arguments.next(), arguments.next()) {
             (None, _) => None,
@@ -148,10 +158,14 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             },
             (Some(_), Some(_)) => return None,
         };
+        if is_registered && description.is_none() {
+            return None;
+        }
         Some(SymbolCreation {
             file: variable.file,
             call_number: u32::from(call),
             description,
+            is_registered,
         })
     }
 
@@ -160,9 +174,21 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         prop: &Prop<'_>,
         property_index: u32,
     ) -> ListedMember {
+        // What a spread copies from an accessor is the value that it reads.
+        let is_copied = matches!(prop.source, PropSource::Copy(..));
+        let kind = match member_kind(prop.flags) {
+            ObjectMemberKind::Getter
+            | ObjectMemberKind::Setter
+            | ObjectMemberKind::GetterAndSetter
+                if is_copied =>
+            {
+                ObjectMemberKind::Field
+            }
+            kind => kind,
+        };
         ListedMember {
             name: self.member_name(prop.name),
-            kind: member_kind(prop.flags),
+            kind,
             is_optional: prop.flags.contains(PropFlags::OPTIONAL),
             property_index,
         }
@@ -177,13 +203,22 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         ObjectMember {
             name: self.member_name(prop.name),
             kind: member_kind(prop.flags),
-            types: PositionTypes {
-                written: self.ask_written(|queries| queries.written_of_prop(prop, written_outer)),
-                checked: self
-                    .ask(|queries| queries.type_without_optional_undefined(prop, checked_outer)),
-            },
+            types: self.types_of_prop(prop, written_outer, checked_outer),
             is_optional: prop.flags.contains(PropFlags::OPTIONAL),
             is_readonly: prop.flags.contains(PropFlags::READONLY),
+        }
+    }
+
+    pub(super) fn types_of_prop(
+        &mut self,
+        prop: &'p Prop<'p>,
+        written_outer: MapperId,
+        checked_outer: MapperId,
+    ) -> PositionTypes {
+        PositionTypes {
+            written: self.ask_written(|queries| queries.written_of_prop(prop, written_outer)),
+            checked: self
+                .ask(|queries| queries.type_without_optional_undefined(prop, checked_outer)),
         }
     }
 
@@ -198,22 +233,6 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             checked: self.ask(|queries| queries.type_without_optional_undefined(prop, outer)),
             is_optional: prop.flags.contains(PropFlags::OPTIONAL),
             is_readonly: prop.flags.contains(PropFlags::READONLY),
-        }
-    }
-
-    pub(super) fn is_inferred_member(&mut self, prop: &'p Prop<'p>) -> bool {
-        match &prop.source {
-            PropSource::Type(_) | PropSource::Copy(..) | PropSource::Mapped(..) => false,
-            PropSource::Literal(..) | PropSource::ReverseMapped(..) => true,
-            PropSource::Symbol(symbol) => {
-                let declarations = self.c.declarations_of_property(*symbol);
-                declarations.iter().any(|&(file, decl)| {
-                    matches!(self.annotation_of(file, decl), Annotation::Missing)
-                })
-            }
-            PropSource::Intersected(_, parts) => {
-                parts.iter().any(|part| self.is_inferred_member(part))
-            }
         }
     }
 
@@ -413,25 +432,35 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         outer: MapperId,
     ) -> WrittenType {
         let declarations = self.c.declarations_of_property(symbol);
-        let is_inferred = declarations
-            .iter()
-            .any(|&(file, decl)| matches!(self.annotation_of(file, decl), Annotation::Missing));
+        let (mut is_inferred, mut is_every_signature, mut is_every_node) = (false, true, true);
+        let mut first_node = None;
+        for &(file, decl) in declarations.iter() {
+            match self.annotation_of(file, decl) {
+                Annotation::Node(node) => {
+                    is_every_signature = false;
+                    first_node.get_or_insert(AnnotatedDeclaration { file, decl, node });
+                }
+                Annotation::Signature => is_every_node = false,
+                Annotation::Missing => {
+                    (is_inferred, is_every_signature, is_every_node) = (true, false, false);
+                    break;
+                }
+            }
+        }
         if is_inferred {
             self.note_inferred_member();
         }
         if !self.member_trust(&declarations).is_trusted() {
             return WrittenType::Unwritten;
         }
-        let is_every_signature = declarations
-            .iter()
-            .all(|&(file, decl)| matches!(self.annotation_of(file, decl), Annotation::Signature));
+
         if is_every_signature {
             let ty = self.c.type_of_prop(prop, outer);
             return WrittenType::from_result(self.resolved(ty));
         }
         let annotated = match member_kind(prop.flags) {
             ObjectMemberKind::Field | ObjectMemberKind::Method => {
-                Ok(self.field_annotation(&declarations))
+                Ok(first_node.filter(|_| is_every_node))
             }
             _ => self.accessor_annotation(&declarations),
         };
@@ -494,25 +523,13 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         Ok((read_type == write_type).then_some(read))
     }
 
-    fn field_annotation(&self, declarations: &[(FileId, Decl)]) -> Option<AnnotatedDeclaration> {
-        let mut first = None;
-        for &(file, decl) in declarations {
-            match self.annotation_of(file, decl) {
-                Annotation::Node(node) => {
-                    first.get_or_insert(AnnotatedDeclaration { file, decl, node });
-                }
-                Annotation::Signature | Annotation::Missing => return None,
-            }
-        }
-        first
-    }
-
     fn is_class_declaration(&self, file: FileId, decl: Decl) -> bool {
         matches!(decl, Decl::ParameterProperty(_))
             || matches!(decl, Decl::Member(member)
                 if matches!(self.c.bound(file).member_owner[member.idx()], MemberOwner::Class(_)))
     }
 
+    #[inline]
     fn annotation_of(&self, file: FileId, decl: Decl) -> Annotation {
         let hir = self.c.hir(file);
         let node = match decl {
@@ -548,7 +565,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if !prop.flags.contains(PropFlags::OPTIONAL) {
             return ty;
         }
-        let defined = self.c.filter(ty, |_, member| !member.is_undefined());
+        let defined = match *self.c.parts(ty) {
+            [first, second] => match (first.is_undefined(), second.is_undefined()) {
+                (false, false) => ty,
+                (true, false) => second,
+                (false, true) => first,
+                (true, true) => TypeId::NEVER,
+            },
+            _ => self.c.filter(ty, |_, member| !member.is_undefined()),
+        };
         if defined.is_never() {
             TypeId::UNDEFINED
         } else {

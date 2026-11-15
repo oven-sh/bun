@@ -1,0 +1,16 @@
+# f1 = addBytes
+# -- source: sum-of-masked-integers.ts
+# function addBytes(a: number, b: number): number {
+#   const low = a & 255;
+#   const high = b & 255;
+#   return low + high * 256;
+# }
+# declare const input: any;
+# (globalThis as any).answer = addBytes(input | 0, input | 0);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 8, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:8 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 8

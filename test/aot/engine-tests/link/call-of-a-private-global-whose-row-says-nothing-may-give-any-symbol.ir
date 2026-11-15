@@ -1,0 +1,29 @@
+# print({}); $createInternalModuleById(1)
+# A read of a private global of the host raises nothing only where none of its rows on %PrivateGlobals% may hand out what nobody describes: the rows of a call too, for the read is the only word about what a call of it gives.
+# This one has a Call row that says nothing: what it hands out may be any value that the host has.
+# The control: read-of-a-private-name-that-the-table-lists-gives-what-its-row-says.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key=@"createInternalModuleById" [isFreeName]
+    v2 = Integer integer=1
+    v3 = Call v1, -, v2
+    v4 = NewObject layout=L0
+    v5 = FinishObject v4
+    v6 = PropGet v0 key="print" [isFreeName]
+    v7 = Call v6, -, v5 calleeName="print"
+    Return v3
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

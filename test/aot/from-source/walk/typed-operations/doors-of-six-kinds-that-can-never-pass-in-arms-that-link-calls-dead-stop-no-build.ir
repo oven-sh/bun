@@ -1,0 +1,19 @@
+# -- source: main.js
+# let kept = null, other = null;
+# class Box { constructor() { this.value = null; } }
+# function take(text) { let n = 0; for (let i = 0; i < 2; i++) n += i; return text === null ? n : n + 1; }
+# async function variable() { for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") kept = x.length; } return kept; }
+# async function constant() { for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") other = 5; } return other; }
+# async function field() { let last = null; for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") { const box = new Box(); box.value = x.length; last = box; } } return last === null ? "none" : last.value; }
+# async function scope() { let held = null; const read = () => held; for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") held = x.length; } return read(); }
+# async function argument() { let sum = 0; for (const x of Object.freeze([1, 2, 3, 4])) { await null; sum += typeof x === "string" ? take(x.length) : take(null); } return sum; }
+# async function result() { for (const x of Object.freeze([1, 2, 3, 4])) { await null; if (typeof x === "string") return x.length; } return null; }
+# Promise.all([variable(), constant(), field(), scope(), argument(), result()]).then((said) => print("SAID", said.map(String).join(" ")));
+# -- end of source
+# The door of a variable, a written constant, a field, a slot of a scope, a parameter and a result, each in an arm that a test has emptied for Link: three of them can never pass.
+# A RIGHT PROGRAM: a build that verifies once stopped at these doors. It builds, and answers as the source.
+# OPTIONS: check=Validate
+# RUN(BUILDS): run-in-shell
+# BUILDS: SAID null null none null 4 null
+# BUILDS-NEXT: exited with 0
+# BUILDS-NEXT: the source prints the same

@@ -38,7 +38,6 @@ const o = { a: 1, set put(given) { console.log(this.constructor(given)()); } };
 Reflect.set(o, "put", text, function () {});
 //// Reflect-set-spread
 //@ alone
-//@ not-seen
 //@ evaluated-code-uses-removed-api
 class A { set put(given) { console.log(this.constructor(given)()); } }
 Reflect.set(...[A.prototype, "put", text, function () {}]);

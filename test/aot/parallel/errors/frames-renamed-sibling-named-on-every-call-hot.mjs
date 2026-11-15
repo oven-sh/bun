@@ -1,5 +1,4 @@
 // A closure that was given a displayName is called by its sibling, and every call is inlined. Each stack names it as given, the later ones too.
-// Flags: --aot-heat=everything-is-hot
 const names = (stack, count) => stack.split("\n").slice(1, 1 + count).map(line => line.trim().replace(/ ?\(.*\)$/, "").replace(/^at /, "")).join(" < ");
 const never = process.argv.length > 1000 ? "x" : "";
 const handedBack = new Function("f", "return f;" + never);

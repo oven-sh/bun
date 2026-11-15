@@ -299,8 +299,7 @@
               "/compiler/debugging",
               "/compiler/size",
               "/compiler/libraries",
-              "/compiler/troubleshooting",
-              "/compiler/internals"
+              "/compiler/troubleshooting"
             ]
           },
           {
@@ -734,6 +733,10 @@
     {
       "source": "/bundler/aot-compatibility",
       "destination": "/compiler/compatibility"
+    },
+    {
+      "source": "/compiler/internals",
+      "destination": "/compiler/aot"
     }
   ],
   "footer": {

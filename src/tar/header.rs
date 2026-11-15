@@ -93,6 +93,12 @@ pub(crate) fn is_null(h: &Block) -> bool {
     strings::index_of_not_char(h, 0).is_none()
 }
 
+/// The checksum field itself counts as spaces.
+pub(crate) fn unsigned_sum(h: &Block) -> i64 {
+    let sum = |bytes: &[u8]| bytes.iter().map(|&b| u32::from(b)).sum::<u32>();
+    i64::from(sum(h) - sum(&h[CHECKSUM]) + sum(&[b' '; CHECKSUM.end - CHECKSUM.start]))
+}
+
 /// Old BSD, Solaris and HP-UX tars summed signed bytes, so either sum is accepted.
 pub(crate) fn checksum_ok(h: &Block) -> bool {
     let field = &h[CHECKSUM];
@@ -100,9 +106,7 @@ pub(crate) fn checksum_ok(h: &Block) -> bool {
         return false;
     }
     let expected = parse_field(field);
-    let sum = |bytes: &[u8]| bytes.iter().map(|&b| u32::from(b)).sum::<u32>();
-    // The field itself counts as spaces.
-    let unsigned = i64::from(sum(h) - sum(field) + sum(&[b' '; CHECKSUM.end - CHECKSUM.start]));
+    let unsigned = unsigned_sum(h);
     if expected == unsigned {
         return true;
     }
@@ -112,15 +116,15 @@ pub(crate) fn checksum_ok(h: &Block) -> bool {
 
 fn number_field_looks_valid(field: &[u8]) -> bool {
     // Base-256, or empty.
-    if matches!(field.first(), Some(0x80 | 0xff | 0)) {
-        return true;
-    }
-    let rest = strings::trim_leading_char(field, b' ');
-    let digits = rest
+    matches!(field.first(), Some(0x80 | 0xff | 0)) || is_octal(field)
+}
+
+/// Digits between padding, and nothing else.
+pub(crate) fn is_octal(field: &[u8]) -> bool {
+    strings::trim_leading_char(field, b' ')
         .iter()
-        .position(|c| !matches!(c, b'0'..=b'7'))
-        .unwrap_or(rest.len());
-    rest.iter().skip(digits).all(|c| matches!(c, b' ' | 0))
+        .skip_while(|c| matches!(c, b'0'..=b'7'))
+        .all(|c| matches!(c, b' ' | 0))
 }
 
 pub(crate) fn has_magic(h: &Block) -> bool {

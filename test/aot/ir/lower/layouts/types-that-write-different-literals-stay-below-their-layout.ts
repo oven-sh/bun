@@ -1,10 +1,10 @@
 // RUN: link
-// CHECK: layout {{*}}name="Seven" module=[[entry]] {{*}}{key="tag" declared={type=int[7, 9]} flags=[IsRequired]}
-// CHECK: layout [[shared]] name="Negate" module=[[entry]] {{*}}{key="kind" declared={type=int[1, 3]} flags=[IsRequired]}{{*}}flags=[IsNeverAllocated]
+// CHECK: layout {{*}}module=[[entry]] {{*}}{key="tag" declared={type=int[7, 9]} flags=[IsRequired]}
+// CHECK: layout [[shared]] module=[[entry]] {{*}}{key="kind" declared={type=int[1, 3]} flags=[IsRequired]}{{*}}flags=[IsNeverAllocated]
 // CHECK: layout {{*}}module=[[entry]] {{*}}{key="kind" declared={type=1} flags=[IsRequired]}{{*}}supertypes=[{{*}}[[shared]]] flags=[IsNeverAllocated]
 // CHECK-NEXT: layout {{*}}module=[[entry]] {{*}}{key="kind" declared={type=3} flags=[IsRequired]}{{*}}supertypes=[{{*}}[[shared]]] flags=[IsNeverAllocated]
 // CHECK-NEXT: variable g0
-// CHECK: function {{*}}name="operandsOf" {{*}}parameters=[{type=undefined|null|[[shared]] site=w{{*}}}, {type=undefined|null|[[shared]] site=w{{*}}}]
+// CHECK: function {{*}}name="operandsOf" {{*}}parameters=[{type=undefined|null|[[shared]] flags={{*}}}, {type=undefined|null|[[shared]] flags={{*}}}]
 
 // Negate and Not have the same names, so they share a layout, which every position of either names. Its `kind` holds what either writes, and a type only
 // bounds its integers: 1 to 3, though nobody writes 2. The layout describes objects that NodeObject makes, whose `this` is a Node, and which names such an

@@ -1,0 +1,18 @@
+# f2 = span
+# -- source: pair-returned-as-an-array.ts
+# function ordered(a: number, b: number): [number, number] {
+#   return a < b ? [a, b] : [b, a];
+# }
+# function span(a: number, b: number): number {
+#   const [low, high] = ordered(a, b);
+#   return high - low;
+# }
+# declare const input: any;
+# (globalThis as any).answer = [span, span(+input, +input)];
+# -- end of source
+# The compiler before this one: 8 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 33, patches 4, moves 6, unlikely or rare 14.
+# RUN(X64): steps most:39 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 39

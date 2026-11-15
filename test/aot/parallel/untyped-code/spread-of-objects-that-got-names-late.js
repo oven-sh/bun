@@ -18,7 +18,7 @@ const mix = text => {
   for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
 };
 
-// Every length of the storage: none, in the cell, and outside it up to where the stub gives up.
+// Every length of the storage: none, in the cell, and outside it past two doublings.
 const sources = [];
 for (let count = 0; count <= 24; count++) sources.push(filled(count, count * 100), grown(count, count + 1));
 for (let round = 0; round < 60; round++) {
@@ -37,7 +37,7 @@ for (let round = 0; round < 60; round++) {
 }
 console.log(hash, show(sources[9]), show(copy(sources[10])), show(withOne(sources[40], 1)));
 
-// Sources that are not copied word by word.
+// Sources that are not copied word by word, and one with a hundred names, which is.
 const symbol = Symbol("s");
 const odd = {
   frozen: Object.freeze(filled(5, 1)),

@@ -1,0 +1,28 @@
+Two import() calls at once come to one mock whose factory waits; the first goes by a computed name, so its file runs from its text.
+#### a.test.mjs
+import { beforeAll, mock, test } from "bun:test";
+const later = () => new Promise(resolve => setTimeout(resolve, 30));
+const name = text => process.env.NOBODY_SETS_THIS || text;
+const show = settled =>
+  console.log("| CASE " + settled.map(s => (s.status === "fulfilled" ? Object.keys(s.value).map(key => (typeof s.value[key] === "function" ? "function" : s.value[key])).join() : "failed " + s.reason.message)).join(" | "));
+beforeAll(() => {
+  mock.module("./lib.mjs", async () => (await later(), { v: "mock v", kept: "mock kept" }));
+});
+test("imports", async () => {
+  show(await Promise.allSettled([import(name("./other.mjs")), import("./user.mjs")]));
+});
+#### lib.mjs
+console.log("| CASE lib runs");
+export const v = "real v";
+export const kept = "kept";
+#### other.mjs
+import { v, kept } from "./lib.mjs";
+export const both = v + " " + kept;
+#### user.mjs
+import { v, kept } from "./lib.mjs";
+export { v, kept };
+#### z.test.mjs
+import { test } from "bun:test";
+import { v } from "./lib.mjs";
+console.log("| CASE the next file", v);
+test("reads", () => {});

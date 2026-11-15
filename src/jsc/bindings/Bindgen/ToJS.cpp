@@ -1,9 +1,15 @@
 #include "root.h"
 #include "Bindgen/ExternTraits.h"
 #include "Bindgen/SchemaStrings.h"
+#include "JSAbortSignal.h"
+#include "JSBuffer.h"
+#include "JSDOMURL.h"
+#include "JSFetchHeaders.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
+#include "streams/JSReadableStream.h"
 #include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/NativeExecutable.h>
@@ -109,6 +115,39 @@ extern "C" bool Bun__Bindgen__exceptionPresenceMatches(JSGlobalObject* globalObj
 extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject* globalObject, const JSValue* values, size_t count)
 {
     return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values, count));
+}
+
+// What a thunk holds a result to that is declared as an instance of a class without a `.bind.ts` file. The value is not empty.
+extern "C" bool Bun__Bindgen__isAbortSignal(EncodedJSValue value)
+{
+    return !!dynamicDowncast<WebCore::JSAbortSignal>(JSValue::decode(value));
+}
+
+extern "C" bool Bun__Bindgen__isArrayBuffer(EncodedJSValue value)
+{
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(JSValue::decode(value));
+    return buffer && !buffer->isShared();
+}
+
+extern "C" bool Bun__Bindgen__isBuffer(EncodedJSValue value)
+{
+    JSValue decoded = JSValue::decode(value);
+    return decoded.isCell() && decoded.asCell()->type() == Uint8ArrayType && JSBuffer__isBuffer(decoded.asCell()->structure()->globalObject(), value);
+}
+
+extern "C" bool Bun__Bindgen__isHeaders(EncodedJSValue value)
+{
+    return !!dynamicDowncast<WebCore::JSFetchHeaders>(JSValue::decode(value));
+}
+
+extern "C" bool Bun__Bindgen__isReadableStream(EncodedJSValue value)
+{
+    return !!dynamicDowncast<WebCore::JSReadableStream>(JSValue::decode(value));
+}
+
+extern "C" bool Bun__Bindgen__isURL(EncodedJSValue value)
+{
+    return !!dynamicDowncast<WebCore::JSDOMURL>(JSValue::decode(value));
 }
 
 }

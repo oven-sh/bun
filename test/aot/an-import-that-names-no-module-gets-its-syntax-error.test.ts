@@ -10,20 +10,16 @@ raiseDefaultTimeout(120_000);
 // `import { x }` without `from "module"` is a syntax error that the parser recovers from, so the build goes on with an import that names no module. Whoever follows `x` to
 // the module it comes from has to find none. A test run also reads the strings of the test files as code, so there the broken text need not even be code.
 // As code it is TypeScript: in a JavaScript file the parser gives up at the error and nothing is left to follow.
-const imports: [string, string][] = [
-  ["named", `import { x }`],
-  ["named, from nothing", `import { x } from`],
-  ["named, from a name", `import { x } from y`],
-  ["under another name", `import { join as x }`],
-  ["a namespace", `import * as x`],
-  ["a macro", `import { x } from y with { type: "macro" }`],
-  ["the namespace of a macro", `import * as x from y with { type: "macro" }`],
+// What crashed the compiler: a require() that follows the name, a call of the name of a macro, a call on the namespace of one.
+const programs = [
+  { file: "required-through-import-meta", code: `import.meta.require(x);\nimport { x }\n` },
+  { file: "a-member-called-for-require", code: `require(x.join("a", "b"));\nimport { x }\n` },
+  { file: "a-macro-called", code: `console.log(x(1));\nimport { x } from y with { type: "macro" }\n` },
+  {
+    file: "a-member-of-a-macros-namespace-called",
+    code: `console.log(x.m(1));\nimport * as x from y with { type: "macro" }\n`,
+  },
 ];
-const uses = [`import.meta.require(x);`, `require(x.join("a", "b"));`, `console.log(x(1));`, `console.log(x.m(1));`];
-
-const programs = imports.flatMap(([name, declaration], index) =>
-  uses.map((use, useIndex) => ({ name, file: `${index}-${useIndex}`, code: `${use}\n${declaration}\n` })),
-);
 
 // A process that a signal ended has 128 + the signal for its exit code.
 async function exitCodes(directory: string, extension: "js" | "ts", ...command: string[]) {

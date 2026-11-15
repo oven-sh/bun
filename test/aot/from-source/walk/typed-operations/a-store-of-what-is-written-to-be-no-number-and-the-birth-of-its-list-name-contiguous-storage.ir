@@ -1,0 +1,18 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# type Listener = (...args: unknown[]) => void;
+# function copyWithInserted(list: Listener[], fn: Listener): unknown[] {
+#   const n = list.length;
+#   const copy = new Array(n + 1);
+#   for (let i = 0; i < n; i++) copy[i] = list[i];
+#   copy[n] = fn;
+#   return copy;
+# }
+# sink(copyWithInserted);
+# -- end of source
+# The function is handed out, so nothing is proven of what it stores, and nothing is written of the list that it makes. What it stores is written to be a function.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = NewArrayLike {{*}}arrayStorage=Contiguous
+# CHECK: = PutArrayElement {{*}}arrayStorage=Contiguous level=Expected
+# CHECK: = PutArrayElement {{*}}arrayStorage=Contiguous level=Expected

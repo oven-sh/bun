@@ -1,0 +1,27 @@
+# -- source: a-store-into-an-object-that-may-have-been-frozen-is-held-to-the-fact-that-nobody-has-seen.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# class Parcel { weight: number; constructor(weight: number) { this.weight = weight; } }
+# function make(weight: number, freezes: boolean) { const parcel = new Parcel(weight); if (freezes) Object.freeze(parcel); parcel.weight = 7; return parcel; }
+# const makes = id(make);
+# print(makes(1, false).weight);
+# try { print(makes(5, true).weight); } catch { print("threw"); }
+# -- end of source
+# LIBRARY: own
+# If objects of its class may be frozen, a store at level Proven relies on the fact that the cell is not frozen.
+# After a join with a path that freezes the cell, the walk's state no longer records that fact.
+# Fault injection, testing=AssumeGuardsAndFacts: the planner of typed accesses assumes that every class guard holds and that every cell fact is known. It does not change the walk's state.
+# With testing=CheckProofsAtRunTime (--aot-harden=proof-checks) whatever the access relies on is checked at run time. Here nothing has established it, so the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 7
+# RIGHT-NEXT: threw
+# RIGHT-NEXT: exited with 0
+# RUN(HARDENED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HARDENED: 7
+# HARDENED-NEXT: threw
+# HARDENED-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,AssumeGuardsAndFacts
+# LIE: 7
+# LIE-NEXT: bun: internal AOT error: redundancy elimination check failed at {{*}} (make)
+# LIE-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# LIE: crashed with

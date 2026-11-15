@@ -73,7 +73,7 @@ impl Tree {
 }
 
 // max number of node_modules folders
-pub(crate) const MAX_DEPTH: usize = (MAX_PATH_BYTES / b"node_modules".len()) + 1;
+const MAX_DEPTH: usize = MAX_PATH_BYTES / b"node_modules".len();
 
 /// Parent-id stack for [`relative_path_and_depth`] (32 KB on Windows, so not zeroed).
 pub(crate) type DepthBuf = [MaybeUninit<Id>; MAX_DEPTH];
@@ -207,7 +207,7 @@ pub struct Iterator<'a, const PATH_STYLE: IteratorPathStyle> {
 pub struct IteratorNext<'a> {
     pub relative_path: &'a ZStr,
     pub dependencies: &'a [DependencyID],
-    pub(crate) tree_id: Id,
+    pub tree_id: Id,
 
     /// depth of the node_modules folder in the tree
     ///
@@ -341,24 +341,21 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
     if tree.id > 0 {
         let buf = string_buf;
-        let mut depth_buf_len: usize = 1;
+        let mut ids = bun_core::vec::BorrowedBuf::from(&mut depth_buf[..]);
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
-            if depth_buf_len == MAX_DEPTH {
+            if ids.len() == ids.capacity() {
                 path_buf[path_written] = 0;
                 return (ZStr::from_buf(path_buf, path_written), 0);
             }
-            depth_buf[depth_buf_len].write(parent_id);
+            ids.unfilled().append(&[parent_id]);
             parent_id = trees[parent_id as usize].parent;
-            depth_buf_len += 1;
         }
 
-        depth_buf_len -= 1;
-
-        depth = depth_buf_len;
-        while depth_buf_len > 0 {
+        depth = ids.len();
+        for (i, &id) in ids.filled().iter().rev().enumerate() {
             if PATH_STYLE == IteratorPathStyle::PkgPath {
-                if depth_buf_len != depth {
+                if i != 0 {
                     if path_written + 1 >= MAX_PATH_BYTES {
                         path_too_long();
                     }
@@ -373,9 +370,6 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                 path_written += 1;
             }
 
-            // SAFETY: the parent walk above wrote `depth_buf[1..=depth]` and
-            // `1 <= depth_buf_len <= depth`.
-            let id = unsafe { depth_buf[depth_buf_len].assume_init() };
             let mut name = trees[id as usize].folder_name(dependencies, buf);
             let mut is_workspace_path = false;
             // The tree of an unlinked workspace package is a child of the root tree, so this is the
@@ -417,8 +411,6 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
                     .copy_from_slice(b"node_modules");
                 path_written += b"/node_modules".len();
             }
-
-            depth_buf_len -= 1;
         }
     }
     path_buf[path_written] = 0;
@@ -1252,9 +1244,9 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
 
-        let mut slice = self.list.to_owned_slice();
-        let mut trees: Vec<Tree> = slice.items_tree().to_vec();
-        let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();
+        let mut list = core::mem::take(&mut self.list);
+        let mut trees: Vec<Tree> = list.items_tree().to_vec();
+        let dependencies: &mut [DependencyIDList] = list.items_dependencies_mut();
 
         for tree in &trees {
             total += tree.dependencies.len;
@@ -1297,8 +1289,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             tree.dependencies.len = len;
         }
 
-        slice.deinit_owned();
-
         Ok(CleanResult { trees, dep_ids })
     }
 }
@@ -1326,7 +1316,7 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return !dep.behavior.is_optional_peer();
     }
 
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_metas = pkgs.items_meta();
     let pkg_resolutions = pkgs.items_resolution();
@@ -1479,7 +1469,7 @@ impl Tree {
         // Copied out, so that neither keeps `builder` borrowed.
         let lockfile_ref = builder.lockfile;
         let lockfile: &Lockfile = lockfile_ref.get();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_resolutions = pkgs.items_resolution();
         let dependencies: &[Dependency] = builder.dependencies;
 

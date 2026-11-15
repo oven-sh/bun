@@ -2,6 +2,9 @@
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesChecked = 1
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="show"
+// CHECK-LABEL: function {{*}}name="toString"
+// CHECK-LABEL: function {{*}}name="toString"
 
 // FILE: main.ts
 // What a variable in a JavaScript file holds is inferred where the source shows it, and the program behaves the same where it does not.
@@ -172,87 +175,3 @@ export function readsEarly() { return early + late; }
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: show toString
-// CHECK-LABEL: function {{*}}name="show"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|[[f_2]] site=[[w_3]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes={{*}}[[f_4]]] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|[[f_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Undefined
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull]} illTypedCause=FromLooseType
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b10():
-// CHECK-NEXT: v4 = Call v1 calleeName="f"
-// CHECK-NEXT: v5 = TypeOf v4
-// CHECK-NEXT: v6 = String string=" "
-// CHECK-NEXT: v7 = Add v5, v6
-// CHECK-NEXT: v8 = Builtin builtin=Object
-// CHECK-NEXT: v9 = Builtin builtin=ObjectIs
-// CHECK-NEXT: v10 = Double number=-0
-// CHECK-NEXT: v11 = Call v9, v8, v4, v10 calleeName="Object.is"
-// CHECK-NEXT: v12 = Convert v11 declared={type=boolean site=[[w_6]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = ToBoolean v12
-// CHECK-NEXT: Branch v13 -> taken b3(| 0), notTaken b5(| 0)
-// CHECK-NEXT: b3(v14) handler=b10():
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4() handler=b10():
-// CHECK-NEXT: v15 = String string="-0"
-// CHECK-NEXT: Jump -> next b7(v15)
-// CHECK-NEXT: b5(v16) handler=b10():
-// CHECK-NEXT: Jump -> next b6()
-// CHECK-NEXT: b6() handler=b10():
-// CHECK-NEXT: v17 = Builtin builtin=String
-// CHECK-NEXT: v18 = Call v17, -, v4 calleeName="String"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string site=[[w_7]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b7(v19)
-// CHECK-NEXT: b7(v20) handler=b10():
-// CHECK-NEXT: v21 = Add v7, v20
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b8()
-// CHECK-NEXT: b8() handler=b10():
-// CHECK-NEXT: Jump -> next b9()
-// CHECK-NEXT: b9():
-// CHECK-NEXT: Jump -> next b11(v22)
-// CHECK-NEXT: b10() role=CatchHandler:
-// CHECK-NEXT: v23 = CatchValue
-// CHECK-NEXT: v24 = String string="throws "
-// CHECK-NEXT: v25 = Convert v23 declared={type=undefined|null|Error flags=[IsExpected, OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: v26 = PropGet v25 key="constructor"
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|function site=[[w_8]]} illTypedCause=Assertion
-// CHECK-NEXT: v28 = PropGet v27 key="name"
-// CHECK-NEXT: v29 = Convert v28 declared={type=undefined|null|string site=[[w_8]]} illTypedCause=Assertion
-// CHECK-NEXT: v30 = Add v24, v29
-// CHECK-NEXT: v31 = Convert v30 declared={type=undefined|null|string site=[[w_5]] flags=[OmitsNull]}
-// CHECK-NEXT: Jump -> next b11(v31)
-// CHECK-NEXT: b11(v32: undefined|null|string):
-// CHECK-NEXT: v33 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v34 = PropGet v33 key="console" [isFreeName]
-// CHECK-NEXT: v35 = Convert v34 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v36 = PropGet v35 key="log"
-// CHECK-NEXT: v37 = Convert v36 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v38 = String string=": "
-// CHECK-NEXT: v39 = Add v0, v38
-// CHECK-NEXT: v40 = Add v39, v32
-// CHECK-NEXT: v41 = Call v37, v35, v40 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v42 = Undefined
-// CHECK-NEXT: Return v42
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="obj"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_9]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="toString"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_12]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="four"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_11]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

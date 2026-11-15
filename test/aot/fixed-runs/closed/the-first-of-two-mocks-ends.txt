@@ -1,0 +1,20 @@
+Two files hand on the object of a third, and a mock is laid over each. The mock that was laid first ends while the second stands: the second goes on answering, for both files.
+#### m1.mjs
+export * as ns from "./h.mjs";
+#### m2.mjs
+export * as ns from "./h.mjs";
+#### h.mjs
+export const v = "real";
+#### package.json
+{ "name": "p" }
+#### a.test.mjs
+import { mock, test, vi } from "bun:test";
+import * as m1 from "./m1.mjs";
+import * as m2 from "./m2.mjs";
+test("the first of two ends", async () => {
+  await mock.module("./m1.mjs", () => ({ ns: { v: "A" } }));
+  await mock.module("./m2.mjs", () => ({ ns: { v: "B" } }));
+  console.log("| CASE both laid", m1.ns.v, "|", m2.ns.v);
+  vi.doUnmock("./m1.mjs");
+  console.log("| CASE the first has ended", m1.ns.v, "|", m2.ns.v);
+});

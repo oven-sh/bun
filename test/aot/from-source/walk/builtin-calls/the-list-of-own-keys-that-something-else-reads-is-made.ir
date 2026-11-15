@@ -1,0 +1,19 @@
+# -- source: the-list-of-own-keys-that-something-else-reads-is-made.ts
+# declare function print(...values: unknown[]): void;
+# type Parcel = { weight: number; fragile?: number; insured?: number };
+# const light: Parcel = { weight: 1, fragile: 2 };
+# const heavy: Parcel = { weight: 3, insured: 4 };
+# function marks(parcel: Parcel) { const names = Object.keys(parcel); return names.length + names[1].length; }
+# function sum(turns: number) { let total = 0; for (let at = 0; at < turns; at++) total += marks(at & 1 ? light : heavy); return total; }
+# print(sum(5));
+# -- end of source
+# The negative case beside the-length-of-own-keys-is-read-in-the-arms-and-no-list-is-made.ir: the list has a second reader, so the arms end behind the call and meet on the list.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: HasKeyOrder {{*}}fields=[2, 0]
+# CHECK: HasKeyOrder {{*}}fields=[2, 1]
+# RUN(LISTS): walk f2 mechanisms=all
+# LISTS-LABEL: code f2:Body
+# LISTS: = NewArray [[weight]], [[other]] contents="
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 45

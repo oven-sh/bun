@@ -1,0 +1,33 @@
+# f1 = upTo, f2 = firstInRounds, f3 = search
+# -- source: a-return-walked-in-a-try-that-is-undone-is-no-way-out-of-the-copy.js
+# function* upTo(count) { for (let at = 0; at < count; at++) yield at; }
+# function firstInRounds(rounds, count, accepts) {
+#   let drift = 0;
+#   for (let round = 0; round < rounds; round++) {
+#     for (const value of upTo(count)) { if (accepts(value + drift)) return value + drift; }
+#     drift = drift + 0.5;
+#   }
+#   return -1;
+# }
+# function search(rounds, count, least) {
+#   const found = firstInRounds(rounds, count, (value) => value > least);
+#   return found * 2;
+# }
+# const inputs = JSON.parse("[[3,3,2.2],[2,2,9],[1,4,-1]]");
+# for (let at = 0; at < inputs.length; at++) print(search(inputs[at][0], inputs[at][1], inputs[at][2]));
+# -- end of source
+# `firstInRounds` is copied into `search`, and `upTo` is walked in place of the for-of. The `return` in the for-of stands behind the loop, in the region of the iteration, which is walked with the
+# loop: inside the try of the loop over the rounds, whose mark is taken before the generator is opened. `drift` comes round as a number where 0 entered: that walk is undone. The way out of the copy
+# that it noted went on standing in the list: a dead block handing on a dead value. It made the answer of the copy a boxed value and took every fact from the state behind the call.
+# RUN: walk f3 mechanisms=all
+# CHECK: frame 1 callee=f2
+# CHECK: frame 2 callee=f1
+# CHECK: ({{*}}: number @Double @{{*}}):
+# CHECK: = Mul
+# RUN(NEVER): walk f3 mechanisms=all
+# NEVER-NOT: function=f2
+# NEVER-NOT: = Unbox
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 5
+# ANSWERS: -2
+# ANSWERS: 0

@@ -8,26 +8,18 @@ import type { AddressInfo } from "node:net";
 interface Observation {
   route: string;
   dispatcher: string;
+  closesInTheTickOfFinish: boolean;
   res: ServerResponse;
-  ticks: string[];
 }
 
 const observations: Observation[] = [];
-const nextTick = process.nextTick;
-process.nextTick = function (callback: Function, ...args: unknown[]) {
-  const latest = observations.at(-1);
-  if (latest && !latest.res.closed) latest.ticks.push(`${callback.name} ${args.length}`);
-  return nextTick.call(process, callback, ...args);
-} as typeof process.nextTick;
+const frameOf = (name: string) => new Error().stack!.split("\n").find(line => line.includes(`at ${name} `)) ?? "unknown";
 
 function observing(listener: RequestListener): RequestListener {
   return (req, res) => {
-    observations.push({
-      route: `${req.method} ${req.url}`,
-      dispatcher: new Error().stack!.split("\n").find(line => line.includes("at onNodeHTTPRequest ")) ?? "unknown",
-      res,
-      ticks: [],
-    });
+    const observation = { route: `${req.method} ${req.url}`, dispatcher: frameOf("onNodeHTTPRequest"), closesInTheTickOfFinish: false, res };
+    observations.push(observation);
+    res.on("close", () => void (observation.closesInTheTickOfFinish = frameOf("emitResponseFinished") !== "unknown"));
     listener(req, res);
   };
 }
@@ -116,12 +108,12 @@ process.stdin.on("end", () => {
     const coverage: Record<string, Record<string, number>> = {};
     // The first request asks for the connection to be closed, which the fast path does not take.
     const slowDispatcher = observations.shift()!.dispatcher;
-    for (const { route, dispatcher, res, ticks } of observations) {
+    for (const { route, dispatcher, closesInTheTickOfFinish, res } of observations) {
       const counts = (coverage[route] ??= { requests: 0, fastDispatch: 0, compactHeaders: 0, singleTickFinish: 0 });
       counts.requests++;
       if (dispatcher !== "unknown" && dispatcher !== slowDispatcher) counts.fastDispatch++;
       if (storedOutgoingHeaders(res) === null) counts.compactHeaders++;
-      if (ticks.at(-1) === "emitResponseFinished 1") counts.singleTickFinish++;
+      if (closesInTheTickOfFinish) counts.singleTickFinish++;
     }
     console.log(JSON.stringify(coverage));
   });

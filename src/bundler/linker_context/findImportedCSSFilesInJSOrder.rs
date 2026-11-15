@@ -30,6 +30,9 @@ pub(crate) fn find_imported_css_files_in_js_order(
     _temp: &Arena,
     entry_point: Index,
 ) -> Vec<Index> {
+    if !(this.parse_graph().input_files.items_loader().iter()).any(|loader| loader.is_css()) {
+        return Vec::new();
+    }
     let mut visited = BitSet::init_empty(this.graph.files.len()).expect("oom");
     let mut order: Vec<Index> = Vec::new();
 

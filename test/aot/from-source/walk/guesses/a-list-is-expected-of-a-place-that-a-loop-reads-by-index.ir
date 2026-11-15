@@ -1,0 +1,23 @@
+# -- source: main.cjs
+# "use strict";
+# const held = sink(), box = { rows: sink() };
+# function inVariable() { let s = 0; for (let i = 0; i < held.length; i++) s += held[i].v; return s; }
+# function inField() { let s = 0; for (let i = 0; i < box.rows.length; i++) s += box.rows[i].v; return s; }
+# function reckoned() { let s = 0; for (let i = 0; i < held.length; i++) s = s + held[i] * 2; return s; }
+# function named() { let s = 0; for (let i = 0; i < held.length; i++) s += held[i].v + held.size; return s; }
+# sink(inVariable, inField, reckoned, named);
+# -- end of source
+# `held.length` and `held[i].v` in one loop are two reads of one place: a list is expected of it. Where the elements are only reckoned with (they may be bytes), and where another name is read off it, nothing
+# f1 = inVariable, f2 = inField, f3 = reckoned, f4 = named
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: testedType=Array
+# RUN(FIELD): walk f2:Body mechanisms=all
+# FIELD: testedType=Array
+# RUN(BYTES): walk f3:Body mechanisms=all
+# BYTES: testedType=Array<number>
+# BYTES: testedType=Uint8Array
+# RUN(NAMED): walk f4:Body mechanisms=all
+# NAMED-NOT: testedType=Array
+# RUN(COUNT): compile ArraysSpeculatedFromLocationUses mechanisms=all
+# COUNT-NOT: statistic ArraysSpeculatedFromLocationUses 0

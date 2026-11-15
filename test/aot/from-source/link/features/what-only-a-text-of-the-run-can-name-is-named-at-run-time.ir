@@ -1,0 +1,8 @@
+# under --trim what only a text of the run can name keeps nothing: its record says so and has the place where the text is evaluated; the flow of Link is closed at the end
+# -- source: what-only-a-text-of-the-run-can-name-is-named-at-run-time.ts
+# declare const input: any;
+# new Function(input)();
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage check=FlowFixpoint
+# RUN: features
+# CHECK: by BunServe named-at-run-time at f0 v

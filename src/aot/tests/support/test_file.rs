@@ -5,9 +5,8 @@ use std::str::FromStr;
 
 const COMMENT_MARK: &str = "//";
 const DEFAULT_PREFIX: &str = "CHECK";
-const RESERVED_NAMES: [&str; 12] = [
+const RESERVED_NAMES: [&str; 11] = [
     "RUN",
-    "FORM",
     "OPTIONS",
     "DIAGNOSTIC",
     "STATISTIC",
@@ -57,7 +56,6 @@ pub struct OptionWord {
     pub line: u32,
 }
 
-/// `file`: from the folder of the test, or from the root of its sections.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Place {
     pub file: String,
@@ -71,7 +69,6 @@ pub struct ExpectedDiagnostic {
     pub line: u32,
 }
 
-/// What stands between a `FILE` line and the next, or `GENERATED`, or the end.
 pub struct Section {
     pub path: String,
     pub text: String,
@@ -87,7 +84,6 @@ pub struct SameRuns {
     pub line: u32,
 }
 
-/// Every line below `line` is a check line that the driver has written.
 pub struct Generated {
     pub functions: Vec<String>,
     pub line: u32,
@@ -109,7 +105,6 @@ pub struct CheckGroup {
 pub struct TestFile {
     pub runs: Vec<RunDirective>,
     pub option_words: Vec<OptionWord>,
-    /// Those of `OPTIONS(<prefix>)`.
     pub option_words_of_runs: Vec<(String, OptionWord)>,
     pub sections: Vec<Section>,
     pub links: Vec<Link>,
@@ -292,7 +287,6 @@ fn find_group(groups: &[CheckGroup], prefix: &str) -> Option<usize> {
 }
 
 impl TestFile {
-    /// Those of `OPTIONS`, then those of `OPTIONS(<prefix>)`.
     pub fn option_words_for(&self, prefix: &str) -> Vec<&OptionWord> {
         let own = self.option_words_of_runs.iter();
         let own = own.filter(|(of, _)| of == prefix).map(|(_, word)| word);
@@ -371,7 +365,6 @@ impl TestFile {
                 });
                 Ok(())
             }
-            ("FORM", None) => Err("FORM is for the engine's tests".to_owned()),
             ("OPTIONS", None) if directive.value.is_empty() => {
                 Err("OPTIONS needs a word".to_owned())
             }
@@ -538,7 +531,6 @@ mod tests {
         checks.map(|check| (check.kind, check.count)).collect()
     }
 
-    /// What `parse_check_line` reads off the part of a directive's name that follows the prefix.
     fn parse_check_kind(suffix: Option<&str>) -> Result<(CheckKind, u32), String> {
         let mut file = parse_without_errors("// RUN: lower\n");
         let name = match suffix {
@@ -740,7 +732,6 @@ mod tests {
 
     #[test]
     fn unknown_directives() {
-        expect_error_after_run("// FORM(X): AsRead", "unknown directive FORM(..)");
         expect_error_after_run("// CHECK(X): x", "unknown directive CHECK(..)");
         for name in [
             "NOTE",
@@ -788,14 +779,6 @@ mod tests {
         let words: Vec<_> = words.map(|word| (&*word.word, word.line)).collect();
         assert_eq!(words, [("a", 2), ("b=1", 2), ("c", 3)]);
         expect_error_after_run("// OPTIONS:", "OPTIONS needs a word");
-    }
-
-    #[test]
-    fn form_belongs_to_engine_tests() {
-        for value in ["AsRead", "Placed", "Later", ""] {
-            let directive = format!("// FORM: {value}");
-            expect_error_after_run(&directive, "FORM is for the engine's tests");
-        }
     }
 
     #[test]
@@ -875,7 +858,10 @@ mod tests {
             "// STATISTIC: FunctionsLowered >= 1",
             "// STATISTIC: FunctionsLowered <= 18446744073709551615",
             "// STATISTIC: ProgramBytes = 64",
-            "// STATISTIC: MaxDataNestingDepthHits = 0",
+            "// STATISTIC: SourceFilesChecked = 5",
+            "// STATISTIC: SourceFilesInferred \t = \t 1",
+            "// STATISTIC: SourceFilesDemoted = 0",
+            "// STATISTIC: LowerNanoseconds >= 0",
         ]
         .join("\n");
         let file = parse_without_errors(&text);
@@ -887,9 +873,24 @@ mod tests {
             (StatisticId::FunctionsLowered, AtLeast, 1, 2),
             (StatisticId::FunctionsLowered, AtMost, u64::MAX, 3),
             (StatisticId::ProgramBytes, Equal, 64, 4),
-            (StatisticId::MaxDataNestingDepthHits, Equal, 0, 5),
+            (StatisticId::SourceFilesChecked, Equal, 5, 5),
+            (StatisticId::SourceFilesInferred, Equal, 1, 6),
+            (StatisticId::SourceFilesDemoted, Equal, 0, 7),
+            (StatisticId::LowerNanoseconds, AtLeast, 0, 8),
         ];
         assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn statistic_names_are_those_of_the_schema() {
+        for id in StatisticId::ALL.into_iter().skip(1) {
+            let text = format!("// RUN: lower\n// STATISTIC: {} = 0\n", id.name());
+            let file = parse_without_errors(&text);
+            let [listed] = &file.statistics[..] else {
+                panic!("{} is listed once", id.name());
+            };
+            assert_eq!(listed.name, id);
+        }
     }
 
     #[test]
@@ -917,6 +918,8 @@ mod tests {
             let directive = format!("// STATISTIC: {word} = 0");
             expect_error_after_run(&directive, &format!("unknown statistic {word}"));
         }
+        let directive = "// STATISTIC(CHECK): ProgramBytes = 0";
+        expect_error_after_run(directive, "unknown directive STATISTIC(..)");
     }
 
     #[test]

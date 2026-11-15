@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 const count = 3000;
-const made = [];
+const made = JSON.parse("[]");
 for (let i = 0; i < count; i++)
   made.push(function (x) {
     return x + i;

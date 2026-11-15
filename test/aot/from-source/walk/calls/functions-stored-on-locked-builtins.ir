@@ -1,0 +1,20 @@
+# -- source: main.cjs
+# function Point(x) { this.x = x; }
+# Point.prototype.read = function () { for (var i = 0; i < 1; i++) this.x = this.x; return this.x; };
+# if (!(Object.defineProperty instanceof Point)) {
+#   try { Object.defineProperty = function (point) { point.x = "text"; return point.read(); }; } catch (error) {}
+# }
+# function run(count) {
+#   var point = new Point(0.5), sum = 0;
+#   for (var i = 0; i < count; i++) sum += point.read();
+#   return sum;
+# }
+# console.log(run(10), run(1000));
+# -- end of source
+# The store throws, so nobody calls the function that is stored.
+# DIAGNOSTIC: LockedBuiltinWriteMayRun
+# RUN: link functions
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known
+# CHECK: function f3 callers-known
+# CHECK: function f4 unreached

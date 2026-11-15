@@ -1,0 +1,40 @@
+# A loop or a spread over an object whose method under Symbol.iterator is proven to be one generator function calls that method itself. The generator goes into that iteration alone, as behind a written call:
+# its body is walked in place of the loop, no generator is made and nothing is stepped. Link lists the one call of the protocol that enters a function, beside the helpers of the library that the same operation may call.
+# f1 = total, f2 = listed, f3 = asked, f5 = the method of Shelf, f7 = the method of Asked
+# -- source: a-generator-method-under-the-iterator-symbol-is-walked-in-the-loop-over-its-object.ts
+# declare function sink(...values: unknown[]): number;
+# class Shelf { constructor(private books: number[]) {} *[Symbol.iterator]() { for (const book of this.books) yield book; } }
+# class Asked { constructor(private books: number[]) {} *[Symbol.iterator]() { for (const book of this.books) yield book; } }
+# function total(shelf: Shelf): number { let sum = 0; for (const book of shelf) sum += book; return sum; }
+# function listed(shelf: Shelf): number[] { return [0, ...shelf]; }
+# function asked(shelf: Asked): number { let sum = 0; for (const book of shelf) sum += book; return sum; }
+# sink(total(new Shelf([1, 2, 3])), listed(new Shelf([4])), asked(new Asked([5])));
+# sink(Asked.prototype[Symbol.iterator].prototype);
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame 1 callee=f5
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayElement
+# CHECK: = Add
+# RUN(NEVER): walk f1:Body mechanisms=all
+# NEVER-NOT: = Call
+# NEVER-NOT: StepGenerator
+# NEVER-NOT: function=f5
+# RUN(SPREAD): walk f2:Body mechanisms=all
+# SPREAD-LABEL: code f2:Body
+# SPREAD: frame 1 callee=f5
+# SPREAD: = AppendElement
+# RUN(LINK): link calls mechanisms=all
+# LINK: call f1 v3 -> f5
+# LINK: call f2 v3 -> f5
+# somebody has read the method as a value and asked it for the object above its generators
+# RUN(ASKED): walk f3:Body mechanisms=all
+# ASKED-LABEL: code f3:Body
+# ASKED-NOT: callee=f7
+# ASKED: = Call
+# with copies withheld the method is called
+# RUN(WITHHELD): walk f1:Body mechanisms=all-Inlining
+# WITHHELD-LABEL: code f1:Body
+# WITHHELD-NOT: callee=f5
+# WITHHELD: = Call

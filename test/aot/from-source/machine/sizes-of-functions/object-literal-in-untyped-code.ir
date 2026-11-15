@@ -1,0 +1,14 @@
+# f1 = make
+# -- source: object-literal-in-untyped-code.js
+# function make(x, y) {
+#   return { x, y };
+# }
+# const point = make(input, input);
+# globalThis.answer = [point, point.x, point.y];
+# -- end of source
+# The compiler before this one: 8 instructions, 1 of them patches.
+# When the bound was taken: steps: operations 7, patches 1, moves 3, unlikely or rare 0.
+# RUN(X64): steps most:10 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 10

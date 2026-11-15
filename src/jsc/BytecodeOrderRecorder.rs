@@ -79,7 +79,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         let ok = unsafe {
             Bun__BytecodeOrder__digestModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 &module.source,
                 &origin_path,
                 module.is_esm,
@@ -102,7 +102,7 @@ fn write_digests(vm: &VirtualMachine, graph: &'static dyn bun_resolver::Standalo
         // SAFETY: as above.
         let ok = unsafe {
             Bun__BytecodeOrder__digestInternalModule(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 id,
                 bytecode.cast::<u8>(),
                 bytecode.len(),
@@ -141,7 +141,7 @@ pub(crate) fn init_vm(
         // SAFETY: `jsc_vm` is this thread's live VM; the payload is a live section of the executable.
         unsafe {
             Bun__BytecodeOrder__setLinkedPayload(
-                vm.jsc_vm,
+                vm.jsc_vm.get(),
                 payload.cast::<u8>(),
                 payload.len(),
                 region_ends.as_ptr(),
@@ -157,7 +157,7 @@ fn enable_if_requested(vm: &VirtualMachine) {
         return;
     }
     // SAFETY: `jsc_vm` is this thread's live VM.
-    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm) };
+    unsafe { Bun__BytecodeOrder__enableRecording(vm.jsc_vm.get()) };
 }
 
 /// Once: a process that outlives the signal it sent itself has written its order file when it really exits.
@@ -392,7 +392,6 @@ fn write_replacing(path: &[u8], text: &[u8]) -> bun_sys::Maybe<()> {
         bun_resolver::fs::FileSystem::tmpname(b".order", &mut tmpname_buf[..], u64::from(pid))
             .map_err(|_| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open))?;
     let tmpfile = bun_sys::Tmpfile::create_with_mode(dir_fd, tmpname, 0o600)?;
-    let _close = bun_sys::CloseOnDrop::new(tmpfile.fd);
     // Not `Tmpfile::finish`: that removes an empty directory that is in the way.
     let result = bun_sys::File::borrow(&tmpfile.fd)
         .write_all(text)

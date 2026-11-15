@@ -1,12 +1,14 @@
 // `__dirname` and `__filename` hold the folder of the build, as with `bun build --compile`. Where that folder is on the machine, a program finds there what `bun build --compile` finds.
 // Where it is not, on the machine that the executable is shipped to, what the executable holds answers under those paths: its modules, and what --asset embedded.
-import { afterAll, expect } from "bun:test";
+import { expect } from "bun:test";
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "./harness/commands";
+import { afterAll } from "./harness/default-timeout";
 import { compileCommand } from "./harness/flags";
-import { beforeAll, describe, test } from "./supported";
+// One by one: the cases move and remove one folder that they share.
+import { beforeAll, describe, testOneByOne as test } from "./supported";
 
 const program = `const fs = require("node:fs"), path = require("node:path");
 const show = async (what, answer) => {
@@ -46,11 +48,21 @@ const page = path.join(__dirname, "public", "index.html");
   await show("require.resolve, then require", () => require(require.resolve("./commands/a.cjs")));
   await show("createRequire(__filename)", () => require("node:module").createRequire(__filename)("./commands/b.cjs"));
   await show("a Worker", () => new Promise((resolve, reject) => {
-    new (require("node:worker_threads").Worker)(path.join(__dirname, "worker.cjs")).on("message", resolve).on("error", reject);
+    const worker = new Worker(path.join(__dirname, "worker.cjs"));
+    worker.onmessage = event => resolve(event.data);
+    worker.onerror = event => reject(new Error(event.message));
   }));
   await show("a file that nobody embedded", () => fs.readFileSync(path.join(__dirname, "beside", "plain.txt"), "utf8").trim());
   await show("process.chdir(__dirname)", () => (process.chdir(__dirname), fs.readFileSync("public/index.html", "utf8").trim()));
 })();
+`;
+
+// Its entry point lies in bin/, so the commands lie above the folder in which it is built.
+const tool = `const fs = require("node:fs"), path = require("node:path");
+const folder = path.join(__dirname, "..", "commands");
+console.log("existsSync:", [fs.existsSync(folder), fs.existsSync(path.join(folder, "a.cjs")), fs.existsSync(path.join(folder, "none.cjs"))].join());
+console.log("statSync:", [fs.statSync(folder).isDirectory(), fs.statSync(path.join(folder, "b.cjs")).isFile()].join());
+console.log("listed and required:", fs.readdirSync(folder).sort().map(file => require(path.join(folder, file))).join());
 `;
 
 describe("compile/aot/an executable finds what lay beside its source", () => {
@@ -62,22 +74,22 @@ describe("compile/aot/an executable finds what lay beside its source", () => {
   afterAll(() => rmSync(root, { recursive: true, force: true }));
 
   beforeAll(async () => {
-    for (const folder of ["public/sub", "commands", "beside"]) mkdirSync(join(source, folder), { recursive: true });
+    for (const folder of ["public/sub", "commands", "beside", "bin"])
+      mkdirSync(join(source, folder), { recursive: true });
     mkdirSync(elsewhere);
     writeFileSync(join(source, "public", "index.html"), "embedded page\n");
     writeFileSync(join(source, "public", "sub", "deep.txt"), "deep\n");
     writeFileSync(join(source, "beside", "plain.txt"), "not embedded\n");
     writeFileSync(join(source, "commands", "a.cjs"), `module.exports = "command a";\n`);
     writeFileSync(join(source, "commands", "b.cjs"), `module.exports = "command b";\n`);
-    writeFileSync(
-      join(source, "worker.cjs"),
-      `require("node:worker_threads").parentPort.postMessage("the worker ran");\n`,
-    );
+    writeFileSync(join(source, "worker.cjs"), `postMessage("the worker ran");\n`);
     writeFileSync(join(source, "server.cjs"), program);
+    writeFileSync(join(source, "bin", "tool.cjs"), tool);
     const files = ["./server.cjs", "--asset", "./public"];
     const builds = [
       [bunExe(), ...compileCommand, ...withoutDebugInformation(), ...files, "--outfile", executable("compiled")],
       [bunExe(), "build", "--compile", ...files, "--outfile", executable("bundled")],
+      [bunExe(), ...compileCommand, ...withoutDebugInformation(), "./bin/tool.cjs", "--outfile", executable("tool")],
     ];
     for (const build of await Promise.all(builds.map(build => spawned(build, source, bunEnv)))) built(build);
   }, 300_000);
@@ -106,6 +118,21 @@ describe("compile/aot/an executable finds what lay beside its source", () => {
           line.startsWith("a file that nobody embedded:") ? "a file that nobody embedded: throws ENOENT" : line,
         ),
       );
+    } finally {
+      renameSync(away, source);
+    }
+  });
+
+  test("where the folder of the build is gone a tool in bin/ finds the commands beside bin/", async () => {
+    const before = await linesOf("tool");
+    expect(before).toEqual([
+      "existsSync: true,true,false",
+      "statSync: true,true",
+      "listed and required: command a,command b",
+    ]);
+    renameSync(source, away);
+    try {
+      expect(await linesOf("tool")).toEqual(before);
     } finally {
       renameSync(away, source);
     }

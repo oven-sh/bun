@@ -1,0 +1,20 @@
+# -- source: each-function-of-a-proven-set-is-called-in-an-arm-of-its-own.ts
+# declare function print(...values: unknown[]): void;
+# class Ash { k = 1; }
+# class Birch { k = 2; }
+# class Cedar { k = 30; }
+# function count(turns: number) { let sum = 0, odd = 0; for (let i = 0; i < turns; i++) { const r = i % 3; const Tree = r === 0 ? Ash : r === 1 ? Birch : Cedar; if (i & 4) odd++; const tree = new Tree(); sum += tree.k; } return sum + odd * 1000; }
+# print(count(3), count(8));
+# -- end of source
+# f1 = count, f2 = Ash, f3 = Birch, f4 = Cedar
+# The construction stands behind another branch, where the ways have met: its callee is proven to be one of three class objects. Two tests tell them apart and the last arm has none; each constructor is copied into its arm, and what reads the new object is walked there too.
+# RUN(ARMS): walk f1 mechanisms=all
+# ARMS-LABEL: code f1:Body
+# ARMS: frame {{*}} callee=f2 {{*}}isConstruction=true
+# ARMS: frame {{*}} callee=f3 {{*}}isConstruction=true
+# ARMS: frame {{*}} callee=f4 {{*}}isConstruction=true
+# ARMS: = TypeTest {{*}}testedType=f2
+# ARMS: = TypeTest {{*}}testedType=f3
+# ARMS-NOT: testedType=f4
+# RUN: run-in-shell
+# CHECK: 33 4069

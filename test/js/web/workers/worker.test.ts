@@ -29,6 +29,15 @@ describe("web worker", () => {
       ).toThrow(/Invalid file URL/);
     });
 
+    test("names the entry that does not resolve", () => {
+      expect(() => new Worker("data:text/javascript,1", { preload: ["./does-not-exist-xyz.js"] })).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          message: 'BuildMessage: ModuleNotFound resolving "./does-not-exist-xyz.js" (entry point)',
+        }),
+      );
+    });
+
     // Reaching the real limit needs 2.5 GB, so the child runs with a 64 KiB synthetic allocation limit
     // (2730 24-byte entries).
     test("throws a RangeError for more entries than the native list allows", async () => {

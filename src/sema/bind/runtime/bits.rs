@@ -12,8 +12,9 @@ pub(super) fn insert_bit(words: &mut Vec<u64>, index: usize) -> bool {
         words.resize(word + 1, 0);
     }
     let mask = 1u64 << (index % 64);
-    let is_new = words[word] & mask == 0;
-    words[word] |= mask;
+    let bits = &mut words[word];
+    let is_new = *bits & mask == 0;
+    *bits |= mask;
     is_new
 }
 

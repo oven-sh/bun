@@ -1,0 +1,8 @@
+# the flow brings the class to a construction that no operation spells: the look sees no operands there
+# -- source: a-class-taken-out-of-a-list-and-constructed-uses-its-features.ts
+# const list = [WebSocket];
+# const made = new list[0]("ws://made.up");
+# console.log(typeof made);
+# -- end of source
+# RUN: features
+# CHECK: by WebSocket

@@ -17,17 +17,17 @@ impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
 {
-    pub(crate) fn parse(input: &mut Parser) -> Result<Size2D<T>>
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Size2D<T>>
     where
-        T: Parse,
+        T: Parse<'bump>,
     {
         Self::parse_with(input, T::parse)
     }
 
-    pub(crate) fn parse_with(
-        input: &mut Parser,
-        parse_fn: fn(&mut Parser) -> Result<T>,
-    ) -> Result<Size2D<T>> {
+    pub(crate) fn parse_with<'bump>(
+        input: &mut Parser<'_, 'bump>,
+        parse_fn: fn(&mut Parser<'_, 'bump>) -> Result<'bump, T>,
+    ) -> Result<'bump, Size2D<T>> {
         let first = parse_fn(input)?;
         let second = input.try_parse(parse_fn).unwrap_or_else(|_| first.clone());
         Ok(Size2D {

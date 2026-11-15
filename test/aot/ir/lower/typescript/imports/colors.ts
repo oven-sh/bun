@@ -5,4 +5,5 @@ export enum Color {
 
 export enum Shade {
   Dark,
+  Deep = "deep".length,
 }

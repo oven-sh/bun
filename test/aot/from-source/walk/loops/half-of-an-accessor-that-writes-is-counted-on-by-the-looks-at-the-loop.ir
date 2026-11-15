@@ -1,0 +1,43 @@
+# `last = o.f` in a loop, off an object that is out of sight: behind the look at the cell and the guard of the name the walk runs the getter, here as a copy. The getter writes a variable and then reads a field,
+# which wants a look of its own. A look at the loop goes into the copy: behind the write no turn begins again, so it counts on no guess there. It used to count on a read that runs no code: the unit was walked again, and the verifier stopped the build.
+# The loop keeps its typed copy. The shape is asked in front of it, and so are the two looks of the access and the look at the slot, though that one stands behind the write: the turns run no other code and
+# store into a variable alone, so every turn would find what the first one finds. Where a look fails the closed copy runs; no turn holds a look or a closed arm.
+# f1 = run, f3 = f
+# -- source: half-of-an-accessor-that-writes-is-counted-on-by-the-looks-at-the-loop.ts
+# declare function print(...values: unknown[]): void;
+# declare function unseen(x: any): any;
+# let calls = 0;
+# class Gauge { c: number; constructor(c: number) { this.c = c; } get f(): number { calls = calls + 1; return this.c; } }
+# class Pair { a: number; constructor(a: number) { this.a = a; } }
+# function run(o: any, n: number, list: Pair[], depth: number): number {
+#   if (depth > 0) return run(o, n, list, depth - 1);
+#   let last = 0;
+#   let sum = 0;
+#   for (let i = 0; i < n; i++) { last = o.f; const b = list[i & 1]; sum = sum + b.a; calls = calls + 1; }
+#   return last + sum;
+# }
+# const first = new Gauge(3);
+# (globalThis as any).keptGauge = first;
+# const pairs = [new Pair(1), new Pair(2)];
+# let total = 0;
+# for (let r = 0; r < 300; r++) total = (total + run(unseen(first), 7, pairs, r % 3)) | 0;
+# print(String(total), String(calls));
+# -- end of source
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: frame {{*}} callee=f3
+# CHECK: = ShapeTest
+# CHECK: frequency=Rare isLoopHead=true
+# CHECK: = HasLayoutPrototype
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: PutModuleVariable
+# CHECK: ():
+# CHECK-NEXT: = AreMembersUnchanged {{*}}key="f"
+# CHECK: ():
+# CHECK-NEXT: = IsSlotFilled {{*}}key="c"
+# CHECK: ():
+# CHECK-NEXT: = GetSlot {{*}}key="c"
+# CHECK-NOT: = PropGet {{*}}key="c"
+# RUN(ANSWERS): run-in-shell globalThis.unseen = x => x;
+# ANSWERS: 3900 4200

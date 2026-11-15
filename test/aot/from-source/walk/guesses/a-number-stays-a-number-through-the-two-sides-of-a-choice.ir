@@ -1,0 +1,11 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# class Signature { parameters: number[]; flags: number; constructor(parameters: number[], flags: number) { this.parameters = parameters; this.flags = flags; } }
+# function hasRest(signature: Signature): boolean { return !!(signature.flags & 1); }
+# function count(signature: Signature, position: number): number { const most = signature.parameters.length - (hasRest(signature) ? 1 : 0); if (position < most) return signature.parameters[position]; return -1; }
+# (globalThis as any).kept = count;
+# print(count(new Signature([1, 2, 3], 1), 1));
+# -- end of source
+# The guess on `signature` has a rare closed arm. Behind `? 1 : 0` the two sides meet and the length is subtracted from: the way that has read the length keeps it as an integer through the choice; it is not boxed to meet what the closed arm has read
+# RUN: walk f2 mechanisms=all
+# CHECK: = Sub {{*}} form=Integers

@@ -1,0 +1,22 @@
+# The open of a for-in looks at the object's own names and then goes up the chain, where a trap of a proxy runs code of the program: it may give the object another key. The enumerator lists what the open found,
+# the tests behind the open see what the trap left, and the note that no key has changed speaks of the time since the open answered. So the turns that are written out by name ask the enumerator once, in front of the first name,
+# whether its list is the object's still: test/aot/parallel/for-in-while-the-open-runs-code/. Where it is not, the loop as written goes through the list from its start.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = ForInOpenCountingNames
+# CHECK: = HasKeyOrder {{*}} layout=L0 fields=[0, 1, 2]
+# CHECK: [[none]]: {{*}} = HasNoExtraProperties
+# CHECK-NEXT: Branch [[none]] -> taken
+# CHECK: [[current]]: {{*}} = GreaterEq {{*}} form=Integers
+# CHECK-NEXT: Branch [[current]] -> taken
+# The open has counted the names that are current where it answers, none where it has entered the run time: one compare, and no turn asks the enumerator: nothing in them changes a key.
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-COUNT-1: = GreaterEq
+# ONCE-NOT: = IsEnumeratorCurrent
+# -- source: the-first-turn-of-a-for-in-asks-the-enumerator-from-source.ts
+# declare function sink(...values: unknown[]): void;
+# type Point = { x: number; y: number; z: number };
+# function make(i: number): Point { return { x: i, y: 2, z: 3 }; }
+# function names(p: Point): string { let s = ""; for (const name in p) s += name + ","; return s; }
+# sink(make, names);
+# -- end of source

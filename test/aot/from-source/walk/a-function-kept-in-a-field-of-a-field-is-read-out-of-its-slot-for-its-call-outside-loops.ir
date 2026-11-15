@@ -1,0 +1,36 @@
+# `inst.core.run(x)` outside loops; `run` is a function kept in a field of Core, `core` a field of Schema that holds its declared type. The guess on `inst` proves L0 of what `core` holds. The stretch
+# ended behind the read of `core` (three tests on the typed way, then `PropGet run` and the call closed behind the meeting). Now the typed way reads `run` out of its slot, the closed arm reads both names,
+# and the receiver and the callee meet: behind the meeting stands the call alone. f1 = apply.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetSlot {{*}}key="core" receivers=[L1] level=Proven
+# CHECK: = GetSlot {{*}}key="run" receivers=[L0] level=Proven
+# CHECK-NOT: = PropGet
+# CHECK: = Call {{*}}calleeKey="run"
+# -- source: a-function-kept-in-a-field-of-a-field-is-read-out-of-its-slot-for-its-call-outside-loops.ts
+# class Core {
+#   run: (x: number) => number;
+#   depth: number;
+#   constructor(k: number) {
+#     this.depth = k;
+#     this.run = k & 1 ? x => x + k : x => x * k;
+#   }
+# }
+# class Schema {
+#   core: Core;
+#   name: string;
+#   constructor(k: number) {
+#     this.core = new Core(k);
+#     this.name = "s" + k;
+#   }
+# }
+# function apply(inst: Schema, x: number): number {
+#   return inst.core.run(x);
+# }
+# const table: Record<string, (inst: Schema, x: number) => number> = { apply };
+# const made = [new Schema(1), new Schema(2), new Schema(3)];
+# const turns = Number(process.argv[2] || 1) * 1000;
+# let sum = 0;
+# for (let i = 0; i < turns; i++) sum = (sum + table[process.argv.length > 99 ? "x" : "apply"]!(made[i % 3]!, i & 7)) % 1000003;
+# console.log(sum);
+# -- end of source

@@ -46,6 +46,8 @@ typedef struct ExternColumnIdentifier {
     }
 } ExternColumnIdentifier;
 
+static_assert(sizeof(ExternColumnIdentifier) == 32, "ExternColumnIdentifier must match src/jsc/JSObject.rs");
+
 typedef struct DataCellArray {
     struct DataCell* cells;
     uint32_t length;
@@ -58,6 +60,12 @@ typedef struct DataCellNumbers {
     uint32_t length;
     uint32_t cap;
 } DataCellNumbers;
+
+typedef struct DataCellBytes {
+    uint8_t* bytes;
+    uint32_t length;
+    uint32_t cap;
+} DataCellBytes;
 
 typedef struct DataCellRaw {
     void* ptr;
@@ -73,7 +81,7 @@ typedef union DataCellValue {
     uint64_t unsigned_bigint;
     uint8_t boolean;
     double date;
-    size_t bytea[2];
+    DataCellBytes bytea;
     WTF::StringImpl* json;
     DataCellArray array;
     DataCellNumbers numbers;
@@ -109,7 +117,6 @@ enum class BunResultMode : uint8_t {
 typedef struct DataCell {
     DataCellTag tag;
     DataCellValue value;
-    uint8_t freeValue;
     uint8_t _indexedColumnFlag;
     uint32_t index;
 
@@ -118,7 +125,7 @@ typedef struct DataCell {
     bool isDuplicateColumn() const { return _indexedColumnFlag == 2; }
 } DataCell;
 
-static_assert(sizeof(DataCell) == 32, "DataCell must match SQLDataCell in src/sql_jsc/shared/SQLDataCell.rs");
+static_assert(sizeof(DataCell) == 32 && offsetof(DataCell, _indexedColumnFlag) == 24 && offsetof(DataCell, index) == 28, "DataCell must match SQLDataCell in src/sql_jsc/shared/SQLDataCell.rs");
 
 class BunStructureFlags {
 public:
@@ -191,11 +198,11 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
     case DataCellTag::Bytea: {
         Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
-        auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
+        auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea.length);
         RETURN_IF_EXCEPTION(scope, {});
 
-        if (cell.value.bytea[1] > 0) {
-            memcpy(uint8Array->vector(), reinterpret_cast<void*>(cell.value.bytea[0]), cell.value.bytea[1]);
+        if (cell.value.bytea.length > 0) {
+            memcpy(uint8Array->vector(), cell.value.bytea.bytes, cell.value.bytea.length);
         }
         return uint8Array;
     }

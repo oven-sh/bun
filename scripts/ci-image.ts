@@ -2,7 +2,7 @@
 
 // The cloud side of CI's machine images (scripts/build/ci-images): whether an
 // image exists, waiting for one, and baking a Windows one. These only work in
-// CI: the cloud credentials are Buildkite cluster secrets.
+// CI: a Buildkite job's token is what signs in to the clouds.
 //
 //   bake-image --key=<image key> --name=<image name>
 //     Bake a Windows image on Azure with Packer, from the bake directory
@@ -43,10 +43,10 @@ interface AwsImage {
 }
 
 /** A short-lived token from Buildkite that says which job this is, for `audience` to verify. */
-function getOidcToken(audience: string): string {
+function getOidcToken(audience: string, ...options: string[]): string {
   const { error, status, stdout, stderr } = spawnSync(
     requireCommand("buildkite-agent"),
-    ["oidc", "request-token", "--audience", audience],
+    ["oidc", "request-token", "--audience", audience, ...options],
     { encoding: "utf8" },
   );
   if (error || status !== 0) {
@@ -102,15 +102,21 @@ type Azure = {
   location: string;
 };
 
-async function getAzure(): Promise<Azure> {
+/** Azure compares a token's subject with one string, so the subject is the pipeline's id and not Buildkite's default. */
+function getAzureOidcToken(...options: string[]): string {
+  return getOidcToken("api://AzureADTokenExchange", "--subject-claim", "pipeline_id", ...options);
+}
+
+async function getAzure(clientId: string): Promise<Azure> {
   const tenantId = getSecret("AZURE_TENANT_ID");
   const response = await request(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       grant_type: "client_credentials",
-      client_id: getSecret("AZURE_CLIENT_ID"),
-      client_secret: getSecret("AZURE_CLIENT_SECRET"),
+      client_id: clientId,
+      client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+      client_assertion: getAzureOidcToken(),
       scope: "https://management.azure.com/.default",
     }).toString(),
     json: true,
@@ -166,7 +172,9 @@ async function getWindowsImageState(azure: Azure, name: string): Promise<ImageSt
 }
 
 export async function getImageState(os: "linux" | "windows", name: string): Promise<ImageState> {
-  return os === "windows" ? getWindowsImageState(await getAzure(), name) : getLinuxImageState(name);
+  return os === "windows"
+    ? getWindowsImageState(await getAzure(getSecret("AZURE_LIST_IMAGES_CLIENT_ID")), name)
+    : getLinuxImageState(name);
 }
 
 async function waitImage(os: "linux" | "windows", name: string, timeoutMinutes: number): Promise<void> {
@@ -228,7 +236,8 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
   await run(["buildkite-agent", "artifact", "download", `${bakeDirectory(key)}/*`, "."]);
   const directory = resolve(bakeDirectory(key));
   const image = JSON.parse(readFileSync(join(directory, "image.json"), "utf8")) as WindowsImage;
-  const azure = await getAzure();
+  const clientId = getSecret("AZURE_BAKE_IMAGES_CLIENT_ID");
+  const azure = await getAzure(clientId);
 
   const state = await getWindowsImageState(azure, name);
   if (state === "available") {
@@ -280,8 +289,10 @@ async function bakeWindowsImage(key: string, name: string, timeoutMinutes: numbe
   await run([packer, "init", template]);
 
   const values: Record<(typeof packerVariables)[number], string> = {
-    client_id: getSecret("AZURE_CLIENT_ID"),
-    client_secret: getSecret("AZURE_CLIENT_SECRET"),
+    client_id: clientId,
+    // Packer signs in with it again each time Azure's access runs out, after an hour or more.
+    // Two hours is the longest Buildkite makes a token last.
+    client_jwt: getAzureOidcToken("--lifetime", `${2 * 60 * 60}`),
     subscription_id: azure.subscriptionId,
     tenant_id: getSecret("AZURE_TENANT_ID"),
     // Its own resource group, in a region where the bake's VM does not

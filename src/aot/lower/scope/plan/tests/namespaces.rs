@@ -2,7 +2,7 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, BindingKind, Bound, Decl, ScopeId, SymbolId};
 use bun_sema::hir::{self, ClassId, EnumId, ExprId, ExprKind, FnKind, ModuleId, PatId, PatKind};
 
-use super::{analyze_source, storage_in};
+use super::{COPIED, analyze_source, analyze_source_that_runs_again, storage_in};
 use crate::lower::captures::Capture;
 use crate::lower::scope::lexical_owners::find_container_binding;
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
@@ -28,6 +28,10 @@ fn namespace_blocks_in(bound: &Bound<'_>, scope: ScopeId) -> Vec<ModuleId> {
     blocks.filter(|block| parent_of(block) == scope).collect()
 }
 
+fn parameter_of(bound: &Bound<'_>, block: ModuleId) -> BindingRef {
+    BindingRef::Symbol(bound.container_parameter(bound.module_scope[block.idx()]))
+}
+
 fn exported_member(bound: &Bound<'_>, binding: SymbolId) -> SymbolId {
     let member = bound.export_symbol_of_value_symbol_if_exported(binding);
     assert_ne!(
@@ -46,10 +50,10 @@ fn namespace_member_is_container_member() {
         let form = BindingForm::ContainerMember { container };
         assert_eq!(probe.form_of("inner"), form);
         assert_eq!(probe.analysis.placement(probe.binding("inner")), None);
-        assert!(matches!(
-            probe.placement_of("Box").storage,
-            Storage::Variable(_)
-        ));
+        let block = namespace_blocks_in(probe.bound, probe.file_scope())[0];
+        let parameter = probe.placement(parameter_of(probe.bound, block));
+        assert!(matches!(parameter.storage, Storage::Variable(_)));
+        assert_eq!(probe.placement_of("Box").storage, Storage::Local);
         assert!(probe.captures(probe.arrow()).is_empty());
     });
 
@@ -59,9 +63,23 @@ fn namespace_member_is_container_member() {
 
     let commonjs = "namespace Box { export const inner = 1; export const read = () => inner; } \
                     module.exports = Box;";
-    analyze_source("main.cts", commonjs, |probe| {
-        assert_eq!(probe.captures(probe.arrow()), [probe.copy_of("Box")]);
+    analyze_source_that_runs_again("main.cts", commonjs, |probe| {
+        let block = namespace_blocks_in(probe.bound, probe.file_scope())[0];
+        let parameter = parameter_of(probe.bound, block);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(parameter)]);
         assert_eq!(probe.placement_of("Box").storage, Storage::Local);
+    });
+}
+
+#[test]
+fn store_to_name_of_namespace_leaves_parameter_of_block() {
+    let source = "namespace Box { export let inner = 1; export const read = () => inner; } \
+                  const read = Box.read; Box = { inner: 2 }; module.exports = read;";
+    analyze_source_that_runs_again("main.cts", source, |probe| {
+        let block = namespace_blocks_in(probe.bound, probe.file_scope())[0];
+        let parameter = parameter_of(probe.bound, block);
+        assert_eq!(probe.placement(parameter), COPIED);
+        assert_eq!(probe.captures(probe.arrow()), [Capture::Value(parameter)]);
     });
 }
 
@@ -118,7 +136,8 @@ fn exported_namespace_variable_is_only_member() {
             probe.form(member),
             BindingForm::ContainerMember { container }
         );
-        assert!(probe.bindings(bound.module_scope[outer.idx()]).is_empty());
+        let bindings = probe.bindings(bound.module_scope[outer.idx()]);
+        assert_eq!(bindings, [parameter_of(bound, outer)]);
     });
 }
 
@@ -155,7 +174,7 @@ fn other_namespace_block_reads_member() {
             probe.form(member),
             BindingForm::ContainerMember { container }
         );
-        assert!(probe.bindings(other).is_empty());
+        assert_eq!(probe.bindings(other), [parameter_of(bound, blocks[1])]);
         assert!(probe.hoisted_functions(other).is_empty());
     });
 }
@@ -172,7 +191,10 @@ fn reopened_namespace_has_binding_per_block() {
             let block = bound.module_scope[outer.idx()];
             let binding = bound.declared_symbol(Decl::Module(namespace_blocks_in(bound, block)[0]));
             let binding_ref = BindingRef::Symbol(binding);
-            assert_eq!(probe.bindings(block), [binding_ref]);
+            assert_eq!(
+                probe.bindings(block),
+                [binding_ref, parameter_of(bound, outer)]
+            );
             assert_eq!(
                 bound.binding_kind(binding),
                 BindingKind::TypeScriptContainer
@@ -204,7 +226,7 @@ fn captured_block_binding_is_shared() {
     });
 
     let commonjs = format!("{namespace} module.exports = Box;");
-    analyze_source("main.cts", &commonjs, |probe| {
+    analyze_source_that_runs_again("main.cts", &commonjs, |probe| {
         let function = probe.only_function(FnKind::Decl);
         let binding = BindingRef::Symbol(probe.bound.declared_symbol(Decl::Fn(function)));
         assert_eq!(probe.placement(binding).storage, Storage::Local);
@@ -213,10 +235,10 @@ fn captured_block_binding_is_shared() {
 }
 
 #[test]
-fn closure_in_nested_namespace_captures_block_binding() {
+fn closure_in_nested_namespace_copies_parameter_of_block() {
     let source = "namespace Outer { export namespace Inner { export let value = 1; \
                   export function read() { return value; } } } module.exports = Outer;";
-    analyze_source("main.cts", source, |probe| {
+    analyze_source_that_runs_again("main.cts", source, |probe| {
         let bound = probe.bound;
         let top = probe.file_scope();
         let outer = namespace_blocks_in(bound, top)[0];
@@ -227,21 +249,20 @@ fn closure_in_nested_namespace_captures_block_binding() {
         let member = exported_member(bound, binding);
         let function = probe.only_function(FnKind::Decl);
         let from = probe.top_scope(function);
-        assert_eq!(find_container_binding(bound, from, member), binding);
-        assert_eq!(find_container_binding(bound, from, container), container);
-        assert_eq!(find_container_binding(bound, top, member), member);
+        let found =
+            |from, container| BindingRef::Symbol(find_container_binding(bound, from, container));
+        assert_eq!(found(from, member), parameter_of(bound, inner));
+        assert_eq!(found(from, container), parameter_of(bound, outer));
+        assert_eq!(found(top, member), BindingRef::Symbol(member));
 
-        let storage = probe.placement(BindingRef::Symbol(binding)).storage;
-        let field = Storage::Field {
-            scope: outer_block,
-            field: 0,
-        };
-        assert_eq!(storage, field);
+        assert_eq!(probe.placement(parameter_of(bound, inner)), COPIED);
         assert_eq!(
             probe.captures(function),
-            [Capture::Environment(outer_block)]
+            [Capture::Value(parameter_of(bound, inner))]
         );
-        let container_storage = probe.placement(BindingRef::Symbol(container)).storage;
-        assert_eq!(container_storage, Storage::Local);
+        for name in [binding, container] {
+            let storage = probe.placement(BindingRef::Symbol(name)).storage;
+            assert_eq!(storage, Storage::Local);
+        }
     });
 }

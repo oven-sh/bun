@@ -1,0 +1,17 @@
+# -- source: a-comparison-in-a-loop-beside-a-boxed-number-from-in-front-compares-raw-doubles.cjs
+# "use strict";
+# const words = JSON.parse('["less"]'), given = JSON.parse("[0.5,1.25,3]");
+# const shelf = { less: (c, a, b) => c - a * b }, helper = shelf[words[0]], half = given[0], more = given[1], three = given[2];
+# function count(t) { let c = 0; for (let i = 0; i < 10; i++) c = helper(three, half, more) === half ? 1 : 2; return c + (t & 1); }
+# const rounds = +JSON.parse('"3"'); let all = 0; for (let t = 0; t < rounds; t++) all = (all + count(t)) % 1000003; print(all);
+# -- end of source
+# f1 = count. In the typed copy of the loop `half` is a number that was asked for in front and is still boxed. An equality in the form of numbers takes a boxed number as it is and tells
+# int32 from double where it compares: in every turn. Beside a boxed number from in front of the loop it compares raw doubles: the number is unboxed by an operation of its own, which is
+# found in front of the loop (here the one that the product made) or built there.
+# RUN: walk f1 mechanisms=all
+# CHECK: [[boxed]]: number @JSValue = Narrowed
+# CHECK: [[raw]]: number @Double = Unbox [[boxed]]
+# CHECK: = StrictEq {{*}}, [[raw]] form=Numbers
+# RUN(ANSWER): run-in-shell mechanisms=all
+# ANSWER: 7
+# ANSWER-NEXT: exited with 0

@@ -1,0 +1,11 @@
+# The added function of the last decorated field stores into the name of a parameter property: the parameter is stored behind it, so the object holds the argument. It held what the added function stored: the value of the property itself was wrong.
+# LIBRARY: own
+# -- source: main.ts
+# declare function publish(run: (count: number) => string): void;
+# function stores(_: undefined, context: ClassFieldDecoratorContext) { context.addInitializer(function (this: any) { this.count = 9; this.other = 8; }); }
+# class Crate { other: any; @stores width = 1; constructor(public count = 5) {} }
+# function run(count: number) { const crate = new Crate(count); return crate.count + " " + crate.other + " " + crate.width; }
+# publish(run);
+# -- end of source
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run(3)); };
+# SHELL: 3 8 1

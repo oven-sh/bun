@@ -1,3 +1,3 @@
 import "./main.mjs";
-console.log("back runs");
+globalThis.lines.push("back runs");
 export const back = 1;

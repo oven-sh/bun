@@ -17,7 +17,3 @@ try {
 } catch (error) {
   console.log(error.name);
 }
-
-/* Output:
-EvalError
-*/

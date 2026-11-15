@@ -232,6 +232,21 @@ impl T {
         )
     }
 
+    /// True if this token starts a primary expression in every context and dialect, and that expression holds others.
+    #[inline(always)]
+    pub(crate) fn opens_primary_expression(self) -> bool {
+        matches!(
+            self,
+            T::New
+                | T::OpenParen
+                | T::OpenBracket
+                | T::OpenBrace
+                | T::Function
+                | T::Class
+                | T::TemplateHead
+        )
+    }
+
     /// True if this token can start a member access, a call, a `!`, type arguments or a template,
     /// or the braces of Flow's `match (a) { }` and `R { a: 1 }`.
     #[inline(always)]

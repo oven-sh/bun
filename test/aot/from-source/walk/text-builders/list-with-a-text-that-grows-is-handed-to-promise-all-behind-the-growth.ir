@@ -1,0 +1,12 @@
+# `const list = [line, i]; line += ..; pending.push(Promise.all(list));`: the text has grown between the literal and the call. The promise gives the text as it was when the list was written.
+# f1 = gather
+# -- source: list-with-a-text-that-grows-is-handed-to-promise-all-behind-the-growth.js
+# function gather(count) { const pending = []; let line = ""; for (let i = 0; i < count; i++) { const list = [line, i]; line += "k" + i; pending.push(Promise.all(list)); } return pending; }
+# Promise.all(gather(id(3))).then(all => print(all.join("|")));
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: ,0|k0,1|k0k1,2
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString

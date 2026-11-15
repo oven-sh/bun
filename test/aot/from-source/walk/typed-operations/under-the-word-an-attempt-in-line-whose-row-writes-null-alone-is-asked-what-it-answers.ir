@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function grow(n: number): string { const list: number[] = []; let last = ""; for (let i = 0; i < n; i++) last = typeof list.push(i); return last; }
+# print(grow(id(3)));
+# print("went on");
+# -- end of source
+# Fault injection, testing=UnderstateEffects:Builtin/Array.prototype.push/KindOfResult: the signature of Array.prototype.push declares null as its only result.
+# The push is an inline attempt that may miss (TryCallInline). Its result arrives as a block parameter, and a parameter whose type is a single marker had no register.
+# So there was no value to check against the signature. With testing=CheckProofsAtRunTime the parameter keeps the result of the attempt.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime globalThis.id = (x) => x;
+# RIGHT: number
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(ASKED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Array.prototype.push/KindOfResult globalThis.id = (x) => x;
+# ASKED: bun: internal AOT error: type check failed at {{*}} (grow)
+# ASKED-NEXT: found int32 in the result of a built-in or indirect call
+# ASKED-NOT: went on
+# ASKED: crashed with

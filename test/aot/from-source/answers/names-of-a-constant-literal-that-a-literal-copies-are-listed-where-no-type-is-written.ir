@@ -1,0 +1,15 @@
+# -- source: main.js
+# const defaults = { a: 1, b: 2 };
+# function settle(options) { return { ...defaults, ...options }; }
+# function main() { let total = 0; for (let i = 0; i < 1000; i++) { const settled = settle({ b: i & 7 }); total += settled.a + settled.b; } return total; }
+# print(main());
+# print(Object.keys(settle({ c: 1, a: 5 })).join(), settle(null).b, settle("xy")[1], settle().a);
+# -- end of source
+# Nothing is written of `options`, so the checker says nothing of the literal that copies it. The front end lists the names of the other source, whose type comes from an object literal, in a layout of this literal's own; what else a caller brings lies outside the slots as before.
+# RUN: run-in-shell
+# CHECK: 4500
+# CHECK-NEXT: a,b,c 2 y 1
+# CHECK-NEXT: exited with 0
+# RUN(FORM): walk f2 mechanisms=all
+# FORM-NOT: CopyDataProperties
+# FORM: GetSlot {{*}} key="a"

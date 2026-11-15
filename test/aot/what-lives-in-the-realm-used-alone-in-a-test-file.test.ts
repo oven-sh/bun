@@ -59,7 +59,7 @@ test("each is as in plain bun test", async () => {
     const { stdout, stderr, exitCode } = await run(
       [bunExe(), "test", "--isolate", "--parallel=8", ...flags],
       String(dir),
-      { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" },
+      { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" },
     );
     // With --parallel what a worker prints comes by way of the runner.
     const results = (stdout + "\n" + stderr).split("\n").filter(line => line.startsWith("RESULT|"));

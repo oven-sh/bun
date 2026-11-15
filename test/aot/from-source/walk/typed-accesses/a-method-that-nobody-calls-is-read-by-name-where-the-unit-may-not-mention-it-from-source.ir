@@ -1,0 +1,25 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# class Only { tell(): any { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; return work + 2; } }
+# const one: any = new Only();
+# let kept: any;
+# function change() { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; kept = one.tell; one.tell = () => 9; return work; }
+# change();
+# print(typeof kept, kept === Only.prototype.tell);
+# -- end of source
+# f1 = change, f3 = tell
+# Nobody calls `tell`. The store lays a field of the same name on the instance, so Link resolves the read to the field and lists `change` among no referrers of `tell`.
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f3 unreached
+# LINK-NEXT: referrers f0, f2
+# The walk finds the method above the instance all the same. Written as a constant, the closure of `tell` would stand in the code of a unit from which LinkTables::referrers does not lead to it, and the queue of units aborted the build.
+# The unit may not mention it: the read goes by its name.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: function=f3
+# CHECK: = PropGet {{*}}key="tell"
+# CHECK-NOT: function=f3
+# CHECK: Return
+# RUN(RUNS): run-in-shell mechanisms=all
+# RUNS: function true
+# RUNS-NEXT: exited with 0

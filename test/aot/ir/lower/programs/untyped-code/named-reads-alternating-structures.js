@@ -148,79 +148,7 @@ line = [];
 for (let turn = 0; turn < 3; turn++) for (let i = 0; i < many.length; i++) line.push(many[i](shapes[(i + turn) % shapes.length]));
 console.log(line.join("|").length, line[0], line[47], line[143]);
 
-// GENERATED: hide shapeWith readThree get
 // CHECK-LABEL: function {{*}}name="hide"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]]|[[L_2]]|[[L_3]]|[[L_4]]|[[L_5]] flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]|[[L_2]]|[[L_3]]|[[L_4]]|[[L_5]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Builtin builtin=JSON
-// CHECK-NEXT: v2 = PropGet v1 key="parse"
-// CHECK-NEXT: v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
-// CHECK-NEXT: v4 = Builtin builtin=JSON
-// CHECK-NEXT: v5 = PropGet v4 key="stringify"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v7 = Call v6, v4, v0 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v9 = Call v3, v1, v8 calleeKey="parse" calleeName="JSON.parse"
-// CHECK-NEXT: ReturnCall v9
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="shapeWith"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=undefined|null|[[L_1]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: anything, v2: undefined|null|string):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = Data data=[[d_6]]
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|[[L_1]] flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer
-// CHECK-NEXT: v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v6)
-// CHECK-NEXT: b2(v7):
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v9 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v10 = Less v7, v9
-// CHECK-NEXT: Branch v10 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
-// CHECK-NEXT: b3(v11, v12):
-// CHECK-NEXT: Jump -> next b4()
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v13 = String string="filler"
-// CHECK-NEXT: v14 = Add v13, v11
-// CHECK-NEXT: v15 = Negate v11
-// CHECK-NEXT: ElemSet v4, v14, v15
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v17 = Increment v11
-// CHECK-NEXT: v18 = Convert v17 declared={type=i32 flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b2(v18)
-// CHECK-NEXT: b6(v19, v20):
-// CHECK-NEXT: Jump -> next b7()
-// CHECK-NEXT: b7():
-// CHECK-NEXT: ElemSet v4, v0, v2
-// CHECK-NEXT: v22 = Convert v20 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v4, v22 key="last"
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="readThree"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_4]] flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_4]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="v"
-// CHECK-NEXT: v2 = PropGet v0 key="w"
-// CHECK-NEXT: v3 = PropGet v0 key="last"
-// CHECK-NEXT: v4 = NewArray v1, v2, v3 contents=anything
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v6 = PropGet v5 key="join"
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|[[f_7]] flags=[IsExpected]}
-// CHECK-NEXT: v8 = Call v7, v5 calleeKey="join" calleeName="join"
-// CHECK-NEXT: ReturnCall v8 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_8]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="a getter"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

@@ -1,0 +1,28 @@
+# `a[i] + b[i]`: beside a text `undefined` is written out, so a read may give NaN for a hole only where the other operand is known to be a number or `undefined`.
+# Of the read that stands first the other is not built yet. What Link says of that later read is held by a stop only on some of the roads it may be built by (not under a key that is a text, not where the type of the container answers),
+# so under `+` the first read keeps `undefined`; the later one finds the first built, `number | undefined`, and gives NaN. Under `-`, `*`, `/` NaN and `undefined` answer alike beside any value: there both give NaN.
+# f1 = sums, f2 = named
+# -- source: of-two-elements-under-a-plus-only-the-later-reads-a-hole-as-nan.ts
+# declare function print(...values: unknown[]): void;
+# const left: number[] = [], right: number[] = [], short: number[] = [];
+# for (let i = 0; i < 8; i++) { left.push(i + 0.5); right.push(i * 0.25 + 0.125); if (i < 3) short.push(i + 1.5); }
+# const holed = [0.5, 1.5, , 3.5, 4.5, 5.5, 6.5, 7.5] as number[];
+# const byName: any = { one: "w", two: 2.5 };
+# function sums(a: number[], b: number[], n: number): number { let s = 0; for (let i = 0; i < n; i++) s -= a[i] + b[i]; return s; }
+# function named(a: number[], names: string[], n: number): string { let s = ""; for (let i = 0; i < n; i++) s += a[i] + byName[names[i & 1]]; return s; }
+# function turns(n: number): number { return Date.now() > 0 ? n : 0; }
+# print(sums(left, right, turns(8)), sums(left, right, turns(9)), sums(short, holed, turns(2)), sums(short, holed, turns(3)), sums(holed, short, turns(3)), sums(short, left, turns(4)));
+# print(named(short, ["one", "two"], turns(5)));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: @OptionalDouble = GetArrayElement
+# CHECK-NOT: readsHoleAsNaN
+# CHECK: @Double = GetArrayElement {{*}}readsHoleAsNaN
+# CHECK: @Double = Add
+# RUN(NAMED): walk f2 mechanisms=all
+# NAMED-LABEL: code f2:Body
+# NAMED-NOT: readsHoleAsNaN
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: -40 NaN -6 NaN NaN NaN
+# ANSWERS: 1.5w53.5wNaNundefinedw

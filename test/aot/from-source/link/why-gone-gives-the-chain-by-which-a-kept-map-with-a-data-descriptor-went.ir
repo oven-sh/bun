@@ -1,0 +1,24 @@
+# -- source: why-gone-gives-the-chain-by-which-a-kept-map-with-a-data-descriptor-went.js
+# const held = { count: 1 };
+# const accessors = { first: { get() { return 1; } }, box: { value: held, writable: held.count > 0 } };
+# const internals = { kept: undefined, other: 1 };
+# function Writer() {}
+# Object.defineProperties(Writer.prototype, accessors);
+# internals.kept = accessors;
+# print(new Writer().first);
+# -- end of source
+# An entry that lays a value beside flags that are written constants is read as a descriptor in sight and keeps the map: the flag here is reckoned, so this entry is not read.
+# `link why-gone` searches the flow of Link at rest and says why something was let go. A layout: forward from where it is made, over edges, through nodes that hold it, to what is unseen. Any other node, named
+# as LinkFlow::describe() names it: backward through nodes that hold unseen objects to where that begins. One line a link of the chain, the root last. One entry of this map lays a value, so the map goes.
+# RUN(LAYOUT): link why-gone L2
+# LAYOUT: why-gone L2: it has gone
+# LAYOUT: an edge leads it to what is unseen; the chain, the root last:
+# LAYOUT: unseen
+# LAYOUT: f0.node{{*}} : L2 unseen
+# RUN(FIELD): link why-gone L4.field0
+# FIELD: why-gone L4.field0: it holds what is unseen
+# FIELD: the chain, the root last:
+# FIELD: L4.field0 :
+# FIELD: f0.node
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1

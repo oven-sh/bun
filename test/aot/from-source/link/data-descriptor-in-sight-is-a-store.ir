@@ -1,0 +1,15 @@
+# -- source: data-descriptor-in-sight-is-a-store.js
+# function K(v) { this.v = v; }
+# Object.defineProperty(K.prototype, "m", { value: function m() { return this.v; }, enumerable: false, configurable: true, writable: true });
+# Object.defineProperty(K.prototype, "w", { value: function w() { return this.v + 1; }, enumerable: false, configurable: true, writable: true });
+# Object.defineProperty(K, "of", { value: function of(v) { return new K(v); }, enumerable: false, configurable: true, writable: true });
+# sink(K.of(1).m() + K.of(2).w());
+# -- end of source
+# The descriptor is made at the call, the allocation fills it and it leaves at the call alone: the call reads six names off it and keeps nothing of it. What it holds under `value` lies under the name from then on, as behind a store:
+# on the object that a constructor function is made with, and on a function whose names are followed. The three descriptors share one layout: what they hold does not meet in its field.
+# The clock of start says of no name that it is laid ahead: through a hole in it the read of such a name gave undefined where the type said a function, and the process died; the claim fired on no real program. What this test told apart by `laid-ahead` it no longer tells.
+# RUN: link members layouts mechanisms=all
+# CHECK: on-function f1 "of"
+# CHECK: on-prototype L0 "m" function=f2
+# CHECK: on-prototype L0 "w" function=f3
+# CHECK: layout L0 {{*}}stays-with-compiled-code

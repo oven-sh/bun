@@ -1,0 +1,13 @@
+# the same program with calls of built-ins withheld: next is called by value
+# RUN: walk f2 mechanisms=none+DirectCalls
+# CHECK-LABEL: code f2:Body
+# CHECK: = Call {{*}}calleeKey="next"
+# RUN(NEVER): walk f2 mechanisms=none+DirectCalls
+# NEVER-NOT: = StepGenerator
+# -- source: next-written-by-hand-steps-the-generator-where-the-call-stands.ts
+# declare function sink(...values: unknown[]): void;
+# function* count(n: number) { for (let i = 0; i < n; i++) yield i; }
+# function firstTwo(n: number) { const g = count(n); const a = g.next(); const b = g.next(); return [a.value, b.done]; }
+# sink(firstTwo);
+# -- end of source
+# f1 = count, f2 = firstTwo

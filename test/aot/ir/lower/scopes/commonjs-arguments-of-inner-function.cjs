@@ -8,7 +8,7 @@
 // CHECK: = CreateMappedArguments
 
 function own() {
-  return arguments.length;
+  return arguments;
 }
 exports.own = own;
 if (false) arguments;

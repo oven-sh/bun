@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const C = [0.5, 1.25, 2, 0.75], X = [0.5, 1, 1.5, 2, 2.5], OUT = [0.5, 0.5, 0.5, 0.5, 0.5];
+# function polynomial(c: number[], x: number[]): number { let s = 0; for (let k = 0; k < x.length; k++) s += c[0]! + x[k]! * (c[1]! + x[k]! * (c[2]! + x[k]! * c[3]!)); return s; }
+# function into(c: number[], x: number[], out: number[]): number { for (let k = 0; k < x.length; k++) out[k] = c[0]! * x[k]! + c[1]!; return out[4]!; }
+# print(polynomial(C, X), into(C, X, OUT));
+# -- end of source
+# Link has seen what is written into the three lists: whole numbers that fit an int32, and fractions. A double read under that type was held to it where it was read: is it a fraction, or whole and within an int32: seventeen
+# operations of the machine a read, in every turn, for a part of `number` that no user of a double leans on. What may be a fraction without bounds is any number, whether the read may meet a hole or has been shown its element.
+# f1 = polynomial, f2 = into
+# RUN: walk f1 f2 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : number @Double = GetArrayElement
+# CHECK-NOT: fractional @Double = GetArrayElement
+# CHECK-LABEL: code f2:Body
+# CHECK: : number @Double = GetArrayElement
+# CHECK-NOT: fractional @Double = GetArrayElement
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 60.46875 2.5

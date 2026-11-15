@@ -1,3 +1,3 @@
 import { nativeTests } from "./testaot";
 
-nativeTests(2, 6);
+nativeTests(2, 10);

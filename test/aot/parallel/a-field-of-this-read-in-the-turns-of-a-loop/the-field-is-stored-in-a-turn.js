@@ -1,0 +1,4 @@
+// `this.items[i]` in a method: `this` is proven. In front of the loop the slot is asked whether it is filled and read once; what it gives is told apart: a list of numbers, a list, a buffer, bytes, another view. A turn stores the field: the next read sees it.
+class Box { constructor(items, other) { this.items = items; this.other = other; } sum() { let s = 0; for (let i = 0; i < this.items.length; i++) { s += this.items[i]; if (i === 1 && this.other.length) { const next = this.other; this.other = []; this.items = next; } } return s; } }
+const name = JSON.parse('"sum"');
+for (const [first, next] of [[[0.5, 1.5, 2.5], [10, 20, 30, 40, 50]], [[1, 2, 3], [0.25, 0.25, 0.25, 0.25]], [[1.5, 2.5, 3.5, 4.5], ["a", "b", "c"]], [[1.5, 2.5, 3.5], []]]) { const box = new Box(first, next); console.log(box[name](), box.items === (next.length ? next : first)); }

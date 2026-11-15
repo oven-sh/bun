@@ -206,7 +206,7 @@ impl Expansion {
                         return Yield::Failed(this);
                     }
                 };
-                let script = Script::init(interp, duped, &sub.script, this, io);
+                let script = Script::init_cmd_subst(interp, duped, &sub.script, this, io);
                 interp.as_expansion_mut(this).child_script = Some(script);
                 return Script::start(interp, script);
             }
@@ -217,13 +217,13 @@ impl Expansion {
                 let len_before = me.current_out.len();
                 match me.current_out.first() {
                     Some(b'/') | Some(b'\\') => {
-                        me.current_out.splice(0..0, home.slice().iter().copied());
+                        me.current_out.splice(0..0, home.iter().copied());
                     }
                     Some(_) => me.current_out.insert(0, b'~'),
                     // `~""` expands to $HOME,
                     // but `~$unset` expands to nothing (word is dropped).
                     None if me.has_quoted_empty => {
-                        me.current_out.extend_from_slice(home.slice());
+                        me.current_out.extend_from_slice(home);
                     }
                     None => {}
                 }
@@ -238,7 +238,6 @@ impl Expansion {
                         *off += prepended;
                     }
                 }
-                home.deref();
             }
             // Brace expansion
             // first, then glob, else flush as a single word.
@@ -467,7 +466,6 @@ impl Expansion {
         command_ctx: *mut bun_options_types::context::ContextData,
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) -> bool {
-        use crate::shell::env_str::EnvStr;
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
             ast::SimpleAtom::QuotedEmpty => {
@@ -479,13 +477,12 @@ impl Expansion {
             }
             ast::SimpleAtom::Var(label) => {
                 // Spec `expandVar`: shell_env first, then export_env, else "".
-                let key = EnvStr::init_slice(label);
-                if let Some(v) = shell.shell_env.get(key) {
-                    out.extend_from_slice(v.slice());
-                    v.deref();
-                } else if let Some(v) = shell.export_env.get(EnvStr::init_slice(label)) {
-                    out.extend_from_slice(v.slice());
-                    v.deref();
+                if let Some(v) = shell
+                    .shell_env
+                    .get(label)
+                    .or_else(|| shell.export_env.get(label))
+                {
+                    out.extend_from_slice(v);
                 }
             }
             ast::SimpleAtom::VarArgv(int) => {
@@ -517,9 +514,7 @@ impl Expansion {
             }
             ast::SimpleAtom::Tilde => {
                 if expand_tilde {
-                    let home = shell.get_homedir();
-                    out.extend_from_slice(home.slice());
-                    home.deref();
+                    out.extend_from_slice(shell.get_homedir());
                 } else {
                     out.push(b'~');
                 }
@@ -670,7 +665,7 @@ impl Expansion {
         this: NodeId,
         result: Vec<Vec<u8>>,
         err: Option<crate::shell::dispatch_tasks::ShellGlobErr>,
-    ) {
+    ) -> Yield {
         use crate::shell::dispatch_tasks::ShellGlobErr;
         log!("Expansion {} onGlobWalkDone", this);
         let walk_err = match err {
@@ -709,8 +704,7 @@ impl Expansion {
                 let msg = format!("no matches found: {}", bstr::BStr::new(&me.current_out));
                 me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
             }
-            Yield::Next(this).run(interp);
-            return;
+            return Yield::Next(this);
         }
 
         {
@@ -725,7 +719,7 @@ impl Expansion {
             }
             me.state = ExpansionState::Done;
         }
-        Yield::Next(this).run(interp);
+        Yield::Next(this)
     }
 
     /// Take the error out of `state == Err(_)` (called by the parent on
@@ -747,10 +741,6 @@ impl Expansion {
         if let Some(c) = child {
             interp.deinit_node(c);
         }
-        let me = interp.as_expansion_mut(this);
-        me.out.buf.clear();
-        me.out.bounds.clear();
-        me.current_out.clear();
     }
 
     /// Take the expanded output (called by the parent after `child_done`).

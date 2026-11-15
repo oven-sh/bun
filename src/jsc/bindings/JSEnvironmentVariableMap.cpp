@@ -994,7 +994,8 @@ RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalOb
     }
 
     // Compiled code keeps what the first read of process.env and of Bun.env gave.
-    JSC::AOT::hostDidReplaceProperty(globalObject, envIdentifier.impl());
+    if (globalObject->vm().hasCompiledCode()) [[unlikely]]
+        JSC::AOT::hostDidReplaceProperty(globalObject, envIdentifier.impl());
 
     return store;
 }

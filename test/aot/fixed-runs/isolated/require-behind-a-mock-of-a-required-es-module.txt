@@ -1,0 +1,58 @@
+Behind a mock, require() of an ES module answers the very object that the factory gave where the module was required before the mock; where it was only imported or never loaded it answers as import() does.
+#### imported.js
+export function f(x) { return x + 9; }
+export const g = 1;
+#### imported.test.js
+
+      import { mock, spyOn, test } from "bun:test";
+      import * as lib from "./imported.js";
+      test("imported alone", async () => {
+        const say = (label, ...values) => console.log("| CASE " + label + " | " + values.map(String).join(" "));
+        const given = { ...lib, extra: 1 };
+        mock.module("./imported.js", () => given);
+        const required = require("./imported.js");
+        say("imported alone: what the factory gave | the namespace", required === given, required === lib);
+        say("imported alone: keys", Object.keys(required).sort().join());
+        spyOn(lib, "f").mockImplementation(() => "fake");
+        say("imported alone: a spy on the namespace", lib.f(1), require("./imported.js").f(1), given.f(1));
+      });
+#### late.js
+export function f(x) { return x + 9; }
+export const g = 1;
+#### late.test.js
+
+      import { mock, test } from "bun:test";
+      test("never loaded", async () => {
+        const say = (label, ...values) => console.log("| CASE " + label + " | " + values.map(String).join(" "));
+        const other = { f: () => "late", g: 2 };
+        mock.module("./late.js", () => other);
+        const late = require("./late.js");
+        say("never loaded: what the factory gave", late === other, late.f(1), Object.keys(late).sort().join());
+        const imported = await import("./late.js");
+        say("never loaded: import()", imported === other, imported.f(1), require("./late.js") === imported);
+      });
+#### required.js
+export function f(x) { return x + 9; }
+export const g = 1;
+#### required.test.js
+
+      import { mock, spyOn, test } from "bun:test";
+      import * as lib from "./required.js";
+      test("required first", async () => {
+        const say = (label, ...values) => console.log("| CASE " + label + " | " + values.map(String).join(" "));
+        say("before the mock", require("./required.js") === lib, require("./required.js").f === lib.f);
+        const given = { ...lib, extra: 1 };
+        mock.module("./required.js", () => given);
+        const required = require("./required.js");
+        say("what the factory gave | the namespace", required === given, required === lib);
+        say("keys", Object.keys(required).sort().join());
+        say("twice the same", require("./required.js") === required);
+        const imported = await import("./required.js");
+        say("import(): the namespace | what the factory gave", imported === lib, imported === given);
+        spyOn(lib, "f").mockImplementation(() => "fake");
+        say("a spy on the namespace", lib.f(1), require("./required.js").f(1), given.f(1), (await import("./required.js")).f(1));
+        given.f = () => "stored";
+        say("a store into what the factory gave", lib.f(1), require("./required.js").f(1));
+        const { f, extra } = require("./required.js");
+        say("by a pattern", f(1), extra);
+      });

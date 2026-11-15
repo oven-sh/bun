@@ -1,0 +1,1 @@
+"use strict"; Object.defineProperty(exports, "__esModule", { value: true }); exports.default = class Before { constructor() { this.before = 1; } who() { return "before"; } }; exports.change = () => { exports.default = class After { constructor() { this.after = 2; this.more = 3; } who() { return "after"; } }; };

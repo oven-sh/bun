@@ -8,7 +8,14 @@ function listOf(...list: unknown[]): unknown[] {
   return list;
 }
 
-const ring: import("./tick_ring").Ring = { read: undefined, write: undefined, made: 0, pushWithInitHooks: undefined };
+const ring: import("./tick_ring").Ring = {
+  read: undefined,
+  write: undefined,
+  spare: 0,
+  willDropFreeTicks: false,
+  beforeRead: undefined,
+  pushWithInitHooks: undefined,
+};
 let growRing!: TickRing["growRing"];
 let pushWithList!: TickRing["pushWithList"];
 let tickInitHooks!: TickRing["tickInitHooks"];
@@ -43,10 +50,7 @@ function takeTick(callback: TickCallback | undefined, frame: Frame): Tick {
 }
 
 // process.nextTick of a program that is compiled ahead of time.
-function /* as in builtins/ProcessObjectInternals.ts: function nextTick */ nextTick(
-  cb: TickCallback,
-  ...args: unknown[]
-) {
+function nextTick(cb: TickCallback, ...args: unknown[]) {
   ("frames are native code");
   if (typeof cb !== "function") throw require("internal/validate_function")["::bunternal::"](cb, "callback");
   if (!isSetUp) setUp();

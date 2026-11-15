@@ -1,0 +1,12 @@
+The factory's importOriginal() of a file that imports a name of node:util.
+#### factory.test.ts
+import { test, vi } from "bun:test";
+import { seen } from "./user.ts";
+vi.mock("./styled.ts", async importOriginal => { try { const actual: any = await importOriginal(); return { who: () => "mocked " + actual.who() }; } catch (e: any) { console.log("| CASE SWALLOWED", e.constructor.name, e.message); return {}; } });
+test("t", () => { try { console.log("| CASE said", seen()); } catch (e: any) { console.log("| CASE THROWS", e.constructor.name, e.message); } });
+#### package.json
+{ "name": "builtin-left-out", "type": "module" }
+#### styled.ts
+import { styleText } from "node:util"; export const who = () => styleText("bold", "real").length > 0 ? "real" : "none";
+#### user.ts
+import { who } from "./styled.ts"; export const seen = () => who();

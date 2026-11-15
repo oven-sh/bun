@@ -62,9 +62,9 @@ const sharedFiles: Files = {
 const importPage = (name: string) => `// @ts-ignore\nimport ${name} from "./${name}.html";\n`;
 
 const PAGE_HELPERS = `declare const Bun: any;
-type Page = { index: string; files: { input?: string; path: string; loader: string }[] };
+type Page = { index: string; files?: { input?: string; path: string; loader: string }[] };
 async function hasFileWithText(page: Page, loader: string, text: string): Promise<boolean> {
-  for (const file of page.files) {
+  for (const file of page.files!) {
     if (file.loader === loader && (await Bun.file(file.path).text()).includes(text)) return true;
   }
   return false;
@@ -82,9 +82,9 @@ const twoPagesProgram: Files = {
     importPage("b") +
     'import { again } from "./again";\n' +
     PAGE_HELPERS +
-    `const pathOf = (page: Page, input: string) => page.files.find(file => file.input === input)!.path;
+    `const pathOf = (page: Page, input: string) => page.files!.find(file => file.input === input)!.path;
 async function printFiles(page: Page, script: string) {
-  const loaders = page.files.map(file => file.loader).sort().join(" ");
+  const loaders = page.files!.map(file => file.loader).sort().join(" ");
   const hasStyles = await hasFileWithText(page, "css", "shared-by-both-pages");
   console.log(loaders, hasStyles, await hasFileWithText(page, "js", script));
 }

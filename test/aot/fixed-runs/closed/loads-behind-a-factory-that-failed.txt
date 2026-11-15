@@ -1,0 +1,45 @@
+Every load behind a mock whose factory threw, answered no object or rejected gets the same error, and the body of the module never runs.
+#### failed.test.ts
+    import { test, mock } from "bun:test";
+    const say = (label: string, f: () => unknown) =>
+      Promise.resolve().then(f).then(v => console.log("| CASE", label, String(v)), e => console.log("| CASE", label, e.constructor.name, e.message));
+    const fails = () => { throw new RangeError("from the factory"); };
+    test("import()", async () => {
+      mock.module("./src/imported.ts", fails);
+      for (const turn of [1, 2, 3]) await say("import " + turn, async () => (await import("./src/imported.ts")).v);
+    });
+    test("require()", async () => {
+      mock.module("./src/required.ts", fails);
+      for (const turn of [1, 2, 3]) await say("require " + turn, () => require("./src/required.ts").v);
+    });
+    test("one after the other", async () => {
+      mock.module("./src/mixed.ts", fails);
+      await say("mixed require", () => require("./src/mixed.ts").v);
+      await say("mixed import", async () => (await import("./src/mixed.ts")).v);
+      await say("mixed require again", () => require("./src/mixed.ts").v);
+    });
+    test("a factory that answers no object", async () => {
+      mock.module("./src/answers-nothing.ts", () => undefined as any);
+      for (const turn of [1, 2, 3]) await say("nothing " + turn, async () => (await import("./src/answers-nothing.ts")).v);
+    });
+    test("a factory whose promise is rejected", async () => {
+      mock.module("./src/rejects.ts", () => Promise.reject(new RangeError("rejected")));
+      for (const turn of [1, 2, 3]) await say("rejects " + turn, async () => (await import("./src/rejects.ts")).v);
+    });
+    test("a factory with names of its own", async () => {
+      const factory = Object.assign(() => { throw new RangeError("from the factory"); }, { v: "of the function" });
+      mock.module("./src/named.ts", factory);
+      for (const turn of [1, 2]) await say("named " + turn, async () => (await import("./src/named.ts")).v);
+    });
+#### src/answers-nothing.ts
+console.log("| CASE", "the body of answers-nothing runs"); export const v = "real v";
+#### src/imported.ts
+console.log("| CASE", "the body of imported runs"); export const v = "real v";
+#### src/mixed.ts
+console.log("| CASE", "the body of mixed runs"); export const v = "real v";
+#### src/named.ts
+console.log("| CASE", "the body of named runs"); export const v = "real v";
+#### src/rejects.ts
+console.log("| CASE", "the body of rejects runs"); export const v = "real v";
+#### src/required.ts
+console.log("| CASE", "the body of required runs"); export const v = "real v";

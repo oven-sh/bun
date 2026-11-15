@@ -29,6 +29,17 @@ struct PlannedRemoval {
     dead_names: Vec<u32>,
 }
 
+/// What `remove_items` would return. Changes nothing.
+pub(crate) fn find_dead_ranges(
+    package: &[u8],
+    removed_items: &[Range<u32>],
+    tombstoned_items: &[Range<u32>],
+) -> Result<Vec<Range<u32>>, TrimInternalError> {
+    let removal = plan_removal(package, removed_items, tombstoned_items)
+        .ok_or(TrimInternalError::MalformedIcuData)?;
+    Ok(removal.dead_ranges)
+}
+
 /// Returns the byte ranges of `package` that nothing refers to any more: ascending, disjoint, adjacent ones merged, offsets from the first byte of `package`.
 pub(crate) fn remove_items(
     package: &mut [u8],

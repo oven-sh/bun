@@ -1,0 +1,4 @@
+[define]
+"config.flag" = "absent"
+"FLAG" = "absent"
+"config.there" = "present"

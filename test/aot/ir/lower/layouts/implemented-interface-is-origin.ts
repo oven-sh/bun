@@ -1,6 +1,6 @@
 // RUN: link
 // CHECK: layout {{*}}kind=Instance name="C" {{*}}fields=[{key="b" declared={type={{*}}} flags=[IsRequired] originLayout=[[i]] originField=1}, {key="a" declared={type={{*}}} flags=[IsRequired] originLayout=[[i]] originField=0}] supertypes=[{{*}}[[i]]]
-// CHECK: layout [[i]] name="I"
+// CHECK: layout [[i]] {{*}}fields=[{key="a"
 
 // RUN(HERITAGE): link
 // HERITAGE-NOT: layout {{*}}name="C"{{*}} base=

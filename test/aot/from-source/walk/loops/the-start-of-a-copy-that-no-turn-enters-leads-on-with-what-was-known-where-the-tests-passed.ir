@@ -1,0 +1,23 @@
+# -- source: the-start-of-a-copy-that-no-turn-enters-leads-on-with-what-was-known-where-the-tests-passed.js
+# function work(rows, least) {
+#   const front = [least];
+#   for (let i = rows.length - 1; i >= 0; i--) {
+#     if (rows[i] < least) {
+#       rows[i] = rows[i] + 1;
+#     }
+#   }
+#   front.push(rows.length);
+#   return front;
+# }
+# const rows = JSON.parse("[0,5,2]");
+# print(work(rows, 3).join(), rows.join());
+# -- end of source
+# The loop counts down, so one of its copies asks the counter alone, and the front of that copy is entered out of turns of another: where it fails, the walk goes on at the entry of the closed copy, which believes
+# what is known of `front`. That failing side is begun last. By then the start of a further copy that no turn had entered had jumped there with nothing known, the jump had taken what had met there, and the walk threw
+# that away and began the block again with nothing. A Bun with assertions or ASan stopped; a release build struck the purchase and said nothing.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 3,3 1,5,3
+# CHECK-NEXT: exited with 0
+# RUN(COUNT): compile WalkLoopsVersioned LoopVersioningAttemptsFailed mechanisms=all
+# COUNT: statistic WalkLoopsVersioned 8
+# COUNT: statistic LoopVersioningAttemptsFailed 0

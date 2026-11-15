@@ -1,0 +1,27 @@
+# -- source: main.js
+# function sum(t) { const list = [1, 2, 3, 4, 5, 6, 7, t & 1]; let s = 0; const it = list[Symbol.iterator](); let r; while (!(r = it.next()).done) s += r.value; return s; }
+# function places(t) { const list = [1, 2, 3, t & 1]; let s = 0; const it = list.keys(); let r; while (!(r = it.next()).done) s += r.value; return s; }
+# print(sum(0), sum(1), places(0));
+# -- end of source
+# The iterator is made in the function and stepped by hand. Nobody writes the list that it walks or its kind behind the birth, so both are the maker's own operand and parameter:
+# the step reads neither field, asks neither for its type, and the arm for whatever else may be walked is not built. The position alone goes through the iterator.
+# f1 = sum, f2 = places, each with the library's next() copied into its loop
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = CallInline {{*}}inlineBuiltin=ArrayIterator
+# CHECK-NOT: = GetInternalField {{*}}index=1
+# CHECK-NOT: = GetInternalField {{*}}index=2
+# CHECK: = GetArrayLength
+# CHECK-NOT: = GetInternalField {{*}}index=1
+# CHECK-NOT: = GetInternalField {{*}}index=2
+# CHECK: = GetArrayElement
+# CHECK-NOT: = GetInternalField {{*}}index=1
+# CHECK-NOT: = GetInternalField {{*}}index=2
+# CHECK: Return
+# RUN(KEYS): walk f2:Body mechanisms=all
+# KEYS: = CallInline {{*}}inlineBuiltin=ArrayIterator
+# KEYS-NOT: = GetArrayElement
+# KEYS-NOT: = GetInternalField {{*}}index=2
+# KEYS: Return
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 28 29 6
+# SHELL-NEXT: exited with 0

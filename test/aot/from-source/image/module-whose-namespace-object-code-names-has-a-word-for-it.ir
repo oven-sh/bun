@@ -1,0 +1,12 @@
+# -- source: main.mjs
+# import * as whole from "./whole.mjs";
+# print("two: " + id(whole).two());
+# -- source: whole.mjs
+# export function two() { return 2; }
+# -- end of source
+# `import * as whole`, handed on: code names the word in which the namespace object lies, and the word is there.
+# RUN(TABLES): image ProgramTables
+# TABLES-LABEL: ProgramTables:
+# TABLES: staticsRoots 1
+# RUN(SHELL): run-in-shell
+# SHELL: two: 2

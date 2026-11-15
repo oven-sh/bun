@@ -1,5 +1,4 @@
 // Object.defineProperty makes a name of a function read-only unless the descriptor says otherwise, and a store under that name throws a TypeError in strict code wherever it stands: in the function that defines the name, in one that is handed the function, or in one that gets it back. Each module makes a function that nobody reads.
-// STATISTIC: InitializersDeferred >= 1
 const modules = {
   "the store stands in a function that is handed the function": () => import("./handed-on.mjs"),
   "the store stands two calls deep": () => import("./handed-on-twice.mjs"),

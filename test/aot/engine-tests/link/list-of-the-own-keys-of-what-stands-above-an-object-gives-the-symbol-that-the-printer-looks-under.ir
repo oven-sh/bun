@@ -1,0 +1,54 @@
+# console.log({ [Reflect.ownKeys(Buffer.alloc(1).__proto__)[0]]() { return "mine"; } });
+# As list-of-the-own-keys-of-a-holder-gives-the-symbol-that-the-printer-looks-under.ir, and nobody sees which object is listed: `__proto__` is a name that is read off an object of the host. A Buffer may exist,
+# so what stands above it is at hand, and a row that gives a list of symbols may give those of Buffer.prototype.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f2
+module m2 path="/$bun/js/builtins/JSBufferPrototype.ts" displayPath="/$bun/js/builtins/JSBufferPrototype.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=JSBufferPrototypeToJSON function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Reflect
+    v1 = Builtin builtin=ReflectOwnKeys
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Buffer" [isFreeName]
+    v4 = Convert v3 declared={type=builtin(Buffer) flags=[IsExpected]}
+    v5 = PropGet v4 key="alloc"
+    v6 = Convert v5 declared={type=builtin(BufferAlloc) flags=[IsExpected]}
+    v7 = Integer integer=1
+    v8 = Call v6, v4, v7 calleeKey="alloc" calleeName="Buffer.alloc"
+    v9 = PropGet v8 key="__proto__"
+    v10 = Call v1, v0, v9 calleeName="Reflect.ownKeys"
+    v11 = Integer integer=0
+    v12 = ElemGet v10, v11
+    v13 = ToPropertyKey v12
+    v14 = NewClosure function=f1
+    v15 = NewObject layout=L0
+    ElemDefine v15, v13, v14
+    v17 = FinishObject v15
+    v18 = Builtin builtin=Console
+    v19 = PropGet v18 key="log"
+    v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v21 = Call v20, v18, v17 calleeKey="log" calleeName="console.log"
+    Return v21
+}
+function f1 module=m0 kind=Method thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = String string="mine"
+    Return v0
+}
+function f2 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 module=m2 kind=Method role=Library enclosingRuntimeFunction=JSBufferPrototypeToJSON thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -97,6 +97,7 @@ using namespace JSC;
     macro(handleEvent) \
     macro(hasWaitingResponses) \
     macro(headers) \
+    macro(heldChunk) \
     macro(highWaterMark) \
     macro(host) \
     macro(hostDefinedImportType) \
@@ -171,11 +172,11 @@ using namespace JSC;
     macro(rawHeaders) \
     macro(read) \
     macro(readable) \
-    macro(readableMark) \
     macro(readableType) \
     macro(redirect) \
     macro(relative) \
     macro(removeAbortAlgorithmFromSignal) \
+    macro(requestListener) \
     macro(require) \
     macro(requireCacheCompiledEntry) \
     macro(requireCacheDidDelete) \
@@ -218,7 +219,6 @@ using namespace JSC;
     macro(webStreamClosedPromise) \
     macro(webStreamControllerError) \
     macro(writable) \
-    macro(writableMark) \
     macro(writableType) \
     macro(write) \
     macro(writer) \
@@ -232,14 +232,14 @@ using namespace JSC;
     macro(armedTimeout) \
     macro(exchange) \
     macro(hasWaitingResponses) \
+    macro(heldChunk) \
     macro(isOpen) \
     macro(isPrepared) \
     macro(ownReadableState) \
     macro(ownWritableState) \
     macro(pipelinedResponses) \
-    macro(readableMark) \
-    macro(resumeUnlessFlowing) \
-    macro(writableMark)
+    macro(requestListener) \
+    macro(resumeUnlessFlowing)
 
 class BunBuiltinNames {
     WTF_MAKE_NONCOPYABLE(BunBuiltinNames);

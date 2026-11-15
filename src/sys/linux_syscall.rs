@@ -18,6 +18,8 @@
 //! `linux`/`android`, so the gate must list both.
 #![cfg(any(target_os = "linux", target_os = "android"))]
 
+use core::mem::MaybeUninit;
+
 use rustix::fd::{BorrowedFd, IntoRawFd, OwnedFd};
 use rustix::io::Errno;
 
@@ -124,9 +126,9 @@ pub(crate) fn openat2(
 }
 
 #[inline]
-pub(crate) fn read(fd: Fd, buf: &mut [u8]) -> Result<usize, i32> {
+pub(crate) fn read(fd: Fd, buf: &mut [MaybeUninit<u8>]) -> Result<usize, i32> {
     let fd = fd.as_borrowed_fd();
-    retry(|| rustix::io::read(fd, buf))
+    retry(|| rustix::io::read_uninit(fd, buf).map(|(read, _)| read.len()))
 }
 
 #[inline]
@@ -136,9 +138,9 @@ pub(crate) fn write(fd: Fd, buf: &[u8]) -> Result<usize, i32> {
 }
 
 #[inline]
-pub(crate) fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Result<usize, i32> {
+pub(crate) fn pread(fd: Fd, buf: &mut [MaybeUninit<u8>], off: i64) -> Result<usize, i32> {
     let fd = fd.as_borrowed_fd();
-    retry(|| rustix::io::pread(fd, buf, off as u64))
+    retry(|| rustix::io::pread_uninit(fd, buf, off as u64).map(|(read, _)| read.len()))
 }
 
 #[inline]
@@ -420,11 +422,19 @@ pub(crate) fn read_raw(fd: i32, buf: &mut [u8]) -> isize {
 ///   (c) synthesizing EINVAL for unknown `op` values ourselves rather than
 ///       letting the kernel reject them.
 /// Passing the raw quad straight through avoids all three.
+///
+/// # Safety
+/// As for `linux::epoll_ctl`.
 #[inline]
-pub(crate) fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: Option<&libc::epoll_event>) -> i32 {
+pub(crate) unsafe fn epoll_ctl(
+    epfd: i32,
+    op: i32,
+    fd: i32,
+    event: Option<&libc::epoll_event>,
+) -> i32 {
     let event = event.map_or(core::ptr::null(), core::ptr::from_ref);
     // SAFETY: the kernel validates `epfd`/`op`/`fd`; `event` is live, or null, which is
-    // EFAULT for every `op` but CTL_DEL.
+    // EFAULT for every `op` but CTL_DEL. The caller answers for `event.u64`.
     unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
 }
 

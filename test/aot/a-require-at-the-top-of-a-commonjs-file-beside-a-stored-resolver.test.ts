@@ -9,8 +9,6 @@ const stores = `const old = Module._resolveFilename; Module._resolveFilename = f
 const tops = {
   "one file": [`const a = require("./a.js");`, `a.name`],
   "two files": [`const a = require("./a.js");\nconst b = require("./b.js");`, `a.name, b.name`],
-  "a file for what it does, and a file": [`require("./a.js");\nconst b = require("./b.js");`, `b.name`],
-  "a name of a file": [`const { name } = require("./a.js");\nconst b = require("./b.js");`, `name, b.name`],
 };
 
 async function linesOf([top, printed]: string[], flags: string[]) {

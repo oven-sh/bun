@@ -14,6 +14,7 @@ doctest = false
 linked_names = []
 
 [dependencies]
+bun_sort_by_number.workspace = true
 bun_sema.workspace = true
 bun_removable_features.workspace = true
 bun_collections.workspace = true

@@ -1,7 +1,7 @@
 // RUN: link
-// CHECK: layout {{*}}kind=Instance name="Derived" {{*}}fields=[{key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
-// CHECK: layout {{*}}kind=Instance name="TwoBelow" {{*}}fields=[{key="c" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
-// CHECK: layout {{*}}kind=Instance name="BelowMethod" {{*}}fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}]
+// CHECK: layout {{*}}kind=Instance name="Derived" {{*}}fields=[{key="b" declared={type=anything} flags=[IsRequired]}]
+// CHECK: layout {{*}}kind=Instance name="TwoBelow" {{*}}fields=[{key="c" declared={type=anything} flags=[IsRequired]}]
+// CHECK: layout {{*}}kind=Instance name="BelowMethod" {{*}}fields=[{key="a" declared={type=anything} flags=[IsRequired]}]
 // CHECK: layout {{*}}kind=Instance name="DeclaresField" {{*}}key="a"
 
 // RUN(ACCESSOR): link

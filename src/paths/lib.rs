@@ -916,6 +916,22 @@ pub mod fs {
             crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
         }
 
+        /// Checks for a package in `node_modules` (in any case) or in the install cache.
+        pub fn is_dependency(&self) -> bool {
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let mut components = crate::strings::split_any(self.name().dir, separators).peekable();
+            while let Some(component) = components.next() {
+                if crate::strings::contains(component, b"@@@")
+                    || component.starts_with(b"@G@")
+                    || (component.eq_ignore_ascii_case(b"node_modules")
+                        && components.peek().is_some())
+                {
+                    return true;
+                }
+            }
+            false
+        }
+
         /// Key used to identify this path in the incremental graph: the real
         /// `text` for `file:` paths, the `pretty` form otherwise.
         #[inline]

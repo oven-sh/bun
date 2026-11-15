@@ -1,1 +1,0 @@
-module.exports = { name: "made.plugin", strict: (function () { return this === undefined; })() };

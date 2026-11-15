@@ -1,0 +1,22 @@
+# f1 = grade, f2 = describe, f3 = counted, f4 = once, f5 = others
+# -- source: main.js
+# const limit = 50;
+# let calls = 0;
+# function grade(points) { let text = ""; switch (true) { case points >= 90: text = "A"; break; case points >= limit: { const rest = points - limit; text = "B" + rest; break; } default: text = "C"; } switch (points % 3) { case 0: case 1: return text + "low"; case 2: return text + "two"; } return text; }
+# function describe(value, other) { let text = typeof value; if (value === 1) text = text + other; switch (other) { case 0: text = text + "zero"; break; case "x": return text; } return other > 1 ? text + other : text + value; }
+# function counted(value) { calls++; if (value > 1) { if (value > 2) { if (value > 3) { if (value > 4) return value * 5 + 1; return value * 6 + 2; } return value * 7 + 3; } return value * 8 + 4; } return value * 9 + 5; }
+# function once() { return grade(95) + grade(52) + grade(0) + describe("a", "x") + describe(1, 0) + describe(true, 7); }
+# function others(points) { return grade(points) + grade("60") + describe(points, points) + counted(3) + counted(9); }
+# print(once(), others(0.5), others(91), calls);
+# -- end of source
+# grade() and describe() calculate with their arguments and with constants alone: a call that passes constants is its result. counted() stores into a variable, so it is called.
+# RUN: walk f4:Body mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK-NOT: CallDirect
+# CHECK: Return
+# RUN(OTHERS): walk f5:Body mechanisms=all
+# OTHERS-LABEL: code f5:Body
+# OTHERS: CallDirect {{*}}function=f1
+# OTHERS: Return
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: AtwoB2lowClowstringnumber0zero1boolean7 CB10lownumber0.52446 AlowB10lownumber912446 4

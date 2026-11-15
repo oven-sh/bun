@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "module": "preserve",
+    "target": "esnext",
+    "moduleDetection": "auto",
+    "noEmit": true,
+    "types": ["bun"]
+  },
+  "files": ["main.ts"]
+}

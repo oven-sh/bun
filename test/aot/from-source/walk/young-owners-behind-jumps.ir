@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# function Entry(key, value) { this.key = key; this.value = value; this.next = null; }
+# function Chain() { this.first = null; this.count = 0; }
+# Chain.prototype.make = function (key, value) { var entry = new Entry(key, value); if (typeof key == "string") entry.next = this.first; else entry.next = null; this.first = entry; return entry; };
+# Chain.prototype.makeBesideList = function (key, value) { var entry = new Entry(key, value); if (typeof key == "string") { this.list = [value]; entry.next = this.first; } else entry.next = null; this.first = entry; return entry; };
+# function fill(chain, values) { for (var i = 0; i < values.length; i++) { chain.make("k" + i, values[i]); chain.count++; } return chain; }
+# function fillBesideLists(chain, values) { for (var i = 0; i < values.length; i++) { chain.makeBesideList("l" + i, values[i]); chain.count++; } return chain; }
+# function fillByNumbers(chain, values) { for (var i = 0; i < values.length; i++) { chain.make(i, values[i]); chain.makeBesideList(i, values[i]); chain.count++; } return chain; }
+# var chain = new Chain();
+# for (var round = 0; round < 3; round++) { fillByNumbers(chain, [1, 2]); fill(chain, [{ a: round }, [round], "x" + round]); fillBesideLists(chain, ["y" + round]); }
+# var text = []; for (var entry = chain.first; entry; entry = entry.next) text.push(entry.key, JSON.stringify(entry.value));
+# print(chain.count, text.join(" "));
+# -- end of source
+# A folded test stands between the birth of an entry and the store into it. The block behind it has no other way in, so the entry is young there and the store needs no barrier. A list that is made in between may collect. f3 = fill, f4 = fillBesideLists
+# RUN: walk f3:Body mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: NewObject
+# CHECK-NEXT: Jump
+# CHECK: key="next"{{*}}OwnerIsYoung
+# RUN(LISTS): walk f4:Body mechanisms=all
+# LISTS-LABEL: code f4:Body
+# LISTS: NewObject
+# LISTS-NOT: key="next"{{*}}OwnerIsYoung
+# LISTS: Return
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 18
+# ANSWERS-NEXT: exited with 0

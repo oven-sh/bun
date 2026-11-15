@@ -12,7 +12,7 @@ use bun_jsc::{StringJsc as _, SysErrorJsc};
 use bun_ptr::RefPtr;
 #[cfg(unix)]
 use bun_sys::beneath::{self, Symlinks};
-use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
+use bun_sys::{self, Fd, FdDirExt as _, Mode};
 
 /// Compression options for the archive
 #[derive(Clone, Copy, Default)]
@@ -270,7 +270,13 @@ fn build_tarball_from_object(global: &JSGlobalObject, obj: JSValue) -> JsResult<
                 perm: 0o644,
                 mtime: now_secs,
             })
-            .map_err(fail)?;
+            .map_err(|err| match err {
+                tar::Error::DirectoryWithContents => global.throw_invalid_arguments(format_args!(
+                    "Failed to create tarball: {} is a directory and cannot have contents",
+                    bun_core::fmt::quote(key_slice.slice())
+                )),
+                err => fail(err),
+            })?;
         writer.data(data).map_err(fail)?;
     }
 
@@ -648,7 +654,6 @@ impl ExtractContext {
             &mut (),
             bun_archive::ExtractOptions {
                 depth_to_skip: 0,
-                close_handles: true,
                 log: false,
                 npm: false,
                 skip_symlinks: false,
@@ -727,10 +732,7 @@ impl TaskContext for BlobContext {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
                     BlobOutputType::Blob => {
-                        let blob_ptr =
-                            Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                        // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                        unsafe { (*blob_ptr).to_js(global) }
+                        Blob::create_with_bytes_and_allocator(data, global, false).into_js(global)
                     }
                     BlobOutputType::Bytes => {
                         // Ownership transfers to JSC's `MarkedArrayBuffer_deallocator`.
@@ -743,9 +745,7 @@ impl TaskContext for BlobContext {
                     // The clone bumps the refcount; ownership of
                     // the new ref transfers into the Blob via init_with_store.
                     let store = self.store.clone();
-                    let blob_ptr = Blob::new(Blob::init_with_store(store, global));
-                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
+                    PromiseResult::Resolve(Blob::init_with_store(store, global).into_js(global))
                 }
                 BlobOutputType::Bytes => {
                     // On allocation failure, reject the promise instead of aborting.
@@ -983,16 +983,13 @@ impl TaskContext for FilesContext {
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
-                    let blob_ptr =
-                        Blob::new(Blob::create_with_bytes_and_allocator(data, global, false));
-                    // SAFETY: blob_ptr is the heap allocation just produced by Blob::new.
-                    let blob = unsafe { &mut *blob_ptr };
+                    let blob = Blob::create_with_bytes_and_allocator(data, global, false);
                     blob.is_jsdom_file.set(true);
                     blob.name.set(bun_core::String::clone_utf8(&entry.path));
                     blob.last_modified.set(entry.mtime as f64 * 1000.0);
 
                     let name_js = blob.name.get().to_js(global)?;
-                    let blob_js = blob.to_js(global);
+                    let blob_js = blob.into_js(global);
                     // SAFETY: map_ptr came from JSMap::from_js on a live value.
                     unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
                 }
@@ -1150,6 +1147,10 @@ pub(crate) fn match_glob_patterns(patterns: &[GlobPattern], pathname: &[u8]) -> 
     !has_positive_patterns || matches_positive
 }
 
+/// In bytes of memory. Names take next to nothing once they are compressed.
+#[cfg(unix)]
+const DEFERRED_SYMLINKS_LIMIT: usize = 128 * 1024 * 1024;
+
 /// Extract archive to disk with glob pattern filtering.
 /// Supports negative patterns with "!" prefix (e.g., "!node_modules/**").
 fn extract_to_disk_filtered(
@@ -1194,7 +1195,7 @@ fn extract_to_disk_filtered(
     let mut count: u32 = 0;
     let mut write_strategy = bun_archive::WriteStrategy::default();
     #[cfg(unix)]
-    let mut symlink_join_buf = None;
+    let (mut deferred_symlinks, mut deferred_bytes) = (Vec::new(), 0usize);
 
     loop {
         let entry_ref = match reader.next_entry() {
@@ -1258,12 +1259,13 @@ fn extract_to_disk_filtered(
                     make_path(bun_core::dirname(pathname).ok_or(err)?)?;
                     open()
                 });
-                let Ok(file_fd) = opened else { continue };
+                let Ok(file) = opened.map(bun_sys::File::from_fd) else {
+                    continue;
+                };
 
                 let write_success = size == 0
-                    || bun_archive::read_data_into_fd(&mut reader, file_fd, &mut write_strategy)
+                    || bun_archive::read_data_into_file(&mut reader, file, &mut write_strategy)
                         .is_ok();
-                let _ = file_fd.close();
 
                 if !write_success {
                     // Remove partial file on failure
@@ -1276,42 +1278,28 @@ fn extract_to_disk_filtered(
                 count += 1;
             }
             bun_sys::FileKind::SymLink => {
-                let link_target = ZBox::from_bytes(entry_ref.symlink().unwrap_or_default());
-                let link_target_z = link_target.as_zstr();
-                // Validate symlink target is also safe
-                if !is_safe_path(link_target_z.as_bytes()) {
-                    continue;
-                }
-                // Symlinks are only extracted on POSIX systems (Linux/macOS).
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    let mut symlinkat = || {
-                        beneath::symlinkat_where_safe(link_target_z, dir_fd, pathname, |path| {
-                            let target = link_target_z.as_bytes();
-                            bun_archive::is_symlink_target_safe(path, target, &mut symlink_join_buf)
-                        })
-                    };
-                    match symlinkat() {
-                        Err(err) => {
-                            if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
-                                if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = make_path(parent);
-                                }
-                                if symlinkat().is_err() {
-                                    continue;
-                                }
-                            } else {
-                                continue;
-                            }
+                    let target = entry_ref.symlink().unwrap_or_default();
+                    if target.len() < bun_paths::MAX_PATH_BYTES && is_safe_path(target) {
+                        deferred_bytes += size_of::<bun_archive::DeferredSymlink>()
+                            + pathname.len()
+                            + target.len();
+                        if deferred_bytes > DEFERRED_SYMLINKS_LIMIT {
+                            return Err(crate::Error::ReadError);
                         }
-                        Ok(()) => {}
+                        deferred_symlinks.push(bun_archive::DeferredSymlink::new(pathname, target));
                     }
-                    count += 1;
                 }
             }
             _ => {}
         }
+    }
+
+    #[cfg(unix)]
+    {
+        count += bun_archive::create_deferred_symlinks(dir_fd, &deferred_symlinks, false);
     }
 
     Ok(count)
@@ -1448,10 +1436,7 @@ pub(crate) mod testing {
                         entry.mtime(),
                     );
                     let mut wide = Vec::new();
-                    if options.windows
-                        && tar::compose::to_utf16(entry.path(), entry.path_is_utf8(), &mut wide)
-                            .is_ok()
-                    {
+                    if options.windows && tar::compose::to_utf16(entry, &mut wide).is_ok() {
                         // A name that is not UTF-8 has one unit for each byte.
                         let name = if entry.path_is_utf8() {
                             String::from_utf16_lossy(&wide).into_bytes()

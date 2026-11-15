@@ -1027,8 +1027,7 @@ impl Drop for SignResult {
 
 #[inline]
 fn zero_sensitive(b: &mut Box<[u8]>) {
-    // SAFETY: `b` is exclusively borrowed; `len` bytes are valid for writes.
-    unsafe { bun_core::secure_zero(b.as_mut_ptr(), b.len()) };
+    bun_core::secure_zero(b);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,24 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# var Levels: any;
+# (function (Levels: any) {
+#     Levels[Levels["Low"] = -2] = "Low";
+#     Levels[Levels["Middle"] = 3] = "Middle";
+#     Levels[Levels["Least"] = -2] = "Least";
+#     Levels[Levels["High"] = 9] = "High";
+# })(Levels || (Levels = {}));
+# print(Object.keys(Levels).join());
+# var Sides: any;
+# (function (Sides: any) {
+#     Sides[Sides["Left"] = -1] = "Left";
+#     Sides[Sides["Right"] = 1] = "Right";
+# })(Sides || (Sides = {}));
+# print(Reflect.ownKeys(Sides).join());
+# print("went on");
+# -- end of source
+# tryListOwnKeys() (builtins/AOTObjectBuiltinOperations.cpp): a compiled object with extra properties and no list of keys yet: the extra properties are flattened once and the object takes the structure that names
+# theirs (Object::ensureStructureForExtraProperties()): ShapeWords, NamedProperties, and MemberGuards by didChangeOwnProperties(). testing=CheckEffectsAtRunTime stopped here on right programs.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: 3,9,Low,-2,Middle,Least,High
+# CHECK-NEXT: 1,Left,-1,Right
+# CHECK-NEXT: went on

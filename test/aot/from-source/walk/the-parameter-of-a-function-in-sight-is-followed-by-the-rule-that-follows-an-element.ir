@@ -1,0 +1,40 @@
+# An element handed to a function in sight goes through the operator that the callee's parameter goes through. The callee's parameter was followed by a second, narrower rule: operators that make numbers, relations, casts.
+# So `function inc(a) { return a + 1; }` was not reached, 11,466 instructions a call of 96, where its twin `return a - -1` took 810; nor `Math.min(Math.max(x, lo), hi)`, 8,065 for 1,879; and a relation against a written text counted as arithmetic.
+# One rule follows both: the loop that follows a value along its first users is a function of the body, the first value and the caller's memo or none. In the callee it steps into no further call.
+# `stepped` and `kept` are reached. `shouts` joins a text: `loud` stays as it is. `sorts` compares with a written text: `early` is not asked for a list of numbers.
+# f1 = inc, f2 = within, f3 = shouts, f4 = sorts, f5 = stepped, f6 = kept, f7 = loud, f8 = early
+# LIBRARY: own
+# -- source: main.js
+# const rows = take(0), words = take(1);
+# function inc(a) { return a + 1; }
+# function within(x, lo, hi) { return Math.min(Math.max(x, lo), hi); }
+# function shouts(x) { return x + "!"; }
+# function sorts(x) { return x < "m"; }
+# function stepped() { let s = 0; for (let i = 0; i < rows.length; i++) { const x = rows[i]; s = s + inc(x); } return s; }
+# function kept() { let s = 0; for (let i = 0; i < rows.length; i++) { const x = rows[i]; s = s + within(x, 2, 3); } return s; }
+# function loud() { let s = 0; for (let i = 0; i < words.length; i++) { const x = words[i]; s = s + shouts(x).length; } return s; }
+# function early() { let s = 0; for (let i = 0; i < words.length; i++) { const x = words[i]; s = s + (sorts(x) ? 1 : 2); } return s; }
+# publish(stepped, kept, loud, early, rows, words);
+# -- end of source
+# RUN(STEPPED): walk f5 mechanisms=all
+# STEPPED: = GetArrayElement
+# STEPPED: = Add {{*}}form=Numbers
+# RUN(KEPT): walk f6 mechanisms=all
+# KEPT: = GetArrayElement
+# RUN(LOUD): walk f7 mechanisms=all
+# LOUD-NOT: arrayStorage=Double
+# RUN(EARLY): walk f8 mechanisms=all
+# EARLY-NOT: arrayStorage=Double
+# RUN(SHELL): run-in-shell let asked = 0; globalThis.take = which => JSON.parse(["[1.5,2.5,3.5,4.5]", "[\"a\",\"z\",\"m\"]"][which]); globalThis.publish = (stepped, kept, loud, early, rows, words) => { const tell = () => print(String(stepped()), kept(), loud(), early()); tell(); tell(); rows[1] = "7"; tell(); rows[1] = { valueOf() { asked++; return 9; } }; tell(); print(asked); rows[1] = 2n; try { tell(); } catch (e) { print(e.constructor.name); } rows.length = 1; tell(); rows.push(0.5, 1, 2); tell(); delete rows[0]; tell(); rows.length = 0; tell(); words[1] = 5; tell(); words.length = 0; tell(); };
+# SHELL: 16 10.5 6 5
+# SHELL-NEXT: 16 10.5 6 5
+# SHELL-NEXT: 2.5714.55.5 11 6 5
+# SHELL-NEXT: 22.5 11 6 5
+# SHELL-NEXT: 2
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: 2.5 2 6 5
+# SHELL-NEXT: 9 8 6 5
+# SHELL-NEXT: NaN NaN 6 5
+# SHELL-NEXT: 0 0 6 5
+# SHELL-NEXT: 0 0 6 5
+# SHELL-NEXT: 0 0 0 0

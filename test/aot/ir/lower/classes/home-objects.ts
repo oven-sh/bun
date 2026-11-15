@@ -4,7 +4,7 @@
 // METHOD: = GetSuperBase [[home]] homeKind=ClassPrototype
 
 // RUN(FIELD): lower
-// FIELD-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}} flags=[IsFromCompiler]}
+// FIELD-LABEL: function {{*}}kind=Initializer{{*}}thisType={type=L{{*}}}
 // FIELD-NOT: Return
 // FIELD: = GetSuperBase [[home]] homeKind=ClassPrototype
 
@@ -45,3 +45,6 @@ export class Derived extends Base {
     super.m();
   }
 }
+
+// A method has its body once reached code reads its name.
+export function readsTheNames(o: any) { return [o.instanceMethod, o.staticMethod]; }

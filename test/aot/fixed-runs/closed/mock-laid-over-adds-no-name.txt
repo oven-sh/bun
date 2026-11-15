@@ -1,0 +1,100 @@
+A mock laid over an ES module that has run adds no name to it: the link refuses whoever imports one that only the factory gave; a mock ahead of the load gives it.
+#### a-over.test.mjs
+import { mock, test } from "bun:test";
+const said = async run => {
+  try {
+    return String(await run());
+  } catch (error) {
+    return error.name + ": " + String(error.message).replace(/ in module .*/s, "");
+  }
+};
+test("laid over a module that has run", async () => {
+  await import("./over/dep.mjs");
+  mock.module("./over/dep.mjs", () => ({ own: "mock own", real: "mock real" }));
+  console.log("| CASE direct", await said(async () => (await import("./over/direct.mjs")).seen()));
+  console.log("| CASE by-star", await said(async () => (await import("./over/by-star.mjs")).seen()));
+  console.log("| CASE by-stars", await said(async () => (await import("./over/by-stars.mjs")).seen()));
+  console.log("| CASE has-it", await said(async () => (await import("./over/has-it.mjs")).seen()));
+  console.log("| CASE require()", await said(async () => require("./over/direct.mjs").seen()));
+});
+#### ahead/by-star.mjs
+import { own, real } from "./star.mjs"; export const seen = () => own + "," + real;
+#### ahead/by-stars.mjs
+import { own, real } from "./stars.mjs"; export const seen = () => own + "," + real;
+#### ahead/dep.mjs
+export const real = "real", other = "other";
+#### ahead/direct.mjs
+import { own, real } from "./dep.mjs"; export const seen = () => own + "," + real;
+#### ahead/has-it.mjs
+import { real } from "./dep.mjs"; export const seen = () => real;
+#### ahead/star.mjs
+export * from "./dep.mjs";
+#### ahead/stars.mjs
+export * from "./star.mjs";
+#### b-ahead.test.mjs
+import { mock, test } from "bun:test";
+const said = async run => {
+  try {
+    return String(await run());
+  } catch (error) {
+    return error.name + ": " + String(error.message).replace(/ in module .*/s, "");
+  }
+};
+test("ahead of the load", async () => {
+  mock.module("./ahead/dep.mjs", () => ({ own: "mock own", real: "mock real" }));
+  console.log("| CASE direct", await said(async () => (await import("./ahead/direct.mjs")).seen()));
+  console.log("| CASE by-star", await said(async () => (await import("./ahead/by-star.mjs")).seen()));
+  console.log("| CASE by-stars", await said(async () => (await import("./ahead/by-stars.mjs")).seen()));
+  console.log("| CASE has-it", await said(async () => (await import("./ahead/has-it.mjs")).seen()));
+});
+#### c-earlier.test.mjs
+import { test } from "bun:test";
+test("an earlier file loads it", async () => {
+  await import("./earlier/stars.mjs");
+});
+#### d-later.test.mjs
+import { jest, test } from "bun:test";
+const said = async run => {
+  try {
+    return String(await run());
+  } catch (error) {
+    return error.name + ": " + String(error.message).replace(/ in module .*/s, "");
+  }
+};
+test("a later file mocks it", async () => {
+  jest.doMock("./earlier/dep.mjs", () => ({ own: "mock own", real: "mock real" }));
+  console.log("| CASE direct", await said(async () => (await import("./earlier/direct.mjs")).seen()));
+  console.log("| CASE by-star", await said(async () => (await import("./earlier/by-star.mjs")).seen()));
+  console.log("| CASE by-stars", await said(async () => (await import("./earlier/by-stars.mjs")).seen()));
+  console.log("| CASE has-it", await said(async () => (await import("./earlier/has-it.mjs")).seen()));
+});
+#### earlier/by-star.mjs
+import { own, real } from "./star.mjs"; export const seen = () => own + "," + real;
+#### earlier/by-stars.mjs
+import { own, real } from "./stars.mjs"; export const seen = () => own + "," + real;
+#### earlier/dep.mjs
+export const real = "real", other = "other";
+#### earlier/direct.mjs
+import { own, real } from "./dep.mjs"; export const seen = () => own + "," + real;
+#### earlier/has-it.mjs
+import { real } from "./dep.mjs"; export const seen = () => real;
+#### earlier/star.mjs
+export * from "./dep.mjs";
+#### earlier/stars.mjs
+export * from "./star.mjs";
+#### over/by-star.mjs
+import { own, real } from "./star.mjs"; export const seen = () => own + "," + real;
+#### over/by-stars.mjs
+import { own, real } from "./stars.mjs"; export const seen = () => own + "," + real;
+#### over/dep.mjs
+export const real = "real", other = "other";
+#### over/direct.mjs
+import { own, real } from "./dep.mjs"; export const seen = () => own + "," + real;
+#### over/has-it.mjs
+import { real } from "./dep.mjs"; export const seen = () => real;
+#### over/star.mjs
+export * from "./dep.mjs";
+#### over/stars.mjs
+export * from "./star.mjs";
+#### package.json
+{ "name": "mock-adds-no-name" }

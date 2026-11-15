@@ -16,7 +16,7 @@ use crate::builtins::table;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{FunctionFlags, OperandKind};
 use crate::ir::{BlockId, Opcode, PropertyKey, PropertyKeyId, TypeId, TypeTable, ValueId};
-use crate::lower::expression::{Evaluation, ShortCircuit, Tail};
+use crate::lower::expression::{Evaluation, ShortCircuit};
 use crate::lower::member::{self, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering, parameters};
 
@@ -76,20 +76,15 @@ pub(super) fn lower_intrinsic_call(
     };
     let arguments: SmallVec<[ExprId; 4]> = hir.ids(hir[node].args).collect();
     let callee = lowering.file.skip_type_syntax(hir[node].callee);
-    let makes_array_in_caller = lowering.file.makes_array_in_caller(hir[node]);
     let site = IntrinsicCall {
         call,
         callee,
         arguments: &arguments,
         exit: evaluation.chain_exit,
         options: CallOptions {
-            tail: match makes_array_in_caller {
-                true => Tail::No,
-                false => evaluation.tail,
-            },
-            expected_result: None,
+            tail: evaluation.tail,
             is_never_inlined: false,
-            is_done_in_place: makes_array_in_caller,
+            is_done_in_place: false,
             call_number: None,
         },
     };
@@ -121,9 +116,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(super) fn emit_private_global_get(&mut self, name: &[u8]) -> ValueId {
+        self.emit_private_global_get_as(name, true)
+    }
+
+    fn emit_private_global_get_as(&mut self, name: &[u8], is_free_name: bool) -> ValueId {
         let key = self.file.engine_private_key(name);
         let global = self.builder.builtin(BuiltinId::GlobalThis, false);
-        self.builder.prop_get(global, key, true, false)
+        self.builder.prop_get(global, key, is_free_name, false)
     }
 
     fn try_lower_intrinsic_value(
@@ -149,7 +148,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let names = self.file.inputs.builtin_names;
                 let name = names.get_private(atom).or_else(|| names.get(atom));
                 let name = name.expect("the resolver found the name of an intrinsic in the table");
-                Ok(self.emit_private_global_get(table::text_of_name(name)))
+                let is_kept = matches!(intrinsic, Intrinsic::PrivateGlobal);
+                Ok(self.emit_private_global_get_as(table::text_of_name(name), is_kept))
             }
             Intrinsic::PrivateName | Intrinsic::ModulePrivateName | Intrinsic::SymbolKey(_) => {
                 Ok(self.lower_private_member(expression, exit)?.function)
@@ -199,13 +199,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let [argument] = lower_named_arguments(self, site)?;
                 let callee = self.emit_builtin_itself(id);
                 let arguments = Arguments::Values(smallvec![argument]);
-                Ok(match id {
-                    BuiltinId::Array => {
-                        let callee = Callee::without_key(callee, None, None);
-                        self.emit_array_made_in_caller(callee, arguments)
-                    }
-                    _ => self.emit_construct(callee, arguments, None),
-                })
+                Ok(self.emit_construct(callee, arguments, None))
+            }
+            Intrinsic::IsHolderWithoutAddedNames(id) => {
+                let [] = get_named_arguments(self.file, site)?;
+                Ok(self.builder.is_holder_without_added_names(id))
             }
             Intrinsic::IsNullish => self.lower_type_test(site, TypeTable::NULLISH),
             Intrinsic::IsObject => self.lower_type_test(site, TypeTable::OBJECT),

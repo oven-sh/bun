@@ -1,0 +1,16 @@
+# f0 = the file, f1 = create
+# -- source: call-behind-a-failing-test-for-closures-enters-none-of-them.js
+# const library = { create() { return function () { this.start.apply(this, arguments); }; } };
+# const First = library.create();
+# First.prototype = { start(a) { this.a = a; }, sum() { return this.a; } };
+# const Second = library.create();
+# Second.prototype = { start(b) { this.b = b; }, sum() { return this.b.sum() + 1; } };
+# let total = 0;
+# for (let i = 0; i < 9; i++) total += new Second(new First(i)).sum();
+# print(total);
+# -- end of source
+# Each call of `create` enters a copy where the callee is a closure of `create`. Where it is none, the call enters nothing that Link knows: nobody calls `create` itself.
+# RUN: link functions mechanisms=all
+# CHECK: function f1 unreached
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 45

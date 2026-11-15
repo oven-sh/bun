@@ -1,0 +1,40 @@
+What a mock gives has the shape that bun test gives it: a name that it lacks, one that it marks, one more.
+#### lacks.test.js
+import { test, mock } from "bun:test";
+mock.module("./src/target.cjs", () => ({ v: "mocked v" }));
+test("lacks", async () => console.log("| CASE", "lacks", (await import("./src/user.js")).read()));
+#### marked.test.js
+import { test, mock } from "bun:test";
+mock.module("./src/target.ts", () => ({ __esModule: true, v: "mocked v", default: "mocked default" }));
+mock.module("./src/other.ts", () => ({ __esModule: true, v: "mocked v", default: undefined }));
+test("marked", () => {
+  const T = require("./src/target.ts");
+  console.log("| CASE", "marked", typeof T, String(T.v), String(T.default), T === require("./src/target.ts"));
+  const O = require("./src/other.ts");
+  console.log("| CASE", "marked", typeof O, String(O.v), String(O.default));
+});
+#### more.test.js
+import { test, mock } from "bun:test";
+import * as T from "pkg-cjs";
+import * as P from "node:path";
+mock.module("pkg-cjs", () => ({ v: "mocked v", extra: "extra" }));
+mock.module("node:path", () => ({ sep: "mocked sep", extra: "extra" }));
+test("more", () => {
+  console.log("| CASE", "more", String(T.v), String(T.extra), "extra" in T, Object.keys(T).sort().join());
+  console.log("| CASE", "more", String(P.sep), String(P.extra), "extra" in P, require("pkg-cjs").extra);
+});
+#### node_modules/pkg-cjs/index.js
+exports.v = "real v";
+#### node_modules/pkg-cjs/package.json
+{ "name": "pkg-cjs", "version": "1.0.0", "main": "index.js" }
+#### package.json
+{ "type": "module" }
+#### src/other.ts
+export const v = "real v"; export default "real default";
+#### src/target.cjs
+exports.v = "real v";
+#### src/target.ts
+export const v = "real v"; export default "real default";
+#### src/user.js
+import * as T from "./target.cjs";
+export const read = () => String(T.v) + " " + String(T.missing) + " " + ("missing" in T) + " " + Object.keys(T).sort();

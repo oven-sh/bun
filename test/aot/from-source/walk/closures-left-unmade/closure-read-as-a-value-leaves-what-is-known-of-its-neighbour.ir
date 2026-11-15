@@ -1,0 +1,22 @@
+# two closures of one literal are left unmade over one scope. One is read as a value: that read needs the literal and ends what the state holds of its own slot alone. The call of the other still takes the scope off the record that the allocation listed, and its slot is not read.
+# f1 = make, f2 = run, f3 = next, f4 = peek
+# -- source: closure-read-as-a-value-leaves-what-is-known-of-its-neighbour.js
+# var kept;
+# function make() { var state = 0; return { next: function () { for (var k = 0; k < 3; k++) state += k; return state; }, peek: function () { for (var k = 0; k < 2; k++) state -= k; return state; } }; }
+# function run(count) { var total = 0; for (var n = 0; n < count; n++) { var it = make(); kept = it.peek; total += it.next(); } return total; }
+# print(run(100), kept());
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: "next" DeferredClosure
+# PLAN: "peek" DeferredClosure
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: [[scope]]: env {{*}} = NewObject
+# CHECK: [[closure]]: {{*}} = GetDeferredClosureSlot {{*}}key="peek"
+# CHECK: = PutModuleVariable
+# CHECK: = CallDirect [[scope]]{{*}}function=f3
+# RUN(NEVER): walk f2 mechanisms=all
+# NEVER-LABEL: code f2:Body
+# NEVER-NOT: key="next"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

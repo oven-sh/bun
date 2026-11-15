@@ -1,0 +1,20 @@
+# -- source: main.js
+# var fake = { apply: function (self, list) { return "fake" + list.length + Object.prototype.toString.call(list); } };
+# function ownApply() { return fake.apply(this, arguments); }
+# var nothing = {};
+# function notCallable() { return nothing.apply(this, arguments); }
+# class K {}
+# function klass() { return K.apply(this, arguments); }
+# function native() { return Math.max.apply(null, arguments); }
+# function bound() { return show.bind("b", "x").apply(this, arguments); }
+# function show(a, b) { return String(this) + a + b; }
+# globalThis.fs = { ownApply, notCallable, klass, native, bound };
+# const fs = globalThis.fs;
+# print(fs.ownApply(), fs.ownApply(1, 2), fs.native(3, 9, 4), fs.native(), fs.native(1, 2, 3, 4, 5, 6), fs.bound(1), fs.bound());
+# for (const name of ["notCallable", "klass"]) { try { fs[name](1, 2); } catch (error) { print(name, error.constructor.name); } }
+# -- end of source
+# RUN: run-in-shell
+# CHECK: fake0[object Arguments] fake2[object Arguments] 9 -Infinity 6 bx1 bxundefined
+# CHECK-NEXT: notCallable TypeError
+# CHECK-NEXT: klass TypeError
+# CHECK-NEXT: exited with 0

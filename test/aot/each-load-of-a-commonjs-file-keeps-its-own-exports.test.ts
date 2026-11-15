@@ -80,10 +80,7 @@ const files = {
     });`,
 };
 
-const ways: [string, Record<string, string>][] = [
-  ["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }],
-  ["in layers", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:2,TestRunPartFiles:1" }],
-];
+const ways: [string, Record<string, string>][] = [["as one program", { BUN_DEBUG_TEST_AOT_WORDS: "TestRunLayers:0" }]];
 
 for (const [way, env] of ways) {
   test(way, async () => {

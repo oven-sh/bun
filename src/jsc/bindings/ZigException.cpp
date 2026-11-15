@@ -82,8 +82,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
+    frame.source_url = Bun::toStringRef(Zig::displayPath(vm, stackFrame));
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -653,6 +652,8 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
+                        } else if (frame.isAsync) {
+                            current.code_type = ZigStackFrameCodeFunction;
                         }
 
                         except.stack.frames_len += 1;

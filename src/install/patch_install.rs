@@ -29,9 +29,7 @@ pub struct PatchTask {
     /// is held via raw pointer through the intrusive thread-pool queue while
     /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
+    /// `Mut` because `PackageManager::wake_raw` takes `*mut Self`.
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
@@ -301,9 +299,7 @@ impl PatchTask {
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
         }
-        let _ = apply
-            .logger
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = apply.logger.print(Output::error_writer());
     }
 
     fn run_from_main_thread_calc_hash(
@@ -336,9 +332,7 @@ impl PatchTask {
             None => {
                 if log_level != LogLevel::Silent {
                     if calc_hash.logger.has_errors() {
-                        let _ = calc_hash
-                            .logger
-                            .print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = calc_hash.logger.print(Output::error_writer());
                     } else {
                         Output::err_generic(
                             "Failed to calculate hash for patch <b>{}<r>",
@@ -360,7 +354,6 @@ impl PatchTask {
             // after `determine_preinstall_state` consumes it.
             let pkg_meta_id = pkg.meta.id;
             let pkg_name = pkg.name;
-            let pkg_resolution_tag = pkg.resolution.tag;
             let name_and_version_hash = calc_hash.name_and_version_hash;
             let dep_behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
@@ -408,12 +401,6 @@ impl PatchTask {
                             is_required,
                             dep_id,
                             &pkg_again,
-                            match pkg_resolution_tag {
-                                crate::resolution_real::Tag::Npm => {
-                                    Authorization::AllowAuthorization
-                                }
-                                _ => Authorization::NoAuthorization,
-                            },
                         ) {
                             // --offline and not cached: already reported / skipped; nothing to patch
                             Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
@@ -817,7 +804,6 @@ impl PatchTask {
 }
 
 use crate::PreinstallState;
-use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager_task::Id as TaskId;

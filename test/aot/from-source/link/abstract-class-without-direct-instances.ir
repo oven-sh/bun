@@ -1,0 +1,15 @@
+# -- source: abstract-class-without-direct-instances.ts
+# declare function print(value: unknown): void;
+# abstract class Base { count = 0; abstract step(by: number): number; }
+# class First extends Base { step(by: number): number { return (this.count += by); } }
+# class Second extends Base { step(by: number): number { return (this.count ^= by); } }
+# class Made { size = 1; twice(): number { return this.size * 2; } }
+# class Below extends Made { }
+# function run(all: Base[]): number { let sum = 0; for (let i = 0; i < all.length; i++) sum += all[i].step(i); return sum; }
+# print(run([new First(), new Second(), new First()]));
+# print(new Made().twice() + new Below().twice());
+# -- end of source
+# A class that is constructed through super() alone has no object of exactly its layout: no receiver is tested for it. A class that is also constructed itself has.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}has-no-direct-instances
+# CHECK-NOT: has-no-direct-instances

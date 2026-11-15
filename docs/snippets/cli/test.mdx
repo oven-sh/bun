@@ -10,6 +10,11 @@ bun test <patterns>
   Type check the test files and everything they import. No test runs if there are type errors
 </ParamField>
 
+<ParamField path="--aot" type="boolean">
+  Compile the test files ahead of time, then run them. See{" "}
+  <a href="/compiler/debugging#run-your-tests-compiled">Run your tests compiled</a>
+</ParamField>
+
 <ParamField path="--timeout" type="number" default="5000">
   Set the per-test timeout in milliseconds (default 5000)
 </ParamField>

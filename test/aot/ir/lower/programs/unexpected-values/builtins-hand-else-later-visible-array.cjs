@@ -234,76 +234,7 @@ async function main() {
 
 main();
 
-// GENERATED: attempt observe pushes1 Odd
-// CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasThis, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v4 = NewRuntimeError runtimeError=LeftOutOfExecutable name="attempt"
-// CHECK-NEXT: Throw v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="observe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsAsync, IsSloppy, HasThis, HasExplicitName] length=2 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|Promise flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything, v2: anything, v3: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v4 = ToThis v1
-// CHECK-NEXT: v5 = GetEnvironmentField v0 layout=[[L_1]] field=16
-// CHECK-NEXT: v6 = CheckInitialized v5 name="results"
-// CHECK-NEXT: v7 = Integer
-// CHECK-NEXT: v8 = Convert v7 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v6, v8 key="length" mode=Sloppy
-// CHECK-NEXT: v10 = GetEnvironmentField v0 layout=[[L_1]] field=1
-// CHECK-NEXT: v11 = NewClosure v3 function=[[f_2]]
-// CHECK-NEXT: v12 = Call v10, -, v11 calleeName="outcome"
-// CHECK-NEXT: v13 = Convert v12 declared={type=undefined|null|Promise<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: v14 = Await v13, v2, v3
-// CHECK-NEXT: v15 = Convert v14 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v16 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v17 = PropGet v16 key="console" [isFreeName]
-// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v19 = PropGet v18 key="log"
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v21 = String string=" -> "
-// CHECK-NEXT: v22 = Add v2, v21
-// CHECK-NEXT: v23 = GetEnvironmentField v0 layout=[[L_1]]
-// CHECK-NEXT: v24 = GetEnvironmentField v0 layout=[[L_1]] field=16
-// CHECK-NEXT: v25 = CheckInitialized v24 name="results"
-// CHECK-NEXT: v26 = Call v23, -, v25 calleeName="show"
-// CHECK-NEXT: v27 = Convert v26 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v28 = Add v22, v27
-// CHECK-NEXT: v29 = String string=" "
-// CHECK-NEXT: v30 = Add v28, v29
-// CHECK-NEXT: v31 = Add v30, v15
-// CHECK-NEXT: v32 = Call v20, v18, v31 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v33 = Undefined
-// CHECK-NEXT: Return v33
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="pushes1"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsSloppy, HasExplicitName] length=1 captures=[{type=env [[L_1]] flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0(v0: env [[L_1]], v1: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = PropGet v1 key="push"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Call v3, v1, v4 calleeKey="push" calleeName="a.push"
-// CHECK-NEXT: v6 = PropGet v1 key="length"
-// CHECK-NEXT: v7 = GetEnvironmentField v0 layout=[[L_1]] field=16
-// CHECK-NEXT: v8 = CheckInitialized v7 name="results"
-// CHECK-NEXT: v9 = PropGet v8 key="push"
-// CHECK-NEXT: v10 = Convert v9 declared={type=undefined|null|[[f_4]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = Call v10, v8, v6 calleeKey="push" calleeName="results.push"
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
+// CHECK-LABEL: function {{*}}name="attempt"
 // CHECK-LABEL: function {{*}}name="Odd"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_5]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_5]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }

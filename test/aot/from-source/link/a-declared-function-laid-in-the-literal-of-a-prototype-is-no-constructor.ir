@@ -1,0 +1,17 @@
+# -- source: a-declared-function-laid-in-the-literal-of-a-prototype-is-no-constructor.cjs
+# 'use strict';
+# function Tally(step) { this.sum = 0; this.step = step; this.last = -1; }
+# Tally.prototype = { add: add, constructor: Tally };
+# function add(x) { this.sum = this.sum + x * this.step; this.last = x; return this; }
+# const t = new Tally(3); for (let i = 0; i < 5; i++) t.add(i);
+# print(t.sum, t.last);
+# -- end of source
+# add() is declared by name, stores into `this`, and is named as a value in the literal that becomes Tally.prototype. A name that stands as a value in a literal was taken for a constructor's place, which is right for
+# `module.exports = { Parser: Parser }`; so add() got a class of its own, its `this` was expected to be an instance of THAT class, of which no object is ever born, the guard at its entry failed at every call and its slow version ran:
+# one 'use strict' at the head of a library cost 68 in 100. A literal that is itself stored as a prototype object holds methods: add() has no class of its own, and its `this` is expected to be an instance of Tally.
+# f1 = Tally, f2 = add
+# RUN(HEAD): print f2
+# HEAD: function f2 name="add" {{*}}thisType={type=L{{*}} flags=[IsExpected]}
+# HEAD-NOT: constructedClass
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 30 4

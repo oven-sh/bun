@@ -359,11 +359,12 @@ bool JSPerformanceEntryOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknow
     return false;
 }
 
-void JSPerformanceEntryOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSPerformanceEntryOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsPerformanceEntry = static_cast<JSPerformanceEntry*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsPerformanceEntry->wrapped(), jsPerformanceEntry);
+    return FinalizeResult::KeepImpl;
 }
 
 PerformanceEntry* JSPerformanceEntry::toWrapped(JSC::VM&, JSC::JSValue value)

@@ -1,0 +1,13 @@
+# f1 = total
+# -- source: lengths-of-strings-beside-arrays.cjs
+# function total(values) { let sum = 0; for (let i = 0; i < values.length; i++) sum += values[i].length; return sum; }
+# const values = []; for (let i = 0; i < 24; i++) values.push("row" + i);
+# sink([total([[1, 2], [3]]), total(values), total(["", [1], "xyz", [, ,]]), total([])].join());
+# try { total(["a", undefined, "b"]); } catch (error) { sink(error.constructor.name); }
+# values[5] = [1, 2, 3]; sink(total(values));
+# -- end of source
+# The elements are proven to be strings, arrays or undefined. The check of the proof asks whether a word is a cell, so the test behind it does not ask again.
+# RUN(X64): steps most:71 f1 mechanisms=all
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 71

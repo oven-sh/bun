@@ -1,0 +1,21 @@
+# -- source: five-functions-called-through-call-let-the-receiver-stay-in-sight.js
+# class Box { constructor(n) { this.count = n; this.note = 0; } }
+# function a() { return this.count + 1; }
+# function b() { return this.count + 2; }
+# function c() { return this.count + 3; }
+# function d() { return this.count + 4; }
+# function e() { return this.count + 5; }
+# function through(handed, box) { return handed.call(box); }
+# function pick(i) { return i === 0 ? a : i === 1 ? b : i === 2 ? c : i === 3 ? d : e; }
+# function all(box) { let sum = ""; for (let i = 0; i < 5; i++) sum += through(pick(i), box) + ","; return sum + box.count + "," + box.note + "," + typeof box.count; }
+# print(all(new Box(10)));
+# -- end of source
+# L0 = Box. Five functions meet in one parameter: Link no longer names them: they are lost, and a family of lost functions has a pool: what is passed to one is passed to all.
+# `handed.call(box)` is a call BY NAME on such a receiver. It was handed to what nobody sees: the box went, and with it all that it reaches. Four functions: nothing went.
+# What answers the name on a closure: what is laid on it, or the member that the table of built-ins finds on every class of functions. The first is called where it arrives; the second is the row of call(), which calls its receiver: the pool.
+# RUN(BOX): link why-gone L0
+# BOX: why-gone L0: it has not gone
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: "count" proven=int[0, 2147483647] writers-known written-at-construction-alone
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 11,12,13,14,15,10,0,number

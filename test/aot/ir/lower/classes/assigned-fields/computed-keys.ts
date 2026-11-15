@@ -7,8 +7,6 @@
 // CHECK-NOT: Define
 // CHECK: function {{*}}name="FirstConstant" {{*}}kind=BaseConstructor
 // CHECK-NOT: Define
-// CHECK: ElemSet
-// CHECK-NOT: Define
 // CHECK: PropSet {{*}}key="b"
 // CHECK-NOT: Define
 // CHECK: function {{*}}kind=Initializer
@@ -20,6 +18,7 @@ const first = "first";
 declare function f(): void;
 f();
 let variable = "variable";
+variable += "s";
 
 export class SignedNumber {
   [-1] = 1;

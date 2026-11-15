@@ -1,7 +1,7 @@
 use super::*;
 use crate::compile::testing::set_up_output;
 use crate::load::host::tests::take_messages;
-use crate::load::source_provider::{DeferredLoad, SourceFile, WithoutServices};
+use crate::load::source_provider::{DataFailure, DeferredLoad, SourceFile, WithoutServices};
 use bstr::BStr;
 use bun_ast::{Loc, Log};
 use bun_sema::atom::Interner;
@@ -70,7 +70,7 @@ impl SourceProvider for TestProvider {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         log: &mut Log,
-    ) -> Result<DataModule<'s>, Failed> {
+    ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
@@ -555,6 +555,41 @@ fn deferred_module_gets_text_once() {
 }
 
 #[test]
+fn asset_deferred_after_finished_reads_gets_code_and_loader_of_plugin() {
+    let (earlier, asset) = (b"/project/a.ts", b"/project/a.bin");
+    let provider = deferring_provider(vec![answer_for_file(earlier, Ok(plugin_source(b"{}")))]);
+    let (disk, messages) = (empty_disk(), LoadMessages::default());
+    let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
+    plugins.read(earlier, Loader::Ts);
+    assert_eq!(plugins.finish_deferred_reads().texts.len(), 1);
+
+    let code = Loaded::Source {
+        contents: Cow::Borrowed(b"export default 1;"),
+        loader: Loader::Js,
+        is_from_plugin: true,
+    };
+    *provider.deferred_answers.lock() = vec![answer_for_file(asset, Ok(code))];
+    let read = plugins.read(asset, Loader::File);
+    assert!(matches!(read, ModuleText::Deferred));
+
+    let reads = plugins.finish_deferred_reads();
+    assert_eq!(reads.texts.len(), 1);
+    assert_eq!(reads.texts[0].0, asset);
+    assert!(reads.missing.is_empty());
+    assert_eq!(provider.finish_count.load(Relaxed), 2);
+
+    assert_eq!(
+        text(plugins.read(asset, Loader::File)),
+        b"export default 1;"
+    );
+    let loaded = plugins.loaded(asset).unwrap();
+    assert_eq!(loaded.loader, Loader::Js);
+    assert!(loaded.is_from_plugin);
+    assert_eq!(provider.load_count.load(Relaxed), 2);
+    assert!(take_messages(&messages).is_empty());
+}
+
+#[test]
 fn deferred_virtual_module_is_answered_by_plugin_name() {
     let provider = TestProvider {
         resolve_answer: resolve_specifier_in_namespace,
@@ -620,25 +655,39 @@ fn deferred_not_found_is_missing() {
 
 #[test]
 fn deferred_failure_is_failed() {
-    let (failed_path, deferred_path) = (b"/project/a.ts", b"/project/b.ts");
-    let provider = deferring_provider(vec![
-        answer_for_file(failed_path, Err(Failed)),
-        answer_for_file(deferred_path, Ok(Loaded::Deferred)),
-    ]);
+    let path = b"/project/a.ts";
+    let provider = deferring_provider(vec![answer_for_file(path, Err(Failed))]);
     let (disk, messages) = (empty_disk(), LoadMessages::default());
     let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
-    plugins.read(failed_path, Loader::Ts);
-    plugins.read(deferred_path, Loader::Ts);
+    plugins.read(path, Loader::Ts);
 
     let reads = plugins.finish_deferred_reads();
     assert!(reads.texts.is_empty() && reads.missing.is_empty());
-    for path in [failed_path, deferred_path] {
-        assert!(matches!(plugins.read(path, Loader::Ts), ModuleText::Failed));
-        assert!(plugins.loaded(path).is_none());
-    }
-    let reported = take_messages(&messages);
-    assert_eq!(reported.len(), 1);
-    assert!(reported[0].ends_with(b"a deferred load was never answered: file:/project/b.ts"));
+    assert!(reads.still_deferred.is_empty());
+    assert!(matches!(plugins.read(path, Loader::Ts), ModuleText::Failed));
+    assert!(plugins.loaded(path).is_none());
+    assert!(take_messages(&messages).is_empty());
+}
+
+#[test]
+fn module_deferred_again_stays_deferred() {
+    let path = b"/project/b.ts";
+    let provider = deferring_provider(vec![answer_for_file(path, Ok(Loaded::Deferred))]);
+    let (disk, messages) = (empty_disk(), LoadMessages::default());
+    let plugins = PluginModules::new(&provider, &disk, &messages, &[]);
+    plugins.read(path, Loader::Ts);
+
+    let reads = plugins.finish_deferred_reads();
+    assert!(reads.texts.is_empty() && reads.missing.is_empty());
+    assert_eq!(reads.still_deferred, [path]);
+    let read = plugins.read(path, Loader::Ts);
+    assert!(matches!(read, ModuleText::Deferred));
+    assert!(plugins.loaded(path).is_none());
+
+    let reads = plugins.finish_deferred_reads();
+    assert!(reads.still_deferred.is_empty());
+    assert_eq!(provider.finish_count.load(Relaxed), 1);
+    assert!(take_messages(&messages).is_empty());
 }
 
 #[test]

@@ -23,6 +23,7 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import fs from "node:fs";
 import {
+  type AddressInfo,
   BlockList,
   connect,
   createConnection,
@@ -39,7 +40,7 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
-import { TLSSocket } from "node:tls";
+import { connect as tlsConnect, TLSSocket } from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -533,10 +534,12 @@ describe("net.Socket write", () => {
 
     async function run() {
       return new Promise((resolve, reject) => {
+        // end() calls back before the socket is closed, and only a closed one connects again.
+        socket.once("close", resolve);
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");
@@ -1048,6 +1051,44 @@ describe("abort during lookup #13126", () => {
   describe("bun already-aborted immediate connect", () => {
     for (const autoSelectFamily of [false, true]) {
       it.concurrent(`autoSelectFamily=${autoSelectFamily}`, () => runFixture(bunExe(), autoSelectFamily, true));
+    }
+  });
+});
+
+describe.concurrent("'timeout' is emitted with a write that does not move", () => {
+  it("while the socket is connecting", async () => {
+    const neverAnswers = () => {};
+    const socket = connect({ host: "localhost", port: 1, lookup: neverAnswers });
+    try {
+      socket.write("x");
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(socket.connecting).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it.each([
+    ["the TLS handshake gets no answer", tlsConnect as typeof connect, (socket: any) => socket.secureConnecting],
+    ["the peer does not read", connect, (socket: Socket) => socket.writableLength > 0],
+  ])("while %s", async (_, dial, isWaiting) => {
+    const accepted: Socket[] = [];
+    const server = createServer(socket => accepted.push(socket)).listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = dial({ port: (server.address() as AddressInfo).port, host: "127.0.0.1" });
+    try {
+      await once(socket, "connect");
+      // The kernel takes only so much for a peer that does not read.
+      do socket.write(Buffer.alloc(16 * 1024 * 1024));
+      while (socket.writableLength === 0);
+      socket.setTimeout(1);
+      await once(socket, "timeout");
+      expect(isWaiting(socket)).toBe(true);
+    } finally {
+      socket.destroy();
+      for (const socket of accepted) socket.destroy();
+      server.close();
     }
   });
 });

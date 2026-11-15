@@ -1,0 +1,29 @@
+# A store of an int32 into a row that is tested for a numeric kind of storage writes no array that may hold cells: the row is read once in front of its loop, with its tests, though the loop stores into it.
+# -- source: main.ts
+# function run(grid: number[][], rows: number, columns: number): number {
+#   let total = 0;
+#   for (let y = 1; y < rows; y++) {
+#     for (let x = 1; x < columns; x++) {
+#       grid[y]![x] = (grid[y - 1]![x]! + grid[y]![x - 1]! * 3) & 255;
+#     }
+#   }
+#   return total;
+# }
+# const grid: number[][] = [];
+# for (let y = 0; y < 6; y++) grid.push([1, 2, 3, 4, 5, 6]);
+# print(run(grid, 6, 6), grid.join("|"));
+# const self: any[] = [[1, 2, 3, 4], [5, 6, 7, 8]];
+# self.push(self);
+# run(self, 2, 4);
+# print(self[1].join());
+# -- end of source
+# f1 = run
+# RUN(STORE): walk f1 mechanisms=all
+# STORE-LABEL: code f1:Body
+# STORE: = IsElementPresent {{*}}arrayStorage=Contiguous
+# STORE: = HasArrayStorage {{*}}isWritable
+# STORE: = PutContiguousIndex {{*}}hasNumericStorage]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0 1,2,3,4,5,6|1,5,18,58,179,31|1,8,42,184,219,176|1,11,75,153,166,162|1,14,117,248,142,76|1,17,168,240,94,102
+# ANSWERS-NEXT: 5,17,54,166
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,18 @@
+# -- source: key-handed-into-loop.ts
+# declare function print(value: unknown): void;
+# interface Row { id: number; age: number; score: number }
+# interface Choice { key: keyof Row }
+# const rows: Row[] = [{ id: 1, age: 2, score: 3 }, { id: 6, age: 7, score: 8 }];
+# const choices = ["id", "age"].map(name => ({ key: name.trim() }) as Choice);
+# function total(choice: Choice): number { const { key } = choice; return rows.reduce((sum, row) => sum + row[key], 0); }
+# function count(choice: Choice): number { const { key } = choice; return rows.filter(row => row[key] === 2).length; }
+# function chosen(place: number): number { const key = place === 0 ? "id" : place === 1 ? "age" : "score"; let sum = 0; for (let i = 0; i < rows.length; i++) sum += rows[i]![key]; return sum; }
+# for (const choice of choices) print(total(choice) + count(choice) + chosen(choice.key.length));
+# -- end of source
+# A key that a callback captures is told apart by the names of the holder; texts that are proven alone are compared in front of the loop.
+# RUN: walk f6:Body mechanisms=all
+# CHECK: SwitchString [[key]] strings=["age", "id", "score"]
+# CHECK: key="age"
+# RUN(TEXTS): walk f3:Body mechanisms=all
+# TEXTS: StringEqualsLiteral [[text]] literal="age"
+# TEXTS: StringEqualsLiteral [[text]] literal="id"

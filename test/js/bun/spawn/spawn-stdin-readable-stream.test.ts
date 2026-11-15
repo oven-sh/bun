@@ -923,14 +923,18 @@ describe("spawn stdin ReadableStream", () => {
       ],
       [
         // The stream is another child's stdout, so attaching it would steal the native source from the reader.
+        // That child waits for its stdin to end: the bytes of a child that has ended are taken ahead of the getter.
         "a reader that a later option getter acquires on a child's stdout",
         "hello 0",
         `
-          const stream = Bun.spawn({ cmd: [exe, "-e", "await Bun.write(Bun.stdout, 'hello')"], stdout: "pipe", stderr: "inherit" }).stdout;
+          const writes = "await Bun.stdin.bytes(); await Bun.write(Bun.stdout, 'hello')";
+          const source = Bun.spawn({ cmd: [exe, "-e", writes], stdin: "pipe", stdout: "pipe", stderr: "inherit" });
+          const stream = source.stdout;
           let reader, refused;
           try {
             refused = Bun.spawn({ cmd: count, stdin: stream, get stdout() { reader ??= stream.getReader(); return "pipe"; }, stderr: "inherit" });
           } catch (error) { threw(error); }
+          source.stdin.end();
           (async () => {
             let text = "";
             for (let chunk; !(chunk = await reader.read()).done; ) text += decode(chunk.value);

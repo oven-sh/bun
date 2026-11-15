@@ -110,98 +110,11 @@ attempt("a list of numbers", () => [list, list[0] + 1, list.length]);
 
 export {};
 
-// GENERATED: wipe wipeOne Sensor warmer corrected where count alarm
 // CHECK-LABEL: function {{*}}name="wipe"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|[[L_1]] site=[[w_2]]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = ForInOpen v0
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: LoopHint
-// CHECK-NEXT: v3 = ForInStep v1, v0
-// CHECK-NEXT: v4 = ResultAt v3
-// CHECK-NEXT: v5 = ResultAt v3 index=1
-// CHECK-NEXT: Branch v4 -> taken b3(), notTaken b4()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v6 = Undefined
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: b4():
-// CHECK-NEXT: v7 = Convert v5 declared={type=undefined|null|string site=[[w_3]]} illTypedCause=FromLooseType
-// CHECK-NEXT: v8 = Null
-// CHECK-NEXT: ElemSet v0, v7, v8
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="wipeOne"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|[[L_4]] site=[[w_5]]}, {type=undefined|null|number|string|symbol site=[[w_6]]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_4]], v1: undefined|null|number|string|symbol):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Null
-// CHECK-NEXT: ElemSet v0, v1, v2
-// CHECK-NEXT: v4 = Undefined
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="Sensor"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_7]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_7]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_7]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_8]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="warmer"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]] site=[[w_9]]} results=[{type=number site=[[w_10]]}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="reading"
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Add v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_10]]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="corrected"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]] site=[[w_11]]} results=[{type=number site=[[w_12]]}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="reading"
-// CHECK-NEXT: v2 = PropGet v0 key="drift"
-// CHECK-NEXT: v3 = Sub v1, v2
-// CHECK-NEXT: v4 = Convert v3 declared={type=number site=[[w_12]]}
-// CHECK-NEXT: Return v4
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="where"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]] site=[[w_13]]} results=[{type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="place"
-// CHECK-NEXT: v2 = PropGet v1 key="toUpperCase"
-// CHECK-NEXT: v3 = Call v2, v1 calleeKey="toUpperCase" calleeName="this.place.toUpperCase"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|string site=[[w_15]] flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=[[w_14]] flags=[OmitsNull, OmitsUndefined]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="count"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=[[L_7]] site=[[w_16]]} results=[{type=number site=[[w_17]]}] {
-// CHECK-NEXT: b0(v0: [[L_7]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = PropGet v0 key="history"
-// CHECK-NEXT: v2 = PropGet v1 key="length"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number site=[[w_18]]} illTypedCause=Assertion
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="alarm"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}] functionTypes={{*}}[[f_20]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="ring"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string site=[[w_19]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

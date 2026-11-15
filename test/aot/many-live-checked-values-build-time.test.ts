@@ -1,6 +1,5 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
-import { measureUntilWithinBounds } from "./harness/measure-again";
 import { reads } from "./harness/reads";
 import { test } from "./supported";
 
@@ -86,6 +85,22 @@ async function processorSecondsOfBuild(program: Program) {
   const [output, errors, exitCodeOfRun] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
   expect({ output, errors, exitCode: exitCodeOfRun }).toEqual({ output: program.output, errors: "", exitCode: 0 });
   return Number(built.resourceUsage()!.cpuTime.user) / 1e6;
+}
+
+// CI ends a test file that has run for five minutes.
+const lastStart = 200_000;
+
+// Other work on the machine only adds to a time. One that is over its bound is measured again, four times at most: code that costs more does so every time.
+async function measureUntilWithinBounds(
+  name: string,
+  measure: () => Promise<number>,
+  isWithinBounds: (measured: number) => boolean,
+) {
+  for (let attemptsLeft = 3; ; attemptsLeft--) {
+    const measured = await measure();
+    if (attemptsLeft === 0 || isWithinBounds(measured) || performance.now() > lastStart) return measured;
+    console.error(`ASKED AGAIN: ${name}`);
+  }
 }
 
 // Four times the program takes four times as long where the time is linear, and sixteen times as long where it is quadratic.

@@ -1,0 +1,40 @@
+# import * as path from "node:path";  use(path);  import * as own from "./main.js";
+# The text that `print` writes for a program names the namespace layout of every file that has one, a file of the library too. The reader of the text numbers those layouts as the program does.
+# The file of the library stands in front of the program's own file here, so the number of the program's own layout hangs on it: a reader that skips the library's file takes L(m1) for L(m0).
+# LIBRARY: own
+# RUN: print
+# CHECK: module m0 {{*}}kind=RuntimeSource {{*}}namespaceLayout=L(m0)
+# CHECK: module m1 {{*}}namespaceLayout=L(m1)
+# CHECK: function f2 {{*}}parameters=[{type=L(m0)}, {type=L(m1)}]
+# CHECK: b0(v0: L(m0), v1: L(m1)):
+
+layout L0 module=m0 fields=[{key="join" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="join" module=m0 declared={type=anything}
+module m0 path="node:path" displayPath="node:path" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodePath body=f1 syntheticExports=[{name="join" variable=g0 isKnownMember=true}] namespaceLayout=L(m0)
+module m1 path="main.js" displayPath="main.js" body=f0 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+function f0 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m0
+    v1 = ModuleNamespace module=m1
+    v2 = NewClosure function=f2
+    v3 = Call v2, -, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    Return v2
+}
+function f2 name="use" module=m1 length=2 thisType={type=anything} parameters=[{type=L(m0)}, {type=L(m1)}] results=[{type=anything}] {
+  b0(v0: L(m0), v1: L(m1)):
+    v2 = Undefined
+    Return v2
+}
+function f3 name="join" module=m0 role=Library length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

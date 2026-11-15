@@ -10,7 +10,7 @@
 export function declared() {
   var f;
   function f() {}
-  return () => f;
+  return [f, () => f];
 }
 
 export function initialized() {

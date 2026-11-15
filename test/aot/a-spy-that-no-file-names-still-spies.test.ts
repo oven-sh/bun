@@ -8,53 +8,71 @@ raiseDefaultTimeout(120_000);
 
 // Each way is a project of its own: what one file spies on is open for all the others.
 // No file spells `spyOn` beside `bun:test`, or `Bun.jest`, so the build has to follow the values.
-const ways: Record<string, { imports?: string; spy: string }> = {
+// `isRefused`: the runner is reached through `Bun` or the global object, under a made name or in other hands. The build follows the objects OF the runner, not what leads to them:
+// the spy is refused where it is laid, with what to write instead. So it is with a text from a file that `Function` or node:vm evaluates: it is global code, sees no name of the test file, and says `Bun.jest(path)`.
+// A direct `eval` sees what the file names: the run stays open for it.
+const ways: Record<string, { imports?: string; spy: string; isRefused?: true }> = {
   "Bun.jest under a name that is made at run time": {
     spy: `return Bun[["je", "st"].join("")](import.meta.path).spyOn(lib, "total");`,
+    isRefused: true,
   },
   "Bun under a name that is made at run time": {
     spy: `return globalThis[["B", "un"].join("")].jest(import.meta.path).spyOn(lib, "total");`,
+    isRefused: true,
   },
   "Bun.jest by Reflect.get": {
     spy: `return Reflect.get(Bun, "jest")(import.meta.path).spyOn(lib, "total");`,
+    isRefused: true,
   },
   "Bun is handed to a helper": {
     imports: `import { toolsOf } from "./tools.js";`,
     spy: `return toolsOf(Bun, import.meta.path).spyOn(lib, "total");`,
+    isRefused: true,
   },
   "the helper makes the name": {
     imports: `import { spyBy } from "./tools.js";`,
     spy: `return spyBy(["je", "st"].join(""), import.meta.path, lib, "total");`,
+    isRefused: true,
   },
   "the name of the spy is made too": {
     spy: `return Bun[["je", "st"].join("")](import.meta.path)[["spy", "On"].join("")](lib, "total");`,
+    isRefused: true,
   },
   "jest.spyOn of what it answers": {
     spy: `return Bun[["je", "st"].join("")](import.meta.path).jest.spyOn(lib, "total");`,
+    isRefused: true,
   },
   "the name of the export is made too": {
     spy: `return Bun[["je", "st"].join("")](import.meta.path).spyOn(lib, ["to", "tal"].join(""));`,
+    isRefused: true,
   },
   "the spy waits in a list": {
     spy: `const steps = []; steps.push(Bun[["je", "st"].join("")](import.meta.path).spyOn); return steps.pop()(lib, "total");`,
+    isRefused: true,
   },
   "the namespace object lies on the global object": {
-    spy: `globalThis.kept = lib; return Bun[["je", "st"].join("")](import.meta.path).spyOn(globalThis.kept, "total");`,
+    spy: `globalThis.kept = lib; return Reflect.get(Bun, "jest")(import.meta.path).spyOn(globalThis.kept, "total");`,
+    isRefused: true,
   },
   "text from a file is handed the namespace object": {
     spy: `return new Function("ns", "path", textOf("operand"))(lib, import.meta.path);`,
+    isRefused: true,
   },
   "text from a file is handed it as the second operand": {
     spy: `return new Function("path", "ns", textOf("operand"))(import.meta.path, lib);`,
+    isRefused: true,
   },
   "text from a file is handed it in an object": {
     spy: `return new Function("held", "path", textOf("member"))({ module: lib }, import.meta.path);`,
+    isRefused: true,
   },
   "text from a file takes it off the global object": {
     spy: `globalThis.kept = lib; return new Function("path", textOf("global"))(import.meta.path);`,
+    isRefused: true,
   },
   "a built-in function calls text from a file": {
     spy: `globalThis.path = import.meta.path; return [lib].map(new Function("ns", textOf("operand")))[0];`,
+    isRefused: true,
   },
   "eval of text from a file sees the variable": {
     spy: `const ns = lib, path = import.meta.path; return eval("(() => {" + textOf("operand") + "})()");`,
@@ -62,6 +80,7 @@ const ways: Record<string, { imports?: string; spy: string }> = {
   "node:vm runs the text": {
     imports: `import vm from "node:vm";`,
     spy: `return vm.runInThisContext("(ns, path) => {" + textOf("operand") + "}")(lib, import.meta.path);`,
+    isRefused: true,
   },
 };
 
@@ -105,5 +124,9 @@ test.concurrent.each(Object.keys(ways))("%s", async name => {
   };
   const [plain, compiled] = await Promise.all([seenWith(), seenWith("--aot")]);
   expect(plain).toEqual({ seen: [`SEEN [[3,6],[3,"spied"],[3,6]]`], exitCode: 0 });
-  expect(compiled).toEqual(plain);
+  expect(compiled).toEqual(
+    ways[name].isRefused
+      ? { seen: [expect.stringMatching(/^SEEN "TypeError: Cannot spy on 'total' of /)], exitCode: 0 }
+      : plain,
+  );
 });

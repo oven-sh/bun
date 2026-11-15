@@ -1,0 +1,208 @@
+# As the library's filter() is written: `each` asks whether what it is handed is a function, then whether it IS the built-in Boolean, and otherwise only calls it: the comparison with a built-in that the text names keeps nothing and runs no code: the parameter keeps the word, so a caller may lend it a closure made for the call. `against` holds it against a variable: that does more, as before.
+# f1 = each, f2 = against, f3 = maker
+# -- source: held-against-a-built-in.ts
+# declare function sink(...values: unknown[]): void;
+# let held: ((x: number) => unknown) | undefined;
+# function each(list: number[], f: (x: number) => unknown): number { if (typeof f !== "function") return -2; let t = 0; if (f === Boolean) { for (let i = 0; i < list.length; i++) if (list[i]) t++; return t; } for (let i = 0; i < list.length; i++) if (f(list[i])) t++; return t; }
+# function against(list: number[], f: (x: number) => unknown): number { if (typeof f !== "function") return -2; let t = 0; if (f === held) return -1; for (let i = 0; i < list.length; i++) if (f(list[i])) t++; return t; }
+# function maker(list: number[], k: number) { return each(list, x => x > k) + each(list, Boolean) + against(list, x => x < k); }
+# sink(maker([1, 2], 1), maker([4], 5), () => held);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-LABEL: function f2
+# CHECK-NOT: only-called
+# CHECK-LABEL: function f3
+
+module m0 path="held-against-a-built-in.ts" displayPath="held-against-a-built-in.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=2}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=4}]} module=m0
+variable g0 name="each" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=2
+variable g1 name="against" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable] place=3
+variable g2 name="held" module=m0 declared={type=undefined|null|function|absent flags=[OmitsNull]} flags=[IsImmutable] place=5
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = Undefined @51
+    v3 = Convert v2 declared={type=undefined|null|function flags=[OmitsNull]} @51
+    PutModuleVariable v3 variable=g2 @51
+    v5 = Builtin builtin=GlobalThis @723
+    v6 = PropGet v5 key="sink" [isFreeName] @723
+    v7 = Data data=d0 @734
+    v8 = Integer integer=1 @742
+    v9 = Call v1, -, v7, v8 calleeName="maker" @728
+    v10 = Data data=d1 @752
+    v11 = Integer integer=5 @757
+    v12 = Call v1, -, v10, v11 calleeName="maker" @746
+    v13 = NewClosure function=f4 @761
+    v14 = Call v6, -, v9, v12, v13 calleeName="sink" @723
+    v15 = Undefined @723
+    Return v15 @723
+}
+function f1 name="each" module=m0 position=99 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|function):
+    v2 = TypeTest v1 testedType=function @170
+    Branch v2 -> taken b1(| 0), notTaken b14(| 0) @170
+  b1(v3):
+    v4 = NarrowByTest v1, v3 @170
+    v5 = Integer @214
+    v6 = Convert v5 declared={type=number} @214
+    v7 = Builtin builtin=Boolean @227
+    v8 = StrictEq v4, v7 @227
+    Branch v8 -> taken b2(), notTaken b8() @227
+  b2():
+    v9 = Integer @251
+    v10 = Convert v9 declared={type=number} @251
+    Jump -> next b3(v6, v10) @247
+  b3(v11: number, v12: number):
+    LoopHint @247
+    v14 = PropGet v0 key="length" @258
+    v15 = Less v12, v14 @258
+    Branch v15 -> taken b4(), notTaken b7() @258
+  b4():
+    v16 = ElemGet v0, v12 @280
+    v17 = ToBoolean v16 @280
+    Branch v17 -> taken b5(| 0), notTaken b6(v11) @280
+  b5(v18):
+    v19 = Increment v11 @289
+    v20 = Convert v19 declared={type=number} @289
+    Jump -> next b6(v20) @289
+  b6(v21: number):
+    v22 = Increment v12 @271
+    v23 = Convert v22 declared={type=number} @271
+    Jump -> next b3(v21, v23) @271
+  b7():
+    v24 = Convert v11 declared={type=number} @301
+    Return v24 @301
+  b8():
+    v25 = Integer @319
+    v26 = Convert v25 declared={type=number} @319
+    Jump -> next b9(v6, v26) @315
+  b9(v27: number, v28: number):
+    LoopHint @315
+    v30 = PropGet v0 key="length" @326
+    v31 = Less v28, v30 @326
+    Branch v31 -> taken b10(), notTaken b13() @326
+  b10():
+    v32 = ElemGet v0, v28 @350
+    v33 = Call v4, -, v32 calleeName="f" @348
+    v34 = ToBoolean v33 @348
+    Branch v34 -> taken b11(| 0), notTaken b12(v27) @348
+  b11(v35):
+    v36 = Increment v27 @360
+    v37 = Convert v36 declared={type=number} @360
+    Jump -> next b12(v37) @360
+  b12(v38: number):
+    v39 = Increment v28 @339
+    v40 = Convert v39 declared={type=number} @339
+    Jump -> next b9(v38, v40) @339
+  b13():
+    v41 = Convert v27 declared={type=number} @372
+    Return v41 @372
+  b14(v42):
+    v43 = Integer integer=-2 @202
+    v44 = Convert v43 declared={type=number} @202
+    Return v44 @202
+}
+function f2 name="against" module=m0 position=377 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|function):
+    v2 = TypeTest v1 testedType=function @451
+    Branch v2 -> taken b1(| 0), notTaken b9(| 0) @451
+  b1(v3):
+    v4 = NarrowByTest v1, v3 @451
+    v5 = Integer @495
+    v6 = Convert v5 declared={type=number} @495
+    v7 = GetModuleVariable variable=g2 @508
+    v8 = CheckInitialized v7 name="held" @508
+    v9 = StrictEq v4, v8 @508
+    Branch v9 -> taken b2(), notTaken b3() @508
+  b2():
+    v10 = Integer integer=-1 @521
+    v11 = Convert v10 declared={type=number} @521
+    Return v11 @521
+  b3():
+    v12 = Integer @538
+    v13 = Convert v12 declared={type=number} @538
+    Jump -> next b4(v6, v13) @534
+  b4(v14: number, v15: number):
+    LoopHint @534
+    v17 = PropGet v0 key="length" @545
+    v18 = Less v15, v17 @545
+    Branch v18 -> taken b5(), notTaken b8() @545
+  b5():
+    v19 = ElemGet v0, v15 @569
+    v20 = Call v4, -, v19 calleeName="f" @567
+    v21 = ToBoolean v20 @567
+    Branch v21 -> taken b6(| 0), notTaken b7(v14) @567
+  b6(v22):
+    v23 = Increment v14 @579
+    v24 = Convert v23 declared={type=number} @579
+    Jump -> next b7(v24) @579
+  b7(v25: number):
+    v26 = Increment v15 @558
+    v27 = Convert v26 declared={type=number} @558
+    Jump -> next b4(v25, v27) @558
+  b8():
+    v28 = Convert v14 declared={type=number} @591
+    Return v28 @591
+  b9(v29):
+    v30 = Integer integer=-2 @483
+    v31 = Convert v30 declared={type=number} @483
+    Return v31 @483
+}
+function f3 name="maker" module=m0 position=596 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = GetModuleVariable variable=g0 @647
+    v3 = NewClosure v1 function=f5 @658
+    v4 = Call v2, -, v0, v3 calleeName="each" @647
+    v5 = GetModuleVariable variable=g0 @672
+    v6 = Builtin builtin=Boolean @683
+    v7 = Call v5, -, v0, v6 calleeName="each" @672
+    v8 = Add v4, v7 @672
+    v9 = GetModuleVariable variable=g1 @694
+    v10 = NewClosure v1 function=f6 @708
+    v11 = Call v9, -, v0, v10 calleeName="against" @694
+    v12 = Add v8, v11 @694
+    Return v12 @694
+}
+function f4 module=m0 position=761 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g2 @767
+    v1 = CheckInitialized v0 name="held" @767
+    Return v1 @767
+}
+function f5 module=m0 position=658 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number variableName="k"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Greater v1, v0 @667
+    Return v2 @667
+}
+function f6 module=m0 position=708 kind=Arrow flags=[IsChecked] length=1 captures=[{type=number variableName="k"}] thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Less v1, v0 @717
+    Return v2 @717
+}
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f10 visibility=Private

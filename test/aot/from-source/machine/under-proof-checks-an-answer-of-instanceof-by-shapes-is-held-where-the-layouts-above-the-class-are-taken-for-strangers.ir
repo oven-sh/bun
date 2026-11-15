@@ -1,0 +1,32 @@
+# An object's prototype link still counts as unchanged when plain objects that shadow nothing are between the object and its class's prototype.
+# The prototype of a subclass is such an object once it has lost its own properties.
+# Out of the compiler's sight, the prototype of an Animal is set to the stripped Dog.prototype, so that Animal is a Dog.
+# So the layouts of the superclasses of the tested class are not sibling layouts.
+# Fault injection, testing=SkipSuperclassCheck: they count as sibling layouts.
+# With --aot-harden=proof-checks (testing=CheckProofsAtRunTime) each result derived from shapes is checked against a walk of the prototype chain that gives up at a trap and runs no code.
+# If they disagree, the process crashes.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# RIGHT: 2 3
+# RIGHT-NEXT: exited with 0
+# RUN(WRONG): run-in-shell mechanisms=all testing=SkipSuperclassCheck
+# WRONG: 2 2
+# WRONG-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=SkipSuperclassCheck,CheckProofsAtRunTime
+# HELD: bun: internal AOT error: type check failed
+# HELD-NEXT: in the result of an operation
+# HELD: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# class Animal { n: number; constructor(n: number) { this.n = n; } }
+# class Dog extends Animal { bark(): number { return 1; } }
+# class Cat extends Animal { purr(): number { return 2; } }
+# const lay: (object: object, above: object | null) => void = id((object: object, above: object | null): void => { Object.setPrototypeOf(object, above); });
+# const strip: (object: any) => void = id((object: any): void => { delete object.constructor; delete object.bark; });
+# const things: unknown[] = id([new Dog(1), new Cat(2), new Animal(3), new Dog(4), new Cat(5)]);
+# function dogs(): number { let sum = 0; for (let i = 0; i < things.length; i++) { if (things[i] instanceof Dog) sum++; } return sum; }
+# const first = dogs();
+# strip(Dog.prototype);
+# lay(things[2] as object, Dog.prototype);
+# print(first, dogs());
+# -- end of source

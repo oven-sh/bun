@@ -248,7 +248,7 @@ fn peers_served_in(
     lockfile: &Lockfile,
     only: Option<&DynamicBitSet>,
 ) -> Vec<(DependencyID, PackageID)> {
-    let nodes = store.nodes.slice();
+    let nodes = &store.nodes;
     let node_pkg_ids = nodes.items_pkg_id();
     let node_dependencies = nodes.items_dependencies();
     let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -373,7 +373,7 @@ fn dependency_is_contained_folder(
 
 /// The `DependencyID`s that are contained folders, and the `PackageID`s only those resolve to.
 fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSet), AllocError> {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_resolutions = pkgs.items_resolution();
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
@@ -423,7 +423,7 @@ pub(crate) fn folder_is_inside_package(
     pkg_id: PackageID,
     folder_pkg_id: PackageID,
 ) -> bool {
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let declarer = &pkgs.items_resolution()[pkg_id as usize];
     let pkg_deps = pkgs.items_dependencies()[pkg_id as usize];
     let resolutions = &lockfile.buffers.resolutions[..];
@@ -483,7 +483,7 @@ fn build_store(
     print_timings: bool,
 ) -> Result<Store, AllocError> {
     let mut timer = std::time::Instant::now();
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_dependency_slices = pkgs.items_dependencies();
     let pkg_resolutions = pkgs.items_resolution();
     let pkg_names = pkgs.items_name();
@@ -696,15 +696,13 @@ fn build_store(
     'next_node: while let Some(entry) = node_queue.pop() {
         'check_cycle: {
             // check for cycles
-            let mut nodes_slice = nodes.slice();
-            // `split_mut()` yields disjoint `&mut [_]` per column.
             let store::node::NodeColumnsMut {
                 pkg_id: node_pkg_ids,
                 dep_id: node_dep_ids,
                 parent_id: node_parent_ids,
                 nodes: node_nodes,
                 ..
-            } = nodes_slice.split_mut();
+            } = nodes.split_mut();
 
             let mut curr_id = entry.parent_id;
             while curr_id != store::node::Id::INVALID {
@@ -766,8 +764,6 @@ fn build_store(
             }
 
             'dont_dedupe: {
-                let mut nodes_slice = nodes.slice();
-                // disjoint-column views via `split_mut`.
                 let store::node::NodeColumnsMut {
                     pkg_id: node_pkg_ids,
                     nodes: node_nodes,
@@ -776,7 +772,7 @@ fn build_store(
                     dependencies: node_dependencies,
                     peers: node_peers,
                     ..
-                } = nodes_slice.split_mut();
+                } = nodes.split_mut();
 
                 let ctx_hash: u64 =
                     if entry_dep.version.tag == VersionTag::Workspace || peer_name_count == 0 {
@@ -921,8 +917,6 @@ fn build_store(
             ..Default::default()
         })?;
 
-        let mut nodes_slice = nodes.slice();
-        // disjoint-column views via `split_mut`.
         let store::node::NodeColumnsMut {
             pkg_id: node_pkg_ids,
             parent_id: node_parent_ids,
@@ -930,7 +924,7 @@ fn build_store(
             peers: node_peers,
             nodes: node_nodes,
             ..
-        } = nodes_slice.split_mut();
+        } = nodes.split_mut();
 
         if let Some(parent_id) = entry.parent_id.try_get() {
             node_nodes[parent_id as usize].push(node_id);
@@ -1219,11 +1213,10 @@ fn build_store(
 
     let mut res_fmt_buf: Vec<u8> = Vec::new();
 
-    let nodes_slice = nodes.slice();
-    let node_pkg_ids = nodes_slice.items_pkg_id();
-    let node_dep_ids = nodes_slice.items_dep_id();
-    let node_peers: &[store::node::Peers] = nodes_slice.items_peers();
-    let node_nodes = nodes_slice.items_nodes();
+    let node_pkg_ids = nodes.items_pkg_id();
+    let node_dep_ids = nodes.items_dep_id();
+    let node_peers: &[store::node::Peers] = nodes.items_peers();
+    let node_nodes = nodes.items_nodes();
 
     let mut store_entries: store::entry::List = store::entry::List::default();
 
@@ -1295,13 +1288,11 @@ fn build_store(
                         }
                     }
 
-                    let mut entries = store_entries.slice();
-                    // disjoint-column views via `split_mut`.
                     let store::entry::EntryColumnsMut {
                         dependencies: entry_dependencies,
                         parents: entry_parents,
                         ..
-                    } = entries.split_mut();
+                    } = store_entries.split_mut();
 
                     entry_parents[info.entry_id.get() as usize].push(entry.entry_parent_id);
                     if curr_dep_id == invalid_dependency_id
@@ -1402,8 +1393,7 @@ fn build_store(
                 entry_id: new_entry_id,
                 dep_id: new_entry_dep_id,
             };
-            let mut entries = store_entries.slice();
-            let entry_dependencies = entries.items_dependencies_mut();
+            let entry_dependencies = store_entries.items_dependencies_mut();
             entry_dependencies[entry_parent_id as usize].insert(item, &dependencies_ctx)?;
 
             let dep_name = new_entry_dep.name.slice(string_buf);
@@ -1652,7 +1642,7 @@ fn expect_directory(path: &bun_core::ZStr) -> sys::Result<()> {
 /// resolver's trust check.
 fn check_link_entries(manager: &mut PackageManager, lockfile: &Lockfile, store: &Store) {
     let string_buf = &lockfile.buffers.string_bytes[..];
-    let pkgs = lockfile.packages.slice();
+    let pkgs = &lockfile.packages;
     let pkg_names = pkgs.items_name();
     let pkg_resolutions = pkgs.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
@@ -1711,7 +1701,7 @@ pub(crate) fn install_isolated_packages(
     // while this reborrow is live (column slices below borrow through it).
     let lockfile: &mut Lockfile = unsafe { &mut *lockfile };
 
-    let store: Store = build_store(
+    let mut store: Store = build_store(
         &*manager,
         &*lockfile,
         install_root_dependencies,
@@ -1727,18 +1717,18 @@ pub(crate) fn install_isolated_packages(
 
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
-            let mut entries = store.entries.slice();
             let store::entry::EntryColumnsMut {
                 entry_hash: entry_hashes,
                 node_id: entry_node_ids,
                 dependencies: entry_dependencies,
+                peer_hash: entry_peer_hashes,
                 ..
-            } = entries.split_mut();
+            } = store.entries.split_mut();
 
             let node_pkg_ids = store.nodes.items_pkg_id();
             let node_dep_ids = store.nodes.items_dep_id();
 
-            let pkgs = lockfile.packages.slice();
+            let pkgs = &lockfile.packages;
             let pkg_names = pkgs.items_name();
             let pkg_resolutions = pkgs.items_resolution();
             let pkg_metas = pkgs.items_meta();
@@ -1754,16 +1744,20 @@ pub(crate) fn install_isolated_packages(
             let no_verify = manager.skips_verify(ResolutionTag::Npm);
             // Include the integrity, because the store path `name@version` isn't unique across
             // registries.
-            let hash_entry = |seed: u64, id: store::entry::Id| {
+            let hash_entry = |seed: u64, id: u32| {
                 let mut h = Wyhash::init(seed);
                 // `no_verify` is hashed so that a verified install never shares an entry whose
                 // bytes were not checked.
                 h.update(&[GLOBAL_STORE_LAYOUT, u8::from(no_verify)]);
-                let path = store::entry::fmt_store_path(id, &store, lockfile);
+                let pkg_id = node_pkg_ids[entry_node_ids[id as usize].get() as usize];
+                let path = store::entry::StorePathFormatter {
+                    pkg_id,
+                    peer_hash: entry_peer_hashes[id as usize],
+                    lockfile,
+                };
                 // The path is the only input without a fixed length, so a NUL marks its end.
                 write!(WyhashWriter { hasher: &mut h }, "{path}\0").expect("unreachable");
-                let pkg_id = store.ids(id).pkg_id as usize;
-                h.update(bun_core::bytes_of(&pkg_metas[pkg_id].integrity));
+                h.update(bun_core::bytes_of(&pkg_metas[pkg_id as usize].integrity));
                 h
             };
 
@@ -1778,7 +1772,7 @@ pub(crate) fn install_isolated_packages(
             }
 
             // 0 means "not eligible". The SCC pass turns each 1 into the entry's hash, or into 0.
-            for entry_idx in 0..store.entries.len() {
+            for entry_idx in 0..entry_hashes.len() {
                 let node_id = entry_node_ids[entry_idx];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
                 let dep_id = node_dep_ids[node_id.get() as usize];
@@ -1866,7 +1860,7 @@ pub(crate) fn install_isolated_packages(
 
             // A trusted entry's scripts can write through its `node_modules/<dep>` links.
             {
-                let mut visited = DynamicBitSet::init_empty(store.entries.len())?;
+                let mut visited = DynamicBitSet::init_empty(entry_hashes.len())?;
                 while let Some(entry_idx) = trusted_entries.pop() {
                     for dep in entry_dependencies[entry_idx].slice() {
                         let dep_entry_idx = dep.entry_id.get() as usize;
@@ -1882,7 +1876,7 @@ pub(crate) fn install_isolated_packages(
             // SCC pass (Tarjan). The members of a cycle share one hash, no matter which one is
             // listed first.
             {
-                let n: u32 = u32::try_from(store.entries.len()).expect("int cast");
+                let n: u32 = u32::try_from(entry_hashes.len()).expect("int cast");
                 let mut tarjan_index = vec![u32::MAX; n as usize].into_boxed_slice();
                 let mut lowlink = vec![0u32; n as usize].into_boxed_slice();
                 let mut on_stack = vec![false; n as usize].into_boxed_slice();
@@ -1940,8 +1934,7 @@ pub(crate) fn install_isolated_packages(
                                 // dependency is already final.
                                 let m = members[0];
                                 if entry_hashes[m as usize] != 0 {
-                                    let mut sub =
-                                        hash_entry(0x9E3779B97F4A7C15, store::entry::Id::from(m));
+                                    let mut sub = hash_entry(0x9E3779B97F4A7C15, m);
                                     let mut poisoned = false;
                                     for dep in entry_dependencies[m as usize].slice() {
                                         let dh = entry_hashes[dep.entry_id.get() as usize];
@@ -1961,7 +1954,7 @@ pub(crate) fn install_isolated_packages(
                                 // The whole SCC gets one hash of its members' sub-hashes, which are
                                 // sorted by content so that the hash is the same in every project.
                                 let own: Vec<u64> = (members.iter())
-                                    .map(|&m| hash_entry(0, store::entry::Id::from(m)).final_())
+                                    .map(|&m| hash_entry(0, m).final_())
                                     .collect();
                                 let mut member_sub: Vec<u64> = Vec::new();
                                 let mut any_ineligible = false;
@@ -2124,7 +2117,7 @@ pub(crate) fn install_isolated_packages(
 
         let node_pkg_ids = store.nodes.items_pkg_id();
 
-        let entries = store.entries.slice();
+        let entries = &store.entries;
         let entry_node_ids = entries.items_node_id();
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
@@ -2138,7 +2131,7 @@ pub(crate) fn install_isolated_packages(
         let lockfile_ro: &Lockfile = lockfile_ref.get();
         let string_buf = &lockfile_ro.buffers.string_bytes[..];
 
-        let pkgs = lockfile_ro.packages.slice();
+        let pkgs = &lockfile_ro.packages;
         let pkg_names = pkgs.items_name();
         let pkg_resolutions = pkgs.items_resolution();
 

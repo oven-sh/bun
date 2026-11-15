@@ -80,7 +80,7 @@ impl Blocked {
         folder: &mut AutoAbsPath,
     ) -> crate::Result<Option<ScriptsList>> {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let package_id = package_id as usize;
         // called alias because a dependency name is not always the package name
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]

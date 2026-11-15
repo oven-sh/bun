@@ -4060,8 +4060,8 @@ fn add_types_by_source_map(
     source_map: &[u8],
     bundle: &Bundle<'_>,
 ) -> Result<TypedText, TypedFilesError> {
-    let source_map = crate::host::parse_json_object(&bun_sema::session::Arena::new(), source_map)
-        .ok_or(TypedFilesError::SourceMapNotJson)?;
+    let source_map =
+        crate::host::parse_json_object(source_map).ok_or(TypedFilesError::SourceMapNotJson)?;
     let strings = |field: &[u8]| -> Vec<&[u8]> {
         source_map
             .get(field)

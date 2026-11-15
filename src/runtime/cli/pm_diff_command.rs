@@ -6,6 +6,7 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
 use bun_archive::tar;
+use bun_ast::AstArena;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -345,7 +346,7 @@ fn package_name_in(tree: &Tree) -> Vec<u8> {
 }
 
 fn package_json_name(bytes: &[u8]) -> Option<Vec<u8>> {
-    let bump = Bump::new();
+    let bump = AstArena::new();
     let src: &[u8] = bump.alloc_slice_copy(bytes);
     let json = bun_parsers::json::parse_utf8(
         &bun_ast::Source::init_path_string(b"package.json", src),
@@ -615,7 +616,7 @@ fn read_dir_tree(
         if let Ok(pkg) = bun_sys::File::read_from(&root_dir, b"package.json") {
             // This has to come before the parse below, because it parses other package.json files.
             let manifests = as_published_by.and_then(|pm| manifests_for(pm, root, &pkg));
-            let bump = Bump::new();
+            let bump = AstArena::new();
             let src: &[u8] = bump.alloc_slice_copy(&pkg);
             if let Ok(json) = bun_parsers::json::parse_utf8(
                 &bun_ast::Source::init_path_string(b"package.json", src),
@@ -818,7 +819,7 @@ fn fetch_registry_tree(
     name: &[u8],
     version: &[u8],
 ) -> Result<Tree, crate::Error> {
-    let bump = Bump::new();
+    let bump = AstArena::new();
     let scope = pm.scope_for_package_name(name);
 
     let manifest_url = format!(
@@ -2230,7 +2231,7 @@ fn install_view(json: &bun_ast::Expr, field: &[u8], bump: &Bump) -> Vec<(Vec<u8>
 }
 
 fn package_json_notes(left: &Tree, right: &Tree, notes: &mut Vec<String>, colors: bool) {
-    let bump = Bump::new();
+    let bump = AstArena::new();
     let parse = |bytes: &[u8]| {
         let src: &[u8] = bump.alloc_slice_copy(bytes);
         bun_parsers::json::parse_utf8(

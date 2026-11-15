@@ -408,9 +408,8 @@ impl InitCommand {
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
-        bun_ast::initialize_store();
         // Arena for JSON parse / Expr building.
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_ast::AstArena::new();
         'read_package_json: {
             if let Some(pkg) = package_json_file.as_ref() {
                 let size: u64 = 'brk: {
@@ -564,9 +563,10 @@ impl InitCommand {
         }
 
         if !did_load_package_json {
-            fields.object = bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
-                .data
-                .e_object();
+            fields.object =
+                bun_ast::Expr::allocate(&bump, bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+                    .data
+                    .e_object();
         }
 
         if !auto_yes {
@@ -744,7 +744,7 @@ impl InitCommand {
 
             // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
             if !minimal && is_type_script_entry_point(&fields.entry_point) {
-                let mut scripts = dependency_map(object, b"scripts");
+                let mut scripts = dependency_map(&bump, object, b"scripts");
                 if scripts.get(b"typecheck").is_none() {
                     // `bun check` runs a `check` script, if there is one.
                     let command: &[u8] = match scripts.get(b"check") {
@@ -760,7 +760,7 @@ impl InitCommand {
             }
 
             if needs_dependencies {
-                let mut dependencies_object = dependency_map(object, b"dependencies");
+                let mut dependencies_object = dependency_map(&bump, object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dependencies[index];
@@ -774,7 +774,7 @@ impl InitCommand {
             }
 
             if needs_dev_dependencies {
-                let mut obj = dependency_map(object, b"devDependencies");
+                let mut obj = dependency_map(&bump, object, b"devDependencies");
                 let mut iter = needed_dev_dependencies.iter_set();
                 while let Some(index) = iter.next() {
                     let dep = &dev_dependencies[index];
@@ -786,7 +786,7 @@ impl InitCommand {
             }
 
             if needs_typescript_dependency {
-                let mut peer_dependencies = dependency_map(object, b"peerDependencies");
+                let mut peer_dependencies = dependency_map(&bump, object, b"peerDependencies");
                 peer_dependencies
                     .data
                     .as_e_object_mut()
@@ -1097,7 +1097,6 @@ impl Assets {
 
 pub(crate) struct PackageJSONFields {
     pub name: Vec<u8>,
-    /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
     pub(crate) entry_point: Vec<u8>,
     pub(crate) private: bool,
@@ -1376,13 +1375,17 @@ impl Template {
     fn write_to_package_json(
         self,
         fields: &mut PackageJSONFields,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
     ) -> Result<(), Error> {
         use bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
         let key: &mut Rope<'_> = crate::cli::cli_arena().alloc(Rope {
-            head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
+            head: bun_ast::Expr::allocate(
+                bump,
+                bun_ast::E::String::init(b"scripts"),
+                bun_ast::Loc::EMPTY,
+            ),
             next: None,
         });
         let mut object = fields.object.unwrap();
@@ -1924,11 +1927,17 @@ fn exists(path: &[u8]) -> bool {
 /// key is absent or holds a value that is not an object (a string, an array,
 /// `null`). The caller `put`s the result back under `key`, which replaces a
 /// non-object value.
-fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Expr {
+fn dependency_map(
+    bump: &bun_ast::AstArena,
+    package_json: &bun_ast::E::Object,
+    key: &[u8],
+) -> bun_ast::Expr {
     package_json
         .get(key)
         .filter(|value| value.data.is_e_object())
-        .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+        .unwrap_or_else(|| {
+            bun_ast::Expr::allocate(bump, bun_ast::E::Object::default(), bun_ast::Loc::EMPTY)
+        })
 }
 
 fn is_type_script_entry_point(entry_point: &[u8]) -> bool {

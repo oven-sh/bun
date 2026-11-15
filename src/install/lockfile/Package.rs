@@ -10,7 +10,7 @@ use bun_semver::semver_query::Wildcard;
 use bun_semver::version::VersionInt;
 use bun_semver::{self as semver, ExternalString, String, Version as SemverVersion};
 
-use crate::bun_json::{E, Expr, ExprData};
+use crate::bun_json::{E, Expr, JsonView};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
 use crate::lockfile_real as lockfile;
 use crate::lockfile_real::{
@@ -22,7 +22,7 @@ use crate::versioned_url::VersionedURLType;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
     Npm, PackageID, PackageManager, PackageNameHash, TruncatedPackageNameHash, bin,
-    default_trusted_dependencies, dependency, initialize_store, invalid_package_id,
+    default_trusted_dependencies, dependency, invalid_package_id,
 };
 
 #[path = "Package/Meta.rs"]
@@ -38,19 +38,6 @@ pub use workspace_map as WorkspaceMap;
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-trait ExprStr {
-    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]>;
-}
-impl ExprStr for Expr {
-    #[inline]
-    fn as_utf8<'b>(&self, bump: &'b bun_alloc::Arena) -> Option<&'b [u8]> {
-        if let ExprData::EString(s) = &self.data {
-            return Some(s.string(bump).expect("OOM"));
-        }
-        None
-    }
-}
-
 #[derive(Clone)]
 enum JsonObjectStringRows<'a> {
     Classic(
@@ -61,11 +48,12 @@ enum JsonObjectStringRows<'a> {
 }
 
 impl<'a> JsonObjectStringRows<'a> {
-    fn new(expr: &'a Expr, bump: &'a bun_alloc::Arena) -> Option<Self> {
-        match &expr.data {
-            ExprData::EObject(obj) => Some(Self::Classic(obj.properties.slice().iter(), bump)),
-            ExprData::EObjectJSON(obj) => Some(Self::Json(obj.get().properties().iter())),
-            _ => None,
+    fn new(expr: JsonView<'a>, bump: &'a bun_alloc::Arena) -> Option<Self> {
+        match expr.as_e_object_json() {
+            Some(obj) => Some(Self::Json(obj.properties().iter())),
+            None => expr
+                .as_e_object()
+                .map(|obj| Self::Classic(obj.properties.slice().iter(), bump)),
         }
     }
 
@@ -85,10 +73,10 @@ impl<'a> Iterator for JsonObjectStringRows<'a> {
             Self::Classic(iter, bump) => {
                 let prop = iter.next()?;
                 let key = prop.key?;
-                let key_bytes = key.as_utf8(*bump)?;
+                let key_bytes = key.as_string(*bump)?;
                 Some((
                     key_bytes,
-                    prop.value.as_ref().and_then(|v| v.as_utf8(*bump)),
+                    prop.value.as_ref().and_then(|v| v.as_string(*bump)),
                     key.loc,
                 ))
             }
@@ -107,10 +95,11 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
 /// Finds `"name"` in the file on disk. The cached tree can be of an edit that is not written.
 fn name_range_on_disk(source: &bun_ast::Source) -> bun_ast::Range {
     let log = bun_ast::Log::init();
-    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(source, &log) else {
+    let arena = bun_ast::AstArena::new();
+    let Ok(json) = crate::bun_json::ParsedJson::parse_package_json(source, &log, &arena) else {
         return bun_ast::Range::NONE;
     };
-    match json.root.as_property(b"name") {
+    match json.root().as_property(b"name") {
         Some(name) => source.range_of_string(value_loc_of(source, name.loc)),
         None => bun_ast::Range::NONE,
     }
@@ -181,21 +170,21 @@ pub(crate) fn parse_append_trusted_dependencies(
     trusted_dependencies: &mut Option<TrustedDependenciesSet>,
     log: &bun_ast::Log,
     source: &bun_ast::Source,
-    json: Expr,
+    json: JsonView<'_>,
     bump: &bun_alloc::Arena,
 ) -> crate::Result<()> {
     let Some(q) = json.as_property(b"trustedDependencies") else {
         return Ok(());
     };
-    let count = match &q.expr.data {
-        ExprData::EArray(arr) => arr.items.len_u32() as usize,
-        ExprData::EArrayJSON(arr) => arr.get().items().len(),
+    let count = match (q.value.as_e_array(), q.value.as_e_array_json()) {
+        (Some(arr), _) => arr.items.len(),
+        (_, Some(arr)) => arr.items().len(),
         _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
     };
     let trusted = trusted_dependencies.get_or_insert_with(Default::default);
     trusted.ensure_unused_capacity(count)?;
-    if let Some(mut items) = q.expr.as_array() {
-        while let Some(item) = items.next() {
+    if let Some(items) = q.value.as_array() {
+        for item in items {
             let Some(name) = item.as_string(bump) else {
                 return Err(invalid_trusted_dependencies(log, source, q.loc));
             };
@@ -218,7 +207,7 @@ pub(crate) fn append_patched_dependencies(
     let Some(q) = json.as_property(b"patchedDependencies") else {
         return Ok(());
     };
-    for (key, value, _) in JsonObjectStringRows::new(&q.expr, bump)
+    for (key, value, _) in JsonObjectStringRows::new(JsonView::from(&q.expr), bump)
         .into_iter()
         .flatten()
     {
@@ -297,13 +286,13 @@ pub trait ResolverContext {
     }
 
     /// Counts strings to be appended by `resolve`.
-    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: &Expr) {}
+    fn count(&mut self, _builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {}
 
     /// Produces the package's `Resolution`. Only called when `!is_void()`.
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        json: &Expr,
+        json: JsonView<'_>,
     ) -> crate::Result<ResolutionType<u64>>;
 
     /// Name to store when the package.json has no name, or has one that is not safe to use as a
@@ -321,7 +310,7 @@ impl ResolverContext for () {
     fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
-        _json: &Expr,
+        _json: JsonView<'_>,
     ) -> crate::Result<ResolutionType<u64>> {
         Ok(ResolutionType::default())
     }
@@ -1389,7 +1378,7 @@ impl Diff {
                         pm,
                         log,
                         source_ref.get(),
-                        json_root,
+                        JsonView::from(&json_root),
                         &mut (),
                         Features::WORKSPACE,
                     )?;
@@ -1780,7 +1769,7 @@ impl Diff {
         let bump = bun_alloc::Arena::new();
         (entry.root.get(group))
             .and_then(|rows| rows.get(dep.name.slice(buf)))
-            .and_then(|written| written.as_utf8(&bump))
+            .and_then(|written| written.as_string(&bump))
             .is_some_and(|written| {
                 dependency::trim_literal(written)
                     == dependency::trim_literal(dep.version.literal.slice(buf))
@@ -2011,8 +2000,8 @@ impl Package<u64> {
         resolver: &mut R,
         features: Features,
     ) -> crate::Result<()> {
-        initialize_store();
-        let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log) {
+        let arena = bun_ast::AstArena::new();
+        let parsed = match crate::bun_json::ParsedJson::parse_package_json(source, log, &arena) {
             Ok(p) => p,
             Err(err) => {
                 let _ = log.print(Output::error_writer());
@@ -2025,7 +2014,7 @@ impl Package<u64> {
             }
         };
 
-        self.parse_with_json(lockfile, pm, log, source, parsed.root, resolver, features)
+        self.parse_with_json(lockfile, pm, log, source, parsed.root(), resolver, features)
     }
 
     /// Borrow-splitting bridge for `processDependencyList`, with `Features::NPM`. Borrowck
@@ -2497,7 +2486,7 @@ impl Package<u64> {
         pm: &mut PackageManager,
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        json: Expr,
+        json: JsonView<'_>,
         resolver: &mut dyn ResolverContext,
         features: Features,
     ) -> crate::Result<()> {
@@ -2521,7 +2510,7 @@ impl Package<u64> {
         // -- Count the sizes
         let name: &[u8] = 'name: {
             if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8(&bump) {
+                if let Some(name) = name_q.value.as_string(&bump) {
                     if !name.is_empty() {
                         // Non-root names become bun.lock `packages` keys, read back only if safe.
                         if FEATURES.is_main || dependency::is_safe_lockfile_package_name(name) {
@@ -2553,7 +2542,7 @@ impl Package<u64> {
 
         if FEATURES.patched_dependencies {
             if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(patched_deps.value, &bump) {
                     for (_, value, _) in rows {
                         if let Some(value) = value {
                             string_builder.count(value);
@@ -2565,14 +2554,14 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if let Some(version_q) = json.as_property(b"version") {
-                if let Some(version_str) = version_q.expr.as_utf8(&bump) {
+                if let Some(version_str) = version_q.value.as_string(&bump) {
                     string_builder.count(version_str);
                 }
             }
         }
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(bin.value, &bump) {
                     for (k, v, _) in rows {
                         let Some(v) = v else {
                             continue;
@@ -2582,8 +2571,8 @@ impl Package<u64> {
                     }
                     break 'bin;
                 }
-                if bin.expr.is_string() {
-                    if let Some(str_) = bin.expr.as_utf8(&bump) {
+                if bin.value.is_string() {
+                    if let Some(str_) = bin.value.as_string(&bump) {
                         // The build pass reads `directories.bin` when `bin` is empty.
                         if !str_.is_empty() {
                             string_builder.count(str_);
@@ -2594,8 +2583,8 @@ impl Package<u64> {
             }
 
             if let Some(dirs) = json.as_property(b"directories") {
-                if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                    if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
+                if let Some(bin_prop) = dirs.value.as_property(b"bin") {
+                    if let Some(str_) = bin_prop.value.as_string(&bump) {
                         string_builder.count(str_);
                         break 'bin;
                     }
@@ -2606,7 +2595,7 @@ impl Package<u64> {
         Scripts::parse_count(&mut string_builder, json);
 
         if !resolver.is_void() {
-            resolver.count(&mut string_builder, &json);
+            resolver.count(&mut string_builder, json);
         }
 
         let dependency_groups: Vec<DependencyGroup> = {
@@ -2645,17 +2634,14 @@ impl Package<u64> {
         if FEATURES.peer_dependencies {
             if let Some(peer_dependencies_meta) = json.as_property(b"peerDependenciesMeta") {
                 optional_peer_dependencies
-                    .ensure_unused_capacity(peer_dependencies_meta.expr.property_count())?;
+                    .ensure_unused_capacity(peer_dependencies_meta.value.property_count())?;
                 peer_dependencies_meta
-                    .expr
+                    .value
                     .for_each_property(|key, _key_loc, meta| {
                         let Some(optional) = meta.as_property(b"optional") else {
                             return;
                         };
-                        if !matches!(
-                            &optional.expr.data,
-                            ExprData::EBoolean(b) if b.value
-                        ) {
+                        if optional.value.as_bool() != Some(true) {
                             return;
                         }
 
@@ -2681,7 +2667,7 @@ impl Package<u64> {
         for group in &dependency_groups {
             if let Some(dependencies_q) = json.as_property(group.prop) {
                 'brk: {
-                    if dependencies_q.expr.is_array() {
+                    if dependencies_q.value.is_array() {
                         if !group.behavior.is_workspace() {
                             let _ = bun_ast::add_error_pretty!(
                                 log,
@@ -2692,8 +2678,8 @@ impl Package<u64> {
                             );
                             return Err(crate::Error::InvalidPackageJSON);
                         }
-                        let arr = workspace_map::NamesArray::from_expr(
-                            &dependencies_q.expr,
+                        let arr = workspace_map::NamesArray::from_json(
+                            dependencies_q.value,
                             value_loc_of(source, dependencies_q.loc),
                         )
                         .expect("is_array was checked above");
@@ -2709,7 +2695,7 @@ impl Package<u64> {
                         break 'brk;
                     }
 
-                    if let Some(rows) = JsonObjectStringRows::new(&dependencies_q.expr, &bump) {
+                    if let Some(rows) = JsonObjectStringRows::new(dependencies_q.value, &bump) {
                         if group.behavior.is_workspace() {
                             // yarn workspaces expects a "workspaces" property shaped like this:
                             //
@@ -2720,15 +2706,14 @@ impl Package<u64> {
                             //    }
                             //
                             if let Some(packages_query) =
-                                dependencies_q.expr.as_property(b"packages")
+                                dependencies_q.value.as_property(b"packages")
                             {
-                                let packages_expr = packages_query.expr;
-                                let packages_loc =
-                                    if matches!(dependencies_q.expr.data, ExprData::EObject(_)) {
-                                        packages_expr.loc
-                                    } else {
-                                        value_loc_of(source, packages_query.loc)
-                                    };
+                                let packages_expr = packages_query.value;
+                                let packages_loc = if dependencies_q.value.as_e_object().is_some() {
+                                    packages_expr.loc
+                                } else {
+                                    value_loc_of(source, packages_query.loc)
+                                };
                                 if !packages_expr.is_array() {
                                     let _ = log.add_error_fmt(
                                         source,
@@ -2739,8 +2724,8 @@ impl Package<u64> {
                                     );
                                     return Err(crate::Error::InvalidPackageJSON);
                                 }
-                                let packages_arr = workspace_map::NamesArray::from_expr(
-                                    &packages_expr,
+                                let packages_arr = workspace_map::NamesArray::from_json(
+                                    packages_expr,
                                     packages_loc,
                                 )
                                 .expect("is_array was checked above");
@@ -2757,11 +2742,11 @@ impl Package<u64> {
                             // "workspaces": { "selfContained": ["apps/desktop"] } — workspaces
                             // (by path or name) whose node_modules must be complete and
                             // physical; see docs/pm/workspaces.mdx.
-                            if let Some(q) = dependencies_q.expr.as_property(b"selfContained") {
-                                if !q.expr.is_array() {
+                            if let Some(q) = dependencies_q.value.as_property(b"selfContained") {
+                                if !q.value.is_array() {
                                     let _ = log.add_error_fmt(
                                         source,
-                                        q.expr.loc,
+                                        q.value.loc,
                                         format_args!(
                                             "\"workspaces.selfContained\" expects an array of workspace paths or names"
                                         ),
@@ -2769,8 +2754,8 @@ impl Package<u64> {
                                     return Err(crate::Error::InvalidPackageJSON);
                                 }
                                 let mut owned: Vec<Vec<u8>> = Vec::new();
-                                if let Some(mut items) = q.expr.as_array() {
-                                    while let Some(item) = items.next() {
+                                if let Some(items) = q.value.as_array() {
+                                    for item in items {
                                         let Some(s) = item.as_string(&bump) else {
                                             let _ = log.add_error_fmt(
                                                 source,
@@ -2788,7 +2773,7 @@ impl Package<u64> {
                                 for unmatched in workspace_names.mark_self_contained(&list) {
                                     log.add_warning_fmt(
                                         Some(source),
-                                        q.expr.loc,
+                                        q.value.loc,
                                         format_args!(
                                             "\"workspaces.selfContained\": \"{}\" does not match any workspace path or name",
                                             bun_core::fmt::EscapeControlChars(bstr::BStr::new(
@@ -2884,11 +2869,11 @@ impl Package<u64> {
             // might process them later if no catalogs were found in workspaces
             lockfile.catalogs.parse_count(json, &mut string_builder);
 
-            lockfile.package_extensions.parse(log, source, &json);
+            lockfile.package_extensions.parse(log, source, json);
 
             install::postinstall_optimizer::PostinstallOptimizer::from_package_json(
                 &mut pm.postinstall_optimizer,
-                &json,
+                json,
             )?;
         }
 
@@ -2918,7 +2903,7 @@ impl Package<u64> {
 
         if !FEATURES.is_main {
             if !resolver.is_void() {
-                self.resolution = resolver.resolve(&mut string_builder, &json)?;
+                self.resolution = resolver.resolve(&mut string_builder, json)?;
             }
         } else {
             self.resolution = Resolution::<u64>::init(TaggedValue::Root);
@@ -2926,7 +2911,7 @@ impl Package<u64> {
 
         if FEATURES.patched_dependencies {
             if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
-                if let Some(rows) = JsonObjectStringRows::new(&patched_deps.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(patched_deps.value, &bump) {
                     lockfile
                         .patched_dependencies
                         .ensure_total_capacity(rows.len())
@@ -2952,7 +2937,7 @@ impl Package<u64> {
 
         'bin: {
             if let Some(bin) = json.as_property(b"bin") {
-                if let Some(rows) = JsonObjectStringRows::new(&bin.expr, &bump) {
+                if let Some(rows) = JsonObjectStringRows::new(bin.value, &bump) {
                     // npm (normalize-package-bin) skips an entry whose value is not a string.
                     let mut entries = rows.filter_map(|(k, v, _)| Some((k, v?)));
                     match entries.clone().count() {
@@ -2999,13 +2984,11 @@ impl Package<u64> {
 
                     break 'bin;
                 }
-                if let ExprData::EString(stri) = &bin.expr.data {
-                    if !stri.data.is_empty() {
+                if let Some(stri) = bin.value.as_utf8_string_literal() {
+                    if !stri.is_empty() {
                         self.bin = Bin {
                             tag: bin::Tag::File,
-                            value: bin::Value::init_file(
-                                string_builder.append::<String>(&stri.data),
-                            ),
+                            value: bin::Value::init_file(string_builder.append::<String>(stri)),
                             ..Default::default()
                         };
                         break 'bin;
@@ -3021,8 +3004,8 @@ impl Package<u64> {
                 // specify individual files, use bin, and for all
                 // the files in an existing bin directory, use
                 // directories.bin.
-                if let Some(bin_prop) = dirs.expr.as_property(b"bin") {
-                    if let Some(str_) = bin_prop.expr.as_utf8(&bump) {
+                if let Some(bin_prop) = dirs.value.as_property(b"bin") {
+                    if let Some(str_) = bin_prop.value.as_string(&bump) {
                         if !str_.is_empty() {
                             self.bin = Bin {
                                 tag: bin::Tag::Dir,
@@ -3065,13 +3048,13 @@ impl Package<u64> {
                 .get(b"bundleDependencies")
                 .or_else(|| json.get(b"bundledDependencies"))
             {
-                match &bundled_deps_expr.data {
-                    ExprData::EBoolean(boolean) => {
-                        bundle_all_deps = boolean.value;
+                match bundled_deps_expr.as_bool() {
+                    Some(boolean) => {
+                        bundle_all_deps = boolean;
                     }
-                    _ => {
-                        if let Some(mut items) = bundled_deps_expr.as_array() {
-                            while let Some(item) = items.next() {
+                    None => {
+                        if let Some(items) = bundled_deps_expr.as_array() {
+                            for item in items {
                                 let Some(s) = item.as_string(&bump) else {
                                     continue;
                                 };
@@ -3085,7 +3068,7 @@ impl Package<u64> {
 
         if FEATURES.is_main {
             pm.workspace_root_name_hash = self.name_hash;
-            let version = json.get(b"version").and_then(|v| v.as_utf8(&bump));
+            let version = json.get(b"version").and_then(|v| v.as_string(&bump));
             pm.workspace_root_version = version.unwrap_or_default().into();
         }
 
@@ -3264,7 +3247,7 @@ impl Package<u64> {
                 }
             } else {
                 if let Some(dependencies_q) = json.as_property(group.prop) {
-                    let rows = JsonObjectStringRows::new(&dependencies_q.expr, &bump)
+                    let rows = JsonObjectStringRows::new(dependencies_q.value, &bump)
                         .expect("validated above: a dependency group is an object");
                     for (key, version, key_loc) in rows {
                         let external_name = string_builder.append::<ExternalString>(key);
@@ -3407,7 +3390,7 @@ impl Package<u64> {
                 string_builder.string_bytes.as_slice(),
                 log,
                 source,
-                &json,
+                json,
                 has_workspaces,
             );
         }

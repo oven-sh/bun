@@ -441,9 +441,8 @@ struct PackageManifest {
 }
 
 fn parse_manifest(directory: &[u8], package_json: &[u8], contents: &[u8]) -> PackageManifest {
-    bun_ast::initialize_store();
     let source = bun_ast::Source::init_path_string(package_json, contents);
-    let (log, arena) = (bun_ast::Log::init(), bun_alloc::Arena::new());
+    let (log, arena) = (bun_ast::Log::init(), bun_ast::AstArena::new());
     let root =
         bun_parsers::json::parse_package_json_utf8(&source, &log, &arena).unwrap_or_default();
     let string_member = |name: &[u8]| -> Option<Vec<u8>> {

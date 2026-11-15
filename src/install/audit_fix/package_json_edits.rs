@@ -175,7 +175,6 @@ fn apply_to_target(
 ) -> crate::Result<()> {
     let root = fetch_entry_root(manager, target);
     {
-        let _guard = bun_ast::expr::Disabler::scope();
         let arena = &manager.ast_arena;
         for edit in edits {
             match &edit.site {
@@ -206,7 +205,7 @@ fn apply_to_target(
     Ok(())
 }
 
-fn rewrite_property(arena: &bun_alloc::Arena, object: &mut Expr, edit: &PackageJsonEdit) {
+fn rewrite_property(arena: &bun_ast::AstArena, object: &mut Expr, edit: &PackageJsonEdit) {
     let Some(object) = object.data.e_object_mut() else {
         return;
     };
@@ -220,7 +219,7 @@ fn rewrite_property(arena: &bun_alloc::Arena, object: &mut Expr, edit: &PackageJ
     }
 }
 
-fn rewrite_value(arena: &bun_alloc::Arena, value: &mut Option<Expr>, edit: &PackageJsonEdit) {
+fn rewrite_value(arena: &bun_ast::AstArena, value: &mut Option<Expr>, edit: &PackageJsonEdit) {
     let Some(literal) = value.as_ref().and_then(Expr::as_utf8_string_literal) else {
         return;
     };
@@ -260,9 +259,10 @@ fn for_each_override_value(
     selector: &OverrideSelector,
     mut f: impl FnMut(&mut Option<Expr>),
 ) {
-    if let Some((field, rules)) = Field::of(root) {
+    if let Some((field, _)) = Field::of(bun_ast::JsonView::from(root))
+        && let Some(mut rules) = root.get(field.json_name().as_bytes())
+    {
         let nested = field == Field::Overrides;
-        let mut rules = rules.expr;
         let Some(object) = rules.data.e_object_mut() else {
             return;
         };

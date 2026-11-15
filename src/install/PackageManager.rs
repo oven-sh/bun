@@ -207,7 +207,7 @@ use crate::resolvers::folder_resolver::{
 use bun_install::lockfile::{self, Lockfile};
 use bun_install::{
     DependencyID, NetworkTask, PackageID, PackageManifestMap, PackageNameAndVersionHash,
-    PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext, initialize_store,
+    PackageNameHash, PatchTask, PreinstallState, TaskCallbackContext,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -497,12 +497,8 @@ pub(crate) static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
 
 pub struct PackageManager {
     pub root_dir: &'static fs::DirEntry,
-    // allocator dropped per §Allocators (was `bun.default_allocator`). For the
-    // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
-    // — i.e. nodes that must outlive `Expr.Data.Store.reset()` across workspace
-    // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
-    // this arena has process lifetime.
-    pub(crate) ast_arena: bun_alloc::Arena,
+    /// Holds the nodes that edits add to a package.json. Never reset: the manager is a leaked singleton.
+    pub(crate) ast_arena: bun_ast::AstArena,
     /// `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
     log: SyncView<&'static bun_ast::Log>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
@@ -1439,7 +1435,7 @@ fn allocate_package_manager(
         wr!(retry_queue, Default::default());
         wr!(log, SyncView::new(log));
         wr!(root_dir, root_dir);
-        wr!(ast_arena, bun_alloc::Arena::new());
+        wr!(ast_arena, bun_ast::AstArena::new());
         wr!(env, Some(bun_ptr::BackRef::new_mut(env)));
         wr!(lockfile, Box::new(Lockfile::default()));
         wr!(
@@ -1757,7 +1753,6 @@ pub fn config_ignores_scripts(
     if let Some(ignore_scripts) = bunfig.ignore_scripts {
         return Ok(ignore_scripts);
     }
-    initialize_store();
     let npmrc = load_npmrc_files(
         bunfig,
         env,
@@ -1778,7 +1773,6 @@ pub fn user_cache_directory(env: &dot_env::Loader, cwd: &[u8]) -> Option<Box<[u8
     if bunfig.cache_directory.is_some() {
         return bunfig.cache_directory;
     }
-    initialize_store();
     let diagnostics = ini::NpmrcDiagnostics::Discard;
     load_npmrc_files(&bunfig, env, cwd, &mut core::iter::empty(), diagnostics).cache_directory
 }
@@ -1923,17 +1917,11 @@ fn find_workspace_root_above<'a>(
         // Keep the path that was opened. The real path of the file descriptor may be on another
         // drive or outside the project.
         let json_source = bun_ast::Source::init_path_string(&walk.path, &json_buf[..json_len]);
-        initialize_store();
-        let parsed = crate::bun_json::ParsedJson::parse_package_json(&json_source, log)?;
-        let json = parsed.root;
+        let arena = bun_ast::AstArena::new();
+        let parsed = crate::bun_json::ParsedJson::parse_package_json(&json_source, log, &arena)?;
+        let json = parsed.root();
         if let Some(last_name) = last_name.as_deref_mut() {
-            if let Some(name) = json.get(b"name").and_then(|e| {
-                if let bun_ast::ExprData::EString(s) = &e.data {
-                    Some(s.data.slice())
-                } else {
-                    None
-                }
-            }) {
+            if let Some(name) = json.get(b"name").and_then(|e| e.as_utf8_string_literal()) {
                 *last_name = Box::<[u8]>::from(name);
             }
         }
@@ -1941,11 +1929,11 @@ fn find_workspace_root_above<'a>(
         if let Some(prop) = json.as_property(b"workspaces") {
             let value_loc = crate::bun_json::property_value_loc(&json_source.contents, prop.loc)
                 .unwrap_or(prop.loc);
-            let names = match &prop.expr.data {
-                bun_ast::ExprData::EArrayJSON(arr) => Some(
+            let names = match prop.value.as_json_value() {
+                Some(bun_ast::E::JsonValue::Array(arr)) => Some(
                     Package::WorkspaceMap::NamesArray::Immutable(arr.get(), value_loc),
                 ),
-                bun_ast::ExprData::EObjectJSON(obj) => obj
+                Some(bun_ast::E::JsonValue::Object(obj)) => obj
                     .get()
                     .properties()
                     .iter()
@@ -2121,7 +2109,6 @@ fn find_project<'a>(
 
 /// [`find_project`] for `bunx`, which has no `PackageManager`.
 pub fn project_directory(cwd: &[u8]) -> Option<&[u8]> {
-    initialize_store();
     find_project(
         without_trailing_slash_windows_path(cwd),
         &mut WorkspacePackageJSONCache::default(),
@@ -2218,9 +2205,7 @@ pub fn init(
     let original_cwd: &[u8] = &original_cwd_clone;
 
     let mut workspace_names = Package::WorkspaceMap::WorkspaceMap::init();
-    let mut workspace_package_json_cache = WorkspacePackageJSONCache {
-        map: Default::default(),
-    };
+    let mut workspace_package_json_cache = WorkspacePackageJSONCache::default();
 
     let mut workspace_name_hash: Option<PackageNameHash> = None;
     let mut root_package_json_name_at_time_of_init: Box<[u8]> = Box::default();
@@ -2434,8 +2419,6 @@ pub fn init(
     // security scanner get a copy of this map.
     env.map.remove(b"BUN_INTERNAL_BUNX_INSTALL");
     env.map.remove(b"BUN_INTERNAL_BUNX_HAS_COPY");
-
-    initialize_store();
 
     {
         // npmrc < bunfig < CLI
@@ -2966,7 +2949,7 @@ fn parse_runtime_root(
             manager,
             &parse_log,
             &source,
-            json,
+            bun_ast::JsonView::from(&json),
             &mut (),
             bun_install::Features {
                 is_main: true,

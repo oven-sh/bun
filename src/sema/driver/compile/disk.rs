@@ -49,12 +49,12 @@ impl Disk {
 }
 
 impl CodeHost for Disk {
-    fn parse_runtime_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        parse_runtime_package_json(arena, text)
+    fn parse_runtime_package_json(&self, text: &[u8]) -> Option<Json> {
+        parse_runtime_package_json(text)
     }
 
-    fn parse_runtime_tsconfig(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        parse_runtime_tsconfig(arena, text)
+    fn parse_runtime_tsconfig(&self, text: &[u8]) -> Option<Json> {
+        parse_runtime_tsconfig(text)
     }
 
     fn parse_code<'s>(

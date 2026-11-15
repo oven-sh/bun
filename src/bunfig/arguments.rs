@@ -116,10 +116,6 @@ fn load_bunfig(
             }
         };
 
-    bun_ast::stmt::data::Store::create();
-    bun_ast::expr::data::Store::create();
-    let _store_reset = bun_ast::StoreResetGuard::new();
-
     let log = ctx.log();
     let _restore = RestoreLogLevel {
         log,

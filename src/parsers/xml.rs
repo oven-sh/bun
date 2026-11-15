@@ -28,7 +28,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
+use bun_ast::{self as ast, AstArena, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::vec::BorrowedBuf;
 use bun_core::{StackCheck, strings};
@@ -82,7 +82,7 @@ impl XML {
     pub fn parse<'a>(
         source: &'a Source<'a>,
         log: &Log,
-        bump: &'a Bump,
+        bump: &'a AstArena,
         options: Options,
     ) -> crate::Result<Expr> {
         let contents: &'a [u8] = source.contents.as_ref();
@@ -96,7 +96,7 @@ impl XML {
         source: &'a Source<'a>,
         units: &'a [u16],
         log: &Log,
-        bump: &'a Bump,
+        bump: &'a AstArena,
         mut options: Options,
     ) -> crate::Result<Expr> {
         options.encoding = InputEncoding::Text;
@@ -107,7 +107,7 @@ impl XML {
         source: &'a Source<'a>,
         contents: &'a [U],
         log: &Log,
-        bump: &'a Bump,
+        bump: &'a AstArena,
         options: Options,
     ) -> crate::Result<Expr> {
         source.check_parseable_len(log, "XML document")?;
@@ -2502,7 +2502,7 @@ impl<T: Copy> Rows<T> {
 /// the tape, so they can only be appended once all of them are known).
 struct Tape<'a> {
     tape: core::ptr::NonNull<E::JsonTape>,
-    bump: &'a Bump,
+    bump: &'a AstArena,
     props: Rows<E::PropertyJSON>,
     items: Rows<E::JsonValue>,
     /// `{}` and `[]` are immutable and carry no data, so one row of each
@@ -2512,8 +2512,8 @@ struct Tape<'a> {
 }
 
 impl<'a> Tape<'a> {
-    fn new_in(bump: &'a Bump, source_len: usize) -> Self {
-        let alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(bump));
+    fn new_in(bump: &'a AstArena, source_len: usize) -> Self {
+        let alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(bump.heap()));
         let tape = bump.alloc(E::JsonTape::empty_in(alloc));
         // A first guess so typical documents do not regrow the tape (each
         // growth step copies it); bounded so a huge text-heavy input does
@@ -2575,10 +2575,7 @@ impl<'a> Tape<'a> {
         self.props.truncate(mark);
         // SAFETY: as above — the tape's own pointer, and it outlives the node.
         let object = unsafe { E::ObjectJSON::new(self.tape, first, count, false, loc) };
-        let Data::EObjectJSON(row) = Expr::init(object, loc).data else {
-            unreachable!()
-        };
-        row
+        self.bump.alloc_node(object)
     }
 
     /// Moves the items staged since `mark` to the tape as one array.
@@ -2588,17 +2585,18 @@ impl<'a> Tape<'a> {
             if let Some(empty) = self.empty_array {
                 return empty;
             }
-            let row = Self::array_of(self.tape, &[], &[], loc);
+            let row = Self::array_of(self.bump, self.tape, &[], &[], loc);
             self.empty_array = Some(row);
             return row;
         }
         let (items, locs) = self.items.columns(mark..self.items.len());
-        let row = Self::array_of(self.tape, items, locs, loc);
+        let row = Self::array_of(self.bump, self.tape, items, locs, loc);
         self.items.truncate(mark);
         row
     }
 
     fn array_of(
+        bump: &AstArena,
         mut tape: core::ptr::NonNull<E::JsonTape>,
         items: &[E::JsonValue],
         locs: &[Loc],
@@ -2608,10 +2606,7 @@ impl<'a> Tape<'a> {
         let (first, count) = unsafe { tape.as_mut() }.append_items(items, locs);
         // SAFETY: see `object_from`.
         let array = unsafe { E::ArrayJSON::new(tape, first, count, false, loc) };
-        let Data::EArrayJSON(row) = Expr::init(array, loc).data else {
-            unreachable!()
-        };
-        row
+        bump.alloc_node(array)
     }
 
     fn root(object: StoreRef<E::ObjectJSON>, loc: Loc) -> Expr {
@@ -2843,8 +2838,13 @@ impl<'a, U: Unit> CompactSink<'a, U> {
             if g.count > 1 {
                 let run = (g.cursor - g.count) as usize..g.cursor as usize;
                 let (values, locs) = self.gathered.columns(run);
-                prop.value =
-                    E::JsonValue::Array(Tape::array_of(self.tape.tape, values, locs, prop.key_loc));
+                prop.value = E::JsonValue::Array(Tape::array_of(
+                    self.tape.bump,
+                    self.tape.tape,
+                    values,
+                    locs,
+                    prop.key_loc,
+                ));
             }
             self.tape.props.set(mark + slot, prop, prop.key_loc);
         }

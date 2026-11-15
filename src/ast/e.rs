@@ -9,7 +9,7 @@ use bun_alloc::AllocError;
 use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
-use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
+use crate::{AstArena, Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
 // AST string fields are arena-owned (bulk-freed via Store/arena reset; never
@@ -1331,18 +1331,24 @@ impl Object {
     }
 
     pub fn as_property(&self, name: &[u8]) -> Option<crate::expr::Query> {
+        let (i, key, value) = self.find_property(name)?;
+        Some(crate::expr::Query {
+            expr: *value,
+            loc: key.loc,
+            i: i as u32,
+        })
+    }
+
+    /// `(index, key, value)`.
+    pub(crate) fn find_property(&self, name: &[u8]) -> Option<(usize, &Expr, &Expr)> {
         for (i, prop) in self.properties.slice().iter().enumerate() {
-            let Some(value) = prop.value else { continue };
+            let Some(value) = &prop.value else { continue };
             let Some(key) = &prop.key else { continue };
             let crate::expr::Data::EString(key_str) = &key.data else {
                 continue;
             };
             if key_str.eql_bytes(name) {
-                return Some(crate::expr::Query {
-                    expr: value,
-                    loc: key.loc,
-                    i: i as u32,
-                });
+                return Some((i, key, value));
             }
         }
         None
@@ -1361,7 +1367,7 @@ impl Object {
         false
     }
 
-    pub fn put(&mut self, bump: &Bump, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+    pub fn put(&mut self, bump: &AstArena, key: &[u8], expr: Expr) -> Result<(), AllocError> {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
@@ -1379,7 +1385,12 @@ impl Object {
         Ok(())
     }
 
-    pub fn put_string(&mut self, bump: &Bump, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
+    pub fn put_string(
+        &mut self,
+        bump: &AstArena,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<(), AllocError> {
         self.put(
             bump,
             key,
@@ -1389,7 +1400,11 @@ impl Object {
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
     /// the leaf `E.Object` expression.
-    pub fn get_or_put_object(&mut self, rope: &Rope<'_>, _bump: &Bump) -> Result<Expr, SetError> {
+    pub fn get_or_put_object(
+        &mut self,
+        rope: &Rope<'_>,
+        bump: &AstArena,
+    ) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1402,7 +1417,7 @@ impl Object {
                     };
                     if let Some(last) = array.items.last() {
                         if let crate::expr::Data::EObject(mut obj) = last.data {
-                            return obj.get_or_put_object(next, _bump);
+                            return obj.get_or_put_object(next, bump);
                         }
                         return Err(SetError::Clobber);
                     }
@@ -1410,7 +1425,7 @@ impl Object {
                 }
                 crate::expr::Data::EObject(mut object) => {
                     if let Some(next) = rope.next.as_deref() {
-                        return object.get_or_put_object(next, _bump);
+                        return object.get_or_put_object(next, bump);
                     }
                     return Ok(existing);
                 }
@@ -1419,9 +1434,9 @@ impl Object {
         }
 
         if let Some(next) = rope.next.as_deref() {
-            let obj = Expr::init(Object::default(), rope.head.loc);
+            let obj = Expr::allocate(bump, Object::default(), rope.head.loc);
             let out = match obj.data {
-                crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, _bump)?,
+                crate::expr::Data::EObject(mut o) => o.get_or_put_object(next, bump)?,
                 _ => unreachable!(),
             };
             VecExt::append(
@@ -1436,7 +1451,7 @@ impl Object {
             return Ok(out);
         }
 
-        let out = Expr::init(Object::default(), rope.head.loc);
+        let out = Expr::allocate(bump, Object::default(), rope.head.loc);
         VecExt::append(
             &mut self.properties,
             G::Property {

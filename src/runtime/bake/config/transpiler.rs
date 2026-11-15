@@ -2,7 +2,7 @@
 
 use super::{BuildConfigSubset, Framework};
 use crate::bake::{Graph, Mode, Side, dev_server};
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_options_types::schema as bun_schema;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ impl Framework {
     /// `bundler_view` is [`Self::as_bundler_view`].
     pub(crate) fn init_transpiler<'a>(
         &self,
-        arena: &'a Arena,
+        arena: &'a AstArena,
         log: &'a bun_ast::Log,
         mode: Mode,
         renderer: Graph,

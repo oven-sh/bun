@@ -59,7 +59,7 @@ pub struct AotBuildRequest<'r, 'a> {
     pub outfile: Option<&'r [u8]>,
     /// The real path of the file that the executable replaces, if any.
     pub replaced_file: Option<&'r [u8]>,
-    pub arena: &'a bun_alloc::Arena,
+    pub arena: &'a bun_ast::AstArena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
     pub plugins: Option<PluginSetup<'a>>,

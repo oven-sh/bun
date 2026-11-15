@@ -1,8 +1,8 @@
 //! Throughput benchmark for the XML parser against other Rust and C/C++ parsers.
 //! Run via `scripts/bench-json-rust.sh --xml [criterion args]`. Fixtures: every `*.xml` / `*.svg` in
 //! `$BUN_XML_BENCH_FIXTURES` (default `bench/xml-corpus/`), plus built-in synthetic documents.
-use bun_alloc::Arena as Bump;
 use bun_ast as js_ast;
+use bun_ast::AstArena;
 use bun_parsers::xml;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
@@ -117,13 +117,11 @@ fn maybe_loop() {
         .into_iter()
         .find(|(name, _)| name == fx)
         .expect("fixture");
-    bun_ast::initialize_store();
-    let mut bump = Bump::new();
+    let mut bump = AstArena::new();
     let start = std::time::Instant::now();
     for _ in 0..n {
         match imp {
             "bun_compact" | "bun_tree" => {
-                let _store_scope = js_ast::StoreResetGuard::new();
                 let log = js_ast::Log::init();
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
@@ -161,7 +159,6 @@ fn maybe_loop() {
 
 fn bench_xml(c: &mut Criterion) {
     maybe_loop();
-    bun_ast::initialize_store();
     let mut group = c.benchmark_group("xml_parse");
     group.sample_size(20);
     for (name, contents) in fixtures() {
@@ -169,9 +166,8 @@ fn bench_xml(c: &mut Criterion) {
 
         for (id, compact) in [("bun_compact", true), ("bun_tree", false)] {
             group.bench_function(BenchmarkId::new(id, &name), |b| {
-                let mut bump = Bump::new();
+                let mut bump = AstArena::new();
                 b.iter(|| {
-                    let _store_scope = js_ast::StoreResetGuard::new();
                     let log = js_ast::Log::init();
                     bump.reset();
                     let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);

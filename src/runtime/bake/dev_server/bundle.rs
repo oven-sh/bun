@@ -271,7 +271,7 @@ impl DevServer {
         &mut self,
         plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.plugins = Some(plugins);
+        self.plugins = Some(Plugins::Borrowed(plugins));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -378,19 +378,21 @@ impl DevServer {
         // server one on this thread (`watch_directory`, `finalize_bundle`).
         let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
             (
-                self.ssr_transpiler_mut()
+                self.ssr_transpiler
+                    .as_mut()
                     .map(|ssr| detach_lifetime_mut(ssr)),
-                detach_lifetime_mut(&mut *self.server_transpiler),
-                detach_lifetime_mut(&mut *self.client_transpiler),
+                detach_lifetime_mut(&mut self.server_transpiler),
+                detach_lifetime_mut(&mut self.client_transpiler),
             )
         };
+        let framework = server_transpiler.options.framework.clone();
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
+                framework: framework.expect("set by DevServer::init"),
                 client_transpiler,
                 ssr_transpiler,
-                plugins: self.plugins,
+                plugins: self.plugins.as_ref().map(Plugins::as_non_null),
             }),
             heap_ref,
             event_loop,

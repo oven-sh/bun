@@ -38,10 +38,11 @@
 use core::cell::{Cell, OnceCell};
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
+use bun_ptr::CellExt as _;
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
@@ -49,7 +50,6 @@ use super::bun_test::{
     ExecutionEntryCfg, HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, SequenceEntry, SequenceEntryId,
     StepResult,
 };
-use super::cells::{CellExt as _, StrongCell};
 use super::expect::expect_deferred::ExpectDeferred;
 use super::test_context::{self, Deferred, TestContext};
 use super::test_context_around::{self, AroundHook};

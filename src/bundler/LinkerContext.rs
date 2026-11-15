@@ -341,7 +341,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 quoted_contents: SourceMapTasks::new(&bundle.quoted_contents_wait_group),
             },
             dev_server: bundle.dev_server,
-            framework: bundle.framework.as_ref(),
+            framework: bundle.framework.as_deref(),
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),
             renamer_rows: None,

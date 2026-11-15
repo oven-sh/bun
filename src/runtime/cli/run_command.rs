@@ -564,8 +564,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Ok(())
     }
 
-    /// Allocates a
-    /// process-lifetime `Transpiler`, primes its resolver/env, reads the
+    /// Puts a `Transpiler` in `this_transpiler`, primes its resolver/env, reads the
     /// top-level `DirInfo`, configures the bundler linker / JSX runtime, and
     /// seeds the `npm_*` env vars.
     ///
@@ -580,7 +579,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// largest block of bundler/linker code otherwise faulted in by `bun run`.
     pub(crate) fn configure_env_for_run<'t>(
         ctx: &mut ContextData,
-        this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        this_transpiler: &'t mut Option<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
     ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
@@ -593,7 +592,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// lookup (the `bun run <script>` dispatch path), never for transpiling.
     pub(crate) fn configure_env_for_run_without_linker<'t>(
         ctx: &mut ContextData,
-        this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        this_transpiler: &'t mut Option<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
     ) -> crate::Result<(&'t mut Transpiler<'static>, bun_resolver::DirInfoRef)> {
@@ -617,7 +616,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     fn configure_env_for_run_impl<'t>(
         ctx: &mut ContextData,
-        this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
+        this_transpiler: &'t mut Option<Transpiler<'static>>,
         env: Option<*mut DotEnv::Loader>,
         opts: ConfigureEnvOptions,
         with_linker: bool,
@@ -627,10 +626,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Process-lifetime arena singleton for the runner's transpiler;
         // threads an `&'static Arena` per PORTING.md §AST crates.
         let arena: &'static bun_alloc::Arena = cli_arena();
-        // Out-param constructor — `configure_env_for_run` writes the whole struct.
-        // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
-        // so callers MUST pass a `MaybeUninit` slot.
-        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
+        let this_transpiler = this_transpiler.insert(Transpiler::init(arena, ctx.log, args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
@@ -1024,10 +1020,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         });
         bun_ast::initialize_store();
 
-        let vm = VirtualMachine::init(VmInitOptions {
+        let options = VmInitOptions {
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
-            log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -1036,7 +1031,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
-        })?;
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
         vm.preload.set(std::mem::take(&mut ctx.preloads));
@@ -1220,8 +1216,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::cli::startup_options::reject_unusable_bunfig_settings(ctx, None);
         }
 
-        let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: std::ptr::NonNull::new(ctx.log),
+        let options = bun_jsc::virtual_machine::Options {
             args: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             graph: Some(graph),
@@ -1234,7 +1229,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 &ctx.runtime_options.dns_result_order,
             ) as u8,
             ..Default::default()
-        })?;
+        };
+        let vm = VirtualMachine::init_with_module_graph(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
@@ -2413,21 +2409,15 @@ impl RunCommand {
         }
 
         // ── setup (unconditional) ────────────────────────────────────────────
-        // out-param init — `Transpiler` is NOT all-zero-valid POD (holds
-        // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
-        // `configure_env_for_run` `.write()` the whole struct.
-        //
         // Use the `_without_linker` variant: nothing reached from here
         // transpiles through `this_transpiler` — the script-string path shells
         // out, and the file-entry-point path boots a fresh VM with its own
         // transpiler — so the bundler-linker / `tsconfig.json` / JSX-runtime
         // setup would be dead weight (and the largest block of bundler code
         // otherwise faulted in for a plain `bun run <script>`).
-        let this_transpiler: &'static mut ::core::mem::MaybeUninit<Transpiler<'static>> =
-            cli_arena().alloc(::core::mem::MaybeUninit::<Transpiler<'static>>::uninit());
         let (this_transpiler, root_dir_info) = Self::configure_env_for_run_without_linker(
             ctx,
-            this_transpiler,
+            cli_arena().alloc(None),
             None,
             ConfigureEnvOptions {
                 log_errors,

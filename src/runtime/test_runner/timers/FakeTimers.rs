@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use crate::api::cron::CronJob;
 use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
-use crate::test_runner::cells::{CellExt as _, StrongCell};
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     InHeap, Popped, TimerHeap, TimerObjectInternals,
@@ -14,8 +13,9 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
-    StrongOptional,
+    StrongCell, StrongOptional,
 };
+use bun_ptr::CellExt as _;
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {

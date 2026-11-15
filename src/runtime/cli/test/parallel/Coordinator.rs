@@ -13,14 +13,13 @@ use std::io::Write as _;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 
 use super::frame::{self, Frame};
 use super::worker::{SpawnContext, Worker};
 use crate::cli::run_compiled::log_first_time_in_test_run;
 use crate::cli::test::timings::Timings;
 use crate::test_command::CommandLineReporter;
-use crate::test_runner::cells::CellExt as _;
 
 // `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.

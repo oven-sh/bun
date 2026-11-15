@@ -2397,6 +2397,7 @@ pub mod parse_worker {
             if task.known_target == options::Target::ServerComponentsSsr
                 && topts
                     .framework
+                    .as_deref()
                     .and_then(|framework| framework.server_components.as_ref())
                     .is_some_and(|sc| sc.separate_ssr_graph)
             {
@@ -2546,12 +2547,12 @@ pub mod parse_worker {
             UseDirective::Client | UseDirective::None => None,
         };
 
-        // `transpiler.options.framework: Option<&bake_types::Framework>`
+        // `transpiler.options.framework: Option<Arc<bake_types::Framework>>`
         // vs `opts.framework: Option<&js_parser::options::Framework>` — both
         // TYPE_ONLY mirrors of `bake.Framework`. Project the fields the parser
         // reads into the parser-side mirror and bump-alloc
         // so `opts` can borrow it.
-        opts.framework = topts.framework.map(|f| {
+        opts.framework = topts.framework.as_deref().map(|f| {
             // `Framework` is bump-allocated below, so `Drop` never runs — use arena-owned slices.
             let projected = js_parser::options::Framework {
                 server_components: f.server_components.as_ref().map(|sc| {
@@ -2586,6 +2587,7 @@ pub mod parse_worker {
         // says run on the server only.
         if let Some(server_exports) = topts
             .framework
+            .as_deref()
             .filter(|_| target == options::Target::Browser)
             .and_then(|f| f.client_page_server_exports(task.path.text))
             .filter(|names| !names.is_empty())

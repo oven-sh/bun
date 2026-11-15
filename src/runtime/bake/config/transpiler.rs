@@ -4,37 +4,32 @@ use super::{BuildConfigSubset, Framework};
 use crate::bake::{Graph, Mode, Side, dev_server};
 use bun_alloc::Arena;
 use bun_options_types::schema as bun_schema;
+use std::sync::Arc;
 
 impl Framework {
-    /// Returns `out`, initialized, and the arena slot of the `bake_types::Framework` view (never dropped by the arena).
-    pub(crate) fn init_transpiler<'a, 'out>(
+    /// `bundler_view` is [`Self::as_bundler_view`].
+    pub(crate) fn init_transpiler<'a>(
         &self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &'out mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        bundler_view: &Arc<bun_bundler::bake_types::Framework>,
         bundler_options: &BuildConfigSubset,
-    ) -> crate::Result<(
-        &'out mut bun_bundler::Transpiler<'a>,
-        *mut bun_bundler::bake_types::Framework,
-    )> {
+    ) -> crate::Result<bun_bundler::Transpiler<'a>> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // The caller (`DevServer::init`) hands us an uninitialized slot, so
-        // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
-        // `&mut Transpiler` for the field assignments below.
-        let out: &'out mut bun_bundler::Transpiler<'a> = out.write(bun_bundler::Transpiler::init(
+        let mut out = bun_bundler::Transpiler::init(
             arena,
             log,
             // `TransformOptions::default()`: every `Option` is `None`, every
             // slice empty, every scalar zero/false.
             bun_schema::api::TransformOptions::default(),
             None,
-        )?);
+        )?;
 
         out.options.target = match renderer {
             Graph::Client => bun_ast::Target::Browser,
@@ -87,12 +82,7 @@ impl Framework {
         out.options.minify_identifiers = minify(bundler_options.minify_identifiers);
         out.options.minify_whitespace = minify(bundler_options.minify_whitespace);
         out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY projection
-        // (`bake_types::Framework`); construct it here and give it arena
-        // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework = arena.alloc(self.as_bundler_view());
-        let framework_view: *mut bun_bundler::bake_types::Framework = &raw mut *framework;
-        out.options.framework = Some(framework);
+        out.options.framework = Some(Arc::clone(bundler_view));
         out.options.inline_entrypoint_import_meta_main = true;
 
         out.options.source_map = match mode {
@@ -153,7 +143,7 @@ impl Framework {
         // Re-sync after define/naming mutations so the resolver sees the
         // final option set.
         out.sync_resolver_opts();
-        Ok((out, framework_view))
+        Ok(out)
     }
 }
 

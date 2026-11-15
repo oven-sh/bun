@@ -1,5 +1,6 @@
 //! Port of highway_json.cpp: stage 1 in the manner of simdjson.
 use bun_simd::{Out, blocks};
+use class::{STRUCTURAL, WHITESPACE};
 
 const LUT_LO: [u8; 16] = [
     0x50, 0x40, 0x40, 0x40, 0x40, 0x40, 0x40, 0x60, 0x40, 0x48, 0x4c, 0x41, 0x42, 0x49, 0x40, 0x60,
@@ -7,8 +8,12 @@ const LUT_LO: [u8; 16] = [
 const LUT_HI: [u8; 16] = [
     0x48, 0x40, 0x32, 0x04, 0x00, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
-const STRUCTURAL: u8 = 0x07;
-const WHITESPACE: u8 = 0x18;
+/// For the scalar indexer, which has to agree with the kernel.
+pub mod class {
+    pub static OF_BYTE: [u8; 256] = crate::classes_of_bytes(super::LUT_LO, super::LUT_HI);
+    pub const STRUCTURAL: u8 = 0x07;
+    pub const WHITESPACE: u8 = 0x18;
+}
 const ODDITY: u8 = 0x20;
 const CONTROL: u8 = 0x40;
 /// The scalar indexer has to take over: there is an oddity, or no more room.

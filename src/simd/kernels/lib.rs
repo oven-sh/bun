@@ -38,6 +38,7 @@ pub use image::simd::{
     rotate_270,
 };
 pub use image::{Filter, Resizer, flip_vertically};
+pub use json::class as json_class;
 pub use json::simd::index_chunk as json_structural_index_chunk;
 pub use memmem::simd::{memmem16_shared, memrmem16, memrmem16_shared};
 pub use paths::simd::{
@@ -65,11 +66,22 @@ pub use width::simd::{
     visible_utf16_width,
 };
 pub use words::simd::{pack_words, unpack_words};
+pub use xml::class as xml_class;
 pub use xml::simd::{
     index_chunk as xml_structural_index_chunk, index_chunk16 as xml_structural_index16_chunk,
 };
 pub use xxhash::XxHash64State;
 pub use xxhash::simd::{xxhash3_64_shared, xxhash32, xxhash32_shared, xxhash64, xxhash64_shared};
+
+/// What the lookups of the low and the high four bits make of each byte.
+const fn classes_of_bytes(low: [u8; 16], high: [u8; 16]) -> [u8; 256] {
+    let (mut classes, mut byte) = ([0; 256], 0);
+    while byte < 256 {
+        classes[byte] = low[byte % 16] & high[byte / 16];
+        byte += 1;
+    }
+    classes
+}
 
 #[inline(always)]
 pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {

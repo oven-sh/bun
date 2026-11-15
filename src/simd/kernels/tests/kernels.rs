@@ -664,6 +664,23 @@ fn json() {
 }
 
 #[test]
+fn byte_classes() {
+    use kernels::{json_class as json, xml_class as xml};
+    for byte in 0..=u8::MAX {
+        let is_in = |set: &[u8]| set.iter().any(|&it| it == byte);
+        let has = |class| json::OF_BYTE[usize::from(byte)] & class != 0;
+        assert_eq!(has(json::STRUCTURAL), is_in(b"{}[]:,"), "{byte}");
+        assert_eq!(has(json::WHITESPACE), is_in(b" \t\n\r"), "{byte}");
+
+        let has = |class| xml::OF_BYTE[usize::from(byte)] & class != 0;
+        let is_control = byte < 0x20 && !is_in(b"\t\n");
+        assert_eq!(has(xml::ANYWHERE), is_control || byte == b'&', "{byte}");
+        assert_eq!(has(xml::IN_TAG), is_in(b"\t\n\"'="), "{byte}");
+        assert_eq!((has(xml::LT), has(xml::GT)), (byte == b'<', byte == b'>'));
+    }
+}
+
+#[test]
 fn json_without_room() {
     let index = |len, dirty: &mut [u64]| {
         let (text, room) = (&[b'['; 64], &mut vec![0; len][..]);

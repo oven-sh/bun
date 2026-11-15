@@ -1,13 +1,21 @@
 //! Port of highway_xml.cpp.
 use bun_simd::{Out, blocks};
+use class::{ANYWHERE, GT, IN_TAG, LT};
 
 const LUT_LO: [u8; 16] = [
     0x03, 0x03, 0x13, 0x03, 0x03, 0x03, 0x07, 0x13, 0x03, 0x0a, 0x0a, 0x03, 0x43, 0x23, 0x83, 0x03,
 ];
 const LUT_HI: [u8; 16] = [0x09, 0x02, 0x14, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-/// `<`, `>`, `&`, and control characters but for tab and newline
-const ANYWHERE: u8 = 0xC7;
-const IN_TAG: u8 = 0x38;
+/// For the scalar code of the parser, which has to agree with the kernels.
+pub mod class {
+    pub static OF_BYTE: [u8; 256] = crate::classes_of_bytes(super::LUT_LO, super::LUT_HI);
+    /// `&`, and control characters but for tab and newline
+    pub const ANYWHERE: u8 = 0x07;
+    /// Tab, newline, quotes and `=`
+    pub const IN_TAG: u8 = 0x38;
+    pub const LT: u8 = 0x40;
+    pub const GT: u8 = 0x80;
+}
 
 #[bun_simd::foreach_target]
 pub(crate) mod simd {
@@ -20,7 +28,7 @@ pub(crate) mod simd {
         [
             v.simd_eq(b'<'),
             v.simd_eq(b'>'),
-            lacks(ANYWHERE),
+            lacks(ANYWHERE | LT | GT),
             lacks(IN_TAG),
         ]
     }

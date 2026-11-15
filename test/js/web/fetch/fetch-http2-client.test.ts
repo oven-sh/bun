@@ -713,6 +713,28 @@ describe.concurrent("fetch() over HTTP/2 (BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CL
     }
   });
 
+  test("a redirect reuses a session with SETTINGS_MAX_CONCURRENT_STREAMS=1", async () => {
+    let sessions = 0;
+    await using server = makeH2Server({ settings: { maxConcurrentStreams: 1 } }, (req, res) => {
+      if (req.url === "/") res.writeHead(302, { location: "/final" });
+      res.end(req.url);
+    });
+    server.on("session", () => sessions++);
+    await once(server.listen(0), "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    await using proc = await spawnFetch(`
+      const res = await fetch("https://localhost:${port}/", { tls: { rejectUnauthorized: false } });
+      console.log(await res.text());
+    `);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, sessions, exitCode }).toEqual({
+      stdout: "/final\n",
+      stderr: "",
+      sessions: 1,
+      exitCode: 0,
+    });
+  });
+
   test("server SETTINGS_MAX_CONCURRENT_STREAMS=1 is honoured per session", async () => {
     const perSessionMax: number[] = [];
     const server = makeH2Server({ settings: { maxConcurrentStreams: 1 } });

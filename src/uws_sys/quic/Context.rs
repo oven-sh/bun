@@ -2,7 +2,8 @@
 //! For the client there is exactly one of these per HTTP-thread loop and it
 //! lives for the process; the server creates one per `Bun.serve({http3:true})`.
 
-use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_char, c_int, c_uint};
+use core::ptr::NonNull;
 
 use crate::Loop;
 use crate::quic::{OwnedPendingConnect, Socket, Stream};
@@ -25,47 +26,40 @@ unsafe extern "C" {
         reject_unauthorized: c_int,
         out_qs: *mut *mut Socket,
         out_pending: *mut Option<OwnedPendingConnect>,
-        user: *mut c_void,
     ) -> c_int;
 
     // `Context` is an `opaque_ffi!` ZST: shims that take only it and a callback are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Socket, c_int),
+        cb: extern "C" fn(&mut Socket, c_int),
     );
-    safe fn us_quic_socket_context_on_goaway(
-        ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Socket),
-    );
-    safe fn us_quic_socket_context_on_close(
-        ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Socket),
-    );
+    safe fn us_quic_socket_context_on_goaway(ctx: &mut Context, cb: extern "C" fn(&mut Socket));
+    safe fn us_quic_socket_context_on_close(ctx: &mut Context, cb: extern "C" fn(&mut Socket));
     safe fn us_quic_socket_context_on_stream_open(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Stream, c_int),
+        cb: extern "C" fn(&mut Stream, c_int),
     );
     safe fn us_quic_socket_context_on_stream_headers(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Stream),
+        cb: extern "C" fn(&mut Stream),
     );
     safe fn us_quic_socket_context_on_stream_data(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Stream, *const u8, c_uint, c_int),
+        cb: unsafe extern "C" fn(&mut Stream, *const u8, c_uint, c_int),
     );
     safe fn us_quic_socket_context_on_stream_writable(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Stream),
+        cb: extern "C" fn(&mut Stream),
     );
     safe fn us_quic_socket_context_on_stream_close(
         ctx: &mut Context,
-        cb: unsafe extern "C" fn(*mut Stream),
+        cb: extern "C" fn(&mut Stream),
     );
 }
 
-pub enum ConnectResult {
+pub enum ConnectResult<'a> {
     /// IP literal or DNS-cache hit: handshake already in flight.
-    Socket(*mut Socket),
+    Socket(&'a mut Socket),
     /// DNS cache miss: caller must register a `Bun__addrinfo` callback on
     /// `pending.addrinfo()` and call `pending.resolved()` when it fires.
     Pending(OwnedPendingConnect),
@@ -76,15 +70,10 @@ impl Context {
     /// # Safety
     /// `global_init` has run.
     #[inline]
-    pub unsafe fn create_client(
-        loop_: &'static Loop,
-        ext_size: c_uint,
-        conn_ext: c_uint,
-        stream_ext: c_uint,
-    ) -> Option<*mut Context> {
+    pub unsafe fn create_client(loop_: &'static Loop) -> Option<NonNull<Context>> {
+        const EXT_SIZE: c_uint = size_of::<u64>() as c_uint;
         // SAFETY: thin FFI forward; all args are POD, return is nullable.
-        let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
-        if p.is_null() { None } else { Some(p) }
+        NonNull::new(unsafe { us_create_quic_client_context(loop_, 0, EXT_SIZE, EXT_SIZE) })
     }
 
     pub fn connect(
@@ -93,8 +82,7 @@ impl Context {
         port: u16,
         sni: &CStr,
         reject_unauthorized: bool,
-        user: *mut c_void,
-    ) -> ConnectResult {
+    ) -> ConnectResult<'_> {
         let mut qs: *mut Socket = core::ptr::null_mut();
         let mut pc = None;
         // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write.
@@ -107,49 +95,49 @@ impl Context {
                 reject_unauthorized as c_int,
                 &raw mut qs,
                 &raw mut pc,
-                user,
             )
         };
         match pc {
             Some(pc) => ConnectResult::Pending(pc),
-            None if rc == 1 => ConnectResult::Socket(qs),
+            // SAFETY: 1 comes with a socket, which only a later engine tick can close.
+            None if rc == 1 => ConnectResult::Socket(unsafe { &mut *qs }),
             None => ConnectResult::Err,
         }
     }
 
     #[inline]
-    pub fn on_hsk_done(&mut self, cb: unsafe extern "C" fn(*mut Socket, c_int)) {
+    pub fn on_hsk_done(&mut self, cb: extern "C" fn(&mut Socket, c_int)) {
         us_quic_socket_context_on_hsk_done(self, cb)
     }
     #[inline]
-    pub fn on_goaway(&mut self, cb: unsafe extern "C" fn(*mut Socket)) {
+    pub fn on_goaway(&mut self, cb: extern "C" fn(&mut Socket)) {
         us_quic_socket_context_on_goaway(self, cb)
     }
     #[inline]
-    pub fn on_close(&mut self, cb: unsafe extern "C" fn(*mut Socket)) {
+    pub fn on_close(&mut self, cb: extern "C" fn(&mut Socket)) {
         us_quic_socket_context_on_close(self, cb)
     }
     #[inline]
-    pub fn on_stream_open(&mut self, cb: unsafe extern "C" fn(*mut Stream, c_int)) {
+    pub fn on_stream_open(&mut self, cb: extern "C" fn(&mut Stream, c_int)) {
         us_quic_socket_context_on_stream_open(self, cb)
     }
     #[inline]
-    pub fn on_stream_headers(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
+    pub fn on_stream_headers(&mut self, cb: extern "C" fn(&mut Stream)) {
         us_quic_socket_context_on_stream_headers(self, cb)
     }
     #[inline]
     pub fn on_stream_data(
         &mut self,
-        cb: unsafe extern "C" fn(*mut Stream, *const u8, c_uint, c_int),
+        cb: unsafe extern "C" fn(&mut Stream, *const u8, c_uint, c_int),
     ) {
         us_quic_socket_context_on_stream_data(self, cb)
     }
     #[inline]
-    pub fn on_stream_writable(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
+    pub fn on_stream_writable(&mut self, cb: extern "C" fn(&mut Stream)) {
         us_quic_socket_context_on_stream_writable(self, cb)
     }
     #[inline]
-    pub fn on_stream_close(&mut self, cb: unsafe extern "C" fn(*mut Stream)) {
+    pub fn on_stream_close(&mut self, cb: extern "C" fn(&mut Stream)) {
         us_quic_socket_context_on_stream_close(self, cb)
     }
 }

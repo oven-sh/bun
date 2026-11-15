@@ -27,6 +27,8 @@ pub mod http_cert_error;
 pub mod http_context;
 #[path = "HTTPRequestBody.rs"]
 pub mod http_request_body;
+#[path = "HTTPResponseMetadata.rs"]
+mod http_response_metadata;
 #[path = "HTTPThread.rs"]
 pub mod http_thread;
 #[path = "InitError.rs"]
@@ -135,49 +137,8 @@ pub use header_value_iterator::{
     HeaderValueIterator, connection_header_keep_alive, fold_transfer_encoding, header_has_token,
     upgrade_header_is_not_h2,
 };
+pub use http_response_metadata::HTTPResponseMetadata;
 pub use init_error::InitError;
-
-/// Cloned response metadata (headers + url + status). Ownership transfers to
-/// the user once the headers phase completes.
-// hoisted so `InternalState` can name it.
-pub struct HTTPResponseMetadata {
-    /// `headers` points into it.
-    owned_buf: Box<[u8]>,
-    headers: Box<[picohttp::Header]>,
-    status_text: StringPointer,
-    url: StringPointer,
-    status_code: u32,
-}
-
-// SAFETY: `headers` points into `owned_buf`.
-unsafe impl Send for HTTPResponseMetadata {}
-
-impl HTTPResponseMetadata {
-    #[inline]
-    pub fn status_code(&self) -> u32 {
-        self.status_code
-    }
-    #[inline]
-    pub fn status_text(&self) -> &[u8] {
-        self.status_text.slice(&self.owned_buf)
-    }
-    pub fn url(&self) -> &[u8] {
-        self.url.slice(&self.owned_buf)
-    }
-    pub fn headers(&self) -> picohttp::HeaderList<'_> {
-        picohttp::HeaderList {
-            list: &self.headers,
-        }
-    }
-    #[inline]
-    pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        self.headers().get(name)
-    }
-    #[inline]
-    pub fn header_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&[u8]> {
-        self.headers().get_if_other_is_absent(name, other)
-    }
-}
 
 pub use bun_http_types::{ETag, MimeType};
 
@@ -413,7 +374,7 @@ impl HTTPClient<'_> {
         &mut self,
         thread: &mut HTTPThread,
         status_code: u32,
-        headers: &'h [picohttp::Header],
+        headers: &'h [picohttp::Header<'h>],
     ) -> crate::Result<(HeaderResult, picohttp::Response<'h>)> {
         let mut response = picohttp::Response {
             minor_version: 0,
@@ -780,8 +741,6 @@ pub struct HTTPClient<'a> {
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
     /// This is a workaround for that. Points into `header_buf`.
     pub(crate) if_modified_since: StringPointer,
-    /// The `Content-Length` header that `build_request` returns points into this.
-    pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
     pub(crate) http_proxy: Option<URL<'a>>,
     /// Captured proxy env (http_proxy / https_proxy / no_proxy) so redirects
@@ -852,10 +811,11 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{BoundedArray, VecExt};
 use bun_core::StringBuilder;
-use bun_core::fmt::{EscapeControlChars, escape_control_chars};
+use bun_core::fmt::{EscapeControlChars, ItoaBuf, escape_control_chars, itoa};
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{StringView, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
+use bun_picohttp::ChunkedStatus;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
 use bun_wyhash::Wyhash;
@@ -886,22 +846,23 @@ pub fn is_successful_connect_status(status_code: u32) -> bool {
 // ── header constants ────────────────────────────────────────────────────
 const HOST_HEADER_NAME: &[u8] = b"Host";
 const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
-const CHUNKED_ENCODED_HEADER: picohttp::Header =
+const CHUNKED_ENCODED_HEADER: picohttp::Header<'static> =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
-const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
-const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
+const CONNECTION_HEADER: picohttp::Header<'static> =
+    picohttp::Header::new(b"Connection", b"keep-alive");
+const ACCEPT_HEADER: picohttp::Header<'static> = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
-const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
+const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header<'static> =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
-const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
+const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header<'static> =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
-const ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI: picohttp::Header =
+const ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI: picohttp::Header<'static> =
     picohttp::Header::new(b"Accept-Encoding", b"gzip, deflate, zstd");
 
-fn accept_encoding_header() -> picohttp::Header {
+fn accept_encoding_header() -> picohttp::Header<'static> {
     if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
         ACCEPT_ENCODING_HEADER_NO_COMPRESSION
     } else if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliDecoder) {
@@ -911,7 +872,7 @@ fn accept_encoding_header() -> picohttp::Header {
     }
 }
 
-fn get_user_agent_header() -> picohttp::Header {
+fn get_user_agent_header() -> picohttp::Header<'static> {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
     picohttp::Header::new(
         b"User-Agent",
@@ -981,7 +942,7 @@ impl RedirectHop {
 const MAX_REQUEST_HEADERS: usize = 256;
 const MAX_RESPONSE_HEADERS: usize = 256;
 
-pub(crate) type RequestHeaders = BoundedArray<picohttp::Header, MAX_REQUEST_HEADERS>;
+pub(crate) type RequestHeaders<'a> = BoundedArray<picohttp::Header<'a>, MAX_REQUEST_HEADERS>;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
 // bun_boringssl doesn't expose an ALPN-offer enum, so
@@ -1434,11 +1395,10 @@ impl<'a> HTTPClient<'a> {
         self.state.request_stage == RequestStage::Done
     }
 
+    /// What is left to send of a body of bytes.
     #[inline]
-    fn request_body(&self) -> &[u8] {
-        // `request_body` is a `RawSlice` into `original_request_body` (sibling
-        // field of `self`); the RawSlice invariant centralises the unsafe.
-        self.state.request_body.slice()
+    pub(crate) fn request_body(&self) -> &[u8] {
+        self.state.request_body(&self.compressed_request_body)
     }
     fn report_progress(&self, completed: usize) {
         if let Some(progress) = &self.progress {
@@ -1969,9 +1929,8 @@ impl<'a> HTTPClient<'a> {
     ///
     /// On https://, we are limited to a 16 KB TLS record size.
     #[inline]
-    fn get_request_body_send_buffer(&self) -> Vec<u8> {
-        let actual_estimated_size =
-            self.request_body().len() + self.estimated_request_header_byte_length();
+    fn get_request_body_send_buffer(&self, body_len: usize) -> Vec<u8> {
+        let actual_estimated_size = body_len + self.estimated_request_header_byte_length();
         let estimated_size = if HTTPClient::is_https(self) {
             actual_estimated_size.min(MAX_TLS_RECORD_SIZE)
         } else {
@@ -2075,13 +2034,14 @@ impl<'a> HTTPClient<'a> {
         &buf[ptr.offset as usize..end]
     }
 
-    pub(crate) fn build_request<'h>(
+    pub(crate) fn build_request<'h, 'v>(
         &mut self,
         body_len: usize,
-        request_headers_buf: &'h mut RequestHeaders,
+        content_length_buf: &'v mut ItoaBuf,
+        request_headers_buf: &'h mut RequestHeaders<'v>,
     ) -> picohttp::Request<'h>
     where
-        'a: 'h,
+        'a: 'v,
     {
         let header_entries = &self.header_entries;
         let header_names = header_entries.items_name();
@@ -2208,10 +2168,7 @@ impl<'a> HTTPClient<'a> {
                     _ => Default::default(),
                 };
                 if let Some(content_length) = framing.content_length {
-                    let value: &[u8] = bun_core::fmt::int_as_bytes(
-                        &mut self.request_content_len_buf,
-                        content_length,
-                    );
+                    let value: &[u8] = itoa(content_length_buf, content_length);
                     request_headers_buf.append_assume_capacity(picohttp::Header::new(
                         CONTENT_LENGTH_HEADER_NAME,
                         value,
@@ -2226,8 +2183,7 @@ impl<'a> HTTPClient<'a> {
                     });
                 }
             } else {
-                let value: &[u8] =
-                    bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);
+                let value: &[u8] = itoa(content_length_buf, body_len);
                 request_headers_buf.append_assume_capacity(picohttp::Header::new(
                     CONTENT_LENGTH_HEADER_NAME,
                     value,
@@ -2477,7 +2433,7 @@ impl InFlightRequest {
 
 impl<'a> HTTPClient<'a> {
     /// Body length for `Content-Length` — the compressed length once
-    /// [`compress_body_for_send`] has run, otherwise the original.
+    /// [`Self::compress_body_into_shared`] has run, otherwise the original.
     #[inline]
     pub(crate) fn body_len_for_send(&self) -> usize {
         if self.state.flags.body_compressed {
@@ -2487,66 +2443,46 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
-    /// Lazy one-shot request-body compression at write time. Re-seats
-    /// `state.request_body` (the send cursor) to the compressed bytes;
+    /// Lazy one-shot request-body compression at write time.
     /// `state.original_request_body` stays as the original uncompressed slice
-    /// so redirects/retries can re-compress from it. When `into_shared` and
-    /// the bound fits, the cursor borrows `LibdeflateState::shared_buffer` —
-    /// callers must [`spill_compressed_body`] before returning to the event
-    /// loop with bytes left to send. Idempotent per attempt via
+    /// so redirects/retries can re-compress from it. Idempotent per attempt via
     /// `state.flags.body_compressed`.
-    ///
-    /// [`spill_compressed_body`]: Self::spill_compressed_body
-    pub(crate) fn compress_body_for_send(
+    /// `Some` borrows the shared buffer: the caller copies what it does not send.
+    fn compress_body_into_shared<'t>(
         &mut self,
-        thread: &mut HTTPThread,
-        into_shared: bool,
-    ) -> crate::Result<()> {
+        thread: &'t mut HTTPThread,
+    ) -> crate::Result<Option<&'t [u8]>> {
         let Some(opt) = self.compress else {
-            return Ok(());
+            return Ok(None);
         };
         if self.state.flags.body_compressed {
-            return Ok(());
+            return Ok(None);
         }
         let HTTPRequestBody::Bytes(input) = self.state.original_request_body else {
-            return Ok(());
+            return Ok(None);
         };
         if input.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         let deflater = thread.lazy_libdeflater.get_or_init();
         let out =
             compress_body::compress_into(deflater, input, &opt, &mut self.compressed_request_body)?;
-        let slice: &[u8] = match out {
-            compress_body::CompressOutput::Shared(n) if into_shared => &deflater.shared_buffer[..n],
-            compress_body::CompressOutput::Shared(n) => {
-                self.compressed_request_body
-                    .extend_from_slice(&deflater.shared_buffer[..n]);
-                self.compressed_request_body.as_slice()
-            }
-            compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
+        let shared = match out {
+            compress_body::CompressOutput::Shared(n) => Some(&deflater.shared_buffer[..n]),
+            compress_body::CompressOutput::Spilled => None,
         };
-        self.compressed_body_len = slice.len();
-        // The `Vec` is next rewritten only once `init()` has re-seated this cursor.
-        self.state.request_body = bun_ptr::RawSlice::new(slice);
+        self.compressed_body_len = shared.unwrap_or(&self.compressed_request_body).len();
         self.state.flags.body_compressed = true;
-        Ok(())
+        Ok(shared)
     }
 
-    /// Copy any unsent compressed bytes still borrowing `shared_buffer` into
-    /// `compressed_request_body` and re-seat the cursor. No-op when the cursor
-    /// already points at the Vec (or is empty).
-    fn spill_compressed_body(&mut self) {
-        if !self.state.flags.body_compressed
-            || !self.compressed_request_body.is_empty()
-            || self.state.request_body.is_empty()
-        {
-            return;
+    /// Compresses into `compressed_request_body`.
+    pub(crate) fn compress_body_for_send(&mut self, thread: &mut HTTPThread) -> crate::Result<()> {
+        if let Some(shared) = self.compress_body_into_shared(thread)? {
+            self.compressed_request_body.extend_from_slice(shared);
         }
-        self.compressed_request_body
-            .extend_from_slice(self.state.request_body.slice());
-        self.state.request_body = bun_ptr::RawSlice::new(self.compressed_request_body.as_slice());
+        Ok(())
     }
 
     fn estimated_request_header_byte_length(&self) -> usize {
@@ -2577,18 +2513,21 @@ impl<'a> HTTPClient<'a> {
         thread: &mut HTTPThread,
         socket: HttpSocket<IS_SSL>,
     ) -> crate::Result<InitialRequestPayloadResult> {
-        self.compress_body_for_send(thread, true)?;
+        let shared_body = self.compress_body_into_shared(thread)?;
 
-        let mut temporary_send_buffer = self.get_request_body_send_buffer();
+        let body_len = shared_body.unwrap_or_else(|| self.request_body()).len();
+        let mut temporary_send_buffer = self.get_request_body_send_buffer(body_len);
 
+        let mut content_length = ItoaBuf::new();
         let mut headers = RequestHeaders::new();
-        let mut rendered = None;
-        if !self.state.partial_request_head.is_empty() {
+        let has_partial_head = !self.state.partial_request_head.is_empty();
+        let request = (!has_partial_head || self.verbose != HTTPVerboseLevel::None).then(|| {
+            self.build_request(self.body_len_for_send(), &mut content_length, &mut headers)
+        });
+        if has_partial_head {
             temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
-        } else {
+        } else if let Some(request) = &request {
             let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
-
-            let request = self.build_request(self.body_len_for_send(), &mut headers);
 
             if self.http_proxy.is_some() {
                 if self.url.is_https() {
@@ -2599,25 +2538,25 @@ impl<'a> HTTPClient<'a> {
                 } else {
                     bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
                     // HTTP do not need tunneling with CONNECT just a slightly different version of the request
-                    write_proxy_request(writer, &request, self)?;
+                    write_proxy_request(writer, request, self)?;
                 }
             } else {
                 bun_core::scoped_log!(fetch, "normal request");
                 validate_request_target(self.url.host)?;
-                write_request(writer, &request)?;
+                write_request(writer, request)?;
             }
-            rendered = Some(request);
         }
 
         let headers_len = temporary_send_buffer.len();
-        if !self.request_body().is_empty()
+        if body_len > 0
             && temporary_send_buffer.capacity() - temporary_send_buffer.len() > 0
             && !self.flags.proxy_tunneling
         {
             let spare = temporary_send_buffer.capacity() - temporary_send_buffer.len();
-            let wrote = spare.min(self.request_body().len());
+            let wrote = spare.min(body_len);
             debug_assert!(wrote > 0);
-            temporary_send_buffer.extend_from_slice(&self.request_body()[0..wrote]);
+            let body = shared_body.unwrap_or_else(|| self.request_body());
+            temporary_send_buffer.extend_from_slice(&body[0..wrote]);
         }
 
         let to_send = &temporary_send_buffer[self.state.request_sent_len..];
@@ -2637,7 +2576,7 @@ impl<'a> HTTPClient<'a> {
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
-                self.spill_compressed_body();
+                (self.compressed_request_body).extend_from_slice(shared_body.unwrap_or_default());
                 return Ok(InitialRequestPayloadResult {
                     has_sent_headers: self.state.request_sent_len >= headers_len,
                     has_sent_body: false,
@@ -2648,25 +2587,24 @@ impl<'a> HTTPClient<'a> {
 
         let has_sent_headers = self.state.request_sent_len >= headers_len;
 
-        if has_sent_headers && self.verbose != HTTPVerboseLevel::None {
-            let request = match rendered {
-                Some(request) => request,
-                None => self.build_request(self.body_len_for_send(), &mut headers),
-            };
+        if has_sent_headers
+            && self.verbose != HTTPVerboseLevel::None
+            && let Some(request) = &request
+        {
             print_request(
                 Protocol::Http1_1,
-                &request,
+                request,
                 self.url.href,
                 !self.flags.reject_unauthorized,
-                self.request_body(),
+                shared_body.unwrap_or_else(|| self.request_body()),
                 self.verbose == HTTPVerboseLevel::Curl,
             );
         }
 
-        if has_sent_headers && !self.request_body().is_empty() {
-            self.state.request_body = bun_ptr::RawSlice::new(
-                &self.state.request_body.slice()[self.state.request_sent_len - headers_len..],
-            );
+        let body_sent = self.state.request_sent_len.saturating_sub(headers_len);
+        match shared_body {
+            Some(body) => (self.compressed_request_body).extend_from_slice(&body[body_sent..]),
+            None => self.state.request_body_sent += body_sent,
         }
 
         let has_sent_body = if matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
@@ -2675,8 +2613,6 @@ impl<'a> HTTPClient<'a> {
         } else {
             false
         };
-
-        self.spill_compressed_body();
 
         Ok(InitialRequestPayloadResult {
             has_sent_headers,
@@ -2688,8 +2624,10 @@ impl<'a> HTTPClient<'a> {
     // Keeps the array of headers out of the frame of `on_writable`.
     #[inline(never)]
     fn write_tunneled_request_head(&mut self, writer: &mut Vec<u8>) -> crate::Result<()> {
+        let mut content_length = ItoaBuf::new();
         let mut headers = RequestHeaders::new();
-        let request = self.build_request(self.body_len_for_send(), &mut headers);
+        let request =
+            self.build_request(self.body_len_for_send(), &mut content_length, &mut headers);
         write_request(writer, &request)
     }
 
@@ -2999,7 +2937,8 @@ impl<'a> HTTPClient<'a> {
                 match &mut self.state.original_request_body {
                     HTTPRequestBody::Bytes(_) => {
                         let to_send = self.request_body();
-                        if !to_send.is_empty() {
+                        let mut unsent_len = to_send.len();
+                        if unsent_len > 0 {
                             let sent = match write_to_socket::<IS_SSL>(socket, to_send) {
                                 Ok(s) => s,
                                 Err(err) => {
@@ -3008,11 +2947,11 @@ impl<'a> HTTPClient<'a> {
                             };
 
                             self.state.request_sent_len += sent;
-                            self.state.request_body =
-                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
+                            self.state.request_body_sent += sent;
+                            unsent_len -= sent;
                         }
 
-                        if self.request_body().is_empty() {
+                        if unsent_len == 0 {
                             self.state.request_stage = RequestStage::Done;
                             return Continue(());
                         }
@@ -3056,23 +2995,25 @@ impl<'a> HTTPClient<'a> {
                         HTTPRequestBody::Bytes(_) => {
                             self.set_timeout(&socket);
 
-                            let to_send = self.state.request_body;
-                            // just wait and retry when onWritable!
-                            let Some(sent) = self.write_to_proxy_tunnel(
-                                thread,
-                                socket,
-                                lent_wrapper,
-                                to_send.slice(),
-                            )?
-                            else {
+                            let Some(proxy) = &mut self.proxy_tunnel else {
                                 return Continue(());
+                            };
+                            let to_send = self.state.request_body(&self.compressed_request_body);
+                            let unsent_len = to_send.len();
+                            let sent = match proxy.write(socket, lent_wrapper, to_send) {
+                                Ok(Some(sent)) => sent,
+                                // just wait and retry when onWritable!
+                                Ok(None) => return Continue(()),
+                                Err(TunnelClosed) => {
+                                    let err = Error::ConnectionClosed;
+                                    return self.on_proxy_tunnel_close(thread, err, socket);
+                                }
                             };
 
                             self.state.request_sent_len += sent;
-                            self.state.request_body =
-                                bun_ptr::RawSlice::new(&self.state.request_body.slice()[sent..]);
+                            self.state.request_body_sent += sent;
 
-                            if self.request_body().is_empty() {
+                            if sent == unsent_len {
                                 self.state.request_stage = RequestStage::Done;
                                 return Continue(());
                             }
@@ -3094,7 +3035,7 @@ impl<'a> HTTPClient<'a> {
                     self.set_timeout(&socket);
                     // Proxy-tunnel writes can be partial across event-loop ticks
                     // — compress straight into the Vec.
-                    if let Err(e) = self.compress_body_for_send(thread, false) {
+                    if let Err(e) = self.compress_body_for_send(thread) {
                         return self.close_and_fail::<IS_SSL>(e, socket);
                     }
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
@@ -3127,11 +3068,17 @@ impl<'a> HTTPClient<'a> {
                         return self
                             .close_and_fail::<IS_SSL>(crate::Error::ConnectionClosed, socket);
                     }
-                    // just wait and retry when onWritable!
-                    let Some(amount) =
-                        self.write_to_proxy_tunnel(thread, socket, lent_wrapper, to_send)?
-                    else {
+                    let Some(proxy) = &mut self.proxy_tunnel else {
                         return Continue(());
+                    };
+                    let amount = match proxy.write(socket, lent_wrapper, to_send) {
+                        Ok(Some(amount)) => amount,
+                        // just wait and retry when onWritable!
+                        Ok(None) => return Continue(()),
+                        Err(TunnelClosed) => {
+                            let err = Error::ConnectionClosed;
+                            return self.on_proxy_tunnel_close(thread, err, socket);
+                        }
                     };
 
                     if IS_FIRST_CALL {
@@ -3147,10 +3094,7 @@ impl<'a> HTTPClient<'a> {
                     self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
 
                     if has_sent_headers && !self.request_body().is_empty() {
-                        self.state.request_body = bun_ptr::RawSlice::new(
-                            &self.state.request_body.slice()
-                                [self.state.request_sent_len - headers_len..],
-                        );
+                        self.state.request_body_sent += self.state.request_sent_len - headers_len;
                     }
 
                     // Match send_initial_request_payload: a Stream/Sendfile
@@ -3601,17 +3545,7 @@ impl<'a> HTTPClient<'a> {
     /// buffer the parsed slices borrow.
     pub(crate) fn clone_metadata(&mut self, response: &picohttp::Response<'_>) {
         self.state.cloned_metadata = None;
-        let mut builder = picohttp::StringBuilder::default();
-        response.count(&mut builder);
-        builder.count(self.url.href);
-        let mut builder = builder.allocate();
-        self.state.cloned_metadata = Some(HTTPResponseMetadata {
-            status_code: response.status_code,
-            status_text: builder.append_count(response.status),
-            headers: response.clone_headers(&mut builder),
-            url: builder.append_count(self.url.href),
-            owned_buf: builder.into_boxed_slice(),
-        });
+        self.state.cloned_metadata = Some(HTTPResponseMetadata::new(response, self.url.href));
     }
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):
@@ -4190,26 +4124,9 @@ impl<'a> HTTPClient<'a> {
         // using content-encoding per chunk is not supported
         decoder.consume_trailer = 1;
 
-        let mut bytes_decoded = incoming_data.len();
-        // phr_decode_chunked mutates in-place
-        // SAFETY: body_buf.list is initialized for [0..len()) and uniquely
-        // borrowed here; the offset is len() - incoming_data.len() (the
-        // just-appended tail), which is in bounds.
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut *decoder,
-                body_buf
-                    .list
-                    .as_mut_ptr()
-                    .add(body_buf.list.len().saturating_sub(incoming_data.len())),
-                &raw mut bytes_decoded,
-            )
-        };
-        let new_len = body_buf
-            .list
-            .len()
-            .saturating_sub(incoming_data.len() - bytes_decoded);
-        body_buf.list.truncate(new_len);
+        let start = body_buf.list.len() - incoming_data.len();
+        let (status, bytes_decoded) = decoder.decode(&mut body_buf.list[start..]);
+        body_buf.list.truncate(start + bytes_decoded);
         let buffer_len = body_buf.list.len();
         self.state.total_body_received += bytes_decoded;
         bun_core::scoped_log!(
@@ -4218,11 +4135,9 @@ impl<'a> HTTPClient<'a> {
             self.state.total_body_received
         );
 
-        match pret {
-            // Invalid HTTP response body
-            -1 => return Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
+        match status {
+            ChunkedStatus::Malformed => return Err(crate::Error::InvalidHTTPResponse),
+            ChunkedStatus::Partial => {
                 self.report_progress(buffer_len);
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming)
@@ -4235,8 +4150,7 @@ impl<'a> HTTPClient<'a> {
 
                 return Ok(false);
             }
-            // Done
-            _ => {
+            ChunkedStatus::Done => {
                 self.state.flags.received_last_chunk = true;
                 let processed = self.process_received_body(thread, true)?;
 
@@ -4264,31 +4178,17 @@ impl<'a> HTTPClient<'a> {
         let in_len = incoming_data.len();
         let buffer = thread.single_packet_small_buffer[..in_len].write_copy_of_slice(incoming_data);
 
-        let mut bytes_decoded = in_len;
-        // phr_decode_chunked mutates in-place
-        // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
-        // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (`buffer` borrows `thread`).
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut self.state.chunked_decoder,
-                buffer.as_mut_ptr().add(buffer.len().saturating_sub(in_len)),
-                &raw mut bytes_decoded,
-            )
-        };
-        let new_len = buffer.len().saturating_sub(in_len - bytes_decoded);
-        let buffer = &mut buffer[..new_len];
+        let (status, bytes_decoded) = self.state.chunked_decoder.decode(buffer);
+        let buffer = &buffer[..bytes_decoded];
         self.state.total_body_received += bytes_decoded;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromSinglePacket {}",
             self.state.total_body_received
         );
-        match pret {
-            // Invalid HTTP response body
-            -1 => Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
+        match status {
+            ChunkedStatus::Malformed => Err(crate::Error::InvalidHTTPResponse),
+            ChunkedStatus::Partial => {
                 self.report_progress(buffer.len());
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
@@ -4304,8 +4204,7 @@ impl<'a> HTTPClient<'a> {
 
                 Ok(false)
             }
-            // Done
-            _ => {
+            ChunkedStatus::Done => {
                 self.state.flags.received_last_chunk = true;
                 let deflater = &mut thread.lazy_libdeflater;
                 self.handle_response_body_from_single_packet(deflater, buffer)?;

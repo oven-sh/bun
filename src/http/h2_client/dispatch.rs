@@ -7,7 +7,6 @@ use super::client_session::ClientSession;
 use super::stream::State as StreamState;
 use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use crate::h2_frame_parser as wire;
-use bun_picohttp as picohttp;
 
 bun_core::declare_scope!(h2_client, hidden);
 
@@ -699,21 +698,7 @@ fn decode_header_block(session: &mut ClientSession, index: usize) {
         );
         stream.sent_end_stream();
     }
-    stream.decoded_headers.reserve_exact(
-        lengths
-            .len()
-            .saturating_sub(stream.decoded_headers.capacity()),
-    );
-    // `decoded_headers` points into `decoded_bytes`, which does not grow again before delivery.
-    let mut rest = &stream.decoded_bytes[start_len..];
-    for [name_len, value_len] in lengths {
-        let (name, value);
-        (name, rest) = rest.split_at(name_len as usize);
-        (value, rest) = rest.split_at(value_len as usize);
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, value));
-    }
+    stream.decoded_lengths = lengths;
 }
 
 /// HEADERS or DATA the peer sent before it saw the RST_STREAM of their stream. They are in

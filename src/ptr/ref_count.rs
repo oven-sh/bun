@@ -373,7 +373,7 @@ impl<T: RefCounted> RefPtr<T> {
     /// # Safety
     /// The caller must own one ref on a live `T`. `raw_ptr` is the pointer of
     /// its `Box` allocation (a new one counts as one ref), or of a pool slot
-    /// that [`RefCounted::destroy`] returns without dropping the box it is given.
+    /// that [`RefCounted::destroy`] returns without dropping the box it is given or calling `into_box`.
     #[inline]
     pub unsafe fn from_raw(raw_ptr: *mut T) -> Self {
         // SAFETY: caller contract

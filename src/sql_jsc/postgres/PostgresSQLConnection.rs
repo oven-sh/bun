@@ -547,11 +547,9 @@ impl PostgresSQLConnection {
 
     fn handle_socket_failure(&self, fail: impl FnOnce(&Self)) {
         self.unregister_auto_flusher();
-        let event_loop = self.event_loop();
-        event_loop.enter();
+        let _entered = self.event_loop().enter_scope();
         self.poll_ref.unref(self.vm_ctx());
         fail(self);
-        event_loop.exit();
     }
 
     fn send_startup_message(&self) {
@@ -715,8 +713,7 @@ impl PostgresSQLConnection {
 
     fn drain_internal(&self) {
         debug!("drainInternal");
-        let event_loop = self.event_loop();
-        event_loop.enter();
+        let _entered = self.event_loop().enter_scope();
 
         self.flush_data();
 
@@ -725,7 +722,6 @@ impl PostgresSQLConnection {
             self.advance();
             self.flush_data();
         }
-        event_loop.exit();
     }
 
     pub(crate) fn on_data(&self, data: &[u8]) {
@@ -737,8 +733,7 @@ impl PostgresSQLConnection {
         }
         self.update_flags(|f| f.insert(ConnectionFlags::IS_PROCESSING_DATA));
 
-        let event_loop = self.event_loop();
-        event_loop.enter();
+        let entered = self.event_loop().enter_scope();
         SocketMonitor::read(data);
         // reset the head to the last message so remaining reflects the right amount of bytes
         self.read_buffer
@@ -819,7 +814,7 @@ impl PostgresSQLConnection {
         self.stop_cancelled_head();
         self.flush_copy_out();
         self.notify_connected();
-        event_loop.exit();
+        drop(entered);
         self.update_poll_ref();
         self.update_flags(|f| f.remove(ConnectionFlags::IS_PROCESSING_DATA));
 

@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -365,21 +365,21 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = ExecutionEntry::create(
+                    let new_item = AliasableBox::from(ExecutionEntry::create(
                         None,
                         args.callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),
                         AddedInPhase::Execution,
-                    );
-                    let new_item_ptr = bun_core::heap::into_raw(new_item);
+                    ));
+                    let new_item_ptr = new_item.as_ptr();
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
                         (*new_item_ptr).next = (*append_point).next;
                         (*append_point).next = Some(new_item_ptr);
                     }
-                    bun_test.extra_execution_entries.push(new_item_ptr);
+                    bun_test.extra_execution_entries.push(new_item);
 
                     Ok(())
                 }
@@ -752,10 +752,8 @@ pub(crate) struct BunTest {
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
     pub(crate) first_last: FirstLast,
-    pub(crate) extra_execution_entries: Vec<*mut ExecutionEntry>,
-    /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
-    /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
-    pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
+    pub(crate) extra_execution_entries: Vec<AliasableBox<ExecutionEntry>>,
+    cloned_hook_entries: Vec<Order::ClonedHookEntry>,
     pub(crate) wants_wakeup: bool,
     /// The phase passed to the most recent `run_next_tick`.
     pending_phase: RefDataValue,
@@ -844,7 +842,7 @@ impl BunTest {
     }
 
     pub(crate) fn create_vitest_entry(&mut self, callback: JSValue, timeout: u32, context: bool) -> NonNull<ExecutionEntry> {
-        let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
+        let entry = AliasableBox::from(ExecutionEntry::create(
             None,
             Some(callback),
             ExecutionEntryCfg { timeout, calling: Calling::Vitest { context }, ..Default::default() },
@@ -852,8 +850,9 @@ impl BunTest {
             BaseScopeCfg::default(),
             AddedInPhase::Execution,
         ));
-        self.extra_execution_entries.push(entry.as_ptr());
-        entry
+        let ptr = entry.as_non_null();
+        self.extra_execution_entries.push(entry);
+        ptr
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {
@@ -1257,28 +1256,7 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
-                let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
-                let describe_seq_end = order.sequences.len();
-                // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
-                // reclaim the Box headers. Must run before `extra_execution_entries` are
-                // spliced into the same chains, or the walk would double-free `DescribeScope`
-                // entries.
-                debug_assert!(
-                    self.extra_execution_entries.is_empty(),
-                    "extra_execution_entries must be spliced after the cloned-hook walk"
-                );
-                for seq in &order.sequences[describe_seq_start..describe_seq_end] {
-                    let Some(test_entry) = seq.test_entry else { continue };
-                    let mut cur = seq.first_entry;
-                    while let Some(p) = cur {
-                        if p != test_entry {
-                            self.cloned_hook_entries.push(p.as_ptr());
-                        }
-                        // SAFETY: live linked-list nodes built by `generate_order_test`.
-                        cur = unsafe { p.as_ref() }.next.and_then(NonNull::new);
-                    }
-                }
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all, true)?
@@ -1299,6 +1277,7 @@ impl BunTest {
                     unsafe { (*reporter.as_ptr()).jest.summary.shuffled += 1 };
                 }
                 self.execution.load_from_order(&mut order);
+                self.cloned_hook_entries = order.cloned_hook_entries;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }
@@ -1714,16 +1693,6 @@ impl Drop for BunTest {
         if self.timer.state.get() == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
             timer_all().remove(&self.timer);
-        }
-
-        for entry in self.extra_execution_entries.drain(..) {
-            // SAFETY: entries were heap-allocated in generic_hook; we own them
-            unsafe { drop(bun_core::heap::take(entry)); }
-        }
-        for entry in self.cloned_hook_entries.drain(..) {
-            // Reclaim only the Box header — fields alias the `DescribeScope` originals.
-            // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
-            let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
         }
         // execution, collection, result_queue: dropped automatically
     }

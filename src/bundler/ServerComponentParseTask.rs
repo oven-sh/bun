@@ -35,8 +35,6 @@ pub(crate) struct ServerComponentParseTask<'a> {
     pub source: Source<'a>,
 }
 
-// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
-// would leak. The size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
 pub enum Data<'a> {
     /// Generate server-side code for a "use client" module. Given the
@@ -56,22 +54,23 @@ pub struct ClientEntryWrapper {
     pub(crate) path: Box<[u8]>,
 }
 
-/// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
+/// Raw thread-pool callback. Takes the `ServerComponentParseTask` back from the
 /// intrusive `task` field and dispatches the parse, then posts the result back
 /// to the owning event loop.
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
 // `ctx.loop_.enqueue_task_concurrent` (MPSC). Reads `ctx: &BundleV2` shared.
-// `ServerComponentParseTask` is `Send` because `ctx: *mut BundleV2` is a
-// backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
-// slices.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
-    // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
-    // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
+    // SAFETY: `thread_pool_task` points to the `task` field of the boxed
+    // `ServerComponentParseTask` that BundleV2 gave to the pool, which runs it once.
     // The bundle's `'a` is erased to `'static`: see `parse_task::task_callback`.
-    let task: &mut ServerComponentParseTask<'static> = unsafe {
-        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask<'static>, task, thread_pool_task))
+    let mut task = unsafe {
+        bun_core::heap::take(bun_core::from_field_ptr!(
+            ServerComponentParseTask<'static>,
+            task,
+            thread_pool_task
+        ))
     };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
@@ -85,11 +84,13 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // worker-owned bump arena; lives for the worker's lifetime.
     let arena: &Arena = worker.arena();
 
-    let value = match task_callback(task, &mut log, arena) {
+    let value = match task_callback(&mut task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
+    // Its exports can be in the bundle's heap, which can go once the result is posted.
+    drop(task);
 
     let result = Box::new(parse_task::Result {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance
@@ -219,10 +220,7 @@ impl Default for ServerComponentParseTask<'_> {
 }
 
 fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
-    // outlives the bundle pass (owned by the heap-allocated task). Route through
-    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
-    let path = bun_ast::StoreStr::new(&data.path[..]);
+    let path = bun_ast::StoreStr::new(b.bump.alloc_slice_copy(&data.path));
     let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
@@ -287,7 +285,7 @@ fn generate_client_reference_proxy(
     ));
 
     for key in client_named_exports.keys() {
-        let key: &[u8] = key.as_ref();
+        let key: &[u8] = b.bump.alloc_slice_copy(key);
         let is_default = key == b"default";
 
         // This error message is taken from
@@ -353,7 +351,7 @@ fn generate_client_reference_proxy(
                     ..Default::default()
                 }),
                 module_path,
-                b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
+                b.new_expr(E::String::init(key)),
             ]),
             ..Default::default()
         });

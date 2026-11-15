@@ -645,31 +645,28 @@ impl Endpoints {
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
     fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+        let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
             process,
             retired: false,
-        }));
-        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
-        // and outlives it.
+        });
+        // SAFETY: `chrome` owns `process` and outlives it.
         let process = unsafe {
-            let process = &(*self_ptr).process;
+            let process = &(*chrome.as_ptr()).process;
             Process::set_exit_handler(
                 process,
-                ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr),
+                ProcessExit::new(ProcessExitKind::ChromeProcess, chrome.as_ptr()),
             );
             process
         };
         if let Err(e) = process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
-            // SAFETY: reclaim the Box (drops our process ref).
-            drop(unsafe { bun_core::heap::take(self_ptr) });
             return Err(crate::Error::WatchFailed);
         }
         // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
         process.disable_keeping_event_loop_alive();
-        INSTANCE.store(self_ptr, Ordering::Relaxed);
+        INSTANCE.store(chrome.into_raw(), Ordering::Relaxed);
 
         debug_assert!(self.child.is_none());
         // usockets owns the fd from here on; this module only owns the process.

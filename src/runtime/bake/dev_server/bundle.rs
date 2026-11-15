@@ -406,10 +406,9 @@ impl DevServer {
         bv2.linker.dev_server = Some(dev_handle);
 
         {
-            self.graph_safety_lock.lock();
+            let _g = self.graph_safety_lock.guard();
             self.graphs.client.reset();
             self.graphs.server.reset();
-            self.graph_safety_lock.unlock();
         }
 
         // LAYERING: `bun_bundler::bake_types::EntryPointList` is the TYPE_ONLY

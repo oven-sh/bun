@@ -1243,11 +1243,11 @@ impl<'a> Transpiler<'a> {
 
         let source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
-                break 'brk virtual_source.clone();
+                break 'brk virtual_source.clone_in(arena);
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
-                break 'brk client_entry_point.source.clone();
+                break 'brk client_entry_point.source.clone_in(arena);
             }
 
             if !DATA_ONLY && path.namespace == b"node" {

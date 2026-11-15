@@ -422,7 +422,7 @@ extern "C" fn on_data(
         this.drive_engines_once();
     }
     // `on_new_mini_conn` runs inside `lsquic_engine_packet_in`. The send scope keeps it from re-entering lsquic.
-    this.send_scope_depth.set(this.send_scope_depth.get() + 1);
+    let _send_scope = this.send_scope();
     bun_boringssl_sys::ERR_clear_error();
     for i in 0..packets {
         let payload = uws::udp::PacketBuffer::opaque_mut(buf).get_payload(i);
@@ -500,7 +500,6 @@ extern "C" fn on_data(
     // during this dispatch must not join the same flight as the data the
     // handlers wrote (sessions stash it; the next depth-0 pass applies it).
     this.process(global);
-    this.send_scope_depth.set(this.send_scope_depth.get() - 1);
 }
 
 /// Node's SNI resolution order: exact hostname, then a `*.suffix` wildcard,
@@ -1085,7 +1084,7 @@ impl QuicEndpoint {
                 }
             }
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
+        let send_scope = self.send_scope();
         self.next_pass_at_ns.set(u64::MAX);
         // Not from the mid-turn drain pass: a deferred abort is dropped when
         // a later stream writes first, and node decides that over the whole
@@ -1159,7 +1158,7 @@ impl QuicEndpoint {
         {
             self.finish_close();
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        drop(send_scope);
         // Writes made by the dispatch above could not flush inline (the scope
         // was held). Send them at the pass's outer edge, where node's
         // SendPendingDataScope flushes, not a loop turn later.
@@ -1393,14 +1392,19 @@ impl QuicEndpoint {
         ctx.cast()
     }
 
+    fn send_scope(&self) -> SendScope<'_> {
+        self.send_scope_depth.update(|depth| depth + 1);
+        SendScope(&self.send_scope_depth)
+    }
+
     pub(super) fn drive_engines_once(&self) {
         if self.closed.get() {
             return;
         }
-        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
+        let send_scope = self.send_scope();
         bun_boringssl_sys::ERR_clear_error();
         self.driver().process();
-        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        drop(send_scope);
     }
 
     pub(super) fn unregister_session(&self, session: *mut QuicSession) {
@@ -1716,7 +1720,7 @@ impl QuicEndpoint {
         };
         // engine_connect fires on_new_conn synchronously; hold the scope so a
         // schedule_process from inside it cannot re-enter the engine.
-        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
+        let send_scope = self.send_scope();
         // `options.token` isn't replayed: lsquic breaks the token and zero-rtt tests with it. That costs the Retry RTT it would have saved.
         // SAFETY: the engine is live and remote/tls/sni are valid for this call. `session` is
         // the conn-ctx, at its final address in its wrapper. lsquic returns a live conn or null.
@@ -1734,7 +1738,7 @@ impl QuicEndpoint {
             );
             lsquic::Conn::from_raw(conn.cast())
         };
-        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        drop(send_scope);
         let Some(conn) = conn else {
             session.teardown(global);
             return Ok(JSValue::UNDEFINED);
@@ -1967,6 +1971,14 @@ impl QuicEndpoint {
                 vt.on_mini_conn_failed = QuicSession::on_mini_conn_failed_detached;
             }
         });
+    }
+}
+
+struct SendScope<'a>(&'a Cell<u32>);
+
+impl Drop for SendScope<'_> {
+    fn drop(&mut self) {
+        self.0.update(|depth| depth - 1);
     }
 }
 

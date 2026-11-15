@@ -630,15 +630,16 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop().enter();
-        let result = jsc::host_fn::from_js_host_call(global, || {
-            match &self.state {
-                ServePluginsState::Pending { plugin, .. } => plugin,
-                _ => unreachable!(),
-            }
-            .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
-        })?;
-        global.bun_vm().event_loop().exit();
+        let result = {
+            let _entered = global.bun_vm().enter_event_loop_scope();
+            jsc::host_fn::from_js_host_call(global, || {
+                match &self.state {
+                    ServePluginsState::Pending { plugin, .. } => plugin,
+                    _ => unreachable!(),
+                }
+                .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+            })?
+        };
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1008,13 +1009,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref via
         // const-asserted `bun_opaque::opaque_deref_mut`. `self.app` is `Some`
         // for the lifetime of any JS-reachable `Server` (set in `listen()`,
-        // freed in `deinit()` after the JS wrapper is gone).
-        bun_opaque::opaque_deref_mut(self.app.get().expect("server not listening"))
+        // freed in `drop` after the JS wrapper is gone).
+        bun_opaque::opaque_deref_mut(self.app().expect("server not listening"))
     }
 
-    /// Unbounded so `deinit()` (in
-    /// the unbounded `impl NewServer` in mod.rs) can call it without naming
-    /// the per-transport `RequestContext` bounds.
+    /// Unbounded so that `drop` can call it without the `RequestContext` bounds.
     pub(super) fn notify_inspector_server_stopped(&self) {
         if self.inspector_server_id.get().get() != 0 {
             bun_core::hint::cold();
@@ -1038,7 +1037,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// node:http 'clientError'. `callback(socketHandle, errorCode, rawPacket)`.
     pub(crate) fn set_on_client_error(&self, global: &JSGlobalObject, callback: JSValue) {
-        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app()) else {
             return;
         };
         let mut on_clienterror = callback;
@@ -1263,7 +1262,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if topic.slice().is_empty() {
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
-        let Some(app) = self.app.get() else {
+        let Some(app) = self.app() else {
             return Ok(JSValue::js_number(0.0));
         };
         let status = AnyWebSocket::publish_with_options(
@@ -1648,8 +1647,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // The DevServer is HTTP/1-only. With it, an HTML route answers HTTP/2 and HTTP/3 with a 503.
         if self.dev_server.get().is_some()
             || !self.config.get().development.is_hmr_enabled()
-            || self.h2_app.get().is_some()
-            || self.h3_app.get().is_some()
+            || self.h2_app().is_some()
+            || self.h3_app().is_some()
             || !self.has_listener()
             || !self
                 .config
@@ -1664,7 +1663,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn reload_static_routes(&self) {
-        if self.app.get().is_none() {
+        if self.app().is_none() {
             // Static routes will get cleaned up when the server is stopped
             return;
         }
@@ -1862,7 +1861,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     pub(crate) fn close_idle_connections(&self, _: &mut JsScope<'_>) -> usize {
-        if self.app.get().is_none() || self.phase_held.get() {
+        if self.app().is_none() || self.phase_held.get() {
             return 0;
         }
         // One sweep, as in Node: busy connections are not marked to close later.
@@ -1902,7 +1901,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener.get() {
+        if let Some(listener) = self.listener() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(p) = bun_opaque::opaque_deref_mut(listener).get_local_port() {
                 return Some(p);
@@ -1939,7 +1938,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Tcp { port, .. } => *port,
         };
 
-        if let Some(listener) = self.listener.get() {
+        if let Some(listener) = self.listener() {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let listener = bun_opaque::opaque_deref_mut(listener);
             port = listener.get_local_port().unwrap_or(port);
@@ -1990,7 +1989,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_config::Address::Unix(_) => return Ok(JSValue::UNDEFINED),
             server_config::Address::Tcp { hostname, .. } => hostname,
         };
-        if let Some(listener) = self.listener.get() {
+        if let Some(listener) = self.listener() {
             let mut buf = [0u8; 1024];
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
@@ -2546,7 +2545,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         protos: Option<Box<[u8]>>,
         data: JSValue,
     ) -> JsResult<()> {
-        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app.get()) else {
+        let (Some(server_js), Some(app)) = (self.js_value_for_dispatch(), self.app()) else {
             return Ok(());
         };
         let handlers =

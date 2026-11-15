@@ -1088,8 +1088,8 @@ fn tls_listen_socket<'a>(listener: &TLSListener<'a>) -> Option<&'a mut uws_sys::
             ListenerType::Uws(listen_socket) if this.ssl => listen_socket,
             _ => return None,
         },
-        TLSListener::Https(server) => server.listener.get()?.cast(),
-        TLSListener::DebugHttps(server) => server.listener.get()?.cast(),
+        TLSListener::Https(server) => server.listener()?.cast(),
+        TLSListener::DebugHttps(server) => server.listener()?.cast(),
         TLSListener::Ignored(_) => return None,
     };
     Some(bun_opaque::opaque_deref_mut(listen_socket))

@@ -411,7 +411,6 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_message(message: &DecodedIPCMessage, handle: JSValue) -> JsResult<()> {
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
         let global_this = vm.global();
-        let event_loop = vm.event_loop();
 
         match *message {
             DecodedIPCMessage::Version(v) => {
@@ -419,9 +418,8 @@ impl IPCInstance {
             }
             DecodedIPCMessage::Data(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC message from parent");
-                event_loop.enter();
+                let _entered = vm.enter_event_loop_scope();
                 Process__emitMessageEvent(global_this, data, handle);
-                event_loop.exit();
             }
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
@@ -440,21 +438,21 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_close() {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        let event_loop = vm.event_loop();
         crate::jsc_hooks::ipc_child_singleton_deinit();
-        event_loop.enter();
-        // On the next tick, so that it comes after the callbacks of the messages that never went out.
-        let emit = bun_jsc::JSFunction::create(
-            vm.global(),
-            "",
-            crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessDisconnectEvent,
-            0,
-            Default::default(),
-        );
-        if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
-            let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+        {
+            let _entered = vm.enter_event_loop_scope();
+            // On the next tick, so that it comes after the callbacks of the messages that never went out.
+            let emit = bun_jsc::JSFunction::create(
+                vm.global(),
+                "",
+                crate::generated_bindgen::ipc_host::Bun__IPC__emitProcessDisconnectEvent,
+                0,
+                Default::default(),
+            );
+            if let Err(err) = JSValue::call_next_tick_1(emit, vm.global(), JSValue::UNDEFINED) {
+                let _ = bun_jsc::task::report_error_or_terminate(vm.global(), err);
+            }
         }
-        event_loop.exit();
         // Group is embedded in RareData and shared with subprocess IPC; nothing
         // to free here.
         vm.channel_ref.disable();

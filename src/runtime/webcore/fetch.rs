@@ -392,15 +392,14 @@ enum URLType {
 /// Nothing was queued yet: cancel a stream body with `reason` and reject with it.
 fn reject_before_send(
     global_this: &JSGlobalObject,
-    body: &mut HTTPRequestBody,
+    body: &HTTPRequestBody,
     reason: JSValue,
 ) -> JsResult<JSValue> {
-    if let HTTPRequestBody::ReadableStream(stream_ref) = &*body {
+    if let HTTPRequestBody::ReadableStream(stream_ref) = body {
         if let Some(stream) = stream_ref.get() {
             stream.cancel_with_reason(global_this, reason)?;
         }
     }
-    body.detach();
     Ok(JSPromise::rejected_promise(global_this, reason).to_js())
 }
 
@@ -1169,7 +1168,7 @@ fn fetch_impl(
     if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
-            return reject_before_send(global_this, &mut body, reason);
+            return reject_before_send(global_this, &body, reason);
         }
     }
 
@@ -1209,14 +1208,10 @@ fn fetch_impl(
                 )?,
                 global_this,
             )? {
-                let mut old = core::mem::replace(
-                    &mut body,
-                    HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
-                        stream,
-                        global_this,
-                    )),
-                );
-                old.detach();
+                body = HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
+                    stream,
+                    global_this,
+                ));
                 break 'prepare_body;
             }
             let rejected_value = JSPromise::rejected_promise(
@@ -1224,7 +1219,6 @@ fn fetch_impl(
                 global_this.create_error_instance(format_args!("Failed to start the body stream")),
             )
             .to_js();
-            body.detach();
             return Ok(rejected_value);
         }
     }
@@ -1256,13 +1250,13 @@ fn fetch_impl(
                 }
             };
 
-            let opened_fd = match opened_fd_res {
+            let opened_file = match opened_fd_res {
                 Err(err) => {
                     let err_js = system_type_error(&err, global_this);
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     return Ok(rejected_value);
                 }
-                Ok(fd) => fd,
+                Ok(fd) => bun_sys::File::from_fd(fd),
             };
 
             // An explicit `compress` request always wins over the sendfile
@@ -1279,7 +1273,7 @@ fn fetch_impl(
                 && http::SendFile::is_eligible(&url)
             {
                 'use_sendfile: {
-                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
+                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_file.fd()) {
                         Ok(result) => result,
                         // bail out for any reason
                         Err(_) => break 'use_sendfile,
@@ -1302,7 +1296,7 @@ fn fetch_impl(
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64) — hence the `as usize` casts.
                     let mut sf = http::SendFile {
-                        fd: opened_fd,
+                        fd: opened_file.fd(),
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
                         content_size: original_size.min(stat_size) as usize,
@@ -1317,21 +1311,21 @@ fn fetch_impl(
                         .saturating_sub(sf.offset);
                     // `remain` is now the slice window clamped to the file, which is the Content-Length.
                     sf.content_size = sf.remain;
-                    body.detach();
 
                     // macOS and FreeBSD read a sendfile(2) length of 0 as "until end of file".
                     if sf.remain == 0 {
-                        opened_fd.close();
+                        body = HTTPRequestBody::default();
                         break 'prepare_body;
                     }
 
-                    body = HTTPRequestBody::Sendfile(sf);
+                    body = HTTPRequestBody::Sendfile {
+                        window: sf,
+                        _file: opened_file,
+                    };
 
                     break 'prepare_body;
                 }
             }
-
-            let opened_file = bun_sys::File::from_fd(opened_fd);
 
             // TODO: make this async + lazy
             let blob_offset = body.blob().offset.get();
@@ -1353,11 +1347,9 @@ fn fetch_impl(
                 Err(err) => {
                     let err_js = system_type_error(&err, global_this);
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
-                    body.detach();
                     return Ok(rejected_value);
                 }
                 Ok(result) => {
-                    body.detach();
                     body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
                         result.slice().to_vec(),
                     ));
@@ -1582,7 +1574,7 @@ fn fetch_impl(
                             invalid.name
                         ),
                     );
-                    return reject_before_send(global_this, &mut body, err);
+                    return reject_before_send(global_this, &body, err);
                 }
             }
         };

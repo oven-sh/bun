@@ -96,7 +96,7 @@ test.skipIf(!isASAN || isWindows)(
   30_000,
 );
 
-// A socket still linked into the uws app when NewApp::destroy runs at
+// A socket still linked into the uws app when the app is destroyed at
 // lastChanceToFinalize would be orphaned, which LSan reports as a direct leak.
 test.skipIf(!isASAN || isWindows)(
   "gracefully-stopped Bun.serve does not orphan a keep-alive socket at VM teardown",

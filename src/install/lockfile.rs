@@ -3567,7 +3567,7 @@ impl Lockfile {
         let alphabetized_name_version_string = &string_builder.allocated_slice()[..len];
         if print_name_version_string {
             Output::flush();
-            Output::disable_buffering();
+            let _unbuffered = Output::disable_buffering_scope();
             // `bun pm hash-string` is asked for the hashed bytes; `--verbose` ends up in CI logs.
             if PackageManager::verbose_install() {
                 Output::writer()
@@ -3581,7 +3581,6 @@ impl Lockfile {
                     .write_all(alphabetized_name_version_string)
                     .expect("unreachable");
             }
-            Output::enable_buffering();
         }
 
         let mut digest = ZERO_HASH;

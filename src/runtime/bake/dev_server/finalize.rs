@@ -1043,9 +1043,8 @@ fn finalize_bundle_inner(
                     .env_loader()
                     .has_set_no_clear_terminal_on_reload(false);
             if clear_terminal {
-                Output::disable_buffering();
+                let _unbuffered = Output::disable_buffering_scope();
                 Output::reset_terminal_all();
-                Output::enable_buffering();
             }
 
             dev.print_memory_line();

@@ -1999,7 +1999,6 @@ dependencies = [
  "bun_exe_format",
  "bun_highway",
  "bun_http",
- "bun_opaque",
  "bun_options_types",
  "bun_parsers",
  "bun_paths",

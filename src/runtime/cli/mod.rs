@@ -310,14 +310,13 @@ fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
     unsafe { core::slice::from_raw_parts(ptr, len) }
 }
 
-/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL and
-/// return the C-string pointer (for argv/envp construction).
+/// Dupe `s` into the process-lifetime CLI arena with a trailing NUL.
 #[inline]
-fn cli_dupe_z(s: &[u8]) -> *const core::ffi::c_char {
+fn cli_dupe_z(s: &[u8]) -> bun_core::CStrRef<'static> {
     let buf: &'static mut [u8] = cli_arena().alloc_slice_fill_default(s.len() + 1);
     buf[..s.len()].copy_from_slice(s);
     // buf[s.len()] is already 0 (Default for u8).
-    buf.as_ptr().cast::<core::ffi::c_char>()
+    bun_core::CStrRef::from_bytes_with_nul(buf)
 }
 
 /// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
@@ -395,9 +394,7 @@ pub(crate) mod cli {
             // message. The bake production path returns `error.BuildFailed`
             // with the actual parse/link errors sitting in `ctx.log` (== this
             // `log`); without this print, users see only the opaque error name.
-            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                bun_core::Output::error_writer(),
-            ));
+            let _ = log.print(bun_core::Output::error_writer());
             bun_crash_handler::handle_root_error(err);
         }
     }

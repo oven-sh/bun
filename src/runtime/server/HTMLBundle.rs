@@ -316,9 +316,7 @@ impl Route {
 
     /// Production only hides the reason from the client, see `end_build_failed`.
     fn set_build_error(&self, log: Log) {
-        // `Log::print` takes the process-global writer as a `*mut io::Writer` through `IntoLogWrite`.
-        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
-        let _ = log.print(writer);
+        let _ = log.print(bun_output::error_writer_buffered());
         bun_output::flush();
         self.state.set(State::Err(log));
     }

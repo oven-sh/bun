@@ -17,7 +17,6 @@ use bun_parsers::json as json_mod;
 use bun_paths as path;
 use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
 use bun_sha_hmac as sha;
-use bun_simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self, Fd, File, FileKind};
 use bun_url::URL;
@@ -259,9 +258,7 @@ impl Context {
                 Ok(j) => j,
                 Err(bun_parsers::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
                 Err(_) => {
-                    let _ = manager
-                        .log_mut()
-                        .print(std::ptr::from_mut(Output::error_writer()));
+                    let _ = manager.log_mut().print(Output::error_writer());
                     Output::err_generic("failed to parse tarball package.json", ());
                     Global::crash();
                 }
@@ -1513,14 +1510,7 @@ impl PublishCommand {
             ),
         );
 
-        // SAFETY: `encode_raw` writes exactly `encoded_tarball_len` bytes into the reserved spare
-        // capacity; `fill_spare` commits exactly that count.
-        let count = unsafe {
-            bun_core::vec::fill_spare(&mut buf, encoded_tarball_len, |spare| {
-                let n = simdutf::base64::encode_raw(&ctx.tarball_bytes, spare.as_mut_ptr(), false);
-                (n, n)
-            })
-        };
+        let count = bun_base64::encode_append(&mut buf, &ctx.tarball_bytes);
         debug_assert!(count == encoded_tarball_len);
 
         let _ = write!(&mut buf, "\",\"length\":{}}}}}}}", ctx.tarball_bytes.len());

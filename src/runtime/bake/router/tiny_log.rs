@@ -113,7 +113,7 @@ impl TinyLog {
 }
 
 /// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`.
-fn writer_splat_byte_all(w: &mut bun_core::io::Writer, byte: u8, n: usize) -> crate::Result<()> {
+fn writer_splat_byte_all(w: &bun_core::io::Writer, byte: u8, n: usize) -> crate::Result<()> {
     let chunk = [byte; 256];
     let mut remain = n;
     while remain > 0 {
@@ -124,11 +124,7 @@ fn writer_splat_byte_all(w: &mut bun_core::io::Writer, byte: u8, n: usize) -> cr
     Ok(())
 }
 
-fn writer_splat_bytes_all(
-    w: &mut bun_core::io::Writer,
-    bytes: &str,
-    n: usize,
-) -> crate::Result<()> {
+fn writer_splat_bytes_all(w: &bun_core::io::Writer, bytes: &str, n: usize) -> crate::Result<()> {
     for _ in 0..n {
         w.write_all(bytes.as_bytes())?;
     }

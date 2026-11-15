@@ -4208,7 +4208,7 @@ fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) ->
     let mut inspect_error: Option<JSValue> = None;
 
     Output::enable_buffering();
-    let writer = Output::error_writer();
+    let mut writer = Output::error_writer();
 
     if class_name == b"Response" {
         bun_core::err_generic!(
@@ -4235,7 +4235,7 @@ fn print_invalid_response_error(global_this: &JSGlobalObject, value: JSValue) ->
 
     Output::flush();
     if !global_this.has_exception() {
-        jsc::ConsoleObject::write_trace(writer, global_this);
+        jsc::ConsoleObject::write_trace(&mut writer, global_this);
     }
     Output::flush();
     inspect_error

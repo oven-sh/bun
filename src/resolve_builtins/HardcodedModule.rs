@@ -309,7 +309,7 @@ bun_core::comptime_string_map! {
 }
 
 impl HardcodedModule {
-    /// One more than the largest discriminant.
+    /// The number of variants. No variant sets its discriminant, so each one `as usize` is less.
     pub const COUNT: usize = <Self as strum::EnumCount>::COUNT;
 
     // Associated `static` is unstable (E0658), so the map lives at module

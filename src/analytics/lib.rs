@@ -93,7 +93,9 @@ pub mod features {
 
     /// Record a builtin-module load. `index` is the discriminant of the `HardcodedModule`.
     pub fn insert_builtin_module(index: usize, name: &'static str) {
-        let _ = BUILTIN_MODULES[index].set(name);
+        if let Some(slot) = BUILTIN_MODULES.get(index) {
+            let _ = slot.set(name);
+        }
     }
 
     macro_rules! define_features {

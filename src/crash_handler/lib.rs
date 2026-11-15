@@ -4001,6 +4001,7 @@ mod draft {
         /// The slots of the builtin modules are in the order of their enum. The report lists them by name.
         #[test]
         fn builtin_modules_are_listed_by_name() {
+            use bun_analytics::features::BUILTIN_MODULE_SLOTS;
             let list = || {
                 let mut lines = BoundedArray::<u8, 256>::default();
                 write!(lines.writer(), "{}", bun_analytics::features::formatter()).unwrap();
@@ -4013,6 +4014,7 @@ mod draft {
                 (0, "bun"),
                 (1, "abort-controller"),
                 (3, "bun:ffi"),
+                (BUILTIN_MODULE_SLOTS, "a module that has no slot"),
             ] {
                 bun_analytics::features::insert_builtin_module(slot, name);
             }

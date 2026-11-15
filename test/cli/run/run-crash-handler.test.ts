@@ -924,11 +924,11 @@ __attribute__((constructor)) static void add_fork_handler(void) {
       env: { ...bunEnv, ...sendsReportTo(server) },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const [stderr, exited] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toContain("abort() called");
     expect(stderr).toContain("oh no: Bun has crashed");
-    expect(exited).toBe(128 + abort);
+    expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });
     expect(await sent).toEndWith("/ack");
   });
 

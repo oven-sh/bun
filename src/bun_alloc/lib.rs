@@ -506,7 +506,7 @@ static PAGE_SIZE: AtomicUsize = AtomicUsize::new(0);
 
 #[inline]
 pub fn page_size() -> usize {
-    match PAGE_SIZE.load(Ordering::Relaxed) {
+    match PAGE_SIZE.load(Ordering::SeqCst) {
         0 => read_page_size(),
         size => size,
     }
@@ -558,7 +558,7 @@ fn read_page_size() -> usize {
         }
     };
     // Threads that get here together store the same value.
-    PAGE_SIZE.store(size, Ordering::Relaxed);
+    PAGE_SIZE.store(size, Ordering::SeqCst);
     size
 }
 

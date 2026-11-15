@@ -271,7 +271,7 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 });
 
 const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a worker's final GC", async () => {
+test.concurrent.skipIf(!cc)("an addon cannot queue work in a finalizer during a worker's final GC", async () => {
   using dir = tempDir("worker-late-napi", {});
   const addon = path.join(String(dir), "addon.node");
   await using build = Bun.spawn({
@@ -281,6 +281,7 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
       "-fPIC",
       ...(isMacOS ? ["-undefined", "dynamic_lookup"] : []),
       `-I${path.resolve(import.meta.dir, "../../../../src/runtime/napi")}`,
+      `-I${path.resolve(import.meta.dir, "../../../../src/jsc/bindings/libuv")}`,
       path.join(import.meta.dir, "worker-late-completion-napi-fixture.c"),
       "-o",
       addon,
@@ -306,7 +307,11 @@ test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // 23 is napi_cannot_run_js.
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "queued from finalizer: 23\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "queued from finalizer: 23\nuv_queue_work is cancelled: 1\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // A `Bun.file()` / `Bun.stdin` read of a pipe or tty that has no data yet

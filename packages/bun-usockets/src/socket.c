@@ -527,10 +527,6 @@ void *us_socket_get_native_handle(struct us_socket_t *s) {
     return (void *) (uintptr_t) us_poll_fd((struct us_poll_t *) s);
 }
 
-void *us_connecting_socket_get_native_handle(struct us_connecting_socket_t *c) {
-    return (void *) (uintptr_t) -1;
-}
-
 int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     if (s->ssl) {
         return us_internal_ssl_write(s, data, length);

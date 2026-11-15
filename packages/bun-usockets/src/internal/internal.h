@@ -176,6 +176,9 @@ struct ssl_session_st;
 extern int us_dispatch_new_session(us_socket_r s, struct ssl_session_st *session);
 /* Returns a US_IDENTITY_* verdict on the name of the server's certificate. Must not run JS. */
 extern int us_dispatch_server_identity(us_socket_r s, struct ssl_st *ssl);
+/* BoringSSL's ALPN select callback, for the owner of `s`. */
+extern int us_dispatch_alpn_select(us_socket_r s, struct ssl_st *ssl, const unsigned char **out, unsigned char *outlen,
+                                   const unsigned char *in, unsigned int inlen);
 extern struct ssl_ctx_st *us_dispatch_socket_server_name(us_socket_r s, const char *hostname, int *abort_handshake);
 extern struct us_socket_t *us_dispatch_ssl_raw_tap(us_socket_r s, char *data, int length);
 /* crypto/sni_tree.cpp: the one place server names are compared. */
@@ -561,16 +564,5 @@ struct us_listen_socket_t {
 
 void us_internal_socket_group_link_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
 void us_internal_socket_group_unlink_connecting_socket(us_socket_group_r group, struct us_connecting_socket_t *c);
-
-
-/* Save/restore the per-loop BIO routing state around in-handshake JS
- * callbacks (SNI / ALPN). Defined in crypto/openssl.c. The snapshot is an
- * opaque void*[US_SSL_LOOP_STATE_SLOTS] the caller provides; Rust callers
- * size their array from us_internal_ssl_loop_state_slots() in a debug
- * assertion so growth cannot silently corrupt a caller's stack. */
-#define US_SSL_LOOP_STATE_SLOTS 6
-int us_internal_ssl_loop_state_slots(void);
-void us_internal_ssl_loop_state_save(void *ssl, void **out);
-void us_internal_ssl_loop_state_restore(void **saved);
 
 #endif // INTERNAL_H

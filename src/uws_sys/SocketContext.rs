@@ -6,7 +6,8 @@
 use core::ffi::{c_char, c_long};
 use core::ptr;
 
-use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
+use bun_boringssl_sys::hashers::SHA256;
+use bun_boringssl_sys::{OwnedSslCtx, OwnedX509Store, SSL_CTX};
 
 use crate::create_bun_socket_error_t;
 
@@ -171,15 +172,7 @@ impl BunSocketContextOptions {
         err: &mut create_bun_socket_error_t,
     ) -> Option<OwnedSslCtx> {
         let ctx = self.create_ssl_context(err)?;
-        // SAFETY: `ctx` is live and not shared yet; the call copies `digest`
-        // (32 bytes, the session id context maximum, so it cannot fail).
-        unsafe {
-            bun_boringssl_sys::SSL_CTX_set_session_id_context(
-                ctx.as_ptr(),
-                digest.as_ptr(),
-                digest.len(),
-            );
-        }
+        ctx.set_session_id_context(digest);
         Some(ctx)
     }
 
@@ -188,9 +181,9 @@ impl BunSocketContextOptions {
     /// Two option structs that build the same `SSL_CTX*` produce the same
     /// digest. Used as the key for `SSLContextCache`.
     pub fn digest(&self) -> [u8; 32] {
-        let mut h = Sha256::init();
+        let mut h = SHA256::init();
 
-        let feed_z = |hp: &mut Sha256, s: *const c_char| {
+        let feed_z = |hp: &mut SHA256, s: *const c_char| {
             // Presence byte so null ≠ "" — both would otherwise feed only
             // the trailing 0. In practice "" usually fails create_ssl_context
             // and never caches, but injectivity is cheap to guarantee.
@@ -202,7 +195,7 @@ impl BunSocketContextOptions {
             hp.update(&[0]); // terminator so {a:"xy"} ≠ {a:"x",b:"y"}
         };
 
-        let feed_arr = |hp: &mut Sha256, arr: *const *const c_char, n: u32| {
+        let feed_arr = |hp: &mut SHA256, arr: *const *const c_char, n: u32| {
             hp.update(&[(!arr.is_null()) as u8]);
             hp.update(bun_core::bytes_of(&n));
             if !arr.is_null() {
@@ -225,7 +218,7 @@ impl BunSocketContextOptions {
         // the file form is used (Bun-specific; node:tls always passes inline
         // bytes). On stat failure we feed zeros — `create_ssl_context` will fail
         // on the same path and the entry never reaches the cache.
-        let feed_path = |hp: &mut Sha256, s: *const c_char| {
+        let feed_path = |hp: &mut SHA256, s: *const c_char| {
             hp.update(&[(!s.is_null()) as u8]);
             if !s.is_null() {
                 // SAFETY: NUL-terminated C string.
@@ -265,7 +258,7 @@ impl BunSocketContextOptions {
         feed_z(&mut h, self.sigalgs);
         feed_z(&mut h, self.ecdh_curve);
         let mut out = [0u8; 32];
-        h.final_(&mut out);
+        h.r#final(&mut out);
         out
     }
 
@@ -294,33 +287,10 @@ impl BunSocketContextOptions {
     }
 }
 
-/// Thin SHA-256 wrapper over the raw `bun_boringssl_sys` FFI. No higher-tier
-/// `bun_boringssl::Sha256` exists yet; this stays local until one does.
-struct Sha256(core::mem::MaybeUninit<bun_boringssl_sys::SHA256_CTX>);
-impl Sha256 {
-    #[inline]
-    fn init() -> Self {
-        let mut ctx = core::mem::MaybeUninit::<bun_boringssl_sys::SHA256_CTX>::uninit();
-        // SAFETY: SHA256_Init writes the full ctx; never reads uninit bytes.
-        unsafe { bun_boringssl_sys::SHA256_Init(ctx.as_mut_ptr()) };
-        Self(ctx)
-    }
-    #[inline]
-    fn update(&mut self, data: &[u8]) {
-        // SAFETY: ctx was initialized in `init`; data is a valid readable slice.
-        unsafe {
-            bun_boringssl_sys::SHA256_Update(
-                self.0.as_mut_ptr(),
-                data.as_ptr().cast::<core::ffi::c_void>(),
-                data.len(),
-            )
-        };
-    }
-    #[inline]
-    fn final_(&mut self, out: &mut [u8; 32]) {
-        // SAFETY: ctx was initialized in `init`; out has room for 32 bytes.
-        unsafe { bun_boringssl_sys::SHA256_Final(out.as_mut_ptr(), self.0.as_mut_ptr()) };
-    }
+/// BoringSSL reads the ALPN callback of a server from the current `SSL_CTX`, which SNI can replace.
+pub fn enable_alpn_select(ctx: &SSL_CTX) {
+    // SAFETY: `ctx` is live, and the callback declines an `SSL` that has no `us_socket_t` and no `SSLWrapper`.
+    unsafe { c::us_ssl_ctx_enable_alpn_select(ctx) }
 }
 
 pub mod c {
@@ -332,6 +302,10 @@ pub mod c {
         ) -> *mut SSL_CTX;
         // safe: no args; reads a process-global counter — no preconditions.
         pub safe fn us_ssl_ctx_live_count() -> c_long;
+        pub safe fn us_ssl_ctx_has_user_ca(ctx: &SSL_CTX) -> core::ffi::c_int;
+        pub(super) fn us_ssl_ctx_enable_alpn_select(ctx: &SSL_CTX);
+        /// The process-wide default root store.
+        pub safe fn us_get_shared_default_ca_store() -> Option<OwnedX509Store>;
         /// Appends the certificates in the NUL-terminated PEM `content` to
         /// `ctx`'s trust store; returns 0 when nothing could be added.
         pub fn us_ssl_ctx_add_ca_cert(

@@ -49,12 +49,6 @@ impl GlobalRef {
     pub fn new(global: &JSGlobalObject) -> Self {
         Self(bun_ptr::BackRef::new(global))
     }
-
-    /// Raw FFI pointer (mut, matching `JSGlobalObject::as_ptr`).
-    #[inline(always)]
-    pub fn as_ptr(self) -> *mut JSGlobalObject {
-        self.0.as_ptr()
-    }
 }
 
 impl core::ops::Deref for GlobalRef {

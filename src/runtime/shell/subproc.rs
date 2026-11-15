@@ -920,8 +920,7 @@ pub(crate) enum Readable {
 }
 
 impl Readable {
-    /// If the slot is a `Pipe`, start its `BufferedReader`
-    /// and (when `eager`) immediately drain it.
+    /// If the slot is a `Pipe`, start its `BufferedReader` and (when `eager`) immediately drain it.
     ///
     /// # Safety
     /// `slot` must point to a live `Readable`. Raw because `start`
@@ -929,8 +928,7 @@ impl Readable {
     /// `Readable::finalize` and overwrites the slot — no reference to it may
     /// span that call.
     unsafe fn start_pipe_reader(slot: *mut Readable, eager: bool) {
-        // The reader must outlive the re-entrant call below even if it
-        // drops this slot's `Rc`; clone it as a keepalive.
+        // The call below may drop this slot's `Rc`.
         // SAFETY: caller contract; borrow scoped to the clone.
         let keepalive = match unsafe { &*slot } {
             Readable::Pipe(pipe) => Rc::clone(pipe),
@@ -1470,8 +1468,7 @@ impl PipeReader {
         match started {
             Ok(ReadStatus::Pending) => {}
             Ok(status) => return self.on_read_status(status),
-            // Only Windows returns an error here. Close the pipe and report it as
-            // a read error, so the `Cmd` is still alive when the child exits.
+            // Windows only. A read error, so that the `Cmd` is still alive when the child exits.
             Err(err) => {
                 self.reader.deinit();
                 return self.on_reader_error(&err);

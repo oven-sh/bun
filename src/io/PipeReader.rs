@@ -235,18 +235,15 @@ impl PosixBufferedReader {
     }
 
     /// `owner` is handed the events, to pass on to [`Self::read`] or [`Self::read_chunks`].
-    ///
-    /// # Safety
-    /// `owner` is what `__bun_run_io` takes its tag for, and `self` is a field of it that does not
-    /// move, until `self` is dropped or has another owner.
+    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, and `self` is a field of it that does
+    /// not move, until `self` is dropped or has another owner.
     pub unsafe fn set_owner(&self, owner: Owner) {
         // SAFETY: caller contract.
         unsafe { self.handle.set_owner(owner) };
     }
 
     pub fn update_ref(&self, value: bool) {
-        // Remember the ref state so a poll created later (lazy start) honours
-        // an unref() that preceded the first registration.
+        // For a poll that is created later.
         self.set_flags(PosixFlags::KEEP_ALIVE, value);
         self.handle.with_poll(|poll| {
             // An unarmed poll delivers nothing; `register_poll` applies KEEP_ALIVE when it arms.
@@ -256,15 +253,12 @@ impl PosixBufferedReader {
         });
     }
 
-    /// Both keep their owner.
+    /// Both keep their owner. The caller drains the buffer.
     pub fn from(&self, other: &PosixBufferedReader) {
         self.release_handle();
         self.handle.take_from(&other.handle);
         self.rwf_unsupported.set(other.rwf_unsupported.get());
         self.take_state_from(other);
-
-        // note: the caller is supposed to drain the buffer themselves
-        // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
     }
 
     pub fn start_memfd(&self, fd: Fd) {
@@ -351,10 +345,7 @@ impl PosixBufferedReader {
         if !self.has_flag(PosixFlags::MEMFD) || fd == Fd::INVALID {
             return;
         }
-        // The handle is closed after the read regardless of result.
-        // `self.handle` owns the fd;
-        // borrow a non-owning `File` view so the temporary doesn't
-        // close it on drop (handle.close() below does).
+        // Borrowed: `handle.close()` closes the fd, whatever the result.
         let result = self.with_buffer(|buffer| {
             sys::File::borrow(&fd).read_to_end_with_array_list(buffer, sys::SizeHint::UnknownSize)
         });
@@ -760,11 +751,7 @@ impl<'a> ReadLoop<'a> {
             return None;
         }
 
-        // A blocking pipe gets one read per wakeup unless it hung up, in
-        // which case draining locally reaches EOF — but `received_hup` is a
-        // snapshot, and user JS inside the consumer may have opened a new
-        // writer on the same FIFO. Re-check before committing to a read
-        // that could block (Linux named FIFOs reject RWF_NOWAIT).
+        // One read per wakeup, unless the pipe hung up. The consumer may have opened a new writer since, and a FIFO rejects RWF_NOWAIT, so ask again before a read that could block.
         if !self.received_hup {
             return Some(reader.register_poll(*self.ev));
         }
@@ -865,8 +852,7 @@ impl Completion {
         read_file_again: false,
     };
 
-    /// # Safety
-    /// `owner` is the one a reader has.
+    /// SAFETY: `owner` is the one a reader has.
     unsafe fn dispatch(self, owner: Owner) {
         if !matches!(self, Completion::Ended(ReadStatus::Pending)) {
             // SAFETY: `set_owner`'s contract.
@@ -936,8 +922,7 @@ impl WindowsBufferedReader {
         ReadStatus::Pending
     }
 
-    /// # Safety
-    /// See `PosixBufferedReader::set_owner`.
+    /// SAFETY: see `PosixBufferedReader::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
         self.claim_source();
@@ -950,15 +935,10 @@ impl WindowsBufferedReader {
         owner.with_addr(core::ptr::from_ref(self).addr()).cast()
     }
 
-    /// From now on this reader is the one a VM teardown stops the source
-    /// through — whether or not it ever starts reading — so nothing else may
-    /// close that handle while it sits here.
+    /// From now on a VM teardown stops the source through this reader, whether or not it ever reads.
     fn claim_source(&self) {
         self.with_source(|source| {
-            // A read over a file is a uv request with no handle to close: list
-            // the boxed File so a thread teardown closes this reader (`close()`
-            // below) before draining the loop. Unlisted where the box leaves
-            // this reader (`close_source`).
+            // A file has no handle to close, so it is listed until `close_source`.
             if let Some(file) = source.file_key() {
                 uv::open_handles::add_file(file);
             }
@@ -1056,8 +1036,7 @@ impl WindowsBufferedReader {
         let spare = |buffer: &mut Vec<u8>| {
             buffer.reserve(size);
             let spare = buffer.spare_capacity_mut();
-            // Spare capacity grows well past `suggested_size`, so an unclamped read
-            // overshoots the limit or `maxBuffer` by however much the buffer had room for.
+            // Spare capacity grows well past `suggested_size`.
             let len = this.clamp_len(spare.len());
             uv::uv_buf_t {
                 len: len as _,
@@ -1097,10 +1076,7 @@ impl WindowsBufferedReader {
 
         // NOTE: pipes/tty need to call stopReading on errors (yeah)
         let completion = if nread_int == 0 {
-            // EAGAIN or EWOULDBLOCK or canceled  (buf is not safe to access here)
-            // With libuv 1.51.0+, calling onRead(.drained) here causes a race condition
-            // where subsequent reads return truncated data (see logs showing 6024 instead
-            // of 74468 bytes). Just ignore 0-byte reads and let libuv continue.
+            // EAGAIN or canceled. Reporting it truncates later reads with libuv 1.51.0+.
             return;
         } else if nread_int == uv::UV_EOF as i64 {
             this.pause();
@@ -1250,8 +1226,7 @@ impl WindowsBufferedReader {
             }
             .to_error(sys::Tag::open)
             {
-                // Routed through `bun.windows.libuv.log` (the `uv` debug
-                // scope, toggled by `BUN_DEBUG_uv=1`), not `SYS`.
+                // The `uv` debug scope, not `SYS`.
                 bun_sys::windows::libuv::log!("uv_read_start() = {}", bstr::BStr::new(err.name()));
                 return sys::Result::Err(err);
             }
@@ -1301,8 +1276,7 @@ impl WindowsBufferedReader {
         ReadStatus::Done
     }
 
-    /// If a file operation is in progress, `Done` comes with the event of
-    /// its completion to ensure proper cleanup ordering.
+    /// With a file read in progress, `Done` comes with the event of its completion.
     pub fn close(&self) -> ReadStatus {
         self.pause();
 
@@ -1345,8 +1319,7 @@ impl WindowsBufferedReader {
             self.set_flags(WindowsFlags::RECEIVED_EOF, true);
         }
 
-        // The read that produced this chunk is complete; if the flag is set again
-        // below, a `start_reading` issued from the delivery set it.
+        // Before the delivery, which may start the next read.
         self.set_flags(WindowsFlags::HAS_INFLIGHT_READ, false);
         Ok((state, read_file_again))
     }

@@ -38,8 +38,8 @@
 //! Every interface method must appear exactly once in each `link_impl_*!`
 //! call (an unknown name is a compile error from the generated macro; a
 //! missing one surfaces as a link error naming
-//! `__bun_dispatch__<Iface>__<Variant>__<method>`). A `#[cfg]` on a method of
-//! the interface also covers its body in each `link_impl_*!`.
+//! `__bun_dispatch__<Iface>__<Variant>__<method>`).
+//! A `#[cfg]` on a method of the interface also covers its body in each `link_impl_*!`.
 
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};

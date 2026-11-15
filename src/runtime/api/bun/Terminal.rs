@@ -294,8 +294,7 @@ impl Terminal {
     }
 
     /// `self`'s address as `*mut Self` for intrusive backref / refcount slots.
-    /// Callers deref it as `&*const` (shared) — see the
-    /// `*StreamingWriterParent` thunks below — so no write provenance is
+    /// Callers deref it as `&*const` (shared), so no write provenance is
     /// required; the `*mut` spelling is purely to match the C-shaped vtable
     /// signatures. All field mutation routes through `Cell`/`JsCell`.
     #[inline]

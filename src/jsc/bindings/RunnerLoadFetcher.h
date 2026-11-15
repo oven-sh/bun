@@ -94,9 +94,18 @@ public:
         unsigned madeAt = key.isNull() ? 0 : m_commonJSSources.get(key);
         if (madeAt && (!outer || madeAt < outer))
             m_runningCommonJSSource = madeAt;
+        if (madeAt && !outer) {
+            m_outermostRun = key;
+            ++m_outermostRuns;
+        }
         return outer;
     }
-    void endCommonJSRun(unsigned outer) { m_runningCommonJSSource = outer; }
+    void endCommonJSRun(unsigned outer)
+    {
+        m_runningCommonJSSource = outer;
+        if (!outer)
+            forgetOutermostRun();
+    }
 
     // True in such a run for a data file of the load that the loader had no module of when that source was made: require() reads the file itself then, as where the import runs as soon as it is fetched. Ask runnerLoadHadNoModuleOfDataFile(), which counts the synchronous loads of the runs first.
     bool hadNoModuleOfDataFile(const WTF::String& key) const
@@ -147,6 +156,57 @@ public:
             dataFile->value = source;
     }
 
+    // The import that the load held back whose body runs and is inside no other such body: null when none runs. Where that import runs as soon as it is fetched, the root of the load and every module between the two are still being loaded meanwhile, and the synchronous load that first asks for the import, or for one of those modules, ends their loads in its own queue: two loader steps for the import and one more for each module above it, and the loader links and evaluates the root one step behind the last. The steps below stand for those.
+    const WTF::String& outermostRun() const { return m_outermostRun; }
+    bool hasOutermostRun() const { return !m_outermostRun.isNull(); }
+    // Tells the steps of one outermost run from those of another.
+    unsigned outermostRunNumber() const { return m_outermostRuns; }
+
+    bool knowsWaitingLoads() const { return m_knowsWaitingLoads; }
+    // `waitingLoads`: each module whose load waits for the outermost run, with the step that ends its load. `rootStep`: that of the root, 0 where its load does not wait.
+    void setWaitingLoads(WTF::UncheckedKeyHashMap<WTF::String, unsigned>&& waitingLoads, unsigned rootStep)
+    {
+        m_waitingLoads = WTF::move(waitingLoads);
+        m_rootLoadStep = rootStep;
+        m_knowsWaitingLoads = true;
+    }
+    // Whether a synchronous load that asks for `key` begins the steps.
+    bool leadsToOutermostRun(const WTF::String& key) const { return m_rootLoadStep && !key.isNull() && (key == m_outermostRun || m_waitingLoads.contains(key)); }
+
+    bool hasLoadSteps() const { return m_lastLoadStep; }
+    void beginLoadSteps()
+    {
+        m_lastLoadStep = m_rootLoadStep;
+        m_loadStep = 0;
+    }
+    // None is left to take: a require() of a waiting module begins them, whose own queue takes them all before any code runs, or the queue that took them gave up.
+    void endLoadSteps() { m_loadStep = m_lastLoadStep = m_rootLoadStep; }
+    // True for a waiting module between the first step and the one that ends its load: no other synchronous load can end that load.
+    bool hasYetToEndLoad(const WTF::String& key) const
+    {
+        if (m_loadStep >= m_lastLoadStep || key.isNull())
+            return false;
+        auto waiting = m_waitingLoads.find(key);
+        return waiting != m_waitingLoads.end() && waiting->value > m_loadStep;
+    }
+
+    enum class LoadStep : uint8_t {
+        // Of an outermost run that has ended, or behind the last step.
+        None,
+        Taken,
+        // The last but one: the loader links and evaluates a loaded root two of its steps behind the call that has it do so.
+        LoadsRoot,
+        Last,
+    };
+    LoadStep takeLoadStep(unsigned run)
+    {
+        if (run != m_outermostRuns || m_loadStep >= m_lastLoadStep)
+            return LoadStep::None;
+        if (++m_loadStep == m_lastLoadStep)
+            return LoadStep::Last;
+        return m_loadStep + 1 == m_lastLoadStep ? LoadStep::LoadsRoot : LoadStep::Taken;
+    }
+
     // Null before endRunnerLoadWhenSettled() and once the load is dropped.
     JSC::JSPromise* promise() const { return m_promise.get(); }
     void setPromise(JSC::JSPromise* promise) { m_promise = JSC::Weak<JSC::JSPromise>(promise); }
@@ -163,6 +223,7 @@ public:
         m_commonJSSources.clear();
         m_synchronousLoads.clear();
         m_runningCommonJSSource = 0;
+        forgetOutermostRun();
         m_promise.clear();
     }
 
@@ -171,6 +232,16 @@ private:
         : m_loader(loader)
         , m_rootKey(rootKey)
     {
+    }
+
+    void forgetOutermostRun()
+    {
+        m_outermostRun = WTF::String();
+        m_knowsWaitingLoads = false;
+        m_waitingLoads.clear();
+        m_rootLoadStep = 0;
+        m_lastLoadStep = 0;
+        m_loadStep = 0;
     }
 
     JSC::JSModuleLoader* m_loader;
@@ -194,6 +265,14 @@ private:
     WTF::Vector<SynchronousLoad> m_synchronousLoads;
     // The number of the source that the running body goes by: 0 when none runs.
     unsigned m_runningCommonJSSource { 0 };
+    WTF::String m_outermostRun;
+    unsigned m_outermostRuns { 0 };
+    bool m_knowsWaitingLoads { false };
+    WTF::UncheckedKeyHashMap<WTF::String, unsigned> m_waitingLoads;
+    unsigned m_rootLoadStep { 0 };
+    // 0 until a synchronous load begins the steps, then `m_rootLoadStep`.
+    unsigned m_lastLoadStep { 0 };
+    unsigned m_loadStep { 0 };
     // Weak, so a load that never settles doesn't keep its global object alive.
     JSC::Weak<JSC::JSPromise> m_promise;
 };

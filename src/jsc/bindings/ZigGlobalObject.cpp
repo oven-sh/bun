@@ -1244,6 +1244,114 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmRegistryEvaluatedKeys, (JSC::JSGlobalObject 
     return JSValue::encode(array);
 }
 
+// The root of the load of `runnerLoad`, once that load has ended and as long as nothing has linked the root.
+static JSC::CyclicModuleRecord* unlinkedRootOfRunnerLoad(JSC::VM& vm, JSC::JSModuleLoader* loader, const Bun::RunnerLoadFetcher& runnerLoad)
+{
+    auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, runnerLoad.rootKey()));
+    auto* root = entry && entry->isLoaded() ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
+    return root && root->status() == JSC::CyclicModuleRecord::Status::Unlinked ? root : nullptr;
+}
+
+// How many modules lie on the longest way from `record` down to `outermostRun`, `record` among them: 0 where it does not import that module, or only through modules that are linked.
+static unsigned modulesAboveOutermostRun(JSC::VM& vm, JSC::AbstractModuleRecord* record, JSC::AbstractModuleRecord* outermostRun, UncheckedKeyHashMap<JSC::AbstractModuleRecord*, unsigned>& modulesAbove)
+{
+    // A module that is come to again below itself counts there as one that does not import it.
+    auto added = modulesAbove.add(record, 0);
+    if (!added.isNewEntry)
+        return added.iterator->value;
+    if (!vm.isSafeToRecurse()) [[unlikely]]
+        return 0;
+    unsigned above = 0;
+    for (auto& loaded : record->loadedModules().values()) {
+        auto* imported = loaded.m_module.get();
+        if (imported == outermostRun) {
+            above = std::max(above, 1u);
+            continue;
+        }
+        auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(imported);
+        if (!cyclic || cyclic->status() != JSC::CyclicModuleRecord::Status::Unlinked)
+            continue;
+        if (unsigned below = modulesAboveOutermostRun(vm, cyclic, outermostRun, modulesAbove))
+            above = std::max(above, below + 1);
+    }
+    modulesAbove.set(record, above);
+    return above;
+}
+
+// Whether a synchronous load that asks for `key` begins the loader steps of `runnerLoad` (RunnerLoadFetcher.h, takeLoadStep). The modules whose loads wait for the outermost run are looked up once a run.
+static bool leadsToOutermostRunOfRunnerLoad(JSC::VM& vm, JSC::JSModuleLoader* loader, Bun::RunnerLoadFetcher& runnerLoad, const String& key)
+{
+    if (key.isNull() || (key != runnerLoad.rootKey() && !runnerLoad.keys().contains(key)))
+        return false;
+    if (!runnerLoad.knowsWaitingLoads()) {
+        UncheckedKeyHashMap<String, unsigned> waitingLoads;
+        unsigned rootStep = 0;
+        auto* outermostRunEntry = loader->registryEntry(JSC::Identifier::fromString(vm, runnerLoad.outermostRun()));
+        auto* root = outermostRunEntry && outermostRunEntry->record() ? unlinkedRootOfRunnerLoad(vm, loader, runnerLoad) : nullptr;
+        UncheckedKeyHashMap<JSC::AbstractModuleRecord*, unsigned> modulesAbove;
+        if (unsigned aboveRoot = root ? modulesAboveOutermostRun(vm, root, outermostRunEntry->record(), modulesAbove) : 0) {
+            // Two steps end the load of the import, and one more that of each module above it.
+            rootStep = aboveRoot + 2;
+            for (auto& [record, above] : modulesAbove) {
+                if (above && !record->moduleKey().isSymbol())
+                    waitingLoads.add(record->moduleKey().string(), above + 2);
+            }
+        }
+        runnerLoad.setWaitingLoads(WTF::move(waitingLoads), rootStep);
+    }
+    return runnerLoad.leadsToOutermostRun(key);
+}
+
+JSC_DECLARE_HOST_FUNCTION(functionTakeLoadStepOfRunnerLoad);
+
+// The synchronous load that is going on takes the step from its queue, behind what it has queued so far: where the loader's own step would be.
+static void queueLoadStepOfRunnerLoad(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, JSValue run)
+{
+    JSValue takeStep = globalObject->thenable(functionTakeLoadStepOfRunnerLoad);
+    JSC::getVM(globalObject).synchronousModuleQueue()->tasks.append(JSC::VM::SynchronousModuleTask { JSC::InternalMicrotask::BunInvokeJobWithArguments, 0, takeStep, JSValue(loader), run });
+}
+
+// A synchronous load has resolved an import to `key` while a CommonJS import that the load of `runnerLoad` held back runs: the first that leads to that import begins the loader steps (RunnerLoadFetcher.h, takeLoadStep).
+static void didResolveImportOfSynchronousLoad(Zig::GlobalObject* globalObject, JSC::JSModuleLoader* loader, Bun::RunnerLoadFetcher& runnerLoad, const String& key)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (runnerLoad.loader() != loader || runnerLoad.hasLoadSteps() || !leadsToOutermostRunOfRunnerLoad(vm, loader, runnerLoad, key) || !unlinkedRootOfRunnerLoad(vm, loader, runnerLoad))
+        return;
+    runnerLoad.beginLoadSteps();
+    queueLoadStepOfRunnerLoad(globalObject, loader, JSC::jsNumber(runnerLoad.outermostRunNumber()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionTakeLoadStepOfRunnerLoad, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* loader = dynamicDowncast<JSC::JSModuleLoader>(callFrame->argument(0));
+    JSValue run = callFrame->argument(1);
+    auto* runnerLoad = globalObject->m_runnerLoad.get();
+    if (!loader || !run.isUInt32() || !runnerLoad || runnerLoad->loader() != loader)
+        return JSValue::encode(jsUndefined());
+    using LoadStep = Bun::RunnerLoadFetcher::LoadStep;
+    LoadStep step = runnerLoad->takeLoadStep(run.asUInt32());
+    if (step == LoadStep::None || step == LoadStep::Last)
+        return JSValue::encode(jsUndefined());
+    // A queue that stopped at what a step threw hands the steps behind it to the microtasks of the realm.
+    if (!vm.synchronousModuleQueue()) {
+        runnerLoad->endLoadSteps();
+        return JSValue::encode(jsUndefined());
+    }
+    queueLoadStepOfRunnerLoad(globalObject, loader, run);
+    if (step == LoadStep::LoadsRoot) {
+        if (auto* root = unlinkedRootOfRunnerLoad(vm, loader, *runnerLoad)) {
+            JSC::JSPromise* loaded = loader->loadModule(globalObject, root->moduleKey(), nullptr, nullptr, { JSC::ModuleLoadFlag::Evaluate });
+            RETURN_IF_EXCEPTION(scope, {});
+            // What the root throws is reported by the load of the runner, which links and evaluates it too.
+            loaded->markAsHandled();
+        }
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1278,6 +1386,13 @@ JSC_DEFINE_HOST_FUNCTION(functionEsmLoadSync, (JSC::JSGlobalObject * lexicalGlob
         // reach loadModuleSync: Link() and Evaluate() reject that status.
         if (isModuleEvaluating(entry->record()))
             return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+        // `bun test`: a CommonJS import that its load held back runs, and where it runs as soon as it is fetched this module may still be being loaded then (RunnerLoadFetcher.h, takeLoadStep). The first synchronous load that leads to the import ends that load in its own queue: this one where none has, and until the steps of another have come to it the module is refused as one whose load is under way.
+        if (auto* runnerLoad = globalObject->m_runnerLoad.get(); runnerLoad && runnerLoad->hasOutermostRun() && runnerLoad->loader() == loader) [[unlikely]] {
+            if (runnerLoad->hasYetToEndLoad(keyString))
+                return JSValue::encode(throwException(globalObject, scope, Bun::createAsyncModuleRequiredError(globalObject, keyString)));
+            if (!runnerLoad->hasLoadSteps() && leadsToOutermostRunOfRunnerLoad(vm, loader, *runnerLoad, keyString) && unlinkedRootOfRunnerLoad(vm, loader, *runnerLoad))
+                runnerLoad->endLoadSteps();
+        }
     }
 
     JSPromise* promise = loader->loadModuleSync(globalObject, key, nullptr, nullptr);
@@ -4279,6 +4394,9 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         if (globalObject->onLoadPlugins.modulesAskedFor.add(resolved).isNewEntry)
             globalObject->onLoadPlugins.hasNewLoad = true;
     }
+    // `bun test`: a synchronous load asks for this import while a CommonJS import that the load of the runner held back runs (RunnerLoadFetcher.h, takeLoadStep).
+    if (auto* runnerLoad = globalObject->m_runnerLoad.get(); runnerLoad && runnerLoad->hasOutermostRun() && vm.synchronousModuleQueue()) [[unlikely]]
+        didResolveImportOfSynchronousLoad(globalObject, loader, *runnerLoad, resolved);
     if (Bun::hasCompiledModules()) [[unlikely]] {
         Bun::willResolveImport(globalObject, resolved, referrer);
         RETURN_IF_EXCEPTION(scope, {});

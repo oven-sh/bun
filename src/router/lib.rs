@@ -175,7 +175,6 @@ impl Routes {
         mut path: &[u8],
         params: &mut route_param::List<'static>,
     ) -> Option<Match> {
-        // Trim trailing slash
         let mut redirect = false;
 
         // Normalize trailing slash
@@ -266,14 +265,14 @@ impl<'a> RouteLoader<'a> {
     fn append_route(&mut self, route: Route) {
         use bun_collections::hash_map::Entry;
 
-        let matched = Match {
+        let target = Match {
             file_path: route.abs_path.as_bytes(),
             name: route.name,
         };
 
         // /index.js
         if route.full_hash == INDEX_ROUTE_HASH {
-            self.index = Some(matched);
+            self.index = Some(target);
             self.all_routes.push(route);
             return;
         }
@@ -318,11 +317,11 @@ impl<'a> RouteLoader<'a> {
                 }
 
                 self.static_list
-                    .put_assume_capacity(&route.name[1..], matched);
+                    .put_assume_capacity(&route.name[1..], target);
             }
 
             self.static_list
-                .put_assume_capacity(route.match_name.as_bytes(), matched);
+                .put_assume_capacity(route.match_name.as_bytes(), target);
             self.all_routes.push(route);
 
             return;
@@ -490,7 +489,7 @@ impl<'a> RouteLoader<'a> {
                                 ));
                             }
 
-                            // SAFETY: entry.dir is at least base_dir.len()-1 bytes; verified above in debug
+                            // entry.dir is at least base_dir.len()-1 bytes; verified above in debug
                             let public_dir = &entry_dir[base_dir.len() - 1..entry_dir.len()];
 
                             let route = Route::parse(
@@ -734,7 +733,6 @@ impl Route {
                     let parts = [entry.dir(), entry.base()];
                     abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
                     route_file_buf[abs_len] = 0;
-                    // SAFETY: NUL-terminated above; `abs_len` bytes valid in route_file_buf.
                     let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
                     match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
                         Ok(f) => {
@@ -963,8 +961,8 @@ pub mod pattern {
         ) -> bool {
             let mut offset: RoutePathInt = 0;
             let mut path_ = path;
-            // The first `length` bytes of `rest`, which is an end of `path`.
-            let start_of = |rest: &[u8], length: usize| StringPointer {
+            // The first `length` bytes of `rest`, a suffix of `path`.
+            let pointer_to = |rest: &[u8], length: usize| StringPointer {
                 offset: (path.len() - rest.len()) as u32,
                 length: length as u32,
             };
@@ -995,7 +993,7 @@ pub mod pattern {
                         if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
-                                value: start_of(path_, i),
+                                value: pointer_to(path_, i),
                             });
                             path_ = &path_[i + 1..];
 
@@ -1008,7 +1006,7 @@ pub mod pattern {
                         } else if pattern.is_end(name) {
                             params.push(Param {
                                 name: dynamic.str(name),
-                                value: start_of(path_, path_.len()),
+                                value: pointer_to(path_, path_.len()),
                             });
                             return true;
                         } else if ALLOW_OPTIONAL_CATCH_ALL {
@@ -1017,7 +1015,7 @@ pub mod pattern {
                             if matches!(pattern.value, Value::OptionalCatchAll(_)) {
                                 params.push(Param {
                                     name: dynamic.str(name),
-                                    value: start_of(path_, path_.len()),
+                                    value: pointer_to(path_, path_.len()),
                                 });
                                 return true;
                             }
@@ -1034,7 +1032,7 @@ pub mod pattern {
                         if !path_.is_empty() {
                             params.push(Param {
                                 name: dynamic.str(name),
-                                value: start_of(path_, path_.len()),
+                                value: pointer_to(path_, path_.len()),
                             });
                             return true;
                         }
@@ -1046,7 +1044,7 @@ pub mod pattern {
                             if !path_.is_empty() {
                                 params.push(Param {
                                     name: dynamic.str(name),
-                                    value: start_of(path_, path_.len()),
+                                    value: pointer_to(path_, path_.len()),
                                 });
                             }
 

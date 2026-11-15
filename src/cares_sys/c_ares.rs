@@ -629,9 +629,7 @@ impl AddrInfo {
         // SAFETY: `ctx` is the box that `Channel` released for this query, which c-ares answers once.
         let this = unsafe { bun_core::heap::take(ctx.cast::<T>()) };
         if let Some(err) = Error::get(status) {
-            // A failure comes without an `addr_info`. `ares_getaddrinfo`
-            // uses `ARES_ENODATA` when no address was usable; lookup reports
-            // that as ENOTFOUND.
+            // A failure comes without an `addr_info`.
             return this.on_addr_info(Err(err.for_name_lookup()));
         }
         // SAFETY: c-ares hands `addr_info` over, and the handler's borrow ends with its call.
@@ -1824,10 +1822,12 @@ impl Error {
         }
     }
 
-    /// `ares_getaddrinfo`, `ares_getnameinfo`, and `ares_gethostbyaddr` report
-    /// "nothing usable" as `ARES_ENODATA`. `dns.lookup`, `dns.lookupService`,
-    /// and `dns.reverse` surface that as `ENOTFOUND`. Record queries do not:
-    /// they keep [`Error::ENODATA`].
+    /// `dns.lookup` / `dns.lookupService` report libuv `UV_EAI_NODATA` as
+    /// `ENOTFOUND`. c-ares uses `ARES_ENODATA` for that same "no address".
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L811-L812
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.cc#L1786-L1787
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/dns.js#L111
+    /// https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/dns.js#L263
     pub fn for_name_lookup(self) -> Self {
         if self == Self::ENODATA {
             Self::ENOTFOUND
@@ -1837,14 +1837,12 @@ impl Error {
     }
 
     pub fn get(rc: i32) -> Option<Error> {
-        // `ARES_ENONAME` is c-ares's getaddrinfo/getnameinfo "host unknown"
-        // status, not a record-query status. Node reports it as ENOTFOUND.
-        // `ARES_ENODATA` is what `ares_query` returns when the name exists and
-        // the requested type does not; Node's `ToErrorCodeString` keeps that
-        // as "ENODATA" (nodejs/node `src/cares_wrap.h`). The numeric
-        // getaddrinfo remap of `UV_EAI_NODATA` / `UV_EAI_NONAME` lives in
-        // [`Error::init_eai`].
-        // https://github.com/nodejs/node/blob/v22.23.4/lib/internal/errors.js
+        // `ares_query` `ARES_ENODATA` stays `ENODATA`. Node's
+        // `ToErrorCodeString` returns `"ENODATA"`, and `DNSException` does not
+        // rewrite string codes. `ARES_ENONAME` is getaddrinfo "host unknown".
+        // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.h#L61
+        // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/dns/callback_resolver.js#L44-L45
+        // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/lib/internal/errors.js#L807-L815
         if rc == ARES_ENONAME {
             return Self::get(ARES_ENOTFOUND);
         }

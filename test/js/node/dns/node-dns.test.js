@@ -1,5 +1,4 @@
-import { dnsGetaddrinfoError } from "bun:internal-for-testing";
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -1152,9 +1151,14 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
 // as the c-ares code `ETIMEOUT`. CI cannot point getaddrinfo at a failing
 // resolver, so this drives the same mapping the system backend, fetch() and
 // Bun.connect() use with the raw EAI_* status.
+async function dnsGetaddrinfoError(code, hostname) {
+  const internal = await import("bun:internal-for-testing");
+  return internal.dnsGetaddrinfoError(code, hostname);
+}
+
 describe("getaddrinfo status mapping", () => {
-  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", () => {
-    const err = dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
+  test("EAI_AGAIN is reported as EAI_AGAIN, like Node", async () => {
+    const err = await dnsGetaddrinfoError("EAI_AGAIN", "redis.example");
     expect(err).toBeInstanceOf(Error);
     expect(err).toMatchObject({
       message: "getaddrinfo EAI_AGAIN redis.example",
@@ -1165,8 +1169,8 @@ describe("getaddrinfo status mapping", () => {
     });
   });
 
-  test("EAI_NONAME is still reported as ENOTFOUND, like Node", () => {
-    expect(dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
+  test("EAI_NONAME is still reported as ENOTFOUND, like Node", async () => {
+    expect(await dnsGetaddrinfoError("EAI_NONAME", "redis.example")).toMatchObject({
       message: "getaddrinfo ENOTFOUND redis.example",
       code: "ENOTFOUND",
       syscall: "getaddrinfo",
@@ -1335,15 +1339,8 @@ describe("resolve* ENODATA vs ENOTFOUND", () => {
   });
 
   test("lookup of a missing hostname is still ENOTFOUND", async () => {
-    // System getaddrinfo reports this failure without a hostname.
-    const fromPromises = await dns_promises.lookup(MISSING).then(
-      () => null,
-      err => err,
-    );
-    expect(fromPromises).toMatchObject({ code: "ENOTFOUND", syscall: "getaddrinfo" });
-    const fromCallback = await new Promise(resolve => dns.lookup(MISSING, err => resolve(err)));
-    expect(fromCallback).toMatchObject({ code: "ENOTFOUND", syscall: "getaddrinfo" });
-
+    // c-ares lookup of the fixture's NXDOMAIN name. System getaddrinfo's
+    // EAI_NONAME → ENOTFOUND mapping is the test above; it does not query DNS.
     const caresMissing = await Bun.dns.lookup(MISSING, { backend: "c-ares" }).then(
       value => ({ ok: value }),
       err => err.code,

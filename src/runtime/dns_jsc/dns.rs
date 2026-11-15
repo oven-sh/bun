@@ -318,9 +318,11 @@ impl c_ares::HostentHandler for Query {
             Ok(host) => {
                 self.resolve(|global| super::cares_jsc::hostent_to_js_response(host, global, b""))
             }
-            // gethostbyaddr's empty PTR answer is ENOTFOUND, same as Node's
-            // `dns.reverse`. Record-query hostents are a different handler.
-            Err(err) => drop(self.reject(err.for_name_lookup(), b"getHostByAddr", true)),
+            // `ares_gethostbyaddr` turns a failed PTR into `ARES_ENOTFOUND`
+            // (`next_lookup` → `end_aquery`). Node passes that string through
+            // `ToErrorCodeString`; it does not remap `ENODATA` here.
+            // https://github.com/nodejs/node/blob/27f213124280b4db4cd1e3dd42f6f8afd01ceff7/src/cares_wrap.h#L266-L270
+            Err(err) => drop(self.reject(err, b"getHostByAddr", true)),
         }
     }
 }

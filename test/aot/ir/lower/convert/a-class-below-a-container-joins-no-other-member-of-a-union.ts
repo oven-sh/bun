@@ -1,7 +1,7 @@
 // RUN: link
 // CHECK: layout {{*}}name="Waiting"
 // CHECK-NOT: supertypes=
-// CHECK: layout {{*}}name="Stream"
+// CHECK: layout {{*}}fields=[{key="listeners"
 
 // The object is a Set, so the Set of the union takes it. It does not go below the other member, whose fields it lacks.
 interface Stream {

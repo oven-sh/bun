@@ -412,7 +412,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * le
 // port), as Node runs its worker bootstrap before user code. Throws like require() would.
 extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
 {
-    BUN_REQUIRE_INTERNAL_MODULE(globalObject, NodeWorkerThreads, "native:Cpp:Worker.cpp:createNodeWorkerConstructor");
+    BUN_LOAD_INTERNAL_MODULE(globalObject, NodeWorkerThreads, "native:Cpp:Worker.cpp:createNodeWorkerConstructor");
 }
 
 // worker_threads (worker side): register the transferred port as this thread's parentPort.

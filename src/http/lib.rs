@@ -757,7 +757,7 @@ impl ProxySettings {
 // Many of these fields can be moved to a packed struct and use less space
 //
 // Lifetime `'a` ties every borrowed input — `url`, `http_proxy`, `header_buf`,
-// `if_modified_since`, `unix_socket_path`, and the borrowed
+// `if_modified_since`, `unix_socket_path`, `progress`, and the borrowed
 // `HTTPRequestBody::Bytes` payload — to the caller's storage. The original port erased these to `'static`
 // and lifetime-erased at every call site; threading the lifetime removes that hazard.
 // Intrusive raw-pointer backrefs (socket ext, h2/h3 streams) store the
@@ -783,9 +783,8 @@ pub struct HTTPClient<'a> {
     /// until `do_redirect` has released the socket, so it is freed there rather
     /// than at the assignment site. Also freed in `Drop` for error paths.
     pub(crate) prev_redirect: Vec<u8>,
-    // Non-owning back-reference to a `Progress::Node` owned by the caller;
-    // raw to avoid threading another lifetime param.
-    pub progress_node: Option<NonNull<bun_core::Progress::Node>>,
+    /// Exclusive: the HTTP thread updates it.
+    pub progress: Option<&'a mut bun_core::Progress::Progress>,
 
     pub flags: Flags,
 
@@ -1233,18 +1232,11 @@ pub(crate) fn get_tls_hostname<'c>(client: &'c HTTPClient<'_>, allow_proxy_url: 
         }
     }
     // Prefer the explicit TLS server_name (e.g. from Node.js servername option)
-    if let Some(props) = &client.tls_props {
-        let sn = props.get().server_name;
-        if !sn.is_null() {
-            // SAFETY: server_name is a NUL-terminated CStr owned by the
-            // SSLConfig; `ffi::cstr` yields an unbound-lifetime borrow of that
-            // C allocation, so `to_bytes()` already satisfies `'c` (tied to
-            // `client.tls_props`) without a `(ptr,len)` round-trip.
-            let sn_slice = unsafe { bun_core::ffi::cstr(sn) }.to_bytes();
-            if !sn_slice.is_empty() {
-                return strip_ipv6_brackets(sn_slice);
-            }
-        }
+    if let Some(props) = &client.tls_props
+        && let Some(server_name) = props.get().server_name_bytes()
+        && !server_name.is_empty()
+    {
+        return strip_ipv6_brackets(server_name);
     }
     strip_ipv6_brackets(client.url.hostname)
 }
@@ -1703,24 +1695,10 @@ impl<'a> HTTPClient<'a> {
         }
         callback.run(self.parent_async_http(), result);
     }
-    #[inline]
-    fn progress_node_mut(&mut self) -> Option<&mut bun_core::Progress::Node> {
-        // SAFETY: progress_node is owned by the caller (e.g. `bun install`'s
-        // Progress) and outlives this client.
-        self.progress_node.map(|mut p| unsafe { p.as_mut() })
-    }
-    /// Common `progress.activate(); set_completed_items(n); maybe_refresh()`
-    /// triple used at every body-chunk boundary. Centralises the raw deref of
-    /// `progress.context` (a backref into the owning `Progress` whose `&mut`
-    /// would alias the embedded `Node` — see `Progress::Node::context_ptr`).
-    fn report_progress(&mut self, completed: usize) {
-        if let Some(progress) = self.progress_node_mut() {
-            progress.activate();
-            progress.set_completed_items(completed);
-            // SAFETY: `context` is a non-null backref to the owning Progress.
-            // `&mut Progress` would alias the node tree (the Progress embeds
-            // `root: Node`), so this stays a narrowly-scoped raw deref.
-            unsafe { (*progress.context_ptr()).maybe_refresh() };
+    fn report_progress(&self, completed: usize) {
+        if let Some(progress) = &self.progress {
+            progress.root().completed_items.set(completed);
+            progress.maybe_refresh();
         }
     }
 }
@@ -2163,7 +2141,7 @@ impl<'a> HTTPClient<'a> {
                 // unified here, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                // `create` hands back the ref the socket ext owns from here on;
+                // The context's registry holds the session's ref from here on;
                 // `attach_leader` may release it (a failed first flush tears the
                 // session down), so `session` is not used after that call.
                 let session = h2::ClientSession::create(ctx, tls_socket, self);
@@ -3072,6 +3050,16 @@ impl<'a> HTTPClient<'a> {
         count
     }
 
+    /// Call after each write that advances `request_sent_len` through `head`.
+    fn hold_partial_request_head(&mut self, head: &[u8]) {
+        let held = &mut self.state.partial_request_head;
+        if self.state.request_sent_len >= head.len() {
+            *held = Vec::new();
+        } else if held.is_empty() {
+            held.extend_from_slice(head);
+        }
+    }
+
     // This exists as a separate function to reduce the amount of time the request body buffer is kept around.
     #[inline(never)]
     fn send_initial_request_payload<const IS_FIRST_CALL: bool, const IS_SSL: bool>(
@@ -3082,25 +3070,31 @@ impl<'a> HTTPClient<'a> {
 
         let mut temporary_send_buffer = self.get_request_body_send_buffer();
 
-        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
-
-        let request = self.build_request(self.body_len_for_send());
-
-        if self.http_proxy.is_some() {
-            if self.url.is_https() {
-                bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
-                // DO the tunneling!
-                self.flags.proxy_tunneling = true;
-                write_proxy_connect(writer, self)?;
-            } else {
-                bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
-                // HTTP do not need tunneling with CONNECT just a slightly different version of the request
-                write_proxy_request(writer, &request, self)?;
-            }
+        let mut rendered = None;
+        if !self.state.partial_request_head.is_empty() {
+            temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
         } else {
-            bun_core::scoped_log!(fetch, "normal request");
-            validate_request_target(self.url.host)?;
-            write_request(writer, &request)?;
+            let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
+
+            let request = self.build_request(self.body_len_for_send());
+
+            if self.http_proxy.is_some() {
+                if self.url.is_https() {
+                    bun_core::scoped_log!(fetch, "start proxy tunneling (https proxy)");
+                    // DO the tunneling!
+                    self.flags.proxy_tunneling = true;
+                    write_proxy_connect(writer, self)?;
+                } else {
+                    bun_core::scoped_log!(fetch, "start proxy request (http proxy)");
+                    // HTTP do not need tunneling with CONNECT just a slightly different version of the request
+                    write_proxy_request(writer, &request, self)?;
+                }
+            } else {
+                bun_core::scoped_log!(fetch, "normal request");
+                validate_request_target(self.url.host)?;
+                write_request(writer, &request)?;
+            }
+            rendered = Some(request);
         }
 
         let headers_len = temporary_send_buffer.len();
@@ -3126,6 +3120,8 @@ impl<'a> HTTPClient<'a> {
             return Err(crate::Error::ConnectionClosed);
         }
         let amount = write_to_socket::<IS_SSL>(socket, to_send)?;
+        self.state.request_sent_len += amount;
+        self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
         if IS_FIRST_CALL {
             if amount == 0 {
                 // don't worry about it
@@ -3138,10 +3134,10 @@ impl<'a> HTTPClient<'a> {
             }
         }
 
-        self.state.request_sent_len += amount;
         let has_sent_headers = self.state.request_sent_len >= headers_len;
 
         if has_sent_headers && self.verbose != HTTPVerboseLevel::None {
+            let request = rendered.unwrap_or_else(|| self.build_request(self.body_len_for_send()));
             print_request(
                 Protocol::Http1_1,
                 &request,
@@ -3584,12 +3580,14 @@ impl<'a> HTTPClient<'a> {
                         return;
                     }
                     let mut temporary_send_buffer: Vec<u8> = Vec::with_capacity(16 * 1024);
-                    let writer = &mut temporary_send_buffer;
-
-                    let request = self.build_request(self.body_len_for_send());
-                    if let Err(e) = write_request(writer, &request) {
-                        self.close_and_fail::<IS_SSL>(e, socket);
-                        return;
+                    if !self.state.partial_request_head.is_empty() {
+                        temporary_send_buffer.extend_from_slice(&self.state.partial_request_head);
+                    } else {
+                        let request = self.build_request(self.body_len_for_send());
+                        if let Err(e) = write_request(&mut temporary_send_buffer, &request) {
+                            self.close_and_fail::<IS_SSL>(e, socket);
+                            return;
+                        }
                     }
 
                     let headers_len = temporary_send_buffer.len();
@@ -3628,6 +3626,7 @@ impl<'a> HTTPClient<'a> {
 
                     self.state.request_sent_len += amount;
                     let has_sent_headers = self.state.request_sent_len >= headers_len;
+                    self.hold_partial_request_head(&temporary_send_buffer[..headers_len]);
 
                     if has_sent_headers && !self.request_body().is_empty() {
                         self.state.request_body = bun_ptr::RawSlice::new(

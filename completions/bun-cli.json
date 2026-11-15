@@ -4676,15 +4676,8 @@
           "multiple": false
         },
         {
-          "name": "aot-log-type-mismatches",
-          "description": "With --aot: the executable logs every value that doesn't match its declared type",
-          "hasValue": false,
-          "required": false,
-          "multiple": false
-        },
-        {
           "name": "explain",
-          "description": "With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, missed-optimizations, allocations",
+          "description": "With --aot: list the code that compiled to a slow path and how to fix it, worst first. Other reports: json, guards, guards-json, trim, allocations",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -4703,6 +4696,14 @@
           "hasValue": false,
           "required": false,
           "multiple": false
+        },
+        {
+          "name": "aot-harden",
+          "description": "With --aot: make a bug in the compiler harder to turn into a memory bug. Takes proof-checks, ignore-told-ranges. Runs slower",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": true
         },
         {
           "name": "no-compile-function-source",

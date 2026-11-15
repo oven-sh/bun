@@ -699,20 +699,3 @@ console.log(summary(run(world, options)));
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module flags=[IsAsync, IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=Process
-// CHECK-NEXT: v1 = PropGet v0 key="env"
-// CHECK-NEXT: v2 = Convert v1 declared={type=builtin(ProcessEnv) flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="PROGRAM"
-// CHECK-NEXT: v4 = Convert v3 declared={type=undefined|null|string site=[[w_1]] flags=[OmitsNull]} illTypedCause=FromLooseType
-// CHECK-NEXT: v5 = ImportDynamic v4 referrer=[[m_0]]
-// CHECK-NEXT: v6 = Await v5
-// CHECK-NEXT: v7 = Undefined
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }

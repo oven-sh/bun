@@ -1,0 +1,42 @@
+# -- source: main.js
+# import { byMap, byFilter, bySome, byFind, byEvery, byReduce, byArrayFrom, byGroupBy, behindTailCall, byTailCall, byCallback } from "./lib/helper.js";
+# print("map " + byMap());
+# print("filter " + byFilter());
+# print("some " + bySome());
+# print("find " + byFind());
+# print("every " + byEvery());
+# print("reduce " + byReduce());
+# print("Array.from " + byArrayFrom());
+# print("Object.groupBy " + byGroupBy());
+# print("behind a tail call " + behindTailCall());
+# print("a built-in that its caller leaves by " + byTailCall());
+# print("a callback of this file that leaves by a tail call " + byCallback(() => callerSourceOrigin()));
+# print("a callback of this file that stays " + byCallback(() => [callerSourceOrigin()]));
+# -- source: lib/helper.js
+# export const byMap = () => [1].map(callerSourceOrigin)[0];
+# export const byFilter = () => [1].filter(callerSourceOrigin).length;
+# export const bySome = () => [1].some(callerSourceOrigin);
+# export const byFind = () => [1].find(callerSourceOrigin);
+# export const byEvery = () => [1].every(callerSourceOrigin);
+# export const byReduce = () => String([1, 2].reduce(callerSourceOrigin));
+# export const byArrayFrom = () => Array.from([1], callerSourceOrigin)[0];
+# export const byGroupBy = () => Object.keys(Object.groupBy([1], callerSourceOrigin))[0];
+# export const behindTailCall = () => [1].map(() => callerSourceOrigin())[0];
+# export const byTailCall = () => [1].map(callerSourceOrigin);
+# export const byCallback = callback => [1].map(callback)[0];
+# -- end of source
+# A host function that asks for the file of its caller passes over the built-ins that are written in JavaScript, as it passes over them in the interpreter: whoever called map() is who calls. The frame of map() has no file, so the answer was null.
+# RUN: run-in-shell
+# CHECK: map file:///lib/helper.js
+# CHECK-NEXT: filter 1
+# CHECK-NEXT: some true
+# CHECK-NEXT: find 1
+# CHECK-NEXT: every true
+# CHECK-NEXT: reduce file:///lib/helper.js
+# CHECK-NEXT: Array.from file:///lib/helper.js
+# CHECK-NEXT: Object.groupBy file:///lib/helper.js
+# CHECK-NEXT: behind a tail call file:///lib/helper.js
+# CHECK-NEXT: a built-in that its caller leaves by file:///main.js
+# CHECK-NEXT: a callback of this file that leaves by a tail call file:///lib/helper.js
+# CHECK-NEXT: a callback of this file that stays file:///main.js
+# CHECK-NEXT: exited with 0

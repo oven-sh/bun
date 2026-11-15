@@ -1,1 +1,0 @@
-{ "name": "app", "version": "3.2.1", "deep": { "er": 5 }, "sideEffects": ["./setup.ts", "./barrel1.ts", "./main.ts"] }

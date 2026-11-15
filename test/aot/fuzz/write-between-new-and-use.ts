@@ -268,8 +268,6 @@ const crossedFor = (isTyped: boolean) =>
 export const inOne = 20;
 const laidOut = [
   { isTyped: false, flags: [] },
-  { isTyped: false, flags: ["--aot-heat=everything-is-hot"] },
-  { isTyped: false, flags: ["--aot-heat=everything-is-cold"] },
   { isTyped: true, flags: [] },
   { isTyped: true, flags: ["--aot-erase-types"] },
 ].map(build => ({ ...build, crossed: crossedFor(build.isTyped) }));

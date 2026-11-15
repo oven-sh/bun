@@ -1,0 +1,22 @@
+# `const { id, ...rest } = row` in a loop, nothing written of row: a CopyObject that leaves a name out. Where the own keys of the row are known (its layout, the order of its keys, nothing beside them:
+# asked of the row) the rest is a dictionary and the definitions of the names that are not left out, in the row's order; on the other way the copy stands as written.
+# -- source: main.js
+# function born(id, name, age) { return { id, name, age }; }
+# const rows = [born(1, "a", 5), { age: 6, name: "b", id: 2 }, born(3, "c", 7)];
+# function omit(row) { const { id, ...rest } = row; return rest; }
+# const said = [];
+# const rounds = JSON.parse("1");
+# for (let round = 0; round < rounds; round++) for (let i = 0; i < rows.length; i++) said.push(Object.keys(omit(rows[i])).join());
+# print(said.join(" "));
+# -- end of source
+# RUN(WALK): walk f0:Body mechanisms=all
+# WALK: HasKeyOrder
+# WALK: HasNoExtraProperties
+# WALK: NewDictionary
+# WALK: PropDefine {{*}} key="name"
+# WALK: PropDefine {{*}} key="age"
+# RUN(OUT): walk f0:Body mechanisms=all
+# OUT-NOT: PropDefine {{*}} key="id"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: name,age age,name name,age
+# ANSWERS-NEXT: exited with 0

@@ -42,7 +42,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 // to avoid one giant `impl PackageManager` block.
 use crate::package_manager_real::enqueue::{self, add_dependency_error};
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
-use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
+use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::package_manager_real::{
     UpdateRequest, enqueue_dependency_list, enqueue_dependency_with_main, enqueue_patch_task_pre,
     save_lockfile, setup_global_dir, update_lockfile_if_needed, write_yarn_lock,
@@ -1106,23 +1106,7 @@ pub fn install_with_manager(
 // ─── runAndWaitFn closure family ──────────────────────────────────────────
 // A const-generic struct + three thin wrapper fns.
 
-/// `RunTasksCallbacks` impl for the void-callback `runTasks` call inside
-/// `runAndWaitFn::isDone` (no hooks, `progress_bar = true`). Only these
-/// flags differ from the default.
-struct InstallWaitCallbacks;
-impl RunTasksCallbacks for InstallWaitCallbacks {
-    type Ctx = ();
-    const PROGRESS_BAR: bool = true;
-}
-
 struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
-    // The caller also holds the same
-    // pointer to call `sleepUntil`. Storing `&mut PackageManager` would alias the outer
-    // borrow in `run_and_wait`. Keep a raw pointer; `run_and_wait` derives this pointer
-    // first and then reborrows *through it* for the `sleep_until` receiver, so both the
-    // receiver and the callback's reborrow share the same raw provenance root.
-    // See `run_and_wait` for the remaining `tick`/`event_loop` overlap note.
-    manager: *mut PackageManager,
     err: Option<crate::Error>,
     /// The wait also ends once only the deferred peers are left to resolve. The tarballs that are
     /// still being downloaded then do not hold up the requests that the peers need.
@@ -1132,14 +1116,7 @@ struct RunAndWaitClosure<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool> {
 impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     RunAndWaitClosure<CHECK_PEERS, ONLY_PRE_PATCH>
 {
-    fn is_done(closure: &mut Self) -> bool {
-        // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
-        // `sleep_until` is now an associated fn taking `*mut PackageManager` and
-        // `AnyEventLoop::tick_raw` reborrows the event loop only *between* `is_done`
-        // calls, so this `&mut PackageManager` is the unique live borrow for the
-        // duration of the callback (no `&mut event_loop` straddles it). The original
-        // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
-        let this = unsafe { &mut *closure.manager };
+    fn is_done(closure: &mut Self, this: &mut PackageManager) -> bool {
         loop {
             if CHECK_PEERS {
                 if let Err(err) = this.process_peer_dependency_list() {
@@ -1150,13 +1127,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
             this.drain_dependency_list();
 
-            // void RunTasksCallbacks — the trait dispatch needs a
-            // concrete `RunTasksCallbacks` impl; `extract_ctx` collapses to `()` so we
-            // do NOT pass `this` as both receiver and ctx (would alias `&mut`).
             let log_level = this.options.log_level;
-            if let Err(err) =
-                run_tasks::<InstallWaitCallbacks>(this, &mut (), CHECK_PEERS, log_level)
-            {
+            if let Err(err) = run_tasks(this, Caller::Resolver, CHECK_PEERS, log_level) {
                 closure.err = Some(err);
                 return true;
             }
@@ -1191,25 +1163,12 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
     }
 
     fn run_and_wait(this: &mut PackageManager, stops_for_peers: bool) -> crate::Result<()> {
-        // Derive the raw pointer first and route *every* manager access through it.
-        // Previously `closure.manager` was taken from `this`, then `this` was reborrowed
-        // into `sleep_until`'s `&mut self` — under Stacked Borrows that reborrow popped
-        // the raw pointer's tag, so the later `&mut *closure.manager` in `is_done` used
-        // an invalidated provenance. Now `mgr` is the root: both the `sleep_until`
-        // receiver and the closure share it, and `this` is never touched again.
-        let mgr: *mut PackageManager = this;
         let mut closure = RunAndWaitClosure::<CHECK_PEERS, ONLY_PRE_PATCH> {
-            manager: mgr,
             err: None,
             stops_for_peers,
         };
 
-        // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
-        // is the sole access path for the manager from here on. `sleep_until` takes the
-        // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
-        // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
-        // callback never invalidates a live tag.
-        unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
+        this.sleep_until(|this| Self::is_done(&mut closure, this));
 
         if let Some(err) = closure.err {
             return Err(err);
@@ -2764,15 +2723,10 @@ fn write_yarn_lock_with_progress(
     manager: &mut PackageManager,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
-    // reshaped for borrowck — `Progress::start` returns
-    // `&mut self.root`, so re-access it via `manager.progress.root` after the
-    // `&mut manager` borrow ends instead of keeping a live `&mut Node`.
-    let mut node_started = false;
     if log_level.show_progress() {
         manager.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let _ = manager.progress.start(b"Saving yarn.lock", 0);
+        manager.progress.start(b"Saving yarn.lock", 0);
         manager.progress.refresh();
-        node_started = true;
     } else if log_level != Options::LogLevel::Silent {
         bun_core::pretty_errorln!("Saved yarn.lock");
         Output::flush();
@@ -2780,11 +2734,11 @@ fn write_yarn_lock_with_progress(
 
     write_yarn_lock(manager)?;
     if log_level.show_progress() {
-        if node_started {
-            manager.progress.root.complete_one();
-        }
+        manager
+            .progress
+            .complete_one(crate::bun_progress::NodeId::Root);
         manager.progress.refresh();
-        manager.progress.root.end();
+        manager.progress.end();
         manager.progress = Default::default();
     }
     Ok(())

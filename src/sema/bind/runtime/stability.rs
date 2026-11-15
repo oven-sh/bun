@@ -1,15 +1,14 @@
 use super::bits::has_bit;
 use super::declaration_kinds::pattern_root;
+use super::lookup::is_global_of_script;
 use super::queries::{find_entry, find_symbol};
 use super::references::is_loop_head;
 use super::{
-    Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit, FunctionFlags,
-    RuntimeInput, has_mapped_arguments,
+    Binding, BindingInitializer, BindingKind, BindingStability, CodeUnit, RuntimeInput,
+    has_mapped_arguments,
 };
 use crate::atom::Atom;
-use crate::bind::{
-    Bound, BoundBuilder, ClassOwner, Decl, FnOwner, Parent, PatParent, ScopeKind, SymbolId,
-};
+use crate::bind::{Bound, BoundBuilder, ClassOwner, Decl, FnOwner, Parent, PatParent, SymbolId};
 use crate::hir::*;
 use smallvec::SmallVec;
 
@@ -38,7 +37,26 @@ pub(super) fn compute_stability(input: &mut RuntimeInput<'_, '_>) {
     pass.add_containers();
     pass.add_expressions();
     let symbols = (0..pass.initializers.len() as u32).map(SymbolId);
-    let stabilities = symbols.map(|symbol| pass.classify(symbol)).collect();
+    let mut stabilities: Vec<_> = symbols.map(|symbol| pass.classify(symbol)).collect();
+    for store in pass.bound.runtime.references.stores.iter() {
+        if let Some(recorded) = stabilities.get_mut(store.symbol.idx())
+            && *recorded == BindingStability::Stable
+            && !pass.bound.binding_kind(store.symbol).is_immutable()
+        {
+            *recorded = BindingStability::Stored;
+        }
+    }
+    // Any code may store to the globals of a script, and read them.
+    let mut scripts = input.hir.global_code();
+    scripts.retain(|it| it.1 == GlobalCode::Script);
+    for (function, _) in scripts {
+        let scope = &pass.bound.scopes[pass.bound.fns[function.idx()].scope.idx()];
+        for &(_, local) in pass.bound.table(scope.locals) {
+            if is_global_of_script(pass.hir, pass.bound, local) {
+                stabilities[local.idx()] = BindingStability::Stored;
+            }
+        }
+    }
     let initializers = pass.initializers.iter().map(|recorded| match *recorded {
         Initializers::One(decl) => Some(decl),
         Initializers::None | Initializers::Several => None,
@@ -115,13 +133,11 @@ impl StabilityPass<'_, '_> {
     }
 
     fn add_container(&mut self, symbol: SymbolId, decl: Decl) {
-        let bound = self.bound;
+        let listed = &self.bound.symbols[symbol.idx()].decls;
         if let Some(recorded) = self.initializers.get_mut(symbol.idx()) {
             *recorded = match *recorded {
                 Initializers::None => Initializers::One(decl),
-                Initializers::One(merged)
-                    if bound.symbols[symbol.idx()].decls.contains(&merged) =>
-                {
+                Initializers::One(merged) if listed.contains(&merged) && listed.contains(&decl) => {
                     Initializers::One(merged)
                 }
                 Initializers::One(_) | Initializers::Several => Initializers::Several,
@@ -215,6 +231,9 @@ impl StabilityPass<'_, '_> {
             let inner_symbols = &bound.runtime.declarations.inner_class_symbols;
             if let Some(inner) = find_symbol(inner_symbols, id) {
                 self.add(inner, Decl::Class(id));
+                if let Some(own) = bound.own_binding_of_decorated_class(inner) {
+                    self.add(own, Decl::Class(id));
+                }
             }
         }
     }
@@ -238,6 +257,11 @@ impl StabilityPass<'_, '_> {
                 self.add_container(symbol, decl);
             }
         }
+        for &(_, parameter) in bound.runtime.declarations.container_parameters.iter() {
+            if let Some(&decl) = bound.symbols[parameter.idx()].decls.first() {
+                self.add(parameter, decl);
+            }
+        }
     }
 
     fn add_expressions(&mut self) {
@@ -250,17 +274,6 @@ impl StabilityPass<'_, '_> {
         for (index, &symbol) in declarations.import_equals_symbols.iter().enumerate() {
             self.add(symbol, Decl::ImportEquals(ImportEqualsId(index as u32)));
         }
-    }
-
-    fn is_mapped_argument(&self, symbol: SymbolId) -> bool {
-        let (hir, bound) = (self.hir, self.bound);
-        let scope = bound.scopes.get(bound.symbol_scope(symbol).idx());
-        let Some(ScopeKind::Fn(function)) = scope.map(|scope| scope.kind) else {
-            return false;
-        };
-        let flags = bound.function_flags(function);
-        flags.contains(FunctionFlags::USES_ARGUMENTS)
-            && has_mapped_arguments(hir, CodeUnit::Function(function))
     }
 
     fn is_mapped_wrapper_parameter(&self, symbol: SymbolId) -> bool {
@@ -295,7 +308,7 @@ impl StabilityPass<'_, '_> {
         if !kind.is_immutable() && has_bit(eval_visible_symbols, symbol.idx()) {
             return BindingStability::VisibleToEval;
         }
-        if kind == BindingKind::Parameter && self.is_mapped_argument(symbol) {
+        if kind == BindingKind::Parameter && bound.is_mapped_argument(self.hir, symbol, true) {
             return BindingStability::MappedArgument;
         }
         if kind == BindingKind::Var && self.is_mapped_wrapper_parameter(symbol) {
@@ -310,6 +323,7 @@ impl StabilityPass<'_, '_> {
     }
 }
 
+#[inline(never)]
 fn find_pattern_initializer(hir: &File<'_>, bound: &Bound<'_>, name: PatId) -> BindingInitializer {
     let mut path: SmallVec<[Atom; 2]> = SmallVec::new();
     let mut pattern = name;
@@ -358,7 +372,13 @@ pub(super) fn find_binding_initializer(
         Decl::Fn(function) => BindingInitializer::Function(function),
         Decl::Module(module) => BindingInitializer::Namespace(module),
         Decl::Enum(id) => BindingInitializer::Enum(id),
-        Decl::Var(name) | Decl::Require(name) => find_pattern_initializer(hir, bound, name),
+        Decl::Var(name) | Decl::Require(name) => match bound.pat_parent[name.idx()] {
+            PatParent::Var(declaration) => match hir[declaration].init.some() {
+                Some(source) => BindingInitializer::Expression(source),
+                None => BindingInitializer::Opaque,
+            },
+            _ => find_pattern_initializer(hir, bound, name),
+        },
         Decl::ExportExpr(statement) => {
             let (StmtKind::ExportDefault(value) | StmtKind::ExportAssign(value)) =
                 hir[statement].kind

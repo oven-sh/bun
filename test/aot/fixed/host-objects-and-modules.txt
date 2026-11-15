@@ -1,0 +1,30 @@
+#### store-through-imported-process.mjs
+import held, { isBun, release, versions } from "node:process";
+try { held.versions = 5; console.log("versions stored"); } catch (error) { console.log("versions", error.constructor.name); }
+try { held.release = 5; console.log("release stored"); } catch (error) { console.log("release", error.constructor.name); }
+try { held.isBun = 5; console.log("isBun stored"); } catch (error) { console.log("isBun", error.constructor.name); }
+console.log(typeof versions, typeof release, typeof isBun);
+#### store-through-imported-process.mjs prints
+versions TypeError
+release TypeError
+isBun TypeError
+object object boolean
+#### url-of-the-library-behind-a-store-to-the-global.mjs
+import { pathToFileURL } from "node:url";
+const real = URL;
+globalThis.URL = undefined;
+console.log(pathToFileURL("/a").protocol, "and the program reads", typeof URL);
+globalThis.URL = real;
+#### url-of-the-library-behind-a-store-to-the-global.mjs prints
+file: and the program reads undefined
+#### url-of-the-library-behind-a-store-under-a-computed-name.mjs
+import { pathToFileURL } from "node:url";
+const called = [];
+const real = { URL, Blob };
+for (const name of Object.keys(real)) globalThis[name] = function () { called.push(name); return {}; };
+console.log(pathToFileURL("/a").protocol, "the library called", called.join());
+console.log(typeof new URL("http://a").protocol, "the program called", called.join());
+for (const name of Object.keys(real)) globalThis[name] = real[name];
+#### url-of-the-library-behind-a-store-under-a-computed-name.mjs prints
+file: the library called 
+undefined the program called URL

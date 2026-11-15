@@ -1,0 +1,25 @@
+# -- source: main.cjs
+# "use strict";
+# const lib = {}; (function (exports) { function add(a, b) { return a + b; } exports.add = add; })(lib);
+# const T = { go(t) { let s = t & 7; for (let i = 0; i < 22000; i++) s = lib.add(s, i); return s; } };
+# const k0 = JSON.parse('"go"'); function f(t) { return T[k0](t) & 1023; }
+# sink(f);
+# -- end of source
+# What a UMD file does: `exports.add = add` in a factory, so `lib.add` is proven undefined|add. A loop that asks nothing but this in every turn is bought twice for it:
+# the slot is read and tested once, in front of both copies, and no turn of the typed copy tests anything. Where nothing was bought every turn branched on the hoisted test: 49,700 > 93,700 instructions for 22,000 turns.
+# f3 = go
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: [[inFront]]: undefined|f4 @JSValue = GetSlotOrUndefined {{*}}key="add"
+# CHECK: [[test]]: boolean @Boolean = TypeTest [[inFront]] testedType=f4
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: Call {{*}}calleeName="lib.add"
+# CHECK: Branch [[test]]
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK-NOT: TypeTest
+# CHECK-NOT: Branch [[test]]
+# CHECK: Return
+# RUN(ANSWERS): run-in-shell globalThis.sink = f => { print(f(1)); print(f(2)); };
+# ANSWERS: 393
+# ANSWERS-NEXT: 394
+# ANSWERS-NEXT: exited with 0

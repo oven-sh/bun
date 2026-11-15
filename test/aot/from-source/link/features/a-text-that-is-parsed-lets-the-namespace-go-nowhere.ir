@@ -1,0 +1,9 @@
+# the row of JSON.parse with a typed result is applied: what comes back is unknown, and nothing that was passed is let go
+# -- source: a-text-that-is-parsed-lets-the-namespace-go-nowhere.ts
+# console.log(JSON.parse(process.argv[2]!));
+# new URLPattern("/a");
+# -- end of source
+# RUN: features
+# CHECK: by URLPattern named
+# RUN(NEVER): features
+# NEVER-NOT: by JSONRawJSON

@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: layout {{*}}name="Item" module=[[maker]] position={{*}}fields=[{key="id" declared={type=number}
+// CHECK: layout {{*}}module=[[maker]] position={{*}}fields=[{key="id" declared={type=number}
 // CHECK: module [[reader]] path="{{*}}a-reader-of-picked-names.ts"
 // CHECK: module [[maker]] path="{{*}}item-with-a-place.ts"
 

@@ -1,0 +1,11 @@
+# `undefined` leaves the locale to the host
+# -- source: undefined-in-the-place-of-the-locale.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(new Date(0).toLocaleDateString(undefined));
+# -- end of source
+# RUN: locales
+# CHECK: locale host-default DatePrototypeToLocaleDateString at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant
+# NEVER-NOT: locale unknown

@@ -1,0 +1,22 @@
+# -- source: main.cjs
+# globalThis.hooks = [];
+# const store = require('./store.cjs');
+# print(store.list.length, store.late, globalThis.hooks.length);
+# -- source: store.cjs
+# require('./cleanup.cjs');
+# const list = [];
+# list.push(1);
+# exports.list = list;
+# exports.late = 1;
+# -- source: cleanup.cjs
+# globalThis.hooks.push(() => require('./store.cjs'));
+# -- end of source
+# A function of cleanup.cjs may ask for store.cjs while that is still running, so nobody proves that the body of store.cjs runs once. The forms of that body do not hang on it: they lean on no proof,
+# and the text of another file would decide how this one is compiled. The twin, ..-asks-for-nothing.ir, has another cleanup.cjs and the same store.cjs: the check lines on its body are the same.
+# f2 = the body of store.cjs
+# RUN: walk f2 mechanisms=all
+# CHECK: = NewArray
+# RUN(SITE): walk f2 mechanisms=all
+# SITE-NOT: literalStorage=Profiled
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 1 1

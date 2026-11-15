@@ -122,6 +122,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
   const SIZE = 32 * 1024 * 1024;
   const env = {
     ...bunEnv,
+    WebKitMallocForceEnabled: "1",
     // `detect_leaks=0` (last wins): natives owned only by a JSC cell
     // (TextDecoder, Blob) are invisible to LeakSanitizer's reachability scan
     // and get reported at exit, independently of what these children test.

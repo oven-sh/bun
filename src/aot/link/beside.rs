@@ -1,4 +1,7 @@
-// Calls each once, at the same time: the first on one other thread, the second on the calling thread.
+use crate::statistics::StepClock;
+use core::time::Duration;
+use std::time::Instant;
+
 pub type Beside<'a> = &'a (dyn Fn(&mut (dyn FnMut() + Send), &mut dyn FnMut()) + Sync);
 
 pub(crate) fn run_one_after_the_other(first: &mut (dyn FnMut() + Send), second: &mut dyn FnMut()) {
@@ -23,13 +26,41 @@ pub(crate) fn run_beside<A: Send, B>(
     )
 }
 
+fn run_timed<R>(run: impl FnOnce() -> R) -> (R, Duration) {
+    let began = Instant::now();
+    let result = run();
+    (result, began.elapsed())
+}
+
+pub(crate) fn run_steps_beside<A: Send, B>(
+    beside: Beside<'_>,
+    steps: &mut StepClock,
+    names: [&str; 2],
+    on_another_thread: impl FnOnce() -> A + Send,
+    on_this_thread: impl FnOnce() -> B,
+) -> (A, B) {
+    let ((first, first_time), (second, second_time)) = run_beside(
+        beside,
+        move || run_timed(on_another_thread),
+        move || run_timed(on_this_thread),
+    );
+    if steps.logs() {
+        let [first_time, second_time] =
+            [first_time, second_time].map(|time| time.as_secs_f64() * 1000.0);
+        steps.end(&format!(
+            "{} ({first_time:.3} ms) beside {} ({second_time:.3} ms)",
+            names[0], names[1]
+        ));
+    }
+    (first, second)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ir::print_program;
+    use crate::link::LinkInput;
     use crate::link::testing::{forward, link, with_lowered_units};
-    use crate::link::{LinkInput, link_while};
-    use crate::statistics::LimitValues;
     use std::thread::ThreadId;
 
     const PROGRAM: [(&str, &str); 2] = [
@@ -77,12 +108,9 @@ function unused(): string {
 
     fn print_linked_with(beside: Beside<'_>) -> String {
         with_lowered_units(&PROGRAM, |units, projects| {
-            let limits = LimitValues::for_host();
             let linked = link(LinkInput {
                 units,
                 projects: *projects,
-                limits: &limits,
-                reports_type_mismatches: false,
                 in_parallel: &forward,
                 beside,
             });
@@ -91,23 +119,18 @@ function unused(): string {
     }
 
     #[test]
-    fn link_calls_meanwhile_once_with_the_keys_of_the_program() {
+    fn link_lists_a_module_for_each_module_record() {
         let runners: [Beside<'_>; 2] = [&run_one_after_the_other, &run_on_two_threads];
         for beside in runners {
             with_lowered_units(&PROGRAM, |units, projects| {
-                let limits = LimitValues::for_host();
                 let input = LinkInput {
                     units,
                     projects: *projects,
-                    limits: &limits,
-                    reports_type_mismatches: false,
                     in_parallel: &forward,
                     beside,
                 };
-                let mut module_counts = Vec::new();
-                let linked = link_while(input, &mut |keys| module_counts.push(keys.modules.len()));
-                let linked = linked.expect("the program links");
-                assert_eq!(module_counts, [linked.keys.modules.len()]);
+                let linked = link(input).expect("the program links");
+                assert_eq!(linked.modules.len(), linked.program.modules.len());
             });
         }
     }

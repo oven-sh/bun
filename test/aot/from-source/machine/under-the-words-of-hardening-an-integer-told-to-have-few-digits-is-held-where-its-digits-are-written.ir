@@ -1,0 +1,21 @@
+# Fault injection, testing=TreatEqualIntegersAsLess: the code generator compiles `<` of two integers as `<=`.
+# So 100000000 passes `at < 100000000`, after which the walk has proven that `at` has at most eight digits.
+# When an integer is appended to a string that is being built and is proven to have at most eight digits, its digits are written inline by one store of eight bytes.
+# The check `< 100,000,000` is omitted because of that proof.
+# No memory outside the builder is touched. The string was silently garbage (`<:0000000>`) with both options of --aot-harden.
+# With CheckBoundsAtRunTime and with CheckProofsAtRunTime, the check is emitted where the digits are written, and the process crashes with a named error.
+# RUN(RIGHT): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime
+# RIGHT: <99999999>
+# RIGHT-NEXT: exited with 0
+# RUN(POSITIONS): run-in-shell mechanisms=all testing=CheckBoundsAtRunTime,TreatEqualIntegersAsLess
+# POSITIONS: bun: internal AOT error: redundancy elimination check failed at {{*}} (spelled)
+# POSITIONS: crashed with SIGABRT
+# RUN(PROOFS): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,TreatEqualIntegersAsLess
+# PROOFS: bun: internal AOT error: type check failed at {{*}} (spelled)
+# PROOFS: crashed with SIGABRT
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function spelled(from: number, turns: number): string { let said = ""; for (let i = 0; i !== turns; i++) { const at = (from + i) & 134217727; if (at < 100000000) { said += "<"; said += at; said += ">"; } } return said; }
+# print(spelled(id(99999999), id(2)));
+# -- end of source

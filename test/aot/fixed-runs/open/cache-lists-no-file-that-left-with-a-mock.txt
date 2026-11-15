@@ -1,0 +1,21 @@
+`bun test` takes a file that imported a mock out of its loader when the mock ends with its test file. require.cache in the next test file lists neither that file nor the mocked one; a file that met no mock stays listed.
+#### a.test.mjs
+import { test, vi } from "bun:test";
+import "./user.mjs";
+import "./alone.mjs";
+vi.mock("./lib.mjs", () => ({ v: "mock v" }));
+test("a", () => {});
+#### alone.mjs
+export const alone = 1;
+#### lib.mjs
+export const v = "real v";
+#### user.mjs
+import { v } from "./lib.mjs";
+export const seen = v;
+#### z.test.cjs
+const { test } = require("bun:test");
+const own = key => key.startsWith(__dirname) && !key.includes(".test.");
+test("z", () => {
+  console.log("| CASE lists " + Object.keys(require.cache).filter(own).map(key => key.slice(__dirname.length + 1)).sort().join(" "));
+  console.log("| CASE has " + ["user.mjs", "lib.mjs", "alone.mjs"].map(name => require("node:path").join(__dirname, name) in require.cache).join(" "));
+});

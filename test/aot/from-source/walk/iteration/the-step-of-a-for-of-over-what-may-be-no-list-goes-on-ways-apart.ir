@@ -1,0 +1,11 @@
+# -- source: the-step-of-a-for-of-over-what-may-be-no-list-goes-on-ways-apart.ts
+# declare function sink(value: unknown): void;
+# function sum(list: number[]): number { let s = 0; for (const v of list) s += v; return s; }
+# sink(sum);
+# -- end of source
+# Nobody has seen the callers, so the step asks for a list and goes by protocol otherwise. Each of its ways knows whether it was the last one.
+# f1 = sum
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: : boolean @Boolean @

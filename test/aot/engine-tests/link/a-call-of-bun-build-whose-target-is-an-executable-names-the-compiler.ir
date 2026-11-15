@@ -1,0 +1,26 @@
+# new Function(globalThis.text)(); Bun.build({ entrypoints: true, target: "bun-linux-x64" });
+# The control: such a target asks for an executable.
+# RUN: features
+# CHECK: feature JIT by BunBuild named at f0
+layout L0 fields=[{key="compile" declared={type=anything}}, {key="entrypoints" declared={type=anything}}, {key="minify" declared={type=anything}}, {key="plugins" declared={type=anything}}, {key="target" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Function
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="text"
+    v3 = Construct v0, -, v2
+    v4 = Call v3, -
+    v5 = Builtin builtin=Bun
+    v6 = PropGet v5 key="build"
+    v7 = Convert v6 declared={type=builtin(BunBuild) flags=[IsExpected]}
+    v8 = NewObject layout=L0
+    v9 = Boolean boolean=true
+    PropDefine v8, v9 key="entrypoints"
+    v11 = String string="bun-linux-x64"
+    PropDefine v8, v11 key="target"
+    v13 = FinishObject v8
+    v14 = Call v7, v5, v13 calleeKey="build" calleeName="Bun.build"
+    Return v14
+}

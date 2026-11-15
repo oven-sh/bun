@@ -1,0 +1,12 @@
+{
+  "why": "nobody handles the error of the original that the mock asks for: `bun test` ends the test with it, and on a busy machine now and then goes on to the last line first",
+  "printed": [
+    "SAID body of tax",
+    "SAID mocked rate threw RangeError of the body threw TypeError threw TypeError undefined undefined",
+    "SAID required rate threw TypeError require() as threw TypeError threw TypeError undefined undefined"
+  ],
+  "tests": [
+    "(fail) a"
+  ],
+  "exitCode": 1
+}

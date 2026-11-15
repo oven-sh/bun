@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync, renameSync } from "node:fs";
+import { renameSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
@@ -36,24 +36,15 @@ for (let n = 1; n <= 10; n++)
 
 const seenIn = (stdout: string) => stdout.split("\n").filter(line => line.startsWith("SEEN "));
 
-test("an executable holds every file that a computed import may mean, and its report counts them", async () => {
+test("an executable holds every file that a computed import may mean", async () => {
   using dir = tempDir("aot-computed-import-of-many-files", files);
   const executable = join(String(dir), isWindows ? "main.exe" : "main");
-  const report = join(String(dir), "report.json");
   const built = await run(
-    [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, "--outfile", executable, "main.js"],
+    [bunExe(), "build", "--compile", "--aot", "--outfile", executable, "main.js"],
     String(dir),
     bunEnv,
   );
   expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-  const counted = JSON.parse(readFileSync(report, "utf8")).computedImports;
-  expect(
-    counted.map((it: any) => [it.location.file.replaceAll("\\", "/").split("/").pop(), it.location.line, it.files]),
-  ).toEqual([
-    ["registry.js", 1, count + 10],
-    ["registry.js", 2, 2],
-  ]);
-  expect(counted[0].bytes).toBeGreaterThan(counted[1].bytes);
   renameSync(join(String(dir), "node_modules"), join(String(dir), "moved-away"));
   renameSync(join(String(dir), "few"), join(String(dir), "few-moved-away"));
   const ran = await run([executable], String(dir), bunEnv);
@@ -65,15 +56,13 @@ test("an executable holds every file that a computed import may mean, and its re
   ]);
 }, 120_000);
 
-for (const words of ["TestRunLayers:0", "TestRunLayers:2,TestRunPartFiles:1"]) {
-  test(`a test run runs such a file compiled (${words})`, async () => {
-    using dir = tempDir("aot-computed-import-of-many-files", files);
-    // A file that runs from its text trips the wire. A file that the run itself writes anew is read from disk, as in plain Bun, so writing over it tells nothing.
-    const env = { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words, BUN_JSC_crashIfInterpreterIsUsed: "1" };
-    const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), env);
-    expect({ seen: seenIn(ran.stdout), exitCode: ran.exitCode }).toEqual({
-      seen: [`SEEN f${count} | compiled f${count}`],
-      exitCode: 0,
-    });
-  }, 120_000);
-}
+test("a test run runs such a file compiled", async () => {
+  using dir = tempDir("aot-computed-import-of-many-files", files);
+  // A file that runs from its text trips the wire. A file that the run itself writes anew is read from disk, as in plain Bun, so writing over it tells nothing.
+  const env = { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" };
+  const ran = await run([bunExe(), "test", "--aot", "--isolate"], String(dir), env);
+  expect({ seen: seenIn(ran.stdout), exitCode: ran.exitCode }).toEqual({
+    seen: [`SEEN f${count} | compiled f${count}`],
+    exitCode: 0,
+  });
+}, 120_000);

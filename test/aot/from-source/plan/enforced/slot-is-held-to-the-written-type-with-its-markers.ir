@@ -1,0 +1,19 @@
+# the type of a slot in the plan is ALL that may lie in the slot while the field is in it: what is written, and undefined and null, which lie there as markers beside a boolean.
+# whoever reads a filled slot takes the plan's type for all that he may find. Without the two in it a read of `round` in front of its definition would be typed a boolean and find undefined. `area`, a number, stays boxed and is held to nothing.
+# f1 = areaOf
+# -- source: slot-is-held-to-the-written-type-with-its-markers.ts
+# declare function sink(...values: unknown[]): void;
+# class Circle { area: number; round: boolean; next: Circle | undefined; constructor(area: number, round: boolean, next: Circle | undefined) { this.area = area; this.round = round; this.next = next; } }
+# function areaOf(circle: Circle) { return circle.area; }
+# sink(Circle, areaOf);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: slot {{*}} "round" {{*}} type=undefined|null|boolean
+# CHECK-NEXT: slot {{*}} "next" {{*}} type=undefined|null|L
+# RUN(FEWEST): plan layouts mechanisms=none+TypedOperations+UnboxedNumbers+TypedSlots
+# FEWEST: slot {{*}} "round" {{*}} type=undefined|null|boolean
+# RUN(NEVER): plan layouts mechanisms=all
+# NEVER-NOT: "area" {{*}} type=
+# NEVER-NOT: "round" {{*}} type=boolean
+# RUN(WITHHELD): plan layouts mechanisms=all-TypedSlots
+# WITHHELD-NOT: type=

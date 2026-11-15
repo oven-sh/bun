@@ -1,0 +1,17 @@
+#### frozen-field-deleted-by-reflect.js
+function run(y) {
+  const p = Object.freeze({ m: y });
+  return Reflect.deleteProperty(p, "m");
+}
+console.log(run("above") + "");
+#### frozen-field-deleted-by-reflect.js prints
+false
+#### assign-under-inherited-setter.js
+function run(t) {
+  const o = { a: 1, b: "x", c: t };
+  const copy = Object.assign({ __proto__: { set a(v) { o.b = "S"; } } }, o);
+  return copy.b;
+}
+console.log(run(0));
+#### assign-under-inherited-setter.js prints
+S

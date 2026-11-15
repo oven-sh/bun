@@ -2,15 +2,13 @@
 // CHECK-LABEL: function {{*}}name="invalidEscape"
 // CHECK: = NewTemplateObject templateStrings=[{raw="\\unicode"}]
 // CHECK-LABEL: function {{*}}name="member"
-// CHECK: [[read]] = PropGet [[o]] key="tag"
-// CHECK-NEXT: [[function]] = Convert [[read]] declared={type=undefined|null|function flags=[IsExpected]}
+// CHECK: [[function]] = PropGet [[o]] key="tag"
 // CHECK-NEXT: [[memberStrings]] = NewTemplateObject templateStrings=[{cooked="a" raw="a"}]
 // CHECK-NEXT: = Call [[function]], [[o]], [[memberStrings]] calleeKey="tag" calleeName="o.tag"
 // CHECK-LABEL: function {{*}}name="plain"
 // CHECK-NEXT: ([[tag]]: {{*}}, [[x]]:
-// CHECK: [[convertedTag]] = Convert [[tag]] declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: [[strings]] = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
-// CHECK-NEXT: = Call [[convertedTag]], -, [[strings]], [[x]] calleeName="tag"
+// CHECK: [[strings]] = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
+// CHECK-NEXT: = Call [[tag]], -, [[strings]], [[x]] calleeName="tag"
 
 // RUN(NOWHERE): lower
 // NOWHERE-NOT: ToString

@@ -1,0 +1,17 @@
+# `for (let i = 0; i < accounts.length; i++) sum += accounts[i].balance` runs no other code. The list is asked once in front of the loop whether it is as it was made and of which kind its storage is; its storage and its length are read there, and the read in the turn names them.
+# f1 = make, f2 = total
+# -- source: a-loop-that-only-reads-a-list-has-its-row-in-front.ts
+# declare function print(value: unknown): void;
+# interface Account { balance: number }
+# function make(i: number): Account { return { balance: i }; }
+# function total(accounts: Account[]): number { let sum = 0; for (let i = 0; i < accounts.length; i++) sum += accounts[i].balance; return sum; }
+# const list: Account[] = [make(1), make(2), make(3)];
+# print(total(list)); list[1] = make(20); print(total(list));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = IsPristine {{*}} builtinClass=Array
+# CHECK: = HasArrayStorage {{*}} arrayStorage=Contiguous
+# CHECK: = GetArrayStorage
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayElement {{*}} arrayStorage=Contiguous

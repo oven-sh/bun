@@ -1,0 +1,21 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# const key = { };
+# const table = new WeakMap<object, any>();
+# table.set(key, id(3));
+# function ask(k: object): string { const got = table.get(k); return got === undefined ? "nothing" : "something"; }
+# print("SAID", ask(key));
+# print("went on");
+# -- end of source
+# LIBRARY: own
+# The twin of what-a-map-gives-is-asked-where-link-says-that-it-holds-undefined-alone.ir for a WeakMap.
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.id = (x) => x;
+# RIGHT: SAID something
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumeUnknownCallsReturnUndefined globalThis.id = (x) => x;
+# LIE: bun: internal AOT error: type check failed at {{*}} (ask)
+# LIE-NEXT: in an element
+# LIE-NOT: went on
+# LIE: crashed with

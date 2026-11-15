@@ -1,0 +1,32 @@
+# -- source: main.cjs
+# "use strict";
+# function veil(value) { return JSON.parse("0", () => value); }
+# function text(n) { const out = []; out.push(1, 2, 3); const d = veil(out); let sum = 0; for (let i = 0; i < d.length && i < n; i++) { sum = (sum + d[i]) | 0; out.push("7"); } return sum + "/" + d.length; }
+# print(text(3), text(5), text(9));
+# -- end of source
+# Where a loop writes only objects that were allocated in this function, what is known about every other object survives the loop header.
+# Whether a value is another object is decided by the order of allocation: a value that existed before the first such object was allocated cannot be that object.
+# Nothing is known about a value that came later (Walker::classifyAgainstAllocations()).
+# Here the array that is read came later: it is the array allocated here, returned through veil(). So the guard before the loop tests that it is another array.
+# Fault injection, testing=AssumeLaterValuesUnaliased: the compiler assumes that it is another object.
+# The guard is hoisted, and the elements are read as numbers throughout the loop while each iteration pushes a string into the array.
+# In a default build the results still look right, because an array into which a string literal is pushed is allocated with boxed storage and fails the hoisted guard.
+# The wrong numbers show up under garbage collections, where the array is allocated differently. The program is
+# test/aot/parallel/a-push-into-a-list-made-here-writes-that-list-alone/a-written-text-is-pushed-into-the-list-whose-veiled-self-is-read-as-numbers.cjs.
+# Built with this switch, it is silently wrong in 105 of the 144 results that it prints.
+# f2 = text
+# RUN: walk f2 mechanisms=all
+# CHECK: HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
+# CHECK: StrictEq {{*}} form=Bits
+# CHECK: isLoopHead=true
+# CHECK: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
+# RUN(LIE): walk f2 mechanisms=all testing=AssumeLaterValuesUnaliased
+# LIE: HasArrayStorage {{*}} arrayStorage=Double [admitsInt32Storage]
+# LIE: isLoopHead=true
+# LIE: GetArrayElement {{*}} arrayStorage=Double level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN, admitsInt32Storage]
+# LIE: TryCallInline {{*}} inlineBuiltin=ArrayPush
+# RUN(SAME): walk f2 mechanisms=all testing=AssumeLaterValuesUnaliased
+# SAME-NOT: StrictEq
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 6/6 677/8 6777777/12
+# RIGHT-NEXT: exited with 0

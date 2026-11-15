@@ -1,0 +1,15 @@
+# f1 = total
+# -- source: main.mjs
+# const d = JSON.parse('{"rows":[[1,2,3],[4,5,6],[7,8,9]]}'), e = JSON.parse('{"rows":[[1],null]}'), f = JSON.parse('{"rows":{"0":[1,2],"length":1}}');
+# function total(d) { let sum = 0; for (let y = 0; y < d.rows.length; y++) for (let x = 0; x < d.rows[y].length; x++) sum += d.rows[y][x]; return sum; }
+# print(total(d), total(f));
+# try { total(e); } catch (error) { print(error instanceof TypeError); }
+# -- end of source
+# The row is read in front of the inner loop, through the site of the field, which runs no code.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetValueAtSiteOrAbsent {{*}} key="rows"
+# CHECK: = IsElementPresent {{*}} arrayStorage=Contiguous
+# CHECK: = GetArrayElement {{*}} arrayStorage=Double
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 45 3
+# ANSWERS-NEXT: true

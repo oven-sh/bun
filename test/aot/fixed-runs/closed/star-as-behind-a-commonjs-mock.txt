@@ -1,0 +1,27 @@
+A file without a body (`export * as all from`) stands between a user that has run and a file whose mock has ended, and an earlier test file has loaded a CommonJS file under a mock.
+#### a.test.js
+import { test, vi } from "bun:test";
+test("a", async () => {
+  vi.doMock("./first.cjs", () => ({ who: "one" }));
+  console.log("| CASE " + (await import("./first.cjs")).who);
+});
+#### b.test.js
+import { test, vi } from "bun:test";
+test("b", async () => {
+  vi.doMock("./dep.js", () => ({ flag: "one" }));
+  console.log("| CASE " + (await import("./user.js")).report());
+});
+#### between.js
+export * as all from "./dep.js";
+#### dep.js
+export const flag = "real";
+#### first.cjs
+exports.who = "real";
+#### package.json
+{ "type": "module" }
+#### user.js
+import { all } from "./between.js";
+export const report = () => all.flag;
+#### z.test.js
+import { test } from "bun:test";
+test("z", async () => console.log("| CASE the next file: " + (await import("./user.js")).report()));

@@ -1,5 +1,4 @@
 // RUN: lower
-// STATISTIC: AotFilesUsed = 6
 
 // FILE: app.ts
 import { byHand } from "by-hand";

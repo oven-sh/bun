@@ -1,0 +1,16 @@
+# -- source: main.mjs
+# function listOf(r) { const list = []; for (let i = 0; i < r.size; i++) list.push(i); return list; }
+# function open(r) {
+#   var t = r[Symbol.iterator] || r["@@iterator"];
+#   if (t) return (t = t.call(r)).next.bind(t);
+#   if (t = listOf(r)) { var o = 0; return function () { return o >= t.length ? { done: true } : { done: false, value: t[o++] }; }; }
+#   throw new TypeError("not iterable");
+# }
+# function sum(r) { var total = 0; for (var step = open(r), part; !(part = step()).done;) total += part.value; return total; }
+# print(sum([1, 2, 3]), sum(new Set([4, 5])), sum({ size: 4 }), sum({ "@@iterator": Array.prototype.values, length: 1, 0: 7 }));
+# -- end of source
+# A variable is stored a list, and its method `call` is called, which no list has: it is expected to be a function too.
+# RUN: print f2
+# CHECK: declared={type=undefined|null|function|Array<number>
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 6 9 6 7

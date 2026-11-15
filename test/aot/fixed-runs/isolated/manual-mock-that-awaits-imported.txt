@@ -1,0 +1,14 @@
+The file of the __mocks__ folder awaits at its top: an import() waits for it.
+#### package.json
+{ "name": "mock-folder-require" }
+#### src/__mocks__/waits.mjs
+console.error("| CASE the file of the folder begins");
+await new Promise(resolve => setTimeout(resolve, 5));
+console.error("| CASE the file of the folder ends");
+export const who = "manual waits";
+#### src/waits.mjs
+export const who = "real waits";
+#### waits-import.test.ts
+import { jest, test } from "bun:test";
+jest.mock("./src/waits.mjs");
+test("an import() of a file that awaits", async () => console.error("| CASE", (await import("./src/waits.mjs")).who));

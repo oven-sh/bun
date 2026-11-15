@@ -9,7 +9,6 @@
 //! exactly one of `resolved()` or `cancel()`.
 
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
 
 use bun_ptr::RefPtr;
 use bun_threading::Guarded;
@@ -17,6 +16,7 @@ use bun_uws as uws;
 use bun_uws::quic;
 
 use super::ClientSession;
+use super::client_context::ClientContext;
 use super::client_session::session_mut;
 
 pub struct PendingConnect {
@@ -135,11 +135,10 @@ impl PendingConnect {
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
         s.closed = true;
-        if let Some(ctx) = super::client_context::ClientContext::get() {
-            super::client_context::ClientContext::as_mut(ctx).unregister(s);
-        }
+        let _registry_ref =
+            ClientContext::get().and_then(|ctx| ClientContext::as_mut(ctx).unregister(s));
         while !s.pending.is_empty() {
-            let stream = s.pending[0];
+            let stream = s.pending[0].as_ptr();
             // stream is live while attached to session.pending.
             let cl = super::client_session::stream_ref(stream).client;
             s.detach(stream);
@@ -149,10 +148,6 @@ impl PendingConnect {
                 super::client_session::client_mut(cl).fail_from_h2(err);
             }
         }
-        let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
-        // SAFETY: `s` refers to a live heap-allocated ClientSession (caller holds
-        // an intrusive ref for the duration); this drops the connection-alive ref.
-        unsafe { ClientSession::deref(s) };
     }
 }
 

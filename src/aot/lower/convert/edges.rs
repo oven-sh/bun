@@ -1,84 +1,51 @@
-use bun_sema::bind::FnOwner;
-use bun_sema::check::aot::{FunctionRef, ShapeKind};
-use bun_sema::hir::{ExprId, ExprKind, Flags, FnBody, FnKind};
+use bun_sema::bind::{FnOwner, Parent};
+use bun_sema::check::aot::{
+    ClassDeclaration, ClassMember, ClassParent, ClassRef, FunctionRef, MemberName,
+    ObjectMemberKind, ShapeKind, TypeShape,
+};
+use bun_sema::fold::Constant;
+use bun_sema::hir::{BinOp, Branches, ExprId, ExprKind, Flags, FnBody, FnKind, MemberKey, UnOp};
 use smallvec::{SmallVec, smallvec};
 
 use crate::ir::generated::IllTypedCause;
-use crate::ir::{DeclaredType, Primitives, TypeTable};
-use crate::lower::{CheckerTypeId, FileLowering};
+use crate::ir::{DeclaredType, PositionFlags, Primitives};
+use crate::lower::{CheckerTypeId, FileLowering, expression};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Construct {
     Flow,
     Assertion,
-    ContentsRead,
-    IndexSignatureRead,
     CallResult {
         declaration: Option<FunctionRef>,
         is_instantiated: bool,
     },
 }
 
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+enum Numbers {
+    None,
+    Int32s,
+    Any,
+}
+
+fn is_int32(number: f64) -> bool {
+    number == f64::from(number as i32) && (number != 0.0 || number.is_sign_positive())
+}
+
+pub(super) fn find_function_shape<'c>(
+    file: &mut FileLowering<'_, 'c, '_, '_>,
+    ty: CheckerTypeId,
+) -> Option<TypeShape<'c>> {
+    let shape = file.queries.type_shape(ty).ok()?;
+    let is_function = matches!(
+        shape.kind,
+        ShapeKind::Function(_) | ShapeKind::ClassConstructor(_)
+    );
+    is_function.then_some(shape)
+}
+
 impl FileLowering<'_, '_, '_, '_> {
-    fn compute_is_loose(&mut self, ty: CheckerTypeId) -> bool {
-        let mut pending: SmallVec<[CheckerTypeId; 4]> = smallvec![ty];
-        while let Some(ty) = pending.pop() {
-            let Ok(shape) = self.queries.type_shape(ty) else {
-                return true;
-            };
-            match shape.kind {
-                ShapeKind::Anything(_)
-                | ShapeKind::AnyObject
-                | ShapeKind::Function(&[])
-                | ShapeKind::TypeVariable {
-                    constraint: None, ..
-                } => return true,
-                ShapeKind::TypeVariable {
-                    constraint: Some(constraint),
-                    ..
-                } => pending.push(constraint),
-                ShapeKind::Union(members) => pending.extend_from_slice(members),
-                ShapeKind::Int32 { base } => pending.push(base),
-                ShapeKind::Never
-                | ShapeKind::Undefined
-                | ShapeKind::Null
-                | ShapeKind::Boolean
-                | ShapeKind::BooleanLiteral(_)
-                | ShapeKind::Number
-                | ShapeKind::NumberLiteral(_)
-                | ShapeKind::NumericEnumMember(_)
-                | ShapeKind::BigInt
-                | ShapeKind::BigIntLiteral { .. }
-                | ShapeKind::String
-                | ShapeKind::StringLiteral(_)
-                | ShapeKind::TemplateLiteral { .. }
-                | ShapeKind::Symbol
-                | ShapeKind::Function(_)
-                | ShapeKind::ClassConstructor(_)
-                | ShapeKind::Array { .. }
-                | ShapeKind::Tuple { .. }
-                | ShapeKind::Builtin { .. }
-                | ShapeKind::Class(_)
-                | ShapeKind::Object => {}
-            }
-        }
-        false
-    }
-
-    fn is_never(&mut self, ty: CheckerTypeId) -> bool {
-        self.queries
-            .type_shape(ty)
-            .is_ok_and(|shape| shape.kind == ShapeKind::Never)
-    }
-
-    fn is_inside_position(&mut self, source: CheckerTypeId, position: DeclaredType) -> bool {
-        let source = self.map_type_at(source, 0).ty;
-        source != TypeTable::ANYTHING
-            && self.fragment.types.union(position.ty, source) == position.ty
-    }
-
-    // What a function with a body returns was converted to its result.
-    fn classify_call_result(&self, declaration: Option<FunctionRef>) -> IllTypedCause {
+    pub(super) fn classify_call_result(&self, declaration: Option<FunctionRef>) -> IllTypedCause {
         let Some(declaration) = declaration else {
             return IllTypedCause::UnprovenCallee;
         };
@@ -122,92 +89,193 @@ impl FileLowering<'_, '_, '_, '_> {
         matches!(self.hir[expression].kind, ExprKind::NonNull(_))
     }
 
-    /// Whether the checker's type of the expression has no number in it.
-    pub(super) fn has_no_number(&mut self, expression: ExprId) -> bool {
+    fn find_numbers(&mut self, expression: ExprId) -> Numbers {
         let Ok(ty) = self.queries.expression_type(expression) else {
+            return Numbers::Any;
+        };
+        if let Some(shape) = find_function_shape(self, ty) {
+            return match shape.trust.is_trusted() {
+                true => Numbers::None,
+                false => Numbers::Any,
+            };
+        }
+        let mapped = self.map_type_at(ty);
+        let ty = self.fragment.types.get(mapped.ty);
+        if !mapped.is_checked || ty.primitives.contains(Primitives::NUMBER) {
+            return Numbers::Any;
+        }
+        match ty.integer_range() {
+            None => Numbers::None,
+            Some((minimum, maximum)) => {
+                match i64::from(i32::MIN) <= minimum && maximum <= i64::from(i32::MAX) {
+                    true => Numbers::Int32s,
+                    false => Numbers::Any,
+                }
+            }
+        }
+    }
+
+    pub(in crate::lower) fn breaks_no_int32_promise(&mut self, source: ExprId) -> bool {
+        let hir = self.hir;
+        let decisions = self.decisions();
+        let mut pending: SmallVec<[ExprId; 4]> = smallvec![source];
+        while let Some(flowing) = pending.pop() {
+            match expression::find_constant(self, flowing) {
+                Some(Constant::Number(number)) if !is_int32(number) => return false,
+                Some(_) => continue,
+                None => {}
+            }
+            if let Some(operand) = hir.type_assertion_operand(flowing) {
+                pending.push(operand);
+                continue;
+            }
+            let is_read = match hir[flowing].kind {
+                ExprKind::Cond { branches, .. } => {
+                    let Branches { yes, no } = hir.branches(branches);
+                    pending.extend(
+                        [yes, no]
+                            .into_iter()
+                            .filter(|&arm| !decisions.is_dead_expr(arm)),
+                    );
+                    continue;
+                }
+                ExprKind::Binary {
+                    op: BinOp::And | BinOp::Or | BinOp::Nullish,
+                    left,
+                    right,
+                } => {
+                    pending.extend(
+                        [left, right]
+                            .into_iter()
+                            .filter(|&side| !decisions.is_dead_expr(side)),
+                    );
+                    continue;
+                }
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    right,
+                    ..
+                } => {
+                    pending.push(right);
+                    continue;
+                }
+                ExprKind::Dot { .. } | ExprKind::Index { .. } => {
+                    !self.reads_field_that_may_be_absent(flowing)
+                }
+                ExprKind::Ident(_)
+                | ExprKind::Call(_)
+                | ExprKind::TaggedTemplate(_)
+                | ExprKind::Await(_) => true,
+                _ => false,
+            };
+            match self.find_numbers(flowing) {
+                Numbers::None => {}
+                Numbers::Int32s if is_read => {}
+                Numbers::Int32s | Numbers::Any => return false,
+            }
+        }
+        true
+    }
+
+    pub(super) fn reads_field_that_may_be_absent(&mut self, access: ExprId) -> bool {
+        let Some((object, MemberKey::Name(name))) = self.hir.member_key(access) else {
             return false;
         };
-        let mapped = self.map_type_at(ty, self.hir[expression].pos);
-        let ty = self.fragment.types.get(mapped.ty);
-        mapped.is_checked
-            && !ty.primitives.contains(Primitives::NUMBER)
-            && ty.integer_range().is_none()
+        let receiver = self.queries.expression_type(object);
+        let shape = receiver.and_then(|receiver| self.queries.type_shape(receiver));
+        let Ok(ShapeKind::Class(class)) = shape.map(|shape| shape.kind) else {
+            return false;
+        };
+        let is_read =
+            |member: &&ClassMember| !member.is_static && member.name == MemberName::String(name);
+        let mut row: SmallVec<[ClassRef; 4]> = smallvec![class];
+        loop {
+            let class = row[row.len() - 1];
+            if let Some(member) = self.queries.class_shape(class).members.iter().find(is_read) {
+                return member.kind == ObjectMemberKind::Field && member.is_optional;
+            }
+            match self.queries.class_parent(class) {
+                Some(ClassParent::Declared(ClassDeclaration::Class(above)))
+                    if !row.contains(&above) =>
+                {
+                    row.push(above);
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    fn is_reckoned_with(&self, read: ExprId) -> bool {
+        let (hir, bound) = (self.hir, self.bound);
+        let mut value = read;
+        while let Parent::Expr(user) = bound.parent_of_expr(value)
+            && user.is_some()
+        {
+            match hir[user].kind {
+                ExprKind::Unary {
+                    op: UnOp::Plus | UnOp::Minus | UnOp::BitNot,
+                    ..
+                }
+                | ExprKind::Assign { op: Some(_), .. }
+                | ExprKind::Call(_) => return true,
+                ExprKind::Binary { op, .. } => match op {
+                    BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma => value = user,
+                    BinOp::EqEq
+                    | BinOp::NotEq
+                    | BinOp::EqEqEq
+                    | BinOp::NotEqEq
+                    | BinOp::In
+                    | BinOp::Instanceof => return false,
+                    _ => return true,
+                },
+                ExprKind::Cond { test, .. } if test != value => value = user,
+                ExprKind::NonNull(_) | ExprKind::As { .. } | ExprKind::Satisfies { .. } => {
+                    value = user;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    pub(in crate::lower) fn position_of_int32_read(
+        &mut self,
+        read: ExprId,
+    ) -> Option<DeclaredType> {
+        if self.find_numbers(read) != Numbers::Int32s || self.reads_field_that_may_be_absent(read) {
+            return None;
+        }
+        let ty = self.queries.expression_type(read).ok()?;
+        let mapped = self.map_type_at(ty);
+        let range = self.fragment.types.get(mapped.ty).integer_range();
+        let every_int32 = (i64::from(i32::MIN), i64::from(i32::MAX));
+        (range == Some(every_int32) || self.is_reckoned_with(read))
+            .then(|| DeclaredType::new(mapped, None, PositionFlags::default()))
     }
 
     pub(super) fn find_cause(
-        &mut self,
+        &self,
         position: DeclaredType,
         source: Option<ExprId>,
-        target: Option<CheckerTypeId>,
         construct: Construct,
     ) -> IllTypedCause {
         if position.is_expected() {
             return IllTypedCause::None;
         }
-        // `x!` takes the programmer's word for what the checker could not show.
         if source.is_some_and(|source| self.is_non_null_assertion(source)) {
             return IllTypedCause::Assertion;
         }
-        let source_position = source.map_or(0, |source| self.hir[source].pos);
-        let source = source.and_then(|source| self.queries.expression_type(source).ok());
-        if let (Some(source), Construct::Flow) = (source, construct)
-            && !target.is_some_and(|target| self.flows_into_container(source, target))
-        {
-            let source = self.map_type_at(source, source_position).ty;
-            self.fragment
-                .family_facts
-                .record_conversion(source, position.ty);
-        }
-        let refused = match construct {
-            Construct::Flow => IllTypedCause::SuppressedError,
-            // `never` goes into every type, and no value is one: an assertion has taken the type of this value away.
-            Construct::Assertion if source.is_some_and(|source| self.is_never(source)) => {
-                return IllTypedCause::Assertion;
-            }
+        match construct {
+            Construct::Flow => IllTypedCause::None,
             Construct::Assertion => IllTypedCause::Assertion,
-            Construct::ContentsRead => return IllTypedCause::ContainerWriterUnseen,
-            // The result of a generic function comes out of a type parameter.
-            Construct::IndexSignatureRead
-            | Construct::CallResult {
+            Construct::CallResult {
                 is_instantiated: true,
                 ..
-            } => return IllTypedCause::FromLooseType,
+            } => IllTypedCause::FromLooseType,
             Construct::CallResult {
                 declaration,
                 is_instantiated: false,
-            } => return self.classify_call_result(declaration),
-        };
-        let Some(source) = source else {
-            return IllTypedCause::FromLooseType;
-        };
-        if is_loose(self, source) {
-            return IllTypedCause::FromLooseType;
-        }
-        let Some(target) = target else {
-            return match self.is_inside_position(source, position) {
-                true => IllTypedCause::None,
-                false => IllTypedCause::FromLooseType,
-            };
-        };
-        if source == target {
-            return IllTypedCause::None;
-        }
-        match self.queries.is_assignable(source, target) {
-            Ok(true) => IllTypedCause::None,
-            // `x?: T` is written `T`, and the position takes `undefined` too.
-            Ok(false) if self.is_inside_position(source, position) => IllTypedCause::None,
-            Ok(false) => refused,
-            Err(_) => IllTypedCause::FromLooseType,
+            } => self.classify_call_result(declaration),
         }
     }
-}
-
-// `any`, `unknown`, `object`, `{}`, `Function` and a bare type parameter say nothing about the value they hold.
-fn is_loose(file: &mut FileLowering<'_, '_, '_, '_>, ty: CheckerTypeId) -> bool {
-    if let Some(&is_loose) = file.types.conversions.loose_types.get(&ty) {
-        return is_loose;
-    }
-    let is_loose = file.compute_is_loose(ty);
-    file.types.conversions.loose_types.insert(ty, is_loose);
-    is_loose
 }

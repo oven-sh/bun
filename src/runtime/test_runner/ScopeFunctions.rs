@@ -14,7 +14,7 @@ use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, Calling, Describ
 use crate::test_runner::bun_test::js_fns::{GenericHookTag, Signature, create_hook};
 use crate::test_runner::test_context;
 use crate::test_runner::test_context_fixtures::TestFixtures;
-use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter};
+use crate::test_runner::test_context_parameter::{ContextParameter, SharedContextParameter, TEXT_LEFT_OUT};
 use crate::test_runner::jest;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
@@ -549,12 +549,12 @@ impl ScopeFunctions {
         }
 
         // handle test reporter agent for debugger
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         let mut test_id_for_debugger: i32 = 0;
-        if let Some(debugger) = (*vm).debugger.as_mut() {
+        if let Some(debugger) = vm.debugger.get() {
             if debugger.test_reporter_agent.is_enabled() {
-                debugger.test_reporter_agent.next_test_id += 1;
-                let id = debugger.test_reporter_agent.next_test_id;
+                debugger.test_reporter_agent.next_test_id.update(|n| n + 1);
+                let id = debugger.test_reporter_agent.next_test_id.get();
                 let name = StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
@@ -668,6 +668,9 @@ impl ScopeFunctions {
                         ContextParameter::Other(None) => Some(global.create_error_instance(format_args!(
                             "{self}{call} expects the {ordinal} parameter of its callback to be an object destructuring pattern: {why}"
                         ))),
+                        ContextParameter::TextLeftOut => {
+                            Some(global.create_error_instance(format_args!("{self}{call}: {TEXT_LEFT_OUT}")))
+                        }
                     };
                     match error {
                         Some(error) => callback = Some(test_context::rejecting(global, error)?),

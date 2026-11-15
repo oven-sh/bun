@@ -6,6 +6,7 @@
 use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
@@ -245,7 +246,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references.
-    global.bun_vm().as_mut().console.cast::<ConsoleObject>()
+    global.bun_vm().console.cast::<ConsoleObject>()
 }
 
 /// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`
@@ -368,6 +369,52 @@ pub fn message_with_type_and_level(
         }
         debug_assert!(global.has_exception());
     }
+}
+
+/// `console.log(text)` in AOT-compiled code: one string and nothing else. Nothing is formatted,
+/// so no `Formatter` is made and no option is looked up: what `format2` writes for a lone
+/// string is the indent of the open groups, its characters and a line break.
+fn print_one_text(level: MessageLevel, global: &JSGlobalObject, text: JSValue) -> JsResult<()> {
+    let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error);
+    let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
+    let is_red = level == MessageLevel::Error && Output::enable_ansi_colors_stderr();
+    let console: *mut ConsoleObject = vm_console(global);
+    // SAFETY: see [`vm_console`] — the live boxed `ConsoleObject` of this VM; JS-thread-only, and
+    // nothing below re-enters JavaScript while `writer` is borrowed.
+    let (default_indent, writer): (u16, &mut dyn bun_io::Write) = unsafe {
+        (
+            (*console).default_indent,
+            if use_stderr {
+                (*console).error_writer()
+            } else {
+                (*console).writer()
+            },
+        )
+    };
+    if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
+        (hooks.console_on_before_print)();
+    }
+    if formatter::write_indent_n(u32::from(default_indent), writer).is_err() {
+        return Ok(());
+    }
+    if is_red {
+        let _ = writer.write_all(pfmt!("<r><red>", true).as_bytes());
+    }
+    let characters = text.to_js_string_view(global)?;
+    if characters.is_utf16() {
+        let _ = writer.write_fmt(format_args!("{characters}"));
+    } else if let Some(slice) = characters.as_utf8() {
+        let _ = writer.write_all(slice);
+    } else if !characters.is_empty() {
+        let buf = strings::allocate_latin1_into_utf8(characters.latin1()).unwrap_or_default();
+        let _ = writer.write_all(&buf);
+    }
+    if is_red {
+        let _ = writer.write_all(pfmt!("<r>", true).as_bytes());
+    }
+    let _ = writer.write_all(b"\n");
+    let _ = writer.flush();
+    Ok(())
 }
 
 fn message_with_type_and_level_(
@@ -1135,8 +1182,7 @@ impl<'a> DynWriteAdapter<'a> {
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
-    // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
@@ -1558,9 +1604,7 @@ pub mod formatter {
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
-        /// Raw pointer (not `Box`) because `visited::Pool` owns the
-        /// `heap::alloc`/`from_raw` lifecycle.
-        pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        pub(crate) map_node: ManuallyDrop<Option<Box<visited::PoolNode>>>,
         pub(crate) hide_native: bool,
         pub(crate) indent: u32,
         pub depth: u16,
@@ -1596,7 +1640,7 @@ pub mod formatter {
                 global_this,
                 remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
-                map_node: None,
+                map_node: ManuallyDrop::new(None),
                 hide_native: false,
                 indent: 0,
                 depth: 0,
@@ -1634,7 +1678,7 @@ pub mod formatter {
                 global_this: self.global_this,
                 remaining_values: self.remaining_values,
                 map: visited::Map::default(),
-                map_node: None,
+                map_node: ManuallyDrop::new(None),
                 hide_native: self.hide_native,
                 indent: self.indent,
                 depth: self.depth,
@@ -1681,21 +1725,13 @@ pub mod formatter {
             if let Some(mut node) = self.map_node.take() {
                 // Move the working map back into the pooled node, shrink if it
                 // ballooned, then return the node to the thread-local pool.
-                let map = core::mem::take(&mut self.map);
-                // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
-                // pooled slot already holds an (empty, post-`take`) `Map`;
-                // assigning over it drops that empty value and moves `map` in.
-                let data = visited::node_data_mut(&mut node);
-                *data = map;
-                if data.capacity() > 512 {
-                    data.deinit();
+                node.data = core::mem::take(&mut self.map);
+                if node.data.capacity() > 512 {
+                    node.data.deinit();
                 } else {
-                    data.clear();
+                    node.data.clear();
                 }
-                // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                // exclusively owned by this formatter; `Map::INIT` is `Some`,
-                // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_ptr()) };
+                visited::Pool::release(node);
             }
         }
     }
@@ -1789,22 +1825,14 @@ pub mod formatter {
         }
 
         impl bun_collections::pool::ObjectPoolType for Map {
-            // Fresh nodes start with an empty map so clearing retained
-            // capacity on first use is well-defined.
-            const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
+            fn init() -> Self {
+                Map::default()
+            }
         }
 
         // Thread-local free list, capped at 16 nodes.
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
-
-        #[inline]
-        pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
-            // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
-            // every node from `Pool::get_node()`; the caller owns `node`
-            // exclusively until `Pool::release`, so forming `&mut` is sound.
-            unsafe { node.as_mut().data.assume_init_mut() }
-        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -2097,6 +2125,15 @@ pub mod formatter {
             if js_type == jsc::JSType::Cell {
                 return Ok(TagResult {
                     tag: TagPayload::NativeCode,
+                    cell: js_type,
+                });
+            }
+
+            if js_type == jsc::JSType::InternalFunction
+                && value.is_placeholder_for_omitted_builtin()
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Function,
                     cell: js_type,
                 });
             }
@@ -2705,7 +2742,10 @@ pub mod formatter {
     /// conflict with the `&self` borrow `Formatter::write_indent` takes.
     /// `self.indent` is a disjoint field read, so passing it by value here
     /// keeps the borrow checker happy.
-    fn write_indent_n(indent: u32, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+    pub(crate) fn write_indent_n(
+        indent: u32,
+        writer: &mut dyn bun_io::Write,
+    ) -> bun_io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -3191,12 +3231,10 @@ pub mod formatter {
         #[inline(never)]
         pub(crate) fn visited_insert(&mut self, value: JSValue) -> bool {
             if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
-                self.map_node = Some(node);
+                let mut node = visited::Pool::get_node();
+                node.data.clear();
+                self.map = core::mem::take(&mut node.data);
+                self.map_node = ManuallyDrop::new(Some(node));
             }
             !self
                 .map
@@ -3865,8 +3903,7 @@ pub mod formatter {
             }
 
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
-            // SAFETY: per-thread VM.
-            let vm = VirtualMachine::get().as_mut();
+            let vm = VirtualMachine::get();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
             Ok(())
         }
@@ -5964,6 +6001,21 @@ console_noop_hooks!(
     Bun__ConsoleObject__recordEnd,
     Bun__ConsoleObject__screenshot,
 );
+
+#[unsafe(no_mangle)]
+#[crate::host_call]
+pub(crate) extern "C" fn Bun__ConsoleObject__printOneText(
+    level: u32,
+    global: &JSGlobalObject,
+    text: JSValue,
+) {
+    if let Err(err) = print_one_text(MessageLevel::from_raw(level), global, text) {
+        if matches!(err, jsc::JsError::OutOfMemory) {
+            global.throw_out_of_memory_value();
+        }
+        debug_assert!(global.has_exception());
+    }
+}
 
 #[unsafe(no_mangle)]
 #[crate::host_call]

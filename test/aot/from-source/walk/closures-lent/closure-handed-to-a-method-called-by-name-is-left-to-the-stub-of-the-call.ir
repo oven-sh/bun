@@ -1,0 +1,32 @@
+# Nothing is known of `bus`. The read of `run` and the call behind it stay one call of a stub, and the arrow is written into the frame: no read by name stands in front of the call, and no call of a value behind it.
+# The stub asks the word of whatever the name finds. That of `twice` says that it only calls its first argument. That of `keep` does not, and a function of the shell has no such word: the arrow is moved to the heap in front of both.
+# The shell comes by often enough that the place and the tables of the stubs remember what they found, with the two kinds of receivers in turns.
+# f1 = twice, f2 = keep, f3 = go
+# -- source: closure-handed-to-a-method-called-by-name-is-left-to-the-stub-of-the-call.ts
+# declare function publish(...values: unknown[]): void;
+# let held: (() => number) | undefined;
+# function twice(job: () => number): number { return job() + job(); }
+# function keep(job: () => number): number { held = job; return 1; }
+# function go(bus: any, k: number): number { const t = bus.run(() => k); return t + 1; }
+# publish(go, twice, keep, () => held);
+# -- end of source
+# RUN: bytes f3 mechanisms=all-Inlining
+# CHECK: CallMethod{{*}}Lending.First count 1
+# RUN(NEVER): bytes f3 mechanisms=all-Inlining
+# NEVER-NOT: NewSlimClosure.
+# RUN(FUSED): bytes f3 mechanisms=all-Inlining
+# FUSED-NOT: CallValueLending
+# RUN(WORDS): plan units mechanisms=all
+# WORDS: unit f1:GenericCallEntry {{*}}only-calls=0
+# RUN(KEEPS): plan units mechanisms=all
+# KEEPS-NOT: unit f2:GenericCallEntry {{*}}only-calls
+# RUN(WITHHELD): bytes f3 mechanisms=all-Inlining-CellsInFrames
+# WITHHELD: NewSlimClosure
+# RUN(SHELL): run-in-shell globalThis.publish = (go, twice, keep, held) => { const calls = { run: twice }, keeps = { run: keep }, foreign = { run(job) { this.job = job; return job(); } }; print(go(calls, 2), go(keeps, 3), held()(), held() === held(), go(calls, 4), held()(), go(keeps, 5), held()()); print(go(foreign, 6), foreign.job(), go(foreign, 7), foreign.job()); const seen = new Set(); let sum = 0; for (let i = 0; i < 300; i++) { sum += go(i % 2 ? calls : keeps, i); seen.add(held()); if (i % 50 === 49) gc(); } print(sum, held()(), seen.size, seen.delete(held()), seen.size); let wrong = 0, at = 0; for (const job of seen) { if (job() !== at) wrong++; at += 2; } print(wrong); print(go({ get run() { return keep; } }, 8), held()(), go(new Proxy({ }, { get() { return keep; } }), 9), held()(), go({ run: keep.bind(null) }, 10), held()()); try { go({ }, 11); } catch (error) { print(error.constructor.name); } try { go(undefined, 12); } catch (error) { print(error.constructor.name); } };
+# SHELL: 5 2 3 true 9 3 2 5
+# SHELL-NEXT: 7 6 8 7
+# SHELL-NEXT: 45450 298 150 true 149
+# SHELL-NEXT: 0
+# SHELL-NEXT: 2 8 2 9 2 10
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: TypeError

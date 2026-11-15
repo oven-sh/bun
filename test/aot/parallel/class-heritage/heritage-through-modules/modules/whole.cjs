@@ -1,0 +1,1 @@
+"use strict"; class Whole { constructor(n) { this.n = n; this.list = []; } add(m) { this.n += m; return this; } get twice() { return this.n * 2; } static from(n) { return new this(n, 1); } } module.exports = Whole;

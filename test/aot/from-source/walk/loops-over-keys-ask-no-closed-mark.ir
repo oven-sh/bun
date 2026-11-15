@@ -1,0 +1,16 @@
+# -- source: main.mjs
+# const m = new Map([["a", 1], ["b", 2], ["c", 3]]);
+# function repeat(turns) {
+#   let n = 0;
+#   for (let k = 0; k < turns; k++) { for (const x of m.keys()) n += x.length; for (const v of m.values()) n += v; }
+#   return n;
+# }
+# console.log(repeat(process.argv.length * 9));
+# -- end of source
+# A loop that is left at the last step never steps again: it asks no table for the mark of a closed iterator.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = MapNext
+# CHECK: = MapNext
+# RUN(MARK): walk f1 mechanisms=all
+# MARK-NOT: IsCollectionIteratorClosedMark

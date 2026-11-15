@@ -1,0 +1,23 @@
+# -- source: main.js
+# class Box { x; constructor(x) { this.x = x; } }
+# let calls = 0;
+# const other = { y: 0, x: 2 };
+# const counted = { get x() { calls++; return 2; } };
+# function tell(f) { try { print(f()); } catch (thrown) { print(thrown.name); } }
+# function each(f) { tell(() => f(new Box(2))); tell(() => f(other)); tell(() => f(counted)); print(calls); tell(() => f(null)); tell(() => f(7)); tell(() => f({ x: "2" })); }
+# function assigned(o, next, n) { let s = 0; for (let i = 0;i < n; i++) { s += o.x; o = next; } return s; }
+# function twoLoops(o, n) { let s = 0; for (let i = 0;i < n; i++) s += o.x; for (let i = 0;i < n; i++) s += o.x * 2; return s; }
+# each((o) => twoLoops(o, 3));
+# each((o) => assigned(o, new Box(5), 3));
+# each((o) => assigned(new Box(5), o, 3));
+# -- end of source
+# `new Box(5)` is made in front of the copy of assigned(). Only the way on which that copy leaves for the call needs the cell, so the sweep moves the birth and the store that fills it down into that block
+# (`Sweep::moveBirthsToWhereCellsAreNeeded()`): behind the beginning of what may run again. The net of effects takes such a birth for no deed: it runs once.
+# f9 = the last arrow
+# RUN(SHAPE): walk f9 testing=CheckEffectsAtRunTime mechanisms=all
+# SHAPE-LABEL: code f9:Body
+# SHAPE: = BeginEffectsCheck
+# SHAPE: = NewObject {{*}}fields=[0]
+# SHAPE-NEXT: CheckInlineeFallback
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: exited with 0

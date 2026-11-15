@@ -1,0 +1,21 @@
+# -- source: main.cjs
+# globalThis.hooks = [];
+# const store = require('./store.cjs');
+# print(store.list.length, store.late, globalThis.hooks.length);
+# -- source: store.cjs
+# require('./cleanup.cjs');
+# const list = [];
+# list.push(1);
+# exports.list = list;
+# exports.late = 1;
+# -- source: cleanup.cjs
+# globalThis.hooks.push(() => 1);
+# -- end of source
+# The program of ..-asks-for-it-again.ir with another cleanup.cjs. store.cjs is the same text: the check lines on its body are the same.
+# f2 = the body of store.cjs
+# RUN: walk f2 mechanisms=all
+# CHECK: = NewArray
+# RUN(SITE): walk f2 mechanisms=all
+# SITE-NOT: literalStorage=Profiled
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 1 1 1

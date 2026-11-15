@@ -1,0 +1,29 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# function Below(a, b) { Base.call(this, a); this.b = b; }
+# Below.prototype = Object.create(Base.prototype);
+# function Counter(n) { this.n = n; }
+# Counter.of = function (n) { return new Counter(n + 1); };
+# function run(count) { var total = 0; for (var i = 0; i < count; i++) total += new Below(i, 1).a + Counter.of(i).n; return total; }
+# publish(Base, Counter);
+# print(run(10));
+# -- end of source
+# Both functions are in the hands of code that nobody has seen, so nothing proves which names they have. Each is the one function object of its function.
+# The guard of `call` on the side of the function object of Base holds while no lookup from Base finds anything in front of Function.prototype, that of `of` while Counter holds the function that the record expects.
+# Base makes no object of its own, so its guards are begun in front of the question. The guard is asked where the name is read, and what is read is not compared with anything. f2 = Below, f4 = run, f5 = of
+# RUN(CALL): walk f2 mechanisms=all
+# CALL-LABEL: code f2:Body
+# CALL: BeginMemberGuards
+# CALL: = AreMembersUnchanged {{*}}side=Static key="call"
+# CALL-NOT: testedType=builtin(FunctionPrototypeCall)
+# RUN(OF): walk f4 mechanisms=all
+# OF-LABEL: code f4:Body
+# OF: = AreMembersUnchanged {{*}}side=Static key="of"
+# RUN(WITHHELD): walk f4 mechanisms=all-Guesses
+# WITHHELD-NOT: side=Static
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { };
+# ANSWERS: 100
+# ANSWERS-NEXT: exited with 0
+# RUN(LAID): run-in-shell globalThis.publish = (Base, Counter) => { Base.call = function (self, a) { self.a = 7; }; Counter.of = () => ({ n: 1 }); };
+# LAID: 80
+# LAID-NEXT: exited with 0

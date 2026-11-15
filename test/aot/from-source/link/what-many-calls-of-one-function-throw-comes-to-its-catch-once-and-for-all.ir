@@ -1,0 +1,16 @@
+# -- source: what-many-calls-of-one-function-throw-comes-to-its-catch-once-and-for-all.js
+# const hide = x => [x][JSON.parse("0")];
+# function first() { return 1; }
+# function second() { throw new RangeError("second"); }
+# function third(f) { return f(); }
+# function all(f) { try { return first() + hide(first)() + third(f) + second(); } catch (caught) { return caught; } }
+# function none() { try { return first() + first(); } catch (caught) { return caught; } }
+# print(all(() => 2).message, all(() => { throw "text"; }), none());
+# -- end of source
+# Four calls stand in one try: a call in sight that throws nothing, a call of what nobody knows, a call of a parameter, a call that throws an error. Each resolution sends what it may throw to the one node that takes it, the name of the catch. A call asks first whether that node holds it already, in the words that the arrival itself would be asked: the node ends as it ended before, and the flow is closed. In none() nobody calls what nobody knows: what is caught there is an error of the engine's alone.
+# OPTIONS: check=FlowFixpoint
+# RUN: link functions mechanisms=all
+# CHECK-NOT: FlowEndedTooEarly
+# CHECK: function f{{*}} returns=anything
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: second text 2

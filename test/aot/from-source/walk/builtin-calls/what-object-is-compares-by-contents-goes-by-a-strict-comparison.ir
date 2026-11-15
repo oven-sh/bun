@@ -1,0 +1,17 @@
+# -- source: what-object-is-compares-by-contents-goes-by-a-strict-comparison.ts
+# declare function sink(value: unknown): void;
+# function same(a: unknown, b: unknown): boolean { return Object.is(a, b); }
+# const joined = ["a", "b"].join(""), large = 10n ** 20n;
+# sink([same("ab", joined), same("ab", "ac"), same(large, 10n ** 20n), same(large, large + 1n), same(NaN, 0 / 0), same(0, -0), same(-0, -0), same("1", 1), same(1n, 1), same(null, undefined), same(joined, {}), same(joined, large), same(Symbol.iterator, Symbol.iterator)].join(" "));
+# -- end of source
+# The form in line of Object.is answers by the bits, and misses wherever the first operand is a text or a BigInt of other bits: those are compared by their contents. The miss went to the host's function:
+# 168 instructions for two texts out of JSON. For what is no number SameValue is `===`, and in that arm the first operand is no number: the arm is a strict comparison.
+# f1 = same
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: TryCallInline {{*}} inlineBuiltin=ObjectIs
+# CHECK-NOT: CallBuiltin {{*}} overload=ObjectIs
+# CHECK: = StrictEq
+# CHECK-NOT: CallBuiltin {{*}} overload=ObjectIs
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: true false true false true false true false false false false false true

@@ -4,7 +4,7 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_ast::{ImportKind, ImportRecord};
+use bun_ast::ImportKind;
 use bun_ast::{Ref, Stmt};
 use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::{FeatureFlags, Output};
@@ -24,6 +24,7 @@ use crate::bun_fs;
 use crate::Graph::Graph;
 #[cfg(debug_assertions)]
 use crate::LinkerContext;
+use crate::bundled_ast::CssAstRef;
 use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
@@ -112,7 +113,7 @@ impl Default for Content<'_> {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`Layers::Borrowed`, `ChunkRenamer` arena)
+// fields (`CssAstRef`, `ChunkRenamer` arena)
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task; this mirrors
 // `InputFile`'s blanket impls (bundle_v2.rs).
@@ -471,11 +472,7 @@ impl SourceMapShiftTracking {
     }
 }
 
-// We don't need an allocator vtable here yet. `()` is kept as a token for the
-// caller's `Option<&DynAlloc>` plumbing; the actual
-// allocation goes through `alloc_buf` (global mimalloc) regardless. Real
-// arena threading (page_allocator vs default_allocator) lands when
-// `bun_alloc::Allocator` is a stable trait object.
+// A token for the callers' `Option<&DynAlloc>`: `alloc_buf` uses the global allocator regardless.
 type DynAlloc = ();
 
 /// Until `DynAlloc` is a real trait object, route
@@ -778,15 +775,12 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    count += bun_core::fmt::count(format_args!(
-                                        "{}",
-                                        HTMLImportManifest::format_escaped_json(
-                                            piece.query.index(),
-                                            graph,
-                                            chunks,
-                                            linker_graph,
-                                        )
-                                    ));
+                                    count += HTMLImportManifest::count_escaped_json(
+                                        piece.query.index(),
+                                        graph,
+                                        linker_graph,
+                                        chunks,
+                                    );
                                     continue;
                                 }
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
@@ -1337,108 +1331,76 @@ pub struct JavaScriptChunk {
 
 pub struct CssChunk<'a> {
     pub(crate) imports_in_chunk_in_order: Vec<CssImportOrder<'a>>,
-    /// When creating a chunk, this is to be an uninitialized slice with
-    /// length of `imports_in_chunk_in_order`
-    ///
-    /// Multiple imports may refer to the same file/stylesheet, but may need to
-    /// wrap them in conditions (e.g. a layer).
-    ///
-    /// When we go through the `prepareCssAstsForChunk()` step, each import will
-    /// create a shallow copy of the file's AST (just dereferencing the pointer).
-    pub(crate) asts: Box<[bun_css::BundlerStyleSheet]>,
 }
 
-impl Drop for CssChunk<'_> {
-    fn drop(&mut self) {
-        // `asts` is a slice of bitwise shallow
-        // copies (see `prepareCssAstsForChunk` `ptr::read`). Multiple slots may
-        // alias the same source AST's heap buffers when a file is imported more
-        // than once, so element-wise drop would double-free.
-        let mut asts = core::mem::take(&mut self.asts).into_vec();
-        // SAFETY: `set_len(0)` then `Vec::drop` frees the slab without running element destructors.
-        unsafe { asts.set_len(0) };
+/// The conditions of an `@import` rule, found through the stylesheet that owns them.
+#[derive(Copy, Clone)]
+pub(crate) struct CssImportCondition<'a> {
+    pub(crate) sheet: CssAstRef<'a>,
+    /// Index into the top-level rules of `sheet`.
+    pub(crate) rule: u32,
+    /// Each visit of a bare `layer` import is a layer of its own. Zero for the others.
+    pub(crate) anonymous_layer: u32,
+}
+
+impl<'a> core::ops::Deref for CssImportCondition<'a> {
+    type Target = bun_css::ImportConditions<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.sheet.rules.v[self.rule as usize] {
+            bun_css::css_parser::BundlerCssRule::Import(rule) => &rule.conditions,
+            _ => unreachable!(),
+        }
     }
 }
 
+impl CssImportCondition<'_> {
+    pub(crate) fn layers_eql(&self, other: &Self) -> bool {
+        self.anonymous_layer == other.anonymous_layer
+            && bun_css::ImportConditions::layers_eql(self, other)
+    }
+}
+
+#[derive(Copy, Clone)]
 pub struct CssImportOrder<'a> {
-    pub(crate) conditions: Vec<bun_css::ImportConditions>,
-    pub(crate) condition_import_records: Vec<ImportRecord<'a>>,
+    pub(crate) conditions: &'a [CssImportCondition<'a>],
 
     pub(crate) kind: CssImportOrderKind<'a>,
 }
 
-impl Drop for CssImportOrder<'_> {
-    fn drop(&mut self) {
-        // `conditions`: bitwise-shared across multiple order entries by
-        // `findImportedFilesInCSSOrder` (`bitwise_copy(wrapping_conditions)`);
-        // freeing here would double-free. The slab is allocated from the
-        // `LinkerGraph` arena and is bulk-freed with it.
-        let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.conditions));
-        // `condition_import_records`: every populated value is uniquely owned
-        // (moved `all_import_records`) or an empty-Vec bitwise copy (cap == 0,
-        // drop is a no-op). Normal drop frees the owned buffers; no
-        // double-free path exists.
-    }
-}
-
-#[derive(strum::IntoStaticStr)]
+#[derive(Copy, Clone, strum::IntoStaticStr)]
 pub enum CssImportOrderKind<'a> {
     /// Represents earlier imports that have been made redundant by later ones (see `isConditionalImportRedundant`)
     /// We don't want to redundantly print the rules of these redundant imports
     /// BUT, the imports may include layers.
     /// We'll just print layer name declarations so that the original ordering is preserved.
     #[strum(serialize = "layers")]
-    Layers(Layers),
+    Layers(Layers<'a>),
     #[strum(serialize = "external_path")]
     ExternalPath(bun_fs::Path<'a>),
     #[strum(serialize = "source_index")]
     SourceIndex(Index),
 }
 
-// Copy-on-write list of layer names.
-// `std::borrow::Cow<'_, Vec<_>>` requires `Vec: Clone` (not implemented), so this
-// is a hand-rolled Cow: a tag + raw pointer for the borrowed
-// arm. LayerName payload allocations live in the arena, so dropping the owned
-// arm is a shallow free and `to_owned` deep-clones element-wise.
-pub enum Layers {
-    /// Borrowed from another `CssImportOrder`'s `Layers` or the parsed stylesheet.
-    Borrowed(bun_ptr::BackRef<Vec<bun_css::LayerName>>),
-    Owned(Vec<bun_css::LayerName>),
+#[derive(Copy, Clone)]
+pub enum Layers<'a> {
+    None,
+    PreImport(CssAstRef<'a>),
+    PostImport(CssAstRef<'a>),
 }
 
-impl Layers {
+impl<'a> Layers<'a> {
     #[inline]
-    pub(crate) fn inner(&self) -> &Vec<bun_css::LayerName> {
+    pub(crate) fn inner(&self) -> &[bun_css::LayerName<'a>] {
         match self {
-            Layers::Borrowed(p) => p.get(),
-            Layers::Owned(b) => b,
-        }
-    }
-
-    /// Cow::Borrowed constructor.
-    ///
-    /// The pointee is arena-owned storage that outlives the chunk pipeline
-    /// (see the lifetime note on `Chunk`); `BackRef` encapsulates that
-    /// invariant so `inner()`/`to_owned()` deref sites are safe.
-    #[inline]
-    pub(crate) fn borrow(p: &Vec<bun_css::LayerName>) -> Self {
-        Layers::Borrowed(bun_ptr::BackRef::new(p))
-    }
-
-    /// If borrowed, deep-clone into an owned
-    /// list and return `&mut` to it; if already owned, return as-is.
-    pub(crate) fn to_owned(&mut self) -> &mut Vec<bun_css::LayerName> {
-        if let Layers::Borrowed(p) = *self {
-            *self = Layers::Owned(p.deep_clone_with(|l| l.clone()));
-        }
-        match self {
-            Layers::Owned(b) => b,
-            Layers::Borrowed(_) => unreachable!(),
+            Layers::None => &[],
+            Layers::PreImport(sheet) => &sheet.layers_pre_import,
+            Layers::PostImport(sheet) => &sheet.layer_names,
         }
     }
 }
 
-impl CssImportOrder<'_> {
+impl<'a> CssImportOrder<'a> {
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // Not an identity: it leaves out the conditions. `css_chunk_key` compares on a hit.
 
@@ -1451,9 +1413,9 @@ impl CssImportOrder<'_> {
         bun_core::write_any_to_hasher(hasher, tag);
         match &self.kind {
             CssImportOrderKind::Layers(layers) => {
-                for layer in layers.inner().slice() {
+                for layer in layers.inner() {
                     for (i, layer_name) in layer.v.slice().iter().enumerate() {
-                        let is_last = i == layers.inner().len() as usize - 1;
+                        let is_last = i == layers.inner().len() - 1;
                         if is_last {
                             hasher.update(layer_name);
                         } else {
@@ -1472,34 +1434,26 @@ impl CssImportOrder<'_> {
     }
 
     #[cfg(debug_assertions)]
-    pub(crate) fn fmt<'a, 'ctx>(
-        &'a self,
-        ctx: &'a LinkerContext<'ctx>,
-    ) -> CssImportOrderDebug<'a, 'ctx> {
+    pub(crate) fn fmt<'r>(&'r self, ctx: &'r LinkerContext<'a>) -> CssImportOrderDebug<'r, 'a> {
         CssImportOrderDebug { inner: self, ctx }
     }
 }
 
 #[cfg(debug_assertions)]
-pub(crate) struct CssImportOrderDebug<'a, 'ctx> {
-    inner: &'a CssImportOrder<'a>,
-    // Note: split lifetimes — `LinkerContext<'ctx>` is invariant over `'ctx`,
-    // so coupling the borrow lifetime to the struct param (`&'a LinkerContext<'a>`)
-    // forces every caller's `&CssImportOrder` and `&LinkerContext` to share one
-    // region. The Display impl only reads `ctx.parse_graph` (a raw `*mut Graph`),
-    // so the inner `'ctx` need not relate to `'a`.
-    ctx: &'a LinkerContext<'ctx>,
+pub(crate) struct CssImportOrderDebug<'r, 'a> {
+    inner: &'r CssImportOrder<'a>,
+    ctx: &'r LinkerContext<'a>,
 }
 
 #[cfg(debug_assertions)]
-impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
+impl fmt::Display for CssImportOrderDebug<'_, '_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(writer, "{} = ", <&'static str>::from(&self.inner.kind))?;
         match &self.inner.kind {
             CssImportOrderKind::Layers(layers) => {
                 write!(writer, "[")?;
                 let l = layers.inner();
-                for (i, layer) in l.slice_const().iter().enumerate() {
+                for (i, layer) in l.iter().enumerate() {
                     if i > 0 {
                         write!(writer, ", ")?;
                     }
@@ -1612,10 +1566,6 @@ impl<'a> Content<'a> {
     #[inline]
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
-    }
-    #[inline]
-    pub(crate) fn is_css(&self) -> bool {
-        matches!(self, Content::Css(_))
     }
     bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
     bun_core::enum_unwrap!(pub Content, Css        => fn css        / css_mut        -> CssChunk<'a>);

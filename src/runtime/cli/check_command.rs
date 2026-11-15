@@ -49,8 +49,6 @@ struct Options {
     explain: Vec<&'static [u8]>,
     code_generation_flag: Option<&'static [u8]>,
     defines: Vec<&'static [u8]>,
-    report_path: Option<&'static [u8]>,
-    report_detail: Option<&'static [u8]>,
     trim: bool,
 }
 
@@ -83,14 +81,12 @@ const OTHERS: &[clap::Param<clap::Help>] = &[
         "--aot              Also report the errors <b>bun compile<r> would report for these entry points"
     ),
     clap::param!(
-        "--explain <report>?...  With --aot: print a report. <b>guards<r> lists every type guard that can fail at run time"
+        "--explain <report>?...  With --aot: list the code that would compile to a slow path and how to fix it, worst first. Other reports: <b>guards<r>, <b>json<r>, <b>trim<r>"
     ),
     clap::param!(
         "--define <k=v>...  With --aot: substitute k with v while parsing, like <b>bun compile --define<r>"
     ),
     clap::param!("--disallow-code-generation-from-strings <level>?"),
-    clap::param!("--aot-report <path>"),
-    clap::param!("--aot-report-detail <detail>"),
     clap::param!("--trim"),
     clap::param!("--cwd <path>       Set the working directory"),
     // Handled by `script_or_command`.
@@ -166,8 +162,6 @@ fn parse(args: &[&ZStr]) -> Options {
         explain: parsed.options(b"--explain").to_vec(),
         code_generation_flag: parsed.option(b"--disallow-code-generation-from-strings"),
         defines: parsed.options(b"--define").to_vec(),
-        report_path: parsed.option(b"--aot-report"),
-        report_detail: parsed.option(b"--aot-report-detail"),
         trim: parsed.flag(b"--trim"),
         ..Default::default()
     };

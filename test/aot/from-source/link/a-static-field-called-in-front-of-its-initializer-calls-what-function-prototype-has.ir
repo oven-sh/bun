@@ -1,0 +1,9 @@
+# A static field counts as laid only behind its initializer. In front of it a call of the name calls what lies above classes: `early` holds the text that Function.prototype.toString answers, not the object alone.
+# -- source: main.js
+# class Peg { constructor(v) { this.v = v; } }
+# class Crate { static early = Crate.toString(); static toString = () => new Peg(1); }
+# function same(value) { return value; }
+# print(typeof same(Crate.early));
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK: function f1 {{*}}result=undefined|string|L0

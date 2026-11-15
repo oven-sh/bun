@@ -1,0 +1,15 @@
+# -- source: row-goes-on-behind-what-the-body-has-stored-not-behind-the-fewest-keys.ts
+# declare function report(value: unknown): void;
+# declare function register(value: unknown): void;
+# interface Message { url: string; method: string; events: object; count: number; }
+# function Message(this: Message, url: string | undefined) { if (url !== undefined) { this.url = url; this.method = "GET"; register(this); this.events = {}; this.count = 1; return; } this.events = {}; this.count = 0; }
+# report(new (Message as any)("/"));
+# report(new (Message as any)(undefined));
+# -- end of source
+# `if (url !== undefined) { this.url = url; this.method = "GET"; register(this); this.events = {}; this.count = 1; return; } this.events = {}; this.count = 0;`: the layout has two orders, and one of them begins with `events`.
+# The row behind the call creates `events` and `count` on an object on which the body has stored `url` and `method`: only the order that lists those two in front of `events` can be the object's.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: HasKeyOrder {{*}} layout=L0 fields=[0, 1]
+# CHECK: PutSlotOrAdd {{*}}key="events" receivers=[L0] {{*}}orderWordAfter=98304
+# CHECK: PutSlotOrAdd {{*}}key="count" receivers=[L0] {{*}}orderWordAfter=131072

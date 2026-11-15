@@ -1,0 +1,11 @@
+# -- source: literals-without-surrogates-are-stepped.ts
+# declare function sink(value: unknown): void;
+# function codes(turns: number) { let n = 0; for (let k = 0; k < turns; k++) for (const c of "the quick fox") n += c.charCodeAt(0); return n; }
+# sink(codes(1000));
+# -- end of source
+# No code unit of the literal is asked for a surrogate.
+# f1 = codes
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: integer=64512
+# CHECK: = GetStringCodeUnit

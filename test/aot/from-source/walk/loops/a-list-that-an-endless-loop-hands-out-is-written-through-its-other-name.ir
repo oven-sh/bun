@@ -1,0 +1,31 @@
+# -- source: a-list-that-an-endless-loop-hands-out-is-written-through-its-other-name.js
+# let kept;
+# let reads = 0;
+# const holder = JSON.parse('{"slice":0}');
+# Object.defineProperty(holder, "NaN", { get() { if (++reads > 3) throw new Error("enough " + kept.length); return 0; } });
+# function walk(a) {
+#   const out = [];
+#   a.slice;
+#   for (let i = a;; i--) {
+#     if (a[i] === 3) ;
+#     kept = out;
+#     out.push(reads);
+#   }
+# }
+# try { walk(holder); } catch (error) { print(error.message, reads, kept.join()); }
+# -- end of source
+# This is the control. The loop mentions `out` and lets it escape, so `out` counts as escaped before the versions of the loop are built, and nothing is assumed about it in the generic version.
+# Fault injection, testing=IgnoreLoopEscapes: loops are assumed to mention no value from before the loop.
+# `out` then stays fresh in the generic version, but what arrives there says otherwise, so the output stays correct.
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: enough 4 4 0,1,2,3
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: enough 4 4 0,1,2,3
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=IgnoreLoopEscapes
+# LIE: enough 4 4 0,1,2,3
+# LIE-NEXT: exited with 0

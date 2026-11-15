@@ -1,0 +1,17 @@
+# -- source: main.js
+# const rounds = JSON.parse("9");
+# const ring = [null, null, null, null];
+# function makeAll(start, count) { let at = start; const shared = function () { return ++at; }; const out = []; for (let i = 0; i < count; i++) out.push(Object.freeze({ shared, second() { return at + 1; }, third() { return at + 2; }, fourth() { return at + 3; }, fifth() { return at + 4; }, sixth() { return at + 5; }, place: i > 0 ? "later" : "first" })); return out; }
+# for (let t = 0; t < rounds; t++) ring[t & 3] = makeAll(t, 3);
+# const all = ring[(rounds - 1) & 3];
+# print(all[0].shared === all[1].shared, all[1].shared === all[2].shared, all[0].second === all[1].second, all[0].second === all[0].second, all[0].shared(), all[2].shared(), all[1].second(), all[2].place);
+# -- end of source
+# The control of methods-of-a-literal-whose-place-is-only-expected-stay-unmade-in-front-of-a-conditional.ir: `shared` has one use, the literal, but it is written outside the loop in which the objects are born: it is one closure in all of them, so it is made, while the methods beside it are left unmade.
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: NewClosure {{*}}function=f2 closureForm
+# WALK-NOT: function=f2 {{*}}isMadeOnDemand
+# WALK: NewClosure {{*}}function=f3 {{*}}isMadeOnDemand
+# WALK-NOT: function=f2 {{*}}isMadeOnDemand
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: true true false true 9 10 11 later
+# ANSWERS-NEXT: exited with 0

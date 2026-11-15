@@ -30,27 +30,13 @@ async function runTests(cwd: string, aot: boolean, args: string[] = [], builds =
   };
 }
 
-const theWarningThatAFileIsCompiledUntyped =
-  /^warn: TS100010: '<dir>\/([^']+)' has \d+ type errors? \([^\n]*\), so it is compiled without its types\.[^\n]*\n\n(?:[^\n]*\n)*?   at <dir>\/[^\n]*\n/gm;
-
-async function expectSameAsBunTest(
-  files: Record<string, string>,
-  args?: string[],
-  builds = true,
-  compiledUntyped: string[] = [],
-) {
+async function expectSameAsBunTest(files: Record<string, string>, args?: string[]) {
   using expectedDir = tempDir("test-aot", files);
   using actualDir = tempDir("test-aot", files);
   const [expected, actual] = await Promise.all([
     runTests(String(expectedDir), false, args),
-    runTests(String(actualDir), true, args, builds),
+    runTests(String(actualDir), true, args),
   ]);
-  const warnedOf: string[] = [];
-  actual.stderr = actual.stderr.replace(
-    theWarningThatAFileIsCompiledUntyped,
-    (_warning, file) => (warnedOf.push(file), ""),
-  );
-  expect(warnedOf).toEqual(compiledUntyped);
   expect(actual).toEqual(expected);
   return actual;
 }
@@ -85,6 +71,28 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain(" 6 pass");
     expect(stderr).toContain(" 2 fail");
     expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("instances name the class of their own run of a module as their constructor", async () => {
+    const file = `
+      import { expect, test } from "bun:test";
+      import { Shape } from "./shape";
+      function hide(value: any): any { try { throw value; } catch (caught) { return caught; } }
+      test("members read by name", () => {
+        for (let round = 0; round < 5; round++) {
+          const shape = hide(new Shape());
+          expect(shape.constructor === Shape).toBe(true);
+          expect(shape.area()).toBe("area");
+          expect(shape.label).toBe("label");
+        }
+      });
+    `;
+    const { stderr } = await expectSameAsBunTest({
+      "a.test.ts": file,
+      "b.test.ts": file,
+      "shape.ts": `export class Shape { area() { return "area"; } get label() { return "label"; } other() { return "other"; } }`,
+    });
+    expect(stderr).toContain(" 2 pass");
   });
 
   test.concurrent("test globals work without an import", async () => {

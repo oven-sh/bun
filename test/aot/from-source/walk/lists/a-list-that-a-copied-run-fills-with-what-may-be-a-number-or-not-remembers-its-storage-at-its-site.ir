@@ -1,0 +1,26 @@
+# `rows.map(row => row.v)` where v is a number or undefined, or where nothing is known of it: the list that the copy of map makes had no kind of storage, which is born as storage for int32: the first 0.5 or undefined was
+# refused, and in the copied text (mapOfList) a refused store is made behind the run AND THE RUN IS LEFT FOR GOOD: the general loop of mapFrom did every other row: 109 instructions a row against 25.
+# Where the store of a copied run finds a list without a kind, the list remembers its storage at its site, as a list guessed to hold int32 does: from the second birth on it is born as the lists of
+# that place became (optional). A store that names a kind for the birth ends that memory: the typed store would be refused by a list born wider (numbers). In the library's own map, which calls by value enter, nothing is
+# remembered: all its callers share one place.
+# -- source: a-list-that-a-copied-run-fills-with-what-may-be-a-number-or-not-remembers-its-storage-at-its-site.cjs
+# 'use strict';
+# const some = []; for (let i = 0; i < 6; i++) some.push({ v: i === 2 ? undefined : i + 0.5, w: i });
+# const all = []; for (let i = 0; i < 6; i++) all.push({ u: i + 0.5, w: i });
+# function optional() { return some.map(row => row.v); }
+# function numbers() { return all.map(row => row.u); }
+# hand(optional); hand(numbers);
+# const show = list => list.map(v => v === undefined ? "u" : String(v)).join();
+# print(show(optional()), show(optional()), show(numbers()), show(numbers()));
+# -- end of source
+# RUN(OPTIONAL): walk f1 mechanisms=all
+# OPTIONAL-LABEL: code f1:Body
+# OPTIONAL: = NewArrayLike {{*}}[remembersStorageAtSite
+# OPTIONAL-NOT: = TryPutIndex
+# OPTIONAL: = TryPutByValDirect
+# RUN(NUMBERS): walk f2 mechanisms=all
+# NUMBERS-LABEL: code f2:Body
+# NUMBERS: = NewArrayLike {{*}}arrayStorage=Double
+# NUMBERS-NOT: remembersStorageAtSite
+# RUN(ANSWERS): run-in-shell hand = function () { };
+# ANSWERS: 0.5,1.5,u,3.5,4.5,5.5 0.5,1.5,u,3.5,4.5,5.5 0.5,1.5,2.5,3.5,4.5,5.5 0.5,1.5,2.5,3.5,4.5,5.5

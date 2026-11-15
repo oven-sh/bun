@@ -9,9 +9,10 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use super::jest::{Jest, FileId, FileColumns as _};
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
+use crate::jsc_hooks::timer_all;
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use crate::cli::test_command::CommandLineReporter;
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
@@ -30,24 +31,6 @@ macro_rules! group_begin {
     };
 }
 pub(crate) use group_begin;
-
-/// Recover this thread's `timer::All` heap (jsc/runtime crate cycle: `vm.timer` is `()` in
-/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
-#[inline]
-pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
-}
-
-/// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
-/// Local helper so it can compare `bun_core::Timespec` against the
-/// event-loop crate's distinct `Timespec` (converted by field).
-// ElTimespec dedup is a separate ticket.
-#[inline]
-fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
-    Timespec::order_ignore_epoch(*a, Timespec { sec: b.sec, nsec: b.nsec })
-}
 
 /// `Strong::create` requires a `&JSGlobalObject`; recover it from the
 /// per-thread VM so `ExecutionEntry::create` (which has no global in scope)
@@ -116,7 +99,7 @@ pub(crate) mod js_fns {
         signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
         let bun_test_root = get_test_root(global_this, signature)?;
-        if global_this.bun_vm().is_in_preload {
+        if global_this.bun_vm().is_in_preload.get() {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} during preload.",
                 signature
@@ -382,21 +365,21 @@ pub(crate) mod js_fns {
                         }
                     };
 
-                    let new_item = ExecutionEntry::create(
+                    let new_item = AliasableBox::from(ExecutionEntry::create(
                         None,
                         args.callback,
                         cfg,
                         None,
                         BaseScopeCfg::default(),
                         AddedInPhase::Execution,
-                    );
-                    let new_item_ptr = bun_core::heap::into_raw(new_item);
+                    ));
+                    let new_item_ptr = new_item.as_ptr();
                     // SAFETY: append_point is a valid linked-list node; new_item_ptr just allocated
                     unsafe {
                         (*new_item_ptr).next = (*append_point).next;
                         (*append_point).next = Some(new_item_ptr);
                     }
-                    bun_test.extra_execution_entries.push(new_item_ptr);
+                    bun_test.extra_execution_entries.push(new_item);
 
                     Ok(())
                 }
@@ -680,7 +663,7 @@ impl BunTestRoot {
     }
 
     pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
-        if vm.is_in_preload {
+        if vm.is_in_preload.get() {
             return None;
         }
         // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only
@@ -769,10 +752,8 @@ pub(crate) struct BunTest {
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
     pub(crate) first_last: FirstLast,
-    pub(crate) extra_execution_entries: Vec<*mut ExecutionEntry>,
-    /// Heap-boxed bitwise clones of hook entries from `Order::generate_order_test`.
-    /// Only the Box header may be freed in `Drop` — fields alias `DescribeScope` originals.
-    pub(crate) cloned_hook_entries: Vec<*mut ExecutionEntry>,
+    pub(crate) extra_execution_entries: Vec<AliasableBox<ExecutionEntry>>,
+    cloned_hook_entries: Vec<Order::ClonedHookEntry>,
     pub(crate) wants_wakeup: bool,
     /// The phase passed to the most recent `run_next_tick`.
     pending_phase: RefDataValue,
@@ -861,7 +842,7 @@ impl BunTest {
     }
 
     pub(crate) fn create_vitest_entry(&mut self, callback: JSValue, timeout: u32, context: bool) -> NonNull<ExecutionEntry> {
-        let entry = bun_core::heap::into_raw_nn(ExecutionEntry::create(
+        let entry = AliasableBox::from(ExecutionEntry::create(
             None,
             Some(callback),
             ExecutionEntryCfg { timeout, calling: Calling::Vitest { context }, ..Default::default() },
@@ -869,8 +850,9 @@ impl BunTest {
             BaseScopeCfg::default(),
             AddedInPhase::Execution,
         ));
-        self.extra_execution_entries.push(entry.as_ptr());
-        entry
+        let ptr = entry.as_non_null();
+        self.extra_execution_entries.push(entry);
+        ptr
     }
 
     pub(crate) fn get_current_state_data(&self) -> RefDataValue {
@@ -999,11 +981,11 @@ impl BunTest {
                 // and `on_before_exit()` doesn't drain the event loop of a file that failed.
                 this.add_result(*entry);
                 Self::run_next_tick(&Rc::downgrade(&strong), global_this, *entry);
-                global_this.bun_vm().as_mut().unhandled_error_counter += 1;
+                global_this.bun_vm().unhandled_error_counter.update(|n| n + 1);
                 return;
             }
         }
-        let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
+        let _ = global_this.bun_vm().uncaught_exception(global_this, error, false);
     }
 
     pub(crate) fn bun_test_done_callback(
@@ -1074,8 +1056,8 @@ impl BunTest {
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
         unsafe {
-            (*this).timer.next = ElTimespec::EPOCH;
-            (*this).timer.state = EventLoopTimerState::PENDING;
+            (*this).timer.next.set(Timespec::EPOCH);
+            (*this).timer.state.set(EventLoopTimerState::PENDING);
 
             match (*this).phase {
                 Phase::Collection => {}
@@ -1088,7 +1070,7 @@ impl BunTest {
     }
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         // Check liveness before allocating so the early return doesn't strand a Box.
         let Some(strong) = weak.upgrade() else {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
@@ -1179,35 +1161,33 @@ impl BunTest {
             }
         }
 
-        // SAFETY: loop done; sole `&mut` for the timer update.
-        unsafe { (*this).update_min_timeout(global_this, &min_timeout) };
+        Self::update_min_timeout(this_strong, &min_timeout);
         Ok(())
     }
 
-    fn update_min_timeout(&mut self, global_this: &JSGlobalObject, min_timeout: &Timespec) {
+    fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
         let _g = group_begin!();
-        let _ = global_this;
+        // SAFETY: neither caller holds a `&mut BunTest`.
+        let timer = unsafe { &(*this.as_ptr()).timer };
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
             "-> timeout: {:?} {}.{}, {:?}",
             min_timeout,
-            self.timer.next.sec,
-            self.timer.next.nsec,
-            order_ignore_epoch(min_timeout, &self.timer.next)
+            timer.next.get().sec,
+            timer.next.get().nsec,
+            Timespec::order_ignore_epoch(*min_timeout, timer.next.get())
         );
-        if order_ignore_epoch(min_timeout, &self.timer.next) == core::cmp::Ordering::Less {
+        if Timespec::order_ignore_epoch(*min_timeout, timer.next.get()) == core::cmp::Ordering::Less {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
-            if self.timer.next != ElTimespec::EPOCH {
+            if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                vm_timer().remove(&raw mut self.timer);
+                timer_all().remove(timer);
             }
-            // `EventLoopTimer.next` uses the event-loop crate's local
-            // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
-            self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
-            if self.timer.next != ElTimespec::EPOCH {
+            timer.next.set(*min_timeout);
+            if timer.next.get() != Timespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                vm_timer().insert(&raw mut self.timer);
+                timer_all().insert(timer);
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1276,28 +1256,7 @@ impl BunTest {
                 } else {
                     Order::AllOrderResult::EMPTY
                 };
-                let describe_seq_start = order.sequences.len();
                 order.generate_order_describe(&mut self.collection.root_scope)?;
-                let describe_seq_end = order.sequences.len();
-                // Collect hook-entry clones boxed by `generate_order_test` so `Drop` can
-                // reclaim the Box headers. Must run before `extra_execution_entries` are
-                // spliced into the same chains, or the walk would double-free `DescribeScope`
-                // entries.
-                debug_assert!(
-                    self.extra_execution_entries.is_empty(),
-                    "extra_execution_entries must be spliced after the cloned-hook walk"
-                );
-                for seq in &order.sequences[describe_seq_start..describe_seq_end] {
-                    let Some(test_entry) = seq.test_entry else { continue };
-                    let mut cur = seq.first_entry;
-                    while let Some(p) = cur {
-                        if p != test_entry {
-                            self.cloned_hook_entries.push(p.as_ptr());
-                        }
-                        // SAFETY: live linked-list nodes built by `generate_order_test`.
-                        cur = unsafe { p.as_ref() }.next.and_then(NonNull::new);
-                    }
-                }
                 beforeall_order.set_failure_skip_to(&mut order);
                 let afterall_order: Order::AllOrderResult = if self.first_last.last {
                     order.generate_all_order(&root.hook_scope.after_all, true)?
@@ -1318,6 +1277,7 @@ impl BunTest {
                     unsafe { (*reporter.as_ptr()).jest.summary.shuffled += 1 };
                 }
                 self.execution.load_from_order(&mut order);
+                self.cloned_hook_entries = order.cloned_hook_entries;
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }
@@ -1374,15 +1334,14 @@ impl BunTest {
             unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &RefDataValue::Start) };
         }
 
-        // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
-        unsafe { (*this).update_min_timeout(global_this, timeout) };
+        Self::update_min_timeout(this_strong, timeout);
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { cfg_args };
         // SAFETY: `this_strong` keeps the cell alive and in place for the whole call.
         let on_stack = unsafe { OnStack::enter(&raw const (*this).execution.on_stack, &cfg_data) };
         let result: JSValue = match vm
-            .event_loop_mut()
+            .event_loop()
             .run_callback_with_result_and_forcefully_drain_microtasks(
-                vm.test_isolation_state.file_context,
+                vm.test_isolation_state.file_context.get(),
                 cfg_callback,
                 global_this,
                 JSValue::UNDEFINED,
@@ -1417,9 +1376,9 @@ impl BunTest {
                 }
             }
 
-            let prev_unhandled_count = vm.unhandled_error_counter;
+            let prev_unhandled_count = vm.unhandled_error_counter.get();
             let _ = global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
+            if vm.unhandled_error_counter.get() == prev_unhandled_count {
                 break;
             }
         }
@@ -1591,7 +1550,7 @@ impl BunTest {
         if let (Phase::Execution, Some(thrown)) = (self.phase, exception)
             && let Err(err) = self.execution.record_error(global_this, user_data, thrown)
         {
-            global_this.bun_vm().as_mut().run_error_handler(global_this.take_exception(err), None);
+            global_this.bun_vm().run_error_handler(global_this.take_exception(err), None);
         }
 
         if handle_status == HandleUncaughtExceptionResult::HideError {
@@ -1643,16 +1602,15 @@ impl BunTest {
             Output::flush();
         }
 
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::TestFailure::record_cb);
-            vm.on_print_error_zig_exception_ctx = failure_ctx;
+            vm.on_print_error_zig_exception.set(Some(crate::cli::test_command::TestFailure::record_cb));
+            vm.on_print_error_zig_exception_ctx.set(failure_ctx);
         }
         print_error(vm, global_this, exception, None);
         if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception = None;
-            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+            vm.on_print_error_zig_exception.set(None);
+            vm.on_print_error_zig_exception_ctx.set(core::ptr::null_mut());
             // SAFETY: `failure_ctx` is one of the two `Option<TestFailure>` above, and the callback is done with it.
             let slot: &mut Option<crate::cli::test_command::TestFailure> =
                 unsafe { &mut *failure_ctx.cast() };
@@ -1707,7 +1665,7 @@ impl Drop for OnStack {
 
 /// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
 pub(crate) fn print_error(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     global_this: &JSGlobalObject,
     error: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
@@ -1732,19 +1690,9 @@ impl Drop for BunTest {
     fn drop(&mut self) {
         let _g = group_begin!();
 
-        if self.timer.state == EventLoopTimerState::ACTIVE {
+        if self.timer.state.get() == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
-            vm_timer().remove(&raw mut self.timer);
-        }
-
-        for entry in self.extra_execution_entries.drain(..) {
-            // SAFETY: entries were heap-allocated in generic_hook; we own them
-            unsafe { drop(bun_core::heap::take(entry)); }
-        }
-        for entry in self.cloned_hook_entries.drain(..) {
-            // Reclaim only the Box header — fields alias the `DescribeScope` originals.
-            // SAFETY: heap-boxed by `Order::generate_order_test`; same layout as `ManuallyDrop`.
-            let _ = unsafe { Box::from_raw(entry.cast::<core::mem::ManuallyDrop<ExecutionEntry>>()) };
+            timer_all().remove(&self.timer);
         }
         // execution, collection, result_queue: dropped automatically
     }

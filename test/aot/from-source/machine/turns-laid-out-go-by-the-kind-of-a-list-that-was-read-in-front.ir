@@ -1,0 +1,10 @@
+# w is read at a place that the turn reckons: its kind is read once in front of the eight turns, which serve doubles and int32s in either list.
+# -- source: dot.ts
+# declare function say(x: number): void;
+# function dot(a: number[], w: number[]): number { let s = 0; for (let i = 0; i < a.length; i++) s += a[i]! * w[(i * 7) & 1023]!; return s; }
+# const make = (n: number, d: number): number[] => { const l: number[] = []; for (let i = 0; i < n; i++) l.push(i + d); return l; };
+# say(dot(make(40, 0), make(1024, 0.25))); say(dot(make(40, 0.5), make(1024, 0))); say(dot(make(40, 0), make(1024, 0)));
+# -- end of source
+# RUN(COUNT): compile UnrolledLoopStorageChecksHoisted mechanisms=all
+# REQUIRES(COUNT): as-written
+# COUNT-NOT: statistic UnrolledLoopStorageChecksHoisted 0

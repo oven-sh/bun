@@ -2197,6 +2197,20 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("style sheets under the size limit are normalized whatever they add up to", async () => {
+    const { text, exitCode } = await pretty(
+      {
+        // As large as a file may be, and cheap: the parser gives up at the `;`.
+        "a/a.css": "@import;" + Buffer.alloc(64 * 1024 * 1024 - 8, " ").toString(),
+        "a/z.css": ".a{color:red}",
+        "b/z.css": ".a { color: red }",
+      },
+      ["--stat"],
+    );
+    expect(text).toMatch(/\n z\.css +│ formatting only\n/);
+    expect(exitCode).toBe(0);
+  });
+
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
   test.skipIf(isDebug)(
     "a file over the normalization size limit is diffed as text and says so",

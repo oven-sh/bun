@@ -1,0 +1,15 @@
+# The control of property-defined-by-a-written-descriptor-under-a-key-of-which-nothing-is-proven.ir: where the object may be none and the key may run code the built-in is called: it throws before the key is asked.
+# -- source: main.ts
+# declare function print(value: any): void;
+# let asked = 0;
+# const key = { toString() { asked++; return "k"; } };
+# function define(target: any, under: any): string { try { Object.defineProperty(target, under, { value: 1, enumerable: true }); return "defined"; } catch (error) { return (error as Error).name; } }
+# print(define(5, key) + " " + asked);
+# const held = {};
+# print(define(held, key) + " " + asked + " " + Object.keys(held).join());
+# -- end of source
+# RUN: walk mechanisms=all
+# CHECK: ObjectDefineProperty/0
+# RUN(CALL): run-in-shell
+# CALL: TypeError 0
+# CALL: defined 1 k

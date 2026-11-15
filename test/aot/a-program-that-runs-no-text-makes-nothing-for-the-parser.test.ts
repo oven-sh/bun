@@ -22,7 +22,8 @@ async function whatIsMade(dir: string, entry: string) {
   const made = readFileSync(path, "utf8")
     .split("\n")
     .filter(line => line.includes("\tmade:"))
-    .map(line => line.split("\tmade:").reverse().join(" "));
+    .map(line => line.split("\tmade:").reverse().join(" "))
+    .sort();
   return { stdout, exitCode, made };
 }
 
@@ -31,11 +32,11 @@ test("the tables that only the parser and the bytecode generator read are made w
   expect(await whatIsMade(String(dir), "compiled.ts")).toEqual({
     stdout: "6,2,4\n",
     exitCode: 0,
-    made: ["BytecodeIntrinsicRegistry 0", "StackListingsAfterGivenUpCaptures 0"],
+    made: ["BytecodeIntrinsicRegistry 0", "ReturnAddressTraceFallbacks 0"],
   });
   expect(await whatIsMade(String(dir), "text.ts")).toEqual({
     stdout: "12\n",
     exitCode: 0,
-    made: ["BytecodeIntrinsicRegistry 1", "StackListingsAfterGivenUpCaptures 0"],
+    made: ["BytecodeIntrinsicRegistry 1", "ReturnAddressTraceFallbacks 0"],
   });
 }, 240_000);

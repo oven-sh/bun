@@ -1,6 +1,6 @@
 // The main loop: takes programs from the sources, has a runner judge them, and turns each failure into a stored
-// finding: confirmed, reduced, attributed to a pass or a flow result, and deduplicated against the findings already
-// stored.
+// finding: confirmed, reduced, attributed to the verifiers or the written types, and deduplicated against
+// the findings already stored.
 import {
   appendFileSync,
   existsSync,
@@ -14,7 +14,6 @@ import {
 import { join } from "path";
 import { withoutInstallingPackages } from "../harness/without-installing-packages";
 import {
-  runtimeChecksVariable,
   verifierFlags,
   withoutVerifiersFlag,
   runEnvFlag,
@@ -34,7 +33,16 @@ import {
 import { parses, reprinted } from "./mutate";
 import { Random } from "./random";
 import { reduce, reduceFiles, shape, type Reduction, type Whole } from "./reduce";
-import { allSources, multiFileSuffix, rewrittenSuffix, type Generated } from "./sources";
+import {
+  allSources,
+  anotherCallSuffix,
+  fourCallersSuffix,
+  multiFileSuffix,
+  neverTakenSuffix,
+  ownCopiesSuffix,
+  rewrittenSuffix,
+  type Generated,
+} from "./sources";
 import { typeChecker, type Checker } from "./type-check";
 
 export interface Settings {
@@ -51,9 +59,7 @@ export interface Settings {
   known: string[];
   minFreeBytes: number;
   reduceSeconds: number;
-  /**
-   * Whether to search for the switches that make a finding go away, which takes a dozen builds or more. Default: yes.
-   */
+  /** Whether to search for the switches that make a finding go away, which takes a build each. Default: yes. */
   attribute?: boolean;
   /** Maximum number of programs in one build. */
   batch?: number;
@@ -62,6 +68,10 @@ export interface Settings {
   /** Also use the multi-file variant of each of `sources`, equally often, on runners that support it. */
   alsoMultiFile?: boolean;
   alsoRewritten?: boolean;
+  alsoNeverTaken?: boolean;
+  alsoAnotherCall?: boolean;
+  alsoOwnCopies?: boolean;
+  alsoFourCallers?: boolean;
   /** The clock that decides when the run is over. A test passes its own so that it never waits. */
   now?: () => number;
 }
@@ -103,12 +113,17 @@ export async function fuzz(settings: Settings): Promise<Summary> {
 
   const rejected = new Set<string>();
   const sources = await allSources(settings.programsRoot, rejected, true);
-  const wanted = (
-    settings.sources ??
-    Object.keys(sources).filter(name => !name.endsWith(multiFileSuffix) && !name.endsWith(rewrittenSuffix))
-  ).filter(name => sources[name]);
+  const isVariant = (name: string) =>
+    name.endsWith(multiFileSuffix) ||
+    name.endsWith(rewrittenSuffix) ||
+    name.endsWith(neverTakenSuffix) ||
+    name.endsWith(anotherCallSuffix) ||
+    name.endsWith(ownCopiesSuffix) ||
+    name.endsWith(fourCallersSuffix);
+  const wanted = (settings.sources ?? Object.keys(sources).filter(name => !isVariant(name))).filter(
+    name => sources[name],
+  );
   if (!wanted.length) throw new Error("no source of programs");
-  const isVariant = (name: string) => name.endsWith(multiFileSuffix) || name.endsWith(rewrittenSuffix);
   const wantedWithVariants = wanted.flatMap(name =>
     isVariant(name)
       ? [name]
@@ -116,6 +131,10 @@ export async function fuzz(settings: Settings): Promise<Summary> {
           name,
           ...(settings.alsoMultiFile ? [name + multiFileSuffix] : []),
           ...(settings.alsoRewritten ? [name + rewrittenSuffix] : []),
+          ...(settings.alsoNeverTaken ? [name + neverTakenSuffix] : []),
+          ...(settings.alsoAnotherCall ? [name + anotherCallSuffix] : []),
+          ...(settings.alsoOwnCopies ? [name + ownCopiesSuffix] : []),
+          ...(settings.alsoFourCallers ? [name + fourCallersSuffix] : []),
         ],
   );
 
@@ -166,6 +185,15 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   const bump = (table: Record<string, number>, key: string, by = 1) => (table[key] = (table[key] ?? 0) + by);
   const listed = (entries: Record<string, number>) => Object.entries(entries).sort().map(([key, count]) => `${key} ${count}`).join(", "); // prettier-ignore
   const total = () => Object.values(counts.programs).reduce((sum, count) => sum + count, 0);
+  let driverErrors = 0;
+  /** A fault of the fuzzer itself: written down, counted, and told by run.ts's exit code. */
+  const noteDriverError = (error: unknown) => {
+    driverErrors++;
+    // The stack of a DOMException does not begin with its message.
+    const stack = error instanceof Error ? (error.stack ?? "") : "";
+    const told = stack.includes(String(error)) ? stack : `${error}${stack && "\n" + stack}`;
+    appendFileSync(join(out, "driver-errors.txt"), `${new Date().toISOString()} ${told}\n`);
+  };
 
   const status = (state: string) => {
     const hours = (now() - started) / 3_600_000;
@@ -181,7 +209,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       .join(", ");
     return (
       `${new Date().toISOString().slice(0, 19)}Z ${state} | binaries ${runners.map(({ runner }) => runner.binary).join(", ")} | seeds ${settings.firstSeed}.. | programs ${total()} (${listed(counts.programs)}) | rate ${rate} | compiled runs: ${listed(counts.runs)} | skipped: ${listed(counts.skipped)} | ` +
-      `findings ${counts.findings}: known ${counts.known}, repeated ${counts.repeated}, unstable ${counts.unstable}, only in a shared build ${counts.onlyTogether}, of the runner ${counts.artifacts}, same without --aot ${counts.sameWithoutCompiler}, not confirmed ${counts.notConfirmed}, distinct in this run ${distinct.length}, distinct stored ${readdirSync(join(out, "findings")).length} | reductions ${counts.reductions}\n`
+      `findings ${counts.findings}: known ${counts.known}, repeated ${counts.repeated}, unstable ${counts.unstable}, only in a shared build ${counts.onlyTogether}, of the runner ${counts.artifacts}, same without --aot ${counts.sameWithoutCompiler}, not confirmed ${counts.notConfirmed}, distinct in this run ${distinct.length}, distinct stored ${readdirSync(join(out, "findings")).length} | reductions ${counts.reductions} | driver errors ${driverErrors}\n`
     );
   };
   const writeStatus = (state = "running") => {
@@ -213,11 +241,20 @@ export async function fuzz(settings: Settings): Promise<Summary> {
    * were removed.
    */
   const metadataOf = (
-    { plainEnvironment, entryPoints, runsInOwnFolder, meant, unstablePlainOutput, mayBeRefused }: Program,
+    {
+      plainEnvironment,
+      entryPoints,
+      runsInOwnFolder,
+      meant,
+      unstablePlainOutput,
+      followsExecutableWithoutCompiler,
+      mayBeRefused,
+    }: Program,
     { files }: Whole,
   ): Partial<Program> => ({
     ...(plainEnvironment && { plainEnvironment }),
     ...(unstablePlainOutput && { unstablePlainOutput }),
+    ...(followsExecutableWithoutCompiler && { followsExecutableWithoutCompiler }),
     ...(mayBeRefused && { mayBeRefused }),
     ...(entryPoints?.some(path => files?.[path] !== undefined) && {
       entryPoints: entryPoints.filter(path => files?.[path] !== undefined),
@@ -253,8 +290,9 @@ export async function fuzz(settings: Settings): Promise<Summary> {
           seconds,
         });
 
-  // Finds the switches that make the failure go away. Where a build is cheap every switch is tried; otherwise one is
-  // found by bisection. The search gets as long as a reduction: every attempt at a hang takes a run's whole time limit.
+  // Finds what the failure goes away without: the verifiers, and anything that switches() names. Where
+  // a build is cheap every name is tried; elsewhere a list of several names is halved while one half is enough. The
+  // search gets as long as a reduction: every attempt at a hang takes a run's whole time limit.
   async function guilty(
     runner: Runner,
     folder: string,
@@ -262,46 +300,34 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     mode: Mode,
     failure: Failure,
   ): Promise<string[]> {
-    // A different failure does not clear a switch: the build may reject the flags, or fail without the pass.
+    // A different failure does not clear a switch: the build may reject the flags, or fail without what they turn off.
     const goesAway = async (flags: string[]) =>
       (await alone(runner, folder, program, [...mode.flags, ...flags])).verdict.kind === "same";
-    const { flowResults, passes } = await runner.switches();
+    let names = await runner.switches();
     const until = now() + settings.reduceSeconds * 1000;
     const found: string[] = [];
     // The compiler's verifiers are on in every mode. A build that they stop, and that ends without them, is one that no
     // user sees stop; what the executable then does is not asked: the program was reduced to whatever still stops the
-    // build. They are meant to change no byte of an executable. Where a check at run time reports in the executable built
-    // with them and not in the one built without, they did, and again it is no user's executable that is at fault.
-    if (
-      mode.flags.includes(verifierFlags) &&
-      /^(internal compiler error|build |validation failure)/.test(failure.kind)
-    ) {
+    // build.
+    if (mode.flags.includes(verifierFlags) && /^(internal compiler error|build )/.test(failure.kind)) {
       const flags = [...mode.flags.filter(flag => flag !== verifierFlags), withoutVerifiersFlag];
       const without = await alone(runner, folder, program, flags);
-      if (failure.kind === "validation failure" ? without.verdict.kind === "same" : without.compiled?.run)
-        found.push("the verifiers");
+      if (without.compiled?.run) found.push("the verifiers");
     }
-    const withoutFlow = await goesAway(runner.withoutFlowResults);
-    if (withoutFlow) found.push("flow-results");
     if (runner.batch === 1) {
-      for (const name of withoutFlow ? [...flowResults, ...passes] : passes)
-        if (now() < until && (await goesAway(runner.disabling([name])))) found.push(name);
+      for (const name of names) if (now() < until && (await goesAway(runner.disabling([name])))) found.push(name);
       return found;
     }
-    for (let names of withoutFlow ? [flowResults, passes] : [passes]) {
-      if (now() > until || (names !== flowResults && !(await goesAway(runner.disabling(names))))) continue;
-      while (names.length > 1 && now() < until) {
-        const [first, second] = [names.slice(0, names.length >> 1), names.slice(names.length >> 1)];
-        if (await goesAway(runner.disabling(first))) names = first;
-        else if (await goesAway(runner.disabling(second))) names = second;
-        else break;
-      }
-      found.push(
-        names.length <= 4
-          ? names.join("&")
-          : `${names.length} of them${now() < until ? " together" : ", not narrowed"}`,
-      );
+    if (!names.length || now() > until || !(await goesAway(runner.disabling(names)))) return found;
+    while (names.length > 1 && now() < until) {
+      const [first, second] = [names.slice(0, names.length >> 1), names.slice(names.length >> 1)];
+      if (await goesAway(runner.disabling(first))) names = first;
+      else if (await goesAway(runner.disabling(second))) names = second;
+      else break;
     }
+    found.push(
+      names.length <= 4 ? names.join("&") : `${names.length} of them${now() < until ? " together" : ", not narrowed"}`,
+    );
     return found;
   }
 
@@ -603,7 +629,11 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         );
       }
     }
-    const culprits = settings.attribute === false || isLate() ? [] : await guilty(runner, folder, small, mode, verdict);
+    // A finding is worth more than what it is attributed to: where the question itself fails, the finding is stored.
+    const culprits =
+      settings.attribute === false || isLate()
+        ? []
+        : await guilty(runner, folder, small, mode, verdict).catch(error => (noteDriverError(error), []));
     // Does the other runner see it too? What only the engine runner shows is often caused by its stand-in library.
     const elsewhere: Record<string, string> = {};
     for (const { runner: other } of runners) {
@@ -614,32 +644,13 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       elsewhere[other.name] = isFinding(there) ? `${there.kind}: ${there.detail}` : there.kind;
     }
 
-    // A validating build checks at run time what the compiler proved. If the default build is wrong and the validating
-    // build reports nothing, a check is missing.
-    const validating = mode.name === "default" ? runner.modes(small).find(each => each.name === "validate") : undefined;
-    const validated =
-      validating && !isLate() ? (await alone(runner, folder, small, validating.flags)).verdict : undefined;
-    if (validated)
-      elsewhere["validating build"] = !isFinding(validated)
-        ? validated.kind === "same"
-          ? "right"
-          : validated.why
-        : sameFailure(verdict, validated)
-          ? "SILENT: it fails in the same way"
-          : `${validated.kind}: ${validated.detail}`;
-
     const byShape =
       verdict.kind === "different output" ||
       verdict.kind === "different exit code" ||
       verdict.kind === "hang" ||
       verdict.kind === "crash" ||
       !verdict.signature.includes(" ");
-    const group = `${groupOf(verdict.kind)}${verdict.kind} ${
-      culprits
-        .filter(name => name !== "flow-results")
-        .slice(0, 3)
-        .join("+") || (culprits.length ? "flow-results" : "no switch")
-    }`;
+    const group = `${groupOf(verdict.kind)}${verdict.kind} ${culprits.slice(0, 3).join("+") || "no switch"}`;
     const name = `${group} ${byShape ? Bun.hash.crc32(shape(wholeText(small))).toString(16) : verdict.signature}`
       .replace(/[^\w+&.-]+/g, "-")
       .slice(0, 120);
@@ -661,7 +672,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     writeProgram(target, "original", withPrint(generated));
     // The same program in the format of ../parallel, ready to land with its fix: its first lines hold what the build
     // and the runs need.
-    const flags = mode.flags.filter(flag => isBuildFlag(flag) && (flag !== verifierFlags || !final.compiled?.run));
+    const flags = mode.flags.filter(isBuildFlag);
     const head = [
       flags.length ? `// Flags: ${flags.join(" ")}` : "",
       small.entryPoints?.length
@@ -670,7 +681,6 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       ...mode.flags
         .filter(flag => flag.startsWith(runEnvFlag))
         .map(flag => `// Env of the executable: ${flag.slice(runEnvFlag.length)}`),
-      verdict.detail.includes(runtimeChecksVariable) ? `// Env of the executable: ${runtimeChecksVariable}` : "",
       final.plain.exitCode ? `// Exit code: ${final.plain.exitCode}` : "",
     ];
     const whole = withPrint(small);
@@ -695,7 +705,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
             (run.exitCode !== 0 ? `exit code ${run.exitCode} signal ${run.signal}\n${run.stderr.slice(0, 4000)}` : "")
         : (final.compiled?.build.stderr ?? "").slice(0, 8000) + (final.compiled?.build.stdout ?? "").slice(0, 2000),
     );
-    const record = { kind: verdict.kind, detail: verdict.detail, guilty: culprits, falseProof: culprits.includes("flow-results"), runner: runner.name, mode: mode.name, flags: mode.flags, binary: runner.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, ...(failsAsSingleFile === undefined ? {} : { failsAsSingleFile }), elsewhere, reduction: { tests: reduced.tests, builds: reduced.rounds }, found: new Date().toISOString() }; // prettier-ignore
+    const record = { kind: verdict.kind, detail: verdict.detail, guilty: culprits, runner: runner.name, mode: mode.name, flags: mode.flags, binary: runner.binary, source: generated.source, seed: generated.seed, group: generated.group, notes: generated.notes, ...(failsAsSingleFile === undefined ? {} : { failsAsSingleFile }), elsewhere, reduction: { tests: reduced.tests, builds: reduced.rounds }, found: new Date().toISOString() }; // prettier-ignore
     writeFileSync(join(target, "finding.json"), JSON.stringify(record, null, 2) + "\n");
     appendFileSync(
       join(out, "findings.tsv"),
@@ -710,10 +720,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
         name,
         verdict.detail,
         Object.entries(elsewhere)
-          .map(
-            ([where, what]) =>
-              `${where === "validating build" ? "the" : "on the"} ${where}${where === "validating build" ? "" : " runner"}: ${what}`,
-          )
+          .map(([where, what]) => `on the ${where} runner: ${what}`)
           .join("; "),
       ].join("\t") + "\n",
     );
@@ -735,6 +742,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       if (avoided) return void (avoided.count++, bump(counts.skipped, "has a known bug in it"));
       return generated;
     } catch (error) {
+      bump(counts.skipped, "the source threw");
       appendFileSync(join(out, "generator-errors.txt"), `${source}:${seed} ${error}\n`);
     }
   }
@@ -899,10 +907,7 @@ export async function fuzz(settings: Settings): Promise<Summary> {
           ),
         );
       } catch (error) {
-        appendFileSync(
-          join(out, "driver-errors.txt"),
-          `${new Date().toISOString()} ${error instanceof Error ? error.stack : error}\n`,
-        );
+        noteDriverError(error);
       }
       await Bun.sleep(0);
     }
@@ -914,5 +919,11 @@ export async function fuzz(settings: Settings): Promise<Summary> {
   clearInterval(timer);
   writeStatus("ended");
   rmSync(work, { recursive: true, force: true });
-  return { programs: total(), findings: counts.findings - counts.known, distinct, status: status("ended") };
+  return {
+    programs: total(),
+    findings: counts.findings - counts.known,
+    distinct,
+    driverErrors,
+    status: status("ended"),
+  };
 }

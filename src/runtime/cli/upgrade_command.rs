@@ -1,6 +1,5 @@
 use bun_collections::VecExt;
 use core::ffi::c_char;
-use core::ptr::NonNull;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
@@ -35,7 +34,7 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+            bun_event_loop::MiniEventLoop::init_global(None),
         ),
         ..Default::default()
     }
@@ -269,13 +268,10 @@ impl UpgradeCommand {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if !SILENT {
-            // `progress_node` stores an untracked NonNull borrow of the caller's
-            // `refresher.root`; sound because `send_sync` below completes before this
-            // frame returns, so the pointee outlives every use.
-            async_http.client.progress_node =
-                Some(NonNull::from(&mut refresher.as_deref_mut().unwrap().root));
+            async_http.client.progress = refresher.as_deref_mut();
         }
         let response = async_http.send_sync(metadata_body)?;
+        drop(async_http);
 
         match response.status_code() {
             404 => return Err(crate::Error::HTTP404),
@@ -298,7 +294,7 @@ impl UpgradeCommand {
             Err(err) => {
                 if !SILENT {
                     let refresher = refresher.expect("infallible: progress active");
-                    refresher.root.end();
+                    refresher.end();
                     refresher.refresh();
 
                     if log.errors > 0 {
@@ -320,7 +316,7 @@ impl UpgradeCommand {
         if log.errors > 0 {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
@@ -340,7 +336,7 @@ impl UpgradeCommand {
         if !expr.is_object() {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
                 bun_core::pretty_errorln!(
@@ -362,7 +358,7 @@ impl UpgradeCommand {
         if version.tag.is_empty() {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
-                refresher.root.end();
+                refresher.end();
                 refresher.refresh();
 
                 bun_core::pretty_errorln!(
@@ -457,7 +453,7 @@ impl UpgradeCommand {
 
         if !SILENT {
             let refresher = refresher.expect("infallible: progress active");
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
             if let Some(name) = version.name() {
                 bun_core::pretty_errorln!(
@@ -561,8 +557,7 @@ impl UpgradeCommand {
         let use_profile = argv_contains(b"--profile");
 
         let mut version: Version = if !use_canary {
-            let refresher: &mut Progress::Progress =
-                Box::leak(Box::new(Progress::Progress::default()));
+            let refresher = &mut Progress::Progress::default();
             refresher.start(b"Fetching version tags", 0);
 
             let Some(version) = Self::get_latest_version::<false>(
@@ -574,7 +569,7 @@ impl UpgradeCommand {
                 return Ok(());
             };
 
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             if !Environment::IS_CANARY {
@@ -629,9 +624,9 @@ impl UpgradeCommand {
         let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
-            let refresher: &mut Progress::Progress =
-                Box::leak(Box::new(Progress::Progress::default()));
-            refresher.start(b"Downloading", version.size as usize).unit = Progress::Unit::Bytes;
+            let refresher = &mut Progress::Progress::default();
+            refresher.start(b"Downloading", version.size as usize);
+            refresher.root().unit.set(Progress::Unit::Bytes);
             refresher.refresh();
             // Store in the process-lifetime CLI arena.
             let zip_file_buffer: &'static mut MutableString = crate::cli::cli_arena()
@@ -647,9 +642,7 @@ impl UpgradeCommand {
                 HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             ));
-            // `refresher` is intentionally leaked (process-lifetime), so the
-            // untracked NonNull stored in `progress_node` can never dangle.
-            async_http.client.progress_node = Some(NonNull::from(&mut refresher.root));
+            async_http.client.progress = Some(refresher);
             async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
             let response = async_http.send_sync(zip_file_buffer)?;
@@ -678,7 +671,7 @@ impl UpgradeCommand {
 
             let bytes = zip_file_buffer.slice();
 
-            refresher.root.end();
+            refresher.end();
             refresher.refresh();
 
             if bytes.is_empty() {
@@ -792,7 +785,7 @@ impl UpgradeCommand {
                     );
                     Global::exit(1);
                 }
-                let _ = zip_file.close();
+                drop(zip_file);
             }
 
             {
@@ -1130,11 +1123,8 @@ impl UpgradeCommand {
                     let target_hash = hash(
                         match target_dir
                             .open_file(target_filename.as_bytes(), sys::O::RDONLY, 0)
-                            .and_then(|f| {
-                                let n = f.read_all(&mut input_buf);
-                                let _ = f.close(); // close error is non-actionable
-                                n
-                            }) {
+                            .and_then(|f| f.read_all(&mut input_buf))
+                        {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1148,11 +1138,10 @@ impl UpgradeCommand {
                     );
 
                     let source_hash = hash(
-                        match save_dir.open_file(exe, sys::O::RDONLY, 0).and_then(|f| {
-                            let n = f.read_all(&mut input_buf);
-                            let _ = f.close(); // close error is non-actionable
-                            n
-                        }) {
+                        match save_dir
+                            .open_file(exe, sys::O::RDONLY, 0)
+                            .and_then(|f| f.read_all(&mut input_buf))
+                        {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
@@ -1330,7 +1319,7 @@ pub(crate) mod upgrade_js_bindings {
     // `None` and leak the HANDLE. Use a `RacyCell`; access is test-only and
     // effectively single-threaded.
     #[cfg(windows)]
-    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
+    static TEMPDIR_FD: bun_core::RacyCell<Option<sys::File>> = bun_core::RacyCell::new(None);
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
@@ -1397,7 +1386,7 @@ pub(crate) mod upgrade_js_bindings {
                     // System-kind handle on Windows.
                     // SAFETY: test-only helper; access is single-threaded (JS thread).
                     unsafe {
-                        TEMPDIR_FD.write(Some(sys::Fd::from_system(fd)));
+                        TEMPDIR_FD.write(Some(sys::File::from_fd(sys::Fd::from_system(fd))));
                     }
                 }
                 _ => {}
@@ -1408,13 +1397,8 @@ pub(crate) mod upgrade_js_bindings {
     pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
-            use bun_sys::FdExt as _;
             // SAFETY: test-only helper; access is single-threaded (JS thread).
-            // Consume (`take`) the stored fd so a repeat call cannot
-            // `CloseHandle` a stale, possibly-reissued HANDLE value.
-            if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
-                fd.close();
-            }
+            unsafe { TEMPDIR_FD.write(None) };
         }
     }
 }

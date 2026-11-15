@@ -1,0 +1,36 @@
+# -- source: main.js
+# function Hook(b) { }
+# function Base(a) { this.a = a; }
+# Base.prototype.first = function () { return this.a; };
+# function Below(a, b) { Base.call(this, a); this.b = b; if ((b & 3) == 2) Hook.call(this, b); }
+# Object.setPrototypeOf(Below.prototype, Base.prototype);
+# Below.prototype.second = function () { return this.b + this.first(); };
+# function run(count) { let total = 0; for (let i = 0; i < count; i++) { const item = new Below(i & 1023, i); total += item.second() + item.a; } return total; }
+# publish(Hook, Base, Below, run);
+# -- end of source
+# The call through Hook's own getter is made as it is written: the closure of Hook is not as it was created, and a turn that runs other code leaves the typed copy of the loop.
+# LIBRARY: own
+# RUN(ANSWERS): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "call", { get() { if (++reads == 2) {  } return Function.prototype.call; } }); print(run(12)); print(run(12)); };
+# ANSWERS: 198
+# ANSWERS-NEXT: 198
+# ANSWERS-NEXT: exited with 0
+# RUN(METHOD): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "call", { get() { if (++reads == 2) { Below.prototype.second = function () { return 1000; }; } return Function.prototype.call; } }); print(run(12)); print(run(12)); };
+# METHOD: 6096
+# METHOD-NEXT: 12066
+# METHOD-NEXT: exited with 0
+# RUN(ABOVE): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "call", { get() { if (++reads == 2) { Base.prototype.first = function () { return 1000; }; } return Function.prototype.call; } }); print(run(12)); print(run(12)); };
+# ABOVE: 6147
+# ABOVE-NEXT: 12132
+# ABOVE-NEXT: exited with 0
+# RUN(SETTER): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "call", { get() { if (++reads == 2) { Object.defineProperty(Base.prototype, "a", { set(value) { }, get() { return 500; } }); } return Function.prototype.call; } }); print(run(12)); print(run(12)); };
+# SETTER: 5108
+# SETTER-NEXT: 12066
+# SETTER-NEXT: exited with 0
+# RUN(CALL): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "call", { get() { if (++reads == 2) { Base.call = function (self, a) { self.a = 700; }; } return Function.prototype.call; } }); print(run(12)); print(run(12)); };
+# CALL: 7108
+# CALL-NEXT: 16866
+# CALL-NEXT: exited with 0
+# RUN(PROTOTYPE): run-in-shell globalThis.publish = (Hook, Base, Below, run) => { let reads = 0; Object.defineProperty(Hook, "call", { get() { if (++reads == 2) { Below.prototype = { second() { return 3000; } }; } return Function.prototype.call; } }); print(run(12)); print(run(12)); };
+# PROTOTYPE: 15108
+# PROTOTYPE-NEXT: 36066
+# PROTOTYPE-NEXT: exited with 0

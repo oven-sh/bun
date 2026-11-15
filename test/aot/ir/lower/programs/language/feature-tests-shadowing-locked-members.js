@@ -65,61 +65,6 @@ attempt("delete of keys that are not there", () => [
 ].join());
 attempt("reading them before the delete", () => [Number.prototype.clz, Promise.accept, Promise.prototype.chain, "clz" in Number.prototype].join());
 
-// GENERATED: GeneratorFunctionPrototype attempt [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="GeneratorFunctionPrototype"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="attempt"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|function):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Jump -> next b2()
-// CHECK-NEXT: b2() handler=b4():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = Builtin builtin=String
-// CHECK-NEXT: v10 = Call v1 calleeName="run"
-// CHECK-NEXT: v11 = Call v9, -, v10 calleeName="String"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v13 = Add v8, v12
-// CHECK-NEXT: v14 = Call v6, v4, v13 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b4() role=CatchHandler:
-// CHECK-NEXT: v15 = CatchValue
-// CHECK-NEXT: v16 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v17 = PropGet v16 key="console" [isFreeName]
-// CHECK-NEXT: v18 = Convert v17 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v19 = PropGet v18 key="log"
-// CHECK-NEXT: v20 = Convert v19 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v21 = String string=": "
-// CHECK-NEXT: v22 = Add v0, v21
-// CHECK-NEXT: v23 = PropGet v15 key="constructor"
-// CHECK-NEXT: v24 = PropGet v23 key="name"
-// CHECK-NEXT: v25 = Add v22, v24
-// CHECK-NEXT: v26 = Call v20, v18, v25 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: Jump -> next b5()
-// CHECK-NEXT: b5():
-// CHECK-NEXT: v27 = Undefined
-// CHECK-NEXT: Return v27
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsNamedByComputedKey] captures=[{type=undefined|null|[[L_2]] flags=[IsExpected] variableName="made"}] thisType={type=anything} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

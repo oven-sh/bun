@@ -1,10 +1,11 @@
 // CI runs up to four test files at once. Each native-<n>.test.ts starts one `testaot` for each processor, so three of them side by
 // side had three for each processor. On the Intel Macs, where a start of a process with a new image costs the most, tests that
 // start the shell twenty times then printed nothing for 100 seconds and were ended as hung.
-import { expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { test } from "../harness/default-timeout";
 import { sharedSlot } from "../harness/shared-slots";
 
 const worker = `

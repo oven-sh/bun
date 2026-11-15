@@ -1,0 +1,15 @@
+# The name is hidden by Symbol.unscopables, so the read under `with` goes on to the global object and throws; the handler takes `got`, a built-in function, as it stood.
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: ReferenceError
+# NONE-NEXT: function stringify() { [
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: ReferenceError
+# ALL-NEXT: function stringify() { [
+# ALL-NEXT: exited with 0
+# -- source: main.cjs
+# var shelf = { item: 0, [Symbol.unscopables]: { item: true } };
+# var got = JSON.stringify;
+# with (shelf) { try { got = item; print("no error"); } catch (error) { print(error.name); } }
+# print(String(got).slice(0, 24));
+# -- end of source

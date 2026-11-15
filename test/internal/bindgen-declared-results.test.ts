@@ -155,12 +155,20 @@ describe("generated bindings of a toy class", () => {
     expect(types).toContain('"make": (() => Toy);');
   });
 
-  test("it changes no binding", async () => {
+  test("the thunk in Rust holds the answer to it", async () => {
     const [declared, undeclared] = await Promise.all([
       runToy(toyMembers((...words) => `b.any.returning(${words.map(word => JSON.stringify(word)).join(", ")})`)),
       runToy(toyMembers(() => "b.any")),
     ]);
-    for (const name of ["generated_bindgen_bun_runtime.rs", "GeneratedToy.cpp", "GeneratedToy.h"]) {
+    const rust = "generated_bindgen_bun_runtime.rs";
+    expect(undeclared.read(rust)).not.toContain("_to_declared_type(");
+    for (const held of ['"Toy.label", "string"', '"Toy.load", "Promise"', '"Toy.chain", "this | undefined"']) {
+      expect(declared.read(rust)).toContain(held);
+    }
+    // `make` is declared to give a Toy, so the thunk has to ask what is one.
+    expect(undeclared.read("GeneratedToy.cpp")).not.toContain("Bun__Bindgen__Toy__isInstance");
+    expect(declared.read("GeneratedToy.cpp")).toContain("Bun__Bindgen__Toy__isInstance");
+    for (const name of ["GeneratedToy.h"]) {
       expect(declared.read(name)).toBe(undeclared.read(name));
     }
   });
@@ -169,7 +177,7 @@ describe("generated bindings of a toy class", () => {
     const [plain, annotated] = await Promise.all([
       runToy(`proto: { count: { getter: b.i32 }, read: { args: { from: b.any }, capability: "heap" } }`),
       runToy(`
-        lockedObjects: ["prototype"],
+        lockedMembers: ["prototype"],
         types: [{ path: ["$Node", "Toy"], isView: false, typeArguments: [] }],
         proto: {
           count: { getter: b.i32, pure: true },

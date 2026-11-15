@@ -1,0 +1,13 @@
+# A turn of a loop asks for the truth of a value that the turn itself made and that the text says is a boolean, and nothing is proven of it. A guess with arms was opened for that one question: a test for a boolean, a branch, an arm that reads the bit, a rare arm that asks the question of any value, a block where both meet: six operations and three blocks for what the emitter writes out in a loop anyway.
+# Where the branch of its block alone asks, the question stands alone and says what it expects; the emitter asks for false and for true and leaves the rest to the stub.
+# f1 = lit
+# -- source: the-truth-of-what-is-expected-to-be-a-boolean-is-one-operation-in-a-loop.ts
+# declare function sink(...values: unknown[]): void;
+# function lit(lamps: Map<number, boolean>, count: number) { let total = 0; for (let i = 0; i < count; i++) { const on: boolean = lamps.get(i)!; if (on) total++; } return total; }
+# sink(lit);
+# -- end of source
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: testedType=boolean
+# CHECK: = ToBoolean {{*}}expectsBoolean

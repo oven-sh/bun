@@ -1,0 +1,27 @@
+# -- source: main.js
+# var Animal = (function () { function Animal(legs) { this.legs = legs; } Animal.prototype.count = function () { return this.legs; }; return Animal; }());
+# var Dog = (function (_super) { function Dog(legs) { _super.call(this, legs); this.tail = 1; } Dog.prototype = Object.create(_super.prototype); return Dog; }(Animal));
+# function makeLookup(size) { const lookup = (n) => (n + 1) | 0; lookup.table = { size }; return lookup; }
+# function main() { const lookup = makeLookup(3); return () => (lookup(1) + lookup.table.size) | 0; }
+# var Cat = (function () { const purr = (n) => (n + 2) | 0; purr.table = { size: 5 }; function Cat(n) { this.n = (purr(n) + purr.table.size) | 0; } Cat.prototype.read = function () { return this.n; }; return Cat; }());
+# const rex = new Dog(4);
+# print(rex.count(), rex.tail, main()(), new Cat(1).read());
+# -- end of source
+# A closure in a word holds whatever hangs on the function object for as long as the program runs: a table laid on a helper, what lies on a prototype object.
+# _super is the one closure of the constructor function Animal, which the closure table holds for good in every build: it lies in a word, and Dog captures nothing.
+# purr is a helper with a table. Cat captures it, and the one closure of Cat never dies either, so nothing is held that was not held: Cat captures nothing.
+# The helper of main() is captured by an arrow that can be let go. It stays a capture and is let go with the arrow.
+# RUN(SUPER): walk f4 mechanisms=all
+# SUPER-LABEL: code f4:Body
+# SUPER: PutModuleVariable
+# RUN(UNITS): plan units mechanisms=all
+# UNITS: unit f10:Body (Void
+# UNITS: unit f11:Body (Void
+# RUN(HELPER): walk f2 mechanisms=all
+# HELPER-LABEL: code f2:Body
+# HELPER-NOT: PutModuleVariable
+# HELPER: NewClosure
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 4 1 5 8
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: 4 1 5 8

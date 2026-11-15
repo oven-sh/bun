@@ -1,0 +1,18 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(ring, n) { var s = 0; for (var i = 0; i < n; i++) s += ring[i & 15]; return s; } };
+# var sixteen = [1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5];
+# print(T[key](sixteen, 40), T[key](sixteen.slice(0, 15), 15), T[key](sixteen.slice(0, 15), 16), T[key](sixteen.concat(9), 40), T[key]([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 40), T[key]([], 0), T[key]([1, , 3, , 5, , 7, , 9, , 11, , 13, , 15, 16], 3));
+# -- end of source
+# `ring[i & 15]`: the key lies between nothing and the mask, so whether it lies inside the list is one question for all turns: is the list longer than the mask. It was asked of the key in every turn.
+# In front of the turns laid out the length is held against the mask once, and in those turns the read goes without its bound: a thousand turns 8,413 > 3,680 instructions, plain Bun 11,095.
+# Who fails that question (a list of 100 read under `i & 255` by a counter that stays below 100) loses nothing but the question: behind these layouts stand the layouts as they were, which ask each key: 1,028 > 1,044.
+# The first form of this asked in front of the typed copy of the walk, and who failed took the closed copy: 1,028 > 7,858.
+# RUN: compile UnrolledLoopsForMaskedIndexes mechanisms=all
+# CHECK: statistic UnrolledLoopsForMaskedIndexes {{*}}
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 200 71.5 NaN 200 308 0 NaN
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 200 71.5 NaN 200 308 0 NaN
+# NONE-NEXT: exited with 0

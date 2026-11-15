@@ -409,11 +409,12 @@ impl<'p, 's> Checker<'p, 's> {
         let lines = match overflow {
             Some(code) => {
                 let types = vec![self.type_to_string(source), self.type_to_string(target)];
-                vec![Line {
+                let line = Line {
                     code,
                     args: super::sink::held(types),
                     level: 0,
-                }]
+                };
+                vec![line]
             }
             None => lines_of(&r.error_chain, 0),
         };
@@ -507,7 +508,7 @@ impl<'p, 's> Checker<'p, 's> {
                 | SigData::DefaultConstruct {
                     base: Some(inner), ..
                 } => inner,
-                SigData::DefaultConstruct { base: None, .. } | SigData::Synth { .. } => break None,
+                SigData::DefaultConstruct { base: None, .. } | SigData::Synth(_) => break None,
             };
         };
         self.parameter_name_at(declaration, params, pos)
@@ -773,9 +774,7 @@ impl<'p, 's> Checker<'p, 's> {
             let is_repeated = was_resolving && self.are_base_types_resolved_by_check(target);
             // That file's task may not have reached this point yet. It would then read what this
             // task stores and never report 2310.
-            if is_repeated
-                && let Some(from) = self.stack.iter().position(|&q| q == Query::Bases(target))
-            {
+            if is_repeated && let Some(from) = self.outermost_in_flight(Query::Bases(target), 0) {
                 self.close_cycle(from);
             }
             let bases = if is_repeated {
@@ -861,7 +860,8 @@ impl<'p, 's> Checker<'p, 's> {
             && let Some((code, prop)) = self.why_never_intersection(original_target)
         {
             let intersection = self.type_to_string_without_reduction(original_target);
-            self.report_error(r, code, &[Arg::Bytes(&intersection), Arg::Prop(prop)]);
+            let args = [Arg::Bytes(&intersection), Arg::Prop(prop)];
+            self.report_error(r, code, &args);
         }
         self.report_relation_error(r, head, source, target);
         if let TypeData::TypeParam(file, tp, _) = *self.data(source)
@@ -1070,12 +1070,14 @@ impl<'p, 's> Checker<'p, 's> {
                     self.report_error(r, 5075, &args);
                 }
                 Some(constraint) if self.is_assignable(source, constraint) => {
-                    self.report_error(r, 5075, &[source_name, target_name, Arg::Type(constraint)]);
+                    let args = [source_name, target_name, Arg::Type(constraint)];
+                    self.report_error(r, 5075, &args);
                 }
                 _ => {
                     // This replaces everything reported so far.
                     r.error_chain = None;
-                    self.report_error(r, 5082, &[target_name, generalized_source_name]);
+                    let args = [target_name, generalized_source_name];
+                    self.report_error(r, 5082, &args);
                 }
             }
         }
@@ -1106,7 +1108,8 @@ impl<'p, 's> Checker<'p, 's> {
             _ => false,
         };
         if !is_already_reported {
-            self.report_error(r, message, &[generalized_source_name, target_name]);
+            let args = [generalized_source_name, target_name];
+            self.report_error(r, message, &args);
         }
     }
 
@@ -1250,7 +1253,8 @@ impl<'p, 's> Checker<'p, 's> {
             let args = [&source_type, &target_type, &names].map(|arg| Arg::Bytes(arg));
             if unmatched.len() > 5 {
                 let more = Arg::Number(unmatched.len() - 4);
-                self.report_error(r, 2740, &[args[0], args[1], args[2], more]);
+                let args = [args[0], args[1], args[2], more];
+                self.report_error(r, 2740, &args);
             } else {
                 self.report_error(r, 2739, &args);
             }

@@ -1,0 +1,19 @@
+# -- source: main.js
+# const n = (value) => Number(globalThis.nothingOfThisName ?? value);
+# function owns(turns) {
+#   let found = 0;
+#   for (let i = 0; i < turns; i++) {
+#     if (Object.hasOwn({ 0: 1, 1: 2 }, -(i & 3) - 1)) found += 1;
+#     if (Object.hasOwn({ 0: 1, 1: 2 }, i / 0 - i / 0)) found += 10;
+#     if (Object.hasOwn({ 0: 1, 1: 2 }, undefined)) found += 100;
+#     if (Object.hasOwn({ 0: 1, 1: 2 }, i & 1)) found += 1000;
+#   }
+#   return found;
+# }
+# print(owns(n(200)));
+# -- end of source
+# A literal that has indices alone keeps them in its extra properties. A test under a key that is no index gives the object a structure for them, so that the answer can be remembered: the rows of the three tests of own
+# properties declare it, as the listings of keys do.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: 200000
+# CHECK-NEXT: exited with 0

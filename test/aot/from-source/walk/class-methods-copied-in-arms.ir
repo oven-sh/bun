@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# "use strict";
+# class Base {
+#   constructor(n) { this.n = n; this.i = 0; }
+#   step() { this.i = (this.i + 1) & 1023; return this.i; }
+#   get() { return this.n; }
+# }
+# class First extends Base { own() { return this.get(); } }
+# class Second extends Base { own() { return this.get() + 1; } }
+# const all = [new First(1), new Second(2), new First(3), new Second(4)];
+# function run(count) { let sum = 0; for (let i = 0; i < count; i++) { const object = all[i & 3]; sum = (sum + object.step() + object.own()) | 0; } return sum; }
+# print(run(10));
+# -- end of source
+# Each arm of the loop copies the method of its class. f6, f8 = own.
+# RUN(COPIED): walk f1 mechanisms=all
+# COPIED: frame {{*}} callee=f6
+# COPIED: frame {{*}} callee=f8
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 46

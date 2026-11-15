@@ -111,7 +111,7 @@ impl File {
     pub(crate) fn handle(self) -> Fd {
         self.0
     }
-    /// `bun_sys::File::stderr()` via the sink (T0-safe).
+    /// The process's stderr, via the sink (T0-safe).
     #[inline]
     pub fn stderr() -> Self {
         output_sink().stderr()
@@ -659,10 +659,7 @@ pub mod stdio {
     /// With one of these flags `bun run` and `bun test` compile the program and then replace this process with one that runs it (`exec_self`).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn compiles_in_place(arg: &[u8]) -> bool {
-        matches!(
-            arg,
-            b"--aot" | b"--debug-aot" | b"--aot-log-type-mismatches"
-        )
+        matches!(arg, b"--aot" | b"--debug-aot")
     }
 
     pub fn init() {
@@ -2824,21 +2821,18 @@ pub const SYNCHRONIZED_END: &str = "\x1b[?2026l";
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036
 pub fn synchronized() -> Synchronized {
-    Synchronized::begin()
+    #[cfg(unix)]
+    {
+        print(format_args!("{}", SYNCHRONIZED_START));
+    }
+    Synchronized(())
 }
 
-pub struct Synchronized;
+#[must_use]
+pub struct Synchronized(());
 
-impl Synchronized {
-    pub(crate) fn begin() -> Synchronized {
-        #[cfg(unix)]
-        {
-            print(format_args!("{}", SYNCHRONIZED_START));
-        }
-        Synchronized
-    }
-
-    pub fn end(self) {
+impl Drop for Synchronized {
+    fn drop(&mut self) {
         #[cfg(unix)]
         {
             print(format_args!("{}", SYNCHRONIZED_END));

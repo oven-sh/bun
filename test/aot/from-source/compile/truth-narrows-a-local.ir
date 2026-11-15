@@ -1,0 +1,13 @@
+# -- source: main.mjs
+# function use(y) { return y.value; }
+# function read(x) { let y = x; if (y) return use(y); return -1; }
+# function sum(x) { let total = 0; let y = x; while (y) { total += use(y); y = y.next; } return total; }
+# const list = [{ value: 1, next: null }, null, { value: 3, next: { value: 5, next: null } }, undefined];
+# function run(turns) { let total = 0; for (let i = 0; i < turns; i++) total += read(list[i & 3]) + sum(list[i & 3]); return total; }
+# print(run(8), run(0));
+# -- end of source
+# The way on which a local is true says so of the local.
+# RUN: print f2
+# CHECK: NarrowByTest
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 22 0

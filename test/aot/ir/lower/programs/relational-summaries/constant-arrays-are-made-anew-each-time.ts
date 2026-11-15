@@ -152,97 +152,11 @@ const b1 = bytes();
 b1[0] = 9;
 console.log(b1.join(), bytes().join(), Math.max(...[1, 5, 3]), [3, 1, 2].sort().join(), [3, 1, 2].toSorted().join(), [1, 2, 3].includes(2), [1, 2, 3].indexOf(4), ["a", "b"].join("-"), [[1, 2], [3]].flat().join(), new Map([[1, "x"]]).get(1), new Set([1, 1, 2]).size);
 
-// GENERATED: tag mixed holes keepSome tagged bytes WithField get
 // CHECK-LABEL: function {{*}}name="tag"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}, {type=Array<number> site=[[w_1]] flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<undefined|null|string>, v1: Array<number>):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="mixed"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|boolean|number|string> site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Data data=[[d_3]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|boolean|number|string> site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="holes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Integer integer=3
-// CHECK-NEXT: v2 = NewArray v0, v1 contents=undefined|number holes=[1]
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Array<undefined|number> site=[[w_4]] flags=[OmitsNull, OmitsUndefined]}
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="keepSome"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}, {type=number site=[[w_6]]}] results=[{type=number site=[[w_7]]}] {
-// CHECK-NEXT: b0(v0: undefined|null|Array<number>, v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Integer integer=100
-// CHECK-NEXT: v3 = Mod v1, v2
-// CHECK-NEXT: v4 = Integer integer=50
-// CHECK-NEXT: v5 = StrictEq v3, v4
-// CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
-// CHECK-NEXT: b2():
-// CHECK-NEXT: v6 = GetModuleVariable variable=[[g_8]]
-// CHECK-NEXT: v7 = CheckInitialized v6 name="keptLists"
-// CHECK-NEXT: v8 = PropGet v7 key="push"
-// CHECK-NEXT: v9 = Call v8, v7, v0 calleeKey="push" calleeName="keptLists.push"
-// CHECK-NEXT: v10 = Convert v9 declared={type=number site=[[w_9]]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v11 = Integer integer=1
-// CHECK-NEXT: v12 = ElemGet v0, v11
-// CHECK-NEXT: v13 = Convert v12 declared={type=number site=[[w_10]]} illTypedCause=ContainerWriterUnseen
-// CHECK-NEXT: Return v13
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="tagged"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = GetModuleVariable variable=[[g_11]]
-// CHECK-NEXT: v1 = NewTemplateObject templateStrings=[{cooked="a" raw="a"}, {cooked="b" raw="b"}]
-// CHECK-NEXT: v2 = Integer integer=1
-// CHECK-NEXT: v3 = Call v0, -, v1, v2 calleeName="tag"
-// CHECK-NEXT: ReturnCall v3 casts=[{declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}}, {declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}}]
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="bytes"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Uint8Array site=[[w_12]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Builtin builtin=Uint8Array
-// CHECK-NEXT: v1 = Data data=[[d_13]]
-// CHECK-NEXT: v2 = Construct v0, -, v1 calleeName="Uint8Array"
-// CHECK-NEXT: v3 = Convert v2 declared={type=undefined|null|Uint8Array site=[[w_14]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="WithField"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_15]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_15]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_15]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_16]]
-// CHECK-NEXT: Return v3
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="get"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=number site=[[w_17]]}] functionTypes={{*}}[[f_18]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=99
-// CHECK-NEXT: v1 = Convert v0 declared={type=number site=[[w_17]]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

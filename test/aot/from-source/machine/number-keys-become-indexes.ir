@@ -1,0 +1,18 @@
+# A number that a loop takes as the key of several accesses is made an index once, in front of the loop: the index, or -1 where the number is none.
+# f2 = steps
+# -- source: number-keys-become-indexes.ts
+# declare function print(text: unknown): void;
+# class Levels {
+#   private level: number[] = [];
+#   private next: number[] = [];
+#   constructor(n: number) { for (let i = 0; i < n; i++) { this.level.push(i & 1); this.next.push((i * 3 + 1) % n); } }
+#   steps(at: number, most: number): number { let sum = 0; for (let i = 0; i < most; i++) { if (this.next[at]! > this.level[at]!) sum += this.next[at]!; this.level[at]! += 1; } return sum; }
+# }
+# let said = ""; for (let i = 0; i < 9; i++) said += new Levels(8).steps(i * 0.75, 4) + " ";
+# print(said);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1 0 0 0 2 0 0 0 9
+# RUN(FORM): emit f2:Body mechanisms=all
+# FORM-LABEL: unit f2:Body
+# FORM: Int64 {{*}}= Select(

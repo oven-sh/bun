@@ -1,0 +1,13 @@
+# f1 = sum
+# -- source: in-a-loop-the-failing-side-of-a-guess-among-known-records-stays-without-sites.ts
+# declare function sink(...values: unknown[]): void;
+# const list: ({ kind: string; r: number } | { kind: string; w: number; h: number })[] = [];
+# for (let i = 0; i < 9; i++) list.push(i % 2 ? { kind: "circle", r: i % 7 } : { kind: "rect", w: i % 5, h: 2 });
+# function sum(t: number): number { let s = t & 1; for (const x of list) s = s + ("r" in x ? x.r : x.w * x.h); return s; }
+# sink(sum(1));
+# -- end of source
+# RUN(ASKED): walk f1 mechanisms=all
+# ASKED: ShapeTest
+# RUN(UNMARKED): walk f1 mechanisms=all
+# UNMARKED: code f1:Body
+# UNMARKED-NOT: = PropGet

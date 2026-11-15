@@ -258,25 +258,11 @@ impl<'a> LinkerContext<'a> {
             .get()
     }
 
-    /// Mutable projection of the `r#loop` BACKREF for `AnyEventLoop` dispatch
-    /// (`enqueue_task_concurrent*`, `tick`). Centralises the raw `NonNull`
-    /// deref so the three callers (`BundleV2::any_loop_mut`, `ParseTask` /
-    /// `ServerComponentParseTask` completion) are safe.
-    ///
-    /// `&self` receiver (not `&mut self`): the loop storage is **disjoint**
-    /// from `LinkerContext` (it lives in the `BundleThread` / runtime arena —
-    /// see [`EventLoop`]), and worker-thread completions reach this through a
-    /// `BackRef<BundleV2>` (`&` only).
+    /// The loop that runs this bundle pass. Other threads only post to it.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn any_loop_mut(&self) -> Option<&mut bun_event_loop::AnyEventLoop> {
-        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that
-        // outlives the bundle pass; the pointee is disjoint from `*self`.
-        // Exclusivity: `Js { owner }.enqueue_task_concurrent` is `&self`
-        // (MPSC), and `Mini.enqueue_task_concurrent_with_extra_ctx` only
-        // pushes to an MPSC queue + writes the caller-owned intrusive task
-        // node, so concurrent worker completions do not alias loop state.
-        self.r#loop.map(|p| unsafe { &mut *p.as_ptr() })
+    pub(crate) fn any_loop(&self) -> Option<&bun_event_loop::AnyEventLoop> {
+        // SAFETY: BACKREF — set once in `BundleV2::init` from a loop that outlives the bundle pass.
+        self.r#loop.map(|p| unsafe { p.as_ref() })
     }
 
     /// Shared-read accessor for the bundler log.
@@ -1047,17 +1033,15 @@ impl<'a> LinkerContext<'a> {
     // `ctx.chunks` shared. The `post_process_*` callees take `GenerateChunkCtx`
     // by value and get `&mut LinkerContext` from `ctx.c()`.
     pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
-        let worker: &mut crate::thread_pool::Worker = &mut **worker;
+        let mut worker = crate::thread_pool::Worker::get(ctx.bundle());
         // Note: dispatch on a discriminant copy so `chunk` isn't borrowed
         // across the post-process call (which takes `&mut Chunk`).
         let result = match chunk.content {
             crate::chunk::Content::Javascript(_) => {
-                post_process_js_chunk(*ctx, worker, chunk, chunk_index)
+                post_process_js_chunk(*ctx, &mut worker, chunk, chunk_index)
             }
-            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, worker, chunk),
-            crate::chunk::Content::Html => post_process_html_chunk(*ctx, worker, chunk),
+            crate::chunk::Content::Css(_) => post_process_css_chunk(*ctx, &mut worker, chunk),
+            crate::chunk::Content::Html => post_process_html_chunk(*ctx, &mut worker, chunk),
         };
         if let Err(err) = result {
             Output::panic(format_args!("TODO: handle error: {}", err.name()));
@@ -1075,10 +1059,9 @@ impl<'a> LinkerContext<'a> {
         chunk: &mut Chunk,
         chunk_index: usize,
     ) {
-        let worker = crate::thread_pool::Worker::get(ctx.bundle());
-        let mut worker = scopeguard::guard(worker, |w| w.unget());
+        let mut worker = crate::thread_pool::Worker::get(ctx.bundle());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
-            Self::generate_js_renamer_(*ctx, &mut **worker, chunk, chunk_index);
+            Self::generate_js_renamer_(*ctx, &mut worker, chunk, chunk_index);
         }
     }
 
@@ -1518,7 +1501,6 @@ impl SourceMapDataTask<'_> {
         let worker = crate::thread_pool::Worker::get(unsafe { &*bundle });
         // SAFETY: `worker.arena` points at `worker.heap` (init by `Worker::create`).
         SourceMapData::compute_line_offsets(ctx, worker.arena(), task.source_index);
-        worker.unget();
     }
 
     // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
@@ -1564,7 +1546,6 @@ impl SourceMapDataTask<'_> {
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
         SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
-        worker.unget();
     }
 }
 
@@ -1796,8 +1777,7 @@ pub struct PendingPartRange<'c, 'a> {
 /// Shared prologue for `generate_compile_result_for_{js,css,html}_chunk` thread-pool
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
 /// the raw `*mut Chunk` from its [`GenerateChunkCtx`],
-/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop).
+/// and acquire the per-thread [`Worker`](crate::thread_pool::Worker).
 ///
 /// `GenerateChunkCtx.chunk` is a `BackRef<Chunk, Mut>` (Copy), so reading it
 /// through `&GenerateChunkCtx` preserves the mutable provenance it was
@@ -1821,10 +1801,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
 ) -> (
     &'c PendingPartRange<'c, 'a>,
     *mut Chunk<'a>,
-    scopeguard::ScopeGuard<
-        &'static mut crate::thread_pool::Worker,
-        impl FnOnce(&'static mut crate::thread_pool::Worker),
-    >,
+    crate::thread_pool::WorkerGuard,
 ) {
     // SAFETY: per fn contract — `task` is the intrusive `task` field.
     let part_range: &PendingPartRange =
@@ -1832,7 +1809,6 @@ pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
     let ctx = part_range.ctx;
     let chunk_ptr: *mut Chunk = ctx.chunk.as_ptr();
     let worker = crate::thread_pool::Worker::get(ctx.bundle());
-    let worker = scopeguard::guard(worker, |w| w.unget());
     (part_range, chunk_ptr, worker)
 }
 
@@ -2345,9 +2321,7 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback: Some(
-                js_printer::RequireOrImportMetaCallback::init(self),
-            ),
+            require_or_import_meta_source: Some(self),
             line_offset_tables: Some(
                 &self.graph.files.items_line_offset_table()[source_index.get() as usize],
             ),
@@ -2562,9 +2536,30 @@ impl<'a> LinkerContext<'a> {
             bits.set(i);
             reach.push(bits);
         }
+        // Visit imports before their importers, so that without cycles the first round already reaches the fixpoint.
+        let mut order: Vec<usize> = Vec::with_capacity(n);
+        let mut seen = vec![false; n];
+        let mut stack: Vec<(usize, usize)> = Vec::new();
+        for root in 0..n {
+            if core::mem::replace(&mut seen[root], true) {
+                continue;
+            }
+            stack.push((root, 0));
+            while let Some((node, next)) = stack.last_mut() {
+                let Some(&import) = edges[*node].get(*next) else {
+                    order.push(*node);
+                    stack.pop();
+                    continue;
+                };
+                *next += 1;
+                if !core::mem::replace(&mut seen[import as usize], true) {
+                    stack.push((import as usize, 0));
+                }
+            }
+        }
         loop {
             let mut changed = false;
-            for i in 0..n {
+            for &i in &order {
                 for &j in &edges[i] {
                     let j = j as usize;
                     if j == i || reach[j].subset_of(&reach[i]) {
@@ -2713,7 +2708,7 @@ pub(crate) struct TreeShakeCtx<'a, 'r> {
     pub(crate) parts_live: &'r mut [bun_collections::AutoBitSet],
     pub(crate) import_records: &'r [bun_ast::import_record::List<'a>],
     pub(crate) entry_point_kinds: &'r [EntryPoint::Kind],
-    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol],
+    pub(crate) css_reprs: &'r [crate::bundled_ast::CssCol<'a>],
     pub(crate) worklist: Vec<TreeShakeWork>,
 }
 

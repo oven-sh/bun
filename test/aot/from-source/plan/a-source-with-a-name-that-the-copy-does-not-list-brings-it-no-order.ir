@@ -1,0 +1,26 @@
+# `again` copies what its written type calls a Note. A Report fits that type and holds `file` and `start` besides: a copy of one holds names that the layout of the
+# copy does not list, so no order of that layout's fields describes it, and the order in which a Report is written brings the layout of the copy no order.
+# -- source: main.ts
+# type Note = { head?: string; kind: number; code: number; text: string; next?: Note[] };
+# type Report = { head: string; kind: number; code: number; text: string; next: Note[]; file: string; start: number };
+# function note(text: string, i: number): Note {
+#   return { text, kind: i & 3, code: i, next: undefined };
+# }
+# function report(i: number): Report {
+#   return { file: "f" + (i & 1), next: [], text: "t", start: i, code: i, kind: 1, head: "h" };
+# }
+# function again(given: Note): Note {
+#   return { ...given };
+# }
+# const show = (made: Note) => Object.keys(made).join() + " " + JSON.stringify(made);
+# console.log(show(again(note("n", 1))));
+# console.log(show(again(report(2))));
+# console.log(show(again(again(report(3)))));
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: layout L0 CompiledObject {{*}} orders=2
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: text,kind,code,next {"text":"n","kind":1,"code":1}
+# ANSWERS-NEXT: file,next,text,start,code,kind,head {"file":"f0","next":[],"text":"t","start":2,"code":2,"kind":1,"head":"h"}
+# ANSWERS-NEXT: file,next,text,start,code,kind,head {"file":"f1","next":[],"text":"t","start":3,"code":3,"kind":1,"head":"h"}
+# ANSWERS-NEXT: exited with 0

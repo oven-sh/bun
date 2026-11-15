@@ -1,0 +1,32 @@
+# LIBRARY: own
+# `list.forEach(function (x) { .. })` in a method that nobody in sight calls in a loop, `rows.map(x => x + 1)` off a static field, `for (..) xs.forEach(x => { sum += x; })` in the body of a file: a list is expected of the
+# receiver, by the names asked or by an earlier rule, and still the read and the call went by name: outside loops that rule was silent, and a guess at the read of a method has to buy more than the read itself:
+# one operation was enough only for what is declared: a map, a set, a list out of a variable of the file that stays.
+# The call is the loop: where it is handed a closure made for it and a list is only expected, the read of the method opens the guess. It is a guess: the receiver is tested; whatever else arrives runs as written.
+# Nothing is copied to the site that was not copied there behind a list that is known.
+# f1 = total
+# -- source: main.cjs
+# "use strict";
+# const XS = outside();
+# function total() { let s = 0; XS.forEach(x => { s += x; }); return s + (XS.some(x => x > 2) ? 100 : 0); }
+# function attempt() { try { return total(); } catch (error) { return error.constructor.name; } }
+# print(attempt(), attempt());
+# -- end of source
+# RUN(TOTAL): walk f1 mechanisms=all
+# TOTAL: = TypeTest {{*}}testedType=Array
+# RUN(LIST): run-in-shell outside = function () { return [1, 2, 3]; };
+# LIST: 106 106
+# RUN(HOLE): run-in-shell outside = function () { return [1, , 3]; };
+# HOLE: 104 104
+# RUN(VIEW): run-in-shell outside = function () { return new Uint8Array([1, 2, 3]); };
+# VIEW: 106 106
+# RUN(SET): run-in-shell outside = function () { return new Set([1, 2, 3]); };
+# SET: TypeError TypeError
+# RUN(LIKE): run-in-shell outside = function () { return { forEach(g) { g(10); }, some(g) { return g(1); } }; };
+# LIKE: 10 10
+# RUN(HEIR): run-in-shell outside = function () { class Heir extends Array { forEach(g) { g(50); } } return Heir.from([1, 2, 3]); };
+# HEIR: 150 150
+# RUN(OWN): run-in-shell outside = function () { const own = [1, 2, 3]; own.forEach = function (g) { g(7); }; return own; };
+# OWN: 107 107
+# RUN(NOTHING): run-in-shell outside = function () { };
+# NOTHING: TypeError TypeError

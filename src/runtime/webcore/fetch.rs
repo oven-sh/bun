@@ -53,7 +53,6 @@ use bun_http_jsc::method_jsc;
 use bun_http_types::Method::Method;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _, URLJsc as _};
-use bun_sys::FdExt as _;
 // `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
 // brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
@@ -137,8 +136,8 @@ fn s3_credentials_for_fetch(global_this: &JSGlobalObject) -> bun_s3_signing::S3C
     s3_credentials_from_env(
         global_this
             .bun_vm()
-            .as_mut()
             .transpiler
+            .get()
             .env_mut()
             .get_s3_credentials(),
     )
@@ -354,15 +353,14 @@ enum URLType {
 /// Nothing was queued yet: cancel a stream body with `reason` and reject with it.
 fn reject_before_send(
     global_this: &JSGlobalObject,
-    body: &mut HTTPRequestBody,
+    body: &HTTPRequestBody,
     reason: JSValue,
 ) -> JsResult<JSValue> {
-    if let HTTPRequestBody::ReadableStream(stream_ref) = &*body {
+    if let HTTPRequestBody::ReadableStream(stream_ref) = body {
         if let Some(stream) = stream_ref.get() {
             stream.cancel_with_reason(global_this, reason)?;
         }
     }
-    body.detach();
     Ok(JSPromise::rejected_promise(global_this, reason).to_js())
 }
 
@@ -383,9 +381,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
-    // outlives this call frame.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
@@ -1342,10 +1338,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 #[cfg(not(windows))]
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-                // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 // Relative to the folder of the entry module, or to the working directory when there
                 // is none (`bun bake`).
-                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                let parts: &[&[u8]] = match vm.main() {
                     Some(main) => &[main, b"../", url_path_decoded],
                     None => &[url_path_decoded],
                 };
@@ -1425,7 +1420,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = &signal {
         if sig.aborted() {
             let reason = sig.js_reason(global_this);
-            return reject_before_send(global_this, &mut body, reason);
+            return reject_before_send(global_this, &body, reason);
         }
     }
 
@@ -1467,14 +1462,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )?,
                 global_this,
             )? {
-                let mut old = core::mem::replace(
-                    &mut body,
-                    HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
-                        stream,
-                        global_this,
-                    )),
-                );
-                old.detach();
+                body = HTTPRequestBody::ReadableStream(readable_stream::Strong::init(
+                    stream,
+                    global_this,
+                ));
                 break 'prepare_body;
             }
             let rejected_value = JSPromise::rejected_promise(
@@ -1482,15 +1473,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 global_this.create_error_instance(format_args!("Failed to start s3 stream")),
             )
             .to_js();
-            body.detach();
             return Ok(rejected_value);
         }
     }
     if body.needs_to_read_file() {
         'prepare_body: {
             // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
-            // jsc↔runtime cycle).
+            // `path.slice_z()`.
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
@@ -1508,13 +1497,13 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            let opened_fd = match opened_fd_res {
+            let opened_file = match opened_fd_res {
                 Err(err) => {
                     let err_js = err.to_js(global_this);
                     let rejected_value = JSPromise::rejected_promise(global_this, err_js).to_js();
                     return Ok(rejected_value);
                 }
-                Ok(fd) => fd,
+                Ok(fd) => bun_sys::File::from_fd(fd),
             };
 
             // An explicit `compress` request always wins over the sendfile
@@ -1531,7 +1520,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 && http::SendFile::is_eligible(&url)
             {
                 'use_sendfile: {
-                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
+                    let stat: bun_sys::Stat = match bun_sys::fstat(opened_file.fd()) {
                         Ok(result) => result,
                         // bail out for any reason
                         Err(_) => break 'use_sendfile,
@@ -1557,7 +1546,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
                     // are `blob::SizeType` (u64) — hence the `as usize` casts.
                     let mut sf = http::SendFile {
-                        fd: opened_fd,
+                        fd: opened_file.fd(),
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
                         content_size: original_size.min(stat_size) as usize,
@@ -1575,57 +1564,41 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         // window clamped to the file); that is the Content-Length.
                         sf.content_size = sf.remain;
                     }
-                    body.detach();
-                    body = HTTPRequestBody::Sendfile(sf);
+                    body = HTTPRequestBody::Sendfile {
+                        window: sf,
+                        _file: opened_file,
+                    };
 
                     break 'prepare_body;
                 }
             }
 
-            // The sendfile path above moves `opened_fd` into `SendFile` (which
-            // owns its lifecycle and breaks out of `'prepare_body`). On this
-            // read-file path we are the sole owner of the fresh fd: `read_file`
-            // is handed it as an `Fd` and never takes ownership. Wrap it in an
-            // RAII guard so any future early return between here and the read
-            // can't leak it.
-            let opened_fd = scopeguard::guard(opened_fd, |fd| fd.close());
-
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
-            // with an `Fd` path only touches `self.sync_error_buf` for
-            // path-variant inputs, so a fresh `NodeFS` is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
-            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-            let mut rf_args = node::fs::args::ReadFile::default();
-            rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(*opened_fd);
-            rf_args.offset = blob_offset;
-            rf_args.max_size = Some(blob_size);
+            let rf_args = node::fs::args::ReadFile {
+                encoding: Encoding::Buffer,
+                path: PathOrFileDescriptor::Fd(opened_file.fd()),
+                offset: blob_offset,
+                max_size: Some(blob_size),
+                ..Default::default()
+            };
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
-            // Eagerly close before constructing the (potentially large) JS
-            // result. Dropping the guard runs the close exactly once.
-            drop(opened_fd);
+            // Eagerly close before constructing the (potentially large) JS result.
+            drop(opened_file);
 
             match res {
                 Err(err) => {
                     let rejected_value =
                         JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js();
-                    body.detach();
                     return Ok(rejected_value);
                 }
-                Ok(mut result) => {
-                    body.detach();
+                Ok(result) => {
                     body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
                         result.slice().to_vec(),
                     ));
-                    // StringOrBuffer::Drop is a no-op for Buffer; release the
-                    // readFile allocation now that the bytes are copied out.
-                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
-                        buf.destroy();
-                    }
                 }
             }
         }
@@ -1728,19 +1701,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 None
             };
 
-            let s3_stream = Box::new(S3StreamWrapper {
+            let s3_stream = S3StreamWrapper {
                 url: BunString::create_atom_if_possible(url.href),
                 promise,
-                global: global_this,
-            });
-            // Shim: erases both the payload type and the `Result` return when
-            // coercing to the `fn (S3UploadResult, *mut c_void)` callback shape.
-            fn s3_stream_wrapper_resolve(result: s3::S3UploadResult<'_>, ctx: *mut libc::c_void) {
-                // SAFETY: ctx was produced by `heap::alloc(s3_stream)` below; the
-                // 'static lifetime is a raw-pointer fiction (the pointee's real
-                // lifetime is managed by the resolve callback itself).
-                let _ = S3StreamWrapper::resolve(result, ctx.cast::<S3StreamWrapper<'static>>());
-            }
+                global: jsc::GlobalRef::from(global_this),
+            };
             // `dupe()` heap-allocates a fresh intrusive-refcounted copy.
             // `upload_stream` adopts the ref by value (no extra bump) and the
             // MultiPartUpload derefs on completion.
@@ -1757,8 +1722,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 headers.as_ref().and_then(|h| h.get_content_encoding()),
                 proxy_url,
                 credentials_with_options.request_payer,
-                Some(s3_stream_wrapper_resolve),
-                bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
+                Some(Box::new(move |result| {
+                    let _ = s3_stream.resolve(result);
+                })),
             )?;
             return Ok(promise_value);
         }
@@ -1845,7 +1811,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             invalid.name
                         ),
                     );
-                    return reject_before_send(global_this, &mut body, err);
+                    return reject_before_send(global_this, &body, err);
                 }
             }
         };
@@ -1940,23 +1906,18 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// S3 ReadableStream upload Wrapper — module level because Rust does not allow
-// `impl` blocks inside fn bodies for types referenced by external fn pointers.
+// S3 ReadableStream upload Wrapper
 // ──────────────────────────────────────────────────────────────────────────
 
-struct S3StreamWrapper<'a> {
+struct S3StreamWrapper {
     promise: jsc::JSPromiseStrong,
     url: BunString,
-    global: &'a JSGlobalObject,
+    global: jsc::GlobalRef,
 }
 
-impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
-        // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
-        // ownership here exactly once on the resolve callback.
-        let mut self_ = unsafe { bun_core::heap::take(self_) };
-        let global = self_.global;
-        // `defer bun.destroy(self)` → Box<Self> Drop at end of scope.
+impl S3StreamWrapper {
+    fn resolve(mut self, result: s3::S3UploadResult) -> JsResult<()> {
+        let global = &*self.global;
         match result {
             s3::S3UploadResult::Success => {
                 let response = RefPtr::new(Response::init(
@@ -1966,12 +1927,12 @@ impl<'a> S3StreamWrapper<'a> {
                         ..Default::default()
                     },
                     Body::new(BodyValue::Empty),
-                    self_.url,
+                    self.url,
                     false,
                 ));
                 let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
                 let response = RefPtr::new(Response::init(
@@ -1985,13 +1946,13 @@ impl<'a> S3StreamWrapper<'a> {
                         bytes: err.message.to_vec(),
                         was_string: true,
                     })),
-                    self_.url,
+                    self.url,
                     false,
                 ));
 
                 let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
-                self_.promise.resolve(global, response_js)?;
+                self.promise.resolve(global, response_js)?;
             }
         }
         Ok(())

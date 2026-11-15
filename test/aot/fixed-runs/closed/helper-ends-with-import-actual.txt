@@ -1,0 +1,14 @@
+vi.importActual("./dep") is the last call of a helper: native code finds the file that the name is written in by the frame of its caller.
+#### test/a.test.ts
+import { load } from "./tools/h1";
+test("t", async () => console.log("| CASE real", (await load()).name));
+#### test/dep.ts
+export const name = "beside the test file";
+#### test/tools/dep.ts
+export const name = "beside the file that passes it on";
+#### test/tools/far/dep.ts
+export const name = "beside the helper: not mocked";
+#### test/tools/far/h2.ts
+export const load = () => vi.importActual("./dep");
+#### test/tools/h1.ts
+export { load } from "./far/h2";

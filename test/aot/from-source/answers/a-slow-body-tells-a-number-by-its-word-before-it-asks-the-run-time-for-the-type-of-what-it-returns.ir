@@ -1,0 +1,14 @@
+# `later` is copied into the loop behind a guard on its arguments. Records out of JSON.parse are not of the written layout, so every call leaves for the slow body, which is written straight.
+# Its callers lean on what it returns (number|bigint), so it holds its answer to that type. A type that is more than one word's test was asked of the run time: a call into C++ for every return, about eighty instructions.
+# Where every number passes the type, the word is asked for a number first; the run time is asked for what is none (the big integers of the third answer).
+# -- source: a-slow-body-tells-a-number-by-its-word-before-it-asks-the-run-time-for-the-type-of-what-it-returns.ts
+# declare function print(...values: unknown[]): void;
+# type Job = { due: number };
+# const later = (a: Job, b: Job) => a.due - b.due;
+# function spread(jobs: Job[]) { let sum: any = later(jobs[1]!, jobs[0]!); for (let at = 2; at < jobs.length; at++) sum += later(jobs[at]!, jobs[at - 1]!); return sum; }
+# print(spread(JSON.parse('[{"due":5},{"due":3},{"due":10}]')), spread([{ due: 1 }, { due: 4 }, { due: 9 }]), spread(eval("[{ due: 5n, x: 1 }, { due: 3n, x: 1 }, { due: 10n, x: 1 }]")));
+# -- end of source
+# RUN(COUNT): compile StraightNumberTagChecks mechanisms=all
+# COUNT: statistic StraightNumberTagChecks 1
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 5 8 5

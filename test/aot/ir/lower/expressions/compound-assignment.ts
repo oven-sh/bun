@@ -16,13 +16,12 @@
 // CHECK-NEXT: Return [[flipped]]
 // CHECK-LABEL: function {{*}}name="member"
 // CHECK: [[object]] = Call {{*}}calleeName="o"
-// CHECK-NEXT: [[convertedObject]] = Convert [[object]] declared={type=undefined|null|number|string|symbol|bigint|L{{*}} flags=[IsExpected]}
-// CHECK-NEXT: [[old]] = PropGet [[convertedObject]] key="p"
+// CHECK-NEXT: [[old]] = PropGet [[object]] key="p"
 // CHECK-NOT: calleeName="o"
 // CHECK: [[operand]] = Call {{*}}calleeName="v"
 // CHECK-NOT: calleeName="o"
 // CHECK: [[updated]] = Add [[old]], [[operand]]
-// CHECK-NEXT: PropSet [[convertedObject]], [[updated]] key="p"
+// CHECK-NEXT: PropSet [[object]], [[updated]] key="p"
 // CHECK-NOT: calleeName="o"
 
 export function local(x: any, y: any): any {

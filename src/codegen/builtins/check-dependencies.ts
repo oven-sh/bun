@@ -6,4 +6,5 @@ export type * from "../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/ge
 const engineModule: typeof import("../../../vendor/WebKit/Source/JavaScriptCore/aot/builtins/generator/check-dependencies.ts") =
   await import(engineFile("builtins/generator/check-dependencies.ts"));
 
-export const { checkDependencies, describeUndescribedResults, summarizeUndescribedResults } = engineModule;
+export const { checkDependencies, describeUndescribedResults, summarizeUndescribedResults, undescribedProperties } =
+  engineModule;

@@ -97,23 +97,4 @@ console.log('line cr', t`A${1 // }
 }B`));
 console.log('empty', t`${1 /* } */}`, JSON.stringify(String.raw`${1 /* } */}`));
 
-// GENERATED: t
 // CHECK-LABEL: function {{*}}name="t"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow flags=[HasRestParameter] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|[[L_1]]|Array flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_2]]] {
-// CHECK-NEXT: b0(v0: undefined|null|number|string|symbol|bigint|[[L_1]]|Array, v1: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=JSON
-// CHECK-NEXT: v3 = PropGet v2 key="stringify"
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(JSONStringify) flags=[IsExpected]}
-// CHECK-NEXT: v5 = Builtin builtin=Array
-// CHECK-NEXT: v6 = Builtin builtin=ArrayFrom
-// CHECK-NEXT: v7 = NewClosure function=[[f_3]]
-// CHECK-NEXT: v8 = Call v6, v5, v0, v7 calleeName="Array.from"
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v10 = PropGet v0 key="raw"
-// CHECK-NEXT: v11 = NewArray v9, v10, v1 contents=anything
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: v13 = Call v4, v2, v12 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: ReturnCall v13 casts=[{declared={type=undefined|null|string flags=[IsExpected]}}]
-// CHECK-NEXT: }

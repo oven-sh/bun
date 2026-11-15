@@ -1,0 +1,14 @@
+# A constructor function stands above the class, so what the static side finds above is not known. `name` is the class object's own: the definition and the read under it look nothing up above, and the class and what stands above it stay in sight. L0 = Base, L1 = Inner.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 family=F0 changes=[] stays-with-compiled-code
+# CHECK: layout L1 family=F0 changes=[] stays-with-compiled-code
+# -- source: the-name-of-a-class-above-which-a-constructor-function-stands-is-defined-and-the-class-stays-in-sight.js
+# function Base() { this.from = "base"; }
+# Base.prototype.greet = function () { return this.from + " " + this.own; };
+# var Renamed = class Inner extends Base {
+#   constructor() { super(); this.own = "own"; }
+# };
+# Object.defineProperty(Renamed, "name", { value: "Outer" });
+# const made = new Renamed();
+# console.log(made.greet(), Renamed.name);
+# -- end of source

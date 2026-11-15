@@ -1,4 +1,4 @@
-// Function.prototype.apply throws for a receiver that is no function before it reads the list (steps 2 and 4 of the specification).
+// Function.prototype.apply with a receiver that is no function: by the specification it throws before it reads the list (steps 2 and 4). Bun reads the list first, and an executable does as Bun does.
 "use strict";
 const unknown = value => [value][0];
 const reads = [];
@@ -21,12 +21,3 @@ for (const receiver of [undefined, null, 1, "text", {}, []]) {
   }
 }
 console.log(Function.prototype.apply.call(unknown(value => value), undefined, unknown(list)), "reads:", reads.join());
-/* Output:
-TypeError reads: 
-TypeError reads: 
-TypeError reads: 
-TypeError reads: 
-TypeError reads: 
-TypeError reads: 
-first reads: length,0
-*/

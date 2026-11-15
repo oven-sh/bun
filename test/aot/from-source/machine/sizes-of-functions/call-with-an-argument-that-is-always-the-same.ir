@@ -1,0 +1,17 @@
+# f2 = scaleBoth
+# -- source: call-with-an-argument-that-is-always-the-same.ts
+# function scale(value: number, factor: number): number {
+#   return value * factor;
+# }
+# function scaleBoth(first: number, second: number): number {
+#   return scale(first, 3) + scale(second, 3);
+# }
+# declare const input: any;
+# (globalThis as any).answer = scaleBoth(+input, +input);
+# -- end of source
+# The compiler before this one: 7 instructions, 2 of them patches.
+# When the bound was taken: steps: operations 6, patches 2, moves 6, unlikely or rare 0.
+# RUN(X64): steps most:12 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 12

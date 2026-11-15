@@ -1,7 +1,7 @@
 //! Schedule long-running callbacks for a task
 //! Slow stuff is broken into tasks, each can run independently without locks
 
-use core::mem::ManuallyDrop;
+use core::ptr::NonNull;
 
 use bun_ast::{Loc, Log};
 use bun_core::Output;
@@ -16,14 +16,11 @@ use crate::{
     DependencyID, ExtractData, ExtractTarball, NetworkTask, PackageManager, PatchTask, Resolution,
 };
 
-/// `'a` is forced by LIFETIMES.tsv (BORROW_PARAM on `Request::*.network`).
 /// TODO: lifetime — Task lives in an intrusive cross-thread queue
-/// (`next`, `package_manager` BACKREF). A `&'a mut NetworkTask` cannot soundly
+/// (`next`, `package_manager` BACKREF). A `&'static mut NetworkTask` cannot soundly
 /// cross that boundary; Phase B should likely demote to `*mut NetworkTask`.
-pub struct Task<'a> {
-    pub(crate) tag: Tag,
-    pub(crate) request: Request<'a>,
-    pub(crate) data: Data,
+pub struct Task {
+    pub(crate) job: Job,
     /// default: `Status::Waiting`
     pub(crate) status: Status,
     /// default: `thread_pool::Task { callback: Task::callback }`
@@ -33,53 +30,17 @@ pub struct Task<'a> {
     /// default: `None`
     pub(crate) err: Option<crate::Error>,
     /// BACKREF — owned by `PackageManager.preallocated_resolve_tasks`.
-    /// `None` only in `uninit()`; every scheduled task overwrites it.
-    pub(crate) package_manager: Option<bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>>,
-    /// default: `None`
-    pub(crate) apply_patch_task: Option<Box<PatchTask>>,
+    pub(crate) package_manager: bun_ptr::ParentRef<PackageManager, bun_ptr::Mut>,
     /// The filesystem tail of a clone or checkout task; `callback` runs it. default: `None`
     pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
-    pub(crate) next: bun_threading::Link<Task<'a>>,
-}
-
-/// Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
-/// the task is observed. Exposed as a module-level fn so call sites that import this
-/// module as `Task` can write `..Task::uninit()` in struct-update position.
-#[inline]
-pub(crate) fn uninit() -> Task<'static> {
-    Task {
-        // Overwritten by every caller; placeholder value.
-        tag: Tag::PackageManifest,
-        // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
-        // valid storage and is never read before the caller overwrites it.
-        request: unsafe { bun_core::ffi::zeroed_unchecked() },
-        // SAFETY: untagged unions of `ManuallyDrop<_>` — any bit pattern is
-        // valid storage and is never read before the caller overwrites it.
-        data: unsafe { bun_core::ffi::zeroed_unchecked() },
-        // `Log` contains `Vec<Msg>` (NonNull invariant) so it cannot be
-        // `mem::zeroed()`; and struct-update `..Task::uninit()` *drops* the
-        // base value's `log` when the caller supplies their own, so this must
-        // be a valid (empty) Log either way.
-        log: Log::default(),
-        id: Id(0),
-        package_manager: None,
-        status: Status::Waiting,
-        threadpool_task: thread_pool::Task {
-            node: Default::default(),
-            callback: Task::callback,
-        },
-        err: None,
-        apply_patch_task: None,
-        git_finalize: None,
-        next: bun_threading::Link::new(),
-    }
+    pub(crate) next: bun_threading::Link<Task>,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
 // `link()` always projects to it.
-unsafe impl<'a> bun_threading::Linked for Task<'a> {
+unsafe impl bun_threading::Linked for Task {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
@@ -155,94 +116,70 @@ impl Id {
     }
 }
 
-impl<'a> Task<'a> {
-    // ── Tag-checked projectors for the untagged `Request`/`Data` unions ────
-    // `Task.tag` is the single discriminant for both; every variant payload is
-    // POD or `ManuallyDrop`-wrapped (no drop on overwrite), so reading the
-    // wrong arm is well-defined garbage rather than UB. The macro's trailing
-    // `as *const $Ty` cast unwraps `ManuallyDrop<$Ty>` (`repr(transparent)`).
-    bun_core::extern_union_accessors! {
-        tag: tag as Tag, value: request;
-        PackageManifest => request_package_manifest @ package_manifest: PackageManifestRequest<'a>, mut request_package_manifest_mut;
-        Extract         => request_extract          @ extract:          ExtractRequest<'a>,         mut request_extract_mut;
-        GitClone        => request_git_clone        @ git_clone:        GitCloneRequest,            mut request_git_clone_mut;
-        GitCommit       => request_git_commit       @ git_commit:       GitCommitRequest,           mut request_git_commit_mut;
-        GitCheckout     => request_git_checkout     @ git_checkout:     GitCheckoutRequest,         mut request_git_checkout_mut;
-        LocalTarball    => request_local_tarball    @ local_tarball:    LocalTarballRequest,        mut request_local_tarball_mut;
+impl Task {
+    /// In a slot of `manager.preallocated_resolve_tasks`.
+    pub(crate) fn create(manager: &mut PackageManager, id: Id, job: Job) -> NonNull<Self> {
+        let task = Task {
+            job,
+            log: Log::init(),
+            id,
+            package_manager: bun_ptr::ParentRef::from_ref_mut(manager),
+            status: Status::Waiting,
+            threadpool_task: thread_pool::Task {
+                node: Default::default(),
+                callback: Task::callback,
+            },
+            err: None,
+            git_finalize: None,
+            next: bun_threading::Link::new(),
+        };
+        manager.preallocated_resolve_tasks.get_init(task)
     }
 
-    bun_core::extern_union_accessors! {
-        tag: tag as Tag, value: data;
-        GitCommit       => data_git_commit       @ git_commit:       Vec<u8>,     mut data_git_commit_mut;
-        GitCheckout     => data_git_checkout     @ git_checkout:     ExtractData, mut data_git_checkout_mut;
+    pub(crate) fn tarball(&self) -> &ExtractTarball {
+        match &self.job {
+            Job::Extract { tarball, .. } => tarball,
+            _ => unreachable!("not an extract task"),
+        }
     }
 
-    // ── Data projectors (multi-tag / by-value — kept hand-written) ─────────
-    // `Tag::LocalTarball` writes its result into `data.extract` (same payload
-    // type as `Tag::Extract`), so `data_extract*` accepts both tags.
-    #[inline]
-    pub(crate) fn data_extract(&self) -> &ExtractData {
-        debug_assert!(self.tag == Tag::Extract || self.tag == Tag::LocalTarball);
-        // SAFETY: tag-guarded; `ManuallyDrop` deref.
-        unsafe { &*self.data.extract }
-    }
-    #[inline]
-    pub(crate) fn data_git_clone(&self) -> Fd {
-        debug_assert!(self.tag == Tag::GitClone);
-        // SAFETY: tag-guarded; `Fd` is `Copy`.
-        unsafe { *self.data.git_clone }
+    pub(crate) fn request_git_clone(&self) -> &GitCloneRequest {
+        match &self.job {
+            Job::GitClone { request, .. } => request,
+            _ => unreachable!("not a clone task"),
+        }
     }
 
-    pub(crate) fn deinit_payload(&mut self) {
-        // SAFETY: `tag` discriminates both unions, set once at enqueue.
-        unsafe {
-            match self.tag {
-                Tag::PackageManifest => {
-                    ManuallyDrop::drop(&mut self.request.package_manifest);
-                    ManuallyDrop::drop(&mut self.data.package_manifest);
-                }
-                Tag::Extract => {
-                    ManuallyDrop::drop(&mut self.request.extract);
-                    ManuallyDrop::drop(&mut self.data.extract);
-                }
-                Tag::GitClone => {
-                    ManuallyDrop::drop(&mut self.request.git_clone);
-                }
-                Tag::GitCommit => {
-                    ManuallyDrop::drop(&mut self.request.git_commit);
-                    ManuallyDrop::drop(&mut self.data.git_commit);
-                }
-                Tag::GitCheckout => {
-                    ManuallyDrop::drop(&mut self.request.git_checkout);
-                    ManuallyDrop::drop(&mut self.data.git_checkout);
-                }
-                Tag::LocalTarball => {
-                    ManuallyDrop::drop(&mut self.request.local_tarball);
-                    ManuallyDrop::drop(&mut self.data.extract);
-                }
-            }
+    pub(crate) fn request_git_commit(&self) -> &GitCommitRequest {
+        match &self.job {
+            Job::GitCommit { request, .. } => request,
+            _ => unreachable!("not a commit task"),
+        }
+    }
+
+    pub(crate) fn request_git_checkout(&self) -> &GitCheckoutRequest {
+        match &self.job {
+            Job::GitCheckout { request, .. } => request,
+            _ => unreachable!("not a checkout task"),
         }
     }
 }
 
-impl<'a> Task<'a> {
+impl Task {
     pub(crate) unsafe fn callback(task: *mut thread_pool::Task) {
         Output::Source::configure_thread();
 
         // SAFETY: `task` points to the `threadpool_task` field of a `Task`
         // (this is the only place this `thread_pool::Task` callback is registered).
-        let this_raw: *mut Task<'a> =
-            unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
+        let this_raw: *mut Task = unsafe { bun_core::from_field_ptr!(Task, threadpool_task, task) };
         // The terminal `resolve_tasks.push` hands the task to the main thread
         // (which may recycle it while this fn still runs `Output::flush()`),
         // so the pushed pointer is derived from the raw receiver, not from the
         // `&mut` below, and nothing touches `this` after the push.
-        // SAFETY: `Task<'a>` is layout-identical for all `'a` (the lifetime is
-        // a phantom on `&mut NetworkTask` borrows that the queue never reads
-        // through); erasing to `'static` is sound for the queue.
-        let task = unsafe { core::ptr::NonNull::new_unchecked(this_raw) }.cast::<Task<'static>>();
+        // SAFETY: derived from `task`, which is not null.
+        let task = unsafe { NonNull::new_unchecked(this_raw) };
         // SAFETY: exclusive access — task runs on exactly one worker thread
-        let this: &mut Task<'a> = unsafe { &mut *this_raw };
+        let this: &mut Task = unsafe { &mut *this_raw };
         // BACKREF (LIFETIMES.tsv:598) — `package_manager` outlives every task it
         // owns. The `ParentRef` is `Copy` and gives safe `Deref` for the
         // shared-read sites below; `manager` is kept as a raw `*mut` for the
@@ -254,22 +191,19 @@ impl<'a> Task<'a> {
         // signatures still take `&mut PackageManager` (`get_cache_directory`,
         // `get_package_metadata`) are dereferenced inline at the call boundary
         // only.
-        let manager_ref = this.package_manager.expect("Task.package_manager unset");
+        let manager_ref = this.package_manager;
         let manager: *mut PackageManager = manager_ref.as_mut_ptr();
 
         // Body of the switch; arms exit via `break 'body;` so the
         // trailing block (patch + push + wake) and `Output::flush()` run
         // unconditionally afterwards.
         'body: {
-            match this.tag {
-                Tag::PackageManifest => {
-                    // SAFETY: tag == PackageManifest discriminates the union
-                    let manifest = unsafe { &mut *this.request.package_manifest };
-
-                    // split-borrow `manifest.network` so the mutable
-                    // `response_buffer` borrow doesn't overlap the immutable
-                    // `response`/`callback` reads below.
-                    let network = &mut *manifest.network;
+            match &mut this.job {
+                Job::PackageManifest {
+                    name,
+                    network,
+                    manifest,
+                } => {
                     // Take ownership so the
                     // multi-MB manifest buffer drops on every exit of this arm
                     // instead of staying live on the NetworkTask until recycle.
@@ -288,40 +222,29 @@ impl<'a> Task<'a> {
                             format_args!(
                                 "{} downloading package manifest {}",
                                 err.name(),
-                                bstr::BStr::new(manifest.name.slice()),
+                                bstr::BStr::new(name.slice()),
                             ),
                         );
                         this.err = Some(err);
                         this.status = Status::Fail;
-                        this.data = Data {
-                            package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
-                        };
                         break 'body;
                     };
 
-                    // `Callback` is a tagged enum, so destructure the variant.
-                    // SAFETY: tag == PackageManifest ⇒ the network task was
-                    // built by `NetworkTask::for_manifest` with this variant.
                     let crate::network_task::Callback::PackageManifest {
                         loaded_manifest,
                         is_extended_manifest,
                         ..
-                    } = &network.callback
+                    } = &mut network.callback
                     else {
-                        // SAFETY: tag == PackageManifest ⇒ the network task was
-                        // built by `NetworkTask::for_manifest` with this variant.
-                        unsafe { core::hint::unreachable_unchecked() }
+                        unreachable!("`NetworkTask::for_manifest` built it");
                     };
-                    let loaded_manifest = loaded_manifest.clone();
-                    let is_extended_manifest = *is_extended_manifest;
 
                     // Shared read of `manager.options` (never mutated by worker
                     // threads) via the `ParentRef` safe `Deref`. Wrap as
                     // `BackRef` so the `&PackageManager` autoref does not stay
                     // live across the `&mut *manager` below.
-                    let scope = bun_ptr::BackRef::new(
-                        manager_ref.scope_for_package_name(manifest.name.slice()),
-                    );
+                    let scope =
+                        bun_ptr::BackRef::new(manager_ref.scope_for_package_name(name.slice()));
                     let package_manifest = match npm::Registry::get_package_metadata(
                         // scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
@@ -329,21 +252,18 @@ impl<'a> Task<'a> {
                         metadata.response,
                         body.slice(),
                         &mut this.log,
-                        manifest.name.slice(),
-                        loaded_manifest,
+                        name.slice(),
+                        loaded_manifest.take(),
                         // SAFETY: see `manager` decl — short-lived `&mut` at call
                         // boundary only (callee touches `cache_directory` /
                         // `get_temporary_directory` lazily).
                         unsafe { &mut *manager },
-                        is_extended_manifest,
+                        *is_extended_manifest,
                     ) {
                         Ok(v) => v,
                         Err(err) => {
                             this.err = Some(err);
                             this.status = Status::Fail;
-                            this.data = Data {
-                                package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
-                            };
                             break 'body;
                         }
                     };
@@ -352,121 +272,89 @@ impl<'a> Task<'a> {
                         npm::registry::PackageVersionResponse::Fresh(result)
                         | npm::registry::PackageVersionResponse::Cached(result) => {
                             this.status = Status::Success;
-                            this.data = Data {
-                                package_manifest: ManuallyDrop::new(result),
-                            };
+                            *manifest = Some(result);
                             break 'body;
                         }
                         npm::registry::PackageVersionResponse::NotFound => {
                             this.log.add_error_fmt(
                                 None,
                                 Loc::EMPTY,
-                                format_args!(
-                                    "404 - GET {}",
-                                    // `manifest` (split-borrow of
-                                    // `this.request`) is still live; reuse
-                                    // it instead of a fresh union deref.
-                                    bstr::BStr::new(manifest.name.slice()),
-                                ),
+                                format_args!("404 - GET {}", bstr::BStr::new(name.slice())),
                             );
                             this.status = Status::Fail;
-                            this.data = Data {
-                                package_manifest: ManuallyDrop::new(npm::PackageManifest::default()),
-                            };
                             break 'body;
                         }
                     }
                 }
-                Tag::Extract => {
+                Job::Extract {
+                    tarball,
+                    source: TarballSource::Network(network),
+                    data,
+                } => {
                     // Streaming extraction never reaches this callback: the
                     // HTTP thread drives `TarballStream.drain_task`, which
-                    // fills in `this.data`/`this.status` and pushes to
+                    // fills in `data`/`this.status` and pushes to
                     // `resolve_tasks` directly from `TarballStream.finish()`.
                     // This path is the buffered fallback — feature flag off,
                     // non-2xx status, or the whole body arrived in a single
                     // chunk before streaming could commit.
 
-                    // SAFETY: tag == Extract discriminates the union
-                    let extract = unsafe { &mut *this.request.extract };
                     // Take ownership so the
                     // tarball body drops on every exit of this arm.
-                    let mut buffer = core::mem::take(&mut extract.network.response_buffer);
+                    let mut buffer = core::mem::take(&mut network.response_buffer);
 
-                    let result = match extract.tarball.run(&mut this.log, buffer.slice()) {
+                    let result = match tarball.run(&mut this.log, buffer.slice()) {
                         Ok(v) => v,
                         Err(err) => {
                             this.err = Some(err);
                             this.status = Status::Fail;
-                            this.data = Data {
-                                extract: ManuallyDrop::new(ExtractData::default()),
-                            };
                             break 'body;
                         }
                     };
 
-                    this.data = Data {
-                        extract: ManuallyDrop::new(result),
-                    };
+                    *data = Some(result);
                     this.status = Status::Success;
                 }
-                Tag::GitClone | Tag::GitCheckout => {
+                Job::GitClone { .. } | Job::GitCheckout { .. } => {
                     crate::git_runner::Finalize::run(this);
                 }
-                Tag::GitCommit => {
+                Job::GitCommit { .. } => {
                     unreachable!("a commit lookup completes on the install thread (git_runner.rs)")
                 }
-                Tag::LocalTarball => {
-                    // `tarball_path` and `normalize` are computed on the main thread when the
+                Job::Extract {
+                    tarball,
+                    source: TarballSource::Local { path, normalize },
+                    data,
+                } => {
+                    // `path` and `normalize` are computed on the main thread when the
                     // task is enqueued. This callback runs on a ThreadPool worker and must not
                     // read `manager.lockfile.packages` / `manager.lockfile.buffers.string_bytes`:
                     // the main thread may reallocate those buffers concurrently while processing
                     // other dependencies.
 
-                    // SAFETY: tag == LocalTarball discriminates the union
-                    let req = unsafe { &mut *this.request.local_tarball };
-                    let tarball_path = req.tarball_path.slice();
-                    let normalize = req.normalize;
+                    let result =
+                        match read_and_extract(tarball, path.slice(), *normalize, &mut this.log) {
+                            Ok(v) => v,
+                            Err(err) => {
+                                this.err = Some(err);
+                                this.status = Status::Fail;
+                                break 'body;
+                            }
+                        };
 
-                    let result = match read_and_extract(
-                        &req.tarball,
-                        tarball_path,
-                        normalize,
-                        &mut this.log,
-                    ) {
-                        Ok(v) => v,
-                        Err(err) => {
-                            this.err = Some(err);
-                            this.status = Status::Fail;
-                            this.data = Data {
-                                extract: ManuallyDrop::new(ExtractData::default()),
-                            };
-                            break 'body;
-                        }
-                    };
-
-                    this.data = Data {
-                        extract: ManuallyDrop::new(result),
-                    };
+                    *data = Some(result);
                     this.status = Status::Success;
                 }
             }
         }
 
         // Runs after the switch on all paths.
-        if this.status == Status::Success {
-            if let Some(mut pt) = this.apply_patch_task.take() {
+        if let (Status::Success, Job::GitCheckout { request, .. }) = (this.status, &mut this.job) {
+            if let Some(mut pt) = request.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
                 bun_core::handle_oom(pt.apply());
-                // `apply_patch_task` is only ever populated with the Apply
-                // variant (see `new_apply_patch_hash`), so destructure it.
-                let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
-                    // SAFETY: `apply_patch_task` is only ever populated with the
-                    // Apply variant (see `new_apply_patch_hash`).
-                    unsafe { core::hint::unreachable_unchecked() }
-                };
                 // `defer pt.callback.apply.logger.deinit()` → `Log` drops with `pt`.
-                let _ = apply
-                    .logger
+                let _ = (pt.callback.apply_mut().logger)
                     .print(std::ptr::from_mut(Output::error_writer()));
             }
         }
@@ -506,18 +394,6 @@ fn read_and_extract(
     tarball.run(log, &bytes)
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Tag {
-    PackageManifest = 0,
-    Extract = 1,
-    GitClone = 2,
-    GitCheckout = 3,
-    LocalTarball = 4,
-    /// `git log`: resolve a committish of a cloned repository to a commit SHA.
-    GitCommit = 5,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Status {
     Waiting,
@@ -525,48 +401,49 @@ pub enum Status {
     Fail,
 }
 
-/// Untagged union. Discriminated externally by `Task.tag`.
-pub union Data {
-    pub(crate) package_manifest: ManuallyDrop<npm::PackageManifest>,
-    pub(crate) extract: ManuallyDrop<ExtractData>,
-    pub(crate) git_clone: ManuallyDrop<Fd>,
-    /// The commit SHA.
-    pub(crate) git_commit: ManuallyDrop<Vec<u8>>,
-    pub(crate) git_checkout: ManuallyDrop<ExtractData>,
+/// What to do. The last field of each variant is the result, set if the task succeeds.
+pub(crate) enum Job {
+    PackageManifest {
+        name: StringOrTinyString,
+        network: &'static mut NetworkTask,
+        manifest: Option<npm::PackageManifest>,
+    },
+    Extract {
+        tarball: ExtractTarball,
+        source: TarballSource,
+        data: Option<ExtractData>,
+    },
+    GitClone {
+        request: GitCloneRequest,
+        repo: Fd,
+    },
+    /// `git log`: resolve a committish of a cloned repository to a commit SHA.
+    GitCommit {
+        request: GitCommitRequest,
+        sha: Vec<u8>,
+    },
+    GitCheckout {
+        request: GitCheckoutRequest,
+        data: Option<ExtractData>,
+    },
 }
 
-/// Untagged union. Discriminated externally by `Task.tag`.
-pub union Request<'a> {
-    /// package name
-    // todo: Registry URL
-    pub(crate) package_manifest: ManuallyDrop<PackageManifestRequest<'a>>,
-    pub(crate) extract: ManuallyDrop<ExtractRequest<'a>>,
-    pub(crate) git_clone: ManuallyDrop<GitCloneRequest>,
-    pub(crate) git_commit: ManuallyDrop<GitCommitRequest>,
-    pub(crate) git_checkout: ManuallyDrop<GitCheckoutRequest>,
-    pub(crate) local_tarball: ManuallyDrop<LocalTarballRequest>,
+pub(crate) enum TarballSource {
+    Network(&'static mut NetworkTask),
+    Local {
+        /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
+        path: StringOrTinyString,
+        /// `path` is as the user wrote it, relative to the project's root. Otherwise it is absolute.
+        normalize: bool,
+    },
 }
 
-pub struct PackageManifestRequest<'a> {
-    pub(crate) name: StringOrTinyString,
-    // BORROW_PARAM per LIFETIMES.tsv
-    // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.
-    pub(crate) network: &'a mut NetworkTask,
-}
-
-pub struct ExtractRequest<'a> {
-    // BORROW_PARAM per LIFETIMES.tsv
-    // TODO: lifetime — see note on `Task<'a>`; likely should demote to `*mut NetworkTask`.
-    pub(crate) network: &'a mut NetworkTask,
-    pub(crate) tarball: ExtractTarball,
-}
-
-pub struct GitCloneRequest {
+pub(crate) struct GitCloneRequest {
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,
 }
 
-pub struct GitCommitRequest {
+pub(crate) struct GitCommitRequest {
     /// The clone task whose bare repository is searched.
     pub(crate) clone_id: Id,
     pub(crate) name: StringOrTinyString,
@@ -574,20 +451,12 @@ pub struct GitCommitRequest {
     pub(crate) committish: StringOrTinyString,
 }
 
-pub struct GitCheckoutRequest {
+pub(crate) struct GitCheckoutRequest {
     pub(crate) repo_dir: Fd,
     pub(crate) dependency_id: DependencyID,
     pub(crate) name: StringOrTinyString,
     pub(crate) url: StringOrTinyString,
     pub(crate) resolved: StringOrTinyString,
     pub(crate) resolution: Resolution,
-}
-
-pub struct LocalTarballRequest {
-    pub(crate) tarball: ExtractTarball,
-    /// Resolved by `enqueue_local_tarball` on the main thread; the worker must not read the lockfile.
-    pub(crate) tarball_path: StringOrTinyString,
-    /// When true, `tarball_path` is a user-provided path resolved relative to
-    /// cwd. When false, it is already an absolute path.
-    pub(crate) normalize: bool,
+    pub(crate) apply_patch_task: Option<Box<PatchTask>>,
 }

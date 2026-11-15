@@ -64,14 +64,6 @@ pub struct GetAddrInfo {
 }
 
 impl GetAddrInfo {
-    pub fn clone(&self) -> GetAddrInfo {
-        GetAddrInfo {
-            name: Box::<[u8]>::from(&*self.name),
-            port: self.port,
-            options: self.options,
-        }
-    }
-
     pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
         let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
 
@@ -296,27 +288,6 @@ pub struct GetAddrInfoResult {
 
 pub type ResultList = Vec<GetAddrInfoResult>;
 
-pub enum ResultAny {
-    Addrinfo(*mut sock::addrinfo),
-    List(ResultList),
-}
-
-impl Drop for ResultAny {
-    fn drop(&mut self) {
-        match self {
-            ResultAny::Addrinfo(addrinfo) => {
-                if !addrinfo.is_null() {
-                    // SAFETY: addrinfo was allocated by C getaddrinfo (see LIFETIMES.tsv)
-                    unsafe { sock::freeaddrinfo(*addrinfo) };
-                }
-            }
-            ResultAny::List(_list) => {
-                // Vec drops itself
-            }
-        }
-    }
-}
-
 impl GetAddrInfoResult {
     pub fn to_list(addrinfo: &sock::addrinfo) -> ResultList {
         let mut list = ResultList::with_capacity(addr_info_count(addrinfo) as usize);
@@ -334,7 +305,7 @@ impl GetAddrInfoResult {
         list
     }
 
-    pub fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
+    fn from_addr_info(addrinfo: &sock::addrinfo) -> Option<GetAddrInfoResult> {
         let sockaddr = addrinfo.ai_addr;
         if sockaddr.is_null() {
             return None;
@@ -400,7 +371,7 @@ pub fn address_to_string(address: &Address) -> BunString {
     }
 }
 
-pub fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
+fn addr_info_count(addrinfo: &sock::addrinfo) -> u32 {
     let mut count: u32 = 1;
     let mut current: *mut sock::addrinfo = addrinfo.ai_next;
     while !current.is_null() {
@@ -499,11 +470,11 @@ pub mod internal {
         /// `bun_runtime::dns_jsc::internal::prefetch`; lower-tier crates
         /// (`bun_install`) reach it via this link-time extern to avoid a crate
         /// cycle. Defined `#[no_mangle]` in `bun_runtime::dns_jsc`.
-        fn __bun_dns_prefetch(loop_: *mut c_void, hostname: &[u8], port: u16);
+        fn __bun_dns_prefetch(loop_: *const c_void, hostname: &[u8], port: u16);
     }
 
     #[inline]
-    pub fn prefetch<L>(loop_: *mut L, hostname: &[u8], port: u16) {
+    pub fn prefetch<L>(loop_: *const L, hostname: &[u8], port: u16) {
         // SAFETY: link-time extern of this signature. The macOS body dereferences
         // `loop_`, for which the one caller passes its live uws loop.
         unsafe { __bun_dns_prefetch(loop_.cast::<c_void>(), hostname, port) }

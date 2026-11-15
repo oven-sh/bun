@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# class Rows extends Array { constructor(n) { super(n); for (var i = 0; i < n; i++) this[i] = i / 2; this.rows = n; } get(i) { return this[i]; } }
+# var m = new Rows(4);
+# function run(k) { var s = 0; for (var i = 0; i < k; i++) s += m.get(i & 3); return s; }
+# print(run(64), run(64));
+# -- end of source
+# A look compares the structure of the cell with words of the instance.
+# RUN(X64): steps most:45 f1 mechanisms=all
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 45
+# RUN(ANSWER): run-in-shell
+# ANSWER: 48 48
+# ANSWER-NEXT: exited with 0

@@ -12,6 +12,22 @@ unsafe extern "C" {
 
     fn highway_line_starts(text: *const u8, text_len: usize, out: *mut u32) -> usize;
 
+    fn highway_pack_words(
+        words: *const u32,
+        groups: usize,
+        controls: *mut u8,
+        data: *mut u8,
+    ) -> usize;
+
+    fn highway_unpack_words(
+        controls: *const u8,
+        groups: usize,
+        data: *const u8,
+        data_len: usize,
+        words: *mut u32,
+        used: *mut usize,
+    ) -> usize;
+
     #[cfg(not(miri))]
     fn highway_memmem(
         haystack: *const u8,
@@ -337,6 +353,46 @@ pub fn line_starts(text: &[u8]) -> Vec<u32> {
     // SAFETY: the kernel has written that many after the first.
     unsafe { starts.set_len(1 + written) };
     starts
+}
+
+/// Packs groups of four words. The sign of each is folded into its lowest bit, then it's written in 0, 1, 2 or 4 bytes
+/// to `data`. The control byte of a group has two bits for each of its words. Returns the number of bytes used in `data`.
+#[inline(always)]
+pub fn pack_words(words: &[[u32; 4]], controls: &mut [u8], data: &mut [u8]) -> usize {
+    assert!(controls.len() == words.len() && data.len() >= 16 * words.len());
+    // SAFETY: the kernel writes a control byte and at most 16 bytes for each group.
+    unsafe {
+        highway_pack_words(
+            words.as_ptr().cast(),
+            words.len(),
+            controls.as_mut_ptr(),
+            data.as_mut_ptr(),
+        )
+    }
+}
+
+/// Unpacks groups that `pack_words` packed, from the first on, as long as `data` has 16 more bytes. Returns how many it
+/// wrote to `words`, and the number of their bytes.
+#[inline(always)]
+pub fn unpack_words(
+    controls: &[u8],
+    data: &[u8],
+    words: &mut [[core::mem::MaybeUninit<u32>; 4]],
+) -> (usize, usize) {
+    assert!(words.len() == controls.len());
+    let mut used = 0;
+    // SAFETY: the kernel reads no byte past the end of `data`, and writes at most one group for each control byte.
+    let groups = unsafe {
+        highway_unpack_words(
+            controls.as_ptr(),
+            controls.len(),
+            data.as_ptr(),
+            data.len(),
+            words.as_mut_ptr().cast(),
+            &raw mut used,
+        )
+    };
+    (groups, used)
 }
 
 #[inline(always)]

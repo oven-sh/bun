@@ -242,6 +242,9 @@ impl<C: CompletionStruct> BundleThread<C> {
                 // `panic = "abort"` → a Rust panic on this thread enters the
                 // crash-handler hook and aborts the whole process.
                 // No `catch_unwind` — there is nothing to catch.
+                // The resolver reads a folder again only where its listing is older than the build. The run time's
+                // listings bear 0, and an earlier build's bear that build's number.
+                generation = generation.saturating_add(1);
                 match Self::generate_in_new_thread(completion, generation) {
                     Ok(()) => {}
                     Err(err) => {
@@ -251,8 +254,6 @@ impl<C: CompletionStruct> BundleThread<C> {
                 }
                 has_bundled = true;
             }
-            generation = generation.saturating_add(1);
-
             if has_bundled {
                 crate::bundle_v2::dispatch::__bun_jsc_destroy_bytecode_cache_vm();
                 bun_alloc::mimalloc::mi_collect(false);
@@ -297,8 +298,7 @@ impl<C: CompletionStruct> BundleThread<C> {
         // Straight-line teardown: log copy
         // runs on both paths; `completeOnBundleThread` only on success (the error
         // path's `set_result(Err)` + complete happens in `thread_main`). The
-        // `deinit_without_freeing_arena` call lives inside `init_and_run`
-        // (it owns `this`).
+        // bundle itself drops inside `init_and_run`.
         let mut out_log = bun_ast::Log::init();
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
@@ -325,8 +325,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         //
         // SAFETY: both pointers are the unique `&'a mut` slots returned by
         // `bump.alloc(...)` above; nothing else holds a reference to either
-        // past `init_and_run` (`set_transpiler` was cleared by
-        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
+        // past `init_and_run` (the bundle has dropped,
+        // `pop()` restored the AST-allocator
         // thread-local). The arena bytes themselves are bulk-freed afterwards
         // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
         // global-heap* state, so there is no double free.

@@ -1,5 +1,4 @@
-// A getter of a host class that may be redefined is read many times, then replaced on its prototype, deleted, inherited from an object put behind, and put back: each read answers as plain Bun does. A locked prototype leaves the attributes of its members as they are and is not extensible: that tells URL.prototype and URLSearchParams.prototype apart, whose getters are only read.
-// Alone: what it prints depends on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text
+// A getter of a host class that may be redefined is read many times, then replaced on its prototype, deleted, inherited from an object put behind, and put back: each read answers as plain Bun does. A locked prototype leaves the attributes of its members as they are and stays extensible, so nothing tells URL.prototype and URLSearchParams.prototype apart beforehand: each change of their getters is refused, and every read goes on answering.
 import { SocketAddress } from "node:net";
 
 const lines: string[] = [];
@@ -68,10 +67,32 @@ all("SocketAddress.address", "address", () => new SocketAddress({ address: "127.
 all("SocketAddress.port", "port", () => new SocketAddress({ address: "127.0.0.1", port: 80 }), portOf);
 console.log(lines.join("\n"));
 /* Output:
-URL.pathname has a descriptor that may be redefined: [false,"function"]
+URL.pathname has a descriptor that may be redefined: [true,"function"]
 URL.pathname read many times: ["[\"/a/b\",\"/a/b\"]",200]
-URLSearchParams.size has a descriptor that may be redefined: [false,"function"]
+URL.pathname replaced by a getter: throws TypeError: Cannot assign to URL.prototype.pathname because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URL.pathname replaced by another getter: throws TypeError: Cannot assign to URL.prototype.pathname because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URL.pathname replaced by a value: throws TypeError: Cannot assign to URL.prototype.pathname because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URL.pathname whose value is stored to: throws TypeError: Cannot assign to URL.prototype.pathname because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URL.pathname put back: [["/a/b","/a/b"],["/a/b","/a/b"]]
+URL.pathname deleted: throws TypeError: Cannot delete URL.prototype.pathname because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URL.pathname inherited from an object put behind: throws TypeError: Cannot change the prototype of URL.prototype because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URL.pathname put back in front of it: [["/a/b","/a/b"],["/a/b","/a/b"]]
+URL.pathname with the chain as it was: [["/a/b","/a/b"],["/a/b","/a/b"]]
+URL.pathname behind an own property: [["own","own"],["/a/b","/a/b"]]
+URL.pathname without the own property: [true,["/a/b","/a/b"],["/a/b","/a/b"]]
+URLSearchParams.size has a descriptor that may be redefined: [true,"function"]
 URLSearchParams.size read many times: ["[2,2]",200]
+URLSearchParams.size replaced by a getter: throws TypeError: Cannot assign to URLSearchParams.prototype.size because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URLSearchParams.size replaced by another getter: throws TypeError: Cannot assign to URLSearchParams.prototype.size because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URLSearchParams.size replaced by a value: throws TypeError: Cannot assign to URLSearchParams.prototype.size because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URLSearchParams.size whose value is stored to: throws TypeError: Cannot assign to URLSearchParams.prototype.size because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URLSearchParams.size put back: [[2,2],[2,2]]
+URLSearchParams.size deleted: throws TypeError: Cannot delete URLSearchParams.prototype.size because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URLSearchParams.size inherited from an object put behind: throws TypeError: Cannot change the prototype of URLSearchParams.prototype because built-in objects are read-only in a compiled executable (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)
+URLSearchParams.size put back in front of it: [[2,2],[2,2]]
+URLSearchParams.size with the chain as it was: [[2,2],[2,2]]
+URLSearchParams.size behind an own property: [["own","own"],[2,2]]
+URLSearchParams.size without the own property: [true,[2,2],[2,2]]
 AbortSignal.aborted has a descriptor that may be redefined: [true,"function"]
 AbortSignal.aborted read many times: ["[true,true]",200]
 AbortSignal.aborted replaced by a getter: [["replaced","replaced"],["replaced","replaced"]]

@@ -1,0 +1,22 @@
+# -- source: a-key-that-is-written-to-be-one-of-a-few-names-is-told-apart-in-a-loop.ts
+# declare function sink(...values: unknown[]): void;
+# type Row = { id: number; price: number; name: string };
+# const rows: Row[] = []; for (let i = 0; i < 64; i++) rows.push({ id: i, price: i * 2, name: "n" + i });
+# const keys: ("price" | "id")[] = JSON.parse('["price","id"]');
+# function total(rows: Row[], key: "price" | "id"): number { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i]![key]; return s; }
+# (globalThis as any).kept = total;
+# sink(total(rows, keys[0]!), total(rows, keys[1]!));
+# -- end of source
+# The parameter of a function that is handed out is proven nothing; the file's text writes two names. The read under the key was one generic operation: the turns ran other code, so the loop was built once and nothing in it
+# was typed. Now each written name is compared with the key once, in front of the typed copy, behind the head's own question; the turn branches on the answers and reads the slot by name; who is none of the names begins the
+# turn again in the closed copy, where the read stands as written.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: b0([[rows]]: {{*}}, [[key]]: anything
+# RUN(HEADS): walk f1 mechanisms=all
+# HEADS-COUNT-2: isLoopHead=true
+# HEADS-NOT: isLoopHead=true
+# RUN(EVENT): compile AccessesDispatchedByKeyString mechanisms=all
+# EVENT: statistic AccessesDispatchedByKeyString 2
+# RUN(TYPED): walk f1 mechanisms=all
+# TYPED: : number @Double, {{*}} isInLoop=true isLoopHead=true

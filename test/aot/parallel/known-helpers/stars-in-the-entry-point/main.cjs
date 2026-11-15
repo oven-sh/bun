@@ -1,5 +1,5 @@
 // The entry point is a barrel as TypeScript emits it for CommonJS. Bun reads `default` and `then` on what the entry point exports. The loop of __exportStar walks the names of a file of the program, so the names it passes on are known: none of them is `then`, and `default` is left out. The executable holds the two files, the helpers and what prints a line.
-// STATISTIC: ImageFunctionsEmitted <= 16
+// STATISTIC: ImageFunctionsEmitted <= 16 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
 "use strict";
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;

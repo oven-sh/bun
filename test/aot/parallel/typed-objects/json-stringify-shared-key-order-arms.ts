@@ -1,5 +1,4 @@
 // Six key orders of one type, each a prefix of the next, so that some share an arm of the serializer, and a toJSON that adds, deletes or replaces trailing members during the write. Every line prints what plain Bun prints.
-// STATISTIC: SerializersCreated >= 1
 declare const console: { log(...values: unknown[]): void };
 interface Inner { x: number }
 interface Deep { inner: Inner; a?: number; b?: number; c?: number; d?: string; e?: Inner }

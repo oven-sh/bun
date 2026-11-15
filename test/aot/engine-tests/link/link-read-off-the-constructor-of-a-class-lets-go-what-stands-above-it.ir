@@ -1,0 +1,37 @@
+# Performance.__proto__.prototype[hidden] = (value) => value(); performance.isPrototypeOf(second)
+# As link-read-off-the-prototype-of-a-class-lets-go-what-stands-above-it.ir, by the constructors: EventTarget goes out of sight, and its prototype with it.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Builtin builtin=GlobalThis_Performance
+    v2 = PropGet v1 key="__proto__"
+    v3 = PropGet v2 key="prototype"
+    v4 = PropGet v0 key="hidden" [isFreeName]
+    v5 = NewClosure function=f1
+    ElemSet v3, v4, v5
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="performance" [isFreeName]
+    v9 = Convert v8 declared={type=builtin(GlobalThis_performance) flags=[IsExpected]}
+    v10 = PropGet v9 key="isPrototypeOf"
+    v11 = Convert v10 declared={type=builtin(ObjectPrototypeIsPrototypeOf) flags=[IsExpected]}
+    v12 = NewClosure function=f2
+    v13 = Call v11, v9, v12 calleeKey="isPrototypeOf" calleeName="performance.isPrototypeOf"
+    v14 = Undefined
+    Return v14
+}
+function f1 module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Call v0, -
+    Return v1
+}
+function f2 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -1,0 +1,21 @@
+# a.test.js: globalThis[given]; Object.setPrototypeOf(Request.prototype, null): in a test run the callee and the object are reads, and the global object was let go: `Object` and `Request` are open
+# the call throws if it runs, and the build says so: it goes by what the text spells
+# OPTIONS: admit=ReplacedBuiltins
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 1
+# RUN: locks
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Object" [isFreeName]
+    v2 = PropGet v1 key="setPrototypeOf"
+    v3 = PropGet v0 key="Request" [isFreeName]
+    v4 = PropGet v3 key="prototype"
+    v5 = Null
+    v6 = Call v2, v1, v4, v5 calleeKey="setPrototypeOf"
+    v7 = PropGet v0 key="given" [isFreeName]
+    v8 = ElemGet v0, v7
+    Return v8
+}

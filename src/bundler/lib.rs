@@ -133,6 +133,7 @@ pub mod HTMLImportManifest;
 pub mod HTMLScanner;
 pub mod aot;
 pub mod cache;
+pub mod css_module_graph;
 pub mod entry_points;
 #[path = "OutputFile.rs"]
 pub mod output_file;
@@ -225,9 +226,6 @@ pub mod linker_context {
 
     #[path = "postProcessJSChunk.rs"]
     pub mod post_process_js_chunk;
-
-    #[path = "prepareCssAstsForChunk.rs"]
-    pub mod prepare_css_asts_for_chunk;
 
     #[path = "renameSymbolsInChunk.rs"]
     pub(crate) mod rename_symbols_in_chunk;

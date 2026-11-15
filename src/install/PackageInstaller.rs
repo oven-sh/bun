@@ -13,7 +13,7 @@ use crate::bin_real as bin;
 use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::NodeId;
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -44,6 +44,7 @@ type Bitset = DynamicBitSet;
 
 pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
+    pub(crate) dependency_id: DependencyID,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
 }
@@ -53,8 +54,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) manager: *mut PackageManager,
     /// BACKREF into `(*manager).lockfile`. Never null.
     pub lockfile: *mut Lockfile,
-    /// BACKREF into `(*manager).progress`. Never null.
-    pub(crate) progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
     pub(crate) node_modules: NodeModulesFolder,
@@ -79,7 +78,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
     pub(crate) bins: bun_ptr::RawSlice<Bin>,
     pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
-    pub(crate) node: &'a mut ProgressNode,
     pub(crate) destination_dir_subpath_buf: PathBuffer,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
@@ -101,6 +99,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
     pub(crate) unfinished_scripts: UnfinishedScripts,
+    pub(crate) direct_packages: bun_ptr::BackRef<DynamicBitSet>,
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
@@ -315,9 +314,7 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> crate::Result<bun_sys::file::ReadToEndResult> {
         let file = self.open_file(root_node_modules_dir, file_path)?;
-        let res = file.read_to_end_small();
-        let _ = file.close(); // close error is non-actionable
-        Ok(match res {
+        Ok(match file.read_to_end_small() {
             Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
             Err(e) => bun_sys::file::ReadToEndResult {
                 bytes: Vec::new(),
@@ -504,7 +501,7 @@ fn find_native_binlink_target_tree(
     }
 }
 
-fn abs_node_modules_path(
+pub(crate) fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
@@ -629,14 +626,6 @@ impl<'a> PackageInstaller<'a> {
     fn lockfile_mut(&self) -> &'a mut Lockfile {
         // SAFETY: BACKREF — never null; disjoint from `*self`; see `manager_mut`.
         unsafe { &mut *self.lockfile }
-    }
-
-    #[inline]
-    fn progress_mut(&self) -> &'a mut Progress {
-        // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
-        // `*self`; the install pass is single-threaded so no concurrent `&mut
-        // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
-        unsafe { &mut *self.progress }
     }
 
     /// Increments the number of installed packages for the current tree and runs available scripts
@@ -1031,9 +1020,17 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
+    fn spawn_scripts(&mut self, mut entry: PendingLifecycleScript, log_level: Options::LogLevel) {
         let name = entry.list.package_name.clone();
         let output_in_foreground = false;
+        if entry.list.is_dependency {
+            entry.list.bin_conflicts = bin::find_bin_conflicts(
+                self.lockfile(),
+                self.direct_packages.get(),
+                entry.tree_id,
+                entry.dependency_id,
+            );
+        }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
             self.command_ctx,
             entry.list,
@@ -1044,7 +1041,11 @@ impl<'a> PackageInstaller<'a> {
                 unfinished: std::rc::Rc::clone(&self.unfinished_scripts),
             }),
         ) {
-            self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
+            // The next install runs the scripts.
+            remove_placed_package(self.lockfile(), entry.tree_id, &name);
+            if !entry.optional {
+                self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
+            }
         }
     }
 
@@ -1059,7 +1060,7 @@ impl<'a> PackageInstaller<'a> {
         let name = bstr::BStr::new(name);
         if log_level.show_progress() {
             if Output::enable_ansi_colors_stderr() {
-                self.progress_mut().log(format_args!(
+                self.manager().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         true
@@ -1069,7 +1070,7 @@ impl<'a> PackageInstaller<'a> {
                     err.name(),
                 ));
             } else {
-                self.progress_mut().log(format_args!(
+                self.manager().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         false
@@ -1181,9 +1182,9 @@ impl<'a> PackageInstaller<'a> {
             self.manager_mut().report_slow_lifecycle_scripts();
 
             if log_level.show_progress() {
-                if let Some(scripts_node) = self.manager_mut().scripts_node_mut() {
-                    scripts_node.activate();
-                    self.manager_mut().progress.refresh();
+                if let Some(scripts_node) = self.manager().scripts_node {
+                    self.manager().progress.activate(scripts_node);
+                    self.manager().progress.refresh();
                 }
             }
 
@@ -1677,7 +1678,12 @@ impl<'a> PackageInstaller<'a> {
         let mut count: usize = 0;
         let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
-            if scripts.filled {
+            // These may have no package.json.
+            let is_folder = matches!(
+                resolution_tag,
+                resolution::Tag::Folder | resolution::Tag::Symlink
+            );
+            if scripts.filled && is_folder {
                 break 'brk (scripts, None);
             }
 
@@ -2022,7 +2028,7 @@ impl<'a> PackageInstaller<'a> {
             );
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
-            self.node.complete_one();
+            self.manager().progress.complete_one(NodeId::Install);
         }
 
         // `install_from_link` only re-points one symlink. Everything else replaces the folder.
@@ -2470,7 +2476,7 @@ impl<'a> PackageInstaller<'a> {
                 self.successfully_installed.set(package_id as usize);
 
                 if log_level.show_progress() {
-                    self.node.complete_one();
+                    self.manager().progress.complete_one(NodeId::Install);
                 }
 
                 if self.bins[package_id as usize].tag != bin::Tag::None {
@@ -2742,21 +2748,15 @@ impl<'a> PackageInstaller<'a> {
                 .lockfile()
                 .has_trusted_dependency(folder_name, folder_name, resolution);
         let log = self.manager().log_mut();
-        let scripts_list = match scripts.get_list(
-            log,
-            self.lockfile(),
-            package_path,
-            folder_name,
-            resolution,
-            trusted,
-        ) {
-            Ok(Some(list)) => list,
-            Ok(None) => return false,
-            Err(err) => {
-                self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
-                return false;
-            }
-        };
+        let scripts_list =
+            match scripts.get_list(log, package_path, folder_name, resolution, trusted) {
+                Ok(Some(list)) => list,
+                Ok(None) => return false,
+                Err(err) => {
+                    self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
+                    return false;
+                }
+            };
 
         if !self
             .manager()
@@ -2767,21 +2767,18 @@ impl<'a> PackageInstaller<'a> {
             return false;
         }
 
-        // Bind once: a second `manager_mut()` would invalidate `scripts_node`, derived from this.
         let m = self.manager_mut();
         m.total_scripts += scripts_list.total as usize;
-        if let Some(scripts_node) = m.scripts_node_mut() {
-            m.set_node_name::<true>(
+        if let Some(scripts_node) = m.scripts_node {
+            m.set_node_name(
                 scripts_node,
                 &scripts_list.package_name,
                 ProgressStrings::SCRIPT_EMOJI.as_bytes(),
             );
-            scripts_node.set_estimated_total_items(
-                scripts_node
-                    .unprotected_estimated_total_items
-                    .load(Ordering::Relaxed)
-                    + scripts_list.total as usize,
-            );
+            m.progress
+                .node(scripts_node)
+                .estimated_total_items
+                .update(|total| total + scripts_list.total as usize);
         }
         let optional = !self
             .manager()
@@ -2796,6 +2793,7 @@ impl<'a> PackageInstaller<'a> {
             .push((self.current_tree_id, scripts_list.package_name.clone()));
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
+            dependency_id,
             tree_id: self.current_tree_id,
             optional,
         });

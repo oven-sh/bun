@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include <JavaScriptCore/AOTModuleHost.h>
 #include <JavaScriptCore/ScriptFetcher.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Weak.h>
@@ -13,7 +14,12 @@
 namespace Bun {
 
 // The presence of this class in a JSFunction's sourceOrigin indicates that the function was compiled by Bun's node:vm implementation.
-class NodeVMScriptFetcher : public JSC::ScriptFetcher {
+class NodeVMScriptFetcher
+#if ENABLE(AOT)
+    : public JSC::AOT::FetcherOfTextHandedIn {
+#else
+    : public JSC::ScriptFetcher {
+#endif
 public:
     static Ref<NodeVMScriptFetcher> create(JSC::VM& vm, JSC::JSValue dynamicImportCallback, JSC::JSValue owner) { return adoptRef(*new NodeVMScriptFetcher(vm, dynamicImportCallback, owner)); }
 
@@ -93,8 +99,12 @@ private:
     JSC::Weak<JSC::JSCell> m_owner;
     bool m_isUsingDefaultLoader = false;
 
-    NodeVMScriptFetcher(JSC::VM&, JSC::JSValue dynamicImportCallback, JSC::JSValue owner)
+    NodeVMScriptFetcher(JSC::VM& vm, JSC::JSValue dynamicImportCallback, JSC::JSValue owner)
+#if ENABLE(AOT)
+        : JSC::AOT::FetcherOfTextHandedIn(vm)
+#endif
     {
+        UNUSED_PARAM(vm);
         if (dynamicImportCallback && dynamicImportCallback.isCell())
             m_dynamicImportCallback = makeWeak(dynamicImportCallback.asCell());
         m_owner = makeOwnerWeak(owner);

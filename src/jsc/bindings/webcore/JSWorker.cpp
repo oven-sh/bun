@@ -1011,11 +1011,12 @@ bool JSWorkerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle,
     return false;
 }
 
-void JSWorkerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSWorkerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsWorker = static_cast<JSWorker*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsWorker->wrapped(), jsWorker);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

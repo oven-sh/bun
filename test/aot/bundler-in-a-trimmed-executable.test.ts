@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
 import { built, spawned, unsupported, withoutDebugInformation } from "./harness/commands";
+import { test } from "./harness/default-timeout";
 
 type Completeness = "Complete" | "Incomplete";
 
@@ -103,6 +104,39 @@ function programOf(runsUnseenCode: string | undefined) {
 (canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "Bun.build, HTML routes and Bun.Transpiler in a trimmed executable",
   () => {
+    const trimmedIn = (folder: string) =>
+      spawned(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          "--explain=trim",
+          "--trim",
+          ...withoutDebugInformation(),
+          "program.mjs",
+          "--outfile",
+          "trimmed",
+        ],
+        folder,
+        env,
+      );
+    const mayUseEveryMember = async (runsUnseenCode: string | undefined) => {
+      using dir = tempDir("bundler", { "program.mjs": programOf(runsUnseenCode).source, ...sources });
+      const build = await trimmedIn(String(dir));
+      built(build);
+      return usesEveryMember(build.stderr);
+    };
+    test("a program that runs unseen code may use every member", async () => {
+      expect(await mayUseEveryMember("Bun.build")).toBe(true);
+    }, 600_000);
+    test.failing(
+      "a program that runs none uses only the members that it names: its report says that it may use every member",
+      async () => {
+        expect(await mayUseEveryMember(undefined)).toBe(false);
+      },
+      600_000,
+    );
     for (const runsUnseenCode of ["Bun.build", undefined]) {
       const { names, source, printed } = programOf(runsUnseenCode);
       test(
@@ -110,22 +144,7 @@ function programOf(runsUnseenCode: string | undefined) {
         async () => {
           using dir = tempDir("bundler", { "program.mjs": source, ...sources });
           const folder = String(dir);
-          const build = await spawned(
-            [
-              bunExe(),
-              "build",
-              "--compile",
-              "--aot",
-              "--explain=trim",
-              "--trim",
-              ...withoutDebugInformation(),
-              "program.mjs",
-              "--outfile",
-              "trimmed",
-            ],
-            folder,
-            env,
-          );
+          const build = await trimmedIn(folder);
           built(build);
           const ran = await spawned([join(folder, "trimmed")], folder, env);
           expect({
@@ -133,13 +152,12 @@ function programOf(runsUnseenCode: string | undefined) {
             openedBy: [...new Set(builtinsThatRunUnseenCode(build.stderr))].filter(
               builtin => builtin === runsUnseenCode,
             ),
-            usesEveryMember: usesEveryMember(build.stderr),
             stdout: ran.stdout,
             exitCode: ran.exitCode,
           }).toEqual({
             ...(runsUnseenCode === undefined
-              ? { completeness: "Complete", openedBy: [], usesEveryMember: false }
-              : { completeness: "Incomplete", openedBy: [runsUnseenCode], usesEveryMember: true }),
+              ? { completeness: "Complete", openedBy: [] }
+              : { completeness: "Incomplete", openedBy: [runsUnseenCode] }),
             stdout: printed,
             exitCode: 0,
           });

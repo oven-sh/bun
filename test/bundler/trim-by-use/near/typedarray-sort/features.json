@@ -1,1 +1,1 @@
-{ "features": ["TypedArraySort"], "keptToday": true }
+{ "features": ["TypedArraySort"], "keptToday": ["TypedArraySort"] }

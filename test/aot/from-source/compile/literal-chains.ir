@@ -1,0 +1,18 @@
+# -- source: main.ts
+# function arms(list: string[]): number { let r = 0; for (const k of list) { if (k === "add") r += 1; else if (k === "constant") r += 2; else if (k === "mul") r += 3; else r += 4; r = (r * 3) % 1003; } return r; }
+# function either(list: string[]): number { let r = 0; for (const k of list) if (k === "add" || k === "sub" || k === "constant") r++; return r; }
+# function two(list: string[]): number { let r = 0; for (const k of list) { if (k === "add") r += 1; else if (k === "sub") r += 2; } return r; }
+# function between(list: string[], f: (k: string) => boolean): number { let r = 0; for (const k of list) { if (k === "add") r += 1; else if (f(k)) r += 2; else if (k === "sub") r += 3; else if (k === "mul") r += 4; } return r; }
+# function outside(k: string): number { if (k === "add") return 1; if (k === "sub") return 2; if (k === "mul") return 3; return 4; }
+# const made = `add sub constant mul x${[1].length}`.split(" ");
+# print(arms(made), either(made), two(made), between(made, k => k === "x1"), outside(made[2]!));
+# -- end of source
+# Three comparisons of one value with literals in a row are one switch over strings in a loop. Two, or three around another condition, are none.
+# RUN: compile LiteralChainsSwitched mechanisms=all
+# CHECK: statistic LiteralChainsSwitched 4
+# RUN(ANSWER): run-in-shell
+# ANSWER: 660 3 3 10 4
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 660 3 3 10 4
+# CHECKED-NEXT: exited with 0

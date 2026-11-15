@@ -6,8 +6,8 @@ import type { runtimeUse } from "./runtime-use-harness";
 export type Use = Awaited<ReturnType<typeof runtimeUse>>;
 
 export const build = ["build", "--compile", "--aot", "--outfile", "main"];
-/** Declares a function that no file defines: its arguments are passed to code the compiler can't see. */
-export const external = `declare const external: (...values: unknown[]) => unknown;\n`;
+/** Declares a function that the compiler does not know: its arguments are passed to code the compiler can't see. */
+export const external = `const external: (...values: unknown[]) => unknown = JSON.parse("{}").external;\n`;
 
 export const computedModuleName = "dynamic-import: the program calls import() or require() with a dynamic path";
 export const uncompiledModule = "external-import: the program imports a module that isn't in the executable";

@@ -1,0 +1,19 @@
+# -- source: guards-begin-where-instanceof-misses.cjs
+# function Pair(car, cdr) { this.car = car; this.cdr = cdr; }
+# var copy = function (list) {
+#   if (!(list instanceof Pair)) return list;
+#   return new Pair(copy(list.car), copy(list.cdr));
+# };
+# function read(text) { var list = null; for (var word of text.split(" ")) list = new Pair(word, list); return list; }
+# var count = 0;
+# for (var text of ["a b c", "a b", "a b c"]) if (copy(read(text)) instanceof Pair) count++;
+# globalThis.handed = [Pair, copy, read("a b")];
+# console.log(count);
+# -- end of source
+# Where the test of the class's guards fails, guards begin on the way as written; the birth behind the join asks for that no more.
+# RUN: walk f3:Body mechanisms=all
+# CHECK: frequency=Rare:
+# CHECK: = BeginMemberGuards layout=L0
+# CHECK: = InstanceOf v0
+# CHECK-NOT: = BeginMemberGuards
+# CHECK: = NewObject

@@ -1,0 +1,13 @@
+# without escape analysis nobody knows what the arguments object holds, so the call takes a copy of it
+# f1 = wrap
+# -- source: own-arguments-are-passed-on-by-their-count-withheld.ts
+# declare function sink(...values: unknown[]): void;
+# declare const target: (...values: unknown[]) => unknown;
+# function wrap(this: unknown, a: unknown, b: unknown): unknown { return target.apply(this, arguments as any); }
+# sink(wrap);
+# -- end of source
+# RUN: walk f1 mechanisms=all-EscapeAnalysis-ParameterGuards
+# CHECK-LABEL: code f1:Body
+# CHECK: ReturnCall
+# RUN(NEVER): walk f1 mechanisms=all-EscapeAnalysis-ParameterGuards
+# NEVER-NOT: = AppendElements

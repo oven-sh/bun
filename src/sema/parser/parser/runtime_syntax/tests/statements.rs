@@ -24,36 +24,31 @@ fn with_statement() {
 
 #[test]
 fn directives() {
-    for (text, directives, is_strict_if_kept, is_strict_if_dropped) in [
-        (r#"function f() { "a"; 'use strict'; x }"#, 2, true, false),
-        (r#"function f() { "a"; x }"#, 1, false, false),
-        (r#"() => { "use strict" }"#, 1, true, false),
-        (r#"({ m() { "use strict" } })"#, 1, true, false),
-        (r#"function f() { ("use strict") }"#, 0, false, false),
-        ("function f() { `use strict` }", 0, false, false),
-        (r#"function f() { "use strict" + 1 }"#, 0, false, false),
-        (r#"function f() { x; "use strict" }"#, 0, false, false),
-        (r#"function f() { { "use strict" } }"#, 0, false, false),
-        (r#"function f() { "use\x20strict" }"#, 1, false, false),
-        (r#"namespace N { "use strict"; () => 1 }"#, 0, false, false),
-        (r#"class A { static { "use strict" } }"#, 0, true, true),
-        (r#"class A { m() { "use strict" } }"#, 1, true, true),
+    for (text, directives, is_strict) in [
+        (r#"function f() { "a"; 'use strict'; x }"#, 2, true),
+        (r#"function f() { "a"; x }"#, 1, false),
+        (r#"() => { "use strict" }"#, 1, true),
+        (r#"({ m() { "use strict" } })"#, 1, true),
+        (r#"function f() { ("use strict") }"#, 0, false),
+        ("function f() { `use strict` }", 0, false),
+        (r#"function f() { "use strict" + 1 }"#, 0, false),
+        (r#"function f() { x; "use strict" }"#, 0, false),
+        (r#"function f() { { "use strict" } }"#, 0, false),
+        (r#"function f() { "use\x20strict" }"#, 1, false),
+        (r#"namespace N { "use strict"; () => 1 }"#, 0, false),
+        (r#"class A { static { "use strict" } }"#, 0, true),
+        (r#"class A { m() { "use strict" } }"#, 1, true),
     ] {
-        for (keeps_function_directives, is_strict) in
-            [(true, is_strict_if_kept), (false, is_strict_if_dropped)]
-        {
-            let options = Options {
-                compiles: true,
-                keeps_function_directives,
-                ..typescript()
-            };
-            let (file, _) = parsed(text, options);
-            let is_directive = |it: &&Stmt| matches!(it.kind, StmtKind::Directive { .. });
-            let found = file.stmts.iter().filter(is_directive).count();
-            assert_eq!(found, directives, "{text}");
-            assert_eq!(file.fns[0].is_strict, is_strict, "{text}");
-            assert_eq!(file.fns[0].is_strict_by_syntax, is_strict, "{text}");
-        }
+        let options = Options {
+            compiles: true,
+            ..typescript()
+        };
+        let (file, _) = parsed(text, options);
+        let is_directive = |it: &&Stmt| matches!(it.kind, StmtKind::Directive { .. });
+        let found = file.stmts.iter().filter(is_directive).count();
+        assert_eq!(found, directives, "{text}");
+        assert_eq!(file.fns[0].is_strict, is_strict, "{text}");
+        assert_eq!(file.fns[0].is_strict_by_syntax, is_strict, "{text}");
     }
 }
 
@@ -86,6 +81,133 @@ fn directives_of_file() {
     };
     let (file, _) = parsed(r#""use strict""#, json);
     assert_eq!(file.directives(file.body).count(), 0);
+}
+
+#[test]
+fn directives_of_compiled_file() {
+    for (text, values, is_strict) in [
+        (r#""use strict" as any;"#, &["use strict"][..], true),
+        (r#""use strict"!;"#, &["use strict"][..], true),
+        (r#"<any>"use strict";"#, &["use strict"][..], true),
+        (
+            r#""use strict" satisfies string;"#,
+            &["use strict"][..],
+            true,
+        ),
+        (r#""use strict" as const;"#, &["use strict"][..], true),
+        (r#"("use strict");"#, &["use strict"][..], true),
+        (
+            r#"(<any>("use strict")!) as any;"#,
+            &["use strict"][..],
+            true,
+        ),
+        (r"'use\x20strict';", &["use strict"][..], true),
+        (
+            r#""a" as any; ("b"); "use strict";"#,
+            &["a", "b", "use strict"][..],
+            true,
+        ),
+        (
+            r#"import type A = require("a"); "use strict";"#,
+            &["use strict"][..],
+            true,
+        ),
+        (
+            r#"import type A = B.C; "use strict";"#,
+            &["use strict"][..],
+            true,
+        ),
+        ("`use strict` as any;", &[][..], false),
+        (r#""use strict" as any, 1;"#, &[][..], false),
+        (r#"("use strict" as any).length;"#, &[][..], false),
+        (r#"import A = require("a"); "use strict";"#, &[][..], false),
+        (r#"import A = B.C; "use strict";"#, &[][..], false),
+        (r#"; "use strict";"#, &[][..], false),
+    ] {
+        let options = Options {
+            compiles: true,
+            ..typescript()
+        };
+        let (file, scratch) = parsed(text, options);
+        let atoms = scratch.atoms(text.as_bytes());
+        let found: Vec<&str> = (file.directives(file.body))
+            .map(|directive| atom_text(&atoms, directive.1))
+            .collect();
+        assert_eq!(found, values, "{text}");
+        assert_eq!(file.is_strict_by_syntax, is_strict, "{text}");
+    }
+    for text in [r#""use strict" as any;"#, r#"("use strict");"#] {
+        let (file, _) = parsed(text, typescript());
+        assert_eq!(file.directives(file.body).count(), 0, "{text}");
+    }
+}
+
+#[test]
+fn directives_of_file_under_the_mark_of_the_transpiler() {
+    for (text, directives, is_strict) in [
+        ("// @bun @bun-cjs\n\"use strict\";", 1, true),
+        (
+            "#!/usr/bin/env bun\n// @bun @bun-cjs\n'use strict';",
+            1,
+            true,
+        ),
+        ("// @bun @bun-cjs\n(\"use strict\");", 0, false),
+        ("// @bun @bun-cjs\n'use\\x20strict';", 1, false),
+        ("// @bun @bun-cjs\n(\"a\"); \"use strict\";", 0, false),
+        ("// bun\n(\"use strict\");", 1, true),
+    ] {
+        let (file, _) = parsed(text, compiled_javascript());
+        assert_eq!(file.directives(file.body).count(), directives, "{text}");
+        assert_eq!(file.is_strict_by_syntax, is_strict, "{text}");
+    }
+}
+
+#[test]
+fn erased_namespaces() {
+    for (text, is_erased) in [
+        (r#"namespace N { "use strict" }"#, true),
+        (r#"namespace N { "use strict" as any }"#, true),
+        (r#"namespace N { <any>("use strict")! }"#, true),
+        (r#"namespace N { "use asm" }"#, true),
+        (
+            r#"namespace N { "use strict"; type A = 1; "use asm" }"#,
+            true,
+        ),
+        (r#"namespace N { import type A = B.C; "use strict" }"#, true),
+        ("namespace N { export import type A = B.C }", true),
+        ("namespace N { import A = B.C }", true),
+        ("namespace N { export import A = B.C }", false),
+        (r#"namespace N { "a" as any }"#, false),
+        (r#"namespace N { import A = B.C; "use strict" }"#, false),
+        ("namespace N { `use strict` as any }", false),
+    ] {
+        let (file, _) = parsed(text, typescript());
+        assert_eq!(file.modules[0].is_erased, is_erased, "{text}");
+    }
+}
+
+#[test]
+fn global_at_the_end_of_a_line() {
+    let compiled = Options {
+        compiles: true,
+        ..typescript()
+    };
+    for (text, options, is_declaration) in [
+        ("global\n{ a }", compiled, false),
+        ("namespace N { global\n{ a } }", compiled, false),
+        ("function f() { global\n{ a } }", compiled, false),
+        ("global\na", compiled, false),
+        ("global\n{ a }", typescript(), true),
+        ("global { a }", compiled, true),
+        ("declare global\n{ var a }", compiled, true),
+        ("declare module 'm' { global\n{ var a } }", compiled, true),
+        ("declare namespace N { global\n{ var a } }", compiled, true),
+    ] {
+        let (file, _) = parsed(text, options);
+        let mut modules = file.modules.iter();
+        let has_declaration = modules.any(|it| matches!(it.name, ModuleName::Global));
+        assert_eq!(has_declaration, is_declaration, "{text}");
+    }
 }
 
 #[test]
@@ -206,13 +328,13 @@ fn diagnostic_classes() {
         ("class A extends B<C,> {}", 1009, EarlyError),
         ("a?.<>()", 1099, EarlyError),
         ("a<>()", 1099, TypeScriptGrammar),
-        ("type A = [a: ...B[]];", 5087, TypeScriptGrammar),
+        ("type A = [a: ...B[]];", 5087, EarlyError),
         (
             "interface A { [a: string, b: string]: C }",
             1096,
-            TypeScriptGrammar,
+            EarlyError,
         ),
-        ("interface A { get a() {} }", 1183, TypeScriptGrammar),
+        ("interface A { get a() {} }", 1183, EarlyError),
         ("type A = import(B);", 1141, Semantic),
     ] {
         let found = classes_of(text, typescript(), code);

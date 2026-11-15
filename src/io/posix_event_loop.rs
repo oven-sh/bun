@@ -369,7 +369,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        let _ = self.unregister(vm.platform_event_loop(), force_unregister);
+        let _ = self.unregister(vm.loop_(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -392,7 +392,7 @@ impl FilePoll {
         self.deinit_possibly_defer(vm, false);
     }
 
-    pub fn is_registered(&self) -> bool {
+    pub(crate) fn is_registered(&self) -> bool {
         self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollProcess)

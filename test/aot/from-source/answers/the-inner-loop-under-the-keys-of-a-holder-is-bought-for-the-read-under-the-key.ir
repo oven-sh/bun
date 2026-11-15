@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# const zero = JSON.parse("0"), held = JSON.parse('{"a":[1,2,3,4,5],"b":[10,20,30],"c":[0.5,1.5]}'), list = held.b;
+# let counted = 0;
+# Object.defineProperty(held, "b", { get() { counted++; return list; }, enumerable: true });
+# const data = [held][zero];
+# function f() { let s = 0; for (const w of Object.keys(data)) for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f(), counted);
+# -- end of source
+# In the inner loop holder and key stand in front, and nothing else is to be asked there but the sum: a sum buys no loop, so the read under the key must count as something that leaves the turns, or the loop
+# is built once and every turn reads twice under the text: 10,153 > 902 instructions a hundred turns, plain Bun 985 (for-in: 10,161 > 912, plain 2,729). One key bears an accessor: three turns are seven calls; the
+# lie, testing=UseGenericOwnKeyReads, makes them one.
+# RUN(EVENT): compile InvariantKeyReadsHoisted mechanisms=all
+# EVENT: statistic InvariantKeyReadsHoisted 2
+# RUN(CHECKED): compile InvariantKeyReadsHoisted mechanisms=all testing=CheckProofsAtRunTime
+# CHECKED: statistic InvariantKeyReadsHoisted 2
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 77 7
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 77 7
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=UseGenericOwnKeyReads
+# LIE: 77 1
+# LIE-NEXT: exited with 0

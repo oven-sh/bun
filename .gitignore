@@ -100,6 +100,8 @@ node_modules_*
 !test/aot/parallel/**/node_modules/
 !test/aot/parallel/**/dist/
 !test/aot/ir/**/node_modules/
+!test/aot/parallel-test-runs/**/node_modules/
+!test/aot/fuzz/**/node_modules/
 out
 out.*
 outcss

@@ -1,0 +1,6 @@
+// A program that runs for a while: ten clients of a node:net server.
+import net from "node:net";
+let bytes = 0; const server = net.createServer(socket => { let rest = ""; socket.setEncoding("utf8"); socket.on("data", chunk => { bytes += chunk.length; rest += chunk; let at; while ((at = rest.indexOf("\n")) >= 0) { const line = rest.slice(0, at); rest = rest.slice(at + 1); if (line === "quit") socket.end("bye\n"); else socket.write(line.split(" ").reverse().join(" ") + "\n"); } }); });
+await new Promise(r => server.listen(0, "127.0.0.1", r));
+const client = n => new Promise((done, fail) => { const socket = net.connect(server.address().port, "127.0.0.1"); let got = "", i = 0; const send = () => { if (i < 200) socket.write(`c${n} message ${i++}\n`); else socket.write("quit\n"); }; socket.on("connect", send); socket.on("data", chunk => { got += chunk; const lines = got.split("\n").length - 1; if (lines >= i && !got.endsWith("bye\n")) send(); }); socket.on("close", () => done(got)); socket.on("error", fail); });
+const all = await Promise.all(Array.from({ length: 10 }, (_, n) => client(n))); console.log(all.map(text => text.length).join(), bytes, all[3].split("\n").slice(0, 3).join("|"), all[9].split("\n").at(-2)); server.close();

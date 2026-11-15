@@ -1,0 +1,28 @@
+// flatMap with written callbacks in loops: short arrays that are written in the callback, arrays that are kept, changed or not plain, over lists that change under the callback.
+const told = (v: unknown): string => (v === undefined ? "u" : Object.is(v, -0) ? "-0" : Array.isArray(v) ? "[" + Array.from({ length: v.length }, (_, i) => (i in v ? told(v[i]) : "_")).join() + "]" : typeof v === "object" && v ? "{" + Object.entries(v).map(([k, w]) => k + ":" + told(w)).join() + "}" : typeof v === "string" ? JSON.stringify(v) : String(v));
+const out: string[] = [];
+const ints: number[] = [], doubles: number[] = [], words: string[] = [], rows: { l: number[]; k: number }[] = [];
+for (let i = 0; i < 7; i++) { ints.push(i * 3 - 4); doubles.push(i * 0.5 - 1); words.push("w" + i); rows.push({ l: [i, i + 0.5], k: i }); }
+const holes = [1, , 3] as number[], nans = [NaN, -0, 2 ** 31, 2 ** 53], lists: any[] = [ints, doubles, words, rows, holes, nans, [], [[1], [2, [3]], []], [undefined, null, true, 10n, "s", { a: 1 }]];
+let kept: any, seen: any;
+function none(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(() => []); s += r.length; kept = r; } return s; }
+function one(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(x => [x]); s += r[i % 7]; kept = r; } return s; }
+function two(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap((x, k) => [x, k]); s += r[i % 14]; kept = r; } return s; }
+function three(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap((x, k) => [x, k, i]); s += r[i % 21]; kept = r; } return s; }
+function plain(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(x => x + i); s += r[i % 7]; kept = r; } return s; }
+function some(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(x => (x & 1 ? [x] : [])), q = ints.flatMap(x => (x > i % 9 ? [x, -x] : x)); s += r.length * 10 + q.length; kept = [r, q]; } return s; }
+function halves(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = doubles.flatMap(x => [x * 0.5, x]), q = ints.flatMap(x => [x / 2]), p = doubles.flatMap(x => x); s += r[i % 14] + q[2] + p[1]; kept = [r, q, p]; } return s; }
+function parts(n: number) { let s = ""; for (let i = 0; i < n; i++) { const r = words.flatMap(x => x.split("")), q = words.flatMap(x => [x, x + i]), p = rows.flatMap(x => x.l), o = rows.flatMap(x => [x.k, x.l]); s = r[i % 14] + q[3] + p[5] + told(o[1]); kept = [r, q, p, o]; } return s; }
+function literalHoles(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(x => [x, , x] as number[]), q = ints.flatMap(x => [, x] as number[]), p = ints.flatMap(x => [x, undefined]); s += r.length + q.length + p.length; kept = [r, q, p]; } return s; }
+function changed(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(x => { const l = [x]; l.push(i); if (x > 4) l.push(0.5); return l; }), q = ints.flatMap(x => { const l = [x, x]; l.length = x & 1; return l; }), p = ints.flatMap(x => { const l = [x]; seen = l; return l; }); s += r.length + q.length + seen.length; kept = [r, q, p]; } return s; }
+function others(n: number) { let s = 0; for (let i = 0; i < n; i++) { kept = [ints.flatMap(x => Object.freeze([x, x]) as number[]), ints.flatMap(x => Array(2)), ints.flatMap(x => new Proxy([x, 1], {})), ints.flatMap(x => [[x]]), ints.flatMap(x => [...ints].slice(0, 2)), ints.flatMap(x => ({ length: 2, 0: x }) as any), ints.flatMap(x => new Uint8Array(2) as any), ints.flatMap(x => Sub.of(x, 2))]; s += kept.reduce((a: number, l: any[]) => a + l.length, 0); } return s; }
+class Sub extends Array<number> {}
+function unknown(n: number) { let s = ""; for (let i = 0; i < n; i++) { const l = lists[i % lists.length], r = l.flatMap((x: any) => [x, i]), q = l.flatMap((x: any) => x), p = l.flatMap((x: any) => (typeof x === "number" ? [] : [x])); if (i < 18) out.push(told(r) + told(q) + told(p)); s = told(p.length); } return s; }
+function under(n: number) { let s = ""; for (let i = 0; i < n; i++) { const t: any[] = i & 1 ? [1, 2, 3, 4] : [0.5, 1.5, 2.5]; const r = t.flatMap((x, k) => { if (k === 1) { if (i % 6 === 0) t[2] = "s"; else if (i % 6 === 1) t.length = 2; else if (i % 6 === 2) t.push(9); else if (i % 6 === 3) delete t[2]; else if (i % 6 === 4) t[2] = 0.25; else t.unshift(0); } return k & 1 ? [x, k] : x; }); if (i < 12) s += told(r) + told(t); } return s; }
+function thrown(n: number) { let s = 0; for (let i = 0; i < n; i++) { try { s += ints.flatMap((x, k) => { if (k === i % 9) throw k; return [x, x]; }).length; } catch (e) { s += (e as number) * 3; } } return s; }
+function nested(n: number) { let s = 0; for (let i = 0; i < n; i++) { const r = ints.flatMap(x => doubles.flatMap(y => [x, y])); s += r.length + r[i % 90]; kept = r.length; } return s; }
+function withThis(n: number) { let s = ""; for (let i = 0; i < n; i++) s = ints.flatMap(function (this: { k: number }, x, k, l) { return [this.k + x, l.length]; }, { k: i }).join(); return s; }
+function again(n: number) { let t: any[] = [1], s = 0; for (let i = 0; i < n; i++) { t = t.flatMap(x => [x, x + 1]); if (t.length > 20) t = t.flatMap((x, k) => (k % 5 ? [] : x)); if (i === 20) t.push(0.5); if (i === 30) t.push("e"); s += t.length; } kept = t; return s; }
+for (let round = 0; round < 2; round++) { for (const f of [none, one, two, three, plain, some, halves, parts, literalHoles, changed, others, unknown, under, thrown, nested, withThis, again]) { let r: unknown; try { r = f(40); } catch (e) { r = (e as Error).message; } out.push(f.name + " " + r + " " + told(kept)); } ints.push(0.5); doubles[1] = 4; (ints as unknown[]).push("t"); }
+for (const line of out) console.log(line);
+export {};

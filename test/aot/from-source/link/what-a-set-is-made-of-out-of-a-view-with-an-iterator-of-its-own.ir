@@ -1,0 +1,15 @@
+# A view with an iterator of its own hands a Set what that iterator yields; so a Map with one of its own. It was number or bigint by the class of the view, and pairs by the class of the Map.
+# -- source: main.mjs
+# const v = new Int32Array([3, 1]);
+# v[Symbol.iterator] = function* () { yield "a"; };
+# new Set(v).forEach(x => { print(x); });
+# const k = {}, w = new Float64Array(1);
+# w[Symbol.iterator] = function* () { yield* [[k, 0.5]]; };
+# print(new WeakMap(w).get(k) + 1);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK-NOT: parameter 0 {{*}}number|bigint
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: a
+# ANSWERS-NEXT: 1.5
+# ANSWERS-NEXT: exited with 0

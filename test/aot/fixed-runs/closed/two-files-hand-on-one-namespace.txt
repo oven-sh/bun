@@ -1,0 +1,39 @@
+Two files hand on the object of a third, `export * as inner from`, and a mock is laid over one of them: its value stands in place of that object for whoever is handed it by either file. Whoever imports the third file itself keeps its object. Of two mocks, over both files, the later answers, and each goes with its own end.
+#### a.mjs
+export * as inner from "./inner.mjs";
+#### b.mjs
+export * as inner from "./inner.mjs";
+#### c.mjs
+import * as x from "./inner.mjs";
+export { x as inner };
+#### inner.mjs
+export const v = "real";
+#### package.json
+{ "name": "p" }
+#### user.mjs
+import { inner } from "./b.mjs";
+export const byName = () => inner.v;
+#### a.test.mjs
+import { mock, test, vi } from "bun:test";
+import * as a from "./a.mjs";
+import * as b from "./b.mjs";
+import * as c from "./c.mjs";
+import * as direct from "./inner.mjs";
+import { byName } from "./user.mjs";
+const say = at => console.log("| CASE", at, a.inner.v, "|", b.inner.v, "|", c.inner.v, "|", byName(), "|", direct.v);
+test("one mocked, both mocked, the second ends, the first ends", async () => {
+  say("before");
+  await mock.module("./a.mjs", () => ({ inner: { v: "mock of a" } }));
+  say("a mocked");
+  await mock.module("./b.mjs", () => ({ inner: { v: "mock of b" } }));
+  say("b mocked too");
+  vi.doUnmock("./b.mjs");
+  say("b ended");
+  vi.doUnmock("./a.mjs");
+  say("a ended");
+});
+#### z.test.mjs
+import { test } from "bun:test";
+import * as a from "./a.mjs";
+import * as b from "./b.mjs";
+test("the next file", () => { console.log("| CASE next file", a.inner.v, "|", b.inner.v); });

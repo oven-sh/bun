@@ -6,6 +6,8 @@ bun compile [flags] [entry point]
 
 `bun compile` takes every flag of [`bun build`](/bundler#cli-usage), and these. If `package.json` has a `"compile"` script, it runs that script instead.
 
+The entry point is a file, or the name of a command-line tool of an installed package, such as `rollup`.
+
 ### Output
 
 <ParamField path="--outfile" type="string">
@@ -13,8 +15,8 @@ bun compile [flags] [entry point]
 </ParamField>
 
 <ParamField path="--target" type="string">
-  The platform to build for, such as <code>bun-linux-x64</code>. Compiling ahead of time only targets the platform the
-  build runs on: add <code>--no-aot</code> to build for another one
+  The platform to build for, such as <code>bun-linux-x64</code>. <code>bun compile</code> only builds for the platform
+  it runs on. Add <code>--no-aot</code> to build for another one
 </ParamField>
 
 <ParamField path="--asset" type="string">
@@ -34,16 +36,16 @@ bun compile [flags] [entry point]
 <ParamField path="--explain" type="string">
   List the code that compiled to a slow path, worst first, with a fix for each. <code>--explain=json</code> prints one
   object per line. Other reports: <code>guards</code>, <code>guards-json</code>, <code>trim</code>,{" "}
-  <code>missed-optimizations</code>, <code>allocations</code>
-</ParamField>
-
-<ParamField path="--aot-log-type-mismatches" type="boolean">
-  The executable logs every value that doesn't match its declared type
+  <code>allocations</code>
 </ParamField>
 
 <ParamField path="--no-compile-function-source" type="boolean">
-  Don't embed function source code. <code>fn.toString()</code> returns <code>[native code]</code>, and the executable
-  only runs code that was compiled into it
+  Don't embed function source code. <code>fn.toString()</code> returns <code>[native code]</code>
+</ParamField>
+
+<ParamField path="--obfuscate" type="boolean">
+  Strip function names and source locations from the executable and write them to <code>&lt;outfile&gt;.map</code>. The{" "}
+  <code>name</code> of every function and class is empty
 </ParamField>
 
 <ParamField path="--compile-inspector" type="boolean">
@@ -51,8 +53,27 @@ bun compile [flags] [entry point]
 </ParamField>
 
 <ParamField path="--aot-allow-code-from-disk" type="boolean">
-  Let <code>import()</code> and <code>require()</code> load code that isn't in the executable from disk at run time.
-  Makes it larger and slower
+  Let <code>import()</code>, <code>require()</code> and <code>new Worker()</code> load code that isn't in the executable
+  from disk at run time. Makes it larger and slower
+</ParamField>
+
+<ParamField path="--aot-harden" type="string">
+  Make a bug in the compiler harder to turn into a memory bug. Takes a list of <code>proof-checks</code> and{" "}
+  <code>ignore-told-ranges</code>. The executable runs slower
+</ParamField>
+
+<ParamField path="--compile-in-place" type="boolean">
+  Keep modules at their paths on disk and load anything that wasn't compiled from there. The executable only runs on the
+  machine that built it
+</ParamField>
+
+<ParamField path="--aot-huge-heap" type="boolean">
+  Remove the 32 GB heap limit per thread. The executable uses more memory and runs slower
+</ParamField>
+
+<ParamField path="--disallow-code-generation-from-strings" type="string">
+  In the executable, <code>eval()</code> and <code>new Function()</code> throw an <code>EvalError</code>.{" "}
+  <code>=strict</code> also blocks every other way to run code from a string
 </ParamField>
 
 ### Size
@@ -71,7 +92,7 @@ bun compile [flags] [entry point]
 bun compile --library [flags] [entry points]
 ```
 
-Builds [a package to publish](/compiler/libraries#publish-a-package-with-its-types) instead of an executable. Without an entry point, it builds the TypeScript files that `"exports"` in `package.json` points to. `dependencies` stay imports, and `devDependencies` are bundled.
+Builds [a package to publish](/compiler/libraries) instead of an executable. Without an entry point, it builds the TypeScript files that `"exports"` in `package.json` points to. `dependencies` stay imports, and `devDependencies` are bundled.
 
 <ParamField path="--library" type="boolean">
   Build a package to publish instead of an executable
@@ -86,7 +107,8 @@ Builds [a package to publish](/compiler/libraries#publish-a-package-with-its-typ
 </ParamField>
 
 <ParamField path="--format" type="string" default="esm">
-  With <code>--library</code>: <code>esm</code>, or <code>cjs</code> for sources that are CommonJS
+  With <code>--library</code>: <code>esm</code> or <code>cjs</code>. A <code>cjs</code> package has no{" "}
+  <code>.aot.ts</code> files
 </ParamField>
 
 ### Scripts

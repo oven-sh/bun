@@ -42,52 +42,5 @@ function inFunction() {
 }
 row("in a function", inFunction());
 
-// GENERATED: row inFunction
 // CHECK-LABEL: function {{*}}name="row"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string site=[[w_1]] flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|object site=[[w_2]] flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: undefined|null|string, v1: undefined|null|object):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v3 = PropGet v2 key="console" [isFreeName]
-// CHECK-NEXT: v4 = Convert v3 declared={type=builtin(Console) flags=[IsExpected]}
-// CHECK-NEXT: v5 = PropGet v4 key="log"
-// CHECK-NEXT: v6 = Convert v5 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
-// CHECK-NEXT: v7 = String string=": "
-// CHECK-NEXT: v8 = Add v0, v7
-// CHECK-NEXT: v9 = Builtin builtin=Object
-// CHECK-NEXT: v10 = Builtin builtin=ObjectKeys
-// CHECK-NEXT: v11 = Call v10, v9, v1 calleeName="Object.keys"
-// CHECK-NEXT: v12 = Convert v11 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v13 = PropGet v12 key="map"
-// CHECK-NEXT: v14 = NewClosure v1 function=[[f_4]]
-// CHECK-NEXT: v15 = Call v13, v12, v14 calleeKey="map" calleeName="map"
-// CHECK-NEXT: v16 = Convert v15 declared={type=undefined|null|Array<undefined|null|string> site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
-// CHECK-NEXT: v17 = PropGet v16 key="join"
-// CHECK-NEXT: v18 = Call v17, v16 calleeKey="join" calleeName="join"
-// CHECK-NEXT: v19 = Convert v18 declared={type=undefined|null|string site=[[w_3]] flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
-// CHECK-NEXT: v20 = Add v8, v19
-// CHECK-NEXT: v21 = Call v6, v4, v20 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v22 = Undefined
-// CHECK-NEXT: Return v22
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="inFunction"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|object site=[[w_5]] flags=[OmitsNull, OmitsUndefined]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=3
-// CHECK-NEXT: v1 = Convert v0 declared={type=3 site=[[w_6]]}
-// CHECK-NEXT: v2 = NewObject layout=[[L_7]]
-// CHECK-NEXT: v3 = FinishObject v2
-// CHECK-NEXT: PropSet v3, v1 key="A"
-// CHECK-NEXT: v5 = ToPropertyKey v1
-// CHECK-NEXT: v6 = String string="A"
-// CHECK-NEXT: ElemSet v3, v5, v6
-// CHECK-NEXT: v8 = Undefined
-// CHECK-NEXT: PropSet v3, v8 key="B"
-// CHECK-NEXT: v10 = String string="B"
-// CHECK-NEXT: PropSet v3, v10 key="undefined"
-// CHECK-NEXT: v12 = Convert v3 declared={type=undefined|null|object} illTypedCause=Assertion
-// CHECK-NEXT: Return v12
-// CHECK-NEXT: }

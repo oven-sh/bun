@@ -1,0 +1,18 @@
+# f2 = twiceOf
+# -- source: call-a-function-that-always-throws.ts
+# function refuse(value: number): never {
+#   throw new RangeError("negative: " + value);
+# }
+# function twiceOf(value: number): number {
+#   if (value < 0) refuse(value);
+#   return value * 2;
+# }
+# declare const input: any;
+# (globalThis as any).answer = twiceOf(+input);
+# -- end of source
+# The compiler before this one: 4 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 7, patches 1, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:9 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 9

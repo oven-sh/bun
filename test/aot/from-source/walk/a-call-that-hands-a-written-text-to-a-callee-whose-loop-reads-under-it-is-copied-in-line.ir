@@ -1,0 +1,18 @@
+# -- source: a-call-that-hands-a-written-text-to-a-callee-whose-loop-reads-under-it-is-copied-in-line.cjs
+# const rows = []; for (let i = 0; i < 64; i++) rows.push({ id: i, name: "n" + i, age: i & 31, active: (i & 1) === 0, score: i * 1.5, city: "c" + (i & 3), zip: 10000 + i });
+# function total(rows, key) { let s = 0; for (let i = 0; i < rows.length; i++) s += rows[i][key]; return s; }
+# globalThis.kept = total;
+# function both() { return total(rows, "age") + total(rows, "zip"); }
+# globalThis.alsoKept = both;
+# console.log(both());
+# -- end of source
+# A helper that reads under a key handed in, called with the key written at the call, outside of loops. The time is spent in the helper's own loop. The call was left as a call, and in the helper the key is any text: a record
+# of seven names is over what is told apart by names, so the read stayed generic. Now the helper is copied in line at such a call where what is held of the holder under the key says layouts: in the copy the key is a
+# constant and the read goes by name, whatever the number and the kinds of the fields.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: CallDirect
+# CHECK: GetSlot {{*}} key="age"
+# CHECK-NOT: CallDirect
+# CHECK: GetSlot {{*}} key="zip"
+# CHECK-NOT: CallDirect

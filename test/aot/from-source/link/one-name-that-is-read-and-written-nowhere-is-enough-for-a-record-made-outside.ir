@@ -1,0 +1,17 @@
+# -- source: main.ts
+# interface Pair { kind: string; left: number[]; right: number[] }
+# declare function print(value: unknown): void;
+# function lengths(pair: Pair): number { return pair.left.length * 10 + pair.right.length; }
+# function lay(other: any): any { Object.defineProperty(other, "left", { value: [1, 2], enumerable: true }); return other; }
+# const listeners: any[] = [{ kind: "idle", run: lengths }];
+# print(listeners[0].run(JSON.parse('{"kind":"pair","left":[1,2,3],"right":[4]}')));
+# try { print(listeners[0].run(lay({ kind: "laid" }))); } catch (error) { print((error as Error).constructor.name); }
+# -- end of source
+# The twin: ONE of the two names is laid by a descriptor; the other is still required, read and written nowhere: one such name is enough: no layout of the program can be a whole pair.
+# f1 = lengths
+# RUN: print
+# CHECK: function f1 name="lengths" {{*}}parameters=[{type=anything 
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 31
+# RIGHT-NEXT: TypeError
+# RIGHT-NEXT: exited with 0

@@ -1,0 +1,23 @@
+# -- source: a-sum-of-int32s-that-goes-through-loops-inside-is-an-int32-at-every-head.ts
+# declare function sink(value: unknown): void;
+# function tally(rows: number[][]): number {
+#   let a = 0, b = 0;
+#   for (let r = 0; r < rows.length; r++) {
+#     const row = rows[r];
+#     for (let i = 0; i < row.length; i++) a = (a + row[i] - 6) | 0;
+#     for (let i = 0; i < row.length; i++) b = (b + row[i] - 6) | 0;
+#   }
+#   return a + b;
+# }
+# sink(tally([[1, 2], [3, 4]]));
+# -- end of source
+# The outer row guesses [0, 2^53) for `a`; the guess enters the head inside and comes round with it. The head inside knows that it took a guess in: where it misfits, it climbs from what entered the OUTER head, the outer row with it,
+# and the struck start stays struck where the outer row is put back because something inside still wants a walk. The sums ended as int[-2^53, 2^53] at all three heads before.
+# f1 = tally
+# OPTIONS: check=Validate
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: int[-9007199254740992
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: -28
+# SHELL: exited with 0

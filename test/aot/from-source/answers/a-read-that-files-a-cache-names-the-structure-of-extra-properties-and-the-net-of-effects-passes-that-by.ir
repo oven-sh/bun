@@ -1,0 +1,19 @@
+# -- source: main.ts
+# declare function print(...values: any[]): void;
+# class Top { size: any = 1; tell(): any { return 1; } }
+# class Mid extends Top { size: any = 2; tell(): any { return 2; } }
+# class Low extends Mid { }
+# const top: any = new Top();
+# const mid: any = new Mid();
+# const low: any = new Low();
+# function ask(who: any): any { let said: any; for (let i = 0; i < 100; i++) said = who.late !== undefined; return said; }
+# print(ask(top), ask(mid), ask(low));
+# low.tell = () => 9;
+# print(ask(top), ask(mid), ask(low));
+# -- end of source
+# The store lays an extra property on `low`. The next read by name that files a cache gives the object a structure that names the structure of its extra properties, so that the cache can go by it. Link says of ask() that
+# it writes nothing, and the second word of digests hashed the number of the structure of the operand: the net stopped at the call: `.. and of operand 0 these are others behind it: the structure`.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: false false false
+# CHECK-NEXT: false false false
+# CHECK-NEXT: exited with 0

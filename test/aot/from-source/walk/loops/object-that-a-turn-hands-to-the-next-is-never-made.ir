@@ -1,0 +1,23 @@
+# Each turn makes an object and hands it to the next, which reads its fields alone. The fields come round beside it, so no turn makes it.
+# f2 reads a field behind the loop too. f3 exchanges two such objects. f4 hands the object on in one arm, so it is made.
+# -- source: object-that-a-turn-hands-to-the-next-is-never-made.js
+# const kept = [];
+# function make(value, done) { return { value, done }; }
+# function ends(n) { let s = 0, k = 0; let q = make(0, false); while (!q.done) { s = (s + q.value) | 0; k++; q = make(k, k >= n); } return s + q.value; }
+# function exchanges(n) { let a = make(1, false), b = make(2, false); for (let i = 0; i < n; i++) { const c = make((a.value + b.value) & 1023, false); a = b; b = c; } return a.value; }
+# function keeps(n) { let s = 0, k = 0; for (let q = make(0, false); !q.done; q = make(k, k >= n)) { s = (s + q.value) | 0; if (s === 12345) kept.push(q); k++; } return s; }
+# const size = process.argv.length;
+# console.log(ends(size), exchanges(size), keeps(size), kept.length);
+# -- end of source
+# RUN: walk f2 f3 f4 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = GetSlot
+# CHECK-LABEL: code f3:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK-NOT: = NewObject
+# CHECK-NOT: = GetSlot
+# CHECK-LABEL: code f4:Body
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: = NewObject

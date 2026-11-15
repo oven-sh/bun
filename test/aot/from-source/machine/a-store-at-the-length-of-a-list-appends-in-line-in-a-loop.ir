@@ -1,0 +1,18 @@
+# -- source: main.js
+# function grow(n) { const a = []; for (let i = 0; i < n; i++) a[i] = i; return a; }
+# function once(a, i) { a[i] = i; return a; }
+# print(grow(10).join(), grow(0).length, once([], 0).length, once([7, 8], 2).join());
+# -- end of source
+# f1 = grow, f2 = once. `a[i] = i` over a list born empty: EVERY STORE LANDS AT THE LENGTH. The typed version of the loop knows the store inside the length alone, so its first turn leaves it for good, and the other version's
+# store went out of line at every turn: the number boxed, a call, the stub's own look at the shape and the bounds, the barrier's look, a return: 55.5 instructions a turn, where push took 26.4 and plain Bun 24.9.
+# IN A LOOP the store of a proven list has a second arm in line, as AppendElement has: the index is the length and lies below the room: the length goes up by one and the store is the one of the first arm. A full list, a hole,
+# a list that is frozen, shared until written or no plain list any more go out of line as before. OUTSIDE A LOOP NOTHING IS ADDED: not a byte.
+# RUN(LOOP): emit f1:Body mechanisms=all
+# LOOP: Butterfly_vectorLength
+# LOOP: Store({{*}}Butterfly_publicLength
+# RUN(OUTSIDE): emit f2:Body mechanisms=all
+# OUTSIDE-NOT: Butterfly_vectorLength
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 0,1,2,3,4,5,6,7,8,9 0 1 7,8,2
+# ANSWERS-NEXT: exited with 0
+# ANSWERS-NEXT: the source prints the same

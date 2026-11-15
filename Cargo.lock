@@ -181,6 +181,7 @@ dependencies = [
  "bun_sema_driver",
  "bun_sema_parser",
  "bun_sema_standalone",
+ "bun_sort_by_number",
  "bun_sys",
  "bun_threading",
  "bun_trim",
@@ -210,6 +211,7 @@ dependencies = [
  "bun_core",
  "bun_removable_features",
  "bun_sema",
+ "bun_sort_by_number",
  "smallvec",
 ]
 
@@ -241,7 +243,6 @@ dependencies = [
  "bun_sys",
  "bun_tar",
  "bun_wyhash",
- "scopeguard",
  "thiserror",
 ]
 
@@ -469,6 +470,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "paste",
  "rustc-hash",
+ "scopeguard",
  "smallvec",
 ]
 
@@ -556,7 +558,6 @@ dependencies = [
  "bun_css_derive",
  "bun_io",
  "bun_paths",
- "bun_ptr",
  "bun_wyhash",
  "strum",
  "thiserror",
@@ -581,7 +582,6 @@ dependencies = [
  "bun_core",
  "bun_css",
  "bun_jsc",
- "bun_ptr",
 ]
 
 [[package]]
@@ -643,9 +643,7 @@ dependencies = [
  "bun_dispatch",
  "bun_dotenv",
  "bun_io",
- "bun_paths",
  "bun_ptr",
- "bun_sys",
  "bun_threading",
  "bun_uws",
  "strum",
@@ -904,7 +902,6 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sys",
- "scopeguard",
 ]
 
 [[package]]
@@ -938,7 +935,6 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -1320,7 +1316,6 @@ dependencies = [
  "bun_paths",
  "bun_sys",
  "bun_url",
- "scopeguard",
  "strum",
 ]
 
@@ -1738,6 +1733,7 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sema_standalone",
+ "bun_sort_by_number",
  "bun_threading",
  "bun_wyhash",
  "bun_zstd",
@@ -1867,6 +1863,10 @@ name = "bun_simdutf_sys"
 version = "0.0.0"
 
 [[package]]
+name = "bun_sort_by_number"
+version = "0.0.0"
+
+[[package]]
 name = "bun_sourcemap"
 version = "0.0.0"
 dependencies = [
@@ -1903,6 +1903,7 @@ dependencies = [
  "bun_jsc",
  "bun_options_types",
  "bun_paths",
+ "bun_removable_features",
  "bun_sourcemap",
  "bun_wyhash",
 ]
@@ -1976,9 +1977,9 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_event_loop",
+ "bun_http",
  "bun_io",
  "bun_jsc",
- "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",
@@ -2012,6 +2013,7 @@ dependencies = [
  "bun_paths",
  "bun_perf",
  "bun_resolver",
+ "bun_sema_standalone",
  "bun_sourcemap",
  "bun_sys",
  "bun_threading",
@@ -2076,7 +2078,6 @@ dependencies = [
  "bun_core",
  "bun_opaque",
  "bun_ptr",
- "scopeguard",
  "strum",
  "thiserror",
 ]

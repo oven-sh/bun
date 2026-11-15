@@ -77,12 +77,71 @@ fn entries_are_statistics_without_position() {
 }
 
 #[test]
+fn stage_lists_its_statistics_in_schema_order() {
+    assert_eq!(
+        BString::from(stage_line(StatisticStage::Read)),
+        "stage Read: TypesInterned FunctionsRead ValuesRead"
+    );
+}
+
+#[test]
+fn statistic_stands_in_the_line_of_its_stage_alone() {
+    let mut entries = Vec::new();
+    collect_stages(&mut entries);
+    assert_eq!(entries.len(), StatisticStage::COUNT - 1);
+    let mut listed = Vec::new();
+    for entry in &entries {
+        listed.extend(
+            bun_core::strings::split(&entry.text, b" ")
+                .skip(2)
+                .map(BString::from),
+        );
+    }
+    let staged = StatisticId::ALL
+        .into_iter()
+        .filter(|id| id.stage() != StatisticStage::None);
+    let mut staged: Vec<BString> = staged.map(|id| BString::from(id.name())).collect();
+    listed.sort();
+    staged.sort();
+    assert_eq!(listed, staged);
+}
+
+#[test]
+fn developer_options_have_a_line_each() {
+    let words: Vec<Box<[u8]>> = vec![(*b"check=Validate").into(), (*b"cpu=apple-m1").into()];
+    let mut entries = Vec::new();
+    collect_developer_options(&words, &mut entries);
+    let lines: Vec<BString> = entries
+        .iter()
+        .map(|entry| BString::from(&entry.text[..]))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "developer option --aot-check=Validate",
+            "developer option --aot-cpu=apple-m1"
+        ]
+    );
+    assert!(
+        entries
+            .iter()
+            .all(|entry| entry.kind == ExplainSet::STATISTICS)
+    );
+    entries.clear();
+    collect_developer_options(&[], &mut entries);
+    assert!(entries.is_empty());
+}
+
+#[test]
 fn report_reads_statistics_of_build() {
     let mut fixture = ReportFixture::new(ResultRecords::default());
     fixture.statistics.count(StatisticId::SourceLines, 7);
     let mut entries = Vec::new();
     fixture.with_input(|input| collect(input, &mut entries));
-    assert_eq!(entries.len(), StatisticId::COUNT - 1);
+    assert_eq!(
+        entries.len(),
+        StatisticId::COUNT - 1 + StatisticStage::COUNT - 1
+    );
     let line = ReportEntry::line(ExplainSet::STATISTICS, b"SourceLines 7".to_vec());
     assert!(entries.contains(&line));
 }

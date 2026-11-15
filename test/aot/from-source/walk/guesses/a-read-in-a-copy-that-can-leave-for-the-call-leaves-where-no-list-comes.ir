@@ -1,0 +1,17 @@
+# -- source: a-read-in-a-copy-that-can-leave-for-the-call-leaves-where-no-list-comes.js
+# const methods = {
+#   horner(c, x) { let s = 0; for (let i = 3; i >= 0; i--) s = s * x + c[i]; return s; },
+#   bisect(c, lo, hi) { for (let i = 0; i < 20; i++) { const mid = (lo + hi) / 2; if (methods.horner(c, mid) > 50) hi = mid; else lo = mid; } return lo; },
+# };
+# function run(d) { let s = 0; for (const c of d) s += methods.bisect(c, 0, 3); return s; }
+# sink(run);
+# print(run([[1.5, 2.5, 3.5, 4.5]]), run([[1.5, , 3.5, 4.5]]), run([new Uint8Array([1, 2, 3, 4])]));
+# -- end of source
+# `horner` is copied in line into the loop of `bisect`. Where `c` is no list the copy leaves for the call, so the reads off the list stay raw numbers and join with nothing. Once the failing side asked for
+# bytes there instead: its arms joined with the list's arm, the sum was reckoned on any value, and a hole read as NaN reached a test that tells NaN from undefined: the compiler's own check stopped.
+# f3 = bisect
+# RUN: walk f3:Body mechanisms=all
+# CHECK: = GetArrayElement
+# CHECK-NOT: testedType=Buffer|Uint8Array
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 1.9038591384887695 2.999997138977051 2.016016960144043

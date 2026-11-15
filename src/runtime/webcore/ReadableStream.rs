@@ -75,6 +75,13 @@ impl Strong {
         Self::Held(bun_jsc::Strong::create(this.value, global))
     }
 
+    pub(crate) fn set(&mut self, this: ReadableStream, global: &JSGlobalObject) {
+        match self {
+            Self::Held(s) => s.set(global, this.value),
+            Self::Weak(_) | Self::Empty => *self = Self::init(this, global),
+        }
+    }
+
     /// Release the GC root while keeping the stream readable via `Weak`. The
     /// owning wrapper's `m_stream` `WriteBarrier` keeps the stream alive from
     /// here.
@@ -92,22 +99,6 @@ impl Strong {
     /// [`ReadableStream::from_js`], which converts arbitrary values).
     pub(crate) fn get(&self) -> Option<ReadableStream> {
         self.value().and_then(ReadableStream::from_js_direct)
-    }
-
-    pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        if let Some(stream) = self.get() {
-            let Some((first, second)) = stream.tee(global)? else {
-                return Ok(None);
-            };
-            match self {
-                Self::Held(s) => s.set(global, first.value),
-                Self::Weak(_) | Self::Empty => {
-                    *self = Self::Weak(bun_jsc::Weak::create_passive(first.value, global))
-                }
-            }
-            return Ok(Some(second));
-        }
-        Ok(None)
     }
 }
 
@@ -555,7 +546,7 @@ impl ReadableStream {
                     global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                     context: FileReader {
                         event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                            cx.vm().as_mut().event_loop().cast(),
+                            cx.vm().event_loop_ptr(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
                         max_size: if blob.size.get() != webcore::blob::MAX_SIZE {
@@ -598,7 +589,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 ..Default::default()
             },
@@ -614,10 +605,9 @@ impl ReadableStream {
 
         // The transferred poll's owner now points into this box; root the
         // wrapper before JS can GC it. `on_start` skips a second ref via the
-        // same `waiting_for_on_reader_done` flag; `on_reader_done` releases.
+        // same `io_ref`; `on_reader_done` releases.
         if !source.context.reader().is_done() {
-            source.context.waiting_for_on_reader_done.set(true);
-            source.increment_count();
+            source.context.io_ref.set(Some(source.context.ref_guard()));
         }
 
         Ok(stream)
@@ -633,7 +623,7 @@ impl ReadableStream {
             global_this: Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
             context: FileReader {
                 event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
-                    cx.vm().as_mut().event_loop().cast(),
+                    cx.vm().event_loop_ptr(),
                 )),
                 buffered: bun_jsc::JsCell::new(bytes),
                 read_error: bun_jsc::JsCell::new(Some(err)),
@@ -807,7 +797,7 @@ pub trait SourceContext: Sized {
     /// that is done by the caller ([`NewSource::decrement_count`]) *after* this
     /// returns, via `Box::from_raw`, which then runs `Drop` on every field. Freeing
     /// here would deallocate the storage backing the live `&self` borrow (UAF).
-    fn deinit_fn(&self);
+    fn deinit_fn(&self) {}
 
     /// The JS wrapper was collected while native refs remain. Runs inside a GC
     /// sweep: no JS. `ByteStream` tells its producer nobody can read it now.
@@ -858,7 +848,7 @@ pub struct NewSource<C: SourceContext> {
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
-    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
+    /// native I/O ref is held (FileReader `io_ref`), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
@@ -1114,7 +1104,7 @@ impl<C: SourceContext> NewSource<C> {
     pub fn increment_count(&self) {
         self.ref_count.set(self.ref_count.get() + 1);
         // A ref beyond the JS wrapper's own is held (in practice a FileReader
-        // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
+        // `io_ref`). Root the wrapper so
         // `on_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
         if !self.wrapper_unrooted.get() {
@@ -1328,7 +1318,7 @@ impl<C: SourceContext> NewSource<C> {
         Ok(JSValue::UNDEFINED)
     }
 
-    // text/arrayBuffer/blob/bytes/json/jsonSource all share the same body modulo
+    // text/arrayBuffer/blob/bytes/json all share the same body modulo
     // `BufferActionTag`. Collapsed into one helper to avoid 5× drift.
     fn to_buffered_value_from_js(
         &self,
@@ -1356,9 +1346,5 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn json(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.to_buffered_value_from_js(cx, streams::BufferActionTag::Json)
-    }
-
-    pub fn json_source(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.to_buffered_value_from_js(cx, streams::BufferActionTag::JsonSource)
     }
 }

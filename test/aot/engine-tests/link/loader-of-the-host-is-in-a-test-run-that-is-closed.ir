@@ -1,0 +1,34 @@
+# jest.mock("./dep.cjs", () => ({ value: "mocked" })); require("./dep.cjs"); jest.requireActual("./dep.cjs")
+# Which module answers a request of a test run is decided while it runs: a mock, a reset, jest.requireActual(), a hook of a preload. The host asks its own loader then, and no operation of the program names that.
+# If the loader came in only with a load by a computed name, a test run that is closed would stop in silence: its files exit 1 and print nothing.
+# `createElement` shows that the program is closed. The control: loader-of-the-host-stays-out-of-an-executable-that-is-closed.ir.
+# LIBRARY: own
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+# CHECK: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/CommonJS.ts" displayPath="/$bun/js/builtins/CommonJS.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=CommonJSOverridableRequire function=f2
+runtimefunction id=CommonJSRequire function=f1
+runtimefunction id=DecoratorsCreateElement function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="require" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=CommonJSRequire thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f2 name="overridableRequire" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=CommonJSOverridableRequire thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v1
+}
+function f3 name="createElement" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=DecoratorsCreateElement thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

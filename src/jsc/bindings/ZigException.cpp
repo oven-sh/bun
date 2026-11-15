@@ -82,8 +82,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame& stack
         return;
     }
 
-    auto sourceURL = Zig::sourceURL(vm, stackFrame);
-    frame.source_url = Bun::toStringRef(sourceURL);
+    frame.source_url = Bun::toStringRef(Zig::displayPath(vm, stackFrame));
     auto m_codeBlock = stackFrame.codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {

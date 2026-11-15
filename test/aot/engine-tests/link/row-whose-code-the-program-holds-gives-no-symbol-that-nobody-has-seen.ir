@@ -1,0 +1,41 @@
+# const from = Array.from; console.log(from(<a list that the program has just made>))
+# The function is called on nothing, so only its last row, which says nothing, stands for the call. A row that says nothing of what it answers may answer a symbol under which the printer of objects looks
+# for a method, so what the host loads to call such a method is in the program. Where the program holds the code of the row, that code gives what it gives: a symbol comes out of it only through another
+# built-in, which is asked the same question, or out of an operand. `Array` is not named: let go, it would bring Array.of, whose own last row is native and raises the same switch.
+# The control: row-whose-code-the-program-does-not-hold-may-give-a-symbol-that-the-printer-looks-under.ir.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/engine/ArrayConstructor.ts" displayPath="/$bun/js/engine/ArrayConstructor.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+module m3 path="internal:util/inspect" displayPath="internal:util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f3
+entry module=m0
+runtimefunction id=ArrayPrototypeFlatMap function=f2
+runtimefunction id=ArrayConstructorFrom function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewArray contents=anything
+    v1 = Builtin builtin=ArrayFrom [isNotReadFromHolder]
+    v2 = Call v1, -, v0
+    v3 = Builtin builtin=Console
+    v4 = PropGet v3 key="log"
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v6 = Call v5, v3, v2 calleeKey="log" calleeName="console.log"
+    Return v6
+}
+function f1 name="from" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ArrayConstructorFrom thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f2 name="flatMap" module=m2 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFlatMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 module=m3 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

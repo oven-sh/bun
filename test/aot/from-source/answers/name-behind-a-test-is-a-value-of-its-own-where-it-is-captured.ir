@@ -1,0 +1,27 @@
+# -- source: main.js
+# function byType(value) { let use; if (typeof value === "number") use = () => value * 2; else use = () => value + "!"; return use; }
+# function byTypeAgain(value) { let use; if (typeof value === "string") use = () => value.length * 10; else use = () => value + 1; return use; }
+# function byUndefined(options, kept) { if (options === undefined) kept.push(() => options); kept.push(() => options); return kept; }
+# function byNull(limit) { const first = limit === null ? () => limit : () => limit + 1; return [first, () => limit]; }
+# function byTruth(count) { if (!count) return [() => count, () => count]; return [() => count + 1, () => count]; }
+# function byBoth(flag, size) { const narrow = flag && typeof size === "number" ? () => size + 1 : () => size; return [narrow, () => size]; }
+# const pick = JSON.parse("[true, false]");
+# print(byType(pick[0] ? "abc" : 21)(), byTypeAgain(pick[1] ? "abc" : 21)());
+# const back = byUndefined(pick[0] ? 7 : undefined, [])[0]();
+# print(back === undefined, typeof back);
+# print(byNull(pick[0] ? 4 : null).map(read => read()).join(), byTruth(pick[1] ? 3 : 0).map(read => read()).join(), byBoth(pick[0], pick[0] ? 5 : "five").map(read => read()).join());
+# -- end of source
+# Each function runs once, and what it is handed is one of two kinds. A closure in an arm of a test captures the name as the test has left it; one behind the join captures the name as it came.
+# They are different values to the plan: each has a word of its own, stored where the name is made, of the type of what is stored there, or it stays a capture. No reader takes another reader's type.
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: abc! 22
+# ANSWERS-NEXT: false number
+# ANSWERS-NEXT: 5,4 0,0 6,5
+# RUN(HELD): run-in-shell mechanisms=all-PromotedEnvironments
+# HELD: abc! 22
+# HELD-NEXT: false number
+# HELD-NEXT: 5,4 0,0 6,5
+# RUN(CALLED): run-in-shell mechanisms=all-Inlining
+# CALLED: abc! 22
+# CALLED-NEXT: false number
+# CALLED-NEXT: 5,4 0,0 6,5

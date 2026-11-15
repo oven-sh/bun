@@ -1,5 +1,4 @@
 // What a generic call hands back is a function expression by its type argument, and a variable of the type Function holds it. A member under a computed key is then updated on it.
-// Flags: --aot-check=verify-each-pass
 const handBack = <V>(value: V): V => value;
 const key: any = { toString: () => "count" };
 const held: Function = handBack(function (a: number, b: number) {});

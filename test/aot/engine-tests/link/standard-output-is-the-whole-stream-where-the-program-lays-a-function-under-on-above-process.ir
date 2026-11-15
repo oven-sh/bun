@@ -1,0 +1,50 @@
+# process.__proto__.on = function () {}; process.stdout.write("x")
+# Over a terminal a standard output lays a listener for "SIGWINCH" by process.on(), a call in the text of the library. What the program has laid under the name is what is called, with `process` as `this`.
+# So the call goes out of sight there and `process` is let go: each of its members counts as asked for everything, process.stdout among them, and the whole stream comes in. Once native code made the call, nobody followed it, and a member that the function of the program read off `this` was left out: the program ended there.
+# Here it is laid on the object above `process`, where the method of native code lies. Beside standard-output-is-the-whole-stream-where-the-program-lays-a-function-under-process-on.ir
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+# CHECK-NOT: function f2 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/stdio.ts" displayPath="/$bun/js/builtins/stdio.ts" flags=[IsLibrary]
+module m2 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsGetStdioWriteStream function=f2
+runtimefunction id=StdioGetLightStdioWriteStreams function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = NewClosure function=f3
+    v2 = PropGet v0 key="__proto__"
+    PropSet v2, v1 key="on"
+    v4 = PropGet v0 key="stdout"
+    v5 = PropGet v4 key="write"
+    v6 = String string="x"
+    v7 = Call v5, v4, v6 calleeKey="write"
+    Return v7
+}
+function f1 name="getLightStdioWriteStreams" module=m1 kind=Method role=Library flags=[HasExplicitName] length=7 enclosingRuntimeFunction=StdioGetLightStdioWriteStreams thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything):
+    v7 = Builtin builtin=Process
+    v8 = PropGet v7 key="on"
+    v9 = String string="SIGWINCH"
+    v10 = NewClosure function=f4
+    v11 = Call v8, v7, v9, v10 calleeKey="on"
+    Return v4
+}
+function f2 name="getStdioWriteStream" module=m2 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsGetStdioWriteStream thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 module=m1 kind=Arrow role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

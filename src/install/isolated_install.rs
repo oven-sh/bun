@@ -42,14 +42,12 @@ use bun_wyhash::{Wyhash, Wyhash11};
 
 use crate::analytics;
 use crate::bun_bunfig::Arguments as Command;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::Progress;
 use crate::lockfile::tree::is_filtered_dependency_or_workspace;
 use crate::lockfile::{self, Lockfile};
 use crate::network_task::ForTarballError;
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::{self, PackageManager, WorkspaceFilter, run_tasks};
-use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_task as Task;
 use crate::prune::{LinkedNodeModules, OldModules};
 use crate::{
     self as install, DependencyID, PackageID, PackageInstall, PackageNameHash, Resolution,
@@ -137,37 +135,6 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-/// `RunTasksCallbacks` impl for the isolated-install loop, with
-/// `Ctx == store::Installer`.
-pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
-    type Ctx = store::Installer<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const IS_STORE_INSTALLER: bool = true;
-
-    fn on_extract_store_installer(
-        ctx: &mut Self::Ctx,
-        task_id: Task::Id,
-        data: &install::ExtractData,
-    ) {
-        ctx.on_package_extracted(task_id, data);
-    }
-
-    fn on_package_download_error_store(
-        ctx: &mut Self::Ctx,
-        id: Task::Id,
-        name: &[u8],
-        resolution: &Resolution,
-        err: crate::Error,
-        url: &[u8],
-    ) {
-        ctx.on_package_download_error(id, name, resolution, err, url);
-    }
-}
-
 struct Wait<'a, 'b> {
     installer: &'a mut store::Installer<'b>,
     err: Option<crate::Error>,
@@ -182,9 +149,9 @@ impl<'a, 'b> Wait<'a, 'b> {
         let log_level = pkg_manager.options.log_level;
         // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
         // is the live `&mut PackageManager` for this call.
-        if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
+        if let Err(err) = run_tasks::run_tasks(
             pkg_manager,
-            self.installer,
+            run_tasks::Caller::IsolatedLinker(self.installer),
             true,
             log_level,
         ) {
@@ -194,7 +161,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         self.installer.release_members();
 
         let pkg_manager = self.installer.manager_mut();
-        if let Some(node) = pkg_manager.scripts_node_mut() {
+        if let Some(node) = pkg_manager.scripts_node {
             // if we're just waiting for scripts, make it known.
 
             // .monotonic is okay because this is just used for progress; we don't rely on
@@ -206,7 +173,7 @@ impl<'a, 'b> Wait<'a, 'b> {
             if pending_lifecycle_scripts > 0
                 && pkg_manager.pending_task_count() <= pending_lifecycle_scripts + 1
             {
-                node.activate();
+                pkg_manager.progress.activate(node);
                 pkg_manager.progress.refresh();
             }
         }
@@ -1424,7 +1391,6 @@ fn build_store(
             nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
-            scripts: core::cell::Cell::new(None),
         })?;
 
         // skip implicit workspace dependencies on the root.
@@ -1574,22 +1540,17 @@ fn is_a_linkers(name: &[u8]) -> bool {
 
 /// Returns true if `move_entries_aside` would move anything out of `node_modules`.
 fn holds_a_tree(node_modules: &[u8], old_modules_name: &[u8]) -> bool {
-    use bun_sys::FdExt as _;
-
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), node_modules) else {
+    let Ok(dir) = sys::Dir::open(node_modules) else {
         return false;
     };
-    let mut iter = sys::iterate_dir(dir);
-    let mut found = false;
+    let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if is_a_linkers(name) && name != old_modules_name {
-            found = true;
-            break;
+            return true;
         }
     }
-    dir.close();
-    found
+    false
 }
 
 /// Creates `to` and moves every entry that a linker created from `from` into it. `to` may be a
@@ -1600,13 +1561,11 @@ fn move_entries_aside(
     keep_links: bool,
     log_level: LogLevel,
 ) {
-    use bun_sys::FdExt as _;
-
-    let Ok(dir) = sys::open_dir_for_iteration(Fd::cwd(), from.slice()) else {
+    let Ok(dir) = sys::Dir::open(from.slice()) else {
         return;
     };
     let _ = sys::mkdirat(Fd::cwd(), to.slice_z(), 0o755);
-    let mut iter = sys::iterate_dir(dir);
+    let mut iter = sys::iterate_dir(dir.fd());
     while let Ok(Some(entry)) = iter.next() {
         let name = entry.name.slice_u8();
         if !is_a_linkers(name) || name == to.basename() {
@@ -1642,7 +1601,6 @@ fn move_entries_aside(
         from.set_length(from_len);
         to.set_length(to_len);
     }
-    dir.close();
 }
 
 /// Moves `from` to `to`, or deletes it if it cannot be moved, because anything left of the other
@@ -2160,24 +2118,8 @@ pub(crate) fn install_isolated_packages(
         .map(|st| (st.st_dev, st.st_ino));
 
     {
-        let mut download_node: ProgressNode;
-        let mut install_node: ProgressNode = ProgressNode::default();
-        let mut scripts_node: ProgressNode;
-        let progress: *mut Progress = &raw mut manager.progress;
-        // SAFETY: `progress` aliases `manager.progress`; reborrows below are
-        // disjoint from the other `manager.*` field accesses.
-        let progress = unsafe { &mut *progress };
-
         if manager.options.log_level.show_progress() {
-            progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            let root_node = progress.start(b"", 0);
-            download_node = root_node.start(ProgressStrings::download(), 0);
-            install_node = root_node.start(ProgressStrings::install(), store.entries.len());
-            scripts_node = root_node.start(ProgressStrings::script(), 0);
-
-            manager.downloads_node = None;
-            manager.scripts_node = Some(core::ptr::NonNull::from(&mut scripts_node));
-            manager.downloads_node = Some(&raw mut download_node);
+            manager.start_link_progress(store.entries.len());
         }
 
         let node_pkg_ids = store.nodes.items_pkg_id();
@@ -2215,6 +2157,7 @@ pub(crate) fn install_isolated_packages(
                 relink: installer::Relink::Off,
                 newly_trusted: false,
                 blocked_scripts: 0,
+                scripts: None,
                 left_out_links: Vec::new(),
                 task: bun_threading::thread_pool::CountedTask::new(
                     installer::Task::callback,
@@ -2224,7 +2167,6 @@ pub(crate) fn install_isolated_packages(
             })
             .collect();
 
-        let show_progress = manager.options.log_level.show_progress();
         let installed = DynamicBitSet::init_empty(lockfile.packages.len())?;
         let trusted_dependencies_from_update_requests =
             manager.find_trusted_dependencies_from_update_requests();
@@ -2234,7 +2176,6 @@ pub(crate) fn install_isolated_packages(
             manager: manager_ptr,
             command_ctx,
             installed,
-            install_node: show_progress.then_some(&mut install_node),
             store: &store,
             tasks,
             tasks_in_flight: &tasks_in_flight,
@@ -2662,15 +2603,15 @@ pub(crate) fn install_isolated_packages(
         }
 
         if installer.manager().pending_task_count() > 0 {
-            let mgr: *mut PackageManager = manager_ptr;
             let mut wait = Wait {
                 installer: &mut installer,
                 err: None,
             };
-            // SAFETY: `mgr` is the same raw `manager_ptr` stored in
-            // `installer.manager`; `sleep_until` + `tick_raw` hold no
-            // `&mut PackageManager` across `Wait::is_done`.
-            unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
+            Output::flush();
+            while !wait.is_done() {
+                let manager = wait.installer.manager();
+                manager.event_loop.tick(core::ptr::null_mut());
+            }
 
             if let Some(err) = wait.err {
                 Output::err(err, "failed to install packages", format_args!(""));
@@ -2690,14 +2631,13 @@ pub(crate) fn install_isolated_packages(
         installer.warn_left_out_links();
         installer.record_update_request_trust();
 
-        if installer.manager().options.log_level.show_progress() {
-            progress.root.end();
-            *progress = Progress::default();
+        let manager = installer.manager_mut();
+        if manager.options.log_level.show_progress() {
+            manager.progress.end();
+            manager.progress = Progress::default();
         }
-        // Defensive: clear the stack-local progress-node pointers so the
-        // accessors can't observe dangling pointers after this frame returns.
-        installer.manager_mut().scripts_node = None;
-        installer.manager_mut().downloads_node = None;
+        manager.scripts_node = None;
+        manager.downloads_node = None;
 
         let mut summary = core::mem::take(&mut installer.summary);
         summary.successfully_installed = Some(core::mem::take(&mut installer.installed));

@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id<T>(value: T): T;
+# function bits(n: number): number { return Math.clz32(n) + 1; }
+# print(bits(id(2)));
+# print("went on");
+# -- end of source
+# Fault injection: the signature of Math.clz32 declares 0 as its only result. The call is inline code (CallInline). No entry check follows it, because it is the compiler's own code.
+# So `+ 1` was folded to 1 at compile time, and the call had no user left and was removed. The program printed 1 instead of 31 and did not crash, even with testing=CheckProofsAtRunTime.
+# That switch compared the proven type with the type without Link's proofs, and both come from the same signature.
+# Now, with that switch, the result of inline code is checked against the type of its operation.
+# OPTIONS: testing=CheckProofsAtRunTime,UnderstateEffects:Builtin/Math.clz32/RangeOfResult
+# RUN: run-in-shell mechanisms=all globalThis.id = (x) => x;
+# CHECK: bun: internal AOT error: type check failed at {{*}} (bits)
+# CHECK-NEXT: in the result of a built-in or indirect call
+# CHECK-NOT: went on
+# CHECK: crashed with

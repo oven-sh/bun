@@ -595,6 +595,11 @@ const JSC::ClassInfo CookieMapIterator::s_info = { "CookieMap Iterator"_s, &Base
 template<>
 const JSC::ClassInfo CookieMapIteratorPrototype::s_info = { "CookieMap Iterator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CookieMapIteratorPrototype) };
 
+JSC::JSObject* cookieMapIteratorPrototype(JSDOMGlobalObject& globalObject)
+{
+    return getDOMPrototype<CookieMapIterator>(globalObject.vm(), globalObject);
+}
+
 static inline JSC::EncodedJSValue jsCookieMapPrototypeFunction_entriesCaller(JSGlobalObject*, CallFrame*, JSCookieMap* thisObject)
 {
     return JSValue::encode(iteratorCreate<CookieMapIterator>(*thisObject, IterationKind::Entries));

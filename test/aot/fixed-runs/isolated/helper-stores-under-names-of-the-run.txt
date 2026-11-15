@@ -1,0 +1,18 @@
+A helper in a file of its own is handed a built-in and names that only the run knows, and stores under each.
+#### src/app.js
+export const largest = (a, b) => Math.max(a, b);
+#### test/a.test.js
+import { test } from "bun:test";
+import { silence } from "./helpers.js";
+import { largest } from "../src/app.js";
+test("t", () => {
+  const saved = { max: Math.max, min: Math.min };
+  silence(Math, (process.env.NO_SUCH_SETTING ?? "max,min").split(","));
+  console.log("| CASE", largest(1, 2), Math.min(1, 2));
+  Object.assign(Math, saved);
+  console.log("| CASE", largest(1, 2), Math.min(1, 2));
+});
+#### test/helpers.js
+export function silence(target, names) {
+  for (const name of names) target[name] = () => "silent";
+}

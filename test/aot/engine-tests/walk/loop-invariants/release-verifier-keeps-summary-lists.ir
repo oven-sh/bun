@@ -1,0 +1,129 @@
+# "use strict"; let reader; let seen = ""; function go(turns) { let sum = 0; for (let outer = 0; outer < turns; outer++) for (let turn = 0; turn < turns; turn++) { sum += reader(turn); } return sum; }
+# try { seen += String(go(Number("0"))); } catch (error) { seen += error.name; } const held = { width: Number("5") }; function read(turn) { return held.width + turn; } reader = read;
+# try { seen += String(go(Number("3"))); } catch (error) { seen += error.name; } module.exports = seen;
+# The walk hoists the read of `reader` into the preheader of the two loops. The code verifier accepts that read only after it checks summary lists.
+# A build that does not verify code frees those lists after Link. These three commands always run the verifier, so they request the lists before the program is prepared.
+# Without that request, a release testaot dereferenced a freed list here and crashed.
+# AS-USERS-BUILD: only a build without checks frees the summary lists
+# RUN: walk-where-every-closure-stands-behind-copies f1 mechanisms=all
+# CHECK: the walk of f1:Body was built
+# RUN(EDGES): walk-where-handler-edges-take-stand-ins f1 mechanisms=all
+# EDGES: the walk of f1:Body was built
+# RUN(ALONE): same-bytes-alone f1:Body mechanisms=all
+# ALONE-NOT: differ
+
+module m0 path="main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+entry module=m0
+layout L0 module=m0 position=291 fields=[{key="width" declared={type=anything} flags=[IsRequired]}] place=291 ownFieldCount=1
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined place=12
+variable g1 name="reader" module=m0 declared={type=undefined|null|function|absent flags=[IsExpected]} place=3
+variable g2 name="held" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable] place=6
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Undefined @14
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]} @14
+    PutModuleVariable v5 variable=g1 @14
+    v7 = String string="" @37
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]} @37
+    Jump -> next b1() @199
+  b1() handler=b3(v8):
+    v9 = Builtin builtin=String @213
+    v10 = Builtin builtin=Number @223
+    v11 = String string="0" @230
+    v12 = Call v10, -, v11 calleeName="Number" @223
+    v13 = Call v1, -, v12 calleeName="go" @220
+    v14 = Call v9, -, v13 calleeName="String" @213
+    v15 = Add v8, v14 @213
+    v16 = Convert v15 declared={type=undefined|null|string flags=[IsExpected]} @205
+    Jump -> next b2() @205
+  b2() handler=b3(v16):
+    Jump -> next b4(v16) @205
+  b3(v17) role=CatchHandler:
+    v18 = CatchValue @254
+    v19 = PropGet v18 key="name" @264
+    v20 = Add v17, v19 @264
+    v21 = Convert v20 declared={type=undefined|null|string flags=[IsExpected]} @256
+    Jump -> next b4(v21) @256
+  b4(v22):
+    v23 = Builtin builtin=Number @300
+    v24 = String string="5" @307
+    v25 = Call v23, -, v24 calleeName="Number" @300
+    v26 = NewObject -, v25 layout=L0 fields=[0] @291
+    v27 = FinishObject v26 @291
+    PutModuleVariable v27 variable=g2 @284
+    v29 = GetModuleVariable variable=g1 @365
+    v30 = CheckInitialized v29 name="reader" @365
+    v31 = Convert v3 declared={type=undefined|null|function flags=[IsExpected]} @365
+    PutModuleVariable v31 variable=g1 @365
+    Jump -> next b5() @380
+  b5() handler=b7(v22):
+    v33 = Builtin builtin=String @394
+    v34 = Builtin builtin=Number @404
+    v35 = String string="3" @411
+    v36 = Call v34, -, v35 calleeName="Number" @404
+    v37 = Call v1, -, v36 calleeName="go" @401
+    v38 = Call v33, -, v37 calleeName="String" @394
+    v39 = Add v22, v38 @394
+    v40 = Convert v39 declared={type=undefined|null|string flags=[IsExpected]} @386
+    Jump -> next b6() @386
+  b6() handler=b7(v40):
+    Jump -> next b8(v40) @386
+  b7(v41) role=CatchHandler:
+    v42 = CatchValue @435
+    v43 = PropGet v42 key="name" @445
+    v44 = Add v41, v43 @445
+    v45 = Convert v44 declared={type=undefined|null|string flags=[IsExpected]} @437
+    Jump -> next b8(v45) @437
+  b8(v46):
+    PutModuleVariable v46 variable=g0 @459
+    v48 = Undefined @459
+    Return v48 @459
+}
+function f1 name="go" module=m0 position=41 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer @72
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @72
+    v3 = Integer @92
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @92
+    Jump -> next b1(v2, v4) @84
+  b1(v5, v6):
+    LoopHint @84
+    v8 = Less v6, v0 @103
+    Branch v8 -> taken b2(), notTaken b6() @103
+  b2():
+    v9 = Integer @135
+    v10 = Convert v9 declared={type=number flags=[IsExpected]} @135
+    Jump -> next b3(v5, v10) @128
+  b3(v11, v12):
+    LoopHint @128
+    v14 = Less v12, v0 @145
+    Branch v14 -> taken b4(), notTaken b5() @145
+  b4():
+    v15 = GetModuleVariable variable=g1 @169
+    v16 = CheckInitialized v15 name="reader" @169
+    v17 = Call v16, -, v12 calleeName="reader" @169
+    v18 = Add v11, v17 @169
+    v19 = Convert v18 declared={type=number flags=[IsExpected]} @162
+    v20 = Increment v12 @152
+    v21 = Convert v20 declared={type=number flags=[IsExpected]} @152
+    Jump -> next b3(v19, v21) @152
+  b5():
+    v22 = Increment v6 @110
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @110
+    Jump -> next b1(v11, v23) @110
+  b6():
+    Return v5 @192
+}
+function f2 name="read" module=m0 position=315 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g2 @344
+    v2 = CheckInitialized v1 name="held" @344
+    v3 = PropGet v2 key="width" @344
+    v4 = Add v3, v0 @357
+    Return v4 @357
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

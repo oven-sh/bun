@@ -5,8 +5,9 @@
 // CHECK-NOT: = IteratorResume
 
 // RUN(SUSPEND): lower
-// SUSPEND: LoopHint
-// SUSPEND-NEXT: [[request]] = Convert {{*}}declared={type=number site=w{{*}}} illTypedCause=FromLooseType
+// SUSPEND: notTaken [[suspend]](
+// SUSPEND: [[suspend]]([[request]]):
+// SUSPEND-NEXT: LoopHint
 // SUSPEND-NEXT: [[results]] = Yield [[request]]
 // SUSPEND-NEXT: [[sent]] = ResultAt [[results]]
 // SUSPEND-NEXT: [[mode]] = ResultAt [[results]] index=1

@@ -1,0 +1,3 @@
+//  object assign, heir declares
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+class A { k = 0;  } Object.assign(A.prototype, { m(n) { return n * 2 + this.k; } }); let a = new A(); function r() { let s = 0; for (let j = 0; j < 150; j++) { s += a.m(j & 3); } return s; } show("after", r); try { class H extends A { m(n) { return n * 13; } }; a = new H(); } catch (e) { console.log("threw", e.name); } show("then", r); show("again", r); a = new A(); show("new", r);

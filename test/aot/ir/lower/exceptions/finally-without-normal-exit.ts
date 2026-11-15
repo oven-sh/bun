@@ -2,10 +2,8 @@
 // CHECK-LABEL: function {{*}}name="onlyThrows"
 // CHECK: [[landing]]() role=CleanupHandler:
 // CHECK-NEXT: [[caught]] = CatchValue
-// CHECK-NEXT: Jump -> next [[finalizer]]([[caught]])
-// CHECK: [[finalizer]]([[thrown]]):
 // CHECK: key="cleanup"
-// CHECK: Throw [[thrown]]
+// CHECK: Throw [[caught]]
 
 // RUN(PATHS): lower
 // PATHS-NOT: Switch

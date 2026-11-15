@@ -1,0 +1,17 @@
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# type Heard = { opened: Set<(n: number) => void>; shut: Set<(n: number) => void> };
+# const heard: Heard = { opened: new Set(), shut: new Set() };
+# function tell(name: keyof Heard, n: number): void { for (const one of heard[name]) one(n); }
+# sink(heard, tell);
+# -- end of source
+# f1 = tell
+# The key is a text, so the read names no field and nothing is known of what it finds. Every field of the record is written to hold a Set, and what is found goes into a for-of and nowhere else:
+# it is expected to be a Set. It is tested for that class, not for a list, and on the passing way the table is stepped without the protocol.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: [[test]]: boolean @Boolean = TypeTest {{*}}testedType=Set
+# CHECK: = IsPristine {{*}}builtinClass=Set
+# CHECK: isLoopHead=true
+# RUN(LIST): walk f1 mechanisms=all
+# LIST-NOT: testedType=Array

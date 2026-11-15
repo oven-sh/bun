@@ -1,0 +1,12 @@
+# -- source: main.cjs
+# function visit() {
+#   const early = typeof step;
+#   again: function step() { return 2; }
+#   return early + " " + step();
+# }
+# print(visit());
+# -- end of source
+# In sloppy code a function may stand behind a label. It is a declaration of the function around it like any other, made before the first statement runs.
+# RUN: run-in-shell
+# CHECK: function 2
+# CHECK-NEXT: exited with 0

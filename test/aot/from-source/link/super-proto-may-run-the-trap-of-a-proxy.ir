@@ -1,0 +1,11 @@
+# The engine's accessor asks the receiver of `super.__proto__` for its link. The receiver may be a proxy, so the read may run code that nobody has seen, though the classes above the home object are as they were written.
+# f1 = ask, f5 = probe
+# -- source: super-proto-may-run-the-trap-of-a-proxy.js
+# class Low {}
+# class Mid extends Low {}
+# class Top extends Mid { probe() { return super.__proto__; } }
+# function ask(p) { return Top.prototype.probe.call(p) === null; }
+# ask(new Proxy({}, { getPrototypeOf() { return null; } }));
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f5 {{*}} returns=[{{*}}mayCallUnknownCode

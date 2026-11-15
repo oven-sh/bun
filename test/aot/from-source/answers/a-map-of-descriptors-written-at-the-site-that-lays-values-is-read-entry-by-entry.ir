@@ -1,0 +1,27 @@
+# -- source: main.cjs
+# "use strict";
+# function add(a, b) { return (a + b) | 0; }
+# function twice(a) { return (a * 2) | 0; }
+# const names = Object.create(null, { add: { value: add }, twice: { value: twice, enumerable: true } });
+# function called(t) { let s = 1; for (let i = 0; i < t; i++) s = names.twice(names.add(s, i)) % 1009; return s; }
+# print(called(5), called(6));
+# -- end of source
+# f1 = add, f2 = twice, f3 = called
+# The map as Object.create's second operand. THE FRONT END: the call stayed a call (it took one operand alone): names was the engine's Object. Where each entry is `name: { value .. }` the record is made and Object.defineProperties,
+# which Object.create runs inside, is called on it with the map. THE SCAN: it split the map's one definition into one an entry, but read a value only beside `writable: true`, gave no entry a form, and let the map leave for unseen code
+# as soon as one entry was no accessor as written: the descriptors went with it, and a function that stands in one counted as handed to unseen code. An entry whose descriptor left into the map alone and whose flags are written constants
+# is read as a single descriptor in sight is. LINK paired a definition's access with its change by the SITE alone: the entries of one map share it: by the key too.
+# RUN(FIELD): link fields mechanisms=all
+# FIELD: "add" appended {{*}}form=read-only.not-enumerable.not-configurable.
+# FIELD: "twice" appended {{*}}form=read-only.not-configurable.
+# RUN(FUNCTION): link functions mechanisms=all
+# FUNCTION: function f1 callers-known
+# FUNCTION: function f2 callers-known
+# RUN(CALLED): walk f3 mechanisms=all
+# CALLED: callee=f1
+# RUN(ANSWER): run-in-shell
+# ANSWER: 84 178
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 84 178
+# CHECKED-NEXT: exited with 0

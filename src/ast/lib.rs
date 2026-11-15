@@ -200,17 +200,10 @@ impl Ref {
     /// Represents a null state without using an extra bit.
     pub const NONE: Ref = Ref(0); // tag=Invalid, inner=0, src=0
 
-    /// Raw 64-bit representation **including** user bits. For round-tripping
-    /// through external pointer-packed storage (e.g. css `IdentOrRef`). Differs
-    /// from [`Self::as_u64`], which masks user bits for hashing/equality.
+    /// Raw 64-bit representation **including** user bits, which [`Self::as_u64`] masks.
     #[inline]
     pub const fn to_raw_bits(self) -> u64 {
         self.0
-    }
-    /// Reconstruct from a value previously returned by [`Self::to_raw_bits`].
-    #[inline]
-    pub const fn from_raw_bits(bits: u64) -> Ref {
-        Ref(bits)
     }
 
     /// General constructor exposing all three packed fields. Prefer `init` for
@@ -2407,6 +2400,19 @@ impl<'a> Source<'a> {
             path,
             contents: Cow::Owned(contents),
             ..Default::default()
+        }
+    }
+
+    /// A copy that owns nothing, to be put in `arena`, which drops nothing.
+    pub fn clone_in(&self, arena: &'a bun_alloc::Arena) -> Source<'a> {
+        let clone_in = |bytes: &Cow<'a, [u8]>| match bytes {
+            Cow::Borrowed(bytes) => Cow::Borrowed(*bytes),
+            Cow::Owned(bytes) => Cow::Borrowed(&*arena.alloc_slice_copy(bytes)),
+        };
+        Source {
+            contents: clone_in(&self.contents),
+            identifier_name: clone_in(&self.identifier_name),
+            ..*self
         }
     }
 

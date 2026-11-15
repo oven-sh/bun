@@ -20,6 +20,10 @@ const usesGlobal = "console.log(declaredElsewhere + 1);\n";
 
 test.each([
   ["a script", { "script.ts": "var declaredElsewhere: number;\n" }],
+  [
+    "a script with an export in a namespace",
+    { "script.ts": "namespace Kept {\n  export const one = 1;\n}\nvar declaredElsewhere: number;\n" },
+  ],
   ["declare global", { "rest.ts": "export {};\ndeclare global { var declaredElsewhere: number; }\n" }],
   [
     "a file outside include that an unreached file imports",
@@ -53,6 +57,14 @@ test("a named file does not see a global of a module nothing reaches, or its err
     errors: [],
     exitCode: 0,
   });
+});
+
+test("a named file finds the file that it adds to, which nothing imports", async () => {
+  const files = {
+    "observable.ts": "export declare class Observable<T> {\n  held: T;\n}\n",
+    "adds.ts": `declare module "./observable" {\n  interface Observable<T> {\n    map(): T;\n  }\n}\nexport {};\n`,
+  };
+  expect(await check(files, "adds.ts")).toEqual({ errors: [], exitCode: 0 });
 });
 
 test("a file that a named file imports is checked as before", async () => {

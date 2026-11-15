@@ -1,0 +1,17 @@
+# -- source: main.ts
+# import * as names from "./names.ts";
+# declare function print(...values: unknown[]): void;
+# declare function id(x: any): any;
+# class Pair { first = 1; second = 2; }
+# function text(): string { return names.first() + names.second(); }
+# function sum(pair: Pair): number { const before = pair.first; const said = text(); return before + pair.first + pair.second + said.length; }
+# print(sum(new Pair()), sum(id(new Pair())));
+# -- source: names.ts
+# export function first(): string { return "f"; }
+# export function second(): string { return "s"; }
+# -- end of source
+# The read of a module's namespace calls no unknown code. A function that calls the module's exports keeps that.
+# RUN: summary f1
+# CHECK: summary f1 operations=9 traits=[MayThrow] effects=[mayThrow, mayThrowByRule, mayCollect, mayTouchMemory] operators=[
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: 6 6

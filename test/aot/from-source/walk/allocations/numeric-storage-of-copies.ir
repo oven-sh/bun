@@ -1,0 +1,29 @@
+# The arrays that slice(), Array.of(), Array() and new Array() return have the storage that their elements need, as in the interpreter.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function describe(value: unknown): string;
+# declare function id(value: any): any;
+# const made: unknown[][] = [[1, 2, 3].slice(), Array.of(1, 2, 3), Array(1, 2, 3), new Array(1.5, 2, 3), [1.5, 2].slice(), ["a", 1].slice(), Array.of<unknown>(1, "b"), [0.5, NaN].slice()];
+# id(made);
+# for (const list of made) print(/ArrayWith(\w+)/.exec(describe(list))![1], list.join());
+# for (const list of made) { list.push("c", 0.5); list[0] = -0; print(list.join(), 1 / (list[0] as number)); }
+# -- end of source
+# LIBRARY: own
+# RUN: run-in-shell mechanisms=all globalThis.id = value => value;
+# CHECK: Int32 1,2,3
+# CHECK-NEXT: Int32 1,2,3
+# CHECK-NEXT: Int32 1,2,3
+# CHECK-NEXT: Double 1.5,2,3
+# CHECK-NEXT: Double 1.5,2
+# CHECK-NEXT: Contiguous a,1
+# CHECK-NEXT: Contiguous 1,b
+# CHECK-NEXT: Contiguous 0.5,NaN
+# CHECK-NEXT: 0,2,3,c,0.5 -Infinity
+# CHECK-NEXT: 0,2,3,c,0.5 -Infinity
+# CHECK-NEXT: 0,2,3,c,0.5 -Infinity
+# CHECK-NEXT: 0,2,3,c,0.5 -Infinity
+# CHECK-NEXT: 0,2,c,0.5 -Infinity
+# CHECK-NEXT: 0,1,c,0.5 -Infinity
+# CHECK-NEXT: 0,b,c,0.5 -Infinity
+# CHECK-NEXT: 0,NaN,c,0.5 -Infinity
+# CHECK-NEXT: exited with 0

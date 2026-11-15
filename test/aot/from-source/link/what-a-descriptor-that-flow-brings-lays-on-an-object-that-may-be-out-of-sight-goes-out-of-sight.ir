@@ -1,0 +1,20 @@
+# The object of the definition is a parameter of a function that code nobody sees may call: the object may be its own, so what the descriptor holds under `value` goes out of sight; the descriptor itself is only read by the built-in and stays. L0 = what is laid, L2 = the descriptor.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L2 changes=[] stays-with-compiled-code
+# -- source: what-a-descriptor-that-flow-brings-lays-on-an-object-that-may-be-out-of-sight-goes-out-of-sight.js
+# const shared = { value: undefined, enumerable: false };
+# let last;
+# function lay(object) {
+#   const made = { kind: "made", seen: 0 };
+#   shared.value = made;
+#   Object.defineProperty(object, "inner", shared);
+#   shared.value = undefined;
+#   last = made;
+# }
+# globalThis.layFromOutside = lay;
+# const mine = { id: 1 };
+# lay(mine);
+# last.seen += 2;
+# console.log(last.seen, mine.inner.kind);
+# -- end of source

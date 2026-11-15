@@ -1,0 +1,16 @@
+# f2 = Holder.twice, f3 = Holder.between
+# -- source: main.ts
+# class Holder { items: string[] = []; constructor(readonly width: number) { for (let k = 0; k < 3; k++) this.items.push("t" + k); }
+#   twice(at: number): string { const key = at % this.width; return this.items[key] + "," + this.items[key]; }
+#   between(at: number): string { const key = at % this.width; const first = this.items[key]; this.items.reverse(); return first + "," + this.items[key]; } }
+# const numbers = JSON.parse("[3,2.5]") as number[];
+# print(new Holder(numbers[0]!).twice(7), new Holder(numbers[1]!).twice(8), new Holder(numbers[0]!).between(8), new Holder(numbers[1]!).between(2.5));
+# -- end of source
+# A list that stays as made is read once under one number, as long as nothing is written in between.
+# RUN: walk f2 mechanisms=all
+# CHECK-COUNT-1: = GetArrayElement
+# CHECK-NOT: = GetArrayElement
+# RUN(BETWEEN): walk f3 mechanisms=all
+# BETWEEN-COUNT-2: = GetArrayElement
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: t1,t1 undefined,undefined t2,t0 t0,t2

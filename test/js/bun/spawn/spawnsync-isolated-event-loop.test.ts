@@ -77,6 +77,33 @@ describe.concurrent("spawnSync isolated event loop", () => {
     expect(exitCode).toBe(0);
   });
 
+  test.skipIf(isWindows)("signal listeners should not run during spawnSync", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        process.on("SIGUSR2", () => console.log("listener"));
+        process.kill(process.pid, "SIGUSR2");
+        Bun.spawnSync({ cmd: ["true"], stdout: "pipe" });
+        console.log("returned");
+        setImmediate(() => console.log("immediate"));
+      `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "returned\nlistener\nimmediate\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("stdin/stdout from main process should not be affected by spawnSync", async () => {
     await using proc = Bun.spawn({
       cmd: [

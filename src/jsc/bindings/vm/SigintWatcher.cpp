@@ -6,7 +6,6 @@
 #endif
 
 extern "C" void Bun__onPosixSignal(int signalNumber);
-extern "C" void Bun__ensureSignalHandler();
 
 namespace Bun {
 
@@ -37,8 +36,6 @@ void SigintWatcher::install()
 #if OS(WINDOWS)
     SetConsoleCtrlHandler(WindowsCtrlHandler, true);
 #else
-    Bun__ensureSignalHandler();
-
     struct sigaction action;
     memset(&action, 0, sizeof(struct sigaction));
 

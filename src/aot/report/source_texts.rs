@@ -36,8 +36,6 @@ pub struct FunctionSources(UnsafeCell<Box<[u8]>>);
 
 // SAFETY: it only changes in `release`.
 unsafe impl Sync for FunctionSources {}
-// SAFETY: as a box of bytes.
-unsafe impl Send for FunctionSources {}
 
 impl FunctionSources {
     pub fn new(sources: Box<[u8]>) -> FunctionSources {

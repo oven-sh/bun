@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use core::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 use std::thread::{self, ThreadId};
 use std::time::Instant;
 
@@ -344,8 +344,8 @@ pub(crate) struct StatWatcher {
 
     /// JS-thread uses only.
     ctx: BackRef<VirtualMachine>,
-    /// The pending pool→JS hop, if any (one at a time: the initial stat, then restats).
-    pending_hop: Cell<u8>,
+    /// The pending pool→JS hop, if any. A restat can post `Changed` again before the last one has run.
+    pending_hop: AtomicU8,
 
     ref_count: ThreadSafeRefCount,
 
@@ -412,7 +412,8 @@ impl StatWatcher {
 
     /// Pool thread → JS thread, where `hop` runs unless the VM is tearing down.
     fn post_to_js_thread(this: RefPtr<Self>, hop: StatWatcherHop, ticket: &bun_jsc::Ticket) {
-        this.pending_hop.set(hop as u8);
+        // `Relaxed`: the post publishes it.
+        this.pending_hop.store(hop as u8, Ordering::Relaxed);
         ticket.post(ConcurrentTask::create(Task::init(this.into_raw())));
     }
 
@@ -423,7 +424,7 @@ impl StatWatcher {
     pub(crate) unsafe fn run_hop(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
         // SAFETY: fn contract.
         let this = unsafe { RefPtr::from_raw(this) };
-        match this.pending_hop.get() {
+        match this.pending_hop.load(Ordering::Relaxed) {
             x if x == StatWatcherHop::InitialStatSuccess as u8 => {
                 Self::initial_stat_success_on_main_thread(this)
             }
@@ -632,7 +633,7 @@ impl StatWatcher {
         let this = RefPtr::new(StatWatcher {
             next: bun_threading::Link::new(),
             ctx: BackRef::new(vm),
-            pending_hop: Cell::new(0),
+            pending_hop: AtomicU8::new(0),
             ref_count: ThreadSafeRefCount::init(),
             closed: AtomicBool::new(false),
             path: alloc_file_path,
@@ -795,8 +796,8 @@ pub(crate) struct InitialStatTask {
     task: WorkPoolTask,
 }
 
-// SAFETY: in `watcher`, `ref_count` and `closed` are atomic, `path` never changes, `last_stat` is
-// `Guarded`, and the JS thread reads `pending_hop` only in the task posted after it is set.
+// SAFETY: in `watcher`, `ref_count`, `closed` and `pending_hop` are atomic, `path` never changes,
+// and `last_stat` is `Guarded`.
 unsafe impl Send for InitialStatTask {}
 
 bun_threading::intrusive_work_task!(InitialStatTask, task);

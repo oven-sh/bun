@@ -10,7 +10,6 @@ use crate::Error;
 use crate::generated_bindgen::transpiler::{
     TranspilerExternal, TranspilerMinify, TranspilerOptions, TranspilerSourcemap,
 };
-use crate::node::types::Buffer;
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
 use bun_alloc::ArenaVec;
 use bun_ast::Expr;
@@ -117,12 +116,10 @@ fn code_from_js(
     let StringOrBuffer::Buffer(buffer) = &parsed else {
         return Ok(parsed);
     };
-    if !buffer.buffer.can_change_under_borrow()
-        && buffer.buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN
-    {
+    if !buffer.can_change_under_borrow() && buffer.byte_len > bun_ast::Source::MAX_PARSEABLE_LEN {
         return Ok(parsed);
     }
-    match buffer.buffer.try_copy_bytes() {
+    match buffer.try_copy_bytes() {
         Some(copy) => Ok(StringOrBuffer::owned(copy)),
         None => Err(global.throw_out_of_memory()),
     }
@@ -1095,7 +1092,7 @@ impl JSTranspiler {
         jsc::mark_binding();
         let code = match code_arg {
             StringOrJsBytes::Bytes(buffer) => {
-                let bytes = Buffer::from_array_buffer(global, buffer.to_js())
+                let bytes = jsc::ArrayBuffer::from_typed_array(global, buffer.to_js())
                     .slice()
                     .to_vec();
                 global.vm().report_extra_memory(bytes.len());

@@ -31,6 +31,9 @@ console.log(await Bun.file("written.txt").text());
 //// a-stream-is-written-to-a-file
 await Bun.write("written.txt", new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("from a stream")); controller.close(); } })));
 console.log(await Bun.file("written.txt").text());
+//// a-stream-is-written-to-a-descriptor-that-fills
+//@ alone
+await Bun.write(1, new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(1 << 20).fill(120)); controller.close(); } })));
 //// a-file-is-served
 //@ file cwd/served.txt "from a file"
 const server = Bun.serve({ port: 0, fetch: () => new Response(Bun.file("served.txt")) });
@@ -39,6 +42,14 @@ server.stop(true);
 //// a-fetched-body-is-written-to-a-file
 const server = Bun.serve({ port: 0, fetch: () => new Response("from a server") });
 await Bun.write("written.txt", await fetch(server.url));
+console.log(await Bun.file("written.txt").text());
+server.stop(true);
+//// a-fetched-stream-is-written-to-a-file
+let finish;
+const server = Bun.serve({ port: 0, fetch: () => new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode("from a ")); finish = () => { controller.enqueue(new TextEncoder().encode("server")); controller.close(); }; } })) });
+const written = Bun.write("written.txt", await fetch(server.url));
+finish();
+await written;
 console.log(await Bun.file("written.txt").text());
 server.stop(true);
 //// a-rewritten-response-is-streamed

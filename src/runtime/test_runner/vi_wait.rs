@@ -6,10 +6,9 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     AbortHandle, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue, JsClass as _,
-    JsError, JsResult, JsThread, Strong,
+    JsError, JsResult, JsThread, Strong, StrongCell,
 };
 
-use super::cells::StrongCell;
 use super::expect_core::expect_deferred::RunningEntry;
 use super::jest::Jest;
 use super::timers::fake_timers::{self, Stop};

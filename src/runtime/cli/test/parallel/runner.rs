@@ -9,7 +9,7 @@ use std::io::Write as _;
 use bun_core::{CStrRef, Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
-use bun_ptr::Interned;
+use bun_ptr::{CellExt as _, Interned};
 use bun_resolver::fs::FileSystem;
 use bun_sys::Fd;
 
@@ -22,7 +22,6 @@ use super::worker::Worker;
 use crate::Command;
 use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
-use crate::test_runner::cells::CellExt as _;
 use crate::test_runner::snapshot::Snapshots;
 use bun_collections::index_sort;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;

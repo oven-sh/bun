@@ -13,11 +13,11 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
     StringJsc as _,
 };
+use bun_ptr::CellExt as _;
 
 pub(crate) use super::bun_test;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use crate::generated_bindgen::jest::{Bun__Jest__returnUndefined, Bun__Jest__setDefaultTimeout};
-use super::cells::CellExt as _;
 use super::pretty_format::{self, JestPrettyFormat};
 use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;

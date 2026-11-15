@@ -279,7 +279,7 @@ pub enum AlreadyBundled {
 
 /// `impl EqlParser for P` — moved out of `bun_ast::expr` (next to `P`).
 impl<'a, const IS_TS: bool, const SCAN: bool> bun_ast::expr::EqlParser
-    for crate::p::P<'a, IS_TS, SCAN>
+    for crate::p::P<'a, '_, IS_TS, SCAN>
 {
     #[inline]
     fn arena(&self) -> &bun_alloc::Arena {

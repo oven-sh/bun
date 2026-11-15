@@ -27,7 +27,7 @@ use bun_core::{String as BunString, StringView};
 // ──────────────────────────────────────────────────────────────────────────────
 bun_opaque::opaque_ffi! { pub struct JSGlobalObject; }
 
-/// Roots nothing: a holder that can outlive every object of its realm needs a [`StrongGlobal`].
+/// A raw pointer to a `JSGlobalObject`, not a GC root: use [`WeakGlobalRef`] if nothing else roots it.
 ///
 /// `Copy` so it drops in for the old reference fields; `!Send + !Sync` via
 /// `BackRef<JSGlobalObject>` (since `JSGlobalObject: !Sync`), matching
@@ -64,35 +64,36 @@ impl From<&JSGlobalObject> for GlobalRef {
     }
 }
 
-/// Keeps the global from being collected.
-pub struct StrongGlobal {
-    global: GlobalRef,
-    _root: crate::Strong,
-}
-
-impl StrongGlobal {
-    pub fn new(global: &JSGlobalObject) -> Self {
-        Self {
-            global: GlobalRef::new(global),
-            _root: crate::Strong::create(global.to_js_value(), global),
-        }
-    }
-
-    pub fn get(&self) -> GlobalRef {
-        self.global
-    }
-}
-
-impl core::ops::Deref for StrongGlobal {
-    type Target = JSGlobalObject;
-    fn deref(&self) -> &JSGlobalObject {
-        &self.global
-    }
-}
-
 impl core::fmt::Debug for GlobalRef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_tuple("GlobalRef").field(&self.0).finish()
+    }
+}
+
+/// A [`GlobalRef`] that is `None` once the global has been collected.
+pub struct WeakGlobalRef {
+    global: GlobalRef,
+    /// `None` for `vm.global()`, which only `bun test --isolate` unprotects before teardown.
+    weak: Option<crate::Weak<()>>,
+}
+
+impl WeakGlobalRef {
+    pub fn new(global: &JSGlobalObject) -> Self {
+        let vm = global.bun_vm();
+        let can_be_collected =
+            vm.test_isolation_enabled.get() || !core::ptr::eq(global, vm.global());
+        Self {
+            global: GlobalRef::new(global),
+            weak: can_be_collected
+                .then(|| crate::Weak::create_passive(global.to_js_value(), global)),
+        }
+    }
+
+    pub fn get(&self) -> Option<GlobalRef> {
+        match &self.weak {
+            Some(weak) => weak.get().map(|_| self.global),
+            None => Some(self.global),
+        }
     }
 }
 

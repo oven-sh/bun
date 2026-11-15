@@ -2259,6 +2259,7 @@ impl ErrName for crate::CrateError {
 pub mod scoped_debug_writer {
     use super::*;
 
+    /// Written once in `stdio::init`, before other threads start, so `Relaxed` suffices.
     pub(crate) static SCOPED_FD: AtomicFd = AtomicFd::new(0);
 
     /// Every scope writes to the same fd. Held across the `write(2)` loop of

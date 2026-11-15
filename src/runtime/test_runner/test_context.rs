@@ -20,7 +20,6 @@ use super::cells::CellExt as _;
 use super::execution::{ExecutionSequence, Result as ExecutionResult};
 use super::expect::Expect;
 use super::expect::expect_deferred::ExpectDeferred;
-use super::jest::FileColumns as _;
 use super::scope_functions::{CallbackMode, FunctionKind, ParseArgumentsCfg, parse_arguments};
 use super::test_context_parameter::{ContextParameter, TEXT_LEFT_OUT};
 use crate::generated_bindgen::scope_functions::{CallbackOrOptions, DescriptionOrCallback};
@@ -221,7 +220,7 @@ impl TestContext {
         let name = test.base.name.as_deref().unwrap_or(b"");
 
         let task = JSValue::create_empty_object(global, 16);
-        let id = format!("{}_{}_{}", buntest.file_id, self.group_index, self.sequence_index);
+        let id = format!("{}_{}_{}", buntest.file.id, self.group_index, self.sequence_index);
         task.put(global, b"id", bun_string_jsc::create_utf8_for_js(global, id.as_bytes())?);
         task.put(global, b"type", ascii(global, "test")?);
         task.put(global, b"name", bun_string_jsc::create_utf8_for_js(global, name)?);
@@ -507,16 +506,8 @@ fn mode(base: &BaseScope) -> &'static str {
     }
 }
 
-fn file_path(buntest: &BunTest) -> &'static [u8] {
-    let Some(reporter) = buntest.reporter else {
-        return b"";
-    };
-    // SAFETY: the reporter outlives every BunTest.
-    unsafe { reporter.as_ref() }.jest.files.items_source()[buntest.file_id as usize].path.text
-}
-
 fn file_name(buntest: &BunTest) -> Vec<u8> {
-    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), file_path(buntest)).to_vec();
+    let mut name = resolve_path::relative(FileSystem::instance().top_level_dir(), buntest.file.path).to_vec();
     resolve_path::platform_to_posix_in_place::<u8>(&mut name);
     name
 }
@@ -562,7 +553,7 @@ pub(crate) fn suite_task(
         let name = bun_string_jsc::create_utf8_for_js(global, &file_name(buntest))?;
         task.put(global, b"name", name);
         task.put(global, b"fullName", name);
-        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, file_path(buntest))?);
+        task.put(global, b"filepath", bun_string_jsc::create_utf8_for_js(global, buntest.file.path)?);
         task.put(global, b"file", task);
         return Ok(task);
     }

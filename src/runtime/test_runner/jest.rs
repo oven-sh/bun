@@ -1,14 +1,14 @@
-use core::ptr::NonNull;
+use core::cell::Cell;
 use std::io::Write as _;
 
-use crate::cli::command::TestOptions;
 use crate::cli::test_command::ReportersConfig;
-use bun_collections::{ArrayHashMap, MultiArrayList};
+use bun_collections::ArrayHashMap;
 use bun_core::Output;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_lint::utils::eslint_utils::js_number::{parse_float, parse_int};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_options_types::context::{RESETS_BEFORE_EACH_TEST, TestEnvironment};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
     StringJsc as _,
@@ -17,6 +17,7 @@ use bun_jsc::{
 pub(crate) use super::bun_test;
 use crate::generated_bindgen::expect::{js_Expect, js_ExpectTypeOf};
 use crate::generated_bindgen::jest::{Bun__Jest__returnUndefined, Bun__Jest__setDefaultTimeout};
+use super::cells::CellExt as _;
 use super::pretty_format::{self, JestPrettyFormat};
 use super::scope_functions::{create_bound, Mode as ScopeKind, ScopeFunctions};
 use super::snapshot::Snapshots;
@@ -25,25 +26,23 @@ use super::{vi_utils, vi_wait};
 use bun_test::js_fns::{GenericHookTag, create_hook};
 use bun_test::{BaseScopeCfg, Flavor, RefDataValue, ScopeMode};
 
-#[derive(Default)]
-struct RepeatInfo {
-    count: u32,
-    index: u32,
+struct Heading {
+    title: Box<[u8]>,
+    prefix: &'static [u8],
+    repeat_count: u32,
+    repeat_index: u32,
 }
 
 #[derive(Default)]
 pub(crate) struct CurrentFile {
-    title: Box<[u8]>,
-    prefix: Box<[u8]>,
-    repeat_info: RepeatInfo,
-    has_printed_filename: bool,
+    unprinted: Cell<Option<Heading>>,
 }
 
 impl CurrentFile {
     pub(crate) fn set(
-        &mut self,
+        &self,
         title: &[u8],
-        prefix: &[u8],
+        prefix: &'static [u8],
         repeat_count: u32,
         repeat_index: u32,
         is_worker: bool,
@@ -52,20 +51,13 @@ impl CurrentFile {
         if is_worker {
             // Coordinator owns the terminal and prints its own per-test file
             // context; the worker should not emit a header to stderr.
-            self.has_printed_filename = true;
             return;
         }
         if reporters.dots || reporters.only_failures {
-            // Assigning into the Box<[u8]> fields below drops the previous values.
-            self.title = Box::<[u8]>::from(title);
-            self.prefix = Box::<[u8]>::from(prefix);
-            self.repeat_info.count = repeat_count;
-            self.repeat_info.index = repeat_index;
-            self.has_printed_filename = false;
+            self.unprinted.set(Some(Heading { title: title.into(), prefix, repeat_count, repeat_index }));
             return;
         }
 
-        self.has_printed_filename = true;
         Self::print(title, prefix, repeat_count, repeat_index);
     }
 
@@ -101,25 +93,16 @@ impl CurrentFile {
         Output::flush();
     }
 
-    pub(crate) fn print_if_needed(&mut self) {
-        if self.has_printed_filename {
-            return;
+    pub(crate) fn print_if_needed(&self) {
+        if let Some(heading) = self.unprinted.take() {
+            Self::print(&heading.title, heading.prefix, heading.repeat_count, heading.repeat_index);
         }
-        self.has_printed_filename = true;
-
-        Self::print(
-            &self.title,
-            &self.prefix,
-            self.repeat_info.count,
-            self.repeat_info.index,
-        );
     }
 }
 
-pub(crate) struct TestRunner<'a> {
+pub(crate) struct TestRunner {
     pub(crate) current_file: CurrentFile,
-    pub(crate) files: FileList,
-    pub(crate) index: FileMap,
+    pub(crate) index: Cell<FileMap>,
     pub(crate) only: bool,
     pub(crate) run_todo: bool,
     pub(crate) concurrent: bool,
@@ -127,37 +110,47 @@ pub(crate) struct TestRunner<'a> {
     pub(crate) concurrent_test_glob: Option<Vec<bun_glob::Prepared<Box<[u8]>>>>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
+    pub(crate) randomize: bool,
+    pub(crate) seed: u32,
+    pub(crate) retry: u32,
+    pub(crate) resets_before_each_test: [Option<bool>; RESETS_BEFORE_EACH_TEST.len()],
+    pub(crate) environment: Option<TestEnvironment>,
+    pub(crate) coverage_skips_test_files: bool,
+    /// Also true in a `--parallel` worker, whose records the coordinator replays into its own `JunitReporter`.
+    pub(crate) reports_to_junit: bool,
 
-    pub(crate) snapshots: Snapshots,
+    pub(crate) snapshots: Cell<Option<Box<Snapshots>>>,
 
     pub(crate) default_timeout_ms: u32,
 
     /// from `setDefaultTimeout() or jest.setTimeout()`. maxInt(u32) means override not set.
-    pub(crate) default_timeout_override: u32,
+    pub(crate) default_timeout_override: Cell<u32>,
 
-    pub(crate) vi_config: vi_utils::Config,
-    pub(crate) vi_config_of_preload: vi_utils::Config,
-
-    pub(crate) test_options: &'a TestOptions,
+    pub(crate) vi_config: Cell<vi_utils::Config>,
+    pub(crate) vi_config_of_preload: Cell<vi_utils::Config>,
 
     /// Used for --test-name-pattern to reduce allocations.
-    pub(crate) filter_regex: Option<&'a RegularExpression>,
+    pub(crate) filter_regex: Option<&'static RegularExpression>,
 
-    pub(crate) unhandled_errors_between_tests: u32,
-    pub(crate) summary: Summary,
+    pub(crate) unhandled_errors_between_tests: Cell<u32>,
+    pub(crate) summary: Cell<Summary>,
 
     /// Set once any `node:test` registration API is called; gates `process.on('exit')` dispatch at the end of the run.
-    pub(crate) node_test_used: bool,
+    pub(crate) node_test_used: Cell<bool>,
 
     /// Without `--isolate`: the last file's DOM is still on `globalThis`. See `left` in environment.ts.
-    pub(crate) environment_is_left: bool,
+    pub(crate) environment_is_left: Cell<bool>,
 
     pub(crate) bun_test_root: bun_test::BunTestRoot,
 }
 
-impl<'a> TestRunner<'a> {
+impl TestRunner {
+    pub(crate) fn with_snapshots<R>(&self, f: impl FnOnce(&mut Snapshots) -> R) -> R {
+        self.snapshots.with_taken(|snapshots| f(snapshots.as_mut().expect("`Snapshots` runs no script")))
+    }
+
     pub(crate) fn get_active_timeout(&self) -> bun_core::Timespec {
-        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
+        let Some(active_file) = self.bun_test_root.clone_active_file() else {
             return bun_core::Timespec::EPOCH;
         };
         // Per-entry deadline, not the (only-advances-sooner) file timer.
@@ -190,7 +183,7 @@ impl<'a> TestRunner<'a> {
     }
 
     pub(crate) fn remove_active_timeout(&self) {
-        let Some(active_file) = self.bun_test_root.active_file.as_deref() else {
+        let Some(active_file) = self.bun_test_root.clone_active_file() else {
             return;
         };
         if active_file.timer.next.get() != bun_core::Timespec::EPOCH {
@@ -199,7 +192,7 @@ impl<'a> TestRunner<'a> {
     }
 
 
-    pub(crate) fn should_file_run_concurrently(&self, file_id: FileId) -> bool {
+    pub(crate) fn should_file_run_concurrently(&self, file_path: &[u8]) -> bool {
         // Check if global concurrent flag is set
         if self.concurrent {
             return true;
@@ -210,12 +203,6 @@ impl<'a> TestRunner<'a> {
             return false;
         };
 
-        // Get the file path from the file_id
-        if file_id as usize >= self.files.len() {
-            return false;
-        }
-        let file_path = self.files.items_source()[file_id as usize].path.text();
-
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
             if pattern.r#match(file_path).matches() {
@@ -225,21 +212,11 @@ impl<'a> TestRunner<'a> {
         false
     }
 
-    pub(crate) fn get_or_put_file(&mut self, file_path: &'static [u8]) -> GetOrPutFileResult {
-        let entry = self.index.get_or_put(file_path).expect("unreachable");
-        if entry.found_existing {
-            return GetOrPutFileResult {
-                file_id: *entry.value_ptr,
-            };
-        }
-        let file_id = self.files.len() as FileId;
-        self.files
-            .append(File {
-                source: bun_ast::Source::init_empty_file(file_path),
-            })
-            .expect("unreachable");
-        *entry.value_ptr = file_id;
-        GetOrPutFileResult { file_id }
+    pub(crate) fn get_or_put_file(&self, path: &'static [u8]) -> File {
+        self.index.with_taken(|index| {
+            let next_id = index.count() as FileId;
+            File { id: *index.entry(path).or_insert_with(|| next_id), path }
+        })
     }
 }
 
@@ -267,22 +244,14 @@ impl Summary {
     }
 }
 
-pub(crate) struct GetOrPutFileResult {
-    pub(crate) file_id: FileId,
-}
-
+#[derive(Clone, Copy)]
 pub(crate) struct File {
-    pub source: bun_ast::Source<'static>,
+    pub(crate) id: FileId,
+    pub(crate) path: &'static [u8],
 }
 
-pub(crate) type FileList = MultiArrayList<File>;
 pub(crate) type FileId = u32;
 
-bun_collections::multi_array_columns! {
-    pub trait FileColumns for File {
-        source: bun_ast::Source<'static>,
-    }
-}
 // Keyed by the interned `&'static [u8]` path from `FilenameStore`, so no
 // allocation and distinct paths never alias.
 pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
@@ -291,26 +260,12 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton.
-    pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
-        bun_core::RacyCell::new(None);
+    #[thread_local]
+    pub(crate) static RUNNER: Cell<Option<&'static TestRunner>> = Cell::new(None);
 
-    /// `None` outside `bun test` and in a Worker, because the runner belongs to the thread that runs the test files.
-    pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: `runner_ptr` only returns it on one thread.
-        runner_ptr().map(|p| unsafe { &mut *p.as_ptr() })
-    }
-
-    /// Raw-pointer accessor for callers that must not materialise
-    /// an exclusive `&mut TestRunner` because a sub-borrow of it (e.g.
-    /// `&BunTestRoot`, `&mut BunTest`) is already live — see
-    /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
-    pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        if VirtualMachine::get_or_null().is_some_and(|vm| vm.worker_ref().is_some()) {
-            return None;
-        }
-        // SAFETY: only written and read on the thread that runs the test files.
-        unsafe { RUNNER.read() }
+    /// `None` outside `bun test`, in a Worker and in the VM of a macro: the runner belongs to the thread that runs the test files.
+    pub(crate) fn runner() -> Option<&'static TestRunner> {
+        RUNNER.get()
     }
 
     /// Computes `RuntimeFeatures::own_test_globals`. Call before the test file is loaded.
@@ -343,12 +298,8 @@ pub(crate) mod Jest {
         Ok(())
     }
 
-    pub(crate) fn file_generation(global: &JSGlobalObject) -> u32 {
-        if global.bun_vm().worker_ref().is_some() {
-            return 0;
-        }
-        // SAFETY: the runner outlives every test file and is only touched on this thread.
-        runner_ptr().map_or(0, |runner| unsafe { (*runner.as_ptr()).bun_test_root.file_generation })
+    pub(crate) fn file_generation() -> u32 {
+        runner().map_or(0, |runner| runner.bun_test_root.file_generation.get())
     }
 
     #[unsafe(no_mangle)]
@@ -604,7 +555,7 @@ pub(crate) fn set_default_timeout(milliseconds: f64) {
     let timeout_ms: u32 = u32::try_from((milliseconds as i32).max(0)).unwrap();
 
     if let Some(test_runner) = Jest::runner() {
-        test_runner.default_timeout_override = timeout_ms;
+        test_runner.default_timeout_override.set(timeout_ms);
     }
 }
 
@@ -614,15 +565,9 @@ pub(crate) fn return_undefined() {}
 /// Reached only from `node:test`, through `$bindgen` rather than the
 /// public `bun:test` module object, whenever a node:test API registers something. Returns 0 outside `bun test`.
 pub(crate) fn file_generation() -> u32 {
-    // `runner_ptr()` rather than `runner()`: node:test calls this on every test
-    // registration, and an exclusive `&mut TestRunner` would invalidate the
-    // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
-    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    Jest::runner_ptr().map_or(0, |p| unsafe {
-        if VirtualMachine::get().worker_ref().is_none() {
-            (*p.as_ptr()).node_test_used = true;
-        }
-        (*p.as_ptr()).bun_test_root.file_generation
+    Jest::runner().map_or(0, |runner| {
+        runner.node_test_used.set(true);
+        runner.bun_test_root.file_generation.get()
     })
 }
 
@@ -1134,7 +1079,7 @@ pub(crate) fn format_vitest_title(global: &JSGlobalObject, template: &[u8], item
 
 pub(crate) fn capture_test_line_number(global_this: &JSGlobalObject) -> u32 {
     if let Some(runner) = Jest::runner() {
-        if runner.test_options.reporters.junit {
+        if runner.reports_to_junit {
             return bun_jsc::cpp::JSC__JSGlobalObject__getCallerLineNumber(global_this);
         }
     }

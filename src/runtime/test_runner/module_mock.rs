@@ -4,13 +4,8 @@ use bun_jsc::JSGlobalObject;
 /// Also true inside a hook that a preload registered, because a preload's `beforeAll` runs once for all test files.
 #[unsafe(no_mangle)]
 extern "C" fn JSMock__isInPreload(global: &JSGlobalObject) -> bool {
-    let vm = global.bun_vm();
-    if vm.is_in_preload.get() {
+    if global.bun_vm().is_in_preload.get() {
         return true;
-    }
-    // Only the main thread has a runner. Workers and the VMs of macros have none.
-    if !vm.is_main_thread.get() {
-        return false;
     }
     let Some(buntest) = bun_test::clone_active_strong() else {
         return false;

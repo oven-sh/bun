@@ -838,14 +838,11 @@ impl ExpectDeferred {
         if buntest.unclaimed.of_file.get() == 0 {
             return StepResult::Complete;
         }
-        let timeout_ms = buntest.reporter.map_or(0, |reporter| {
-            // SAFETY: the reporter outlives every BunTest.
-            let runner = &unsafe { reporter.as_ref() }.jest;
-            match runner.default_timeout_override {
-                u32::MAX => runner.default_timeout_ms,
-                timeout_ms => timeout_ms,
-            }
-        });
+        let runner = &buntest.reporter.jest;
+        let timeout_ms = match runner.default_timeout_override.get() {
+            u32::MAX => runner.default_timeout_ms,
+            timeout_ms => timeout_ms,
+        };
         let deadline = *buntest.unclaimed.deadline.get_or_init(|| match timeout_ms {
             0 => Timespec::EPOCH,
             timeout_ms => now.add_ms(i64::from(timeout_ms)),

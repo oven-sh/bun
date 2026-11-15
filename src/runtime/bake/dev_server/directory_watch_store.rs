@@ -50,7 +50,7 @@ impl DevServer {
             entry.dir
         );
 
-        self.bun_watcher.evict(entry.watch_index);
+        self.bun_watcher.remove_at_index(entry.watch_index);
 
         // The Box key drops on swap_remove_at.
         let _ = store.watches.swap_remove_at(entry_index);
@@ -75,7 +75,7 @@ pub(crate) struct Entry {
     pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher::evict`.
+    /// To pass to `Watcher::remove_at_index`.
     pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 impl Default for Entry {

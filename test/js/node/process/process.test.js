@@ -3046,9 +3046,9 @@ describe.each(["Buffer.alloc(SIZE, 7)", "new Uint8Array(SIZE).fill(7)", "new Flo
       const slack = 1024 * 1024;
       const near = (a, b) => expect(Math.abs(a - b)).toBeLessThanOrEqual(slack);
 
-      // Counted as soon as the typed arrays exist, and arrayBuffers is part of external, as in Node.
-      expect(immediate.arrayBuffers).toBeGreaterThanOrEqual(before.arrayBuffers + payload);
-      expect(immediate.external).toBeGreaterThanOrEqual(before.external + payload);
+      // Counted as soon as the typed arrays exist, once, and arrayBuffers is part of external, as in Node.
+      near(immediate.arrayBuffers, before.arrayBuffers + payload);
+      near(immediate.external, before.external + payload);
       expect(immediate.arrayBuffers).toBeLessThanOrEqual(immediate.external);
 
       // A collection changes nothing: the bytes were counted already.

@@ -1566,7 +1566,7 @@ describe("inbound stream lifecycle", () => {
     }
   });
 
-  // A header-value `toString` runs user JS while sendTrailers holds the native `&mut Stream`;
+  // A header-value `toString` runs user JS while sendTrailers holds the native `&Stream`;
   // feeding the stream's own RST_STREAM (then another read) back into the parser from that
   // callback must not free the Stream out from under the caller (use-after-free under ASAN).
   test("re-entrant read() from a trailer-value toString does not free the in-use stream", async () => {

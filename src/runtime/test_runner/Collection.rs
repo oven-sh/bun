@@ -4,12 +4,12 @@ use core::cell::Cell;
 
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_core::Timespec;
+use bun_ptr::CellExt as _;
 
 use crate::test_runner::bun_test::{
     BunTest, BunTestPtr, HandleUncaughtExceptionResult, RefDataValue, ScopeId, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
-use crate::test_runner::cells::CellExt as _;
 
 pub(crate) struct Collection {
     describe_callback_queue: Cell<Vec<QueuedDescribe>>,

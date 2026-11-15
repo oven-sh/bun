@@ -92,7 +92,7 @@ fn string_property(key: &'static [u8], value: &'static [u8]) -> G::Property {
 fn object_expr(properties: Vec<G::Property>) -> Expr {
     Expr::init(
         E::Object {
-            properties: G::PropertyList::move_from_list(properties),
+            properties: bun_alloc::AstAlloc::vec_from_iter(properties),
             ..Default::default()
         },
         bun_ast::Loc::EMPTY,

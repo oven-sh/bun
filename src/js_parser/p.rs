@@ -1558,8 +1558,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let _ = self.check_dynamic_specifier(arg, arg.loc, "require.resolve()");
 
-        // Vec::from_owned_slice wants Box<[T]>; init_one is the
-        // single-element equivalent (matches transpose_require below).
         self.new_expr(
             E::Call {
                 target: require_resolve_ref,

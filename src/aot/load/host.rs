@@ -1093,14 +1093,13 @@ impl LoadHost<'_> {
         arena: &'s Arena,
         atoms: &Interner<'s>,
         hir: &mut File<'s>,
-        format: ModuleFormat,
         source: &ParsedSource,
     ) -> TreeChange {
         let code_from_strings = self.input.options.aot.code_generation_from_strings;
         match source.kind == SourceKind::Program
             && code_from_strings == CodeGenerationFromStrings::Allowed
         {
-            true => import_functions::write_import_functions(arena, atoms, hir, format),
+            true => import_functions::write_import_functions(arena, atoms, hir),
             false => TreeChange::Unchanged,
         }
     }
@@ -1887,7 +1886,7 @@ impl CodeHost for LoadHost<'_> {
             return false;
         }
         let source = parsed_source_mut(payload);
-        self.write_import_functions(arena, atoms, request.hir, request.module_format, source);
+        self.write_import_functions(arena, atoms, request.hir, source);
         self.compile_components_and_expand_globs(arena, atoms, request, source);
         let is_module = request.module_format == ModuleFormat::Esm;
         let file = (request.path, &mut *request.hir);
@@ -1908,10 +1907,7 @@ impl CodeHost for LoadHost<'_> {
         {
             return TreeChange::ChangedAndUnfinished;
         }
-        let format = request.analysis.module_format;
-        if self.write_import_functions(arena, atoms, request.hir, format, source)
-            == TreeChange::Changed
-        {
+        if self.write_import_functions(arena, atoms, request.hir, source) == TreeChange::Changed {
             return TreeChange::ChangedAndUnfinished;
         }
         let runs_tests = self.input.options.load.runs_tests;

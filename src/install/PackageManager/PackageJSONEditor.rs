@@ -1,8 +1,8 @@
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_collections::StringArrayHashMap;
 use std::io::Write as _;
 
 use bun_ast as js_ast;
-use bun_ast::{E, Expr, G};
+use bun_ast::{AstVec, E, Expr, G};
 use bun_core::{Global, Output, strings};
 use bun_paths::path_buffer_pool;
 use bun_paths::resolve_path::{join_abs_string_buf, platform};
@@ -203,7 +203,9 @@ pub(crate) fn edit_patched_dependencies(
             patched_dependencies.is_parenthesized = obj.is_parenthesized;
             patched_dependencies.was_originally_macro = obj.was_originally_macro;
             for p in obj.properties.slice() {
-                VecExt::append(&mut patched_dependencies.properties, copy_property(p));
+                patched_dependencies
+                    .properties
+                    .push(arena, copy_property(p));
             }
         }
     }
@@ -253,11 +255,12 @@ pub fn edit_trusted_dependencies(
     }
 
     let trusted_dependencies_to_add = len;
-    let new_trusted_deps = bun_alloc::AstAlloc::vec_from_iter(
-        trusted_dependencies.iter().copied().chain(
+    let new_trusted_deps = js_ast::ExprNodeList::from_iter_in(
+        (trusted_dependencies.iter().copied()).chain(
             (names_to_add[..len].iter().rev())
                 .map(|name| Expr::allocate(arena, E::EString::init(name), bun_ast::Loc::EMPTY)),
         ),
+        arena,
     );
 
     let mut needs_new_trusted_dependencies_list = true;
@@ -272,7 +275,7 @@ pub fn edit_trusted_dependencies(
         Expr::allocate(
             arena,
             E::Array {
-                items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
+                items: js_ast::ExprNodeList::from_slice_in(new_trusted_deps.slice(), arena),
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -305,7 +308,7 @@ pub fn edit_trusted_dependencies(
         *package_json = Expr::allocate(
             arena,
             E::Object {
-                properties: bun_alloc::AstAlloc::vec_from_iter(root_properties),
+                properties: G::PropertyList::from_slice_in(&root_properties, arena),
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -1370,7 +1373,7 @@ pub(crate) fn edit(
             Expr::allocate(
                 arena,
                 E::Object {
-                    properties: bun_alloc::AstAlloc::vec(),
+                    properties: AstVec::new(),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,
@@ -1382,7 +1385,7 @@ pub(crate) fn edit(
                 .data
                 .e_object_mut()
                 .expect("infallible: variant checked");
-            obj.properties = bun_alloc::AstAlloc::vec_from_iter(new_dependencies);
+            obj.properties = G::PropertyList::from_slice_in(&new_dependencies, arena);
             if obj.properties.len_u32() > 1 {
                 obj.alphabetize_properties();
             }
@@ -1405,7 +1408,7 @@ pub(crate) fn edit(
             *current_package_json = Expr::allocate(
                 arena,
                 E::Object {
-                    properties: bun_alloc::AstAlloc::vec_from_iter(root_properties),
+                    properties: G::PropertyList::from_slice_in(&root_properties, arena),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,

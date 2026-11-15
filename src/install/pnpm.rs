@@ -1,7 +1,7 @@
 use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_ast::{self, self as js_ast, E, Expr, ExprData};
-use bun_collections::{StringArrayHashMap, VecExt};
+use bun_collections::StringArrayHashMap;
 use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::strings;
 use bun_semver as semver;
@@ -397,16 +397,12 @@ pub(crate) fn migrate_pnpm_lockfile(
 
     let yaml_source = bun_ast::Source::init_path_string(b"pnpm-lock.yaml", data);
     let yaml_arena = bun_ast::AstArena::new();
-    let mut yaml_allocator = bun_ast::ASTMemoryAllocator::borrowing(&yaml_arena);
-    let parsed = {
-        let _scope = yaml_allocator.enter();
-        bun_parsers::yaml::YAML::parse(
-            &yaml_source,
-            log,
-            &yaml_arena,
-            bun_parsers::yaml::CyclicAliases::Reject,
-        )
-    };
+    let parsed = bun_parsers::yaml::YAML::parse(
+        &yaml_source,
+        log,
+        &yaml_arena,
+        bun_parsers::yaml::CyclicAliases::Reject,
+    );
     let Ok(mut root) = parsed else {
         return Err(MigratePnpmLockfileError::YamlParseError);
     };
@@ -1705,10 +1701,10 @@ fn add_trusted_dependencies(
         return Ok(false);
     }
 
-    let mut items = js_ast::ExprNodeList::init_capacity(names.len());
+    let mut items = js_ast::ExprNodeList::with_capacity_in(names.len(), bump);
     if let Some(mut existing_items) = existing.as_ref().and_then(Expr::as_array) {
         while let Some(item) = existing_items.next() {
-            VecExt::append(&mut items, item);
+            items.push(bump, item);
         }
     }
 
@@ -1716,7 +1712,7 @@ fn add_trusted_dependencies(
     for &name in names {
         if !items.slice().iter().any(|item| as_str(item) == Some(name)) {
             let item = Expr::allocate(bump, E::EString::init(name), bun_ast::Loc::EMPTY);
-            VecExt::append(&mut items, item);
+            items.push(bump, item);
         }
     }
     if existing.is_some() && items.len_u32() == existing_len {
@@ -1984,7 +1980,7 @@ fn string_entries(
             scalar_text(source, scalar).filter(|_| !matches!(scalar.data, ExprData::ENull(_)));
         Some(Expr::allocate(bump, E::EString::init(text?), scalar.loc))
     };
-    let mut properties = js_ast::G::PropertyList::init_capacity(map.property_count());
+    let mut properties = js_ast::G::PropertyList::with_capacity_in(map.property_count(), bump);
     for (key, value) in props(map) {
         let key = text_of(key);
         let value = match &value.data {
@@ -1998,8 +1994,8 @@ fn string_entries(
             *skipped += 1;
             continue;
         }
-        VecExt::append(
-            &mut properties,
+        properties.push(
+            bump,
             js_ast::G::Property {
                 key,
                 value,
@@ -2092,10 +2088,10 @@ fn copy_into_root(
 }
 
 fn paths_array(bump: &bun_ast::AstArena, paths: &[&[u8]]) -> Expr {
-    let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
+    let mut items = js_ast::ExprNodeList::with_capacity_in(paths.len(), bump);
     for path in paths {
-        VecExt::append(
-            &mut items,
+        items.push(
+            bump,
             Expr::allocate(bump, E::EString::init(path), bun_ast::Loc::EMPTY),
         );
     }

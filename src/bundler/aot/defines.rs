@@ -1,6 +1,6 @@
 use bun_alloc::Arena;
 use bun_ast::expr::Data;
-use bun_ast::{Expr, Loc, Log};
+use bun_ast::{AstArena, Expr, Loc, Log};
 use bun_js_parser::defines::{Define as DefineTable, DefineData};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
@@ -8,7 +8,6 @@ use bun_sema::hir_from_data::DataValue;
 use bun_sema::util::SharedSort;
 
 use super::data_values::{NotData, data_value_from_expr, report_not_data};
-use super::services::with_ast_scope;
 use crate::options::BundleOptions;
 
 struct DefineEntry<'d> {
@@ -24,7 +23,7 @@ pub(crate) fn fold_options<'s>(
     log: &Log,
 ) -> FoldOptions<'s> {
     let table = &*options.define;
-    let defines = with_ast_scope(|scratch| convert_defines(table, scratch, arena, atoms, log));
+    let defines = convert_defines(table, &AstArena::new(), arena, atoms, log);
     let user_defined = paths_of_names(user_defined_names, arena, atoms);
     let dropped_calls = paths_of_names(&options.drop, arena, atoms);
     let features = feature_atoms(options, atoms);
@@ -59,7 +58,7 @@ fn collect_define_entries(table: &DefineTable) -> Vec<DefineEntry<'_>> {
 
 fn convert_defines<'s>(
     table: &DefineTable,
-    scratch: &Arena,
+    scratch: &AstArena,
     arena: &'s Arena,
     atoms: &Interner<'s>,
     log: &Log,
@@ -102,7 +101,7 @@ fn intern_slice<'p, 's>(
 
 fn define_value<'s>(
     data: &DefineData,
-    scratch: &Arena,
+    scratch: &AstArena,
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> Result<DefineValue<'s>, NotData> {
@@ -200,7 +199,7 @@ mod tests {
     fn create_table(
         entries: &[(&str, &str)],
         dropped: &[&[u8]],
-        scratch: &bun_ast::AstArena,
+        scratch: &AstArena,
     ) -> Box<DefineTable> {
         let input = api::StringMap {
             keys: entries
@@ -227,20 +226,19 @@ mod tests {
     }
 
     fn fold_configured<'s>(
-        configure: impl FnOnce(&mut BundleOptions<'_>, &bun_ast::AstArena),
+        configure: impl FnOnce(&mut BundleOptions<'_>, &AstArena),
         arena: &'s Arena,
         atoms: &Interner<'s>,
     ) -> (FoldOptions<'s>, Log) {
-        with_ast_scope(|scratch| {
-            with_test_context(
-                |options| configure(options, scratch),
-                |context| {
-                    let log = Log::default();
-                    let options = fold_options(context.options(), &[], arena, atoms, &log);
-                    (options, log)
-                },
-            )
-        })
+        let scratch = &AstArena::new();
+        with_test_context(
+            |options| configure(options, scratch),
+            |context| {
+                let log = Log::default();
+                let options = fold_options(context.options(), &[], arena, atoms, &log);
+                (options, log)
+            },
+        )
     }
 
     fn fold<'s>(
@@ -394,7 +392,7 @@ mod tests {
         let (options, log) = fold_configured(
             |options, scratch| {
                 let mut table = create_table(&[("LEVEL", "41")], &[], scratch);
-                let call = Expr::init(E::Call::default(), Loc::EMPTY);
+                let call = Expr::allocate(scratch, E::Call::default(), Loc::EMPTY);
                 let unusable = DefineData {
                     value: call.data,
                     ..Default::default()

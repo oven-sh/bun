@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-use bun_collections::VecExt;
 
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
@@ -291,12 +290,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let fn_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
                         exported_members.put(
+                            p.ast_arena,
                             fn_name,
                             TSNamespaceMember {
                                 loc: locref.loc,
                                 data: TSNamespaceMemberData::Property,
                             },
-                        )?;
+                        );
                         p.ref_to_ts_namespace_member
                             .insert(ref_, TSNamespaceMemberData::Property);
                     }
@@ -309,12 +309,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let class_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
                         exported_members.put(
+                            p.ast_arena,
                             class_name,
                             TSNamespaceMember {
                                 loc: locref.loc,
                                 data: TSNamespaceMemberData::Property,
                             },
-                        )?;
+                        );
                         p.ref_to_ts_namespace_member
                             .insert(ref_, TSNamespaceMemberData::Property);
                     }
@@ -328,12 +329,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             let ns_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
+                                p.ast_arena,
                                 ns_name,
                                 TSNamespaceMember {
                                     data: clone_ts_member_data(&member_data),
                                     loc: ns.name.loc,
                                 },
-                            )?;
+                            );
                             p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
@@ -347,12 +349,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             let enum_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
+                                p.ast_arena,
                                 enum_name,
                                 TSNamespaceMember {
                                     data: clone_ts_member_data(&member_data),
                                     loc: ns.name.loc,
                                 },
-                            )?;
+                            );
                             p.ref_to_ts_namespace_member.insert(ref_, member_data);
                         }
                     }
@@ -457,7 +460,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 arg_ref = p.new_symbol(SymbolKind::Hoisted, name_text);
             }
             // Named in this scope so that no binding inside shadows it.
-            VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
+            p.current_scope.generated.push(p.ast_arena, arg_ref);
             ts_namespace.arg_ref = arg_ref;
         }
         p.pop_scope();
@@ -514,7 +517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             p.lexer.expect(T::TStringLiteral)?;
             p.lexer.expect(T::TCloseParen)?;
             if !opts.is_typescript_declare {
-                let args = ExprNodeList::init_one(path);
+                let args = ExprNodeList::from_slice_in(&[path], p.ast_arena);
                 let close_paren_loc = p.lexer.loc();
                 value = p.new_expr(
                     E::Call {
@@ -560,10 +563,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
-        let decls = G::DeclList::init_one(G::Decl {
-            binding,
-            value: Some(value),
-        });
+        let decls = G::DeclList::from_slice_in(
+            &[G::Decl {
+                binding,
+                value: Some(value),
+            }],
+            p.ast_arena,
+        );
         Ok(p.s(
             S::Local {
                 kind,
@@ -666,12 +672,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             values.push(value);
 
             exported_members.put(
+                p.ast_arena,
                 value_name.slice(),
                 TSNamespaceMember {
                     loc: value_loc,
                     data: TSNamespaceMemberData::EnumProperty,
                 },
-            )?;
+            );
 
             if p.lexer.token != T::TComma && p.lexer.token != T::TSemicolon {
                 break;
@@ -720,8 +727,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p.new_symbol(SymbolKind::Hoisted, prefixed);
-                // SAFETY: see above.
-                VecExt::append(&mut p.current_scope_mut().generated, arg_ref);
+                p.current_scope.generated.push(p.ast_arena, arg_ref);
             } else {
                 arg_ref = p
                     .declare_symbol(SymbolKind::Hoisted, name_loc, name_text)

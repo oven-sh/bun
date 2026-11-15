@@ -6,7 +6,7 @@ use crate::options::Json;
 use crate::utils::text::{number_to_string, string_from_code_points};
 use bun_ast::E::JsonValue;
 use bun_ast::expr::Data;
-use bun_ast::{ASTMemoryAllocator, AstArena, Expr, Log, Source};
+use bun_ast::{AstArena, Expr, Log, Source};
 use bun_core::strings;
 use bun_parsers::json::ParsedJson;
 use bun_parsers::json5::JSON5Parser;
@@ -189,8 +189,6 @@ pub fn with_parsed<T>(
     read: impl FnOnce(&Expr) -> T,
 ) -> Result<T, SyntaxError> {
     let arena = AstArena::new();
-    let mut allocator = ASTMemoryAllocator::borrowing(&arena);
-    let _scope = allocator.enter();
     let text = bun_core::strings::without_utf8_bom(text);
     let source = Source::init_path_string(b"".as_slice(), text);
     let mut log = Log::init();

@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use crate::api::bun_process::Status;
@@ -896,9 +895,7 @@ impl CreateCommand {
                                 script_property_out_i += 1;
                             }
 
-                            scripts_obj
-                                .properties
-                                .shrink_retaining_capacity(script_property_out_i);
+                            scripts_obj.properties.truncate(script_property_out_i);
                         }
 
                         if key != b"bun-create" {
@@ -941,7 +938,7 @@ impl CreateCommand {
 
                         i += 1;
                     }
-                    props.shrink_retaining_capacity(property_i);
+                    props.truncate(property_i);
                 }
 
                 // A task that is the name of a package.json script runs that script.

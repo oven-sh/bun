@@ -25,12 +25,12 @@ use crate::diagnostics::ErrorCategory;
 use crate::hir::AliasingEffect;
 use crate::hir::AliasingSignature;
 use crate::hir::ApplyEffect;
-use crate::hir::AstAlloc;
 use crate::hir::BasicBlock;
 use crate::hir::BlockId;
 use crate::hir::DeclarationId;
 use crate::hir::Effect;
 use crate::hir::FunctionId;
+use crate::hir::HirAlloc;
 use crate::hir::HirFunction;
 use crate::hir::HirVec;
 use crate::hir::IdentifierId;
@@ -1410,7 +1410,7 @@ fn infer_block(
         instructions[instr_index].effects = if effects.is_empty() {
             None
         } else {
-            Some(AstAlloc::vec_from_iter(effects.drain(..)))
+            Some(HirAlloc::vec_from_iter(effects.drain(..)))
         };
     }
     context.signature = signature;
@@ -1432,7 +1432,7 @@ fn infer_block(
         } => {
             if let Some(handler_param) = context.catch_handlers.get(handler_id).cloned() {
                 if state.is_defined(handler_param.identifier) {
-                    let mut terminal_effects: HirVec<AliasingEffect> = AstAlloc::vec();
+                    let mut terminal_effects: HirVec<AliasingEffect> = HirAlloc::vec();
                     for instr_id in &block.instructions {
                         let instr = &instructions[instr_id.0 as usize];
                         match &instr.value {
@@ -2410,7 +2410,7 @@ fn compute_signature_for_instruction(
                 receiver: callee.clone(),
                 function: callee.clone(),
                 mutates_function: false,
-                args: AstAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
+                args: HirAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
@@ -2424,7 +2424,7 @@ fn compute_signature_for_instruction(
                 receiver: callee.clone(),
                 function: callee.clone(),
                 mutates_function: true,
-                args: AstAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
+                args: HirAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
@@ -2443,7 +2443,7 @@ fn compute_signature_for_instruction(
                 receiver: receiver.clone(),
                 function: property.clone(),
                 mutates_function: false,
-                args: AstAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
+                args: HirAlloc::vec_from_iter(args.iter().map(place_or_spread_to_hole)),
                 into: lvalue.clone(),
                 signature: sig,
                 loc: *loc,
@@ -2532,7 +2532,7 @@ fn compute_signature_for_instruction(
         InstructionValue::FunctionExpression { lowered_func, .. }
         | InstructionValue::ObjectMethod { lowered_func, .. } => {
             let inner_func = &env.functions[lowered_func.func.0 as usize];
-            let captures = AstAlloc::vec_from_iter(
+            let captures = HirAlloc::vec_from_iter(
                 inner_func
                     .context
                     .iter()
@@ -3363,7 +3363,7 @@ fn compute_effects_for_aliasing_signature_config(
                 let func = substitutions.get(f).and_then(|v| v.first()).cloned();
                 let into = substitutions.get(i).and_then(|v| v.first()).cloned();
                 if let (Some(recv), Some(func), Some(into)) = (recv, func, into) {
-                    let mut apply_args: HirVec<PlaceOrSpreadOrHole> = AstAlloc::vec();
+                    let mut apply_args: HirVec<PlaceOrSpreadOrHole> = HirAlloc::vec();
                     for arg in a {
                         match arg {
                             crate::hir::type_config::ApplyArgConfig::Hole { .. } => {
@@ -3419,7 +3419,7 @@ fn build_signature_from_function_expression(
     func_id: FunctionId,
 ) -> AliasingSignature {
     let inner_func = &env.functions[func_id.0 as usize];
-    let mut params: HirVec<IdentifierId> = AstAlloc::vec();
+    let mut params: HirVec<IdentifierId> = HirAlloc::vec();
     let mut rest: Option<IdentifierId> = None;
     for param in &inner_func.params {
         match param {
@@ -3431,7 +3431,7 @@ fn build_signature_from_function_expression(
     let aliasing_effects = inner_func
         .aliasing_effects
         .clone()
-        .unwrap_or_else(AstAlloc::vec);
+        .unwrap_or_else(HirAlloc::vec);
     let loc = inner_func.loc;
 
     if rest.is_none() {
@@ -3445,7 +3445,7 @@ fn build_signature_from_function_expression(
         rest,
         returns,
         effects: aliasing_effects,
-        temporaries: AstAlloc::vec(),
+        temporaries: HirAlloc::vec(),
     }
 }
 
@@ -3705,7 +3705,7 @@ fn compute_effects_for_aliasing_signature(
                     .and_then(|v| v.first())
                     .cloned();
                 if let (Some(recv), Some(func), Some(apply_into)) = (recv, func, apply_into) {
-                    let mut apply_args: HirVec<PlaceOrSpreadOrHole> = AstAlloc::vec();
+                    let mut apply_args: HirVec<PlaceOrSpreadOrHole> = HirAlloc::vec();
                     for arg in a {
                         match arg {
                             PlaceOrSpreadOrHole::Hole => apply_args.push(PlaceOrSpreadOrHole::Hole),

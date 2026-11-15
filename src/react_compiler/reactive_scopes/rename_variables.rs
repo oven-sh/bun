@@ -15,6 +15,7 @@ use crate::collections::IdMap;
 use crate::hir::DeclarationId;
 use crate::hir::EvaluationOrder;
 use crate::hir::FunctionId;
+use crate::hir::HirAlloc;
 use crate::hir::IdentifierName;
 use crate::hir::InstructionValue;
 use crate::hir::Place;
@@ -103,7 +104,7 @@ impl Scopes {
             self.taken.last_mut().unwrap()[usize::from(is_promoted_jsx)] = id;
         }
 
-        let stored = StoreStr::new(bun_ast::data_store_dupe_str(&name));
+        let stored = HirAlloc::dupe_str(&name);
         self.seen
             .insert(declaration_id, IdentifierName::Named(stored));
         self.stack

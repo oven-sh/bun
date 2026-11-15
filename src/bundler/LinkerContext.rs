@@ -3,13 +3,11 @@ use core::sync::atomic::Ordering;
 
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_ast::{Data, Loc, Log, Range, Source};
+use bun_ast::{AstArena, AstBox, AstVec, Data, Loc, Log, Range, Source};
 use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
-use bun_sourcemap::{
-    self as SourceMap, DebugIDFormatter, LineOffsetTable, SourceMapPieces, SourceMapState,
-};
+use bun_sourcemap::{self as SourceMap, DebugIDFormatter, SourceMapPieces, SourceMapState};
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use crate::bake_types as bake;
@@ -35,7 +33,9 @@ use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
 use crate::Graph::{CssAsts, Graph};
-use crate::linker_graph::{is_external_dynamic_import, top_level_symbol_to_parts};
+use crate::linker_graph::{
+    QuotedSourceContents, is_external_dynamic_import, top_level_symbol_to_parts,
+};
 use crate::options::{BundleOptions, CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
@@ -701,7 +701,6 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
     // `chunk_index`. Writes only to `chunk`.
     pub(crate) fn generate_js_renamer(&self, chunk: &mut Chunk<'a>) {
-        let _worker = crate::thread_pool::Worker::get(self.bundle);
         if let crate::chunk::Content::Javascript(_) = chunk.content {
             chunk.renamer = rename_symbols_in_chunk(self, chunk).expect("TODO: handle error");
         }
@@ -1063,8 +1062,8 @@ pub(crate) struct SourceMapData<'l, 'a> {
     pub(crate) quoted_contents: SourceMapTasks<'l, 'a, QuotedContents>,
 }
 
-type LineOffsets = SourceMap::line_offset_table::List<bun_alloc::AstAlloc>;
-type QuotedContents = Option<bun_alloc::AstVec<u8>>;
+type LineOffsets = SourceMap::line_offset_table::AstList;
+type QuotedContents = Option<QuotedSourceContents>;
 
 /// One task per file. They run while the link goes on, so each keeps its result to itself.
 pub(crate) struct SourceMapTasks<'l, 'a, T> {
@@ -1120,9 +1119,8 @@ impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
         // SAFETY: `task` is the field of an element of `tasks`, and nothing else touches an element
         // before the wait group is done.
         let task = unsafe { &mut *bun_core::from_field_ptr!(SourceMapTask<'l, 'a, T>, task, task) };
-        // What `compute` allocates with `AstAlloc` lands in this worker's heap, which dropping the pool frees.
-        let _worker = crate::thread_pool::Worker::get(task.bundle);
-        task.result = T::compute(&task.bundle.graph, task.source_index);
+        let worker = crate::thread_pool::Worker::get(task.bundle);
+        task.result = T::compute(worker.arena(), &task.bundle.graph, task.source_index);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -1139,11 +1137,11 @@ impl<'l, 'a, T: SourceMapColumn> SourceMapTasks<'l, 'a, T> {
 }
 
 pub(crate) trait SourceMapColumn: Default {
-    fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self;
+    fn compute(arena: &AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self;
 }
 
 impl SourceMapColumn for LineOffsets {
-    fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
+    fn compute(arena: &AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
         debug!("Computing LineOffsetTable: {}", source_index);
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
@@ -1156,17 +1154,17 @@ impl SourceMapColumn for LineOffsets {
         let approximate_line_count =
             parse_graph.ast.items_approximate_newline_count()[source_index as usize];
 
-        LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
+        SourceMap::LineOffsetTable::generate_in(
             &source.contents,
             // We don't support sourcemaps for source files with more than 2^31 lines
             (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
+            arena,
         )
-        .expect("OOM")
     }
 }
 
 impl SourceMapColumn for QuotedContents {
-    fn compute(parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
+    fn compute(arena: &AstArena, parse_graph: &Graph<'_>, source_index: crate::IndexInt) -> Self {
         debug!("Computing Quoted Source Contents: {}", source_index);
         let loader: Loader = parse_graph.input_files.items_loader()[source_index as usize];
         if !loader.can_have_source_map() {
@@ -1174,22 +1172,20 @@ impl SourceMapColumn for QuotedContents {
         }
 
         let source: &Source = &parse_graph.input_files.items_source()[source_index as usize];
-        // Allocate from the worker's AST allocation state (installed by
-        // `Worker::get`); ~12.5% escape-expansion slack matches `quote_for_json`'s
+        // ~12.5% escape-expansion slack matches `quote_for_json`'s
         // heuristic so the writer rarely reallocs. The slack is dropped with
         // the arena at bundle end, and `StringJoiner` only borrows a `&[u8]`
         // view downstream.
         let contents: &[u8] = &source.contents;
-        let mut buf = bun_alloc::AstAlloc::vec_with_capacity::<u8>(
-            contents.len() + (contents.len() >> 3) + 8,
-        );
+        let mut buf =
+            Vec::with_capacity_in(contents.len() + (contents.len() >> 3) + 8, arena.heap());
         buf.push(b'"');
         js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
             contents, &mut buf, b'"', false, true,
         )
         .expect("OOM");
         buf.push(b'"');
-        Some(buf)
+        Some(QuotedSourceContents::new(buf.leak()))
     }
 }
 
@@ -1546,7 +1542,7 @@ impl<'a> LinkerContext<'_, 'a> {
         loc: Loc,
         namespace_ref: Ref,
         import_record_index: u32,
-        alloc: &Bump,
+        alloc: &AstArena,
         ast: &JSAst<'_>,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
@@ -1564,24 +1560,28 @@ impl<'a> LinkerContext<'_, 'a> {
             // Otherwise, replace this statement with a call to "require()"
             stmts
                 .inside_wrapper_prefix
-                .append_non_dependency(Stmt::alloc(
+                .append_non_dependency(Stmt::allocate(
+                    alloc,
                     S::Local {
-                        decls: G::DeclList::from_slice(&[G::Decl {
-                            binding: Binding::alloc(
-                                alloc,
-                                bun_ast::b::Identifier {
-                                    r#ref: namespace_ref,
-                                },
-                                loc,
-                            ),
-                            value: Some(Expr::init(
-                                E::RequireString {
-                                    import_record_index,
-                                    ..Default::default()
-                                },
-                                loc,
-                            )),
-                        }]),
+                        decls: G::DeclList::from_slice_in(
+                            &[G::Decl {
+                                binding: Binding::alloc(
+                                    alloc,
+                                    bun_ast::b::Identifier {
+                                        r#ref: namespace_ref,
+                                    },
+                                    loc,
+                                ),
+                                value: Some(Expr::init(
+                                    E::RequireString {
+                                        import_record_index,
+                                        ..Default::default()
+                                    },
+                                    loc,
+                                )),
+                            }],
+                            alloc,
+                        ),
                         ..Default::default()
                     },
                     record.range.loc,
@@ -1609,24 +1609,28 @@ impl<'a> LinkerContext<'_, 'a> {
                 // Replace the statement with a call to "require()" since the other module is CJS-wrapped
                 stmts
                     .inside_wrapper_prefix
-                    .append_non_dependency(Stmt::alloc(
+                    .append_non_dependency(Stmt::allocate(
+                        alloc,
                         S::Local {
-                            decls: G::DeclList::from_slice(&[G::Decl {
-                                binding: Binding::alloc(
-                                    alloc,
-                                    bun_ast::b::Identifier {
-                                        r#ref: namespace_ref,
-                                    },
-                                    loc,
-                                ),
-                                value: Some(Expr::init(
-                                    E::RequireString {
-                                        import_record_index,
-                                        ..Default::default()
-                                    },
-                                    loc,
-                                )),
-                            }]),
+                            decls: G::DeclList::from_slice_in(
+                                &[G::Decl {
+                                    binding: Binding::alloc(
+                                        alloc,
+                                        bun_ast::b::Identifier {
+                                            r#ref: namespace_ref,
+                                        },
+                                        loc,
+                                    ),
+                                    value: Some(Expr::init(
+                                        E::RequireString {
+                                            import_record_index,
+                                            ..Default::default()
+                                        },
+                                        loc,
+                                    )),
+                                }],
+                                alloc,
+                            ),
                             ..Default::default()
                         },
                         loc,
@@ -1651,7 +1655,8 @@ impl<'a> LinkerContext<'_, 'a> {
                 }
 
                 // Replace the statement with a call to "init()"
-                let init_call = Expr::init(
+                let init_call = Expr::allocate(
+                    alloc,
                     E::Call {
                         target: Expr::init_identifier(wrapper_ref, loc),
                         ..Default::default()
@@ -1660,13 +1665,15 @@ impl<'a> LinkerContext<'_, 'a> {
                 );
 
                 if other_flags.is_async_or_has_async_dependency {
-                    stmts
-                        .inside_wrapper_prefix
-                        .append_async_dependency(init_call, self.promise_all_runtime_ref)?;
+                    stmts.inside_wrapper_prefix.append_async_dependency(
+                        alloc,
+                        init_call,
+                        self.promise_all_runtime_ref,
+                    )?;
                 } else {
                     stmts
                         .inside_wrapper_prefix
-                        .append_sync_dependency(init_call)?;
+                        .append_sync_dependency(alloc, init_call)?;
                 }
             }
         }
@@ -1677,7 +1684,7 @@ impl<'a> LinkerContext<'_, 'a> {
     pub(crate) fn print_code_for_file_in_chunk_js(
         &self,
         r: renamer::Renamer,
-        alloc: &Bump,
+        alloc: &AstArena,
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
         ast: &JSAst<'_>,
@@ -2634,6 +2641,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         wrapper_ref: Ref,
         source_index: crate::IndexInt,
     ) {
+        let arena = self.graph.ast_arena();
         match wrap {
             // If this is a CommonJS file, we're going to need to generate a wrapper
             // for the CommonJS closure. That will end up looking something like this:
@@ -2668,23 +2676,25 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 }
 
                 // generate a dummy part that depends on the "__commonJS" symbol.
-                let dependencies: DependencyList =
-                    if self.options.output_format != Format::InternalBakeDev {
-                        let mut deps = DependencyList::init_capacity(common_js_parts.len());
-                        for &part in common_js_parts {
-                            deps.append_assume_capacity(Dependency {
+                let dependencies: DependencyList = if self.options.output_format
+                    != Format::InternalBakeDev
+                {
+                    let mut deps = DependencyList::with_capacity_in(common_js_parts.len(), arena);
+                    for &part in common_js_parts {
+                        deps.push(
+                            arena,
+                            Dependency {
                                 part_index: part,
                                 source_index: bun_ast::Index::RUNTIME,
-                            });
-                        }
-                        deps
-                    } else {
-                        DependencyList::new_in(bun_alloc::AstAlloc)
-                    };
+                            },
+                        );
+                    }
+                    deps
+                } else {
+                    DependencyList::new()
+                };
                 let mut symbol_uses = PartSymbolUseMap::default();
-                symbol_uses
-                    .put(wrapper_ref, SymbolUse::unscoped(1))
-                    .expect("OOM");
+                symbol_uses.put(arena, wrapper_ref, SymbolUse::unscoped(1));
                 let exports_ref = self.graph.ast.items_exports_ref()[source_index as usize];
                 let module_ref = self.graph.ast.items_module_ref()[source_index as usize];
                 let wrap_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
@@ -2694,21 +2704,23 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                         source_index,
                         Part {
                             symbol_uses,
-                            declared_symbols: DeclaredSymbolList::from_slice(&[
-                                DeclaredSymbol {
-                                    ref_: exports_ref,
-                                    is_top_level: true,
-                                },
-                                DeclaredSymbol {
-                                    ref_: module_ref,
-                                    is_top_level: true,
-                                },
-                                DeclaredSymbol {
-                                    ref_: wrap_ref,
-                                    is_top_level: true,
-                                },
-                            ])
-                            .expect("unreachable"),
+                            declared_symbols: DeclaredSymbolList::from_slice_in(
+                                &[
+                                    DeclaredSymbol {
+                                        ref_: exports_ref,
+                                        is_top_level: true,
+                                    },
+                                    DeclaredSymbol {
+                                        ref_: module_ref,
+                                        is_top_level: true,
+                                    },
+                                    DeclaredSymbol {
+                                        ref_: wrap_ref,
+                                        is_top_level: true,
+                                    },
+                                ],
+                                arena,
+                            ),
                             dependencies,
                             ..Default::default()
                         },
@@ -2785,36 +2797,44 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 };
 
                 // generate a dummy part that depends on the "__esm" and optionally "__promiseAll" symbols
-                let mut dependencies =
-                    DependencyList::init_capacity(esm_parts.len() + promise_all_parts.len());
+                let mut dependencies = DependencyList::with_capacity_in(
+                    esm_parts.len() + promise_all_parts.len(),
+                    arena,
+                );
                 for &part in esm_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
+                    dependencies.push(
+                        arena,
+                        Dependency {
+                            part_index: part,
+                            source_index: bun_ast::Index::RUNTIME,
+                        },
+                    );
                 }
                 for &part in promise_all_parts {
-                    dependencies.append_assume_capacity(Dependency {
-                        part_index: part,
-                        source_index: bun_ast::Index::RUNTIME,
-                    });
+                    dependencies.push(
+                        arena,
+                        Dependency {
+                            part_index: part,
+                            source_index: bun_ast::Index::RUNTIME,
+                        },
+                    );
                 }
 
                 let mut symbol_uses = PartSymbolUseMap::default();
-                symbol_uses
-                    .put(wrapper_ref, SymbolUse::unscoped(1))
-                    .expect("OOM");
+                symbol_uses.put(arena, wrapper_ref, SymbolUse::unscoped(1));
                 let part_index = self
                     .graph
                     .add_part_to_file(
                         source_index,
                         Part {
                             symbol_uses,
-                            declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
-                                ref_: wrapper_ref,
-                                is_top_level: true,
-                            }])
-                            .expect("unreachable"),
+                            declared_symbols: DeclaredSymbolList::from_slice_in(
+                                &[DeclaredSymbol {
+                                    ref_: wrapper_ref,
+                                    is_top_level: true,
+                                }],
+                                arena,
+                            ),
                             dependencies,
                             ..Default::default()
                         },
@@ -2873,6 +2893,7 @@ struct PropertyAccess {
 
 /// What following an import to its export needs.
 struct ImportMatcher<'m, 'a> {
+    arena: &'a AstArena,
     bundle: &'m BundleV2<'a>,
     ast: &'m MultiArrayList<JSAst<'a>>,
     meta_flags: &'m [crate::js_meta::Flags],
@@ -3134,7 +3155,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
     fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
-        re_exports: &mut bun_alloc::AstVec<Dependency>,
+        re_exports: &mut DependencyList,
     ) -> MatchImport {
         self.match_import_with_export_inner(init_tracker, None, re_exports)
     }
@@ -3144,7 +3165,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
         &mut self,
         init_tracker: ImportTracker,
         mut first_hop: Option<(crate::IndexInt, bun_ast::StoreStr)>,
-        re_exports: &mut bun_alloc::AstVec<Dependency>,
+        re_exports: &mut DependencyList,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
         // Note: `cycle_detector` is restored by an explicit
@@ -3451,13 +3472,13 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                             prev_source_index,
                             tracker.import_ref,
                         );
-                        re_exports.reserve(deps.len());
-                        for &dep in deps {
-                            re_exports.push(Dependency {
+                        re_exports.extend(
+                            self.arena,
+                            deps.iter().map(|&dep| Dependency {
                                 part_index: dep,
                                 source_index: bun_ast::Index::init(tracker.source_index.get()),
-                            });
-                        }
+                            }),
+                        );
                     }
 
                     // If this is a re-export of another import, continue for another
@@ -3628,28 +3649,29 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
         imports_to_bind: &mut crate::RefImportData,
         import_ref: Ref,
         result: &MatchImport,
-        re_exports: bun_alloc::AstVec<Dependency>,
+        re_exports: DependencyList,
     ) {
-        imports_to_bind
-            .put(
-                import_ref,
-                crate::ImportData {
-                    re_exports,
-                    data: ImportTracker {
-                        source_index: crate::Index::init(result.source_index),
-                        import_ref: result.r#ref,
-                        ..Default::default()
-                    },
+        imports_to_bind.put(
+            self.arena,
+            import_ref,
+            crate::ImportData {
+                re_exports,
+                data: ImportTracker {
+                    source_index: crate::Index::init(result.source_index),
+                    import_ref: result.r#ref,
+                    ..Default::default()
                 },
-            )
-            .expect("unreachable");
+            },
+        );
         if result.kind == MatchImportKind::NormalAndNamespace {
-            self.symbol_mut(import_ref).namespace_alias =
-                Some(bun_alloc::ast_box(G::NamespaceAlias {
+            self.symbol_mut(import_ref).namespace_alias = Some(AstBox::new_in(
+                G::NamespaceAlias {
                     namespace_ref: result.namespace_ref,
                     alias: result.alias,
                     ..Default::default()
-                }));
+                },
+                self.arena,
+            ));
         }
     }
 
@@ -3684,7 +3706,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                     // Missing, or only reachable through `export *` from CommonJS: stays an access.
                     let name = if let Some(index) = resolved_exports.get_index(name) {
                         bun_ast::StoreStr::new(&resolved_exports.keys()[index])
-                    } else if &**name == b"default"
+                    } else if name == b"default"
                         && self.ast.items_flags()[target_source as usize]
                             .contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
                         && !LinkerContext::lifted_default_import_needs_wrapper(
@@ -3725,7 +3747,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
                 continue;
             }
             self.cycle_detector.clear();
-            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            let mut re_exports = DependencyList::new();
             let result = self.match_import_with_export_inner(
                 ImportTracker {
                     source_index: crate::Index::init(access.target_source),
@@ -3916,9 +3938,11 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         source_index: crate::IndexInt,
         member_resolutions: &mut ImportMemberResolutions,
     ) {
+        let arena = self.graph.ast_arena();
         let meta = self.graph.meta.split_mut();
         let imports_to_bind = &mut meta.imports_to_bind[source_index as usize];
         let mut matcher = ImportMatcher {
+            arena,
             bundle: self.bundle,
             ast: &self.graph.ast,
             meta_flags: meta.flags,
@@ -3965,7 +3989,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             // Re-use memory for the cycle detector
             matcher.cycle_detector.clear();
 
-            let mut re_exports: bun_alloc::AstVec<Dependency> = bun_alloc::AstAlloc::vec();
+            let mut re_exports = DependencyList::new();
             let result = matcher.match_import_with_export(
                 ImportTracker {
                     source_index: crate::Index::init(source_index),
@@ -3991,12 +4015,14 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     matcher.bind_matched_import(imports_to_bind, import_ref, &result, re_exports);
                 }
                 MatchImportKind::Namespace => {
-                    matcher.symbol_mut(import_ref).namespace_alias =
-                        Some(bun_alloc::ast_box(G::NamespaceAlias {
+                    matcher.symbol_mut(import_ref).namespace_alias = Some(AstBox::new_in(
+                        G::NamespaceAlias {
                             namespace_ref: result.namespace_ref,
                             alias: result.alias,
                             ..Default::default()
-                        }));
+                        },
+                        arena,
+                    ));
                 }
                 MatchImportKind::Cycle => {
                     let source = matcher.get_source(source_index);
@@ -4016,9 +4042,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                     );
                 }
                 MatchImportKind::ProbablyTypescriptType => {
-                    meta.probably_typescript_type[source_index as usize]
-                        .put(import_ref, ())
-                        .expect("unreachable");
+                    meta.probably_typescript_type[source_index as usize].put(arena, import_ref, ());
                 }
                 MatchImportKind::Ambiguous => {
                     let source = matcher.get_source(source_index);
@@ -4082,8 +4106,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 }
                 for &(namespace_ref, count) in &namespace_uses {
                     part.symbol_uses
-                        .get_or_put_value(namespace_ref, Default::default())
-                        .expect("OOM")
+                        .get_or_put_value(arena, namespace_ref, Default::default())
                         .value_ptr
                         .merge(SymbolUse::unscoped(count));
                 }
@@ -4114,6 +4137,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         member_resolutions: &ImportMemberResolutions,
     ) {
         let id = source_index as usize;
+        let arena = self.graph.ast_arena();
         let ast = self.graph.ast.split_mut();
         let meta = self.graph.meta.split_mut();
         let imports_to_bind = &mut meta.imports_to_bind[id];
@@ -4161,11 +4185,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 // `name` points into `resolved_exports` keys, which outlive printing.
                 self.graph
                     .import_member_bindings
-                    .get_or_put_value(base, Default::default())
-                    .expect("OOM")
+                    .get_or_put_value(arena, base, Default::default())
                     .value_ptr
-                    .put_static_key(name.slice(), resolved.r#ref)
-                    .expect("OOM");
+                    .put_borrowed(arena, name, resolved.r#ref);
 
                 // From here on this is an ordinary use of the target's symbol by this
                 // part: move the use count over, record it as an import of this file
@@ -4175,29 +4197,27 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 {
                     let part = &mut ast.parts[id].as_mut_slice()[part_index];
                     let uses = part.import_symbol_property_uses.as_mut().unwrap();
-                    let _ = uses.get_ptr_mut(&base).unwrap().remove(name.slice());
+                    let _ = uses.get_mut(&base).unwrap().remove(name.slice());
                     part.symbol_uses
-                        .get_or_put_value(resolved.r#ref, Default::default())
-                        .expect("OOM")
+                        .get_or_put_value(arena, resolved.r#ref, Default::default())
                         .value_ptr
                         .merge(SymbolUse::unscoped(count));
                 }
                 if resolved.source_index != source_index
                     && !imports_to_bind.contains(&resolved.r#ref)
                 {
-                    imports_to_bind
-                        .put(
-                            resolved.r#ref,
-                            crate::ImportData {
-                                data: ImportTracker {
-                                    source_index: crate::Index::init(resolved.source_index),
-                                    import_ref: resolved.r#ref,
-                                    ..Default::default()
-                                },
+                    imports_to_bind.put(
+                        arena,
+                        resolved.r#ref,
+                        crate::ImportData {
+                            data: ImportTracker {
+                                source_index: crate::Index::init(resolved.source_index),
+                                import_ref: resolved.r#ref,
                                 ..Default::default()
                             },
-                        )
-                        .expect("OOM");
+                            ..Default::default()
+                        },
+                    );
                 }
                 for &part in parts_declaring(resolved.source_index, resolved.r#ref) {
                     dependencies.push(Dependency {
@@ -4210,7 +4230,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             if !dependencies.is_empty() {
                 let part = &mut ast.parts[id].as_mut_slice()[part_index];
                 for &dependency in &dependencies {
-                    part.dependencies.push(dependency);
+                    part.dependencies.push(arena, dependency);
                 }
             }
         }
@@ -4242,16 +4262,20 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         name: &[u8],
         alias: &[u8],
     ) -> Result<(Ref, u32), AllocError> {
+        let arena = self.graph.ast_arena();
         let r#ref =
             self.graph
                 .generate_new_symbol(source_index, bun_ast::symbol::Kind::Other, name);
         let part_index = self.graph.add_part_to_file(
             source_index,
             Part {
-                declared_symbols: DeclaredSymbolList::from_slice(&[DeclaredSymbol {
-                    ref_: r#ref,
-                    is_top_level: true,
-                }])?,
+                declared_symbols: DeclaredSymbolList::from_slice_in(
+                    &[DeclaredSymbol {
+                        ref_: r#ref,
+                        is_top_level: true,
+                    }],
+                    arena,
+                ),
                 can_be_removed_if_unused: true,
                 ..Default::default()
             },
@@ -4268,11 +4292,12 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             .graph
             .meta
             .items_top_level_symbol_to_parts_overlay_mut()[source_index as usize];
-        top_level.put(r#ref, bun_alloc::AstAlloc::vec_from_slice(&[part_index]))?;
+        top_level.put(arena, r#ref, AstVec::from_slice_in(&[part_index], arena));
 
         let resolved_exports =
             &mut self.graph.meta.items_resolved_exports_mut()[source_index as usize];
         resolved_exports.put(
+            arena,
             alias,
             crate::ExportData {
                 data: ImportTracker {
@@ -4282,7 +4307,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 },
                 ..Default::default()
             },
-        )?;
+        );
         Ok((r#ref, part_index))
     }
 
@@ -4462,10 +4487,15 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    fn append_sync_dependency(&mut self, call_expr: Expr) -> Result<(), AllocError> {
+    fn append_sync_dependency(
+        &mut self,
+        alloc: &AstArena,
+        call_expr: Expr,
+    ) -> Result<(), AllocError> {
         self.stmts.insert(
             self.sync_dependencies_end,
-            Stmt::alloc(
+            Stmt::allocate(
+                alloc,
                 S::SExpr {
                     value: call_expr,
                     ..Default::default()
@@ -4479,6 +4509,7 @@ impl InsideWrapperPrefix {
 
     fn append_async_dependency(
         &mut self,
+        alloc: &AstArena,
         call_expr: Expr,
         promise_all_ref: Ref,
     ) -> Result<(), AllocError> {
@@ -4486,9 +4517,10 @@ impl InsideWrapperPrefix {
             self.has_async_dependency = true;
             self.stmts.insert(
                 self.sync_dependencies_end,
-                Stmt::alloc(
+                Stmt::allocate(
+                    alloc,
                     S::SExpr {
-                        value: Expr::init(E::Await { value: call_expr }, Loc::EMPTY),
+                        value: Expr::allocate(alloc, E::Await { value: call_expr }, Loc::EMPTY),
                         ..Default::default()
                     },
                     Loc::EMPTY,
@@ -4529,7 +4561,7 @@ impl InsideWrapperPrefix {
                 .e_array_mut()
                 .expect("infallible: variant checked")
                 .items
-                .push(call_expr);
+                .push(alloc, call_expr);
         } else {
             // convert single `await init_` to `await __promiseAll([init_1(), init_2()])`
 
@@ -4541,19 +4573,23 @@ impl InsideWrapperPrefix {
                 Loc::EMPTY,
             );
 
-            let mut items = bun_ast::ExprNodeList::init_capacity(2);
-            items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
+            let items =
+                bun_ast::ExprNodeList::from_slice_in(&[first_dep_call_expr, call_expr], alloc);
 
-            let mut args = bun_ast::ExprNodeList::init_capacity(1);
-            args.append_assume_capacity(Expr::init(
-                E::Array {
-                    items,
-                    ..Default::default()
-                },
-                Loc::EMPTY,
-            ));
+            let args = bun_ast::ExprNodeList::from_slice_in(
+                &[Expr::allocate(
+                    alloc,
+                    E::Array {
+                        items,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                )],
+                alloc,
+            );
 
-            let promise_all_call = Expr::init(
+            let promise_all_call = Expr::allocate(
+                alloc,
                 E::Call {
                     target: promise_all,
                     args,
@@ -4563,9 +4599,11 @@ impl InsideWrapperPrefix {
             );
 
             // replace the `await init_` expr with `await __promiseAll`
-            self.stmts[self.sync_dependencies_end] = Stmt::alloc(
+            self.stmts[self.sync_dependencies_end] = Stmt::allocate(
+                alloc,
                 S::SExpr {
-                    value: Expr::init(
+                    value: Expr::allocate(
+                        alloc,
                         E::Await {
                             value: promise_all_call,
                         },

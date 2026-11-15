@@ -5,7 +5,7 @@ import { isASAN, rss } from "harness";
 // https://github.com/oven-sh/bun/issues/26088
 // YAML parser was leaking memory on each parse call because AST nodes were
 // not being freed. This caused segfaults after high-volume YAML parsing.
-// Fix: Use ASTMemoryAllocator to ensure AST nodes are freed at end of scope.
+// Fix: AST nodes are freed when the parse call returns.
 test("YAML.parse shouldn't leak memory", () => {
   // Create YAML with 10000 single-char strings - creates many AST E.String nodes
   const items = Array.from({ length: 10000 }, () => "  - x").join("\n");

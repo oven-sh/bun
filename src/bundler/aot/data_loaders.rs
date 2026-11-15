@@ -13,7 +13,7 @@ use bun_sema::hir_from_data::{DataModule, DataValue, DatabasePlace};
 use super::assets::EmbeddedFiles;
 use super::css_modules;
 use super::data_values::{data_value_from_expr, report_not_data};
-use super::services::{BuildContext, with_ast_scope};
+use super::services::BuildContext;
 
 const REPLACEMENT_CHARACTER: &[u8] = "\u{FFFD}".as_bytes();
 
@@ -150,22 +150,21 @@ fn parse_structured_value<'s>(
     log: &Log,
 ) -> Result<&'s DataValue<'s>, DataFailure> {
     let errors_before = log.errors.get();
-    with_ast_scope(|scratch| {
-        let Some(root) = parse_tree(format, source, log, scratch) else {
-            if log.errors.get() == errors_before {
-                let path = BStr::new(source.path.text);
-                log.add_error_fmt(
-                    Some(source),
-                    Loc::EMPTY,
-                    format_args!("\"{path}\" could not be parsed"),
-                );
-            }
-            return Err(DataFailure::InvalidText);
-        };
-        data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
-            report_not_data(log, source.path.text, "the value", error);
-            DataFailure::Build
-        })
+    let scratch = &AstArena::new();
+    let Some(root) = parse_tree(format, source, log, scratch) else {
+        if log.errors.get() == errors_before {
+            let path = BStr::new(source.path.text);
+            log.add_error_fmt(
+                Some(source),
+                Loc::EMPTY,
+                format_args!("\"{path}\" could not be parsed"),
+            );
+        }
+        return Err(DataFailure::InvalidText);
+    };
+    data_value_from_expr(&root, scratch, arena, atoms).map_err(|error| {
+        report_not_data(log, source.path.text, "the value", error);
+        DataFailure::Build
     })
 }
 

@@ -1,11 +1,10 @@
-use bun_alloc::{AstAlloc, AstVec};
-use bun_collections::VecExt;
-
 use crate::StrictModeKind;
+use crate::ast_hash_map::AstHashTable;
 use crate::base::Ref;
 use crate::nodes::StoreRef;
 use crate::symbol::{self, Symbol};
 use crate::ts::TSNamespaceScope;
+use crate::{AstArena, AstBox, AstVec};
 
 /// One binding of a scope in a `Members::Table`: its name (a slice of the
 /// source text or the lexer's string table, which outlive the arena holding
@@ -85,16 +84,15 @@ impl<const N: usize> InlineMembers<N> {
 
 /// A scope's bindings by name. Most scopes bind a handful of names, so they
 /// start as a short inline array and only become a hash table past
-/// `INLINE_MAX`. Both live in `AstAlloc` (freed with the arena holding the
-/// `Scope`; a `Scope`'s `Drop` never runs).
+/// `INLINE_MAX`.
 #[derive(Default)]
 pub enum Members {
     #[default]
     Empty,
     /// In declaration order.
-    Small(bun_alloc::AstBox<InlineMembers<4>>),
-    Inline(bun_alloc::AstBox<InlineMembers<8>>),
-    Table(bun_collections::hashbrown::HashTable<MemberEntry, AstAlloc>),
+    Small(AstBox<InlineMembers<4>>),
+    Inline(AstBox<InlineMembers<8>>),
+    Table(AstHashTable<MemberEntry>),
 }
 
 pub struct MembersGetOrPut<'a> {
@@ -197,28 +195,27 @@ impl Members {
     }
 
     /// Room for about `n` members (the module scope, sized from the source).
-    pub fn reserve(&mut self, n: usize) {
+    pub fn reserve(&mut self, arena: &AstArena, n: usize) {
         if n > Self::INLINE_MAX {
-            self.to_table(n);
+            self.to_table(arena, n);
         }
     }
 
-    fn to_table(&mut self, capacity: usize) {
+    fn to_table(&mut self, arena: &AstArena, capacity: usize) {
         fn fill<const N: usize>(
+            arena: &AstArena,
             inline: &InlineMembers<N>,
             capacity: usize,
-        ) -> bun_collections::hashbrown::HashTable<MemberEntry, AstAlloc> {
-            let mut table = bun_collections::hashbrown::HashTable::with_capacity_in(
-                capacity.max(Members::INLINE_MAX * 2),
-                AstAlloc,
-            );
+        ) -> AstHashTable<MemberEntry> {
+            let mut table =
+                AstHashTable::with_capacity_in(capacity.max(Members::INLINE_MAX * 2), arena);
             for i in 0..inline.len as usize {
                 let entry = MemberEntry {
                     name: inline.names[i],
                     hash: inline.hashes[i],
                     member: inline.members[i],
                 };
-                table.insert_unique(Members::table_hash(entry.hash), entry, |e| {
+                table.insert_unique(arena, Members::table_hash(entry.hash), entry, |e| {
                     Members::table_hash(e.hash)
                 });
             }
@@ -226,14 +223,12 @@ impl Members {
         }
         let table = match core::mem::take(self) {
             Members::Table(mut table) => {
-                table.reserve(capacity, |e| Self::table_hash(e.hash));
+                table.reserve(arena, capacity, |e| Self::table_hash(e.hash));
                 table
             }
-            Members::Empty => {
-                bun_collections::hashbrown::HashTable::with_capacity_in(capacity, AstAlloc)
-            }
-            Members::Small(inline) => fill(&inline, capacity),
-            Members::Inline(inline) => fill(&inline, capacity),
+            Members::Empty => AstHashTable::with_capacity_in(capacity, arena),
+            Members::Small(inline) => fill(arena, &inline, capacity),
+            Members::Inline(inline) => fill(arena, &inline, capacity),
         };
         *self = Members::Table(table);
     }
@@ -243,11 +238,16 @@ impl Members {
     /// # Safety
     /// `name` is stored by reference: it must outlive this scope (source
     /// text, the lexer's string table, or the AST arena all do).
-    pub unsafe fn get_or_put_hashed(&mut self, hash: u32, name: &[u8]) -> MembersGetOrPut<'_> {
+    pub unsafe fn get_or_put_hashed<'m>(
+        &'m mut self,
+        arena: &'m AstArena,
+        hash: u32,
+        name: &[u8],
+    ) -> MembersGetOrPut<'m> {
         loop {
             match self {
                 Members::Empty => {
-                    *self = Members::Small(bun_alloc::ast_box(InlineMembers::new()));
+                    *self = Members::Small(AstBox::new_in(InlineMembers::new(), arena));
                 }
                 Members::Small(inline) => {
                     let found = inline.find(hash, name);
@@ -265,7 +265,7 @@ impl Members {
                         };
                     }
                     let grown = inline.grow::<8>();
-                    *self = Members::Inline(bun_alloc::ast_box(grown));
+                    *self = Members::Inline(AstBox::new_in(grown, arena));
                 }
                 Members::Inline(inline) => {
                     let found = inline.find(hash, name);
@@ -282,33 +282,23 @@ impl Members {
                             value_ptr: &mut inline.members[i],
                         };
                     }
-                    self.to_table(Self::INLINE_MAX * 2);
+                    self.to_table(arena, Self::INLINE_MAX * 2);
                 }
                 Members::Table(table) => {
-                    return match table.entry(
+                    let entry = table.get_or_insert_with(
+                        arena,
                         Self::table_hash(hash),
                         |e| e.hash == hash && e.name.slice() == name,
                         |e| Self::table_hash(e.hash),
-                    ) {
-                        bun_collections::hashbrown::hash_table::Entry::Occupied(o) => {
-                            MembersGetOrPut {
-                                found_existing: true,
-                                value_ptr: &mut o.into_mut().member,
-                            }
-                        }
-                        bun_collections::hashbrown::hash_table::Entry::Vacant(v) => {
-                            MembersGetOrPut {
-                                found_existing: false,
-                                value_ptr: &mut v
-                                    .insert(MemberEntry {
-                                        name: crate::StoreStr::new(name),
-                                        hash,
-                                        member: Member::default(),
-                                    })
-                                    .into_mut()
-                                    .member,
-                            }
-                        }
+                        || MemberEntry {
+                            name: crate::StoreStr::new(name),
+                            hash,
+                            member: Member::default(),
+                        },
+                    );
+                    return MembersGetOrPut {
+                        found_existing: entry.found_existing,
+                        value_ptr: &mut entry.value_ptr.member,
                     };
                 }
             }
@@ -319,9 +309,9 @@ impl Members {
     ///
     /// # Safety
     /// As for `get_or_put_hashed`.
-    pub unsafe fn put(&mut self, name: &[u8], member: Member) {
+    pub unsafe fn put(&mut self, arena: &AstArena, name: &[u8], member: Member) {
         // SAFETY: forwarded contract.
-        *unsafe { self.get_or_put_hashed(Self::hash(name), name) }.value_ptr = member;
+        *unsafe { self.get_or_put_hashed(arena, Self::hash(name), name) }.value_ptr = member;
     }
 }
 
@@ -331,11 +321,9 @@ pub struct Scope {
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
     // `unsafe { &*parent.as_ptr() }` at every walk site.
     pub parent: Option<StoreRef<Scope>>,
-    /// `AstVec` for the same reason as `members` above. Elements are `StoreRef`
-    /// so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
+    /// Elements are `StoreRef` so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
     pub children: AstVec<StoreRef<Scope>>,
     pub members: Members,
-    /// `AstVec`: arena-backed.
     pub generated: AstVec<Ref>,
     /// This scope's index in the visit pass's pre-order walk and the index of
     /// the last scope inside it, which `Ast::scope_uses` refers to.
@@ -375,13 +363,13 @@ impl Scope {
     /// `Default::default()` chain — i.e. no temporary `Scope` is constructed
     /// and partially dropped, and `members`/`children`/`generated` come from a
     /// const-folded zero header rather than three out-of-line `default()`
-    /// calls. `AstAlloc::vec` and `StringHashMap::new_in` are both `const fn`.
+    /// calls.
     pub const EMPTY: Self = Self {
         kind: Kind::Block,
         parent: None,
-        children: AstAlloc::vec(),
+        children: AstVec::new(),
         members: Members::EMPTY,
-        generated: AstAlloc::vec(),
+        generated: AstVec::new(),
         visit_span: [u32::MAX, u32::MAX],
         label_ref: Ref::NONE,
         label_stmt_is_loop: false,
@@ -424,13 +412,14 @@ impl Scope {
     /// parser's names are slices of the source or of the lexer's string
     /// table, which outlive the AST arena.
     #[inline]
-    pub unsafe fn get_or_put_member_with_hash(
-        &mut self,
+    pub unsafe fn get_or_put_member_with_hash<'m>(
+        &'m mut self,
+        arena: &'m AstArena,
         name: &[u8],
         hash_value: u32,
-    ) -> MembersGetOrPut<'_> {
+    ) -> MembersGetOrPut<'m> {
         // SAFETY: forwarded contract.
-        unsafe { self.members.get_or_put_hashed(hash_value, name) }
+        unsafe { self.members.get_or_put_hashed(arena, hash_value, name) }
     }
 
     /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]

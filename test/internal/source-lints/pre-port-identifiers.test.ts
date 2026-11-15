@@ -33,7 +33,6 @@ const renamed: { zig: string; rust: string }[] = [
   { zig: "isSliceInBuffer", rust: "bun_alloc::is_slice_in_buffer" },
   { zig: "markInactive", rust: "mark_inactive" },
   { zig: "onResolveJSC", rust: "run_on_resolve" },
-  { zig: "resetStore", rust: "reset_store" },
   { zig: "startTLSWithCTX", rust: "start_tls_with_ctx" },
   { zig: "toJSUnchecked", rust: "to_js_unchecked" },
 ];

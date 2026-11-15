@@ -4,7 +4,6 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
 
-use bun_ast::ASTMemoryAllocator;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
@@ -610,12 +609,6 @@ impl TranspilerJob {
         // SAFETY: a leaf field, which takes its own lock.
         let source_mappings = unsafe { &(*vm).source_mappings };
 
-        // `borrowing()`: the AST node store and the
-        // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
-        // drops at the end of `run()`.
-        let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
-        let _ast_scope = ast_memory_store.enter();
-
         let path = bun_paths::fs::Path::init(&this.path_text);
         let specifier = path.text;
         let loader = this.loader;
@@ -910,9 +903,6 @@ impl TranspilerJob {
             ..ResolvedSource::printed(printed_ast, source_code)
         };
 
-        // `arena` and `ast_memory_store` drop here (after `_ast_scope` restores
-        // the thread-local AST heap pointer), `mi_heap_destroy`ing every parse
-        // / AST allocation made by this call. Nothing references them past
-        // this point — `source_code` above is a fresh WTF::String copy.
+        // `arena` drops here. `source_code` above is a fresh WTF::String copy, so nothing points into it.
     }
 }

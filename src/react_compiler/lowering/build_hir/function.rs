@@ -5,8 +5,9 @@ use crate::diagnostics::{
     CompilerDiagnostic, CompilerError, CompilerErrorDetail, ErrorCategory, SourceLocation,
 };
 use crate::hir::{
-    Effect, FunctionExpressionType, InstructionKind, InstructionValue, LValue, LoweredFunction,
-    ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr, VariableBinding,
+    Effect, FunctionExpressionType, HirAlloc, InstructionKind, InstructionValue, LValue,
+    LoweredFunction, ObjectProperty, ObjectPropertyKey, ObjectPropertyType, Place, StoreStr,
+    VariableBinding,
 };
 use bun_ast::expr::Data;
 use bun_ast::{self as ast, E, Expr, G, Loc, Ref};
@@ -376,7 +377,7 @@ fn lower_object_property_key(
         Data::ENumber(n) if !computed => {
             let scratch = n.value().to_string();
             Ok(Some(ObjectPropertyKey::Identifier {
-                name: super::helpers::arena_str(scratch.as_bytes()),
+                name: HirAlloc::dupe_str(scratch.as_bytes()),
             }))
         }
         Data::EIdentifier(id) if !computed => Ok(Some(ObjectPropertyKey::Identifier {
@@ -412,7 +413,7 @@ fn lower_object_property_key(
 fn estring_to_store_str(s: &E::EString) -> StoreStr {
     debug_assert!(s.next.is_none());
     if s.is_utf16 {
-        super::helpers::arena_str(bun_core::strings::to_utf8_alloc(s.slice16()).as_slice())
+        HirAlloc::dupe_str(bun_core::strings::to_utf8_alloc(s.slice16()).as_slice())
     } else {
         StoreStr::new(s.slice8())
     }

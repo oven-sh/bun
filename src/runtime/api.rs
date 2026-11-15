@@ -192,11 +192,8 @@ fn with_text_format_source<R>(
     f(arena, &mut log, &source)
 }
 
-/// Where a parse error stands in the document, for the `position` property
-/// of the `SyntaxError` a text-format parser throws: `{ line, column, offset,
-/// lineText }`, the shape of `BuildMessage.position` without the file. The
-/// location's `line_text` has to be UTF-8. `None` when the parser attached no
-/// location (the `line: -1` sentinel of [`bun_ast::Location::init_or_null`]).
+/// The `position` of a parse `SyntaxError`: `{ line, column, offset, lineText }`
+/// from a [`bun_ast::Location`] with UTF-8 `line_text`, or `None` for the `line: -1` sentinel.
 fn location_to_js(
     global: &bun_jsc::JSGlobalObject,
     location: &bun_ast::Location,
@@ -219,9 +216,7 @@ fn location_to_js(
     Ok(Some(object))
 }
 
-/// The index in a JS string of the byte `offset` of its UTF-8 form: the
-/// `offset` of a [`bun_ast::Location`] a parser computed over that UTF-8, for
-/// a caller who passed the string.
+/// The index in a JS string of the byte `offset` of its UTF-8 form.
 fn js_string_index(utf8: &[u8], offset: usize) -> usize {
     bun_core::strings::element_length_utf8_into_utf16(&utf8[..offset.min(utf8.len())])
 }

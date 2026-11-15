@@ -2181,8 +2181,7 @@ impl ErrorPositionState {
     }
 }
 
-/// A long line of UTF-8 cut to ~120 bytes around `offset_in_line`, the byte
-/// of the error in it.
+/// A long line of UTF-8 cut to ~120 bytes around the error at `offset_in_line`.
 fn window_line_text(full_line: &[u8], offset_in_line: usize) -> &[u8] {
     if full_line.len() <= 80 + offset_in_line {
         return full_line;

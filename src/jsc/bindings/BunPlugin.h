@@ -91,6 +91,8 @@ public:
         }
 
         VirtualModuleMap* _Nullable virtualModules = nullptr;
+        // By the path that require() resolves a mocked name to, where an import resolves it to another file: the key of the mock, which require() loads instead.
+        WTF::UncheckedKeyHashMap<String, String> moduleMockKeysByRequirePath = {};
         bool mustDoExpensiveRelativeLookup = false;
         // Set right before requestImportModule(), to tell moduleLoaderResolve() it's a script's import(), which can't use NUL-prefixed keys.
         bool isResolvingImportCall = false;
@@ -192,6 +194,7 @@ public:
             Base::clear();
             delete virtualModules;
             virtualModules = nullptr;
+            moduleMockKeysByRequirePath.clear();
             mustDoExpensiveRelativeLookup = false;
             displacedPreloadModuleMocks.clear();
             runningModuleMocks.clear();

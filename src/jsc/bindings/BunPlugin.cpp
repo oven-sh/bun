@@ -535,6 +535,8 @@ public:
     WriteBarrier<JSObject> exports;
     WriteBarrier<JSString> specifier;
     WriteBarrier<JSString> writtenSpecifier;
+    // The path that require() resolves the name to, where an import resolves it to another file, which is `specifier`. Null for vi.mock() and vi.doMock(), and with compiled code.
+    WriteBarrier<JSString> requirePath;
     // Set when a loaded ES module is patched in place. Maps export name to the overwritten value, or to this object if there was none yet.
     WriteBarrier<JSObject> originalExports;
     WriteBarrier<Unknown> originalCommonJSExports;
@@ -771,6 +773,15 @@ static JSModuleMock* registeredModuleMock(Zig::GlobalObject* globalObject, const
         return nullptr;
     auto entry = virtualModules->find(specifier);
     return entry == virtualModules->end() ? nullptr : dynamicDowncast<JSModuleMock>(entry->value.get());
+}
+
+// The mock of a name that require() resolves to `path` and an import to another file, which is the mock's key. Null once something else has that key.
+static JSModuleMock* moduleMockOfRequirePath(Zig::GlobalObject* globalObject, const String& path)
+{
+    auto& keys = globalObject->onLoadPlugins.moduleMockKeysByRequirePath;
+    auto turn = keys.find(path);
+    auto* mock = turn == keys.end() ? nullptr : registeredModuleMock(globalObject, turn->value);
+    return mock && mock->requirePath && mock->requirePath->tryGetValue().data == path ? mock : nullptr;
 }
 
 // jest.resetModules() swaps in a new JSModuleMock with the same factory, which still counts as the same mock.
@@ -8190,6 +8201,7 @@ void JSModuleMock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(mock->exports);
     visitor.append(mock->specifier);
     visitor.append(mock->writtenSpecifier);
+    visitor.append(mock->requirePath);
     visitor.append(mock->originalExports);
     visitor.append(mock->originalCommonJSExports);
     visitor.append(mock->commonJSExportsOfOriginal);

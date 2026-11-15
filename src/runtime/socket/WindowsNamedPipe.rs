@@ -41,12 +41,10 @@ bun_output::declare_scope!(WindowsNamedPipe, visible);
 
 pub(crate) type CertError = crate::socket::upgraded_duplex::CertError;
 
-type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
-
 use crate::jsc_hooks::timer_all;
 
 pub(crate) struct WindowsNamedPipe {
-    pub(crate) wrapper: OnceCell<WrapperType>,
+    pub(crate) wrapper: OnceCell<SSLWrapper>,
     pub(crate) root: Cell<*mut WindowsNamedPipe>,
     /// Until [`start`](Self::start) hands it to `writer`.
     pipe: JsCell<Option<uv::Owned<uv::Pipe>>>,
@@ -125,8 +123,9 @@ impl WindowsNamedPipe {
         self.flags.set(flags);
     }
 
-    fn install_wrapper(&self, wrapper: WrapperType) {
+    fn install_wrapper(&self, wrapper: SSLWrapper) {
         debug_assert!(self.wrapper.get().is_none(), "TLS was set up twice");
+        wrapper.enable_session_and_keylog();
         self.wrapper.get_or_init(|| wrapper);
     }
 
@@ -186,7 +185,7 @@ impl WindowsNamedPipe {
         let mut data = self.incoming.replace(Vec::new());
 
         match self.wrapper.get() {
-            Some(w) => w.receive_data(data.as_slice()),
+            Some(w) => w.receive_data(&mut &*self, data.as_slice()),
             None => (self.handlers.on_data)(self.handlers.ctx, data.as_slice()),
         }
         data.clear();
@@ -217,85 +216,49 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onOpen");
         (self.handlers.on_open)(self.handlers.ctx);
     }
+}
 
-    fn on_data(&self, decoded_data: &[u8]) {
+impl ssl_wrapper::Handler for &WindowsNamedPipe {
+    fn on_open(&mut self) {
+        WindowsNamedPipe::on_open(self)
+    }
+
+    fn on_data(&mut self, decoded_data: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onData ({})", decoded_data.len());
         (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
-    fn on_session(&self, session: &[u8]) {
+    fn on_session(&mut self, session: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
         (self.handlers.on_session)(self.handlers.ctx, session);
     }
 
-    fn on_keylog(&self, line: &[u8]) {
+    fn on_keylog(&mut self, line: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onKeylog ({})", line.len());
         (self.handlers.on_keylog)(self.handlers.ctx, line);
     }
 
-    // ── SSLWrapper trampolines ───────────────────────────────────────────────
-    // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots.
-    // SAFETY (all): `this` is the `ctx` set in `wrapper_handlers`; the engine
-    // only fires handlers while `self` (its owner) is alive.
-    fn ssl_on_open(this: *mut Self) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_open()
+    fn server_identity(&mut self, ssl: &boringssl::SSL) -> bun_boringssl::ServerIdentity {
+        (self.handlers.server_identity)(self.handlers.ctx, ssl)
     }
-    fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_handshake(ok, e)
-    }
-    fn ssl_on_data(this: *mut Self, d: &[u8]) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_data(d)
-    }
-    fn ssl_on_session(this: *mut Self, d: &[u8]) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_session(d)
-    }
-    fn ssl_server_identity(this: *mut Self, ssl: &boringssl::SSL) -> bun_boringssl::ServerIdentity {
-        // SAFETY: see block note above.
-        let this = unsafe { &*this };
-        (this.handlers.server_identity)(this.handlers.ctx, ssl)
-    }
-    fn ssl_alpn_select<'a>(
-        this: *mut Self,
+
+    fn alpn_select<'a>(
+        &mut self,
         ssl: &boringssl::SSL,
         offered: &'a [u8],
     ) -> bun_boringssl::AlpnSelection<'a> {
-        // SAFETY: see block note above.
-        let this = unsafe { &*this };
-        (this.handlers.alpn_select)(this.handlers.ctx, ssl, offered)
-    }
-    fn ssl_on_keylog(this: *mut Self, d: &[u8]) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_keylog(d)
-    }
-    fn ssl_on_close(this: *mut Self) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.on_close()
-    }
-    fn ssl_write(this: *mut Self, d: &[u8]) {
-        // SAFETY: see block note above.
-        unsafe { &*this }.internal_write(d)
+        (self.handlers.alpn_select)(self.handlers.ctx, ssl, offered)
     }
 
-    fn wrapper_handlers(&self) -> ssl_wrapper::Handlers<*mut WindowsNamedPipe> {
-        ssl_wrapper::Handlers {
-            ctx: self.root_ptr(),
-            on_open: Self::ssl_on_open,
-            on_handshake: Self::ssl_on_handshake,
-            on_data: Self::ssl_on_data,
-            on_close: Self::ssl_on_close,
-            write: Self::ssl_write,
-            on_session: Some(Self::ssl_on_session),
-            on_keylog: Some(Self::ssl_on_keylog),
-            server_identity: Some(Self::ssl_server_identity),
-            alpn_select: Some(Self::ssl_alpn_select),
-        }
+    fn on_close(&mut self) {
+        WindowsNamedPipe::on_close(self)
     }
 
-    fn on_handshake(&self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn write(&mut self, encoded_data: &[u8]) {
+        self.internal_write(encoded_data)
+    }
+
+    fn on_handshake(&mut self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
         bun_output::scoped_log!(WindowsNamedPipe, "onHandshake");
         let _keep_alive = self.keep_alive();
 
@@ -316,7 +279,9 @@ impl WindowsNamedPipe {
             (self.handlers.on_writable)(self.handlers.ctx);
         }
     }
+}
 
+impl WindowsNamedPipe {
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
         if let Some(bytes) = data {
             if !bytes.is_empty() {
@@ -334,7 +299,7 @@ impl WindowsNamedPipe {
 
         if !msg_more {
             if let Some(w) = self.wrapper.get() {
-                let _ = w.shutdown(false);
+                let _ = w.shutdown(&mut &*self, false);
             }
             self.writer.end(self);
         }
@@ -378,7 +343,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub(crate) fn flush(&self) {
         if let Some(w) = self.wrapper.get() {
-            let _ = w.flush();
+            let _ = w.flush(&mut &*self);
         }
         if !self.flags.get().disconnected() {
             let _ = self.writer.flush(self);
@@ -442,7 +407,7 @@ impl WindowsNamedPipe {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
                 if let Some(w) = self.wrapper.get() {
-                    w.start();
+                    w.start(&mut &*self);
                 }
             } else {
                 // trigger onOpen
@@ -463,7 +428,7 @@ impl WindowsNamedPipe {
 
         if let Some(tls) = ssl_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
-            match WrapperType::init_with_ctx(tls, false, self.wrapper_handlers()) {
+            match SSLWrapper::init_with_ctx(tls, false) {
                 Ok(w) => self.install_wrapper(w),
                 Err(_) => {
                     self.pipe.set(None);
@@ -483,7 +448,7 @@ impl WindowsNamedPipe {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
                 if let Some(w) = self.wrapper.get() {
-                    w.start();
+                    w.start(&mut &*self);
                 }
             } else {
                 // trigger onOpen
@@ -558,7 +523,7 @@ impl WindowsNamedPipe {
     ) -> Option<bun_sys::Result<()>> {
         if let Some(ctx) = owned_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
-            match WrapperType::init_with_ctx(&ctx, true, self.wrapper_handlers()) {
+            match SSLWrapper::init_with_ctx(&ctx, true) {
                 Ok(w) => self.install_wrapper(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
@@ -572,7 +537,7 @@ impl WindowsNamedPipe {
         }
         if let Some(tls) = ssl_options {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
-            match ssl_wrapper::init(&tls, true, self.wrapper_handlers()) {
+            match ssl_wrapper::init(&tls, true) {
                 Ok(w) => self.install_wrapper(w),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
@@ -627,7 +592,7 @@ impl WindowsNamedPipe {
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(w) = self.wrapper.get() {
-            return i32::try_from(w.write_data(data).unwrap_or(0)).expect("int cast");
+            return i32::try_from(w.write_data(&mut &*self, data).unwrap_or(0)).expect("int cast");
         }
         self.internal_write(data);
         i32::try_from(data.len()).expect("int cast")
@@ -661,7 +626,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub(crate) fn close(&self) {
         if let Some(w) = self.wrapper.get() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(&mut &*self, false);
         }
         self.writer.end(self);
     }
@@ -669,7 +634,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub(crate) fn shutdown(&self) {
         if let Some(w) = self.wrapper.get() {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(&mut &*self, false);
         } else {
             // Plain (non-TLS) named pipe: half-close the write side so the peer
             // observes EOF. Without this, Socket.prototype.end() over a Windows

@@ -205,10 +205,9 @@ pub struct PooledSocket<const SSL: bool> {
     /// The context that owns this pooled socket's memory (for returning to correct pool).
     pub(crate) owner: *mut HTTPContext<SSL>,
     /// If this socket carries an established CONNECT tunnel (HTTPS through
-    /// an HTTP proxy), the tunnel is preserved here. The pool owns one
-    /// strong ref while the socket is parked (the `RefPtr` *is* that ref).
+    /// an HTTP proxy), the tunnel is preserved here.
     /// None for direct connections.
-    pub(crate) proxy_tunnel: Option<RefPtr<ProxyTunnel>>,
+    pub(crate) proxy_tunnel: Option<Box<ProxyTunnel>>,
     /// Tunnel: the origin hostname (`hostname_buf` is the proxy). Unix TLS:
     /// the hostname the handshake verified (`hostname_buf` is the path).
     pub(crate) target_hostname: Box<[u8]>,
@@ -279,8 +278,7 @@ fn ssl_config_hash(cfg: Option<&SSLConfig>) -> u64 {
 struct ExistingSocket<const SSL: bool> {
     socket: HTTPSocket<SSL>,
     /// Present if the socket carries an established CONNECT tunnel.
-    /// Ownership (one strong ref) is transferred to the caller.
-    tunnel: Option<RefPtr<ProxyTunnel>>,
+    tunnel: Option<Box<ProxyTunnel>>,
     /// Present if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
@@ -410,12 +408,21 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 debug_assert!(!socket.is_closed());
                 Self::put_request(slot, request);
             }
-            Break(step) => Self::run_next_step(request, slot, step),
+            Break(step) => Self::run_next_step(request, socket, slot, step),
         }
     }
 
-    fn run_next_step(request: InFlightRequest, slot: &Cell<*mut c_void>, step: NextStep) {
+    fn run_next_step(
+        mut request: InFlightRequest,
+        socket: HTTPSocket<SSL>,
+        slot: &Cell<*mut c_void>,
+        step: NextStep,
+    ) {
         match step {
+            NextStep::ReleaseSocket => {
+                request.release_socket(socket);
+                request.finish();
+            }
             NextStep::Finish => request.finish(),
             NextStep::Connect => request.connect(),
             NextStep::AttachH2 => {
@@ -609,9 +616,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// `reject_unauthorized` is set to `false`.
     ///
     /// If `tunnel` is non-null, the socket carries an established CONNECT
-    /// tunnel. The pool takes ownership of one strong ref on the tunnel;
-    /// the caller must NOT deref it afterwards. If pooling fails (pool
-    /// full, hostname too long, socket bad), the tunnel is dereffed here.
+    /// tunnel.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn release_socket(
         &mut self,
@@ -621,7 +626,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         hostname: &[u8],
         port: u16,
         ssl_config: Option<&ssl_config::SharedPtr>,
-        mut tunnel: Option<RefPtr<ProxyTunnel>>,
+        tunnel: Option<Box<ProxyTunnel>>,
         target_hostname: &[u8],
         target_port: u16,
         proxy_auth_hash: u64,
@@ -662,7 +667,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 verification,
                 ssl_config_hash: ssl_config_hash(ssl_config.map(|c| &**c)),
                 owner,
-                // Pool owns the tunnel ref transferred by the caller.
                 proxy_tunnel: tunnel,
                 target_hostname: if (had_tunnel || transport == Transport::Unix)
                     && !target_hostname.is_empty()
@@ -683,36 +687,29 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     Self::park(self.pending_unix_sockets.get_or_init(), pooled, pool)
                 }
             };
-            match parked {
-                None => {
-                    bun_core::scoped_log!(
-                        HTTPContext,
-                        "Keep-Alive release {}:{} tunnel={} target={}:{}",
-                        bstr::BStr::new(hostname),
-                        port,
-                        had_tunnel,
-                        bstr::BStr::new(target_hostname),
-                        target_port,
-                    );
-                    return;
-                }
-                Some(mut pooled) => tunnel = pooled.proxy_tunnel.take(),
+            if parked {
+                bun_core::scoped_log!(
+                    HTTPContext,
+                    "Keep-Alive release {}:{} tunnel={} target={}:{}",
+                    bstr::BStr::new(hostname),
+                    port,
+                    had_tunnel,
+                    bstr::BStr::new(target_hostname),
+                    target_port,
+                );
+                return;
             }
         }
         bun_core::scoped_log!(HTTPContext, "close socket");
-        if let Some(t) = tunnel {
-            ProxyTunnel::shutdown(t.as_non_null());
-            crate::proxy_tunnel::raw_as_mut(t.as_ptr()).detach_socket();
-        }
         Self::close_socket(socket);
     }
 
-    /// Park `pooled`, evicting the longest-idle entry when the pool is full; hands it back on failure.
+    /// Park `pooled`, evicting the longest-idle entry when the pool is full. False on failure.
     fn park<const N: usize>(
         pool: &HiveArray<PooledSocket<SSL>, N>,
         pooled: PooledSocket<SSL>,
         options: crate::PoolOptions,
-    ) -> Option<PooledSocket<SSL>> {
+    ) -> bool {
         // Oldest parked socket, of `options.id` only when `same_session`.
         let oldest = |same_session: bool| -> (Option<*mut PooledSocket<SSL>>, usize) {
             let mut oldest: Option<*mut PooledSocket<SSL>> = None;
@@ -742,7 +739,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         }
         if pool.used().find_first_unset().is_none() {
             let (Some(oldest), _) = oldest(false) else {
-                return Some(pooled);
+                return false;
             };
             bun_core::scoped_log!(HTTPContext, "Keep-Alive pool full, evicting oldest");
             // The evicted connection is healthy: retire it with a FIN
@@ -750,9 +747,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
             Self::close_socket(pooled_socket_mut(oldest).http_socket);
         }
         let socket = pooled.http_socket;
-        let slot = match pool.try_get_init(pooled) {
-            Ok(slot) => slot,
-            Err(pooled) => return Some(pooled),
+        let Ok(slot) = pool.try_get_init(pooled) else {
+            return false;
         };
         Self::set_socket_ext(
             socket,
@@ -760,7 +756,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         );
         socket.flush();
         Self::arm_idle_timeout(socket, options.idle_timeout_seconds);
-        None
+        true
     }
 
     /// How long a parked socket may sit idle; 0 is the 5 minute default.
@@ -929,8 +925,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     }
                 }
 
-                // Transfer tunnel ownership (the parked strong ref) to the caller.
-                let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
+                let tunnel = socket.proxy_tunnel.take();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
                 // SAFETY: `socket_ptr` is a fully-initialized hive slot.
@@ -1116,12 +1111,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // onOpen only promotes .pending -> .opened, and
                     // firstCall only acts on .opened/.pending, so both
                     // become no-ops for the CONNECT/handshake phases.
-                    // `adopt` moves the pool's strong ref into
-                    // `client.proxy_tunnel`.
-                    crate::proxy_tunnel::ProxyTunnel::adopt::<SSL>(tunnel, &mut client, sock);
+                    tunnel.adopt(&mut client);
                     return Self::run_on_socket(client, sock, slot, |c| {
                         c.on_open::<SSL>(sock)?;
-                        c.on_writable::<true, SSL>(sock)
+                        c.on_writable::<true, SSL>(sock, None)
                     });
                 }
                 return Self::run_on_socket(client, sock, slot, |c| c.on_reuse::<SSL>(sock));
@@ -1206,7 +1199,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let mut iter = pool.used().iter_set();
         while let Some(idx) = iter.next() {
             let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
-            // Not shutdown(): its close callback would deref the freed HTTPClient in the tunnel's ctx.
             pooled.proxy_tunnel = None;
             pooled.h2_session = None;
             pooled.http_socket.close(uws::CloseKind::Failure);
@@ -1451,7 +1443,7 @@ impl<const SSL: bool> Handler<SSL> {
 
     pub fn on_writable(socket: HTTPSocket<SSL>) {
         let tagged = HTTPContext::<SSL>::enter_client(socket, |client| {
-            client.on_writable::<false, SSL>(socket)
+            client.on_writable::<false, SSL>(socket, None)
         });
         let Some(tagged) = tagged else { return };
         if let Some(session) = tagged.session() {

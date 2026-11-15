@@ -47,8 +47,8 @@ use crate::hir::cfg_utils::{
 use crate::hir::environment::Environment;
 use crate::hir::visitors;
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE,
-    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
+    BasicBlock, BlockId, BlockKind, EvaluationOrder, FunctionId, GENERATED_SOURCE, GotoVariant,
+    HirAlloc, HirFunction, HirVec, IdentifierId, Instruction, InstructionId, InstructionKind,
     InstructionValue, LValue, Place, Terminal,
 };
 
@@ -131,7 +131,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
 
                     // Create a new block which will contain code following the IIFE call
                     let continuation_block_id = env.next_block_id();
-                    let continuation_instructions = AstAlloc::vec_from_slice(
+                    let continuation_instructions = HirAlloc::vec_from_slice(
                         &func.body.blocks[&block_id].instructions[ii + 1..],
                     );
                     let continuation_terminal = func.body.blocks[&block_id].terminal.clone();
@@ -139,7 +139,7 @@ pub(crate) fn inline_immediately_invoked_function_expressions(
                         id: continuation_block_id,
                         instructions: continuation_instructions,
                         kind: block_kind,
-                        phis: AstAlloc::vec(),
+                        phis: HirAlloc::vec(),
                         preds: crate::collections::IndexSet::new(),
                         terminal: continuation_terminal,
                     };

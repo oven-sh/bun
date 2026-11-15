@@ -4,11 +4,9 @@ use std::borrow::Cow;
 use std::cell::Cell;
 use std::ptr::NonNull;
 
-use bun_alloc::Arena;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition};
-use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
-use bun_collections::VecExt;
+use bun_ast::{self as js_ast, AstArena, AstBox, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_core::strings;
 use bun_glob::BunGlobWalker;
 use bun_paths::resolve_path::{self, platform};
@@ -172,7 +170,7 @@ struct Expansion<'a> {
 }
 
 impl Expansion<'_> {
-    fn import_call(&self, path: &[u8], loc: Loc) -> (Expr, TransposeState) {
+    fn import_call(&self, arena: &AstArena, path: &[u8], loc: Loc) -> (Expr, TransposeState) {
         let mut state = TransposeState {
             loc,
             ..Default::default()
@@ -180,11 +178,19 @@ impl Expansion<'_> {
         if let Some((loader, r#type)) = self.loader {
             state.import_loader = Some(loader);
             state.import_options = object_of(
+                arena,
                 b"with",
-                object_of(b"type", Expr::init(E::String::init(r#type), loc)),
+                object_of(
+                    arena,
+                    b"type",
+                    Expr::allocate(arena, E::String::init(r#type), loc),
+                ),
             );
         }
-        (Expr::init(E::String::init(path), self.path_loc), state)
+        (
+            Expr::allocate(arena, E::String::init(path), self.path_loc),
+            state,
+        )
     }
 }
 
@@ -474,7 +480,7 @@ fn find_files(
 struct Arguments<'a, 'log> {
     log: &'log bun_ast::Log,
     source: &'a bun_ast::Source<'a>,
-    arena: &'a Arena,
+    arena: &'a AstArena,
 }
 
 impl<'a> Arguments<'a, '_> {
@@ -491,7 +497,7 @@ impl<'a> Arguments<'a, '_> {
     ) -> Result<Valid, Invalid<'a>> {
         Err(Invalid {
             loc,
-            message: bun_alloc::arena_format!(in self.arena, "{message}")
+            message: bun_alloc::arena_format!(in self.arena.heap(), "{message}")
                 .into_bump_str()
                 .as_bytes(),
         })
@@ -874,7 +880,7 @@ impl<'a> Arguments<'a, '_> {
             let (name, _, value) = self.option(property, loc)?;
             let text = match value.data {
                 ExprData::ENumber(_) | ExprData::EBoolean(_) => {
-                    let empty = Expr::init(E::String::init(b""), value.loc);
+                    let empty = Expr::allocate(self.arena, E::String::init(b""), value.loc);
                     fold_string_addition(value, empty, self.arena, FoldStringAdditionKind::Normal)
                         .unwrap_or(value)
                 }
@@ -903,14 +909,18 @@ impl<'a> Arguments<'a, '_> {
     }
 }
 
-fn object_of(key: &'static [u8], value: Expr) -> Expr {
-    Expr::init(
+fn object_of(arena: &AstArena, key: &'static [u8], value: Expr) -> Expr {
+    Expr::allocate(
+        arena,
         E::Object {
-            properties: G::PropertyList::init_one(G::Property {
-                key: Some(Expr::init(E::String::init(key), value.loc)),
-                value: Some(value),
-                ..Default::default()
-            }),
+            properties: G::PropertyList::from_slice_in(
+                &[G::Property {
+                    key: Some(Expr::allocate(arena, E::String::init(key), value.loc)),
+                    value: Some(value),
+                    ..Default::default()
+                }],
+                arena,
+            ),
             is_single_line: true,
             ..Default::default()
         },
@@ -918,13 +928,14 @@ fn object_of(key: &'static [u8], value: Expr) -> Expr {
     )
 }
 
-fn arrow_of(arena: &Arena, args: &[js_ast::Ref], body: Stmt) -> Expr {
+fn arrow_of(arena: &AstArena, args: &[js_ast::Ref], body: Stmt) -> Expr {
     let loc = body.loc;
     let args = arena.alloc_slice_fill_iter(args.iter().map(|&r#ref| G::Arg {
         binding: js_ast::Binding::alloc(arena, B::Identifier { r#ref }, loc),
         ..Default::default()
     }));
-    Expr::init(
+    Expr::allocate(
+        arena,
         E::Arrow {
             args: js_ast::StoreSlice::new_mut(args),
             body: G::FnBody {
@@ -938,25 +949,29 @@ fn arrow_of(arena: &Arena, args: &[js_ast::Ref], body: Stmt) -> Expr {
     )
 }
 
-fn arrow(arena: &Arena, args: &[js_ast::Ref], value: Expr) -> Expr {
+fn arrow(arena: &AstArena, args: &[js_ast::Ref], value: Expr) -> Expr {
     arrow_of(
         arena,
         args,
-        Stmt::alloc(S::Return { value: Some(value) }, value.loc),
+        Stmt::allocate(arena, S::Return { value: Some(value) }, value.loc),
     )
 }
 
 #[optimize(size)]
-fn throwing_function(arena: &Arena, type_error: js_ast::Ref, message: &[u8], loc: Loc) -> Expr {
-    let value = Expr::init(
+fn throwing_function(arena: &AstArena, type_error: js_ast::Ref, message: &[u8], loc: Loc) -> Expr {
+    let value = Expr::allocate(
+        arena,
         E::New {
             target: Expr::init(E::Identifier::init(type_error), loc),
-            args: js_ast::ExprNodeList::init_one(Expr::init(E::String::init(message), loc)),
+            args: js_ast::ExprNodeList::from_slice_in(
+                &[Expr::allocate(arena, E::String::init(message), loc)],
+                arena,
+            ),
             ..Default::default()
         },
         loc,
     );
-    arrow_of(arena, &[], Stmt::alloc(S::Throw { value }, loc))
+    arrow_of(arena, &[], Stmt::allocate(arena, S::Throw { value }, loc))
 }
 
 fn is_import_meta_glob(expr: Expr) -> bool {
@@ -982,8 +997,9 @@ pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) ->
         && object.original_name.slice() == b"Object"
 }
 
-fn dot(target: Expr, name: &[u8]) -> Expr {
-    Expr::init(
+fn dot(arena: &AstArena, target: Expr, name: &[u8]) -> Expr {
+    Expr::allocate(
+        arena,
         E::Dot {
             target,
             name: name.into(),
@@ -995,12 +1011,16 @@ fn dot(target: Expr, name: &[u8]) -> Expr {
 }
 
 #[optimize(size)]
-fn then_export(arena: &Arena, import: Expr, parameter: js_ast::Ref, name: &[u8]) -> Expr {
+fn then_export(arena: &AstArena, import: Expr, parameter: js_ast::Ref, name: &[u8]) -> Expr {
     let namespace = Expr::init(E::Identifier::init(parameter), import.loc);
-    Expr::init(
+    Expr::allocate(
+        arena,
         E::Call {
-            target: dot(import, b"then"),
-            args: js_ast::ExprNodeList::init_one(arrow(arena, &[parameter], dot(namespace, name))),
+            target: dot(arena, import, b"then"),
+            args: js_ast::ExprNodeList::from_slice_in(
+                &[arrow(arena, &[parameter], dot(arena, namespace, name))],
+                arena,
+            ),
             ..Default::default()
         },
         import.loc,
@@ -1054,7 +1074,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         let arguments = Arguments {
             log: self.log(),
             source: self.source,
-            arena: self.arena,
+            arena: self.ast_arena,
         }
         .read(call, loc);
         self.arena.alloc(arguments)
@@ -1066,7 +1086,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             .expect("unreachable")
             .r#ref;
         throwing_function(
-            self.arena,
+            self.ast_arena,
             type_error,
             self.arena.alloc_slice_copy(message),
             loc,
@@ -1093,7 +1113,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         let mut finder = Arguments {
             log: self.log(),
             source: self.source,
-            arena: self.arena,
+            arena: self.ast_arena,
         };
         let expansion = match arguments {
             Ok(literals) => finder.expand(literals, loc, host, is_bundling),
@@ -1120,24 +1140,25 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             ImportMetaGlobUse::Expanded
         });
 
-        let mut properties: G::PropertyList = bun_alloc::AstAlloc::vec();
-        properties.reserve(expansion.entries.len());
+        let mut properties =
+            G::PropertyList::with_capacity_in(expansion.entries.len(), self.ast_arena);
         for &(key, path) in &expansion.entries {
             let value = if only_keys {
                 Expr::init(E::Number::new(0.0), loc)
             } else {
                 self.import_meta_glob_value(&expansion, path, loc)
             };
-            VecExt::append(
-                &mut properties,
+            properties.push(
+                self.ast_arena,
                 G::Property {
-                    key: Some(Expr::init(E::String::init(key), loc)),
+                    key: Some(Expr::allocate(self.ast_arena, E::String::init(key), loc)),
                     value: Some(value),
                     ..Default::default()
                 },
             );
         }
-        *e = Expr::init(
+        *e = Expr::allocate(
+            self.ast_arena,
             E::Object {
                 properties,
                 ..Default::default()
@@ -1150,9 +1171,10 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             && self.esm_export_keyword.len == 0
             && self.top_level_await_keyword.len == 0
         {
-            *e = Expr::init(
+            *e = Expr::allocate(
+                self.ast_arena,
                 E::Call {
-                    target: arrow(self.arena, &[], *e),
+                    target: arrow(self.ast_arena, &[], *e),
                     ..Default::default()
                 },
                 loc,
@@ -1201,8 +1223,12 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             b"\"import.meta.glob\" is expanded at transpile time, so call it directly and pass literals",
             loc,
         );
-        let value = Expr::assign(dot(Expr::init(E::ImportMeta {}, loc), b"glob"), function);
-        Some(Stmt::alloc(
+        let value = Expr::assign(
+            self.ast_arena,
+            dot(self.ast_arena, Expr::init(E::ImportMeta {}, loc), b"glob"),
+            function,
+        );
+        Some(self.s(
             S::SExpr {
                 value,
                 ..Default::default()
@@ -1221,7 +1247,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             return self.import_meta_glob_static_import(expansion, path, loc);
         }
 
-        let (specifier, state) = expansion.import_call(path, loc);
+        let (specifier, state) = expansion.import_call(self.ast_arena, path, loc);
         let mut value = self.transpose_import(specifier, &state);
         if !expansion.import.is_empty() {
             // Record the export as used, or the bundler tree-shakes it out of the `import()`.
@@ -1237,9 +1263,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             let parameter = self.new_symbol(js_ast::symbol::Kind::Other, b"m");
             self.declare_temp_var(parameter);
             self.record_usage(parameter);
-            value = then_export(self.arena, value, parameter, expansion.import);
+            value = then_export(self.ast_arena, value, parameter, expansion.import);
         }
-        arrow(self.arena, &[], value)
+        arrow(self.ast_arena, &[], value)
     }
 
     fn import_meta_glob_static_import(
@@ -1266,7 +1292,9 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             namespace_name
         };
         let namespace_ref = self.new_symbol(js_ast::symbol::Kind::Other, namespace_name);
-        VecExt::append(&mut self.module_scope_mut().generated, namespace_ref);
+        self.module_scope
+            .generated
+            .push(self.ast_arena, namespace_ref);
 
         let mut import = S::Import {
             namespace_ref,
@@ -1292,16 +1320,18 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
             .as_bytes();
             let local_name = self.temp_var_name(local_name);
             let ref_ = self.new_symbol(js_ast::symbol::Kind::Other, local_name);
-            VecExt::append(&mut self.module_scope_mut().generated, ref_);
+            self.module_scope.generated.push(self.ast_arena, ref_);
             self.is_import_item.insert(ref_, ());
             if self.options.features.hot_module_reloading {
-                self.symbols[ref_.inner_index() as usize].namespace_alias =
-                    Some(bun_alloc::ast_box(G::NamespaceAlias {
+                self.symbols[ref_.inner_index() as usize].namespace_alias = Some(AstBox::new_in(
+                    G::NamespaceAlias {
                         namespace_ref,
                         alias: js_ast::StoreStr::new(name),
                         import_record_index,
                         was_originally_property_access: false,
-                    }));
+                    },
+                    self.ast_arena,
+                ));
             }
             import.items = js_ast::StoreSlice::new_mut(self.arena.alloc_slice_fill_iter([
                 js_ast::ClauseItem {

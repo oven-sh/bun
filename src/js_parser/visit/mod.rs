@@ -23,10 +23,9 @@ use bun_ast::s::Kind as LocalKind;
 use bun_ast::scope::{Kind as ScopeKind, Member as ScopeMember};
 use bun_ast::symbol::Kind as SymbolKind;
 use bun_ast::{
-    AssignTarget, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef, S,
-    Stmt, StmtData, Symbol,
+    AssignTarget, AstVec, B, Binding, BindingNodeIndex, E, Expr, ExprData, ExprNodeList, G, LocRef,
+    S, Stmt, StmtData, Symbol,
 };
-use bun_collections::VecExt;
 // `parser::SideEffects` is a stub enum without the assoc fns; the real
 // `should_keep_stmt_in_dead_control_flow` lives on `ast::side_effects::SideEffects`.
 use crate::scan::scan_side_effects::SideEffects;
@@ -69,12 +68,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// expression's own scope rather than the one being visited.
     pub(crate) fn record_declared_symbol_in(&mut self, r#ref: Ref, own_scope: bool) {
         debug_assert!(r#ref.is_symbol());
-        self.declared_symbols
-            .append(bun_ast::DeclaredSymbol {
+        self.declared_symbols.append(
+            self.ast_arena,
+            bun_ast::DeclaredSymbol {
                 ref_: r#ref,
                 is_top_level: !own_scope && self.current_scope == self.module_scope,
-            })
-            .expect("oom");
+            },
+        );
     }
 
     pub(crate) fn visit_func(
@@ -649,8 +649,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     return expr;
                 }
                 let mut kept = E::Object {
-                    properties: G::PropertyList::init_capacity(
+                    properties: G::PropertyList::with_capacity_in(
                         object.properties.len().min(bound_properties.len()),
+                        self.ast_arena,
                     ),
                     ..*object
                 };
@@ -669,10 +670,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         Some(repeated) => {
                             kept.properties[repeated.i as usize].value = Some(query.expr);
                         }
-                        None => kept.properties.push(G::Property {
-                            value: Some(value),
-                            ..object.properties[query.i as usize]
-                        }),
+                        None => kept.properties.push(
+                            self.ast_arena,
+                            G::Property {
+                                value: Some(value),
+                                ..object.properties[query.i as usize]
+                            },
+                        ),
                     }
                 }
                 if has_non_string_key {
@@ -684,20 +688,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 if array.was_originally_macro && !bound_array.has_spread =>
             {
                 let bound_items = bound_array.items();
-                let mut items =
-                    ExprNodeList::init_capacity(array.items.len().min(bound_items.len()));
+                let mut items = ExprNodeList::with_capacity_in(
+                    array.items.len().min(bound_items.len()),
+                    self.ast_arena,
+                );
                 for (item, child_expr) in bound_items.iter().zip(array.items.iter()) {
-                    items.push(if matches!(item.binding.data, BData::BMissing(_)) {
-                        self.new_expr(E::Missing {}, expr.loc)
-                    } else {
-                        self.visit_binding_and_expr_for_macro(item.binding, *child_expr)
-                    });
+                    items.push(
+                        self.ast_arena,
+                        if matches!(item.binding.data, BData::BMissing(_)) {
+                            self.new_expr(E::Missing {}, expr.loc)
+                        } else {
+                            self.visit_binding_and_expr_for_macro(item.binding, *child_expr)
+                        },
+                    );
                 }
                 self.new_expr(E::Array { items, ..*array }, expr.loc)
             }
             (BData::BIdentifier(id), _) => {
                 if self.options.features.inlining {
-                    self.const_values.put(id.r#ref, expr).expect("oom");
+                    self.const_values.put(self.ast_arena, id.r#ref, expr);
                 }
                 expr
             }
@@ -718,7 +727,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 if could_be_const_value || (Self::ALLOW_MACROS && could_be_macro) {
                     if let Some(val) = decl.value {
                         if val.can_be_const_value() {
-                            self.const_values.put(id_ref, val).expect("oom");
+                            self.const_values.put(self.ast_arena, id_ref, val);
                         }
                     }
                 } else {
@@ -1023,7 +1032,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 // The name of a class expression is declared nowhere else:
                 // the renamer still has to number it around its neighbors.
                 if is_expr {
-                    VecExt::append(&mut self.vis_scope().generated, name_ref);
+                    self.current_scope.generated.push(self.ast_arena, name_ref);
                 }
                 inner_ref
             } else {
@@ -1031,7 +1040,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
-                self.vis_scope().members.put(
+                self.current_scope.members.put(
+                    self.ast_arena,
                     original_name,
                     ScopeMember {
                         ref_: body_ref,
@@ -1084,7 +1094,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     list.extend_from_slice(csb_stmts);
                     self.visit_stmts(&mut list, StmtsKind::FnBody)
                         .expect("unreachable");
-                    csb.stmts = Vec::from_bump_vec(list);
+                    csb.stmts = AstVec::from_slice_in(&list, self.ast_arena);
                     self.pop_scope();
 
                     self.fn_or_arrow_data_visit = old_fn_or_arrow_data;
@@ -1309,7 +1319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             },
                             bind_loc,
                         );
-                        injected.push(Stmt::assign(dot, arg_ident));
+                        injected.push(Stmt::assign(self.ast_arena, dot, arg_ident));
 
                         if use_define {
                             // New symbol so renaming can't desync the field from the arg.
@@ -1362,7 +1372,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     key.loc,
                                 ),
                             };
-                            injected.push(Stmt::assign(target, init));
+                            injected.push(Stmt::assign(self.ast_arena, target, init));
                         }
                         // Keep `#x;` for brand; keep decorated props for `lower_class`.
                         if is_private || !prop.ts_decorators.is_empty() {
@@ -1405,7 +1415,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             let target = self.new_expr(E::Super {}, loc);
                             let arguments_ref =
                                 self.new_symbol(SymbolKind::Unbound, crate::parser::ARGUMENTS_STR);
-                            VecExt::append(&mut self.current_scope_mut().generated, arguments_ref);
+                            self.current_scope
+                                .generated
+                                .push(self.ast_arena, arguments_ref);
                             let spread_inner =
                                 self.new_expr(E::Identifier::init(arguments_ref), loc);
                             let spread = self.new_expr(
@@ -1414,7 +1426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 },
                                 loc,
                             );
-                            let args = ExprNodeList::init_one(spread);
+                            let args = ExprNodeList::from_slice_in(&[spread], self.ast_arena);
                             let call = self.new_expr(
                                 E::Call {
                                     target,
@@ -1695,7 +1707,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 );
 
                 if let_decls.len() > 0 {
-                    let decls = G::DeclList::from_bump_vec(let_decls);
+                    let decls = G::DeclList::from_slice_in(&let_decls, p.ast_arena);
                     let loc = decls.at(0).value.unwrap().loc;
                     before.push(p.s(
                         S::Local {
@@ -1715,7 +1727,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             before.push(new);
                         }
                     } else {
-                        let decls = G::DeclList::from_bump_vec(var_decls);
+                        let decls = G::DeclList::from_slice_in(&var_decls, p.ast_arena);
                         let loc = decls.at(0).value.unwrap().loc;
                         before.push(p.s(
                             S::Local {
@@ -1736,7 +1748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let mut end: usize = 0;
                 for idx in 0..visited.len() {
                     let item = visited[idx];
-                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.arena) {
+                    if !SideEffects::should_keep_stmt_in_dead_control_flow(item, p.ast_arena) {
                         continue;
                     }
 
@@ -1789,8 +1801,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let generated_len = p.current_scope().generated.len();
             let outlined_len = rc.outlined_len();
             let compiled = {
+                let ast_arena = p.ast_arena;
                 let host = &mut crate::react_compiler_host::ReactCompilerHost::new(p);
                 bun_react_compiler::maybe_compile_pending(
+                    ast_arena,
                     &mut rc,
                     host,
                     &pending,
@@ -1821,7 +1835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let mut is_control_flow_dead = false;
             stmts.retain(|stmt| {
                 if is_control_flow_dead
-                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.arena)
+                    && !SideEffects::should_keep_stmt_in_dead_control_flow(*stmt, p.ast_arena)
                 {
                     return false;
                 }
@@ -1911,7 +1925,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         for stmt in stmts.iter().copied() {
             if is_control_flow_dead
                 && dead_code_elimination
-                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.arena)
+                && !SideEffects::should_keep_stmt_in_dead_control_flow(stmt, p.ast_arena)
             {
                 // Strip unnecessary statements if the control flow is dead here
                 continue;
@@ -2046,7 +2060,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SLocal(mut prev_local) = prev_stmt.data {
                             if local.can_merge_with(&prev_local) {
-                                prev_local.decls.extend_from_slice(local.decls.slice());
+                                prev_local
+                                    .decls
+                                    .extend_from_slice(p.ast_arena, local.decls.slice());
                                 continue;
                             }
                         }
@@ -2065,8 +2081,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 prev_expr.does_not_affect_tree_shaking = prev_expr
                                     .does_not_affect_tree_shaking
                                     && s_expr.does_not_affect_tree_shaking;
-                                prev_expr.value =
-                                    Expr::join_with_comma(prev_expr.value, s_expr.value);
+                                prev_expr.value = Expr::join_with_comma(
+                                    prev_expr.value,
+                                    p.ast_arena,
+                                    s_expr.value,
+                                );
                                 continue;
                             }
                         } else if let StmtData::SLocal(prev_local) = prev_stmt.data {
@@ -2117,8 +2136,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_switch.test =
-                                    Expr::join_with_comma(prev_expr.value, s_switch.test);
+                                s_switch.test = Expr::join_with_comma(
+                                    prev_expr.value,
+                                    p.ast_arena,
+                                    s_switch.test,
+                                );
                                 output.truncate(prev_idx);
                             }
                         }
@@ -2132,7 +2154,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
                             if !prev_stmt.is_super_call() {
-                                s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
+                                s_if.test =
+                                    Expr::join_with_comma(prev_expr.value, p.ast_arena, s_if.test);
                                 output.truncate(prev_idx);
                             }
                         }
@@ -2153,6 +2176,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             if !prev_stmt.is_super_call() {
                                 ret.value = Some(Expr::join_with_comma(
                                     prev_expr.value,
+                                    p.ast_arena,
                                     ret.value.unwrap(),
                                 ));
                                 output[prev_idx] = stmt;
@@ -2180,6 +2204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     S::Throw {
                                         value: Expr::join_with_comma(
                                             prev_expr.value,
+                                            p.ast_arena,
                                             s_throw.value,
                                         ),
                                     },

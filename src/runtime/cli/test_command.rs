@@ -2803,7 +2803,6 @@ impl TestCommand {
             ctx.args.disable_default_env_files = true;
         }
 
-        bun_ast::initialize_store();
         let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
             // Clone (not take): build_worker_argv reads ctx.args to forward them to workers.
             transform_options: ctx.args.clone(),
@@ -4167,9 +4166,6 @@ struct PrintLogAfterFile(&'static bun_ast::Log);
 
 impl Drop for PrintLogAfterFile {
     fn drop(&mut self) {
-        bun_ast::Expr::data_store_reset();
-        bun_ast::Stmt::data_store_reset();
-
         let log = self.0;
         if log.has_errors() {
             let _ = log.print(Output::error_writer());

@@ -10,7 +10,7 @@ use smallvec::SmallVec;
 
 use crate::hir::environment::Environment;
 use crate::hir::{
-    ArrayElement, ArrayPatternElement, AstAlloc, BasicBlock, BlockId, Case, HirFunction,
+    ArrayElement, ArrayPatternElement, BasicBlock, BlockId, Case, HirAlloc, HirFunction,
     IdentifierId, Instruction, InstructionValue, JsxAttribute, JsxTag, ManualMemoDependency,
     ManualMemoDependencyRoot, ObjectPropertyKey, ObjectPropertyOrSpread, Pattern, Place,
     PlaceOrSpread, ScopeId, Terminal,
@@ -457,7 +457,7 @@ pub fn each_terminal_successor(terminal: &Terminal) -> Blocks {
 pub fn map_pattern_operands(pattern: &mut Pattern, f: &mut impl FnMut(Place) -> Place) {
     match pattern {
         Pattern::Array(arr) => {
-            arr.items = AstAlloc::vec_from_iter(arr.items.iter().map(|item| match item {
+            arr.items = HirAlloc::vec_from_iter(arr.items.iter().map(|item| match item {
                 ArrayPatternElement::Place(place) => ArrayPatternElement::Place(f(place.clone())),
                 ArrayPatternElement::Spread(spread) => {
                     let mut spread = spread.clone();

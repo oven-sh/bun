@@ -361,8 +361,6 @@ impl DefineDataExt for DefineData {
             path: defines_path(),
             ..Default::default()
         };
-        // The lists of the value outlive the `AstAlloc` state of the caller.
-        let _detached = bun_alloc::ast_alloc::DetachAstHeap::new();
         let mut expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
         clear_locs(&mut expr);
         let data: ExprData = expr.data;

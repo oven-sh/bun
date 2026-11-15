@@ -18,16 +18,13 @@
 //! `ordered_remove`) drop and immediately rebuild it so lookups never
 //! silently degrade to O(n).
 
+use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::alloc::Allocator;
 use core::hash::{Hash, Hasher};
-use std::alloc::Global;
-// See workspace `Cargo.toml` hashbrown comment + `bun_alloc/hashbrown_bridge.rs`
-// for why `StringHashMap`'s `A` must implement *both* allocator traits and why
-// the default is `DefaultAlloc` rather than `std::alloc::Global`.
-use bun_alloc::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use hashbrown::hash_map::RawVacantEntryMut;
+use std::alloc::Global;
 
 use bun_alloc::AllocError;
 
@@ -124,15 +121,13 @@ impl<C: Default> Default for BoxedSliceContext<C> {
     }
 }
 
-impl<C: ArrayHashContext<[u8]>, A: Allocator> ArrayHashContext<Box<[u8], A>>
-    for BoxedSliceContext<C>
-{
+impl<C: ArrayHashContext<[u8]>> ArrayHashContext<Box<[u8]>> for BoxedSliceContext<C> {
     #[inline]
-    fn hash(&self, key: &Box<[u8], A>) -> u32 {
+    fn hash(&self, key: &Box<[u8]>) -> u32 {
         self.0.hash(&**key)
     }
     #[inline]
-    fn eql(&self, a: &Box<[u8], A>, b: &Box<[u8], A>, b_index: usize) -> bool {
+    fn eql(&self, a: &Box<[u8]>, b: &Box<[u8]>, b_index: usize) -> bool {
         self.0.eql(&**a, &**b, b_index)
     }
 }
@@ -221,7 +216,7 @@ pub trait ArrayHashMapExt {
 /// At or below this many entries the hash-prefiltered linear scan over
 /// `hashes` wins (the whole `Vec<u32>` fits in one cache line); above it we
 /// build/maintain the SwissTable index.
-const INDEX_THRESHOLD: usize = 8;
+pub const INDEX_THRESHOLD: usize = 8;
 
 /// Widen the cached `u32` entry hash to the `u64` hashbrown probes with. The
 /// SwissTable control byte is `h2 = top 7 bits of the 64-bit hash`; if we fed
@@ -249,7 +244,7 @@ const fn spread_hash(h: u32) -> u64 {
 // ~320 KB of otherwise-cold code resident on startup.
 //
 // Hoisting the closure into one named return-position `impl Fn` and routing
-// every insert/rebuild through `#[inline(never)]` free fns collapses all of
+// every insert/rebuild through `#[inline(never)]` fns collapses all of
 // that to a single `reserve_rehash` monomorph emitted once in this crate's
 // CGU, where `src/startup.order` can place it.
 
@@ -261,38 +256,68 @@ fn index_rehasher(hashes: &[u32]) -> impl Fn(&u32) -> u64 + '_ {
     move |&j| spread_hash(hashes[j as usize])
 }
 
-/// Append entry index `i` (cached hash `h`) to the accelerator. Outlined so the
-/// `RawTable<u32>::{insert_unique, reserve_rehash}` it monomorphizes live in
-/// `bun_collections` instead of being cloned into every generic
-/// `push_entry::<K,V,C,A>` instantiation downstream. The extra call frame is
-/// ~5 cycles against a ~30-cycle SwissTable insert; the win is one hot copy
-/// the linker can order instead of N scattered ones.
-#[inline(never)]
-fn index_insert_unique<A: MapAllocator>(
-    index: &mut hashbrown::HashTable<u32, IndexAlloc<A>>,
-    hashes: &[u32],
-    i: u32,
-    h: u32,
-) {
-    index.insert_unique(spread_hash(h), i, index_rehasher(hashes));
-}
+/// The `hash → entry index` accelerator of an insertion-ordered map. `hashes` is the cached-hash column of the map.
+#[derive(Clone)]
+pub struct HashIndex<A: HashbrownAllocator>(hashbrown::HashTable<u32, A>);
 
-/// Grow a live accelerator so it can hold `target` entries without a further
-/// `RawTable<u32>` rehash. Outlined for the same reason as
-/// [`index_insert_unique`] — keep the `reserve_rehash` monomorph in this crate
-/// rather than re-emitting it per `<K,V,C,A>` instantiation. Called from the
-/// `reserve` / `ensure_*_capacity` paths so a caller that pre-sizes the map
-/// pays the SwissTable grow once instead of `O(log n)` times across the
-/// following `push_entry` loop.
-#[inline(never)]
-fn index_reserve<A: MapAllocator>(
-    index: &mut hashbrown::HashTable<u32, IndexAlloc<A>>,
-    hashes: &[u32],
-    target: usize,
-) {
-    let extra = target.saturating_sub(index.len());
-    if extra != 0 {
-        index.reserve(extra, index_rehasher(hashes));
+impl<A: HashbrownAllocator> HashIndex<A> {
+    /// Indexes every entry of `hashes`, with room for `capacity` entries.
+    pub fn build(hashes: &[u32], capacity: usize, alloc: A) -> Self {
+        let mut table = hashbrown::HashTable::with_capacity_in(capacity.max(hashes.len()), alloc);
+        for (i, &h) in hashes.iter().enumerate() {
+            table.insert_unique(spread_hash(h), i as u32, index_rehasher(hashes));
+        }
+        Self(table)
+    }
+
+    #[inline]
+    pub fn allocator(&self) -> &A {
+        self.0.allocator()
+    }
+
+    /// Appends entry `i`, whose cached hash is `h`.
+    #[inline(never)]
+    pub fn insert(&mut self, hashes: &[u32], i: u32, h: u32) {
+        self.0
+            .insert_unique(spread_hash(h), i, index_rehasher(hashes));
+    }
+
+    /// Makes room for `target` entries.
+    #[inline(never)]
+    pub fn reserve(&mut self, hashes: &[u32], target: usize) {
+        let extra = target.saturating_sub(self.0.len());
+        if extra != 0 {
+            self.0.reserve(extra, index_rehasher(hashes));
+        }
+    }
+
+    #[inline]
+    pub fn find(&self, h: u32, mut is_match: impl FnMut(usize) -> bool) -> Option<usize> {
+        self.0
+            .find(spread_hash(h), |&i| is_match(i as usize))
+            .map(|&i| i as usize)
+    }
+
+    /// Remove the slot pointing at entry `i` (cached hash `h`).
+    #[inline]
+    fn remove(&mut self, i: usize, h: u32) {
+        if let Ok(slot) = self.0.find_entry(spread_hash(h), |&j| j as usize == i) {
+            slot.remove();
+        }
+    }
+
+    /// Call after `hashes.swap_remove(removed)`. Does not allocate.
+    #[inline]
+    pub fn swap_remove(&mut self, hashes: &[u32], removed: usize, removed_hash: u32) {
+        self.remove(removed, removed_hash);
+        let old_last = hashes.len();
+        if old_last != removed {
+            // The element now at `removed` carried its hash with it.
+            let moved_hash = spread_hash(hashes[removed]);
+            if let Some(slot) = self.0.find_mut(moved_hash, |&i| i as usize == old_last) {
+                *slot = removed as u32;
+            }
+        }
     }
 }
 
@@ -307,29 +332,23 @@ fn index_reserve<A: MapAllocator>(
 /// Free fn (no `K`/`V`/`C` in scope) + `#[inline(never)]` so this — and the
 /// `HashTable::with_capacity` / grow path inside it — is one symbol shared by
 /// every `ArrayHashMap` instantiation that uses the same `A` (only two ZST
-/// allocators exist today: `DefaultAlloc` and `AstAlloc`). Boxed so the caller
+/// allocators exist today: `Global` and the React compiler's `HirAlloc`). Boxed so the caller
 /// can store it as `Option<Box<…>>` (8 B header vs the 32 B inline `HashTable`).
 #[cold]
 #[inline(never)]
 fn rebuild_index_from_hashes<A: MapAllocator>(
     hashes: &[u32],
     capacity: usize,
-) -> Box<hashbrown::HashTable<u32, IndexAlloc<A>>, A> {
-    let mut table = hashbrown::HashTable::with_capacity_in(
-        capacity.max(hashes.len()),
-        IndexAlloc(A::default()),
-    );
-    for (i, &h) in hashes.iter().enumerate() {
-        table.insert_unique(spread_hash(h), i as u32, index_rehasher(hashes));
-    }
-    Box::new_in(table, A::default())
+) -> Box<HashIndex<IndexAlloc<A>>, A> {
+    let index = HashIndex::build(hashes, capacity, IndexAlloc(A::default()));
+    Box::new_in(index, A::default())
 }
 
-/// Shorthand for the allocator bound every `ArrayHashMap`/`StringArrayHashMap`
+/// Shorthand for the allocator bound every `ArrayHashMap`
 /// `impl` block needs: `core::alloc::Allocator` for the `Vec<K/V/u32, A>`
-/// columns and the per-key `Box<[u8], A>`; `Clone` so `Vec`/`Box` can clone
+/// columns; `Clone` so `Vec`/`Box` can clone
 /// their allocator on resize/clone; `Default` so constructors don't need an
-/// `*_in(alloc: A)` variant — all current `A` (`Global`, `AstAlloc`) are ZST.
+/// `*_in(alloc: A)` variant — all current `A` (`Global`, `HirAlloc`) are ZST.
 pub trait MapAllocator: Allocator + Clone + Default {}
 impl<A: Allocator + Clone + Default> MapAllocator for A {}
 
@@ -338,11 +357,6 @@ impl<A: Allocator + Clone + Default> MapAllocator for A {}
 /// accelerator's bucket array can route through `A` without `MapAllocator`
 /// itself requiring `HashbrownAllocator` (orphan rules block bridging
 /// `std::alloc::Global`, the default `A`, directly).
-///
-/// This makes an `ArrayHashMap<_, _, _, AstAlloc>` fully arena-backed: when
-/// its `Drop` never runs (the AST `MultiArrayList` slab-only-drop pattern,
-/// e.g. `BundledAst` columns), nothing — columns, key boxes, index header,
-/// *or* index buckets — is stranded on the global heap.
 #[derive(Clone, Copy, Default)]
 struct IndexAlloc<A>(A);
 
@@ -371,15 +385,6 @@ unsafe impl<A: Allocator> allocator_api2::alloc::Allocator for IndexAlloc<A> {
 }
 
 /// Insertion-ordered hash map with contiguous key / value storage.
-///
-/// `A` routes the three column `Vec`s and (for `StringArrayHashMap`) the
-/// per-key `Box<[u8], A>` through the same allocator, so an
-/// `ArrayHashMap<_, _, _, AstAlloc>` is bulk-freed by the AST arena's
-/// `mi_heap_destroy` instead of leaking on the global heap when its owning AST
-/// node never has `Drop` run (the `BabyList` pattern — same motivation as
-/// `Vec<T, AstAlloc>` for `G::DeclList`/`PropertyList`, and
-/// `StringHashMap<V, AstAlloc>` for `Scope::members`). The `hashbrown` index
-/// accelerator stays on the global allocator; see [`MapAllocator`].
 pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     keys: Vec<K, A>,
     values: Vec<V, A>,
@@ -390,7 +395,7 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     /// the column vecs by every mutation path (patched on point removal,
     /// rebuilt on permutation). Both the `Box` and the table's bucket array
     /// route through `A` (via [`IndexAlloc`]), so an
-    /// `ArrayHashMap<_, _, _, AstAlloc>` whose `Drop` never runs (arena
+    /// `ArrayHashMap<_, _, _, HirAlloc>` whose `Drop` never runs (arena
     /// bulk-free) strands nothing on the global heap.
     ///
     /// Boxed so the per-map header cost is 8 B (`Option<Box>` uses the
@@ -399,7 +404,7 @@ pub struct ArrayHashMap<K, V, C = AutoContext, A: MapAllocator = Global> {
     /// every `Part` and doubled the `Vec<Part>` grow `memmove`s the bundler
     /// page-faults on. The box is allocated once, lazily, at the
     /// `INDEX_THRESHOLD` crossover.
-    index: Option<Box<hashbrown::HashTable<u32, IndexAlloc<A>>, A>>,
+    index: Option<Box<HashIndex<IndexAlloc<A>>, A>>,
     ctx: C,
     // Debug-only re-entrancy guard around operations that may invalidate
     // entry pointers. `AtomicBool`
@@ -590,7 +595,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     fn reserve_index_to_capacity(&mut self) {
         let cap = self.hashes.capacity();
         if let Some(index) = self.index.as_deref_mut() {
-            index_reserve(index, &self.hashes, cap);
+            index.reserve(&self.hashes, cap);
         }
     }
 
@@ -717,20 +722,17 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         if let Some(index) = self.index.as_deref() {
             let hashes = self.hashes.as_ptr();
             let keys = self.keys.as_ptr();
-            return index
-                .find(spread_hash(h), |&i| {
-                    let i = i as usize;
-                    // SAFETY: bounds-check elision on the hot probe path.
-                    // Every `i` stored in `self.index` satisfies
-                    // `i < self.hashes.len() == self.keys.len()` — it was
-                    // inserted by `push_entry`/`rebuild_index` with that
-                    // bound, and every path that shrinks or permutes those
-                    // vecs either patches the index in place
-                    // (`index_swap_remove`/`index_remove_tail`) or calls
-                    // `drop_index()` first.
-                    unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
-                })
-                .map(|&i| i as usize);
+            return index.find(h, |i| {
+                // SAFETY: bounds-check elision on the hot probe path.
+                // Every `i` stored in `self.index` satisfies
+                // `i < self.hashes.len() == self.keys.len()` — it was
+                // inserted by `push_entry`/`rebuild_index` with that
+                // bound, and every path that shrinks or permutes those
+                // vecs either patches the index in place
+                // (`HashIndex::swap_remove`/`index_remove_tail`) or calls
+                // `drop_index()` first.
+                unsafe { *hashes.add(i) == h && eq(&*keys.add(i), i) }
+            });
         }
         // Below the index threshold: hash-prefiltered linear scan.
         // `hashes.len()` ≤ 8 here, so this is a single cache line; the bounds
@@ -756,7 +758,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             // Route through the non-generic outlined helper so the
             // `RawTable<u32>` grow path is emitted once in this crate, not
             // re-monomorphized per `<K,V,C,A>` in every downstream CGU.
-            Some(index) => index_insert_unique(index, &self.hashes, i as u32, h),
+            Some(index) => index.insert(&self.hashes, i as u32, h),
             None if i >= INDEX_THRESHOLD => self.rebuild_index(),
             None => {}
         }
@@ -786,7 +788,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// with an immediate `rebuild_index()` when the map is past the threshold
     /// so subsequent lookups never silently fall back to O(n) linear scan.
     /// Point removals (`pop`/`swap_remove`) instead patch the index in place
-    /// — see [`index_remove_tail`]/[`index_swap_remove`].
+    /// — see [`index_remove_tail`]/[`HashIndex::swap_remove`].
     #[inline]
     fn drop_index(&mut self) {
         self.index = None;
@@ -796,34 +798,8 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// O(1); used for the `pop`/`shrink` path.
     #[inline]
     fn index_remove_tail(&mut self, tail: usize, tail_hash: u32) {
-        let Some(index) = self.index.as_deref_mut() else {
-            return;
-        };
-        if let Ok(slot) = index.find_entry(spread_hash(tail_hash), |&i| i as usize == tail) {
-            slot.remove();
-        }
-    }
-
-    /// Patch the index after a `Vec::swap_remove(removed)`: drop the slot for
-    /// `removed`, then retarget the slot that still says `old_last` (the
-    /// pre-swap tail index, == `self.keys.len()` post-swap) to `removed`.
-    /// O(1).
-    #[inline]
-    fn index_swap_remove(&mut self, removed: usize, removed_hash: u32) {
-        let Some(index) = self.index.as_deref_mut() else {
-            return;
-        };
-        if let Ok(slot) = index.find_entry(spread_hash(removed_hash), |&i| i as usize == removed) {
-            slot.remove();
-        }
-        let old_last = self.keys.len();
-        if old_last != removed {
-            // The element now at `removed` carried its hash with it.
-            let moved_hash = self.hashes[removed];
-            if let Some(slot) = index.find_mut(spread_hash(moved_hash), |&i| i as usize == old_last)
-            {
-                *slot = removed as u32;
-            }
+        if let Some(index) = self.index.as_deref_mut() {
+            index.remove(tail, tail_hash);
         }
     }
 
@@ -903,7 +879,9 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         let k = self.keys.swap_remove(index);
         let v = self.values.swap_remove(index);
         let h = self.hashes.swap_remove(index);
-        self.index_swap_remove(index, h);
+        if let Some(hash_index) = self.index.as_deref_mut() {
+            hash_index.swap_remove(&self.hashes, index, h);
+        }
         (k, v)
     }
 
@@ -1223,8 +1201,8 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 ///
 /// Newtype (not an alias) so `get_or_put` / `get` / `put` can take `&[u8]`
 /// borrows — keys are `Box<[u8]>` and the borrowing methods box on insert.
-pub struct StringArrayHashMap<V, C = StringContext, A: MapAllocator = Global> {
-    inner: ArrayHashMap<Box<[u8], A>, V, BoxedSliceContext<C>, A>,
+pub struct StringArrayHashMap<V, C = StringContext> {
+    inner: ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>,
     // The string context is consulted for hash/eql on `[u8]` borrows. The inner
     // map's context is `BoxedSliceContext<C>` (NOT `AutoContext`) so methods
     // reached via `Deref` hash identically to the `&[u8]` paths above.
@@ -1235,7 +1213,7 @@ pub struct StringArrayHashMap<V, C = StringContext, A: MapAllocator = Global> {
 pub type CaseInsensitiveAsciiStringArrayHashMap<V> =
     StringArrayHashMap<V, CaseInsensitiveAsciiStringContext>;
 
-impl<V, C: Default, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
+impl<V, C: Default> Default for StringArrayHashMap<V, C> {
     fn default() -> Self {
         Self {
             inner: ArrayHashMap::new(),
@@ -1244,7 +1222,7 @@ impl<V, C: Default, A: MapAllocator> Default for StringArrayHashMap<V, C, A> {
     }
 }
 
-impl<V: Clone, C: Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
+impl<V: Clone, C: Default> StringArrayHashMap<V, C> {
     /// Fallible (OOM) clone; kept as `Result` for API stability.
     pub fn clone(&self) -> Result<Self, AllocError> {
         Ok(Self {
@@ -1254,20 +1232,20 @@ impl<V: Clone, C: Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
     }
 }
 
-impl<V, C, A: MapAllocator> Deref for StringArrayHashMap<V, C, A> {
-    type Target = ArrayHashMap<Box<[u8], A>, V, BoxedSliceContext<C>, A>;
+impl<V, C> Deref for StringArrayHashMap<V, C> {
+    type Target = ArrayHashMap<Box<[u8]>, V, BoxedSliceContext<C>>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<V, C, A: MapAllocator> DerefMut for StringArrayHashMap<V, C, A> {
+impl<V, C> DerefMut for StringArrayHashMap<V, C> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
+impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1319,7 +1297,7 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             Some(core::mem::replace(&mut self.inner.values[i], value))
         } else {
-            self.inner.push_entry(box_key::<A>(key), value, h);
+            self.inner.push_entry(Box::from(key), value, h);
             None
         }
     }
@@ -1329,7 +1307,7 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             self.inner.values[i] = value;
         } else {
-            self.inner.push_entry(box_key::<A>(key), value, h);
+            self.inner.push_entry(Box::from(key), value, h);
         }
         Ok(())
     }
@@ -1348,26 +1326,26 @@ impl<V, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap
 
     /// Removes the entry (swapping the last element into its slot) and
     /// returns the owned key/value pair.
-    pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8], A>, V>> {
+    pub fn fetch_swap_remove(&mut self, key: &[u8]) -> Option<KV<Box<[u8]>, V>> {
         let i = self.find(key)?;
         let (k, v) = self.inner.swap_remove_at(i);
         Some(KV { key: k, value: v })
     }
 }
 
-impl<V: Default, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArrayHashMap<V, C, A> {
+impl<V: Default, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
     /// See `ArrayHashMap::get_or_put`. The key is boxed on insert; callers that
     /// then write `*gop.key_ptr = Box::from(key)` are doing a redundant alloc —
     /// harmless.
     pub fn get_or_put(
         &mut self,
         key: &[u8],
-    ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
+    ) -> Result<GetOrPutResult<'_, Box<[u8]>, V>, AllocError> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             return Ok(self.inner.gop_at(i, true));
         }
-        let i = self.inner.push_entry(box_key::<A>(key), V::default(), h);
+        let i = self.inner.push_entry(Box::from(key), V::default(), h);
         Ok(self.inner.gop_at(i, false))
     }
 
@@ -1375,61 +1353,48 @@ impl<V: Default, C: ArrayHashContext<[u8]> + Default, A: MapAllocator> StringArr
         &mut self,
         key: &[u8],
         value: V,
-    ) -> Result<GetOrPutResult<'_, Box<[u8], A>, V>, AllocError> {
+    ) -> Result<GetOrPutResult<'_, Box<[u8]>, V>, AllocError> {
         let h = self.ctx.hash(key);
         if let Some(i) = self.inner.find_hash(h, |k, idx| self.ctx.eql(key, k, idx)) {
             return Ok(self.inner.gop_at(i, true));
         }
-        let i = self.inner.push_entry(box_key::<A>(key), value, h);
+        let i = self.inner.push_entry(Box::from(key), value, h);
         Ok(self.inner.gop_at(i, false))
     }
 }
 
-impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
-    type Key = Box<[u8], A>;
+impl<V, C> ArrayHashMapExt for StringArrayHashMap<V, C> {
+    type Key = Box<[u8]>;
     type Value = V;
     type Iterator<'a>
-        = Iter<'a, Box<[u8], A>, V>
+        = Iter<'a, Box<[u8]>, V>
     where
         Self: 'a;
-    fn iterator(&mut self) -> Iter<'_, Box<[u8], A>, V> {
+    fn iterator(&mut self) -> Iter<'_, Box<[u8]>, V> {
         self.inner.iterator()
     }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// StringHashMap<V, A> — unordered `[]const u8`-keyed map
+// StringHashMap<V> — unordered `[]const u8`-keyed map
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Thin newtype over `hashbrown::HashMap` that adds
 /// the `get_or_put` / `get_or_put_value` entry points while keeping the
 /// `hashbrown` surface (`.get`, `.contains_key`, `.reserve`, `.insert`, …)
 /// reachable via `Deref`.
-///
-/// Allocator-generic so AST containers (`Scope::members` &c.) can route both
-/// the table *and* the owned-key boxes through `bun_alloc::AstAlloc`,
-/// so the map's backing store lives
-/// in the same arena as the AST nodes that hold it. The `A = Global` default
-/// keeps every existing `StringHashMap<V>` site source-compatible.
 // Hashed with seed-0 wyhash —
 // deterministic across runs and ~3-5× faster than `RandomState`/SipHash on
 // the short identifier keys the parser/printer/renamer churn.
-//
-// The `A: Default` bound replaces a per-call allocator
-// parameter: hashbrown's `HashMap<_, _, _, A>` stores the allocator by value,
-// and every key `Box<[u8], A>` needs its own `A` too. For zero-sized
-// allocators (`Global`, `AstAlloc`) `A::default()` is a no-op constant; if a
-// stateful allocator is ever needed, add `*_in(alloc: A)` constructors and
-// loosen the bound there.
 #[derive(Clone)]
-pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default = DefaultAlloc> {
-    inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
+pub struct StringHashMap<V> {
+    inner: hashbrown::HashMap<StringHashMapKey, V, bun_wyhash::BuildHasher, DefaultAlloc>,
 }
 
 /// Alias for the underlying `hashbrown` map so in-crate signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
-type StringHashMapInner<V, A = DefaultAlloc> =
-    hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
+type StringHashMapInner<V> =
+    hashbrown::HashMap<StringHashMapKey, V, bun_wyhash::BuildHasher, DefaultAlloc>;
 
 /// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the
 /// default produced by `put`/`get_or_put`) or a borrowed `&'static [u8]`
@@ -1444,46 +1409,38 @@ type StringHashMapInner<V, A = DefaultAlloc> =
 ///
 /// `Deref<Target = [u8]>` + `Borrow<[u8]>` keep `.get(&[u8])`,
 /// `.contains_key(&[u8])`, and `&**key` working unchanged at every call site,
-/// so this is a drop-in replacement for the previous `Box<[u8], A>` alias.
+/// so this is a drop-in replacement for the previous `Box<[u8]>` alias.
 ///
 /// ## Layout
 /// Packed `(ptr, len | OWNED_BIT)` instead of a 2-variant enum. The enum had
 /// no usable niche (both `Box<[u8]>` and `&[u8]` start with a non-null
 /// pointer), so it was 24 B; folding the owned/borrowed discriminant into the
-/// top bit of `len` brings it to 16 B. For
-/// `Scope::members` (`hashbrown::RawTable<(StringHashMapKey, Member)>`) that
-/// shrinks the stored tuple 40 B → 32 B, cutting the module-scope table's
-/// page footprint (and `reserve_rehash` `memcpy` traffic) by ~20 %.
-pub struct StringHashMapKey<A: Allocator + Default = DefaultAlloc> {
+/// top bit of `len` brings it to 16 B.
+pub struct StringHashMapKey {
     /// First byte of the key. Never null — empty borrowed keys use the slice's
     /// own (dangling-but-non-null) pointer; empty owned keys use whatever
-    /// `Box::<[u8], A>::into_raw` returned, which round-trips through
-    /// `Box::from_raw_in` in `Drop`.
+    /// `Box::into_non_null` returned, which round-trips through `Box::from_raw` in `Drop`.
     ptr: core::ptr::NonNull<u8>,
     /// Low `usize::BITS - 1` bits: byte length. Top bit: set ⇔ owned (heap
-    /// allocation made via `A`, freed in `Drop`); clear ⇔ borrowed (`'static`
+    /// allocation, freed in `Drop`); clear ⇔ borrowed (`'static`
     /// or arena-lifetime, never freed). Slices cannot exceed `isize::MAX`
     /// bytes, so the top bit is always free.
     len_tag: usize,
-    _alloc: PhantomData<Box<[u8], A>>,
 }
 
 const SHMK_OWNED_BIT: usize = 1 << (usize::BITS - 1);
 
-// Compile-time check: with a ZST allocator the key is exactly two words.
-const _: () = assert!(
-    core::mem::size_of::<StringHashMapKey<DefaultAlloc>>() == 2 * core::mem::size_of::<usize>()
-);
+const _: () =
+    assert!(core::mem::size_of::<StringHashMapKey>() == 2 * core::mem::size_of::<usize>());
 
 // SAFETY: `NonNull<u8>` strips the auto-trait, but the pointee is logically
-// either `&'static [u8]` (borrowed) or `Box<[u8], A>` (owned) — both `Send`
-// when `A: Send`, so transferring the packed pointer between threads is sound.
-unsafe impl<A: Allocator + Default + Send> Send for StringHashMapKey<A> {}
-// SAFETY: same logical payloads as above; both are `Sync` when `A: Sync` and
+// either `&'static [u8]` (borrowed) or `Box<[u8]>` (owned), which are both `Send`.
+unsafe impl Send for StringHashMapKey {}
+// SAFETY: same logical payloads as above; both are `Sync` and
 // the type exposes no interior mutability through the raw pointer.
-unsafe impl<A: Allocator + Default + Sync> Sync for StringHashMapKey<A> {}
+unsafe impl Sync for StringHashMapKey {}
 
-impl<A: Allocator + Default> StringHashMapKey<A> {
+impl StringHashMapKey {
     #[inline(always)]
     const fn packed_len(&self) -> usize {
         self.len_tag & !SHMK_OWNED_BIT
@@ -1501,73 +1458,67 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         Self {
             ptr: core::ptr::NonNull::from_ref(s).cast(),
             len_tag: s.len(),
-            _alloc: PhantomData,
         }
     }
 
     /// Owned-key constructor (previously the `Owned` variant). Takes ownership
-    /// of `b`'s allocation; freed via `A::default()` on drop.
+    /// of `b`'s allocation; freed on drop.
     #[inline]
-    pub(crate) fn owned(b: Box<[u8], A>) -> Self {
+    pub(crate) fn owned(b: Box<[u8]>) -> Self {
         let len = b.len();
         debug_assert!(
             len & SHMK_OWNED_BIT == 0,
             "slice len cannot exceed isize::MAX"
         );
-        // Discard the stored `A` — for every `A` in use (`Global`,
-        // `DefaultAlloc`, `AstAlloc`) it is a ZST, so `A::default()` in `Drop`
-        // is the same instance.
         Self {
-            ptr: Box::into_non_null_with_allocator(b).0.cast(),
+            ptr: Box::into_non_null(b).cast(),
             len_tag: len | SHMK_OWNED_BIT,
-            _alloc: PhantomData,
         }
     }
 }
 
-impl<A: Allocator + Default> Drop for StringHashMapKey<A> {
+impl Drop for StringHashMapKey {
     #[inline]
     fn drop(&mut self) {
         if self.is_owned() {
             let len = self.packed_len();
-            // SAFETY: `ptr`/`len` were produced by `Box::<[u8], A>::into_raw`
+            // SAFETY: `ptr`/`len` were produced by `Box::into_non_null`
             // in `owned()`; reconstituting and dropping is the documented
-            // round-trip. `A::default()` is sound for the ZST allocators in
-            // use (see `owned()`).
+            // round-trip.
             unsafe {
                 let slice = core::ptr::slice_from_raw_parts_mut(self.ptr.as_ptr(), len);
-                drop(Box::<[u8], A>::from_raw_in(slice, A::default()));
+                drop(Box::from_raw(slice));
             }
         }
     }
 }
 
-impl<A: Allocator + Default> Deref for StringHashMapKey<A> {
+impl Deref for StringHashMapKey {
     type Target = [u8];
     #[inline]
     fn deref(&self) -> &[u8] {
         // SAFETY: `ptr` points at `packed_len()` initialised bytes for the
         // lifetime of `self` — either a `'static`/arena slice (borrowed) or a
-        // live `Box<[u8], A>` allocation (owned, freed only in `Drop`).
+        // live `Box<[u8]>` allocation (owned, freed only in `Drop`).
         unsafe { core::slice::from_raw_parts(self.ptr.as_ptr(), self.packed_len()) }
     }
 }
 
-impl<A: Allocator + Default> core::borrow::Borrow<[u8]> for StringHashMapKey<A> {
+impl core::borrow::Borrow<[u8]> for StringHashMapKey {
     #[inline]
     fn borrow(&self) -> &[u8] {
         self
     }
 }
 
-impl<A: Allocator + Default> AsRef<[u8]> for StringHashMapKey<A> {
+impl AsRef<[u8]> for StringHashMapKey {
     #[inline]
     fn as_ref(&self) -> &[u8] {
         self
     }
 }
 
-impl<A: Allocator + Default> Hash for StringHashMapKey<A> {
+impl Hash for StringHashMapKey {
     #[inline]
     fn hash<H: Hasher>(&self, state: &mut H) {
         // Must match `<[u8] as Hash>` so `Borrow<[u8]>`-keyed lookups agree.
@@ -1575,39 +1526,37 @@ impl<A: Allocator + Default> Hash for StringHashMapKey<A> {
     }
 }
 
-impl<A: Allocator + Default> PartialEq for StringHashMapKey<A> {
+impl PartialEq for StringHashMapKey {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
         **self == **other
     }
 }
-impl<A: Allocator + Default> Eq for StringHashMapKey<A> {}
+impl Eq for StringHashMapKey {}
 
-impl<A: Allocator + Default> Clone for StringHashMapKey<A> {
+impl Clone for StringHashMapKey {
     #[inline]
     fn clone(&self) -> Self {
         if self.is_owned() {
-            // Re-box via `A` so the clone owns an independent allocation.
-            Self::owned(box_key::<A>(self))
+            owned_key(self)
         } else {
             // Borrowed: copy the (ptr, len) pair; nothing to free on drop.
             Self {
                 ptr: self.ptr,
                 len_tag: self.len_tag,
-                _alloc: PhantomData,
             }
         }
     }
 }
 
-impl<A: Allocator + Default> From<Box<[u8], A>> for StringHashMapKey<A> {
+impl From<Box<[u8]>> for StringHashMapKey {
     #[inline]
-    fn from(b: Box<[u8], A>) -> Self {
+    fn from(b: Box<[u8]>) -> Self {
         Self::owned(b)
     }
 }
 
-impl<A: Allocator + Default> From<&'static [u8]> for StringHashMapKey<A> {
+impl From<&'static [u8]> for StringHashMapKey {
     /// Zero-copy: the slice is stored by reference. This is the conversion
     /// `hashbrown::VacantEntryRef::insert` calls on miss in the
     /// [`StringHashMap::put_borrowed`] / [`StringHashMap::get_or_put_borrowed`]
@@ -1620,77 +1569,62 @@ impl<A: Allocator + Default> From<&'static [u8]> for StringHashMapKey<A> {
     }
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringHashMap<V, A> {
+impl<V> Default for StringHashMap<V> {
     fn default() -> Self {
         Self {
             inner: hashbrown::HashMap::with_hasher_in(
                 bun_wyhash::BuildHasher::default(),
-                A::default(),
+                DefaultAlloc,
             ),
         }
     }
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> IntoIterator for StringHashMap<V, A> {
-    type Item = (StringHashMapKey<A>, V);
-    type IntoIter = hashbrown::hash_map::IntoIter<StringHashMapKey<A>, V, A>;
+impl<V> IntoIterator for StringHashMap<V> {
+    type Item = (StringHashMapKey, V);
+    type IntoIter = hashbrown::hash_map::IntoIter<StringHashMapKey, V, DefaultAlloc>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.inner.into_iter()
     }
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Deref for StringHashMap<V, A> {
-    type Target = StringHashMapInner<V, A>;
+impl<V> Deref for StringHashMap<V> {
+    type Target = StringHashMapInner<V>;
     fn deref(&self) -> &Self::Target {
         &self.inner
     }
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> DerefMut for StringHashMap<V, A> {
+impl<V> DerefMut for StringHashMap<V> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.inner
     }
 }
 
-/// Clone `key` into a `Box<[u8], A>` using `A::default()`. The previous
-/// `Box::from(key)` spelling is `Global`-only; this is the allocator-generic
-/// equivalent. For `AstAlloc` the buffer lands in the thread-local AST
-/// `mi_heap` so the key is reclaimed by the same `mi_heap_destroy` that frees
-/// the table and the AST node holding the map.
 #[inline]
-fn box_key<A: Allocator + Default>(key: &[u8]) -> Box<[u8], A> {
-    let mut v = Vec::with_capacity_in(key.len(), A::default());
-    v.extend_from_slice(key);
-    v.into_boxed_slice()
+fn owned_key(key: &[u8]) -> StringHashMapKey {
+    StringHashMapKey::owned(Box::from(key))
 }
 
-/// `box_key` wrapped in the `StringHashMap` key enum. Kept separate from
-/// `box_key` because `StringArrayHashMap` (which still stores plain
-/// `Box<[u8], A>` keys) shares the bare helper.
-#[inline]
-fn owned_key<A: Allocator + Default>(key: &[u8]) -> StringHashMapKey<A> {
-    StringHashMapKey::owned(box_key::<A>(key))
-}
-
-pub enum EntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
+pub enum EntryRef<'a, 'k, V> {
     Occupied(&'a mut V),
-    Vacant(VacantEntryRef<'a, 'k, V, A>),
+    Vacant(VacantEntryRef<'a, 'k, V>),
 }
 
-pub struct VacantEntryRef<'a, 'k, V, A: Allocator + HashbrownAllocator + Default> {
-    entry: RawVacantEntryMut<'a, StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
+pub struct VacantEntryRef<'a, 'k, V> {
+    entry: RawVacantEntryMut<'a, StringHashMapKey, V, bun_wyhash::BuildHasher, DefaultAlloc>,
     hash: u64,
     key: &'k [u8],
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Default> VacantEntryRef<'_, '_, V, A> {
+impl<V> VacantEntryRef<'_, '_, V> {
     pub fn insert(self, value: V) {
-        (self.entry).insert_hashed_nocheck(self.hash, owned_key::<A>(self.key), value);
+        (self.entry).insert_hashed_nocheck(self.hash, owned_key(self.key), value);
     }
 }
 
-impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
+impl<V> StringHashMap<V> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -1703,7 +1637,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
     /// Inherent forwarder so callers can name
     /// `StringHashMap::values` without relying on `Deref` resolution.
     #[inline]
-    pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey<A>, V> {
+    pub fn values(&self) -> hashbrown::hash_map::Values<'_, StringHashMapKey, V> {
         self.inner.values()
     }
 
@@ -1725,14 +1659,14 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
                 e.insert(value);
             }
             RawEntryMut::Vacant(e) => {
-                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
+                e.insert_hashed_nocheck(hash, owned_key(key), value);
             }
         }
         Ok(())
     }
 
     /// Like hashbrown's, but inserting copies `key`, which need not be `'static`.
-    pub fn entry_ref<'k>(&mut self, key: &'k [u8]) -> EntryRef<'_, 'k, V, A> {
+    pub fn entry_ref<'k>(&mut self, key: &'k [u8]) -> EntryRef<'_, 'k, V> {
         use hashbrown::hash_map::RawEntryMut;
         let hash = self.hash_key(key);
         match self
@@ -1817,7 +1751,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 /// `StringArrayHashMap` instead.
 pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
-impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
+impl<V: Default> StringHashMap<V> {
     /// Single hash + single probe via `raw_entry_mut`; the key `Box` is only
     /// allocated on miss. Callers whose key bytes already outlive the map
     /// should prefer [`get_or_put_borrowed`] which also skips the miss-path
@@ -1838,7 +1772,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
                 RawEntryMut::Vacant(v) => StringHashMapGetOrPut {
                     found_existing: false,
                     value_ptr: v
-                        .insert_hashed_nocheck(hash, owned_key::<A>(key), V::default())
+                        .insert_hashed_nocheck(hash, owned_key(key), V::default())
                         .1,
                 },
             },
@@ -1855,9 +1789,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
                 .from_key_hashed_nocheck(hash, key)
             {
                 RawEntryMut::Occupied(e) => e.into_mut(),
-                RawEntryMut::Vacant(e) => {
-                    e.insert_hashed_nocheck(hash, owned_key::<A>(key), value).1
-                }
+                RawEntryMut::Vacant(e) => e.insert_hashed_nocheck(hash, owned_key(key), value).1,
             },
         )
     }
@@ -2059,52 +1991,42 @@ mod index_tests {
         assert_eq!(m.get(b"missing"), None);
     }
 
-    use core::alloc::Layout;
-    use core::ptr::NonNull;
-    use core::sync::atomic::{AtomicUsize, Ordering};
+    use core::alloc::{GlobalAlloc, Layout};
+    use core::cell::Cell;
+    use std::alloc::System;
 
-    static COUNTING_ALLOCS: AtomicUsize = AtomicUsize::new(0);
+    thread_local! {
+        static ALLOCS: Cell<usize> = const { Cell::new(0) };
+    }
 
-    #[derive(Clone, Copy, Default)]
     struct CountingAlloc;
 
-    // SAFETY: thin forwarder to `std::alloc::Global`.
-    unsafe impl core::alloc::Allocator for CountingAlloc {
-        fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, core::alloc::AllocError> {
-            COUNTING_ALLOCS.fetch_add(1, Ordering::Relaxed);
-            std::alloc::Global.allocate(layout)
+    // SAFETY: thin forwarder to `System`.
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            ALLOCS.set(ALLOCS.get() + 1);
+            // SAFETY: forwarded; the caller upholds the contract of `alloc`.
+            unsafe { System.alloc(layout) }
         }
-        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
-            unsafe { std::alloc::Global.deallocate(ptr, layout) }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            // SAFETY: forwarded; caller guarantees `ptr` came from `alloc`.
+            unsafe { System.dealloc(ptr, layout) }
         }
     }
 
-    // SAFETY: delegates to the `core::alloc::Allocator` impl above.
-    unsafe impl allocator_api2::alloc::Allocator for CountingAlloc {
-        fn allocate(
-            &self,
-            layout: Layout,
-        ) -> Result<NonNull<[u8]>, allocator_api2::alloc::AllocError> {
-            core::alloc::Allocator::allocate(self, layout)
-                .map_err(|_| allocator_api2::alloc::AllocError)
-        }
-        unsafe fn deallocate(&self, ptr: NonNull<u8>, layout: Layout) {
-            // SAFETY: forwarded; caller guarantees `ptr` came from `allocate`.
-            unsafe { core::alloc::Allocator::deallocate(self, ptr, layout) }
-        }
-    }
+    #[global_allocator]
+    static ALLOC: CountingAlloc = CountingAlloc;
 
     #[test]
     fn string_hash_map_no_alloc_on_hit() {
-        let mut m: StringHashMap<u32, CountingAlloc> = StringHashMap::new();
+        let mut m: StringHashMap<u32> = StringHashMap::new();
         // Pre-size so the table itself does not reallocate during the test.
         m.ensure_total_capacity(4).unwrap();
-        let base = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        let base = ALLOCS.get();
 
         m.put(b"aa", 1).unwrap();
         m.put(b"bb", 2).unwrap();
-        let after_miss = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        let after_miss = ALLOCS.get();
         assert_eq!(after_miss - base, 2, "one key Box per distinct key on miss");
 
         // Hits via every safe owning entry point must not box the key again.
@@ -2112,14 +2034,14 @@ mod index_tests {
         m.put_assume_capacity(b"bb", 20);
         assert!(m.get_or_put(b"aa").unwrap().found_existing);
         assert_eq!(*m.get_or_put_value(b"bb", 0).unwrap(), 20);
-        let after_hit = COUNTING_ALLOCS.load(Ordering::Relaxed);
+        let after_hit = ALLOCS.get();
         assert_eq!(after_hit, after_miss, "hits must not allocate a key Box");
 
         // A fresh key via get_or_put boxes exactly once.
         let g = m.get_or_put(b"cc").unwrap();
         assert!(!g.found_existing);
         *g.value_ptr = 30;
-        assert_eq!(COUNTING_ALLOCS.load(Ordering::Relaxed), after_hit + 1);
+        assert_eq!(ALLOCS.get(), after_hit + 1);
 
         assert_eq!(*m.get(b"aa".as_slice()).unwrap(), 10);
         assert_eq!(*m.get(b"bb".as_slice()).unwrap(), 20);

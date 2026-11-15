@@ -1,11 +1,11 @@
-use super::services::{BuildContext, with_ast_scope};
+use super::services::BuildContext;
 use crate::bun_fs as Fs;
 use crate::options::Target;
 use crate::parse_task::Step;
 use crate::parse_task::parse_worker::run_with_source_code;
 use crate::{ParseTask, Worker};
 use bun_aot::load::source_provider::{ComponentFile, apply_jsx_settings};
-use bun_ast::{Index, Log};
+use bun_ast::{AstArena, Index, Log};
 use bun_js_parser::{
     ExpandedImportMetaGlob, leave_import_meta_globs_as_written, record_import_meta_globs,
 };
@@ -41,22 +41,20 @@ pub(crate) fn expand_globs(
 
 fn parse(context: &BuildContext, file: &ComponentFile<'_>, log: &mut Log) -> bool {
     let mut worker = Worker::get(context.bundle());
-    with_ast_scope(|arena| {
-        // SAFETY: `parsed` holds the AST that borrows `arena` and `file.contents`, and drops inside this closure.
-        let (arena, contents) =
-            unsafe { (detach_lifetime_ref(arena), detach_lifetime(file.contents)) };
-        let mut worker = scopeguard::guard(&mut *worker, |worker| {
-            let inlines_main = context.options().inline_entrypoint_import_meta_main;
-            set_main_inlining(worker, inlines_main);
-        });
-        // Load fails the build on a macro import, so nothing is lost by disabling macros here.
-        worker.transpiler_for_target(TARGET).options.no_macros = true;
-        set_main_inlining(&mut worker, false);
-        let mut task = create_task(context, file);
-        let mut step = Step::Pending;
-        let parsed = run_with_source_code(&mut task, &mut worker, &mut step, log, arena, contents);
-        parsed.is_ok_and(|success| !success.log.has_errors())
-    })
+    let arena = &AstArena::new();
+    // SAFETY: `parsed` holds the AST that borrows `arena` and `file.contents`, and drops inside this function.
+    let (arena, contents) = unsafe { (detach_lifetime_ref(arena), detach_lifetime(file.contents)) };
+    let mut worker = scopeguard::guard(&mut *worker, |worker| {
+        let inlines_main = context.options().inline_entrypoint_import_meta_main;
+        set_main_inlining(worker, inlines_main);
+    });
+    // Load fails the build on a macro import, so nothing is lost by disabling macros here.
+    worker.transpiler_for_target(TARGET).options.no_macros = true;
+    set_main_inlining(&mut worker, false);
+    let mut task = create_task(context, file);
+    let mut step = Step::Pending;
+    let parsed = run_with_source_code(&mut task, &mut worker, &mut step, log, arena, contents);
+    parsed.is_ok_and(|success| !success.log.has_errors())
 }
 
 /// A worker may run an entry point too, so the load folds `import.meta.main` there, not the parser.

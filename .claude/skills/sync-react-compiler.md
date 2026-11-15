@@ -52,7 +52,7 @@ the porting reference for the AST-boundary files.
    `react_compiler_ast::expressions::Expression::Foo`, the Bun port reads
    `bun_ast::expr::Data::EFoo`; where upstream constructs
    `react_compiler_ast::statements::Statement::Foo { … }`, the Bun port calls
-   `Stmt::alloc(S::Foo { … }, loc)`. Keep control flow, pass ordering,
+   `Stmt::allocate(arena, S::Foo { … }, loc)`. Keep control flow, pass ordering,
    variable names, and comments 1:1 with upstream — only the AST reads/writes
    change.
 

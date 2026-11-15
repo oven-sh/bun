@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use core::mem;
 
 use bun_collections::{ArrayHashMap, AutoBitSet, MultiArrayList, StringSet, index_sort};

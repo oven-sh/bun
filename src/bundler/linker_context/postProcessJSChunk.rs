@@ -9,8 +9,7 @@ use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
     ThreadPool,
 };
-use bun_alloc::Arena;
-use bun_ast::{self as js_ast, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
+use bun_ast::{AstArena, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
@@ -113,14 +112,7 @@ pub(crate) fn post_process_js_chunk(
         crate::chunk::Content::Javascript(_)
     ));
 
-    bun_ast::expr::data::Store::create();
-    bun_ast::stmt::data::Store::create();
-    // Side arena for `AstAlloc` — linker thread builds wrapper/runtime AST
-    // nodes here outside any `ASTMemoryAllocator` scope; without this their
-    // embedded `Vec<Property>`/`Vec<Expr>` buffers leak from the global heap.
-    let _ast_alloc_heap = js_ast::StoreAstAllocHeap::new();
-
-    let arena = Arena::new();
+    let arena = AstArena::new();
 
     // Also generate the cross-chunk binding code
     let mut cross_chunk_prefix: PrintResult;
@@ -157,7 +149,7 @@ pub(crate) fn post_process_js_chunk(
         ModuleInfo::create(loader.is_type_script())
     });
 
-    let worker_arena: &Arena = worker.arena();
+    let worker_arena: &AstArena = worker.arena();
 
     // An ESM entry point already ends in an `export { }` clause
     // (`generate_entry_point_tail_js`); its cross-chunk exports join that
@@ -757,7 +749,7 @@ pub(crate) fn post_process_js_chunk(
     // linker graph are alive.
     let mut j = unsafe { j.detach_lifetime() };
     chunk.intermediate_output = c
-        .break_output_into_pieces(worker_arena, &mut j, ctx.chunks.len() as u32)
+        .break_output_into_pieces(worker_arena.heap(), &mut j, ctx.chunks.len() as u32)
         .unwrap_or_else(|_| panic!("Unhandled out of memory error in breakOutputIntoPieces()"));
 
     // TODO: meta contents
@@ -793,8 +785,8 @@ pub(crate) fn generate_entry_point_tail_js(
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     source_index: IndexInt,
-    arena: &Arena,
-    temp_arena: &Arena,
+    arena: &AstArena,
+    temp_arena: &AstArena,
     r: js_printer::renamer::Renamer,
     module_info: Option<&mut ModuleInfo>,
     cross_chunk_exports: &[bun_ast::ClauseItem],
@@ -807,14 +799,16 @@ pub(crate) fn generate_entry_point_tail_js(
         options::OutputFormat::Esm => {
             match flags.wrap {
                 crate::WrapKind::Cjs => {
-                    stmts.push(Stmt::alloc(
+                    stmts.push(Stmt::allocate(
+                        temp_arena,
                         // "export default require_foo();"
                         S::ExportDefault {
                             default_name: bun_ast::LocRef {
                                 loc: bun_ast::Loc::EMPTY,
                                 ref_: ast.wrapper_ref,
                             },
-                            value: StmtOrExpr::Expr(Expr::init(
+                            value: StmtOrExpr::Expr(Expr::allocate(
+                                temp_arena,
                                 E::Call {
                                     target: Expr::init_identifier(
                                         ast.wrapper_ref,
@@ -832,11 +826,14 @@ pub(crate) fn generate_entry_point_tail_js(
                     if flags.wrap == crate::WrapKind::Esm && ast.wrapper_ref.is_valid() {
                         if flags.is_async_or_has_async_dependency {
                             // "await init_foo();"
-                            stmts.push(Stmt::alloc(
+                            stmts.push(Stmt::allocate(
+                                temp_arena,
                                 S::SExpr {
-                                    value: Expr::init(
+                                    value: Expr::allocate(
+                                        temp_arena,
                                         E::Await {
-                                            value: Expr::init(
+                                            value: Expr::allocate(
+                                                temp_arena,
                                                 E::Call {
                                                     target: Expr::init_identifier(
                                                         ast.wrapper_ref,
@@ -855,9 +852,11 @@ pub(crate) fn generate_entry_point_tail_js(
                             ));
                         } else {
                             // "init_foo();"
-                            stmts.push(Stmt::alloc(
+                            stmts.push(Stmt::allocate(
+                                temp_arena,
                                 S::SExpr {
-                                    value: Expr::init(
+                                    value: Expr::allocate(
+                                        temp_arena,
                                         E::Call {
                                             target: Expr::init_identifier(
                                                 ast.wrapper_ref,
@@ -968,22 +967,26 @@ pub(crate) fn generate_entry_point_tail_js(
                                 //     export_foo as foo
                                 //   };
                                 //
-                                stmts.push(Stmt::alloc(
+                                stmts.push(Stmt::allocate(
+                                    temp_arena,
                                     S::Local {
-                                        decls: G::DeclList::from_slice(&[G::Decl {
-                                            binding: Binding::alloc(
-                                                temp_arena,
-                                                B::Identifier { r#ref: temp_ref },
-                                                bun_ast::Loc::EMPTY,
-                                            ),
-                                            value: Some(Expr::init(
-                                                E::ImportIdentifier {
-                                                    ref_: resolved_export_data.import_ref,
-                                                    ..Default::default()
-                                                },
-                                                bun_ast::Loc::EMPTY,
-                                            )),
-                                        }]),
+                                        decls: G::DeclList::from_slice_in(
+                                            &[G::Decl {
+                                                binding: Binding::alloc(
+                                                    temp_arena,
+                                                    B::Identifier { r#ref: temp_ref },
+                                                    bun_ast::Loc::EMPTY,
+                                                ),
+                                                value: Some(Expr::init(
+                                                    E::ImportIdentifier {
+                                                        ref_: resolved_export_data.import_ref,
+                                                        ..Default::default()
+                                                    },
+                                                    bun_ast::Loc::EMPTY,
+                                                )),
+                                            }],
+                                            temp_arena,
+                                        ),
                                         ..Default::default()
                                     },
                                     bun_ast::Loc::EMPTY,
@@ -1041,7 +1044,8 @@ pub(crate) fn generate_entry_point_tail_js(
                         // below for the synthetic-default-export path.
                         let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
                         if !items.is_empty() {
-                            stmts.push(Stmt::alloc(
+                            stmts.push(Stmt::allocate(
+                                temp_arena,
                                 S::ExportClause {
                                     items: bun_ast::StoreSlice::new_mut(items),
                                     is_single_line: false,
@@ -1056,14 +1060,16 @@ pub(crate) fn generate_entry_point_tail_js(
                             && !had_default_export
                             && !items.is_empty()
                         {
-                            let mut properties = G::PropertyList::init_capacity(items.len());
+                            let mut properties =
+                                G::PropertyList::with_capacity_in(items.len(), temp_arena);
                             let getter_fn_body: &mut [Stmt] =
                                 arena.alloc_slice_fill_default(items.len());
                             let mut remain_getter_fn_body = &mut getter_fn_body[..];
                             for export_item in items.iter() {
                                 let (fn_body, rest) = remain_getter_fn_body.split_at_mut(1);
                                 remain_getter_fn_body = rest;
-                                fn_body[0] = Stmt::alloc(
+                                fn_body[0] = Stmt::allocate(
+                                    temp_arena,
                                     S::Return {
                                         value: Some(Expr::init(
                                             E::Identifier {
@@ -1075,10 +1081,11 @@ pub(crate) fn generate_entry_point_tail_js(
                                     },
                                     bun_ast::Loc::EMPTY,
                                 );
-                                VecExt::append(
-                                    &mut properties,
+                                properties.push(
+                                    temp_arena,
                                     G::Property {
-                                        key: Some(Expr::init(
+                                        key: Some(Expr::allocate(
+                                            temp_arena,
                                             E::String {
                                                 // SAFETY: alias is an arena `*const [u8]`; never null.
                                                 data: export_item.alias.slice().into(),
@@ -1087,7 +1094,8 @@ pub(crate) fn generate_entry_point_tail_js(
                                             },
                                             export_item.alias_loc,
                                         )),
-                                        value: Some(Expr::init(
+                                        value: Some(Expr::allocate(
+                                            temp_arena,
                                             E::Function {
                                                 func: G::Fn {
                                                     body: G::FnBody {
@@ -1107,13 +1115,15 @@ pub(crate) fn generate_entry_point_tail_js(
                                     },
                                 );
                             }
-                            stmts.push(Stmt::alloc(
+                            stmts.push(Stmt::allocate(
+                                temp_arena,
                                 S::ExportDefault {
                                     default_name: bun_ast::LocRef {
                                         ref_: Ref::NONE,
                                         loc: bun_ast::Loc::EMPTY,
                                     },
-                                    value: StmtOrExpr::Expr(Expr::init(
+                                    value: StmtOrExpr::Expr(Expr::allocate(
+                                        temp_arena,
                                         E::Object {
                                             properties,
                                             ..Default::default()
@@ -1128,7 +1138,8 @@ pub(crate) fn generate_entry_point_tail_js(
 
                     if default_is_namespace {
                         // "export default exports_foo;"
-                        stmts.push(Stmt::alloc(
+                        stmts.push(Stmt::allocate(
+                            temp_arena,
                             S::ExportDefault {
                                 default_name: bun_ast::LocRef {
                                     ref_: Ref::NONE,
@@ -1159,7 +1170,9 @@ pub(crate) fn generate_entry_point_tail_js(
                 crate::WrapKind::Cjs => {
                     // "module.exports = require_foo();"
                     stmts.push(Stmt::assign(
-                        Expr::init(
+                        temp_arena,
+                        Expr::allocate(
+                            temp_arena,
                             E::Dot {
                                 target: Expr::init_identifier(
                                     c.unbound_module_ref,
@@ -1171,7 +1184,8 @@ pub(crate) fn generate_entry_point_tail_js(
                             },
                             bun_ast::Loc::EMPTY,
                         ),
-                        Expr::init(
+                        Expr::allocate(
+                            temp_arena,
                             E::Call {
                                 target: Expr::init_identifier(ast.wrapper_ref, bun_ast::Loc::EMPTY),
                                 ..Default::default()
@@ -1184,9 +1198,11 @@ pub(crate) fn generate_entry_point_tail_js(
                 // in the parser), so there is no `init_foo` to call.
                 crate::WrapKind::Esm if ast.wrapper_ref.is_valid() => {
                     // "init_foo();"
-                    stmts.push(Stmt::alloc(
+                    stmts.push(Stmt::allocate(
+                        temp_arena,
                         S::SExpr {
-                            value: Expr::init(
+                            value: Expr::allocate(
+                                temp_arena,
                                 E::Call {
                                     target: Expr::init_identifier(
                                         ast.wrapper_ref,

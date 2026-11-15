@@ -121,7 +121,6 @@ mod draft {
     use bun_ast::E::Rope;
     use bun_ast::{AstArena, E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
-    use bun_collections::VecExt;
     use bun_core::{Output, ZStr};
     use bun_dotenv::Loader as DotEnvLoader;
     use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry, NpmUrlAuth};

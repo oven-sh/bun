@@ -18,7 +18,7 @@ use crate::diagnostics::{CompilerDiagnostic, cold_invariant};
 use crate::hir::environment::Environment;
 
 use crate::hir::{
-    AliasingEffect, AstAlloc, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirFunction,
+    AliasingEffect, BlockId, Effect, EvaluationOrder, FunctionId, HIR, HirAlloc, HirFunction,
     IdentifierId, InstructionValue, Place, ReactFunctionType,
 };
 
@@ -180,7 +180,7 @@ where
         }
     }
 
-    func.aliasing_effects = Some(AstAlloc::vec_from_iter(function_effects));
+    func.aliasing_effects = Some(HirAlloc::vec_from_iter(function_effects));
 
     for operand in &mut func.context {
         if captured_or_mutated.contains(operand.identifier) || operand.effect == Effect::Capture {
@@ -205,7 +205,7 @@ fn placeholder_function() -> HirFunction {
         id: None,
         name_hint: None,
         fn_type: ReactFunctionType::Other,
-        params: AstAlloc::vec(),
+        params: HirAlloc::vec(),
         return_type_annotation: None,
         returns: Place {
             identifier: IdentifierId(0),
@@ -213,15 +213,15 @@ fn placeholder_function() -> HirFunction {
             reactive: false,
             loc: None,
         },
-        context: AstAlloc::vec(),
+        context: HirAlloc::vec(),
         body: HIR {
             entry: BlockId(0),
             blocks: IndexMap::new(),
         },
-        instructions: AstAlloc::vec(),
+        instructions: HirAlloc::vec(),
         generator: false,
         is_async: false,
-        directives: AstAlloc::vec(),
+        directives: HirAlloc::vec(),
         aliasing_effects: None,
     }
 }

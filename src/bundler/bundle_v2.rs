@@ -5,6 +5,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::ptr::NonNull;
+use core::sync::SyncView;
 use core::sync::atomic::AtomicU32;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
@@ -56,6 +57,9 @@ pub struct PendingImport {
     pub(crate) import_record_index: u32,
 }
 
+/// The imports that failed to resolve, by what `DevServerHandle::mark_resolution_failure` returns for the importer.
+pub type ResolutionFailures = ArrayHashMap<u32, bun_ast::Log>;
+
 pub struct BundleV2<'a> {
     pub transpiler: &'a mut Transpiler<'a>,
     pub(crate) other_transpilers: OtherTranspilers<'a>,
@@ -83,6 +87,8 @@ pub struct BundleV2<'a> {
     /// Populated from `transpiler.options.dev_server` + the runtime-registered vtable at
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
+    /// Unlike parse failures, these can be created asynchronously and out of order. Empty without `dev_server`.
+    pub(crate) resolution_failures: SyncView<ResolutionFailures>,
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
@@ -150,7 +156,7 @@ impl<'a> OtherTranspilers<'a> {
 
     fn ensure_client(
         &mut self,
-        main: &Transpiler<'a>,
+        main: &mut Transpiler<'a>,
         arena: &'a bun_alloc::Arena,
     ) -> &mut Transpiler<'a> {
         let client = self.client.get_or_insert_with(|| {
@@ -305,6 +311,7 @@ pub mod bv2_impl {
 
     use core::cell::{Cell, OnceCell};
     use core::ptr::NonNull;
+    use core::sync::SyncView;
     use std::io::Write as _;
 
     use crate::Graph::InputFileColumns;
@@ -1807,7 +1814,7 @@ pub mod bv2_impl {
     // avoids two distinct nominal `BundleV2`/`PendingImport`/`BakeOptions` types
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
     // errors in cross-module call sites).
-    pub use super::{BakeOptions, BundleV2, PendingImport};
+    pub use super::{BakeOptions, BundleV2, PendingImport, ResolutionFailures};
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn enqueue_on_js_loop_for_plugins(
@@ -1832,7 +1839,7 @@ pub mod bv2_impl {
 
         #[cold]
         pub(super) fn create_client_transpiler(
-            this_transpiler: &Transpiler<'a>,
+            this_transpiler: &mut Transpiler<'a>,
             arena: &'a bun_alloc::Arena,
         ) -> Result<Box<Transpiler<'a>>, Error> {
             // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
@@ -1848,7 +1855,8 @@ pub mod bv2_impl {
             let this_compile = this_transpiler.options.compile_mode.is_executable();
             let this_env = this_transpiler.env;
 
-            let mut ct = Transpiler::for_worker(this_transpiler, arena, this_transpiler.log);
+            let log = this_transpiler.log();
+            let mut ct = Transpiler::for_worker(this_transpiler, arena, log);
 
             ct.options.target = Target::Browser;
             // Don't inherit SSR mode from the server target: the SSR pass
@@ -1910,27 +1918,34 @@ pub mod bv2_impl {
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> &bun_ast::Log {
-            Self::resolution_log(
-                &mut self.dev_server,
-                &mut self.transpiler,
-                abs_path,
-                bake_graph,
-            )
+            let entry = self.mark_resolution_failure(abs_path, bake_graph);
+            Self::resolution_log(&mut self.resolution_failures, entry, self.transpiler.log())
         }
 
-        /// `log_for_resolution_failures`, for callers that use the rest of the bundle meanwhile.
-        fn resolution_log<'s>(
-            dev_server: &'s mut Option<dispatch::DevServerHandle>,
-            transpiler: &'s mut &mut Transpiler<'_>,
+        /// The first half of `log_for_resolution_failures`: the file's position in `resolution_failures`.
+        fn mark_resolution_failure(
+            &mut self,
             abs_path: &[u8],
             bake_graph: bake::Graph,
-        ) -> &'s bun_ast::Log {
-            if let Some(dev) = dev_server {
-                // CYCLEBREAK GENUINE: DevServer → vtable.
-                // SAFETY: owner is a live *mut DevServer per handle invariant.
-                return unsafe { &*dev.log_for_resolution_failures(abs_path, bake_graph) };
+        ) -> Option<usize> {
+            let file = (self.dev_server?).mark_resolution_failure(abs_path, bake_graph);
+            let entry = bun_core::handle_oom(self.resolution_failures.as_mut().get_or_put(file));
+            if !entry.found_existing {
+                *entry.value_ptr = bun_ast::Log::init();
             }
-            transpiler.log()
+            Some(entry.index)
+        }
+
+        /// The second half, for callers that use the rest of the bundle meanwhile.
+        fn resolution_log<'s>(
+            resolution_failures: &'s mut SyncView<ResolutionFailures>,
+            entry: Option<usize>,
+            transpiler_log: &'s bun_ast::Log,
+        ) -> &'s bun_ast::Log {
+            match entry {
+                Some(entry) => &resolution_failures.as_mut().values()[entry],
+                None => transpiler_log,
+            }
         }
     }
 
@@ -2324,7 +2339,7 @@ pub mod bv2_impl {
         }
 
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
-        pub(crate) fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+        pub(crate) fn fail_if_no_entry_points(&mut self) -> Result<(), Error> {
             if !self.graph.entry_points.is_empty() {
                 return Ok(());
             }
@@ -2338,10 +2353,11 @@ pub mod bv2_impl {
 
         /// `BundleOptions::type_check`. Every file is parsed, so the pool is idle and the text of
         /// each file is in the graph.
-        fn type_check(&self) -> Result<(), Error> {
+        fn type_check(&mut self) -> Result<(), Error> {
             let Some(type_check) = self.transpiler.options.type_check else {
                 return Ok(());
             };
+            let log = self.transpiler.log();
             let sources = self.graph.input_files.items_source();
             let loaders = self.graph.input_files.items_loader();
             let import_records = self.graph.ast.items_import_records();
@@ -2399,7 +2415,7 @@ pub mod bv2_impl {
                 entry_points: &mut entry_points,
                 sources: &mut sources,
             };
-            if type_check(checked, self.transpiler.log()) {
+            if type_check(checked, log) {
                 return Ok(());
             }
             Err(crate::Error::BuildFailed)
@@ -2586,11 +2602,14 @@ pub mod bv2_impl {
                         let handles_import_errors;
                         let ignore_module_resolution_errors =
                             self.transpiler.options.ignore_module_resolution_errors;
-                        let log = Self::resolution_log(
-                            &mut self.dev_server,
-                            &mut self.transpiler,
+                        let entry = self.mark_resolution_failure(
                             &import_record.source_file,
                             target.bake_graph(),
+                        );
+                        let log = Self::resolution_log(
+                            &mut self.resolution_failures,
+                            entry,
+                            self.transpiler.log(),
                         );
 
                         {
@@ -3030,6 +3049,7 @@ pub mod bv2_impl {
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
+                resolution_failures: SyncView::default(),
                 file_map: None,
                 source_code_length: 0,
                 thread_lock: bun_core::ThreadLock::init_locked(),
@@ -3093,6 +3113,7 @@ pub mod bv2_impl {
             if this.transpiler.options.bytecode
                 && this.transpiler.options.compile_mode.is_executable()
             {
+                let log = this.transpiler.log();
                 let paths = this
                     .transpiler
                     .options
@@ -3102,7 +3123,7 @@ pub mod bv2_impl {
                 match crate::bytecode_order::BytecodeOrder::load(paths) {
                     Ok((order, without_hints)) => {
                         for (path, unusable) in without_hints {
-                            this.transpiler.log().add_warning_fmt(
+                            log.add_warning_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -3115,7 +3136,7 @@ pub mod bv2_impl {
                         this.bytecode_order = order;
                     }
                     Err((path, err)) => {
-                        this.transpiler.log().add_error_fmt(
+                        log.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -4014,8 +4035,9 @@ pub mod bv2_impl {
             let mut linker_graph = this.clone_ast()?;
             linker_graph.additional_output_files = additional_output_files;
 
+            let log = this.transpiler.log();
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
-            let mut chunks = linker.link(this.transpiler.log())?;
+            let mut chunks = linker.link(log)?;
             this.dump_pool_stats("link");
 
             // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
@@ -4032,7 +4054,7 @@ pub mod bv2_impl {
 
             let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                 &mut linker,
-                this.transpiler.log(),
+                log,
                 &mut chunks,
             )?;
             this.dump_pool_stats("print");
@@ -4142,8 +4164,9 @@ pub mod bv2_impl {
             let mut linker_graph = this.clone_ast()?;
             linker_graph.additional_output_files = additional_output_files;
 
+            let log = this.transpiler.log();
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
-            let mut chunks = linker.link(this.transpiler.log())?;
+            let mut chunks = linker.link(log)?;
 
             if chunks.is_empty() {
                 return Ok(Vec::new());
@@ -4151,7 +4174,7 @@ pub mod bv2_impl {
 
             crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                 &mut linker,
-                this.transpiler.log(),
+                log,
                 &mut chunks,
             )
         }
@@ -4609,7 +4632,7 @@ pub mod bv2_impl {
                             crate::Error::Plugin,
                             load.bake_graph(),
                             source.path.key_for_incremental_graph(),
-                            &raw const temp_log,
+                            &temp_log,
                             this,
                         )
                         .expect("oom");
@@ -4731,11 +4754,14 @@ pub mod bv2_impl {
                         return;
                     }
 
-                    let log = Self::resolution_log(
-                        &mut this.dev_server,
-                        &mut this.transpiler,
+                    let entry = this.mark_resolution_failure(
                         &resolve.import_record.source_file,
                         resolve.import_record.original_target.bake_graph(),
+                    );
+                    let log = Self::resolution_log(
+                        &mut this.resolution_failures,
+                        entry,
+                        this.transpiler.log(),
                     );
 
                     // When it's not a file, this is an error and we should report it.
@@ -5045,16 +5071,17 @@ pub mod bv2_impl {
 
             self.add_server_component_boundaries_as_extra_entry_points()?;
 
+            let log = self.transpiler.log();
             let mut linker = LinkerContext::load(self, linker_graph, &reachable_files)?;
-            let mut chunks = linker.link(self.transpiler.log())?;
+            let mut chunks = linker.link(log)?;
 
-            if self.transpiler.log().errors.get() > 0 {
+            if log.errors.get() > 0 {
                 return Err(crate::Error::BuildFailed);
             }
 
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
                 &mut linker,
-                self.transpiler.log(),
+                log,
                 &mut chunks,
             )?;
 
@@ -5286,7 +5313,7 @@ pub mod bv2_impl {
                                         crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
                                         sources[index].path.text,
-                                        &raw const log,
+                                        &log,
                                         self,
                                     )
                                     .map_err(|_| AllocError)?;
@@ -5384,6 +5411,7 @@ pub mod bv2_impl {
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
             let linker_graph = self.clone_ast().map_err(|_| AllocError)?;
+            let transpiler_log = self.transpiler.log();
             let mut linker = LinkerContext::load(self, linker_graph, js_reachable_files)
                 .map_err(|_| AllocError)?;
 
@@ -5486,7 +5514,7 @@ pub mod bv2_impl {
 
             crate::linker_context_mod::generate_chunks_in_parallel::<true>(
                 &mut linker,
-                self.transpiler.log(),
+                transpiler_log,
                 &mut chunks,
             )
             .map_err(|_| AllocError)?;
@@ -5507,13 +5535,14 @@ pub mod bv2_impl {
                         crate::Error::InvalidCssImport,
                         bake::Graph::Client,
                         sources[entry_point.get() as usize].path.text,
-                        &raw const log,
+                        &log,
                         self,
                     )
                     .map_err(|_| AllocError)?;
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
             }
 
+            let resolution_failures = core::mem::take(self.resolution_failures.as_mut());
             dev_server
                 .finalize_bundle(
                     self,
@@ -5521,6 +5550,7 @@ pub mod bv2_impl {
                         chunks,
                         linker_graph,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
+                        resolution_failures,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -6193,19 +6223,8 @@ pub mod bv2_impl {
                         ) {
                         Ok(r) => break r,
                         Err(err) => {
-                            // borrowck — `log_for_resolution_failures` returns
-                            // `&Log` tied to `&mut self`, but it's always a raw-ptr
-                            // deref (DevServer vtable or `transpiler.log`). Detach via
-                            // `*const` so later `self.*` reads don't conflict.
-                            // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
-                            let log: &bun_ast::Log = unsafe {
-                                &*std::ptr::from_ref::<bun_ast::Log>(
-                                    self.log_for_resolution_failures(
-                                        source.path.text,
-                                        ctx.target.bake_graph(),
-                                    ),
-                                )
-                            };
+                            let entry = self
+                                .mark_resolution_failure(source.path.text, ctx.target.bake_graph());
 
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
@@ -6252,6 +6271,11 @@ pub mod bv2_impl {
                                 .flags
                                 .insert(bun_ast::ImportRecordFlags::WAS_UNRESOLVED);
 
+                            let log = Self::resolution_log(
+                                &mut self.resolution_failures,
+                                entry,
+                                self.transpiler.log(),
+                            );
                             if err == _resolver::Error::ModuleNotFound {
                                 let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
 
@@ -6969,7 +6993,6 @@ pub mod bv2_impl {
                     }
                 }
                 parse_task::ResultValue::Success(result) => {
-                    // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                     result.log.append_to(this.transpiler.log());
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
@@ -7267,12 +7290,11 @@ pub mod bv2_impl {
                                     err.err,
                                     err.target.bake_graph(),
                                     abs_path,
-                                    &raw const err.log,
+                                    &err.log,
                                     std::ptr::from_mut(this),
                                 )
                                 .expect("oom");
                         } else if err.log.msgs_len() > 0 {
-                            // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             err.log.append_to(this.transpiler.log());
                         } else {
                             let step_name = match err.step {
@@ -7280,7 +7302,6 @@ pub mod bv2_impl {
                                 crate::parse_task::Step::Parse => "parse",
                                 crate::parse_task::Step::Resolve => "resolve",
                             };
-                            // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
                             this.transpiler.log().add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
@@ -7658,6 +7679,7 @@ pub mod bv2_impl {
         pub chunks: Vec<Chunk<'a>>,
         pub linker_graph: LinkerGraph<'a>,
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
+        pub resolution_failures: ResolutionFailures,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

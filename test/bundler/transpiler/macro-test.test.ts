@@ -395,6 +395,32 @@ test("the JSON of a Blob or Response is still inlined after a later macro collec
   });
 });
 
+// Both parse an empty JSON document. A Worker parses the defines again.
+test("a macro that returns an empty JSON Blob doesn't change what an empty --define is", async () => {
+  using dir = tempDir("macro-empty-json", {
+    "m.ts": `export const empty = () => new Blob([], { type: "application/json" });`,
+    "worker.ts": `const object = EMPTY;\nobject.key = 1;\nconsole.log(object.key, object === object);`,
+    "index.ts": `
+      import { empty } from "./m.ts" with { type: "macro" };
+      console.log(JSON.stringify(empty()));
+      new Worker("./worker.ts");
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--define", "EMPTY=", "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ lastLines: stdout.trim().split("\n").slice(-2), stderr, exitCode }).toEqual({
+    lastLines: ["{}", "1 true"],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 // The classification follows the MIME essence, not the category table the runtime uses for blob types:
 // any `+json` suffix or `/json` subtype is JSON, and the JavaScript and XML `application/*` types are text.
 // The data URL keeps the raw content type, parameters included.

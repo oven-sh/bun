@@ -225,7 +225,7 @@ impl TOML {
         log: &Log,
         bump: &'a AstArena,
         redact_logs: bool,
-    ) -> crate::Result<Expr> {
+    ) -> crate::Result<Expr<'a>> {
         source.check_parseable_len(log, "TOML document")?;
         let mut parser = Parser {
             scanner: Scanner {
@@ -1713,7 +1713,7 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     // ── document structure ─────────────────────────────────────────────────
 
-    fn parse_root(&mut self) -> PResult<Expr> {
+    fn parse_root(&mut self) -> PResult<Expr<'a>> {
         let start = self.scanner.init_document()?;
 
         let root = Expr::allocate(self.bump, E::Object::default(), loc_of(start));
@@ -1739,10 +1739,10 @@ impl<'a, 'log> Parser<'a, 'log> {
     /// Returns the table that becomes current.
     fn parse_table_header(
         &mut self,
-        root: StoreRef<E::Object>,
+        root: StoreRef<'a, E::Object<'a>>,
         aot: bool,
         header_pos: usize,
-    ) -> PResult<StoreRef<E::Object>> {
+    ) -> PResult<StoreRef<'a, E::Object<'a>>> {
         let mut path: ArenaVec<'a, KeySeg<'a>> = ArenaVec::with_capacity_in(0, self.bump);
         path.push(self.scanner.scan_key_after_sep()?);
         loop {
@@ -1758,11 +1758,11 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     fn navigate_header(
         &mut self,
-        root: StoreRef<E::Object>,
+        root: StoreRef<'a, E::Object<'a>>,
         path: &[KeySeg<'a>],
         is_aot: bool,
         header_pos: usize,
-    ) -> PResult<StoreRef<E::Object>> {
+    ) -> PResult<StoreRef<'a, E::Object<'a>>> {
         let mut cur: StoreRef<E::Object> = root;
         for (i, seg) in path.iter().enumerate() {
             let last = i + 1 == path.len();
@@ -1882,7 +1882,11 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     /// The rest of `key = value` (including dotted keys) after the first key
     /// segment, inserted into `table`.
-    fn parse_keyval(&mut self, table: StoreRef<E::Object>, first: KeySeg<'a>) -> PResult<()> {
+    fn parse_keyval(
+        &mut self,
+        table: StoreRef<'a, E::Object<'a>>,
+        first: KeySeg<'a>,
+    ) -> PResult<()> {
         let mut path: ArenaVec<'a, KeySeg<'a>> = ArenaVec::with_capacity_in(0, self.bump);
         path.push(first);
         loop {
@@ -1900,9 +1904,9 @@ impl<'a, 'log> Parser<'a, 'log> {
     /// and inserts `value` at the final segment.
     fn assign_path(
         &mut self,
-        table: StoreRef<E::Object>,
+        table: StoreRef<'a, E::Object<'a>>,
         path: &[KeySeg<'a>],
-        value: Expr,
+        value: Expr<'a>,
     ) -> PResult<()> {
         let mut cur = table;
         for seg in &path[..path.len() - 1] {
@@ -1941,7 +1945,7 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     // ── values ─────────────────────────────────────────────────────────────
 
-    fn parse_value(&mut self, token: ValueToken<'a>) -> PResult<Expr> {
+    fn parse_value(&mut self, token: ValueToken<'a>) -> PResult<Expr<'a>> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(PErr::StackOverflow);
         }
@@ -1963,7 +1967,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         }
     }
 
-    fn string_expr(&self, text: &'a [u8], is_ascii: bool, loc: Loc) -> Expr {
+    fn string_expr(&self, text: &'a [u8], is_ascii: bool, loc: Loc) -> Expr<'a> {
         if is_ascii {
             Expr::allocate(self.bump, E::String::init(text), loc)
         } else {
@@ -1976,7 +1980,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     }
 
     /// The rest of `[ ... ]` after the opening bracket.
-    fn parse_array(&mut self, pos: usize) -> PResult<Expr> {
+    fn parse_array(&mut self, pos: usize) -> PResult<Expr<'a>> {
         let (array, mut ptr) = self.new_array(pos, Kind::StaticArray);
 
         loop {
@@ -2001,7 +2005,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     }
 
     /// The rest of `{ ... }` after the opening brace.
-    fn parse_inline_table(&mut self, pos: usize) -> PResult<Expr> {
+    fn parse_inline_table(&mut self, pos: usize) -> PResult<Expr<'a>> {
         // An inline table is its own definition block so dotted keys inside it
         // cannot extend outer tables and vice versa.
         let outer_block = self.block;
@@ -2047,7 +2051,7 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     // ── table bookkeeping ──────────────────────────────────────────────────
 
-    fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr, StoreRef<E::Object>) {
+    fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr<'a>, StoreRef<'a, E::Object<'a>>) {
         let expr = Expr::allocate(self.bump, E::Object::default(), loc_of(pos));
         let ptr = expr.data.e_object().expect("infallible: just constructed");
         self.meta.insert(
@@ -2060,7 +2064,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         (expr, ptr)
     }
 
-    fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr, StoreRef<E::Array>) {
+    fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr<'a>, StoreRef<'a, E::Array<'a>>) {
         let expr = Expr::allocate(self.bump, E::Array::default(), loc_of(pos));
         let ptr = expr.data.e_array().expect("infallible: just constructed");
         self.meta.insert(
@@ -2075,9 +2079,9 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     fn append_aot_elem(
         &mut self,
-        mut array: StoreRef<E::Array>,
+        mut array: StoreRef<'a, E::Array<'a>>,
         pos: usize,
-    ) -> PResult<StoreRef<E::Object>> {
+    ) -> PResult<StoreRef<'a, E::Object<'a>>> {
         let (elem, ptr) = self.new_table(pos, Kind::ArrayElem);
         array.push(self.bump, elem)?;
         Ok(ptr)
@@ -2085,9 +2089,9 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     fn insert_key(
         &mut self,
-        mut obj: StoreRef<E::Object>,
+        mut obj: StoreRef<'a, E::Object<'a>>,
         seg: KeySeg<'a>,
-        value: Expr,
+        value: Expr<'a>,
     ) -> PResult<()> {
         // The duplicate check must use the UTF-8 key bytes: `as_property`
         // compares correctly against both 8-bit and UTF-16 stored keys.

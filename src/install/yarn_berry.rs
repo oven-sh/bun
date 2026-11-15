@@ -53,7 +53,7 @@ fn shown(text: &[u8]) -> impl core::fmt::Display + '_ {
 
 /// Yarn reads every scalar as a string, but Bun's parser gives plain scalars a type (`2.10` becomes
 /// the number 2.1). This returns the original text.
-pub(crate) fn scalar_text<'s>(source: &'s [u8], expr: &Expr) -> Option<&'s [u8]> {
+pub(crate) fn scalar_text<'s, 'ast: 's>(source: &'s [u8], expr: &Expr<'ast>) -> Option<&'s [u8]> {
     if let Some(s) = as_str(expr) {
         return Some(s);
     }
@@ -77,7 +77,7 @@ pub(crate) fn scalar_text<'s>(source: &'s [u8], expr: &Expr) -> Option<&'s [u8]>
 /// returns the first.
 fn duplicate_key<'s>(
     source: &'s [u8],
-    expr: &Expr,
+    expr: &Expr<'s>,
     depth: u8,
 ) -> Result<Option<&'s [u8]>, AllocError> {
     let mut seen: StringArrayHashMap<()> = StringArrayHashMap::new();
@@ -203,11 +203,12 @@ fn parse_conditions(cond: &[u8]) -> (npm::OperatingSystem, npm::Architecture, np
 
 /// Returns `name@<resolution>`, or `None` for a package that Bun installs from a project folder and
 /// can't patch.
-fn patched_dependency_key(
+fn patched_dependency_key<'a>(
+    bump: &'a AstArena,
     lockfile: &Lockfile,
     name: &[u8],
     package_id: PackageID,
-) -> Option<Vec<u8>> {
+) -> Option<&'a [u8]> {
     use ResolutionTag as Tag;
     let res = lockfile.packages.items_resolution()[package_id as usize];
     if matches!(
@@ -217,7 +218,8 @@ fn patched_dependency_key(
         return None;
     }
     let res = res.fmt(string_bytes!(lockfile), bun_core::fmt::PathSep::Posix);
-    Some(format!("{}@{}", bstr::BStr::new(name), res).into_bytes())
+    let key = bun_alloc::arena_format!(in bump, "{}@{}", bstr::BStr::new(name), res);
+    Some(key.into_bump_str().as_bytes())
 }
 
 type Ranges = Vec<(Box<[u8]>, Box<[u8]>)>;
@@ -539,12 +541,12 @@ enum EntryKind {
     Patch,
 }
 
-struct Entry {
+struct Entry<'a> {
     kind: EntryKind,
-    expr: Expr,
-    name: &'static [u8],
+    expr: Expr<'a>,
+    name: &'a [u8],
     /// text after `name@` in `resolution`
-    reference: &'static [u8],
+    reference: &'a [u8],
     package_id: PackageID,
 }
 
@@ -581,7 +583,7 @@ fn package_json<'a>(
     log: &bun_ast::Log,
     abs_path: &[u8],
     options: GetJsonOptions,
-) -> Result<&'a mut WorkspacePackageJsonCacheEntry, Error> {
+) -> Result<&'a mut WorkspacePackageJsonCacheEntry<'static>, Error> {
     manager
         .workspace_package_json_cache
         .get_with_path(log, abs_path, options)
@@ -763,13 +765,13 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     let _ = root_json_path.append(b"package.json"); // capacity error is non-actionable
     let root_json = package_json(manager, log, root_json_path.slice(), Default::default())?;
     // `process_names_array` resolves globs relative to the source's directory.
-    let (root_manifest, root_source) = (root_json.root, root_json.source.clone());
+    let (root_manifest, root_source) = (root_json.root, root_json.source);
     let mut workspace_map = WorkspaceMap::init();
     workspace_map.process_manifest(
         &mut manager.workspace_package_json_cache,
         log,
         &root_manifest,
-        &root_source,
+        root_source,
         MissingWorkspace::Skip,
     )?;
 
@@ -1011,8 +1013,9 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     }
 
     // A patch can wrap another patch, so repeat until every chain has reached a package.
-    let mut patched: Vec<(Vec<u8>, Vec<u8>)> = Vec::new(); // ("name@version", patch path)
-    let mut stacked: Vec<(Vec<u8>, usize, Vec<u8>)> = Vec::new(); // ("name@version", files, the first)
+    let bump = manager.workspace_package_json_cache.arena;
+    let mut patched: Vec<(&[u8], Vec<u8>)> = Vec::new(); // ("name@version", patch path)
+    let mut stacked: Vec<(&[u8], usize, Vec<u8>)> = Vec::new(); // ("name@version", files, the first)
     let mut patched_packages: bun_collections::HashMap<PackageID, ()> = Default::default();
     let mut pending: Vec<usize> = (0..entries.len())
         .filter(|&i| entries[i].kind == EntryKind::Patch)
@@ -1066,7 +1069,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
             if paths.is_empty() {
                 continue;
             }
-            let Some(key) = patched_dependency_key(this, entries[inner_idx].name, pid) else {
+            let Some(key) = patched_dependency_key(bump, this, entries[inner_idx].name, pid) else {
                 bail!(
                     log,
                     "yarn.lock patches \"{}\" with \"{}\"; bun does not patch packages installed from a project folder",
@@ -1088,7 +1091,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     bail!(
                         log,
                         "yarn.lock patches \"{}\" with both \"{}\" and \"{}\"; bun applies one patch per package",
-                        shown(&key),
+                        shown(key),
                         shown(existing),
                         shown(&path),
                     );
@@ -1461,8 +1464,8 @@ pub(crate) fn migrate_yarn_berry_lockfile(
     // This comes after the `patch:` values are rewritten, so that the next install doesn't see them
     // as changed.
     if let Ok(root_json) = package_json(manager, log, root_json_path.slice(), Default::default()) {
-        let (source, json) = (root_json.source.clone(), root_json.root);
-        crate::migration::parse_root_overrides(this, manager, log, &source, json, &workspace_map)?;
+        let (source, json) = (root_json.source, root_json.root);
+        crate::migration::parse_root_overrides(this, manager, log, source, json, &workspace_map)?;
     }
 
     for (target, changed) in edited {
@@ -1681,7 +1684,11 @@ fn resolution_target_entry(
 }
 
 /// Returns the names under `dependenciesMeta` or `peerDependenciesMeta` that have `optional: true`.
-pub(crate) fn optional_names<'s>(source: &'s [u8], entry: &Expr, meta_key: &[u8]) -> Vec<&'s [u8]> {
+pub(crate) fn optional_names<'s>(
+    source: &'s [u8],
+    entry: &Expr<'s>,
+    meta_key: &[u8],
+) -> Vec<&'s [u8]> {
     props(&entry.get(meta_key).unwrap_or_default())
         .filter(|(_, v)| v.get(b"optional").and_then(|e| e.as_bool()) == Some(true))
         .filter_map(|(k, _)| scalar_text(source, k))
@@ -1701,13 +1708,13 @@ struct Extended<'a> {
 }
 
 /// Returns the dependencies that were added because of `extended`.
-fn append_entry_dependencies(
+fn append_entry_dependencies<'a>(
     this: &mut Lockfile,
     log: &bun_ast::Log,
     pkg: &mut lockfile::Package,
-    source: &[u8],
+    source: &'a [u8],
     entry_name: &[u8],
-    entry: &Expr,
+    entry: &Expr<'a>,
     extended: &Extended<'_>,
 ) -> Result<Vec<(PackageNameHash, ExtensionKind)>, Error> {
     let mut added = Vec::new();
@@ -1805,7 +1812,7 @@ fn extensions_of<'a>(
     descriptor_to_entry: &StringArrayHashMap<usize>,
     source: &[u8],
     name: &[u8],
-    entry: &Expr,
+    entry: &Expr<'a>,
 ) -> Extended<'a> {
     let mut extended = Extended::default();
     let Some(version) = entry.get(b"version").and_then(|v| scalar_text(source, &v)) else {
@@ -1885,10 +1892,10 @@ fn append_manifest_dependencies(
     let is_root = root_workspaces.is_some();
     // Maps each name to the range that Yarn installs for it, as Yarn writes it: the one in
     // devDependencies, or else optionalDependencies, or else dependencies.
-    let mut yarn_ranges: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
+    let mut yarn_ranges: StringArrayHashMap<&[u8]> = StringArrayHashMap::new();
     let mut in_dev: StringArrayHashMap<()> = StringArrayHashMap::new();
     // name -> its range in the first group that lists it
-    let mut declared: StringArrayHashMap<&'static [u8]> = StringArrayHashMap::new();
+    let mut declared: StringArrayHashMap<&[u8]> = StringArrayHashMap::new();
     // names with another range in a later group
     let mut several_ranges: StringArrayHashMap<()> = StringArrayHashMap::new();
     for (group, behavior) in [
@@ -2057,7 +2064,7 @@ fn append_dependency(
 }
 
 #[inline(never)]
-fn string_expr(bump: &AstArena, s: &[u8]) -> Expr {
+fn string_expr<'a>(bump: &'a AstArena, s: &[u8]) -> Expr<'a> {
     Expr::allocate(
         bump,
         E::EString::init(bump.alloc_slice_copy(s)),
@@ -2065,14 +2072,17 @@ fn string_expr(bump: &AstArena, s: &[u8]) -> Expr {
     )
 }
 
-fn object_expr<'a>(bump: &AstArena, entries: impl IntoIterator<Item = (&'a [u8], Expr)>) -> Expr {
+fn object_expr<'a, 'ast>(
+    bump: &'ast AstArena,
+    entries: impl IntoIterator<Item = (&'a [u8], Expr<'ast>)>,
+) -> Expr<'ast> {
     object_expr_from(bump, &mut entries.into_iter())
 }
 
 fn object_expr_from<'a>(
-    bump: &AstArena,
-    entries: &mut dyn Iterator<Item = (&'a [u8], Expr)>,
-) -> Expr {
+    bump: &'a AstArena,
+    entries: &mut dyn Iterator<Item = (&[u8], Expr<'a>)>,
+) -> Expr<'a> {
     let mut properties = AstVec::new();
     for (key, value) in entries {
         properties.push(
@@ -2094,7 +2104,7 @@ fn object_expr_from<'a>(
     )
 }
 
-fn sorted_object(bump: &AstArena, map: &StringArrayHashMap<Box<[u8]>>) -> Expr {
+fn sorted_object<'a>(bump: &'a AstArena, map: &StringArrayHashMap<Box<[u8]>>) -> Expr<'a> {
     let mut pairs: Vec<(&[u8], &[u8])> = map.iter().map(|(k, v)| (&**k, &**v)).collect();
     pairs.sort_unstable();
     object_expr(
@@ -2104,7 +2114,7 @@ fn sorted_object(bump: &AstArena, map: &StringArrayHashMap<Box<[u8]>>) -> Expr {
 }
 
 /// `packageExtensions`, in the shape .yarnrc.yml has them.
-fn extensions_object(bump: &AstArena, extensions: &[PackageExtension]) -> Expr {
+fn extensions_object<'a>(bump: &'a AstArena, extensions: &[PackageExtension]) -> Expr<'a> {
     object_expr(
         bump,
         extensions.iter().map(|extension| {
@@ -2144,7 +2154,7 @@ fn edit_package_json(
     log: &bun_ast::Log,
     abs_path: &[u8],
     rewrites: &Rewrites,
-    patched: &[(Vec<u8>, Vec<u8>)],
+    patched: &[(&'static [u8], Vec<u8>)],
     yarnrc: Option<&YarnRc>,
 ) -> Result<Option<Vec<&'static str>>, Error> {
     let catalogs = yarnrc
@@ -2157,6 +2167,7 @@ fn edit_package_json(
     let options = GetJsonOptions {
         guess_indentation: true,
     };
+    let bump = manager.workspace_package_json_cache.arena;
     let Ok(entry) = package_json(manager, log, abs_path, options) else {
         return Ok(None);
     };
@@ -2164,7 +2175,6 @@ fn edit_package_json(
     if !json.is_object() {
         return Ok(None);
     }
-    let bump = AstArena::new();
     let mut changed: Vec<&'static str> = Vec::new();
 
     let mut any = false;
@@ -2196,7 +2206,7 @@ fn edit_package_json(
             if let Some((_, _, new_spec)) =
                 (rewrites.iter()).find(|(of, from, _)| &**of == name && &**from == value)
             {
-                prop.value = Some(string_expr(&bump, new_spec));
+                prop.value = Some(string_expr(bump, new_spec));
                 any = true;
             }
         }
@@ -2208,18 +2218,18 @@ fn edit_package_json(
     if !patched.is_empty() {
         // Keep what the user already declared for Bun, and add Yarn's entries to it.
         let existing = json.get(b"patchedDependencies");
-        let mut patches = existing.unwrap_or_else(|| object_expr(&bump, []));
+        let mut patches = existing.unwrap_or_else(|| object_expr(bump, []));
         if patches.is_object() {
             let obj = e_object_mut(&mut patches);
             let mut any = false;
             for (key, path) in patched {
                 if obj.get(key).is_none() {
-                    obj.put(&bump, key, string_expr(&bump, path))?;
+                    obj.put(bump, key, string_expr(bump, path))?;
                     any = true;
                 }
             }
             if existing.is_none() {
-                e_object_mut(&mut json).put(&bump, b"patchedDependencies", patches)?;
+                e_object_mut(&mut json).put(bump, b"patchedDependencies", patches)?;
             }
             if any {
                 changed.push("added patchedDependencies");
@@ -2248,7 +2258,7 @@ fn edit_package_json(
             let mut workspaces = match json.get(b"workspaces") {
                 Some(existing) if existing.is_object() => existing,
                 existing => object_expr(
-                    &bump,
+                    bump,
                     existing
                         .filter(|e| e.is_array())
                         .map(|packages| (b"packages".as_slice(), packages)),
@@ -2256,25 +2266,25 @@ fn edit_package_json(
             };
             let ws_obj = e_object_mut(&mut workspaces);
             if let (true, Some(default)) = (want_default, default) {
-                ws_obj.put(&bump, b"catalog", sorted_object(&bump, default))?;
+                ws_obj.put(bump, b"catalog", sorted_object(bump, default))?;
             }
             if want_named {
                 let groups = named.into_iter().map(|group| {
                     let ranges = catalogs.get(group).expect("listed above");
-                    (group, sorted_object(&bump, ranges))
+                    (group, sorted_object(bump, ranges))
                 });
-                ws_obj.put(&bump, b"catalogs", object_expr(&bump, groups))?;
+                ws_obj.put(bump, b"catalogs", object_expr(bump, groups))?;
             }
-            e_object_mut(&mut json).put(&bump, b"workspaces", workspaces)?;
+            e_object_mut(&mut json).put(bump, b"workspaces", workspaces)?;
             changed.push("copied .yarnrc.yml catalogs to workspaces");
         }
     }
 
     if !extensions.is_empty() && json.get(b"packageExtensions").is_none() {
         e_object_mut(&mut json).put(
-            &bump,
+            bump,
             b"packageExtensions",
-            extensions_object(&bump, extensions),
+            extensions_object(bump, extensions),
         )?;
         changed.push("copied .yarnrc.yml packageExtensions to packageExtensions");
     }
@@ -2282,7 +2292,6 @@ fn edit_package_json(
     if changed.is_empty() {
         return Ok(None);
     }
-    // The spliced-in nodes live in `bump`: the cache entry must own its tree.
     save_entry(entry, json, log);
     Ok(Some(changed))
 }

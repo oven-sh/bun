@@ -32,15 +32,15 @@ pub(crate) struct AstBuilder<'a, 'bump> {
     pub(crate) bump: &'bump AstArena,
     pub(crate) source: &'a Source<'a>,
     pub(crate) source_index: u32,
-    pub(crate) stmts: Vec<Stmt>,
-    pub(crate) symbols: Vec<Symbol>,
+    pub(crate) stmts: Vec<Stmt<'bump>>,
+    pub(crate) symbols: Vec<Symbol<'bump>>,
     pub(crate) import_records: Vec<ImportRecord<'bump>>,
-    pub(crate) named_imports: NamedImports,
-    pub(crate) named_exports: NamedExports,
+    pub(crate) named_imports: NamedImports<'bump>,
+    pub(crate) named_exports: NamedExports<'bump>,
     pub(crate) import_records_for_current_part: Vec<u32>,
-    pub(crate) current_scope: Scope,
+    pub(crate) current_scope: Scope<'bump>,
     pub(crate) module_ref: Ref,
-    pub(crate) declared_symbols: DeclaredSymbolList,
+    pub(crate) declared_symbols: DeclaredSymbolList<'bump>,
     /// When set, codegen is altered
     pub(crate) hot_reloading: bool,
     pub(crate) hmr_api_ref: Ref,
@@ -83,7 +83,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ab)
     }
 
-    pub(crate) fn new_symbol(&mut self, kind: SymbolKind, identifier: &[u8]) -> Result<Ref, OOM> {
+    pub(crate) fn new_symbol(
+        &mut self,
+        kind: SymbolKind,
+        identifier: &'bump [u8],
+    ) -> Result<Ref, OOM> {
         let inner_index: RefInt = RefInt::try_from(self.symbols.len()).unwrap();
         self.symbols.push(Symbol {
             kind,
@@ -102,14 +106,14 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ref_)
     }
 
-    pub(crate) fn get_symbol(&mut self, ref_: Ref) -> &mut Symbol {
+    pub(crate) fn get_symbol(&mut self, ref_: Ref) -> &mut Symbol<'bump> {
         debug_assert!(ref_.source_index() == self.source.index.0);
         &mut self.symbols[ref_.inner_index() as usize]
     }
 
     pub(crate) fn add_import_record(
         &mut self,
-        path: &'static [u8],
+        path: &'bump [u8],
         kind: ImportKind,
     ) -> Result<u32, OOM> {
         let index = self.import_records.len();
@@ -128,9 +132,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
     pub(crate) fn add_import_stmt<const N: usize>(
         &mut self,
-        path: &'static [u8],
-        identifiers_to_import: [&'static [u8]; N],
-    ) -> Result<[Expr; N], OOM> {
+        path: &'bump [u8],
+        identifiers_to_import: [&'bump [u8]; N],
+    ) -> Result<[Expr<'bump>; N], OOM> {
         let mut out = [Expr::EMPTY; N];
 
         let record = self.add_import_record(path, ImportKind::Stmt)?;
@@ -139,8 +143,6 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let non_unique =
             MutableString::ensure_valid_identifier(path_name.non_unique_name_string_base())?;
         let name = strings::append(b"import_", &non_unique);
-        // Copy into the arena so the raw `*const [u8]` stored on the
-        // Symbol outlives this stack frame.
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
         let namespace_ref = self.new_symbol(SymbolKind::Other, name)?;
 
@@ -190,31 +192,27 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(out)
     }
 
-    pub(crate) fn append_stmt<T: StatementData>(&mut self, data: T) -> Result<(), OOM> {
+    pub(crate) fn append_stmt<T: StatementData<'bump>>(&mut self, data: T) -> Result<(), OOM> {
         self.stmts.reserve(1);
         self.stmts.push(self.new_stmt(data));
         Ok(())
     }
 
-    pub(crate) fn new_stmt<T: StatementData>(&self, data: T) -> Stmt {
+    pub(crate) fn new_stmt<T: StatementData<'bump>>(&self, data: T) -> Stmt<'bump> {
         Stmt::allocate::<T>(self.bump, data, Loc::EMPTY)
     }
 
-    pub(crate) fn new_expr<T: IntoExprData>(&self, data: T) -> Expr {
+    pub(crate) fn new_expr<T: IntoExprData<'bump>>(&self, data: T) -> Expr<'bump> {
         Expr::allocate::<T>(self.bump, data, Loc::EMPTY)
     }
 
-    pub(crate) fn new_external_symbol(&mut self, name: &[u8]) -> Result<Ref, OOM> {
+    pub(crate) fn new_external_symbol(&mut self, name: &'bump [u8]) -> Result<Ref, OOM> {
         let ref_ = self.new_symbol(SymbolKind::Other, name)?;
         let sym = self.get_symbol(ref_);
         sym.set_must_not_be_renamed(true);
         Ok(ref_)
     }
 
-    // Returns `BundledAst<'bump>` (== `JSAst`) directly. The only
-    // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
-    // every other field stores arena data via raw pointers / `StoreSlice`, so
-    // nothing borrows `&mut self` past this call.
     pub(crate) fn to_bundled_ast(
         &mut self,
         target: options::Target,
@@ -551,7 +549,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
 
     // stub methods for ImportScanner duck typing
 
-    pub(crate) fn generate_temp_ref(&mut self, name: Option<&[u8]>) -> Ref {
+    pub(crate) fn generate_temp_ref(&mut self, name: Option<&'bump [u8]>) -> Ref {
         self.new_symbol(SymbolKind::Other, name.unwrap_or(b"temp"))
             .expect("OOM")
         // Rust aborts on OOM by default; explicit expect for clarity

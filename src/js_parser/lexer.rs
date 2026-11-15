@@ -35,37 +35,37 @@ fn tokenToString_get(token: T) -> &'static [u8] {
 }
 
 #[derive(Default, Clone, Copy)]
-pub struct JSXPragma {
-    pub(crate) _jsx: js_ast::Span,
-    pub(crate) _jsx_frag: js_ast::Span,
-    pub(crate) _jsx_runtime: js_ast::Span,
-    pub(crate) _jsx_import_source: js_ast::Span,
+pub struct JSXPragma<'a> {
+    pub(crate) _jsx: js_ast::Span<'a>,
+    pub(crate) _jsx_frag: js_ast::Span<'a>,
+    pub(crate) _jsx_runtime: js_ast::Span<'a>,
+    pub(crate) _jsx_import_source: js_ast::Span<'a>,
 }
 
-impl JSXPragma {
+impl<'a> JSXPragma<'a> {
     // `Span.text` is a `StoreStr`; `.len()` via Deref<[u8]>.
-    pub(crate) fn jsx(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx(&self) -> Option<js_ast::Span<'a>> {
         if self._jsx.text.len() > 0 {
             Some(self._jsx)
         } else {
             None
         }
     }
-    pub(crate) fn jsx_frag(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx_frag(&self) -> Option<js_ast::Span<'a>> {
         if self._jsx_frag.text.len() > 0 {
             Some(self._jsx_frag)
         } else {
             None
         }
     }
-    pub(crate) fn jsx_runtime(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx_runtime(&self) -> Option<js_ast::Span<'a>> {
         if self._jsx_runtime.text.len() > 0 {
             Some(self._jsx_runtime)
         } else {
             None
         }
     }
-    pub(crate) fn jsx_import_source(&self) -> Option<js_ast::Span> {
+    pub(crate) fn jsx_import_source(&self) -> Option<js_ast::Span<'a>> {
         if self._jsx_import_source.text.len() > 0 {
             Some(self._jsx_import_source)
         } else {
@@ -159,8 +159,8 @@ pub struct LexerSnapshot<'a> {
     pub(crate) is_log_disabled: bool,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
-    pub(crate) jsx_pragma: JSXPragma,
-    pub(crate) source_mapping_url: Option<js_ast::Span>,
+    pub(crate) jsx_pragma: JSXPragma<'a>,
+    pub(crate) source_mapping_url: Option<js_ast::Span<'a>>,
     pub(crate) number: f64,
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
@@ -218,11 +218,11 @@ pub struct Lexer<'a, 'log> {
     pub(crate) preserve_all_comments_before: bool,
     pub(crate) is_legacy_octal_literal: bool,
     pub(crate) is_log_disabled: bool,
-    pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment>,
+    pub(crate) comments_to_preserve_before: Vec<js_ast::G::Comment<'a>>,
     pub(crate) code_point: CodePoint,
     pub(crate) identifier: &'a [u8],
-    pub(crate) jsx_pragma: JSXPragma,
-    pub(crate) source_mapping_url: Option<js_ast::Span>,
+    pub(crate) jsx_pragma: JSXPragma<'a>,
+    pub(crate) source_mapping_url: Option<js_ast::Span<'a>>,
     pub(crate) number: f64,
     pub(crate) rescan_close_brace_as_template_token: bool,
     pub(crate) prev_error_loc: Loc,
@@ -865,7 +865,7 @@ impl<'a, 'log> Lexer<'a, 'log> {
         Ok(())
     }
 
-    fn remaining(&self) -> &[u8] {
+    fn remaining(&self) -> &'a [u8] {
         &self.contents[self.current..]
     }
 
@@ -2088,10 +2088,10 @@ impl<'a, 'log> Lexer<'a, 'log> {
                             PureAnnotation::Ignore
                         };
                         first_marker = false;
-                        let chunk = js_ast::StoreStr::new(self.remaining());
+                        let chunk = self.remaining();
                         self.current += self.scan_pragma(
                             pragma_trigger_pos,
-                            chunk.slice(),
+                            chunk,
                             CommentKind::SingleLine,
                             pure,
                         );
@@ -2121,7 +2121,7 @@ impl<'a, 'log> Lexer<'a, 'log> {
     fn scan_pragma(
         &mut self,
         offset_for_errors: usize,
-        chunk: &[u8],
+        chunk: &'a [u8],
         comment: CommentKind,
         pure: PureAnnotation,
     ) -> usize {
@@ -2258,7 +2258,7 @@ impl<'a, 'log> Lexer<'a, 'log> {
         }
     }
 
-    pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    pub(crate) fn to_e_string(&mut self) -> Result<js_ast::E::String<'a>, Error> {
         match self.string_literal_raw {
             StringLiteralRaw::Ascii(raw) => Ok(js_ast::E::String::init(raw)),
             StringLiteralRaw::Utf16(utf16) => Ok(js_ast::E::String::init_utf16(utf16)),
@@ -2295,7 +2295,7 @@ impl<'a, 'log> Lexer<'a, 'log> {
         }
     }
 
-    pub(crate) fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String, Error> {
+    pub(crate) fn to_utf8_e_string(&mut self) -> Result<js_ast::E::String<'a>, Error> {
         let mut res = self.to_e_string()?;
         res.to_utf8(self.arena)?;
         Ok(res)
@@ -3420,11 +3420,11 @@ impl PragmaArg {
     // These can be extremely long, so we use SIMD.
     /// "//# sourceMappingURL=data:/adspaoksdpkz"
     ///                       ^^^^^^^^^^^^^^^^^^
-    pub(crate) fn scan_source_mapping_url_value(
+    pub(crate) fn scan_source_mapping_url_value<'a>(
         start: usize,
         offset_for_errors: usize,
-        chunk: &[u8],
-        result: &mut Option<js_ast::Span>,
+        chunk: &'a [u8],
+        result: &mut Option<js_ast::Span<'a>>,
     ) -> usize {
         const PREFIX: u32 = " sourceMappingURL=".len() as u32;
         let url_and_rest_of_code = &chunk[PREFIX as usize..]; // Slice containing only the potential argument
@@ -3463,12 +3463,12 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
-    pub(crate) fn scan(
+    pub(crate) fn scan<'a>(
         offset_: usize,
         pragma: &[u8],
-        text_: &[u8],
+        text_: &'a [u8],
         allow_newline: bool,
-    ) -> Option<js_ast::Span> {
+    ) -> Option<js_ast::Span<'a>> {
         let mut text = &text_[pragma.len()..];
         let mut iter = CodepointIterator::init(text);
 

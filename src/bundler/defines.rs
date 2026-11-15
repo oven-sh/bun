@@ -15,33 +15,23 @@ use bun_js_parser::lexer as js_lexer;
 // directly with no cross-crate hook.
 // ══════════════════════════════════════════════════════════════════════════
 pub use bun_js_parser::defines::{
-    Define, DefineData, DotDefine, Flags, IdentifierDefine, Options, RawDefines, UserDefines,
-    UserDefinesArray, are_parts_equal,
+    Define, DefineData, DefineExprData, DefineExprKind, DotDefine, Flags, IdentifierDefine,
+    Options, RawDefines, UserDefines, UserDefinesArray, are_parts_equal,
 };
 
 /// Alias for `Options` so `options.rs` can write `DefineData::init(DefineDataInit { .. })`.
 pub(crate) type DefineDataInit<'a> = Options<'a>;
-/// Alias for `ExprData` so `options.rs` can write `DefineValue::EUndefined(..)`.
-pub(crate) use bun_ast::ExprData as DefineValue;
 
 // `Expr::Data` stores `Number`/`Undefined` inline (not via pointer), so no
 // pointer indirection is needed for these constants.
-
-use bun_paths::fs::Path as FsPath;
-// `Path::init` is not `const fn`; lazily build the path.
-fn defines_path() -> FsPath<'static> {
-    let mut p = FsPath::init(b"defines.json");
-    p.namespace = b"internal";
-    p
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // `process.env.*` → define entries
 // ══════════════════════════════════════════════════════════════════════════
 
-fn env_string_store_put(
-    store: &mut UserDefinesArray,
-    bump: &bun_ast::AstArena,
+fn env_string_store_put<'a>(
+    store: &mut UserDefinesArray<'a>,
+    bump: &'a bun_ast::AstArena,
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
@@ -60,12 +50,12 @@ fn env_string_store_put(
 
 /// Copies `process.env.*` entries from the dotenv loader into `to_string`
 /// according to `behavior` (all of them, or only those starting with `prefix`).
-pub(crate) fn copy_env_for_define(
+pub(crate) fn copy_env_for_define<'a>(
     env: &bun_dotenv::Loader,
-    to_string: &mut UserDefinesArray,
+    to_string: &mut UserDefinesArray<'a>,
     behavior: bun_dotenv::DotEnvBehavior,
     prefix: &[u8],
-    bump: &bun_ast::AstArena,
+    bump: &'a bun_ast::AstArena,
 ) -> Result<(), crate::Error> {
     use bun_dotenv::DotEnvBehavior;
     const PROCESS_ENV: &[u8] = b"process.env.";
@@ -103,22 +93,22 @@ pub(crate) fn copy_env_for_define(
 // ══════════════════════════════════════════════════════════════════════════
 
 /// Extension surface for the canonical `Define` (which lives in `bun_js_parser`).
-pub trait DefineExt: Sized {
+pub trait DefineExt<'a>: Sized {
     fn init(
-        user_defines: Option<UserDefines>,
-        string_defines: Option<UserDefinesArray>,
+        user_defines: Option<UserDefines<'a>>,
+        string_defines: Option<UserDefinesArray<'a>>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
-    ) -> Result<Box<Define>, bun_alloc::AllocError>;
+    ) -> Result<Box<Define<'a>>, bun_alloc::AllocError>;
 }
 
-impl DefineExt for Define {
+impl<'a> DefineExt<'a> for Define<'a> {
     fn init(
-        _user_defines: Option<UserDefines>,
-        string_defines: Option<UserDefinesArray>,
+        _user_defines: Option<UserDefines<'a>>,
+        string_defines: Option<UserDefinesArray<'a>>,
         drop_debugger: bool,
         omit_unused_global_calls: bool,
-    ) -> Result<Box<Define>, bun_alloc::AllocError> {
+    ) -> Result<Box<Self>, bun_alloc::AllocError> {
         // Step 1. Load the globals into the hash tables
         let mut define = Define::with_pure_globals(drop_debugger, omit_unused_global_calls);
 
@@ -144,7 +134,7 @@ impl DefineExt for Define {
     }
 }
 
-/// Pre-built `ExprData` for the literal define *values* Bun auto-injects on
+/// Pre-built `DefineExprData` for the literal define *values* Bun auto-injects on
 /// every transpiler init: `"development"` / `"production"` / `"test"` (the
 /// `process.env.NODE_ENV` & `process.env.BUN_ENV` defaults) and `true` /
 /// `false` (the `process.browser` default). The `E::EString` payloads live in
@@ -152,24 +142,24 @@ impl DefineExt for Define {
 /// Returns `None` for everything else (user `--define` values, env-file
 /// `NODE_ENV` overrides like `staging`, JSON object/array literals, …), which
 /// falls through to the general `parse_env_json` path in `DefineData::parse`.
-fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
+fn const_default_define_value(value_str: &[u8]) -> Option<DefineExprData<'static>> {
     static DEVELOPMENT: bun_ast::E::EString = bun_ast::E::EString::from_static(b"development");
     static PRODUCTION: bun_ast::E::EString = bun_ast::E::EString::from_static(b"production");
     static TEST: bun_ast::E::EString = bun_ast::E::EString::from_static(b"test");
     if value_str == b"\"development\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(
-            &DEVELOPMENT,
-        )))
+        Some(DefineExprData::from_static_string(&DEVELOPMENT))
     } else if value_str == b"\"production\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(
-            &PRODUCTION,
-        )))
+        Some(DefineExprData::from_static_string(&PRODUCTION))
     } else if value_str == b"\"test\"" {
-        Some(ExprData::EString(bun_ast::StoreRef::from_static(&TEST)))
+        Some(DefineExprData::from_static_string(&TEST))
     } else if value_str == b"true" {
-        Some(ExprData::EBoolean(bun_ast::E::Boolean { value: true }))
+        Some(DefineExprData::new(ExprData::EBoolean(
+            bun_ast::E::Boolean { value: true },
+        )))
     } else if value_str == b"false" {
-        Some(ExprData::EBoolean(bun_ast::E::Boolean { value: false }))
+        Some(DefineExprData::new(ExprData::EBoolean(
+            bun_ast::E::Boolean { value: false },
+        )))
     } else {
         None
     }
@@ -177,32 +167,32 @@ fn const_default_define_value(value_str: &[u8]) -> Option<ExprData> {
 
 /// Extension surface for the canonical `DefineData` — `parse` / `from_input`
 /// need `bun_parsers::json_parser` / `js_lexer::Keywords`.
-pub trait DefineDataExt: Sized {
+pub trait DefineDataExt<'a>: Sized {
     fn parse(
         key: &[u8],
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_ast::AstArena,
-    ) -> Result<DefineData, crate::Error>;
+        bump: &'a bun_ast::AstArena,
+    ) -> Result<DefineData<'a>, crate::Error>;
 
     fn from_mergeable_input_entry(
-        user_defines: &mut UserDefines,
+        user_defines: &mut UserDefines<'a>,
         key: &[u8],
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_ast::AstArena,
+        bump: &'a bun_ast::AstArena,
     ) -> Result<(), crate::Error>;
 
     fn from_input(
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &bun_ast::Log,
-        bump: &bun_ast::AstArena,
-    ) -> Result<UserDefines, crate::Error>;
+        bump: &'a bun_ast::AstArena,
+    ) -> Result<UserDefines<'a>, crate::Error>;
 }
 
 /// The positions are in the text of the define, and the printer takes them for ones in the file.
@@ -228,15 +218,15 @@ fn clear_locs(expr: &mut bun_ast::Expr) {
     }
 }
 
-impl DefineDataExt for DefineData {
+impl<'a> DefineDataExt<'a> for DefineData<'a> {
     fn from_mergeable_input_entry(
-        user_defines: &mut UserDefines,
+        user_defines: &mut UserDefines<'a>,
         key: &[u8],
         value_str: &[u8],
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_ast::AstArena,
+        bump: &'a bun_ast::AstArena,
     ) -> Result<(), crate::Error> {
         user_defines.put_assume_capacity(
             key,
@@ -258,8 +248,8 @@ impl DefineDataExt for DefineData {
         value_is_undefined: bool,
         method_call_must_be_replaced_with_undefined_: bool,
         log: &bun_ast::Log,
-        bump: &bun_ast::AstArena,
-    ) -> Result<DefineData, crate::Error> {
+        bump: &'a bun_ast::AstArena,
+    ) -> Result<Self, crate::Error> {
         let mut key_splitter = strings::split(key, b".");
         while let Some(part) = key_splitter.next() {
             if !js_lexer::is_identifier(part) {
@@ -310,7 +300,7 @@ impl DefineDataExt for DefineData {
             };
 
             return Ok(DefineData {
-                value,
+                value: DefineExprData::new(value),
                 // upstream `DefineData` now owns `original_name:
                 // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of a
                 // borrowed `ptr`/`len` pair. Dupe
@@ -337,7 +327,6 @@ impl DefineDataExt for DefineData {
         // set on the `bun run` path. Build the `DefineData` straight from
         // process-lifetime statics: skips `bump.alloc_slice_copy` + `json_parser::parse_env_json`.
         if let Some(value) = const_default_define_value(value_str) {
-            let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(value.tag());
             return Ok(DefineData {
                 value,
                 original_name: if !value_str.is_empty() {
@@ -347,7 +336,7 @@ impl DefineDataExt for DefineData {
                 },
                 flags: Flags::new(
                     /* valueless: */ value_is_undefined,
-                    /* can_be_removed_if_unused: */ can_be_removed_if_unused,
+                    /* can_be_removed_if_unused: */ true,
                     /* call_can_be_unwrapped_if_unused: */ bun_ast::E::CallUnwrap::Never,
                     /* method_call_must_be_replaced_with_undefined: */
                     method_call_must_be_replaced_with_undefined_,
@@ -356,17 +345,12 @@ impl DefineDataExt for DefineData {
         }
 
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
-        let source = bun_ast::Source {
-            contents: std::borrow::Cow::Borrowed(arena_value),
-            path: defines_path(),
-            ..Default::default()
-        };
-        let mut expr = bun_parsers::json_parser::parse_env_json(&source, log, bump)?;
+        let mut expr = bun_parsers::json_parser::parse_env_json(arena_value, log, bump)?;
         clear_locs(&mut expr);
         let data: ExprData = expr.data;
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
-            value: data,
+            value: DefineExprData::new(data),
             original_name: if !value_str.is_empty() {
                 Some(Box::<[u8]>::from(value_str))
             } else {
@@ -386,8 +370,8 @@ impl DefineDataExt for DefineData {
         defines: &RawDefines,
         drop: &[&[u8]],
         log: &bun_ast::Log,
-        bump: &bun_ast::AstArena,
-    ) -> Result<UserDefines, crate::Error> {
+        bump: &'a bun_ast::AstArena,
+    ) -> Result<UserDefines<'a>, crate::Error> {
         let mut user_defines = UserDefines::default();
         user_defines.reserve((defines.len() + drop.len()) as u32 as usize);
         for (key, value) in defines.keys().iter().zip(defines.values().iter()) {

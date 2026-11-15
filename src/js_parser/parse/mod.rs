@@ -20,10 +20,10 @@ use bun_ast::LexerLog as _;
 use crate::lexer::T;
 use crate::p::P;
 use crate::parser::{
-    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, ExprOrLetStmt,
-    FnOrArrowDataParse, LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions,
-    ParseClassOptions, ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult,
-    StmtList, TypeParameterFlag,
+    AwaitOrYield, DeferredArrowArgErrors, DeferredErrors, ExprListLoc, FnOrArrowDataParse,
+    LexicalDecl, LocList, ParenExprOpts, ParseBindingOptions, ParseClassOptions,
+    ParseStatementOptions, ParsedPath, PropertyOpts, SkipTypeParameterResult, StmtList,
+    TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::expr::EFlags;
@@ -40,12 +40,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         level: Level,
         errors: Option<&mut DeferredErrors>,
-        expr: &mut Expr,
+        expr: &mut Expr<'a>,
     ) -> Result<(), Error> {
         self.parse_expr_common(level, errors, EFlags::None, expr)
     }
     #[inline]
-    pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
+    pub fn parse_expr(&mut self, level: Level) -> Result<Expr<'a>, Error> {
         let mut expr = Expr::EMPTY;
         self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
@@ -55,7 +55,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         level: Level,
         flags: EFlags,
-        expr: &mut Expr,
+        expr: &mut Expr<'a>,
     ) -> Result<(), Error> {
         self.parse_expr_common(level, None, flags, expr)
     }
@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         level: Level,
         mut errors: Option<&mut DeferredErrors>,
         flags: EFlags,
-        expr: &mut Expr,
+        expr: &mut Expr<'a>,
     ) -> Result<(), Error> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
@@ -97,7 +97,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         Ok(())
     }
 
-    pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr, Error> {
+    pub(crate) fn parse_yield_expr(&mut self, loc: bun_ast::Loc) -> Result<Expr<'a>, Error> {
         let p = self;
         let mut is_star = false;
         let mut value: Option<ExprNodeIndex> = None;
@@ -139,7 +139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         class_keyword: bun_ast::Range,
         name: Option<js_ast::LocRef>,
         class_opts: &ParseClassOptions<'a>,
-    ) -> Result<G::Class, Error> {
+    ) -> Result<G::Class<'a>, Error> {
         let p = self;
         let mut extends: Option<Expr> = None;
         let mut has_decorators: bool = false;
@@ -293,7 +293,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn parse_template_parts(
         &mut self,
         include_raw: bool,
-    ) -> Result<(bun_ast::StoreSlice<E::TemplatePart>, bun_ast::Loc), Error> {
+    ) -> Result<(bun_ast::StoreSlice<'a, E::TemplatePart<'a>>, bun_ast::Loc), Error> {
         let p = self;
         let mut parts = BumpVec::<E::TemplatePart>::with_capacity_in(1, p.arena);
         // Allow "in" inside template literals
@@ -336,7 +336,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     // This assumes the caller has already checked for TStringLiteral or TNoSubstitutionTemplateLiteral
-    pub(crate) fn parse_string_literal(&mut self) -> Result<Expr, Error> {
+    pub(crate) fn parse_string_literal(&mut self) -> Result<Expr<'a>, Error> {
         let p = self;
         let loc = p.lexer.loc();
         let mut str_ = p.lexer.to_e_string()?;
@@ -347,7 +347,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         Ok(expr)
     }
 
-    pub(crate) fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
+    pub(crate) fn parse_call_args(&mut self) -> Result<ExprListLoc<'a>, Error> {
         // Allow "in" inside call arguments; restored on every exit path
         let old_allow_in = self.allow_in;
         self.allow_in = true;
@@ -356,7 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         result
     }
 
-    fn parse_call_args_inner(&mut self) -> Result<ExprListLoc, Error> {
+    fn parse_call_args_inner(&mut self) -> Result<ExprListLoc<'a>, Error> {
         let p = self;
         let mut args: smallvec::SmallVec<[Expr; 4]> = smallvec::SmallVec::new();
         p.lexer.expect(T::TOpenParen)?;
@@ -389,7 +389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn parse_jsx_prop_value_identifier(
         &mut self,
         previous_string_with_backslash_loc: &mut bun_ast::Loc,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         // Use NextInsideJSXElement() not Next() so we can parse a JSX-style string literal
         p.lexer.next_inside_jsx_element()?;
@@ -420,7 +420,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         loc: bun_ast::Loc,
         level: Level,
         opts: ParenExprOpts,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         let mut items_list = BumpVec::<Expr>::new_in(p.arena);
         let mut errors = DeferredErrors::default();
@@ -676,7 +676,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         let mut name: Option<js_ast::LocRef> = None;
         let class_keyword = p.lexer.range();
@@ -776,8 +776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         if p.lexer.token == T::TStringLiteral {
             let estr = p.lexer.to_e_string()?;
             if estr.is_utf8() {
-                // SAFETY: E::String slices are arena-owned for 'a.
-                return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
+                return Ok(estr.slice8());
             } else {
                 // Lone surrogates are replaced with U+FFFD; the surrogate-error
                 // diagnostic path is dropped until the strict variant lands.
@@ -800,15 +799,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn parse_expr_or_let_stmt(
         &mut self,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<ExprOrLetStmt, Error> {
+    ) -> Result<js_ast::StmtOrExpr<'a>, Error> {
         let p = self;
         let token_range = p.lexer.range();
 
         if p.lexer.token != T::TIdentifier {
-            return Ok(ExprOrLetStmt {
-                stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),
-                ..Default::default()
-            });
+            return Ok(js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?));
         }
 
         let raw = p.lexer.raw();
@@ -826,19 +822,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         }
 
                         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Other, opts)?;
-                        let decls_slice = bun_collections::RawSlice::new(decls.slice());
-                        return Ok(ExprOrLetStmt {
-                            stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
-                                S::Local {
-                                    kind: js_ast::LocalKind::KLet,
-                                    decls,
-                                    is_export: opts.is_export,
-                                    ..Default::default()
-                                },
-                                token_range.loc,
-                            )),
-                            decls: decls_slice,
-                        });
+                        return Ok(js_ast::StmtOrExpr::Stmt(p.s(
+                            S::Local {
+                                kind: js_ast::LocalKind::KLet,
+                                decls,
+                                is_export: opts.is_export,
+                                ..Default::default()
+                            },
+                            token_range.loc,
+                        )));
                     }
                 }
                 _ => {}
@@ -862,7 +854,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 // p.markSyntaxFeature(.using, token_range.loc);
                 opts.is_using_statement = true;
                 let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
-                let decls_slice = bun_collections::RawSlice::new(decls.slice());
                 if opts.is_typescript_declare {
                     // TypeScript does not allow "using" declarations in ambient
                     // contexts ("declare using x", "declare namespace { using x }").
@@ -877,18 +868,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 } else if !opts.is_for_loop_init {
                     p.require_initializers(js_ast::LocalKind::KUsing, decls.slice())?;
                 }
-                return Ok(ExprOrLetStmt {
-                    stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
-                        S::Local {
-                            kind: js_ast::LocalKind::KUsing,
-                            decls,
-                            is_export: false,
-                            ..Default::default()
-                        },
-                        token_range.loc,
-                    )),
-                    decls: decls_slice,
-                });
+                return Ok(js_ast::StmtOrExpr::Stmt(p.s(
+                    S::Local {
+                        kind: js_ast::LocalKind::KUsing,
+                        decls,
+                        is_export: false,
+                        ..Default::default()
+                    },
+                    token_range.loc,
+                )));
             }
         } else if p.fn_or_arrow_data_parse.allow_await == AwaitOrYield::AllowExpr && raw == b"await"
         {
@@ -922,7 +910,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         opts.is_using_statement = true;
                         let decls =
                             p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, opts)?;
-                        let decls_slice = bun_collections::RawSlice::new(decls.slice());
                         if opts.is_typescript_declare {
                             p.log().add_error(
                                 Some(p.source),
@@ -932,18 +919,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         } else if !opts.is_for_loop_init {
                             p.require_initializers(js_ast::LocalKind::KAwaitUsing, decls.slice())?;
                         }
-                        return Ok(ExprOrLetStmt {
-                            stmt_or_expr: js_ast::StmtOrExpr::Stmt(p.s(
-                                S::Local {
-                                    kind: js_ast::LocalKind::KAwaitUsing,
-                                    decls,
-                                    is_export: false,
-                                    ..Default::default()
-                                },
-                                token_range.loc,
-                            )),
-                            decls: decls_slice,
-                        });
+                        return Ok(js_ast::StmtOrExpr::Stmt(p.s(
+                            S::Local {
+                                kind: js_ast::LocalKind::KAwaitUsing,
+                                decls,
+                                is_export: false,
+                                ..Default::default()
+                            },
+                            token_range.loc,
+                        )));
                     }
                     let r = p.store_name_in_ref(raw2);
                     break 'value p.new_expr(
@@ -965,36 +949,28 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             p.parse_suffix(&mut value, Level::Prefix, None, EFlags::None)?;
             let mut expr = p.new_expr(E::Await { value }, token_range.loc);
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
-            return Ok(ExprOrLetStmt {
-                stmt_or_expr: js_ast::StmtOrExpr::Expr(expr),
-                ..Default::default()
-            });
+            return Ok(js_ast::StmtOrExpr::Expr(expr));
         } else {
-            return Ok(ExprOrLetStmt {
-                stmt_or_expr: js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?),
-                ..Default::default()
-            });
+            return Ok(js_ast::StmtOrExpr::Expr(p.parse_expr(Level::Lowest)?));
         }
 
         // Parse the remainder of this expression that starts with an identifier
         let ref_ = p.store_name_in_ref(raw);
-        let mut result = ExprOrLetStmt {
-            stmt_or_expr: js_ast::StmtOrExpr::Expr(p.new_expr(
-                E::Identifier {
-                    ref_,
-                    ..Default::default()
-                },
-                token_range.loc,
-            )),
-            ..Default::default()
-        };
-        if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
-            p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
-        }
-        Ok(result)
+        let mut expr = p.new_expr(
+            E::Identifier {
+                ref_,
+                ..Default::default()
+            },
+            token_range.loc,
+        );
+        p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
+        Ok(js_ast::StmtOrExpr::Expr(expr))
     }
 
-    pub(crate) fn parse_binding(&mut self, opts: ParseBindingOptions) -> Result<Binding, Error> {
+    pub(crate) fn parse_binding(
+        &mut self,
+        opts: ParseBindingOptions,
+    ) -> Result<Binding<'a>, Error> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
             return Err(crate::Error::StackOverflow);
@@ -1175,7 +1151,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         })
     }
 
-    pub(crate) fn parse_property_binding(&mut self) -> Result<B::Property, Error> {
+    pub(crate) fn parse_property_binding(&mut self) -> Result<B::Property<'a>, Error> {
         let p = self;
         // Every match arm below assigns `key` (or `return`s) before any read.
         let key: Expr;
@@ -1280,7 +1256,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         kind: js_ast::symbol::Kind,
         opts: &mut ParseStatementOptions<'a>,
-    ) -> Result<G::DeclList, Error> {
+    ) -> Result<G::DeclList<'a>, Error> {
         let p = self;
         let mut decls: smallvec::SmallVec<[G::Decl; 4]> = smallvec::SmallVec::new();
 
@@ -1343,8 +1319,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         let path_text = p.lexer.to_utf8_e_string()?;
         let mut path = ParsedPath {
             loc: p.lexer.loc(),
-            // SAFETY: E::String slice8() is arena-owned for 'a.
-            text: unsafe { bun_collections::detach_lifetime(path_text.slice8()) },
+            text: path_text.slice8(),
             is_macro: false,
             import_tag: bun_ast::ImportRecordTag::None,
             loader: None,
@@ -1621,7 +1596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         async_range: bun_ast::Range,
         level: Level,
         flags: EFlags,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         if let Some(starts) = &mut p.starts_for_parse_only {
             starts

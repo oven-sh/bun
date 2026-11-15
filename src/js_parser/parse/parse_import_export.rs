@@ -14,7 +14,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         loc: bun_ast::Loc,
         level: Level,
-    ) -> Result<Expr, Error> {
+    ) -> Result<Expr<'a>, Error> {
         let p = self;
         // Parse an "import.meta" expression
         if p.lexer.token == T::TDot {

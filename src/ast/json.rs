@@ -6,26 +6,26 @@ use crate::expr::{Data, Tag};
 use crate::{E, Expr, G, Loc};
 
 #[derive(Clone, Copy)]
-pub struct JsonView<'t> {
+pub struct JsonView<'t, 'ast> {
     /// For an [`E::JsonValue`], the `key_loc` of its property or the `loc` of its array.
     pub loc: Loc,
-    value: Value<'t>,
+    value: Value<'t, 'ast>,
 }
 
 #[derive(Clone, Copy)]
-enum Value<'t> {
-    JsonValue(&'t E::JsonValue),
-    Expr(&'t Expr),
+enum Value<'t, 'ast> {
+    JsonValue(&'t E::JsonValue<'t>),
+    Expr(&'t Expr<'ast>),
 }
 
 #[derive(Clone, Copy)]
-pub struct Query<'t> {
-    pub value: JsonView<'t>,
+pub struct Query<'t, 'ast> {
+    pub value: JsonView<'t, 'ast>,
     pub loc: Loc,
 }
 
-impl<'t> From<&'t Expr> for JsonView<'t> {
-    fn from(expr: &'t Expr) -> Self {
+impl<'t, 'ast> From<&'t Expr<'ast>> for JsonView<'t, 'ast> {
+    fn from(expr: &'t Expr<'ast>) -> Self {
         JsonView {
             loc: expr.loc,
             value: Value::Expr(expr),
@@ -33,7 +33,7 @@ impl<'t> From<&'t Expr> for JsonView<'t> {
     }
 }
 
-impl<'t> JsonView<'t> {
+impl<'t, 'ast> JsonView<'t, 'ast> {
     pub fn from_json_value(value: &'t E::JsonValue, loc: Loc) -> Self {
         JsonView {
             loc,
@@ -41,21 +41,21 @@ impl<'t> JsonView<'t> {
         }
     }
 
-    pub fn as_json_value(self) -> Option<&'t E::JsonValue> {
+    pub fn as_json_value(self) -> Option<&'t E::JsonValue<'t>> {
         match self.value {
             Value::JsonValue(value) => Some(value),
             Value::Expr(_) => None,
         }
     }
 
-    fn as_expr_data(self) -> Option<&'t Data> {
+    fn as_expr_data(self) -> Option<&'t Data<'ast>> {
         match self.value {
             Value::JsonValue(_) => None,
             Value::Expr(expr) => Some(&expr.data),
         }
     }
 
-    pub fn as_e_object_json(self) -> Option<&'t E::ObjectJSON> {
+    pub fn as_e_object_json(self) -> Option<&'t E::ObjectJSON<'t>> {
         match self.value {
             Value::JsonValue(value) => value.as_object(),
             Value::Expr(Expr {
@@ -66,7 +66,7 @@ impl<'t> JsonView<'t> {
         }
     }
 
-    pub fn as_e_array_json(self) -> Option<&'t E::ArrayJSON> {
+    pub fn as_e_array_json(self) -> Option<&'t E::ArrayJSON<'t>> {
         match self.value {
             Value::JsonValue(value) => value.as_array(),
             Value::Expr(Expr {
@@ -77,14 +77,14 @@ impl<'t> JsonView<'t> {
         }
     }
 
-    pub fn as_e_object(self) -> Option<&'t E::Object> {
+    pub fn as_e_object(self) -> Option<&'t E::Object<'ast>> {
         match self.as_expr_data()? {
             Data::EObject(object) => Some(object),
             _ => None,
         }
     }
 
-    pub fn as_e_array(self) -> Option<&'t E::Array> {
+    pub fn as_e_array(self) -> Option<&'t E::Array<'ast>> {
         match self.as_expr_data()? {
             Data::EArray(array) => Some(array),
             _ => None,
@@ -174,7 +174,7 @@ impl<'t> JsonView<'t> {
         }
     }
 
-    pub fn as_property(self, name: &[u8]) -> Option<Query<'t>> {
+    pub fn as_property(self, name: &[u8]) -> Option<Query<'t, 'ast>> {
         if let Some(object) = self.as_e_object_json() {
             let row = object
                 .properties()
@@ -192,16 +192,16 @@ impl<'t> JsonView<'t> {
         })
     }
 
-    pub fn get(self, name: &[u8]) -> Option<JsonView<'t>> {
+    pub fn get(self, name: &[u8]) -> Option<Self> {
         self.as_property(name).map(|query| query.value)
     }
 
-    pub fn get_object(self, name: &[u8]) -> Option<JsonView<'t>> {
+    pub fn get_object(self, name: &[u8]) -> Option<Self> {
         self.get(name).filter(|value| value.is_object())
     }
 
     /// `(key, key_loc, value)` in source order. Empty if `self` is not an object.
-    fn properties(self) -> impl Iterator<Item = (&'t [u8], Loc, JsonView<'t>)> {
+    fn properties(self) -> impl Iterator<Item = (&'t [u8], Loc, Self)> {
         let rows = self
             .as_e_object_json()
             .map_or(&[][..], E::ObjectJSON::properties);
@@ -225,21 +225,21 @@ impl<'t> JsonView<'t> {
         rows.chain(exprs)
     }
 
-    pub fn for_each_property(self, mut f: impl FnMut(&'t [u8], Loc, JsonView<'t>)) {
+    pub fn for_each_property(self, mut f: impl FnMut(&'t [u8], Loc, Self)) {
         self.properties()
             .for_each(|(key, loc, value)| f(key, loc, value));
     }
 
     pub fn try_for_each_property<Error>(
         self,
-        mut f: impl FnMut(&'t [u8], Loc, JsonView<'t>) -> Result<(), Error>,
+        mut f: impl FnMut(&'t [u8], Loc, Self) -> Result<(), Error>,
     ) -> Result<(), Error> {
         self.properties()
             .try_for_each(|(key, loc, value)| f(key, loc, value))
     }
 
     /// `None` for an empty array, like [`Expr::as_array`].
-    pub fn as_array(self) -> Option<impl Iterator<Item = JsonView<'t>>> {
+    pub fn as_array(self) -> Option<impl Iterator<Item = Self>> {
         let rows = self.as_e_array_json().map_or(&[][..], E::ArrayJSON::items);
         let exprs: &[Expr] = self.as_e_array().map_or(&[], |array| &array.items);
         let items = (rows

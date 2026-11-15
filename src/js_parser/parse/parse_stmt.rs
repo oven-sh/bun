@@ -43,7 +43,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     // spread across sibling monomorphizations that fault-around drags in.
 
     #[inline]
-    fn t_semicolon(p: &mut Self) -> Result<Stmt> {
+    fn t_semicolon(p: &mut Self) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         Ok(Stmt::empty())
     }
@@ -53,7 +53,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         p.parse_fn_stmt(loc, opts, None)
     }
@@ -64,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         if !Self::IS_TYPESCRIPT_ENABLED {
             p.lexer.unexpected()?;
             return Err(crate::Error::SyntaxError);
@@ -74,7 +74,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     #[cold]
     #[inline(never)]
-    fn t_at(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
+    fn t_at(p: &mut Self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt<'a>> {
         // Parse decorators before class statements, which are potentially exported
         if Self::IS_TYPESCRIPT_ENABLED || p.options.features.standard_decorators {
             let scope_index = p.scopes_in_order.len();
@@ -125,7 +125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
             p.forbid_lexical_decl(loc);
         }
@@ -138,7 +138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         let decls = p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, opts)?;
         p.lexer.expect_or_insert_semicolon()?;
@@ -158,7 +158,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         if opts.lexical_decl != LexicalDecl::AllowAll {
             p.forbid_lexical_decl(loc);
         }
@@ -189,7 +189,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)]
-    fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
         // `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
@@ -265,7 +265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     #[cold]
     #[inline(never)]
-    fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_do(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         let mut stmt_opts = ParseStatementOptions::default();
         let body = p.parse_stmt(&mut stmt_opts)?;
@@ -283,7 +283,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)]
-    fn t_while(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_while(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
@@ -298,7 +298,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     #[cold]
     #[inline(never)]
-    fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_with(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         p.lexer.expect(T::TOpenParen)?;
         let test = p.parse_expr(Level::Lowest)?;
@@ -324,7 +324,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)]
-    fn t_switch(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_switch(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt<'a>> {
         p.lexer.next()?;
 
         p.lexer.expect(T::TOpenParen)?;
@@ -399,7 +403,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)]
-    fn t_try(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_try(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         let body_loc = p.lexer.loc();
         p.lexer.expect(T::TOpenBrace)?;
@@ -484,7 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)]
-    fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit as well as explicit returns.
@@ -538,10 +542,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 bad_async_range = Some(p.lexer.range());
             }
 
-            // Track the decl slice separately so we can reference it after `decls` is moved into
-            // an arena-backed S::Local. The Vec's heap buffer stays put across the move; the
-            // arena outlives this fn, so the lifetime-erased view remains valid.
-            let mut decls_ptr: bun_ast::StoreSlice<G::Decl> = bun_ast::StoreSlice::EMPTY;
             let init_loc = p.lexer.loc();
             let mut is_var = false;
             match p.lexer.token {
@@ -552,7 +552,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     let mut stmt_opts = ParseStatementOptions::default();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Hoisted, &mut stmt_opts)?;
-                    decls_ptr = bun_ast::StoreSlice::new(decls.slice());
                     init_ = Some(p.s(
                         S::Local {
                             kind: js_ast::s::Kind::KVar,
@@ -568,7 +567,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     let mut stmt_opts = ParseStatementOptions::default();
                     let decls =
                         p.parse_and_declare_decls(js_ast::symbol::Kind::Constant, &mut stmt_opts)?;
-                    decls_ptr = bun_ast::StoreSlice::new(decls.slice());
                     init_ = Some(p.s(
                         S::Local {
                             kind: js_ast::s::Kind::KConst,
@@ -587,14 +585,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         ..Default::default()
                     };
 
-                    let res = p.parse_expr_or_let_stmt(&mut stmt_opts)?;
-                    match res.stmt_or_expr {
+                    match p.parse_expr_or_let_stmt(&mut stmt_opts)? {
                         js_ast::StmtOrExpr::Stmt(stmt) => {
                             bad_let_range = None;
                             bad_async_range = None;
-                            // Keep the "let"/"using" declarations visible to the for-in/for-of
-                            // checks below ("forbid_initializers"), like the "var"/"const" arms.
-                            decls_ptr = bun_ast::StoreSlice::new(res.decls.slice());
                             init_ = Some(stmt);
                         }
                         js_ast::StmtOrExpr::Expr(expr) => {
@@ -612,6 +606,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     }
                 }
             }
+
+            // A closure: a slice that is live from here grows the frame of this recursive function.
+            let init_decls = move || match init_ {
+                Some(Stmt {
+                    data: js_ast::StmtData::SLocal(local),
+                    ..
+                }) => local.get().decls.slice(),
+                _ => &[],
+            };
 
             // "in" expressions are allowed again
             p.allow_in = true;
@@ -649,7 +652,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     }
                 }
 
-                p.forbid_initializers(decls_ptr.slice(), "of", false)?;
+                p.forbid_initializers(init_decls(), "of", false)?;
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Comma)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -668,7 +671,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
             // Detect for-in loops
             if p.lexer.token == T::TIn {
-                p.forbid_initializers(decls_ptr.slice(), "in", is_var)?;
+                p.forbid_initializers(init_decls(), "in", is_var)?;
                 p.lexer.next()?;
                 let value = p.parse_expr(Level::Lowest)?;
                 p.lexer.expect(T::TCloseParen)?;
@@ -689,7 +692,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 match &init_stmt.data {
                     js_ast::StmtData::SLocal(local) => {
                         if local.kind == js_ast::s::Kind::KConst {
-                            p.require_initializers(js_ast::s::Kind::KConst, decls_ptr.slice())?;
+                            p.require_initializers(js_ast::s::Kind::KConst, &local.decls)?;
                         }
                     }
                     _ => {}
@@ -725,7 +728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline]
-    fn t_break(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_break(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         let name = p.parse_label_name()?;
         p.lexer.expect_or_insert_semicolon()?;
@@ -733,7 +736,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline]
-    fn t_continue(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_continue(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         let name = p.parse_label_name()?;
         p.lexer.expect_or_insert_semicolon()?;
@@ -741,7 +748,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline]
-    fn t_return(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_return(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt<'a>> {
         if p.fn_or_arrow_data_parse.is_return_disallowed {
             p.log().add_range_error(
                 Some(p.source),
@@ -765,7 +776,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline]
-    fn t_throw(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_throw(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         if p.lexer.has_newline_before {
             p.log().add_error(
@@ -784,7 +795,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     #[cold]
     #[inline(never)]
-    fn t_debugger(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
+    fn t_debugger(
+        p: &mut Self,
+        _: &mut ParseStatementOptions,
+        loc: bun_ast::Loc,
+    ) -> Result<Stmt<'a>> {
         p.lexer.next()?;
         p.lexer.expect_or_insert_semicolon()?;
         Ok(p.s(S::Debugger {}, loc))
@@ -795,7 +810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         _: &mut ParseStatementOptions,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit.
@@ -823,7 +838,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         let previous_export_keyword = p.esm_export_keyword;
         match opts.scope {
             StatementScope::Module => p.esm_export_keyword = p.lexer.range(),
@@ -1401,7 +1416,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         let previous_import_keyword = p.esm_import_keyword;
         p.esm_import_keyword = p.lexer.range();
         p.lexer.next()?;
@@ -1683,7 +1698,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         loc: bun_ast::Loc,
         label_loc: bun_ast::Loc,
         label_ref: Ref,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;
         // Pop after parsing the labeled body; done explicitly so we can keep
         // `p` exclusively borrowed.
@@ -1713,7 +1728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
-    ) -> Result<Stmt> {
+    ) -> Result<Stmt<'a>> {
         let is_identifier = p.lexer.token == T::TIdentifier;
         let name = p.lexer.identifier;
         // Parse either an async function, an async expression, or a normal expression.
@@ -1731,8 +1746,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             expr = p.parse_async_prefix_expr(async_range, Level::Lowest, EFlags::None)?;
             p.parse_suffix(&mut expr, Level::Lowest, None, EFlags::None)?;
         } else {
-            let expr_or_let = p.parse_expr_or_let_stmt(opts)?;
-            match expr_or_let.stmt_or_expr {
+            match p.parse_expr_or_let_stmt(opts)? {
                 js_ast::StmtOrExpr::Stmt(stmt) => {
                     p.lexer.expect_or_insert_semicolon()?;
                     return Ok(stmt);
@@ -1784,7 +1798,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         opts: &mut ParseStatementOptions<'a>,
         loc: bun_ast::Loc,
         ts_stmt: js_lexer::TypescriptStmtKeyword,
-    ) -> Result<Option<Stmt>> {
+    ) -> Result<Option<Stmt<'a>>> {
         match ts_stmt {
             js_lexer::TypescriptStmtKeyword::TsStmtType => {
                 if p.lexer.token == T::TIdentifier && !p.lexer.has_newline_before {
@@ -1984,7 +1998,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         Ok(None)
     }
 
-    pub(crate) fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
+    pub(crate) fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt<'a>> {
         if !self.stack_check.is_safe_to_recurse() {
             // Sentinel error; mapped to a "Maximum call stack size exceeded"
             // syntax error at the catch site in parse_entry.rs.

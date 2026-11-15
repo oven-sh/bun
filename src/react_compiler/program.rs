@@ -58,10 +58,10 @@ pub enum JsxImportKind {
 /// Getters borrow `&self`; mutators borrow `&mut self`. Lowering uses only
 /// getters and finishes (returning an owned `HirFunction`) before codegen
 /// takes any `&mut self`, so the two never overlap.
-pub trait Host {
-    fn symbols(&self) -> &[Symbol];
-    fn module_scope(&self) -> &Scope;
-    fn import_records(&self) -> &[ImportRecord<'_>];
+pub trait Host<'a> {
+    fn symbols(&self) -> &[Symbol<'a>];
+    fn module_scope(&self) -> &Scope<'a>;
+    fn import_records(&self) -> &[ImportRecord<'a>];
 
     /// The operand of each `x as T` with the cast, in the order of the operands. The parser drops casts.
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -97,11 +97,11 @@ pub trait Host {
     /// `SourceContentsSlice`, `AllocatedName`). Post-visit, identifier
     /// references are resolved `Symbol` refs, so this is just a symbol-table
     /// name lookup; kept for the few `SourceContentsSlice` refs codegen mints.
-    fn ref_name(&self, ref_: Ref) -> &[u8];
+    fn ref_name(&self, ref_: Ref) -> &'a [u8];
 
     /// The `Scope` created at `loc`, if any. Unused post-visit (refs are
     /// already resolved); always returning `None` is correct.
-    fn scope_for_loc(&self, loc: bun_ast::Loc) -> Option<&Scope>;
+    fn scope_for_loc(&self, loc: bun_ast::Loc) -> Option<&Scope<'a>>;
 
     /// `Ref` for a JSX runtime symbol (jsx/jsxs/jsxDEV/Fragment/createElement),
     /// declaring it on the parser's `jsx_imports` table on first use so the
@@ -124,7 +124,7 @@ pub trait Host {
 
     /// The classic runtime's factory (`React.createElement`, `h`, ...),
     /// resolved from the current scope the way the visit pass resolves it.
-    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr;
+    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr<'a>;
 
     /// A new symbol for a module-level name, such as an outlined function.
     fn new_generated(&mut self, name: &[u8]) -> Ref;
@@ -169,7 +169,7 @@ const DYNAMIC_GATING_DIRECTIVE_PREFIX: &[u8] = b"use memo if(";
 // Directive helpers
 // -----------------------------------------------------------------------
 
-fn collect_body_directives(stmts: &[Stmt]) -> Vec<&[u8]> {
+fn collect_body_directives<'a>(stmts: &[Stmt<'a>]) -> Vec<&'a [u8]> {
     let mut out = Vec::new();
     for s in stmts {
         match &s.data {
@@ -194,23 +194,23 @@ pub fn has_module_scope_opt_out(stmts: &[Stmt]) -> bool {
 /// imported bindings reach `Environment::resolve_module_type` instead of
 /// degrading to `Global`.
 #[inline(never)]
-pub fn collect_import_bindings(
+pub fn collect_import_bindings<'a>(
     arena: &AstArena,
-    stmts: &[Stmt],
-    records: &[ImportRecord],
-    symbols: &[Symbol],
-) -> IndexMap<Ref, VariableBinding> {
+    stmts: &[Stmt<'a>],
+    records: &[ImportRecord<'a>],
+    symbols: &[Symbol<'a>],
+) -> IndexMap<Ref, VariableBinding<'a>> {
     bun_removable_features::removable_definition!(ReactCompiler, collect_import_bindings);
     with_arena(arena, || {
         collect_import_bindings_impl(stmts, records, symbols)
     })
 }
 
-fn collect_import_bindings_impl(
-    stmts: &[Stmt],
-    records: &[ImportRecord],
-    symbols: &[Symbol],
-) -> IndexMap<Ref, VariableBinding> {
+fn collect_import_bindings_impl<'a>(
+    stmts: &[Stmt<'a>],
+    records: &[ImportRecord<'a>],
+    symbols: &[Symbol<'a>],
+) -> IndexMap<Ref, VariableBinding<'a>> {
     let mut out = IndexMap::new();
     for stmt in stmts {
         let StmtData::SImport(import) = &stmt.data else {
@@ -220,8 +220,8 @@ fn collect_import_bindings_impl(
         let Some(record) = records.get(import.import_record_index as usize) else {
             continue;
         };
-        let module = crate::hir::StoreStr::new(record.path.text);
-        let local_name = |ref_: Ref| -> Option<crate::hir::StoreStr> {
+        let module = ast::StoreStr::new(record.path.text);
+        let local_name = |ref_: Ref| -> Option<ast::StoreStr<'a>> {
             symbols
                 .get(ref_.inner_index() as usize)
                 .map(|sym| sym.original_name)
@@ -985,7 +985,7 @@ fn is_valid_component_params(host: &dyn Host, args: &[G::Arg], has_rest_arg: boo
 fn get_react_function_type(
     host: &dyn Host,
     name: Option<&[u8]>,
-    func: &FunctionNode<'_>,
+    func: &FunctionNode<'_, 'static>,
     body_directives: &[&[u8]],
     in_react_hoc: bool,
     is_top_level: bool,
@@ -1118,7 +1118,7 @@ fn set_flag(flags: &mut flags::FunctionSet, flag: flags::Function, on: bool) {
     }
 }
 
-fn build_outlined_decl(arena: &AstArena, outlined: CodegenFunction) -> Stmt {
+fn build_outlined_decl(arena: &'static AstArena, outlined: CodegenFunction) -> Stmt<'static> {
     let mut fn_flags = flags::FUNCTION_NONE;
     if outlined.is_async {
         fn_flags |= flags::Function::IsAsync;
@@ -1152,13 +1152,13 @@ fn build_outlined_decl(arena: &AstArena, outlined: CodegenFunction) -> Stmt {
 // finalized after.
 // -----------------------------------------------------------------------
 
-pub struct ReactCompilerState {
+pub struct ReactCompilerState<'a> {
     options: ReactCompilerOptions,
     env_config: EnvironmentConfig,
     context: ProgramContext,
     diagnostics: Vec<CompileDiagnostic>,
-    outlined_decls: Vec<Stmt>,
-    import_bindings: IndexMap<Ref, VariableBinding>,
+    outlined_decls: Vec<Stmt<'a>>,
+    import_bindings: IndexMap<Ref, VariableBinding<'a>>,
     /// `Some` once a fatal (panic-threshold or Config-category) error has been
     /// hit; subsequent `maybe_compile_*` calls become no-ops.
     fatal: Option<CompileOutput>,
@@ -1167,7 +1167,7 @@ pub struct ReactCompilerState {
     did_lazy_init: bool,
 }
 
-impl ReactCompilerState {
+impl<'a> ReactCompilerState<'a> {
     /// Construct per-file state. Host-dependent initialization
     /// (`ProgramContext::init_from_scope`, restricted-import validation) is
     /// deferred to the first `maybe_compile_*` call so the parser can set
@@ -1176,7 +1176,7 @@ impl ReactCompilerState {
     pub fn new(
         options: ReactCompilerOptions,
         has_module_scope_opt_out: bool,
-        import_bindings: IndexMap<Ref, VariableBinding>,
+        import_bindings: IndexMap<Ref, VariableBinding<'a>>,
     ) -> Self {
         bun_removable_features::removable_definition!(ReactCompiler, Self::new);
         bun_core::scoped_log!(
@@ -1294,7 +1294,7 @@ impl ReactCompilerState {
     }
 
     /// Removes and returns the functions outlined since `outlined_len()` returned `from`. Any left here go at the end of the module.
-    pub fn take_outlined_from(&mut self, from: usize) -> impl Iterator<Item = Stmt> + '_ {
+    pub fn take_outlined_from(&mut self, from: usize) -> impl Iterator<Item = Stmt<'a>> + '_ {
         self.outlined_decls.drain(from..)
     }
 }
@@ -1308,8 +1308,8 @@ impl ReactCompilerState {
 /// to the caller's stack. `args` is an arena-backed `StoreSlice` (stable across
 /// the call); the live body is passed separately as the `visit_stmts` buffer.
 #[derive(Clone, Copy)]
-pub struct PendingCompile {
-    pub args: StoreSlice<G::Arg>,
+pub struct PendingCompile<'a> {
+    pub args: StoreSlice<'a, G::Arg<'a>>,
     pub flags: flags::FunctionSet,
     pub body_loc: Loc,
     pub args_loc: Loc,
@@ -1326,8 +1326,8 @@ pub struct PendingCompile {
 /// `G::Fn` / `E::Arrow` by `visit_func` / arrow-visit (the body has already
 /// been spliced into the `visit_stmts` buffer by the hook).
 #[derive(Clone, Copy)]
-pub struct CompileResult {
-    pub args: StoreSlice<G::Arg>,
+pub struct CompileResult<'a> {
+    pub args: StoreSlice<'a, G::Arg<'a>>,
     pub flags: flags::FunctionSet,
 }
 
@@ -1337,14 +1337,14 @@ pub struct CompileResult {
 /// (so the existing mangle phase then runs on it), along with the new
 /// args/flags for `visit_func` / arrow-visit to apply.
 #[inline(never)]
-pub fn maybe_compile_pending(
-    arena: &AstArena,
-    state: &mut ReactCompilerState,
-    host: &mut dyn Host,
-    pending: &PendingCompile,
-    body: &mut [Stmt],
+pub fn maybe_compile_pending<'a>(
+    arena: &'a AstArena,
+    state: &mut ReactCompilerState<'a>,
+    host: &mut dyn Host<'a>,
+    pending: &PendingCompile<'a>,
+    body: &mut [Stmt<'a>],
     name: Option<&[u8]>,
-) -> Option<(Vec<Stmt>, CompileResult)> {
+) -> Option<(Vec<Stmt<'a>>, CompileResult<'a>)> {
     bun_removable_features::removable_definition!(ReactCompiler, maybe_compile_pending);
     with_observation(|observation| {
         let Some(observation) = observation else {
@@ -1370,14 +1370,28 @@ pub fn maybe_compile_pending(
     })
 }
 
-fn compile_pending(
-    arena: &AstArena,
-    state: &mut ReactCompilerState,
-    host: &mut dyn Host,
-    pending: &PendingCompile,
-    body: &mut [Stmt],
+fn compile_pending<'a>(
+    arena: &'a AstArena,
+    state: &mut ReactCompilerState<'a>,
+    host: &mut dyn Host<'a>,
+    pending: &PendingCompile<'a>,
+    body: &mut [Stmt<'a>],
     name: Option<&[u8]>,
-) -> Option<(Vec<Stmt>, CompileResult)> {
+) -> Option<(Vec<Stmt<'a>>, CompileResult<'a>)> {
+    type Inputs<'a, 'ast> = (
+        &'ast AstArena,
+        &'a mut ReactCompilerState<'ast>,
+        &'a mut dyn Host<'ast>,
+        &'a PendingCompile<'ast>,
+    );
+    // SAFETY: only lifetimes differ. The compiler stores what it gets from these in HIR, which is dropped before
+    // `with_arena` returns, in `state` and in `cf`. It does not keep `body` itself, only statements copied out of it.
+    let ((arena, state, host, pending), body) = unsafe {
+        core::mem::transmute::<
+            (Inputs<'_, 'a>, &mut [Stmt<'a>]),
+            (Inputs<'_, 'static>, &'static mut [Stmt<'static>]),
+        >(((arena, state, host, pending), body))
+    };
     let tmp = G::Fn {
         name: None,
         open_parens_loc: pending.args_loc,
@@ -1404,20 +1418,24 @@ fn compile_pending(
     set_flag(&mut flags, flags::Function::IsAsync, cf.is_async);
     set_flag(&mut flags, flags::Function::IsGenerator, cf.generator);
     set_flag(&mut flags, flags::Function::HasRestArg, cf.has_rest_arg);
-    Some((
-        cf.body,
-        CompileResult {
-            args: StoreSlice::from_iter_in(cf.params, arena),
-            flags,
-        },
-    ))
+    let result = CompileResult {
+        args: StoreSlice::from_iter_in(cf.params, arena),
+        flags,
+    };
+    // SAFETY: only lifetimes differ, and `'static` stood for `'a`.
+    Some(unsafe {
+        core::mem::transmute::<
+            (Vec<Stmt<'static>>, CompileResult<'static>),
+            (Vec<Stmt<'a>>, CompileResult<'a>),
+        >((cf.body, result))
+    })
 }
 
 fn maybe_compile_node(
-    arena: &AstArena,
-    state: &mut ReactCompilerState,
-    host: &mut dyn Host,
-    node: FunctionNode<'_>,
+    arena: &'static AstArena,
+    state: &mut ReactCompilerState<'static>,
+    host: &mut dyn Host<'static>,
+    node: FunctionNode<'_, 'static>,
     name: Option<&[u8]>,
     in_react_hoc: bool,
     is_top_level: bool,
@@ -1534,11 +1552,11 @@ fn maybe_compile_node(
 /// (prepended) plus any outlined function decls (appended). Returns the
 /// summary `CompileOutput`.
 #[inline(never)]
-pub fn finish(
-    arena: &AstArena,
-    state: ReactCompilerState,
+pub fn finish<'a>(
+    arena: &'a AstArena,
+    state: ReactCompilerState<'a>,
     host: &mut dyn Host,
-    out_stmts: &mut Vec<Stmt>,
+    out_stmts: &mut Vec<Stmt<'a>>,
 ) -> CompileOutput {
     bun_removable_features::removable_definition!(ReactCompiler, finish);
     with_observation(|observation| {
@@ -1556,11 +1574,11 @@ pub fn finish(
     })
 }
 
-fn finish_program(
-    arena: &AstArena,
-    mut state: ReactCompilerState,
+fn finish_program<'a>(
+    arena: &'a AstArena,
+    mut state: ReactCompilerState<'a>,
     host: &mut dyn Host,
-    out_stmts: &mut Vec<Stmt>,
+    out_stmts: &mut Vec<Stmt<'a>>,
 ) -> CompileOutput {
     if let Some(fatal) = state.fatal.take() {
         return fatal;

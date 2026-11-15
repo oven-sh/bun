@@ -13,8 +13,8 @@ use crate::{Index, IndexInt, LinkerContext};
 
 type SymbolList<'a> = bun_ast::symbol::List<'a>;
 
-pub(crate) fn generate_code_for_lazy_export(
-    this: &mut LinkerContext,
+pub(crate) fn generate_code_for_lazy_export<'a>(
+    this: &mut LinkerContext<'_, 'a>,
     log: &bun_ast::Log,
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
@@ -100,7 +100,7 @@ pub(crate) fn generate_code_for_lazy_export(
                 let ref_ = entry.ref_;
                 debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
-                let name_expr = |name: &ExportedName<'_>| match *name {
+                let name_expr = |name: &ExportedName<'a>| match *name {
                     ExportedName::Local(ref_) => Expr::allocate(
                         arena,
                         E::NameOfSymbol {
@@ -140,7 +140,6 @@ pub(crate) fn generate_code_for_lazy_export(
                     )
                 };
 
-                // `Symbol.original_name: StoreStr` — arena-owned for the link pass.
                 let key: &[u8] = symbols[ref_.inner_index() as usize].original_name.slice();
                 exports.put(arena, key, value)?;
             }

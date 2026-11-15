@@ -3,7 +3,7 @@
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
 use crate::hir::*;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, Expr, G, OpCode, OptionalChain, Ref};
+use bun_ast::{self as ast, G, OpCode, OptionalChain, Ref};
 
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 
@@ -326,7 +326,7 @@ pub(super) fn lower_member_expression(
                 Some(obj) => obj,
                 None => lower_expression_to_temporary(builder, &d.target)?,
             };
-            let prop_literal = PropertyLiteral::String(StoreStr::new(d.name.slice()));
+            let prop_literal = PropertyLiteral::String(d.name);
             let value = InstructionValue::PropertyLoad {
                 object: object.clone(),
                 property: prop_literal.clone(),
@@ -1086,7 +1086,7 @@ fn lower_member_store(
                 builder,
                 InstructionValue::PropertyStore {
                     object,
-                    property: PropertyLiteral::String(StoreStr::new(d.name.slice())),
+                    property: PropertyLiteral::String(d.name),
                     value,
                     loc,
                 },

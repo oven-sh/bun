@@ -16,7 +16,7 @@ use crate::hir::{HirAlloc, HirVec};
 /// Invariant: the wrapped `EString` is never roped (`next.is_none()`).
 /// Lowering flattens the rare rope case so every consumer here can ignore it.
 #[derive(Clone, Copy)]
-pub struct JsString(StoreRef<E::EString>);
+pub struct JsString(StoreRef<'static, E::EString<'static>>);
 
 impl fmt::Debug for JsString {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -26,7 +26,7 @@ impl fmt::Debug for JsString {
 
 impl JsString {
     #[inline]
-    pub fn new(s: StoreRef<E::EString>) -> Self {
+    pub fn new(s: StoreRef<'static, E::EString<'static>>) -> Self {
         debug_assert!(s.get().next.is_none());
         Self(s)
     }
@@ -54,17 +54,17 @@ impl JsString {
         ))
     }
 
-    fn alloc(s: E::EString) -> Self {
+    fn alloc(s: E::EString<'static>) -> Self {
         Self(StoreRef::from_bump(Box::leak(Box::new_in(s, HirAlloc))))
     }
 
     #[inline]
-    pub fn as_estring(&self) -> StoreRef<E::EString> {
+    pub fn as_estring(&self) -> StoreRef<'static, E::EString<'static>> {
         self.0
     }
 
     #[inline]
-    pub fn estring(&self) -> &E::EString {
+    pub fn estring(&self) -> &E::EString<'static> {
         self.0.get()
     }
 

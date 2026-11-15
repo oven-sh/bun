@@ -432,7 +432,7 @@ fn platform_dir(dir: &[u8]) -> Box<[u8]> {
     out.into_boxed_slice()
 }
 
-fn str_of(expr: &Expr) -> Option<&[u8]> {
+fn str_of<'a>(expr: &'a Expr<'_>) -> Option<&'a [u8]> {
     expr.as_string(crate::cli::cli_arena())
         .filter(|s| !s.is_empty())
 }

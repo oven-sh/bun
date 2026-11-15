@@ -148,14 +148,6 @@ impl AstArena {
         arena
     }
 
-    /// Lets another thread allocate nodes. A `heap` that the arena owns stays with its thread until a reset.
-    pub fn unlock_thread(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            self.thread_lock = bun_core::ThreadLock::init_unlocked();
-        }
-    }
-
     #[inline]
     pub fn heap(&self) -> &Arena {
         self.heap.get_or_init(Arena::new)
@@ -163,15 +155,17 @@ impl AstArena {
 
     /// Not inlined: inlining grows the stack frames of the recursive `parse_*` functions.
     #[inline(never)]
-    pub fn alloc_node<T>(&self, value: T) -> StoreRef<T> {
-        let node = self.alloc_layout(Layout::new::<T>()).cast::<T>();
-        // SAFETY: the allocation is new and has the layout of `T`.
-        unsafe { node.write(value) };
-        StoreRef::from_non_null(node)
+    pub fn alloc_node<T>(&self, value: T) -> StoreRef<'_, T> {
+        let mut node = self.alloc_layout(Layout::new::<T>()).cast::<T>();
+        // SAFETY: the allocation is new, has the layout of `T`, and is only freed through `&mut self`.
+        StoreRef::from_bump(unsafe {
+            node.write(value);
+            node.as_mut()
+        })
     }
 
-    pub fn dupe_str(&self, bytes: &[u8]) -> StoreStr {
-        StoreStr::new(&AstVec::from_slice_in(bytes, self))
+    pub fn dupe_str(&self, bytes: &[u8]) -> StoreStr<'_> {
+        StoreStr::new(AstVec::from_slice_in(bytes, self).leak())
     }
 
     #[inline]
@@ -269,8 +263,10 @@ impl AstArena {
             *self.chunks_size.get_mut() = self.chunks.get_mut().truncate(limit);
         }
         #[cfg(debug_assertions)]
-        self.poison_used_chunks();
-        self.unlock_thread();
+        {
+            self.poison_used_chunks();
+            self.thread_lock = bun_core::ThreadLock::init_unlocked();
+        }
         *self.large_chunks.get_mut() = ChunkList(None);
         *self.current.get_mut() = None;
         *self.cursor.get_mut() = Self::DANGLING;
@@ -345,7 +341,7 @@ mod tests {
         node.as_ptr().addr()
     }
 
-    fn fill(arena: &AstArena, bytes: usize) -> Vec<StoreRef<[usize; 32]>> {
+    fn fill(arena: &AstArena, bytes: usize) -> Vec<StoreRef<'_, [usize; 32]>> {
         let count = bytes / size_of::<[usize; 32]>();
         (0..count).map(|i| arena.alloc_node([i; 32])).collect()
     }
@@ -415,20 +411,11 @@ mod tests {
     fn new_arena_reuses_spare_chunk() {
         let first = address(AstArena::new().alloc_node(0u64));
         let (outer, inner) = (AstArena::new(), AstArena::new());
-        let (a, b) = (outer.alloc_node(1u64), inner.alloc_node(2u64));
+        let (a, b) = (outer.alloc_node(1u64), address(inner.alloc_node(2u64)));
         assert!(!REUSE_CHUNKS || address(a) == first);
         drop(inner);
-        assert_ne!(address(a), address(b));
+        assert_ne!(address(a), b);
         assert_eq!(*a, 1);
-    }
-
-    #[test]
-    fn unlocked_arena_keeps_its_values_on_another_thread() {
-        let mut arena = AstArena::new();
-        let first = address(arena.alloc_node(1u64));
-        arena.unlock_thread();
-        let second = std::thread::spawn(move || address(arena.alloc_node(2u64)));
-        assert_eq!(second.join().unwrap(), first + MIN_ALIGN);
     }
 
     #[test]

@@ -64,7 +64,11 @@ fn lookup(name: &[u8]) -> Option<KnownGlobal> {
 
 impl KnownGlobal {
     #[inline(always)]
-    fn call_from_new(bump: &AstArena, e: &mut E::New, loc: crate::Loc) -> js_ast::Expr {
+    fn call_from_new<'a>(
+        bump: &'a AstArena,
+        e: &mut E::New<'a>,
+        loc: crate::Loc,
+    ) -> js_ast::Expr<'a> {
         let call = E::Call {
             target: e.target,
             args: core::mem::take(&mut e.args),
@@ -76,13 +80,13 @@ impl KnownGlobal {
     }
 
     #[inline(never)]
-    pub fn minify_global_constructor(
-        bump: &AstArena,
-        e: &mut E::New,
+    pub fn minify_global_constructor<'a>(
+        bump: &'a AstArena,
+        e: &mut E::New<'a>,
         symbols: &[Symbol],
         loc: crate::Loc,
         minify_whitespace: bool,
-    ) -> Option<js_ast::Expr> {
+    ) -> Option<js_ast::Expr<'a>> {
         let id = if let js_ast::ExprData::EIdentifier(ident) = e.target.data {
             ident.ref_
         } else {
@@ -93,9 +97,6 @@ impl KnownGlobal {
             return None;
         }
 
-        // SAFETY: `original_name` is an arena-owned slice valid for the
-        // lifetime of the symbol table (set at declaration time, never freed
-        // before `P` teardown).
         let original_name = symbol.original_name.slice();
         let constructor = lookup(original_name)?;
 

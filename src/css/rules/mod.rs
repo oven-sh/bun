@@ -1232,7 +1232,7 @@ pub struct MinifyContext<'a, 'bump> {
     /// Pre-scanned `@custom-media` definitions, if the feature is enabled.
     pub(crate) custom_media:
         Option<bun_collections::ArrayHashMap<Box<[u8]>, custom_media::CustomMediaRule<'bump>>>,
-    pub(crate) extra: &'a css::StylesheetExtra,
+    pub(crate) extra: &'a css::StylesheetExtra<'a>,
     pub(crate) css_modules: bool,
     /// First minification error encountered (surfaced out-of-band).
     pub(crate) err: Option<css::error::MinifyError>,

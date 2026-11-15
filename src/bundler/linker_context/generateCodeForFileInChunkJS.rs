@@ -20,8 +20,8 @@ use super::convert_stmts_for_chunk::convert_stmts_for_chunk;
 use super::convert_stmts_for_chunk_for_dev_server::convert_stmts_for_chunk_for_dev_server;
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn generate_code_for_file_in_chunk_js(
-    c: &LinkerContext,
+pub(crate) fn generate_code_for_file_in_chunk_js<'a>(
+    c: &LinkerContext<'_, 'a>,
     writer: &mut js_printer::BufferWriter,
     r: renamer::Renamer,
     chunk: &Chunk,
@@ -29,9 +29,9 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
     to_common_js_ref: Ref,
     to_esm_ref: Ref,
     runtime_require_ref: Option<Ref>,
-    stmts: &mut StmtList,
-    arena: &AstArena,
-    temp_arena: &AstArena,
+    stmts: &'a mut StmtList<'a>,
+    arena: &'a AstArena,
+    temp_arena: &'a AstArena,
     module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
@@ -81,13 +81,12 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 .all_stmts
                 .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
 
-            // Capture pointer/len now, re-slice after pushes (borrowck).
-            // SAFETY: `inner` aliases the first `main_stmts_len` elements of `all_stmts`;
-            // subsequent pushes only append past this range and capacity was reserved above
-            // so no reallocation occurs.
-            let inner = bun_ast::StoreSlice::new_mut(
-                &mut stmts.all_stmts.as_mut_slice()[0..main_stmts_len],
-            );
+            // The slot of the closure around `inner`.
+            stmts.all_stmts.push(Stmt::empty());
+            stmts
+                .all_stmts
+                .extend_from_slice(stmts.outside_wrapper_prefix.as_slice());
+            let (inner, outer) = stmts.all_stmts.split_at_mut(main_stmts_len);
 
             let mut clousure_args: BoundedArray<G::Arg, 3> = BoundedArray::default();
             clousure_args.append_assume_capacity(G::Arg {
@@ -127,7 +126,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
             let dup_args = temp_arena.alloc_slice_copy(clousure_args.const_slice());
 
-            stmts.all_stmts.push(Stmt::allocate_expr(
+            outer[0] = Stmt::allocate_expr(
                 temp_arena,
                 Expr::allocate(
                     temp_arena,
@@ -135,7 +134,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         func: G::Fn {
                             args: bun_ast::StoreSlice::new_mut(dup_args),
                             body: G::FnBody {
-                                stmts: inner,
+                                stmts: bun_ast::StoreSlice::new_mut(inner),
                                 loc: bun_ast::Loc::EMPTY,
                             },
                             ..Default::default()
@@ -143,10 +142,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     },
                     bun_ast::Loc::EMPTY,
                 ),
-            ));
-            stmts
-                .all_stmts
-                .extend_from_slice(stmts.outside_wrapper_prefix.as_slice());
+            );
 
             ast.flags.insert(AstFlags::USES_MODULE_REF);
 
@@ -182,7 +178,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 r,
                 arena,
                 writer,
-                &mut stmts.all_stmts[main_stmts_len..],
+                outer,
                 &ast,
                 flags,
                 Ref::NONE,
@@ -508,7 +504,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 }
 
                 // TODO: variants of the runtime functions
-                let body_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                let body_stmts = out_stmts;
                 // The wrapper must be a regular function, not an arrow, so that a
                 // top-level `arguments` reference in the CommonJS body binds to the
                 // wrapper's own `arguments` object (Node and esbuild both allow it).
@@ -517,7 +513,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         temp_arena,
                         E::Function {
                             func: G::Fn {
-                                args: bun_ast::StoreSlice::new(args.into_bump_slice()),
+                                args: bun_ast::StoreSlice::from_bump(args),
                                 body: G::FnBody {
                                     stmts: body_stmts,
                                     loc: bun_ast::Loc::EMPTY,
@@ -562,17 +558,14 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         temp_arena,
                     );
 
-                    stmts.append(
-                        StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::allocate(
-                            temp_arena,
-                            S::Local {
-                                decls,
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                    );
+                    stmts.outside_wrapper_prefix.push(Stmt::allocate(
+                        temp_arena,
+                        S::Local {
+                            decls,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ));
                 }
             }
             WrapKind::Esm => {
@@ -582,14 +575,14 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 // swallow any exceptions thrown during module initialization.
                 let is_async = flags.is_async_or_has_async_dependency;
 
-                struct ExportHoist<'a> {
-                    decls: Vec<G::Decl>,
-                    arena: &'a AstArena,
-                    symbols: &'a bun_ast::symbol::Map,
+                struct ExportHoist<'a, 'ast> {
+                    decls: Vec<G::Decl<'ast>>,
+                    arena: &'ast AstArena,
+                    symbols: &'a bun_ast::symbol::Map<'ast>,
                 }
 
-                impl ExportHoist<'_> {
-                    fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr {
+                impl<'ast> ExportHoist<'_, 'ast> {
+                    fn wrap_identifier(&mut self, loc: bun_ast::Loc, ref_: Ref) -> Expr<'ast> {
                         self.decls.push(G::Decl {
                             binding: Binding::alloc(self.arena, B::Identifier { r#ref: ref_ }, loc),
                             value: None,
@@ -601,7 +594,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     /// The pattern without the locals the linker bound to exports
                     /// (`const { a } = await import(…)`): assigning one would
                     /// overwrite the export.
-                    fn without_bound_items(&self, binding: Binding) -> Binding {
+                    fn without_bound_items(&self, binding: Binding<'ast>) -> Binding<'ast> {
                         let bun_ast::binding::Data::BObject(object) = binding.data else {
                             return binding;
                         };
@@ -645,15 +638,14 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                     symbols: &c.graph.symbols,
                 };
 
-                let mut inner_stmts = bun_ast::StoreSlice::new_mut(stmts.all_stmts.as_mut_slice());
+                let mut inner_stmts = out_stmts;
 
                 // Hoist all top-level "var" and "function" declarations out of the closure
                 {
                     let mut end: usize = 0;
-                    // Iterate by index since we mutate
-                    // `inner_stmts[end]` and call `stmts.append(...)` inside the loop.
-                    'hoist: for i in 0..stmts.all_stmts.len() {
-                        let stmt = stmts.all_stmts[i];
+                    // Iterate by index since we mutate `inner_stmts[end]` inside the loop.
+                    'hoist: for i in 0..inner_stmts.len() {
+                        let stmt = inner_stmts[i];
                         let transformed = match stmt.data {
                             StmtData::SLocal(local) => 'stmt: {
                                 // "using" / "await using" declarations have disposal
@@ -708,15 +700,12 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                                 break 'stmt Stmt::allocate_expr(temp_arena, value);
                             }
                             StmtData::SFunction(_) => {
-                                stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                                stmts.outside_wrapper_prefix.push(stmt);
                                 continue 'hoist;
                             }
-                            StmtData::SClass(mut class) => 'stmt: {
-                                // `class` is `StoreRef<S::Class>` — an arena-owned pointer.
-                                // `&mut class.class` (via DerefMut) yields a `&mut G::Class` into arena
-                                // memory, so wrapping it in a StoreRef for `EClass` is sound.
+                            StmtData::SClass(class) => 'stmt: {
                                 if class.class.can_be_moved() {
-                                    stmts.append(StmtListWhich::OutsideWrapperPrefix, stmt);
+                                    stmts.outside_wrapper_prefix.push(stmt);
                                     continue 'hoist;
                                 }
 
@@ -724,7 +713,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                                 let class_name_ref = class.class.class_name.unwrap().ref_;
                                 let lhs = hoist.wrap_identifier(class_name_loc, class_name_ref);
                                 let class_ref: StoreRef<E::Class> =
-                                    StoreRef::from_bump(&mut class.class);
+                                    StoreRef::from_bump(&mut class.into_mut().class);
                                 break 'stmt Stmt::allocate_expr(
                                     temp_arena,
                                     Expr::assign(
@@ -740,8 +729,6 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                             _ => stmt,
                         };
 
-                        // `inner_stmts` aliases `stmts.all_stmts.items` which is not
-                        // resized in this loop; `end <= i < len`.
                         inner_stmts.slice_mut()[end] = transformed;
                         end += 1;
                     }
@@ -749,17 +736,14 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 }
 
                 if !hoist.decls.is_empty() {
-                    stmts.append(
-                        StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::allocate(
-                            temp_arena,
-                            S::Local {
-                                decls: G::DeclList::from_slice_in(&hoist.decls, temp_arena),
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                    );
+                    stmts.outside_wrapper_prefix.push(Stmt::allocate(
+                        temp_arena,
+                        S::Local {
+                            decls: G::DeclList::from_slice_in(&hoist.decls, temp_arena),
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ));
                     hoist.decls.clear();
                 }
 
@@ -811,17 +795,14 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                         temp_arena,
                     );
 
-                    stmts.append(
-                        StmtListWhich::OutsideWrapperPrefix,
-                        Stmt::allocate(
-                            temp_arena,
-                            S::Local {
-                                decls,
-                                ..Default::default()
-                            },
-                            bun_ast::Loc::EMPTY,
-                        ),
-                    );
+                    stmts.outside_wrapper_prefix.push(Stmt::allocate(
+                        temp_arena,
+                        S::Local {
+                            decls,
+                            ..Default::default()
+                        },
+                        bun_ast::Loc::EMPTY,
+                    ));
                 } else {
                     // // If this fails, then there will be places we reference
                     // // `init_foo` without it actually existing.
@@ -854,29 +835,26 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                             bun_ast::Loc::EMPTY,
                         );
 
-                        stmts.append(
-                            StmtListWhich::OutsideWrapperPrefix,
-                            Stmt::allocate(
-                                temp_arena,
-                                S::Local {
-                                    decls: G::DeclList::from_slice_in(
-                                        &[G::Decl {
-                                            binding: Binding::alloc(
-                                                temp_arena,
-                                                B::Identifier {
-                                                    r#ref: ast.wrapper_ref,
-                                                },
-                                                bun_ast::Loc::EMPTY,
-                                            ),
-                                            value: Some(value),
-                                        }],
-                                        temp_arena,
-                                    ),
-                                    ..Default::default()
-                                },
-                                bun_ast::Loc::EMPTY,
-                            ),
-                        );
+                        stmts.outside_wrapper_prefix.push(Stmt::allocate(
+                            temp_arena,
+                            S::Local {
+                                decls: G::DeclList::from_slice_in(
+                                    &[G::Decl {
+                                        binding: Binding::alloc(
+                                            temp_arena,
+                                            B::Identifier {
+                                                r#ref: ast.wrapper_ref,
+                                            },
+                                            bun_ast::Loc::EMPTY,
+                                        ),
+                                        value: Some(value),
+                                    }],
+                                    temp_arena,
+                                ),
+                                ..Default::default()
+                            },
+                            bun_ast::Loc::EMPTY,
+                        ));
                     }
                 }
             }
@@ -885,10 +863,6 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
 
         out_stmts = bun_ast::StoreSlice::new_mut(stmts.outside_wrapper_prefix.as_mut_slice());
     }
-
-    // `out_stmts` aliases either `stmts.all_stmts` or `stmts.outside_wrapper_prefix`,
-    // both of which remain live for the rest of this function.
-    let out_stmts: &mut [Stmt] = out_stmts.slice_mut();
 
     if out_stmts.is_empty() {
         return PrintResult::Result(PrintResultSuccess {
@@ -901,7 +875,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
         r,
         arena,
         writer,
-        out_stmts,
+        &out_stmts,
         &ast,
         flags,
         to_esm_ref,
@@ -913,7 +887,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
     )
 }
 
-fn merge_adjacent_local_stmts(stmts: &mut Vec<Stmt>, arena: &AstArena) {
+fn merge_adjacent_local_stmts<'a>(stmts: &mut Vec<Stmt<'a>>, arena: &'a AstArena) {
     if stmts.is_empty() {
         return;
     }

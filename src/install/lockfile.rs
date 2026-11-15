@@ -3694,7 +3694,7 @@ impl Lockfile {
             package::parse_append_trusted_dependencies(
                 &mut trusted,
                 log,
-                &entry.source,
+                entry.source,
                 bun_ast::JsonView::from(&entry.root),
                 &bump,
             )?;

@@ -12,10 +12,6 @@ use bun_core::strings;
 use crate::{AstArena, AstVec, Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
-// AST string fields are arena-owned (bulk-freed via arena reset; never
-// individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
-// lifetime-erased pointer with safe construction (no `transmute`) and
-// `Deref<Target=[u8]>` under the same valid-until-arena-reset contract.
 pub use crate::StoreStr as Str;
 
 /// This represents an internal property name that can be mangled. The symbol
@@ -38,15 +34,15 @@ impl Default for NameOfSymbol {
     }
 }
 
-pub struct Array {
-    pub items: ExprNodeList,
+pub struct Array<'a> {
+    pub items: ExprNodeList<'a>,
     pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
     pub close_bracket_loc: crate::Loc,
 }
-impl Default for Array {
+impl Default for Array<'_> {
     fn default() -> Self {
         Self {
             items: AstVec::new(),
@@ -59,24 +55,24 @@ impl Default for Array {
     }
 }
 // Live subset of `Array` accessors needed by downstream crates.
-impl Array {
-    pub fn push(&mut self, bump: &AstArena, item: Expr) -> Result<(), AllocError> {
+impl<'a> Array<'a> {
+    pub fn push(&mut self, bump: &'a AstArena, item: Expr<'a>) -> Result<(), AllocError> {
         self.items.push(bump, item);
         Ok(())
     }
 
     #[inline]
-    pub fn slice(&self) -> &[Expr] {
+    pub fn slice(&self) -> &[Expr<'a>] {
         self.items.slice()
     }
 }
 
-impl Array {
+impl<'a> Array<'a> {
     pub fn inline_spread_of_array_literals(
         &mut self,
-        bump: &AstArena,
+        bump: &'a AstArena,
         estimated_count: usize,
-    ) -> Result<ExprNodeList, AllocError> {
+    ) -> Result<ExprNodeList<'a>, AllocError> {
         // This over-allocates a little but it's fine
         // `Expr.data` is an enum (validity invariant), so an
         // expand-to-capacity + index-walk pattern would form `&mut [Expr]`
@@ -126,9 +122,9 @@ impl Array {
     }
 }
 
-pub struct Unary {
+pub struct Unary<'a> {
     pub op: crate::OpCode,
-    pub value: ExprNodeIndex,
+    pub value: ExprNodeIndex<'a>,
     pub flags: UnaryFlags,
 }
 
@@ -172,9 +168,9 @@ bitflags::bitflags! {
     }
 }
 
-pub struct Binary {
-    pub left: ExprNodeIndex,
-    pub right: ExprNodeIndex,
+pub struct Binary<'a> {
+    pub left: ExprNodeIndex<'a>,
+    pub right: ExprNodeIndex<'a>,
     pub op: crate::OpCode,
 }
 
@@ -210,9 +206,9 @@ pub struct NewTarget {
     pub range: crate::Range,
 }
 
-pub struct New {
-    pub target: ExprNodeIndex,
-    pub args: ExprNodeList,
+pub struct New<'a> {
+    pub target: ExprNodeIndex<'a>,
+    pub args: ExprNodeList<'a>,
 
     /// True if there is a comment containing "@__PURE__" or "#__PURE__" preceding
     /// this call expression. See the comment inside ECall for more details.
@@ -220,7 +216,7 @@ pub struct New {
 
     pub close_parens_loc: crate::Loc,
 }
-impl Default for New {
+impl Default for New<'_> {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
@@ -251,10 +247,10 @@ pub enum Special {
     ResolvedSpecifierString(u32),
 }
 
-pub struct Call {
+pub struct Call<'a> {
     // Node:
-    pub target: ExprNodeIndex,
-    pub args: ExprNodeList,
+    pub target: ExprNodeIndex<'a>,
+    pub args: ExprNodeList<'a>,
     pub optional_chain: Option<OptionalChain>,
     pub is_direct_eval: bool,
     pub close_paren_loc: crate::Loc,
@@ -272,7 +268,7 @@ pub struct Call {
     /// Used when printing to generate the source prop on the fly
     pub was_jsx_element: bool,
 }
-impl Default for Call {
+impl Default for Call<'_> {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
@@ -294,12 +290,10 @@ pub enum CallUnwrap {
     IfUnusedAndToStringSafe,
 }
 
-pub struct Dot {
+pub struct Dot<'a> {
     // target is Node
-    pub target: ExprNodeIndex,
-    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // with the arena — see `nodes.rs` StoreStr docs).
-    pub name: Str,
+    pub target: ExprNodeIndex<'a>,
+    pub name: Str<'a>,
     pub name_loc: crate::Loc,
     pub optional_chain: Option<OptionalChain>,
 
@@ -318,7 +312,7 @@ pub struct Dot {
     /// (`LinkerGraph::import_member_bindings`).
     pub is_import_property_use: bool,
 }
-impl Default for Dot {
+impl Default for Dot<'_> {
     fn default() -> Self {
         Self {
             target: ExprNodeIndex::EMPTY,
@@ -331,17 +325,17 @@ impl Default for Dot {
         }
     }
 }
-pub struct Index {
-    pub index: ExprNodeIndex,
-    pub target: ExprNodeIndex,
+pub struct Index<'a> {
+    pub index: ExprNodeIndex<'a>,
+    pub target: ExprNodeIndex<'a>,
     pub optional_chain: Option<OptionalChain>,
     /// See `Dot::is_import_property_use`.
     pub is_import_property_use: bool,
 }
 
-pub struct Arrow {
-    pub args: crate::StoreSlice<G::Arg>,
-    pub body: G::FnBody,
+pub struct Arrow<'a> {
+    pub args: crate::StoreSlice<'a, G::Arg<'a>>,
+    pub body: G::FnBody<'a>,
 
     pub is_async: bool,
     pub has_rest_arg: bool,
@@ -352,8 +346,8 @@ pub struct Arrow {
 }
 // The fourth bool fits in existing trailing padding.
 const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
-impl Arrow {
-    pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
+impl<'a> Arrow<'a> {
+    pub const NOOP_RETURN_UNDEFINED: Arrow<'a> = Arrow {
         args: crate::StoreSlice::EMPTY,
         body: G::FnBody {
             loc: crate::Loc::EMPTY,
@@ -365,7 +359,7 @@ impl Arrow {
         has_react_hooks_suppression: false,
     };
 }
-impl Default for Arrow {
+impl Default for Arrow<'_> {
     fn default() -> Self {
         Self {
             args: crate::StoreSlice::EMPTY,
@@ -381,8 +375,8 @@ impl Default for Arrow {
     }
 }
 
-pub struct Function {
-    pub func: G::Fn,
+pub struct Function<'a> {
+    pub func: G::Fn<'a>,
 }
 
 /// 8-byte identifier expression payload. The three side-effect flags are packed
@@ -610,18 +604,18 @@ pub struct PrivateIdentifier {
 ///     This also skips extra state that we'd need to track.
 ///     If React Fast Refresh ends up using this later, then we can revisit this decision.
 ///  [0]: https://github.com/automerge/automerge/issues/177
-pub struct JSXElement {
+pub struct JSXElement<'a> {
     /// JSX tag name
     /// `<div>` => E.String.init("div")
     /// `<MyComponent>` => E.Identifier{.ref = symbolPointingToMyComponent }
     /// null represents a fragment
-    pub tag: Option<ExprNodeIndex>,
+    pub tag: Option<ExprNodeIndex<'a>>,
 
     /// JSX props
-    pub properties: G::PropertyList,
+    pub properties: G::PropertyList<'a>,
 
     /// JSX element children `<div>{this_is_a_child_element}</div>`
-    pub children: ExprNodeList,
+    pub children: ExprNodeList<'a>,
 
     /// needed to make sure parse and visit happen in the same order
     pub key_prop_index: i32,
@@ -630,7 +624,7 @@ pub struct JSXElement {
 
     pub close_tag_loc: crate::Loc,
 }
-impl Default for JSXElement {
+impl Default for JSXElement<'_> {
     fn default() -> Self {
         Self {
             tag: None,
@@ -722,11 +716,11 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub(crate) fn to_string(self, bump: &Bump) -> Option<Str> {
+    pub(crate) fn to_string(self, bump: &Bump) -> Option<Str<'_>> {
         Self::to_string_from_f64(self.value(), bump)
     }
 
-    pub(crate) fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
+    pub(crate) fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str<'_>> {
         if value == value.trunc() && (value < i32::MAX as f64 && value > i32::MIN as f64) {
             let int_value = value as i64;
             let abs = int_value.unsigned_abs();
@@ -805,12 +799,10 @@ macro_rules! impl_number_cast {
 }
 impl_number_cast!(usize);
 
-pub struct BigInt {
-    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // with the arena — see `nodes.rs` StoreStr docs).
-    pub value: Str,
+pub struct BigInt<'a> {
+    pub value: Str<'a>,
 }
-impl BigInt {
+impl BigInt<'_> {
     /// `value` may carry a `0x`/`0o`/`0b` prefix. A leading zero is otherwise
     /// a syntax error, so any literal that starts with `0` and has more than
     /// one character is a radix literal.
@@ -836,23 +828,65 @@ impl BigInt {
 // Compact, read-only object/array nodes: the JSON parser's native output.
 // Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
 
+/// A `&'a T` with the layout of [`StoreRef`]. Covariant, because nothing writes to these nodes.
+#[repr(C, packed(4))]
+pub struct JsonRef<'a, T>(&'a T);
+
+impl<'a, T> JsonRef<'a, T> {
+    #[inline]
+    pub const fn new(node: &'a T) -> Self {
+        JsonRef(node)
+    }
+
+    #[inline]
+    pub fn get(self) -> &'a T {
+        self.0
+    }
+}
+
+impl<'a, T> From<StoreRef<'a, T>> for JsonRef<'a, T> {
+    #[inline]
+    fn from(node: StoreRef<'a, T>) -> Self {
+        JsonRef(node.get())
+    }
+}
+
+impl<T> Clone for JsonRef<'_, T> {
+    #[inline]
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<T> Copy for JsonRef<'_, T> {}
+
+impl<T> core::ops::Deref for JsonRef<'_, T> {
+    type Target = T;
+    #[inline]
+    fn deref(&self) -> &T {
+        self.0
+    }
+}
+
+pub type ObjectJSONRef<'a> = JsonRef<'a, ObjectJSON<'a>>;
+pub type ArrayJSONRef<'a> = JsonRef<'a, ArrayJSON<'a>>;
+
 /// A JSON value inside an `ObjectJSON` / `ArrayJSON`. The layout is read
 /// from C++ (`JSONRowsToJS.cpp`).
 #[derive(Clone, Copy)]
 #[repr(C, u32)]
-pub enum JsonValue {
+pub enum JsonValue<'a> {
     Null = 0,
     Boolean(bool) = 1,
     Number(Number) = 2,
-    String(Str) = 3,
-    Object(StoreRef<ObjectJSON>) = 4,
-    Array(StoreRef<ArrayJSON>) = 5,
+    String(Str<'a>) = 3,
+    Object(ObjectJSONRef<'a>) = 4,
+    Array(ArrayJSONRef<'a>) = 5,
 }
 
 const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
 const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
 
-impl JsonValue {
+impl<'a> JsonValue<'a> {
     pub(crate) fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         match self {
             JsonValue::Null => hasher.update(&[0]),
@@ -894,7 +928,7 @@ impl JsonValue {
     }
 
     #[inline]
-    pub fn as_object(&self) -> Option<&ObjectJSON> {
+    pub fn as_object(&self) -> Option<&ObjectJSON<'a>> {
         match self {
             JsonValue::Object(o) => Some(o.get()),
             _ => None,
@@ -902,7 +936,7 @@ impl JsonValue {
     }
 
     #[inline]
-    pub fn as_array(&self) -> Option<&ArrayJSON> {
+    pub fn as_array(&self) -> Option<&ArrayJSON<'a>> {
         match self {
             JsonValue::Array(a) => Some(a.get()),
             _ => None,
@@ -913,10 +947,10 @@ impl JsonValue {
 /// One `"key": value` row of an [`ObjectJSON`]. Layout read from C++.
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub struct PropertyJSON {
-    pub key: Str,
+pub struct PropertyJSON<'a> {
+    pub key: Str<'a>,
     pub key_loc: crate::Loc,
-    pub value: JsonValue,
+    pub value: JsonValue<'a>,
 }
 
 const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
@@ -927,29 +961,20 @@ const _: () = assert!(core::mem::offset_of!(PropertyJSON, value) == 16);
 
 /// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
 #[derive(Clone, Copy)]
-pub enum TapeAlloc {
+pub enum TapeAlloc<'a> {
     Global,
-    Arena(core::ptr::NonNull<Bump>),
+    Arena(&'a Bump),
 }
 
-// SAFETY: an arena tape is built and read on the thread that owns the arena.
-unsafe impl Send for TapeAlloc {}
-// SAFETY: see the `Send` impl.
-unsafe impl Sync for TapeAlloc {}
-
 // SAFETY: both arms forward to allocators that uphold the `Allocator` contract.
-unsafe impl core::alloc::Allocator for TapeAlloc {
+unsafe impl core::alloc::Allocator for TapeAlloc<'_> {
     fn allocate(
         &self,
         layout: core::alloc::Layout,
     ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
         match self {
             TapeAlloc::Global => core::alloc::Allocator::allocate(&std::alloc::Global, layout),
-            TapeAlloc::Arena(a) => {
-                // SAFETY: the arena outlives the tape (the type's contract).
-                let arena: &Bump = unsafe { a.as_ref() };
-                core::alloc::Allocator::allocate(&arena, layout)
-            }
+            TapeAlloc::Arena(arena) => core::alloc::Allocator::allocate(arena, layout),
         }
     }
 
@@ -959,12 +984,10 @@ unsafe impl core::alloc::Allocator for TapeAlloc {
             TapeAlloc::Global => unsafe {
                 core::alloc::Allocator::deallocate(&std::alloc::Global, ptr, layout)
             },
-            TapeAlloc::Arena(a) => {
-                // SAFETY: the arena outlives the tape (the type's contract).
-                let arena: &Bump = unsafe { a.as_ref() };
-                // SAFETY: forwarding the caller's contract to the arena.
-                unsafe { core::alloc::Allocator::deallocate(&arena, ptr, layout) }
-            }
+            // SAFETY: forwarding the caller's contract to the arena.
+            TapeAlloc::Arena(arena) => unsafe {
+                core::alloc::Allocator::deallocate(arena, ptr, layout)
+            },
         }
     }
 }
@@ -981,23 +1004,23 @@ pub enum StrEncoding {
 }
 
 /// Everything one parsed JSON document allocates that does not borrow the source.
-pub struct JsonTape {
-    props: Vec<PropertyJSON, TapeAlloc>,
-    items: Vec<JsonValue, TapeAlloc>,
-    prop_value_locs: Vec<crate::Loc, TapeAlloc>,
-    item_locs: Vec<crate::Loc, TapeAlloc>,
-    str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
+pub struct JsonTape<'a> {
+    props: Vec<PropertyJSON<'a>, TapeAlloc<'a>>,
+    items: Vec<JsonValue<'a>, TapeAlloc<'a>>,
+    prop_value_locs: Vec<crate::Loc, TapeAlloc<'a>>,
+    item_locs: Vec<crate::Loc, TapeAlloc<'a>>,
+    str_chunks: Vec<Vec<u8, TapeAlloc<'a>>, TapeAlloc<'a>>,
     pub encoding: StrEncoding,
 }
 
-impl JsonTape {
+impl<'a> JsonTape<'a> {
     const STR_CHUNK: usize = 4096;
 
-    pub fn empty() -> JsonTape {
+    pub fn empty() -> Self {
         Self::empty_in(TapeAlloc::Global)
     }
 
-    pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
+    pub fn empty_in(alloc: TapeAlloc<'a>) -> Self {
         JsonTape {
             props: Vec::new_in(alloc),
             items: Vec::new_in(alloc),
@@ -1025,17 +1048,21 @@ impl JsonTape {
     /// Build the pointer with this rather than a bare `NonNull::from`, so the
     /// borrow it is derived from cannot silently be the wrong one.
     #[inline]
-    pub fn root_ptr(&mut self) -> core::ptr::NonNull<JsonTape> {
+    pub fn root_ptr(&mut self) -> core::ptr::NonNull<Self> {
         core::ptr::NonNull::from(self)
     }
 
     #[inline]
-    fn alloc(&self) -> TapeAlloc {
+    fn alloc(&self) -> TapeAlloc<'a> {
         *self.props.allocator()
     }
 
     #[inline]
-    pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
+    pub fn append_props(
+        &mut self,
+        rows: &[PropertyJSON<'a>],
+        value_locs: &[crate::Loc],
+    ) -> (u32, u32) {
         let first = self.props.len() as u32;
         self.props.extend_from_slice(rows);
         self.prop_value_locs.extend_from_slice(value_locs);
@@ -1043,7 +1070,7 @@ impl JsonTape {
     }
 
     #[inline]
-    pub fn append_items(&mut self, rows: &[JsonValue], item_locs: &[crate::Loc]) -> (u32, u32) {
+    pub fn append_items(&mut self, rows: &[JsonValue<'a>], item_locs: &[crate::Loc]) -> (u32, u32) {
         let first = self.items.len() as u32;
         self.items.extend_from_slice(rows);
         self.item_locs.extend_from_slice(item_locs);
@@ -1051,13 +1078,11 @@ impl JsonTape {
     }
 
     /// Copy decoded string bytes into the tape; chunks grow only within capacity and so never move.
-    pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
-        self.alloc_str_join(bytes, b"")
-    }
-
-    /// [`alloc_str`](Self::alloc_str) of the concatenation `a ++ b`.
-    pub fn alloc_str_join(&mut self, a: &[u8], b: &[u8]) -> Str {
-        let len = a.len() + b.len();
+    ///
+    /// # Safety
+    /// The result is not read after the tape is dropped.
+    pub unsafe fn alloc_str(&mut self, bytes: &[u8]) -> Str<'a> {
+        let len = bytes.len();
         let fits = self
             .str_chunks
             .last()
@@ -1070,17 +1095,17 @@ impl JsonTape {
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
         let start = chunk.len();
         if len <= 32 {
-            chunk.extend(a.iter().chain(b));
+            chunk.extend(bytes.iter());
         } else {
-            chunk.extend_from_slice(a);
-            chunk.extend_from_slice(b);
+            chunk.extend_from_slice(bytes);
         }
-        Str::new(&chunk[start..])
+        // SAFETY: these bytes do not move or change until the tape is dropped, which is the caller's contract.
+        Str::new(unsafe { bun_collections::detach_lifetime(&chunk[start..]) })
     }
 
     /// The row buffers, for a reader that resolves spans itself.
     #[inline]
-    pub fn raw_rows(&self) -> (*const PropertyJSON, *const JsonValue) {
+    pub fn raw_rows(&self) -> (*const PropertyJSON<'a>, *const JsonValue<'a>) {
         (self.props.as_ptr(), self.items.as_ptr())
     }
 
@@ -1097,26 +1122,26 @@ impl JsonTape {
     }
 
     #[inline]
-    fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
+    fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON<'a>] {
         &self.props[first as usize..first as usize + count as usize]
     }
 
     /// Returns one object's properties, given the row range from its [`ObjectJSON::rows`].
     #[inline]
-    pub fn properties(&self, rows: core::ops::Range<u32>) -> &[PropertyJSON] {
+    pub fn properties(&self, rows: core::ops::Range<u32>) -> &[PropertyJSON<'_>] {
         &self.props[rows.start as usize..rows.end as usize]
     }
 
     #[inline]
-    fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
+    fn items_span(&self, first: u32, count: u32) -> &[JsonValue<'a>] {
         &self.items[first as usize..first as usize + count as usize]
     }
 }
 
 /// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
 #[repr(C)]
-pub struct ObjectJSON {
-    tape: core::ptr::NonNull<JsonTape>,
+pub struct ObjectJSON<'a> {
+    tape: core::ptr::NonNull<JsonTape<'a>>,
     first: u32,
     count: u32,
     pub close_brace_loc: crate::Loc,
@@ -1128,12 +1153,12 @@ const _: () = assert!(core::mem::offset_of!(ObjectJSON, count) == 12);
 const _: () = assert!(core::mem::offset_of!(ArrayJSON, first) == 8);
 const _: () = assert!(core::mem::offset_of!(ArrayJSON, count) == 12);
 
-// SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
-unsafe impl Send for ObjectJSON {}
+// SAFETY: the tape outlives the node (the contract of `new`) and is read-only once parsing returns.
+unsafe impl Send for ObjectJSON<'_> {}
 // SAFETY: see the `Send` impl.
-unsafe impl Sync for ObjectJSON {}
+unsafe impl Sync for ObjectJSON<'_> {}
 
-impl ObjectJSON {
+impl<'a> ObjectJSON<'a> {
     /// `tape` must be the document's [`JsonTape`], and must outlive this node.
     ///
     /// # Safety
@@ -1145,7 +1170,7 @@ impl ObjectJSON {
     /// later [`properties`](Self::properties) read UB.
     #[inline]
     pub unsafe fn new(
-        tape: core::ptr::NonNull<JsonTape>,
+        tape: core::ptr::NonNull<JsonTape<'a>>,
         first: u32,
         count: u32,
         is_single_line: bool,
@@ -1162,13 +1187,13 @@ impl ObjectJSON {
 
     /// The tape this node's rows live on.
     #[inline]
-    pub fn tape(&self) -> &JsonTape {
+    pub fn tape(&self) -> &JsonTape<'a> {
         // SAFETY: per the constructor's contract the tape outlives this node.
         unsafe { self.tape.as_ref() }
     }
 
     #[inline]
-    pub fn properties(&self) -> &[PropertyJSON] {
+    pub fn properties(&self) -> &[PropertyJSON<'a>] {
         if self.count == 0 {
             return &[];
         }
@@ -1194,7 +1219,7 @@ impl ObjectJSON {
     }
 
     #[inline]
-    pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
+    pub fn get(&self, key: &[u8]) -> Option<&JsonValue<'a>> {
         self.properties()
             .iter()
             .find(|p| p.key.slice() == key)
@@ -1204,8 +1229,8 @@ impl ObjectJSON {
 
 /// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
 #[repr(C)]
-pub struct ArrayJSON {
-    tape: core::ptr::NonNull<JsonTape>,
+pub struct ArrayJSON<'a> {
+    tape: core::ptr::NonNull<JsonTape<'a>>,
     first: u32,
     count: u32,
     pub close_bracket_loc: crate::Loc,
@@ -1213,18 +1238,18 @@ pub struct ArrayJSON {
 }
 
 // SAFETY: see `ObjectJSON`.
-unsafe impl Send for ArrayJSON {}
+unsafe impl Send for ArrayJSON<'_> {}
 // SAFETY: see `ObjectJSON`.
-unsafe impl Sync for ArrayJSON {}
+unsafe impl Sync for ArrayJSON<'_> {}
 
-impl ArrayJSON {
+impl<'a> ArrayJSON<'a> {
     /// `tape` must be the document's [`JsonTape`], and must outlive this node.
     ///
     /// # Safety
     /// Same provenance contract as [`ObjectJSON::new`].
     #[inline]
     pub unsafe fn new(
-        tape: core::ptr::NonNull<JsonTape>,
+        tape: core::ptr::NonNull<JsonTape<'a>>,
         first: u32,
         count: u32,
         is_single_line: bool,
@@ -1241,13 +1266,13 @@ impl ArrayJSON {
 
     /// The tape this node's rows live on.
     #[inline]
-    pub fn tape(&self) -> &JsonTape {
+    pub fn tape(&self) -> &JsonTape<'a> {
         // SAFETY: see `ObjectJSON::properties`.
         unsafe { self.tape.as_ref() }
     }
 
     #[inline]
-    pub fn items(&self) -> &[JsonValue] {
+    pub fn items(&self) -> &[JsonValue<'a>] {
         if self.count == 0 {
             return &[];
         }
@@ -1266,8 +1291,8 @@ impl ArrayJSON {
     }
 }
 
-pub struct Object {
-    pub properties: G::PropertyList,
+pub struct Object<'a> {
+    pub properties: G::PropertyList<'a>,
     pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
@@ -1275,7 +1300,7 @@ pub struct Object {
 
     pub close_brace_loc: crate::Loc,
 }
-impl Default for Object {
+impl Default for Object<'_> {
     fn default() -> Self {
         Self {
             properties: AstVec::new(),
@@ -1292,11 +1317,11 @@ impl Default for Object {
 ///
 /// Segments live in the bump arena and are bulk-freed at arena reset.
 pub struct Rope<'a> {
-    pub head: Expr,
+    pub head: Expr<'a>,
     pub next: Option<&'a mut Rope<'a>>,
 }
 impl<'a> Rope<'a> {
-    pub fn append(&mut self, expr: Expr, bump: &'a Bump) {
+    pub fn append(&mut self, expr: Expr<'a>, bump: &'a Bump) {
         // Walk to the tail iteratively: recursing once per node overflows the
         // native stack on adversarially deep ropes (e.g. an `.npmrc` section
         // header with thousands of dot-separated segments).
@@ -1323,12 +1348,12 @@ bun_core::oom_from_alloc!(SetError);
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
 // Sort helpers stay in the gated impl below.
-impl Object {
-    pub fn get(&self, key: &[u8]) -> Option<Expr> {
+impl<'a> Object<'a> {
+    pub fn get(&self, key: &[u8]) -> Option<Expr<'a>> {
         self.as_property(key).map(|q| q.expr)
     }
 
-    pub fn as_property(&self, name: &[u8]) -> Option<crate::expr::Query> {
+    pub fn as_property(&self, name: &[u8]) -> Option<crate::expr::Query<'a>> {
         let (i, key, value) = self.find_property(name)?;
         Some(crate::expr::Query {
             expr: *value,
@@ -1338,7 +1363,7 @@ impl Object {
     }
 
     /// `(index, key, value)`.
-    pub(crate) fn find_property(&self, name: &[u8]) -> Option<(usize, &Expr, &Expr)> {
+    pub(crate) fn find_property(&self, name: &[u8]) -> Option<(usize, &Expr<'a>, &Expr<'a>)> {
         for (i, prop) in self.properties.slice().iter().enumerate() {
             let Some(value) = &prop.value else { continue };
             let Some(key) = &prop.key else { continue };
@@ -1365,7 +1390,12 @@ impl Object {
         false
     }
 
-    pub fn put(&mut self, bump: &AstArena, key: &[u8], expr: Expr) -> Result<(), AllocError> {
+    pub fn put(
+        &mut self,
+        bump: &'a AstArena,
+        key: &'a [u8],
+        expr: Expr<'a>,
+    ) -> Result<(), AllocError> {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
@@ -1385,9 +1415,9 @@ impl Object {
 
     pub fn put_string(
         &mut self,
-        bump: &AstArena,
-        key: &[u8],
-        value: &[u8],
+        bump: &'a AstArena,
+        key: &'a [u8],
+        value: &'a [u8],
     ) -> Result<(), AllocError> {
         self.put(
             bump,
@@ -1400,9 +1430,9 @@ impl Object {
     /// the leaf `E.Object` expression.
     pub fn get_or_put_object(
         &mut self,
-        rope: &Rope<'_>,
-        bump: &AstArena,
-    ) -> Result<Expr, SetError> {
+        rope: &Rope<'a>,
+        bump: &'a AstArena,
+    ) -> Result<Expr<'a>, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
             None => return Err(SetError::Clobber),
@@ -1476,11 +1506,11 @@ pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
 }
 
 // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
-impl Object {
+impl<'a> Object<'a> {
     /// Appends a property without checking for an existing key. Callers that
     /// need duplicate detection must check `as_property` with UTF-8 bytes
     /// first — a UTF-16 EString key's raw `data` view is not byte-comparable.
-    pub fn append_property(&mut self, bump: &AstArena, key: Expr, value: Expr) {
+    pub fn append_property(&mut self, bump: &'a AstArena, key: Expr<'a>, value: Expr<'a>) {
         self.properties.push(
             bump,
             G::Property {
@@ -1527,8 +1557,8 @@ fn object_sorter_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering 
     a.cmp(&b)
 }
 
-pub struct Spread {
-    pub value: ExprNodeIndex,
+pub struct Spread<'a> {
+    pub value: ExprNodeIndex<'a>,
 }
 
 /// Discriminants are shared with the C++ switch in
@@ -1567,19 +1597,17 @@ impl TomlDateTimeKind {
 // keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
 // in `Expr`), so this does not affect `Expr` size.
 #[repr(C, align(8))]
-pub struct EString {
+pub struct EString<'a> {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
-    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // with the arena — see `nodes.rs` StoreStr docs).
-    pub data: Str,
+    pub data: Str<'a>,
 
     // A very simple rope implementation
     // We only use this for string folding, so this is kind of overkill
     // We don't need to deal with substrings
-    pub next: Option<StoreRef<EString>>,
-    pub end: Option<StoreRef<EString>>,
+    pub next: Option<StoreRef<'a, EString<'a>>>,
+    pub end: Option<StoreRef<'a, EString<'a>>>,
     pub rope_len: u32,
     pub prefer_template: bool,
     pub is_utf16: bool,
@@ -1593,15 +1621,15 @@ pub struct EString {
 pub use EString as String;
 
 /// [`EString::flattened`] result: the node itself, or an owned copy when a rope was flattened.
-pub enum Flattened<'a> {
-    Borrowed(&'a EString),
-    Owned(EString),
+pub enum Flattened<'a, 'ast> {
+    Borrowed(&'a EString<'ast>),
+    Owned(EString<'ast>),
 }
 
-impl core::ops::Deref for Flattened<'_> {
-    type Target = EString;
+impl<'ast> core::ops::Deref for Flattened<'_, 'ast> {
+    type Target = EString<'ast>;
     #[inline]
-    fn deref(&self) -> &EString {
+    fn deref(&self) -> &EString<'ast> {
         match self {
             Flattened::Borrowed(s) => s,
             Flattened::Owned(s) => s,
@@ -1609,7 +1637,7 @@ impl core::ops::Deref for Flattened<'_> {
     }
 }
 
-impl Default for EString {
+impl Default for EString<'_> {
     fn default() -> Self {
         Self {
             data: Str::EMPTY,
@@ -1624,18 +1652,18 @@ impl Default for EString {
 }
 
 // Minimal live surface for `IntoExprData` / `Data` / `lexer.rs` callers.
-impl EString {
+impl<'a> EString<'a> {
     #[inline]
     pub const fn is_utf8(&self) -> bool {
         !self.is_utf16
     }
     #[inline]
-    pub fn slice8(&self) -> &[u8] {
+    pub fn slice8(&self) -> &'a [u8] {
         debug_assert!(!self.is_utf16);
         self.data.slice()
     }
     #[inline]
-    pub fn slice16(&self) -> &[u16] {
+    pub fn slice16(&self) -> &'a [u16] {
         debug_assert!(self.is_utf16);
         // SAFETY: when `is_utf16`, `data` was constructed by `init_utf16` from a
         // `&[u16]`: `data.ptr` is the original u16-aligned pointer (reinterpreted
@@ -1669,9 +1697,7 @@ impl EString {
             toml_datetime: None,
         }
     }
-    /// `data` is arena-owned (source text or the arena)
-    /// and bulk-freed; `StoreStr` records it under the `StoreRef` contract.
-    pub fn init(data: &[u8]) -> Self {
+    pub fn init(data: &'a [u8]) -> Self {
         Self {
             data: Str::new(data),
             ..Default::default()
@@ -1680,7 +1706,7 @@ impl EString {
 
     /// A TOML date/time literal; `data` must be ASCII text `Temporal.*.from`
     /// accepts verbatim.
-    pub fn init_toml_datetime(data: &[u8], kind: TomlDateTimeKind) -> Self {
+    pub fn init_toml_datetime(data: &'a [u8], kind: TomlDateTimeKind) -> Self {
         Self {
             data: Str::new(data),
             toml_datetime: Some(kind),
@@ -1691,7 +1717,7 @@ impl EString {
     /// stores the **u16 element count** (not byte count); `slice16()` and
     /// friends rely on this. The pointer is reinterpreted to `*const u8` for
     /// storage only.
-    pub fn init_utf16(data: &[u16]) -> Self {
+    pub fn init_utf16(data: &'a [u16]) -> Self {
         // `Str::new` only records `(ptr, len)`; we want the original `*const u16`
         // (reinterpreted as bytes) and the **u16 element count**. Safe-cast the
         // full `2*len` byte view, then reslice to the first `len` bytes — same
@@ -1708,7 +1734,7 @@ impl EString {
     /// E.String containing non-ascii characters may not fully work.
     /// https://github.com/oven-sh/bun/issues/11963
     /// More investigation is needed.
-    pub fn init_re_encode_utf8(utf8: &[u8], bump: &Bump) -> EString {
+    pub fn init_re_encode_utf8(utf8: &'a [u8], bump: &'a Bump) -> Self {
         if strings::first_non_ascii(utf8).is_none() {
             Self::init(utf8)
         } else {
@@ -1723,7 +1749,7 @@ impl EString {
     /// Ensure `data` is UTF-8 (transcode from UTF-16 rope if needed).
     /// `lexer.rs::to_utf8_e_string` only ever calls this on a freshly-decoded
     /// non-rope string; the heavy rope-walk path is in the gated impl below.
-    pub fn to_utf8(&mut self, bump: &Bump) -> Result<(), AllocError> {
+    pub fn to_utf8(&mut self, bump: &'a Bump) -> Result<(), AllocError> {
         if !self.is_utf16 {
             return Ok(());
         }
@@ -1738,7 +1764,7 @@ impl EString {
 // Subset of the gated impl below adapted to the current `bun_core` API
 // (no bump-arena `to_utf8_alloc`). Heavy
 // transcode/rope-clone paths stay gated.
-impl EString {
+impl<'a> EString<'a> {
     #[inline]
     pub fn len(&self) -> usize {
         if self.rope_len > 0 {
@@ -1758,7 +1784,7 @@ impl EString {
 
     /// Flatten any rope and return UTF-8 bytes.
     /// Resolves the rope into the bump arena, then transcodes if UTF-16.
-    pub fn slice<'b>(&mut self, bump: &'b Bump) -> &'b [u8] {
+    pub fn slice(&mut self, bump: &'a Bump) -> &'a [u8] {
         self.resolve_rope_if_needed(bump);
         self.string(bump).expect("OOM")
     }
@@ -1800,7 +1826,7 @@ impl EString {
     }
 
     /// Flatten in place. Parser only; shared-AST readers use [`Self::flattened`].
-    pub fn resolve_rope_if_needed(&mut self, bump: &Bump) {
+    pub fn resolve_rope_if_needed(&mut self, bump: &'a Bump) {
         if self.next.is_none() || !self.is_utf8() {
             return;
         }
@@ -1809,7 +1835,7 @@ impl EString {
     }
 
     /// `self` if not a rope, else a copy flattened into `bump`. Never writes to `self`. Only a rope creates the heap of `bump`.
-    pub fn flattened(&self, bump: &AstArena) -> Flattened<'_> {
+    pub fn flattened(&self, bump: &'a AstArena) -> Flattened<'_, 'a> {
         if self.next.is_none() || !self.is_utf8() {
             return Flattened::Borrowed(self);
         }
@@ -1820,7 +1846,7 @@ impl EString {
     }
 
     /// The rope's bytes, concatenated into a fresh `bump` slice.
-    fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
+    pub fn flatten_rope<'b>(&self, bump: &'b Bump) -> &'b [u8] {
         let mut bytes = bun_alloc::ArenaVec::<u8>::with_capacity_in(self.rope_len as usize, bump);
         bytes.extend_from_slice(&self.data);
         let mut str_ = self.next;
@@ -1833,10 +1859,11 @@ impl EString {
 
     /// Return UTF-8 bytes, transcoding if UTF-16.
     /// The transcode allocates via the global arena then copies into `bump`.
-    pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
+    pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError>
+    where
+        'a: 'b,
+    {
         if self.is_utf8() {
-            // `self.data` is arena-owned with the same lifetime as `bump`;
-            // StoreStr re-borrows under that contract.
             Ok(self.data.slice())
         } else {
             let v = strings::to_utf8_alloc(self.slice16());
@@ -1867,10 +1894,10 @@ impl EString {
 
 // ── EString surface ────────────────────────────────────────────────────────
 // Ordering / equality / const-literal / rope-mutation helpers.
-impl EString {
-    pub const EMPTY: EString = EString::from_static(b"");
+impl<'a> EString<'a> {
+    pub const EMPTY: EString<'a> = EString::from_static(b"");
 
-    pub fn is_identifier(&mut self, bump: &Bump) -> bool {
+    pub fn is_identifier(&mut self, bump: &'a Bump) -> bool {
         if !self.is_utf8() {
             return crate::lexer_tables::is_identifier_utf16(self.slice16());
         }
@@ -1922,7 +1949,7 @@ impl EString {
     /// `Option<NonNull>` rope links + scalars) but does not derive it to keep
     /// rope-ownership intent explicit; use this for field-wise copies.
     #[inline]
-    pub fn shallow_clone(&self) -> EString {
+    pub fn shallow_clone(&self) -> Self {
         EString {
             data: self.data,
             prefer_template: self.prefer_template,
@@ -1934,10 +1961,26 @@ impl EString {
         }
     }
 
+    /// [`Self::shallow_clone`] of a string that is not a rope, which only shares its text.
+    #[inline]
+    pub fn flat_clone<'b>(&self) -> EString<'b>
+    where
+        'a: 'b,
+    {
+        debug_assert!(self.next.is_none());
+        EString {
+            data: self.data,
+            prefer_template: self.prefer_template,
+            next: None,
+            end: None,
+            rope_len: self.rope_len,
+            is_utf16: self.is_utf16,
+            toml_datetime: self.toml_datetime,
+        }
+    }
+
     /// Link `other` onto this string's rope tail. Mutates both ropes: neither may have another owner.
-    ///
-    /// `other` MUST be arena-allocated: its address is captured as a `StoreRef`.
-    pub(crate) fn push(&mut self, other: &mut EString) {
+    pub(crate) fn push(&mut self, mut other: StoreRef<'a, Self>) {
         debug_assert!(self.is_utf8());
         debug_assert!(other.is_utf8());
 
@@ -1949,12 +1992,9 @@ impl EString {
         }
         self.rope_len += other.rope_len;
 
-        // Caller contract — `other` lives in the AST arena and outlives
-        // the next reset, so capturing its address as a `StoreRef` is sound.
-        let other_ref = StoreRef::from_bump(other);
         if self.next.is_none() {
-            self.next = Some(other_ref);
-            self.end = Some(other_ref);
+            self.next = Some(other);
+            self.end = Some(other);
         } else {
             let mut end = self.end.unwrap();
             while end.get().next.is_some() {
@@ -1962,8 +2002,8 @@ impl EString {
             }
             // `end` points into the live arena; rope nodes are mutated in
             // place via `StoreRef::DerefMut` (single-threaded visitor).
-            end.next = Some(other_ref);
-            self.end = Some(other_ref);
+            end.next = Some(other);
+            self.end = Some(other);
         }
     }
 }
@@ -1977,7 +2017,7 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
     )
 }
 
-impl fmt::Display for EString {
+impl fmt::Display for EString<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("E.String")?;
         if self.next.is_none() {
@@ -2009,58 +2049,58 @@ impl fmt::Display for EString {
 }
 
 // value is in the Node
-pub struct TemplatePart {
-    pub value: ExprNodeIndex,
+pub struct TemplatePart<'a> {
+    pub value: ExprNodeIndex<'a>,
     pub tail_loc: crate::Loc,
-    pub tail: TemplateContents,
+    pub tail: TemplateContents<'a>,
 }
 
-pub struct Template {
-    pub tag: Option<ExprNodeIndex>,
+pub struct Template<'a> {
+    pub tag: Option<ExprNodeIndex<'a>>,
     /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
-    pub parts: crate::StoreSlice<TemplatePart>,
-    pub head: TemplateContents,
+    pub parts: crate::StoreSlice<'a, TemplatePart<'a>>,
+    pub head: TemplateContents<'a>,
 }
 
-impl Template {
+impl<'a> Template<'a> {
     /// Empty `StoreSlice<TemplatePart>` for parts-less templates (e.g. tagged
     /// no-substitution literals).
     #[inline]
-    pub fn empty_parts() -> crate::StoreSlice<TemplatePart> {
+    pub fn empty_parts() -> crate::StoreSlice<'a, TemplatePart<'a>> {
         crate::StoreSlice::EMPTY
     }
 
     #[inline]
-    pub fn parts(&self) -> &[TemplatePart] {
+    pub fn parts(&self) -> &[TemplatePart<'a>] {
         self.parts.slice()
     }
 
     #[inline]
-    pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
+    pub fn parts_mut(&mut self) -> &mut [TemplatePart<'a>] {
         self.parts.slice_mut()
     }
 }
 
-pub enum TemplateContents {
-    Cooked(EString),
-    Raw(Str),
+pub enum TemplateContents<'a> {
+    Cooked(EString<'a>),
+    Raw(Str<'a>),
 }
-impl TemplateContents {
+impl<'a> TemplateContents<'a> {
     pub(crate) fn is_utf8(&self) -> bool {
         matches!(self, TemplateContents::Cooked(c) if c.is_utf8())
     }
 
-    bun_core::enum_unwrap!(pub TemplateContents, Cooked => fn cooked / cooked_mut -> EString);
+    bun_core::enum_unwrap!(pub TemplateContents, Cooked => fn cooked / cooked_mut -> EString<'a>);
 }
 
-impl TemplateContents {
+impl TemplateContents<'_> {
     /// Field-wise copy. `EString` is structurally
     /// `Copy` but does not derive it; use `shallow_clone` for the cooked arm.
     #[inline]
-    pub(crate) fn shallow_clone(&self) -> TemplateContents {
+    pub(crate) fn shallow_clone(&self) -> Self {
         match self {
             TemplateContents::Cooked(c) => TemplateContents::Cooked(c.shallow_clone()),
             TemplateContents::Raw(r) => TemplateContents::Raw(*r),
@@ -2068,25 +2108,24 @@ impl TemplateContents {
     }
 }
 
-impl Template {
-    /// "`a${'b'}c`" => "`abc`"
-    pub fn fold(&mut self, bump: &AstArena, loc: crate::Loc) -> Expr {
+impl<'a> Template<'a> {
+    /// "`a${'b'}c`" => "`abc`". `None` if `self` stays as it is.
+    pub fn fold(&mut self, bump: &'a AstArena, loc: crate::Loc) -> Option<Expr<'a>> {
         if self.tag.is_some()
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            // `self` is arena-allocated, so capturing its address as a
-            // `StoreRef` is sound.
-            return Expr {
-                data: crate::expr::Data::ETemplate(StoreRef::from_bump(self)),
-                loc,
-            };
+            return None;
         }
 
         debug_assert!(matches!(self.head, TemplateContents::Cooked(_)));
 
         if self.parts().is_empty() {
-            return Expr::allocate(bump, core::mem::take(self.head.cooked_mut()), loc);
+            return Some(Expr::allocate(
+                bump,
+                core::mem::take(self.head.cooked_mut()),
+                loc,
+            ));
         }
 
         let mut parts =
@@ -2107,7 +2146,7 @@ impl Template {
             match &part.value.data {
                 crate::expr::Data::ENumber(n) => {
                     if let Some(s) = n.to_string(bump) {
-                        part.value = Expr::allocate(bump, EString::init(&s), part.value.loc);
+                        part.value = Expr::allocate(bump, EString::init(s.slice()), part.value.loc);
                     }
                 }
                 crate::expr::Data::ENull(_) => {
@@ -2125,8 +2164,11 @@ impl Template {
                 }
                 crate::expr::Data::EBigInt(value) => {
                     if !BigInt::has_radix(&value.value) {
-                        part.value =
-                            Expr::allocate(bump, EString::init(&value.value), part.value.loc);
+                        part.value = Expr::allocate(
+                            bump,
+                            EString::init(value.value.slice()),
+                            part.value.loc,
+                        );
                     }
                 }
                 _ => {}
@@ -2164,7 +2206,7 @@ impl Template {
                                     crate::Loc::EMPTY,
                                 )
                                 .data
-                                .e_string_mut()
+                                .e_string()
                                 .unwrap(),
                             );
                     }
@@ -2180,7 +2222,7 @@ impl Template {
                                     part.tail_loc,
                                 )
                                 .data
-                                .e_string_mut()
+                                .e_string()
                                 .unwrap(),
                             );
                     }
@@ -2210,7 +2252,7 @@ impl Template {
                                     crate::Loc::EMPTY,
                                 )
                                 .data
-                                .e_string_mut()
+                                .e_string()
                                 .unwrap(),
                             );
                         }
@@ -2223,7 +2265,7 @@ impl Template {
                                     part.tail_loc,
                                 )
                                 .data
-                                .e_string_mut()
+                                .e_string()
                                 .unwrap(),
                             );
                         }
@@ -2242,12 +2284,12 @@ impl Template {
                 .e_string_mut()
                 .expect("infallible: variant checked")
                 .resolve_rope_if_needed(bump);
-            return head;
+            return Some(head);
         }
 
         // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
         // provenance for downstream mutators.
-        Expr::allocate(
+        Some(Expr::allocate(
             bump,
             Template {
                 tag: None,
@@ -2260,14 +2302,12 @@ impl Template {
                 ),
             },
             loc,
-        )
+        ))
     }
 }
 
-pub struct RegExp {
-    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // with the arena — see `nodes.rs` StoreStr docs).
-    pub value: Str,
+pub struct RegExp<'a> {
+    pub value: Str<'a>,
 
     /// This exists for JavaScript bindings
     /// The RegExp constructor expects flags as a second argument.
@@ -2277,36 +2317,36 @@ pub struct RegExp {
     ///      ^
     pub flags_offset: Option<u16>,
 }
-impl RegExp {
-    pub fn pattern(&self) -> &[u8] {
+impl<'a> RegExp<'a> {
+    pub fn pattern(&self) -> &'a [u8] {
         // Between the first slash and the last: flags have none. Not `trim`: a pattern can end in `\/`.
         let end = bun_core::strings::last_index_of_char(&self.value, b'/').unwrap_or(0);
-        self.value.get(1..end).unwrap_or_default()
+        self.value.slice().get(1..end).unwrap_or_default()
     }
 
-    pub fn flags(&self) -> &[u8] {
+    pub fn flags(&self) -> &'a [u8] {
         // Behind the last slash. Not by `flags_offset`, which wraps at 65,536.
         let slash = bun_core::strings::last_index_of_char(&self.value, b'/');
         slash
-            .and_then(|it| self.value.get(it + 1..))
+            .and_then(|it| self.value.slice().get(it + 1..))
             .unwrap_or_default()
     }
 }
 
-pub struct Await {
-    pub value: ExprNodeIndex,
+pub struct Await<'a> {
+    pub value: ExprNodeIndex<'a>,
 }
 
 #[derive(Default)]
-pub struct Yield {
-    pub value: Option<ExprNodeIndex>,
+pub struct Yield<'a> {
+    pub value: Option<ExprNodeIndex<'a>>,
     pub is_star: bool,
 }
 
-pub struct If {
-    pub test: ExprNodeIndex,
-    pub yes: ExprNodeIndex,
-    pub no: ExprNodeIndex,
+pub struct If<'a> {
+    pub test: ExprNodeIndex<'a>,
+    pub yes: ExprNodeIndex<'a>,
+    pub no: ExprNodeIndex<'a>,
 }
 
 pub enum UnwrappedRequireMarker {}
@@ -2337,16 +2377,14 @@ pub struct RequireResolveString {
     // close_paren_loc: logger.Loc = logger.Loc.Empty,
 }
 
-pub struct InlinedEnum {
-    pub value: ExprNodeIndex,
-    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
-    // with the arena — see `nodes.rs` StoreStr docs).
-    pub comment: Str,
+pub struct InlinedEnum<'a> {
+    pub value: ExprNodeIndex<'a>,
+    pub comment: Str<'a>,
 }
 
-pub struct Import {
-    pub expr: ExprNodeIndex,
-    pub options: ExprNodeIndex,
+pub struct Import<'a> {
+    pub expr: ExprNodeIndex<'a>,
+    pub options: ExprNodeIndex<'a>,
     pub import_record_index: u32,
     /// When bundling a string-literal `import("...")`, this is the synthetic
     /// namespace symbol minted by `transpose_import`. Property accesses /
@@ -2364,7 +2402,7 @@ pub struct Import {
     // more info: https://webpack.js.org/api/module-methods/#magic-comments.
     // leading_interior_comments: []G.Comment = &([_]G.Comment{}),
 }
-impl Import {
+impl Import<'_> {
     pub fn is_import_record_null(&self) -> bool {
         self.import_record_index == u32::MAX
     }
@@ -2417,7 +2455,7 @@ mod json_tape_tests {
     use crate::Loc;
     use core::ptr::NonNull;
 
-    fn prop(key: Str, value: JsonValue) -> PropertyJSON {
+    fn prop<'a>(key: Str<'a>, value: JsonValue<'a>) -> PropertyJSON<'a> {
         PropertyJSON {
             key,
             key_loc: Loc::EMPTY,
@@ -2428,27 +2466,31 @@ mod json_tape_tests {
     /// Mirrors `Parser`'s ownership: the tape is a heap allocation the parser
     /// holds as a `NonNull` and reaches only through that pointer, handing the
     /// same pointer to every node it builds.
-    struct TapeOwner(NonNull<JsonTape>);
+    struct TapeOwner<'a>(NonNull<JsonTape<'a>>);
 
-    impl TapeOwner {
+    impl<'a> TapeOwner<'a> {
         fn new() -> Self {
             TapeOwner(
                 NonNull::new(bun_core::heap::into_raw(Box::new(JsonTape::empty())))
                     .expect("non-null"),
             )
         }
-        fn ptr(&self) -> NonNull<JsonTape> {
+        fn ptr(&self) -> NonNull<JsonTape<'a>> {
             self.0
         }
         /// `Parser::tape_mut` — a fresh reborrow of the root pointer per call.
         #[allow(clippy::mut_from_ref)]
-        fn get(&self) -> &mut JsonTape {
+        fn get(&self) -> &mut JsonTape<'a> {
             // SAFETY: sole owner; each call hands out one short-lived borrow.
             unsafe { &mut *self.0.as_ptr() }
         }
+        fn alloc_str(&self, bytes: &[u8]) -> Str<'a> {
+            // SAFETY: the tests drop the owner last.
+            unsafe { self.get().alloc_str(bytes) }
+        }
     }
 
-    impl Drop for TapeOwner {
+    impl Drop for TapeOwner<'_> {
         fn drop(&mut self) {
             // SAFETY: sole owner of a `Box`-allocated tape.
             drop(unsafe { bun_core::heap::take(self.0.as_ptr()) });
@@ -2464,13 +2506,13 @@ mod json_tape_tests {
         let tape = TapeOwner::new();
 
         // Inner `{"b": null}`.
-        let kb = tape.get().alloc_str(b"b");
+        let kb = tape.alloc_str(b"b");
         let (first, count) = tape.get().append_props(&[prop(kb, JsonValue::Null)], &[]);
         // SAFETY: the tape's own pointer, as `Parser` passes it.
         let inner = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
 
         // The parse continues: another string, then the outer object's rows.
-        let ka = tape.get().alloc_str(b"a");
+        let ka = tape.alloc_str(b"a");
         let (first, count) = tape.get().append_props(&[prop(ka, JsonValue::Null)], &[]);
         // SAFETY: as above.
         let outer = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
@@ -2521,11 +2563,11 @@ mod json_tape_tests {
     #[test]
     fn alloc_str_chunks_never_move() {
         let tape = TapeOwner::new();
-        let a = tape.get().alloc_str(b"first");
+        let a = tape.alloc_str(b"first");
         // Force a fresh chunk: bigger than what is left in the current one.
         let big = vec![b'x'; JsonTape::STR_CHUNK + 1];
-        let b = tape.get().alloc_str(&big);
-        let c = tape.get().alloc_str(b"third");
+        let b = tape.alloc_str(&big);
+        let c = tape.alloc_str(b"third");
         assert_eq!(a.slice(), b"first");
         assert_eq!(b.slice(), &big[..]);
         assert_eq!(c.slice(), b"third");
@@ -2543,16 +2585,18 @@ mod json_tape_tests {
         let tape_ptr = owner.root_ptr();
         // From here on reach the tape only through `tape_ptr`, as the parser does.
         // SAFETY: `tape_ptr` roots the tape; `owner` is untouched until it drops.
-        let tape = |p: NonNull<JsonTape>| -> &mut JsonTape { unsafe { &mut *p.as_ptr() } };
+        let tape = || unsafe { &mut *tape_ptr.as_ptr() };
 
-        let kb = tape(tape_ptr).alloc_str(b"b");
-        let (first, count) = tape(tape_ptr).append_props(&[prop(kb, JsonValue::Null)], &[]);
+        // SAFETY: `owner` drops last.
+        let kb = unsafe { tape().alloc_str(b"b") };
+        let (first, count) = tape().append_props(&[prop(kb, JsonValue::Null)], &[]);
         // SAFETY: the tape's own pointer.
         let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
 
         // The parse keeps appending after the node is built.
-        let ka = tape(tape_ptr).alloc_str(b"a");
-        let (first, count) = tape(tape_ptr).append_props(&[prop(ka, JsonValue::Null)], &[]);
+        // SAFETY: `owner` drops last.
+        let ka = unsafe { tape().alloc_str(b"a") };
+        let (first, count) = tape().append_props(&[prop(ka, JsonValue::Null)], &[]);
         // SAFETY: as above.
         let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
 

@@ -93,7 +93,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
     let root_path = root_package_json_path();
 
     let entry = package_json_entry_or_crash(manager, &root_path);
-    let (root_expr, root_source) = (entry.root, entry.source.clone());
+    let (root_expr, root_source) = (entry.root, entry.source);
     let name_expr = root_expr.get(b"name");
     let root_name: Box<[u8]> = name_expr
         .as_ref()
@@ -107,7 +107,7 @@ pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceM
         &mut manager.workspace_package_json_cache,
         log,
         &root_expr,
-        &root_source,
+        root_source,
         MissingWorkspace::Error,
     ) {
         if log.has_errors() {
@@ -229,16 +229,16 @@ pub(crate) fn select_targets(
 pub(crate) fn fetch_entry<'a>(
     manager: &'a mut PackageManager,
     target: &WorkspaceTarget,
-) -> &'a mut MapEntry {
+) -> &'a mut MapEntry<'static> {
     let log = manager.log();
     fetch_entry_from(&mut manager.workspace_package_json_cache, log, target)
 }
 
-pub(crate) fn fetch_entry_from<'a>(
-    json_cache: &'a mut WorkspacePackageJSONCache,
+pub(crate) fn fetch_entry_from<'a, 'ast>(
+    json_cache: &'a mut WorkspacePackageJSONCache<'ast>,
     log: &bun_ast::Log,
     target: &WorkspaceTarget,
-) -> &'a mut MapEntry {
+) -> &'a mut MapEntry<'ast> {
     match json_cache.get_with_path(
         log,
         &target.package_json_path,
@@ -260,14 +260,14 @@ pub(crate) fn fetch_entry_from<'a>(
 pub(crate) fn fetch_entry_root(
     manager: &mut PackageManager,
     target: &WorkspaceTarget,
-) -> bun_ast::Expr {
+) -> bun_ast::Expr<'static> {
     fetch_entry(manager, target).root
 }
 
 pub(crate) fn store_entry(
     manager: &mut PackageManager,
     target: &WorkspaceTarget,
-    root: bun_ast::Expr,
+    root: bun_ast::Expr<'static>,
 ) {
     let log = manager.log();
     save_entry(fetch_entry(manager, target), root, log);

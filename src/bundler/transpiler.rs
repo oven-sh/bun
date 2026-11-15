@@ -362,15 +362,17 @@ impl<'a> Transpiler<'a> {
 
         let mut is_development = false;
         if had_explicit_node_env {
-            if let Some(node_env) = self.options.define.dots.get(b"NODE_ENV".as_slice()) {
+            if let Some(node_env) = self.options.define.dots().get(b"NODE_ENV".as_slice()) {
                 if !node_env.is_empty() {
-                    if let Some(s) = node_env[0].data.value.e_string() {
-                        if s.eql_comptime(b"production") {
-                            is_production = true;
-                        } else if s.eql_comptime(b"development") {
-                            is_development = true;
+                    node_env[0].data.value.with(|value| {
+                        if let js_ast::defines::DefineExprKind::String(s) = value {
+                            if s.eql_comptime(b"production") {
+                                is_production = true;
+                            } else if s.eql_comptime(b"development") {
+                                is_development = true;
+                            }
                         }
-                    }
+                    });
                 }
             }
         }
@@ -551,7 +553,7 @@ impl<'a> Transpiler<'a> {
 // `ParseResult` / `AlreadyBundled` / `ParseOptions` + `Transpiler::parse*`
 // — used by `ModuleLoader::transpile_source_code` (jsc_hooks.rs) and
 // `JSTranspiler`. The body of
-// `parse_maybe_return_file_only_allow_shared_buffer` does the source-load
+// `parse_internal` does the source-load
 // step (virtual / client-entry / `node:` fallback) and dispatches to the
 // per-loader transpile branches.
 // ══════════════════════════════════════════════════════════════════════════
@@ -597,15 +599,6 @@ pub struct ParseResult<'a> {
     pub ast: bun_ast::Ast<'a>,
     pub already_bundled: AlreadyBundled,
     pub empty: bool,
-
-    /// Owns the bytes that `source.contents` points into when they came from
-    /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
-    /// decoded `data:` URL. That borrow is erased, so the backing must live at least as long as
-    /// the `ParseResult`; threading it here means it drops when the result is
-    /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
-    /// `Contents::Empty`/`Borrowed` for the virtual-source / shared-buffer
-    /// paths (no-op on drop).
-    pub source_contents_backing: resolver::cache::Contents,
 }
 
 impl<'a> ParseResult<'a> {
@@ -614,7 +607,6 @@ impl<'a> ParseResult<'a> {
         arena: &'a bun_alloc::Arena,
         source: bun_ast::Source<'a>,
         loader: options::Loader,
-        source_contents_backing: resolver::cache::Contents,
     ) -> Self {
         ParseResult {
             source,
@@ -622,7 +614,6 @@ impl<'a> ParseResult<'a> {
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             empty: true,
-            source_contents_backing,
         }
     }
 }
@@ -658,7 +649,8 @@ pub struct ParseOptions<'a, 'b> {
     pub macro_js_ctx: MacroJSCtx,
     pub macro_load_states: &'a MacroLoadStates,
     pub virtual_source: Option<&'b bun_ast::Source<'a>>,
-    pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
+    pub replace_exports:
+        bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport<'a>>,
     pub inject_jest_globals: bool,
     pub is_test_entry_point: bool,
     pub set_breakpoint_on_first_line: bool,
@@ -914,7 +906,10 @@ impl<'a> Transpiler<'a> {
         &mut self,
         this_parse: ParseOptions<'p, '_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
-    ) -> Option<ParseResult<'p>> {
+    ) -> Option<ParseResult<'p>>
+    where
+        'a: 'p,
+    {
         self.parse_maybe_return_file_only::<false>(this_parse, client_entry_point_)
     }
 
@@ -922,62 +917,40 @@ impl<'a> Transpiler<'a> {
         &mut self,
         this_parse: ParseOptions<'p, '_>,
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
-    ) -> Option<ParseResult<'p>> {
-        self.parse_maybe_return_file_only_allow_shared_buffer::<RETURN_FILE_ONLY, false>(
-            this_parse,
-            client_entry_point_,
-        )
-    }
-
-    pub fn parse_maybe_return_file_only_allow_shared_buffer<
-        'p,
-        const RETURN_FILE_ONLY: bool,
-        const USE_SHARED_BUFFER: bool,
-    >(
-        &mut self,
-        this_parse: ParseOptions<'p, '_>,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
-    ) -> Option<ParseResult<'p>> {
-        self.parse_internal::<RETURN_FILE_ONLY, USE_SHARED_BUFFER, false>(
-            this_parse,
-            client_entry_point_,
-        )
+    ) -> Option<ParseResult<'p>>
+    where
+        'a: 'p,
+    {
+        self.parse_internal::<RETURN_FILE_ONLY, false>(this_parse, client_entry_point_)
     }
 
     /// References no JavaScript parser, so `--trim` can remove the parser and keep this.
     pub fn parse_data_file<'p, const RETURN_FILE_ONLY: bool>(
         &mut self,
         this_parse: ParseOptions<'p, '_>,
-    ) -> Option<ParseResult<'p>> {
-        self.parse_internal::<RETURN_FILE_ONLY, false, true>(this_parse, None)
+    ) -> Option<ParseResult<'p>>
+    where
+        'a: 'p,
+    {
+        self.parse_internal::<RETURN_FILE_ONLY, true>(this_parse, None)
     }
 
-    fn parse_internal<
-        'p,
-        const RETURN_FILE_ONLY: bool,
-        const USE_SHARED_BUFFER: bool,
-        const DATA_ONLY: bool,
-    >(
+    fn parse_internal<'p, const RETURN_FILE_ONLY: bool, const DATA_ONLY: bool>(
         &mut self,
         this_parse: ParseOptions<'p, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
-    ) -> Option<ParseResult<'p>> {
+    ) -> Option<ParseResult<'p>>
+    where
+        'a: 'p,
+    {
         let arena = this_parse.arena;
         let dirname_fd = this_parse.dirname_fd;
         let file_descriptor = this_parse.file_descriptor;
         let path = this_parse.path;
         let loader = this_parse.loader;
         let log: &bun_ast::Log = self.log();
-
-        // Owns the heap allocation backing `source.contents` for the
-        // non-shared-buffer file-read and `data:` URL paths. Threaded into the
-        // returned `ParseResult` so it drops with the result instead of being
-        // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
-        // client-entry / `node:` / shared-buffer paths it stays `Empty`
-        // (`Drop` is a no-op).
-        let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
         let source: &'p bun_ast::Source<'p> = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
@@ -996,9 +969,7 @@ impl<'a> Transpiler<'a> {
                 break 'brk bun_ast::Source::init_path_string(path.text, b"");
             }
 
-            // The decoded body is owned in
-            // `source_backing` (below) so `source.contents` re-borrows it
-            // without leaking; never falls through to `read_file_with_allocator`
+            // Never falls through to `read_file_into_arena`
             // (which would try to open `data:...` as a filesystem path).
             if strings::has_prefix_comptime(path.text, b"data:") {
                 use bun_resolver::data_url::DataURL;
@@ -1017,7 +988,7 @@ impl<'a> Transpiler<'a> {
                         return None;
                     }
                 };
-                let body = match data_url.decode_data() {
+                let contents = match data_url.decode_data_in(arena) {
                     Ok(b) => b,
                     Err(err) => {
                         let _ = log.add_error_fmt(
@@ -1032,14 +1003,6 @@ impl<'a> Transpiler<'a> {
                         return None;
                     }
                 };
-                source_backing = resolver::cache::Contents::from(body);
-                // SAFETY: `source_backing` is moved into the returned
-                // `ParseResult` (or drops on `return None`); the re-borrow is
-                // sound for the lifetime of `source.contents`' consumers, which
-                // never outlive the `ParseResult`. A real lifetime can be
-                // threaded once `bun_ast::Source.contents` becomes `Cow`.
-                let contents: &'static [u8] =
-                    unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
                 break 'brk bun_ast::Source::init_path_string(path.text, contents);
             }
 
@@ -1048,12 +1011,12 @@ impl<'a> Transpiler<'a> {
             // `RuntimeTranspilerStore`) so the source bytes land in the
             // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
-            let entry = match self.resolver.caches.fs.read_file_with_allocator(
+            let entry = match resolver::cache::Fs::read_file_into_arena(
                 path.text,
                 dirname_fd,
-                USE_SHARED_BUFFER,
                 file_descriptor,
-                if USE_SHARED_BUFFER { None } else { Some(arena) },
+                arena,
+                Fs::ByteOrderMark::Converted,
             ) {
                 Ok(e) => e,
                 Err(err) => {
@@ -1074,49 +1037,25 @@ impl<'a> Transpiler<'a> {
             {
                 *opened_file = Some(file);
             }
-            // The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER`) or in `this_parse.arena` (no-op drop —
-            // bulk-freed by `mi_heap_destroy` when the per-call arena is
-            // recycled). Thread the
-            // provenance-tagged backing alongside the `ParseResult` so it
-            // drops when the result is recycled — no `mem::forget`
-            // (PORTING.md §Forbidden patterns).
-            source_backing = entry.contents;
-            // SAFETY: `source_backing` outlives every read through
-            // `source.contents` (it is moved into the returned `ParseResult`,
-            // and the only consumers are the parser/printer which run before
-            // the result drops).
-            let contents: &'static [u8] =
-                unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice()) };
             bun_ast::Source {
                 path: bun_paths::fs::Path {
                     namespace: b"file",
                     ..path
                 },
-                contents: std::borrow::Cow::Borrowed(contents),
+                contents: std::borrow::Cow::Borrowed(entry.contents),
                 ..Default::default()
             }
         });
 
         if RETURN_FILE_ONLY {
-            return Some(ParseResult::empty_with(
-                arena,
-                source.clone(),
-                loader,
-                source_backing,
-            ));
+            return Some(ParseResult::empty_with(arena, source.clone(), loader));
         }
 
         if source.contents.is_empty()
             || (source.contents.len() < 33 && strings::trim(&source.contents, b"\n\r ").is_empty())
         {
             if !loader.handles_empty_file() {
-                return Some(ParseResult::empty_with(
-                    arena,
-                    source.clone(),
-                    loader,
-                    source_backing,
-                ));
+                return Some(ParseResult::empty_with(arena, source.clone(), loader));
             }
         }
 
@@ -1133,7 +1072,6 @@ impl<'a> Transpiler<'a> {
                         arena,
                         source.clone(),
                         options::Loader::Wasm,
-                        source_backing,
                     ));
                 }
 
@@ -1296,7 +1234,6 @@ impl<'a> Transpiler<'a> {
                         loader,
                         already_bundled: AlreadyBundled::None,
                         empty: false,
-                        source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
                         ast: bun_ast::Ast::empty_in(arena),
@@ -1304,7 +1241,6 @@ impl<'a> Transpiler<'a> {
                         loader,
                         already_bundled: AlreadyBundled::None,
                         empty: false,
-                        source_contents_backing: source_backing,
                     },
                     js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
                         ast: bun_ast::Ast::empty_in(arena),
@@ -1377,7 +1313,6 @@ impl<'a> Transpiler<'a> {
                         source: source.clone(),
                         loader,
                         empty: false,
-                        source_contents_backing: source_backing,
                     },
                 });
             }
@@ -1391,28 +1326,19 @@ impl<'a> Transpiler<'a> {
                 return parse_data_loader(
                     source,
                     loader,
-                    source_backing,
                     arena,
                     log,
                     this_parse.keep_json_and_toml_as_one_statement,
                 );
             }
             options::Loader::Text => {
-                return parse_text_loader(source, loader, source_backing, arena);
+                return parse_text_loader(source, loader, arena);
             }
             options::Loader::Md if !DATA_ONLY => {
-                return parse_md_loader(source, loader, source_backing, arena, log);
+                return parse_md_loader(source, loader, arena, log);
             }
             options::Loader::Wasm => {
-                return parse_wasm_loader(
-                    source,
-                    loader,
-                    source_backing,
-                    arena,
-                    &path,
-                    self.options.target,
-                    log,
-                );
+                return parse_wasm_loader(source, loader, arena, &path, self.options.target, log);
             }
             options::Loader::Css => {}
             options::Loader::Js
@@ -1436,7 +1362,7 @@ impl<'a> Transpiler<'a> {
 
 // ---------------------------------------------------------------------------
 // Cold rare-loader parse paths, split out of
-// `Transpiler::parse_maybe_return_file_only_allow_shared_buffer` so the
+// `Transpiler::parse_internal` so the
 // data-format / markdown / wasm code they pull in lands in `.text.unlikely`
 // instead of being interleaved (post-LTO) with the hot JS/TS parse path.
 // ---------------------------------------------------------------------------
@@ -1444,9 +1370,8 @@ impl<'a> Transpiler<'a> {
 #[cold]
 #[inline(never)]
 fn parse_data_loader<'a>(
-    source: &bun_ast::Source<'a>,
+    source: &'a bun_ast::Source<'a>,
     loader: options::Loader,
-    source_backing: resolver::cache::Contents,
     arena: &'a AstArena,
     log: &bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
@@ -1521,7 +1446,7 @@ fn parse_data_loader<'a>(
 
     // `Ast::from_parts` takes `Box<[Part]>`
     // (Vec owns its buffer). The single-part array is built on
-    // the global heap; `stmts` stays arena-backed (`*mut [Stmt]`).
+    // the global heap; `stmts` stays arena-backed.
     let parts: Box<[bun_ast::Part]> = 'parts: {
         if keep_json_and_toml_as_one_statement {
             let stmt = bun_ast::Stmt::allocate(
@@ -1553,9 +1478,6 @@ fn parse_data_loader<'a>(
                 let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::default(); n];
 
                 symbols.resize_with(n, Default::default);
-                // `S::ExportClause.items: *mut [ClauseItem]`
-                // is arena-owned; `ClauseItem: Default` so
-                // `alloc_slice_fill_default` is fine.
                 let export_clauses = arena.alloc_slice_fill_default::<bun_ast::ClauseItem>(n);
                 let mut duplicate_key_checker: bun_collections::StringHashMap<u32> =
                     bun_collections::StringHashMap::default();
@@ -1602,8 +1524,6 @@ fn parse_data_loader<'a>(
                             // with the arena instead of leaking
                             // (PORTING.md §Forbidden patterns
                             // bars `heap::alloc` for `&'static`).
-                            // SAFETY: ARENA — `arena` outlives
-                            // the returned `ParseResult.ast`.
                             Ok(boxed) => bun_ast::StoreStr::new(arena.alloc_slice_copy(&boxed)),
                             Err(_) => return None,
                         },
@@ -1704,16 +1624,14 @@ fn parse_data_loader<'a>(
         loader,
         already_bundled: AlreadyBundled::None,
         empty: false,
-        source_contents_backing: source_backing,
     });
 }
 
 #[cold]
 #[inline(never)]
 fn parse_text_loader<'a>(
-    source: &bun_ast::Source<'a>,
+    source: &'a bun_ast::Source<'a>,
     loader: options::Loader,
-    source_backing: resolver::cache::Contents,
     arena: &'a AstArena,
 ) -> Option<ParseResult<'a>> {
     let expr = bun_ast::Expr::allocate(
@@ -1744,7 +1662,6 @@ fn parse_text_loader<'a>(
         loader,
         already_bundled: AlreadyBundled::None,
         empty: false,
-        source_contents_backing: source_backing,
     });
 }
 
@@ -1753,7 +1670,6 @@ fn parse_text_loader<'a>(
 fn parse_md_loader<'a>(
     source: &bun_ast::Source<'a>,
     loader: options::Loader,
-    source_backing: resolver::cache::Contents,
     arena: &'a AstArena,
     log: &bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
@@ -1796,7 +1712,6 @@ fn parse_md_loader<'a>(
         loader,
         already_bundled: AlreadyBundled::None,
         empty: false,
-        source_contents_backing: source_backing,
     });
 }
 
@@ -1805,7 +1720,6 @@ fn parse_md_loader<'a>(
 fn parse_wasm_loader<'a>(
     source: &bun_ast::Source<'a>,
     loader: options::Loader,
-    source_backing: resolver::cache::Contents,
     arena: &'a Arena,
     path: &bun_paths::fs::Path<'_>,
     target: options::Target,
@@ -1830,7 +1744,6 @@ fn parse_wasm_loader<'a>(
             loader,
             already_bundled: AlreadyBundled::None,
             empty: false,
-            source_contents_backing: source_backing,
         });
     }
     None
@@ -1900,10 +1813,10 @@ pub use js_printer::Format as PrintFormat;
 // to the one concrete type and marking the public entry points
 // `#[inline(never)]` makes LTO emit exactly one copy in `bun_bundler`.
 impl<'a> Transpiler<'a> {
-    fn print_with_source_map_maybe<const ENABLE_SOURCE_MAP: bool>(
+    fn print_with_source_map_maybe<'ast, const ENABLE_SOURCE_MAP: bool>(
         &self,
-        print_arena: &AstArena,
-        mut ast: bun_ast::Ast,
+        print_arena: &'ast AstArena,
+        mut ast: bun_ast::Ast<'ast>,
         source: &bun_ast::Source,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
@@ -2006,11 +1919,11 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_esm_cold<const ENABLE_SOURCE_MAP: bool>(
+    fn print_esm_cold<'ast, const ENABLE_SOURCE_MAP: bool>(
         &self,
-        print_arena: &AstArena,
+        print_arena: &'ast AstArena,
         writer: &mut js_printer::BufferPrinter,
-        ast: &bun_ast::Ast,
+        ast: &bun_ast::Ast<'ast>,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2048,11 +1961,11 @@ impl<'a> Transpiler<'a> {
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
-    fn print_ast_esm_ascii_not_bun_cold<const ENABLE_SOURCE_MAP: bool>(
+    fn print_ast_esm_ascii_not_bun_cold<'ast, const ENABLE_SOURCE_MAP: bool>(
         &self,
-        print_arena: &AstArena,
+        print_arena: &'ast AstArena,
         writer: &mut js_printer::BufferPrinter,
-        ast: &bun_ast::Ast,
+        ast: &bun_ast::Ast<'ast>,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2076,11 +1989,11 @@ impl<'a> Transpiler<'a> {
     // hoisted out of print_with_source_map_maybe to express the
     // is-bun bool dispatch as a const generic.
     #[allow(clippy::too_many_arguments)]
-    fn print_ast_esm_ascii<const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
+    fn print_ast_esm_ascii<'ast, const ENABLE_SOURCE_MAP: bool, const IS_BUN: bool>(
         &self,
-        print_arena: &AstArena,
+        print_arena: &'ast AstArena,
         writer: &mut js_printer::BufferPrinter,
-        ast: &bun_ast::Ast,
+        ast: &bun_ast::Ast<'ast>,
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
@@ -2140,10 +2053,10 @@ impl<'a> Transpiler<'a> {
     /// template-string flattening and the flattened bytes share the AST's
     /// lifetime. See `print_with_source_map_maybe`.
     #[inline(never)]
-    pub fn print(
+    pub fn print<'ast>(
         &self,
-        print_arena: &AstArena,
-        result: ParseResult,
+        print_arena: &'ast AstArena,
+        result: ParseResult<'ast>,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
     ) -> crate::Result<usize> {
@@ -2165,10 +2078,10 @@ impl<'a> Transpiler<'a> {
     /// `print_arena` is the same per-call arena that built `result.ast` —
     /// see [`Self::print`].
     #[inline(never)]
-    pub fn print_with_source_map(
+    pub fn print_with_source_map<'ast>(
         &self,
-        print_arena: &AstArena,
-        result: ParseResult,
+        print_arena: &'ast AstArena,
+        result: ParseResult<'ast>,
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
@@ -2693,7 +2606,6 @@ impl<'a> Transpiler<'a> {
             file_path_text,
             dirname_fd,
             false,
-            None,
             None,
         ) {
             Ok(e) => e,

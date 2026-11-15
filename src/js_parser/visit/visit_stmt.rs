@@ -14,7 +14,7 @@ use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as js_ast, B, Binding, E, Expr, G, S, Stmt};
 
 // `ListManaged(Stmt)` in the parser is arena-backed (`p.arena`).
-type StmtList<'bump> = BumpVec<'bump, Stmt>;
+type StmtList<'bump> = BumpVec<'bump, Stmt<'bump>>;
 
 use bun_ast::StmtNodeList;
 
@@ -27,11 +27,11 @@ use bun_ast::StmtNodeList;
 // existing backing storage, so we copy. The arena
 // reclaims both at end-of-parse.
 #[inline]
-fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
+fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList<'a>) -> StmtList<'a> {
     bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
 }
 #[inline]
-fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
+fn list_to_stmts(list: StmtList<'_>) -> StmtNodeList<'_> {
     StmtNodeList::from_bump(list)
 }
 
@@ -41,14 +41,14 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
-    fn cur_scope(&mut self) -> &mut js_ast::Scope {
+    fn cur_scope(&mut self) -> &mut js_ast::Scope<'a> {
         self.current_scope_mut()
     }
 
     pub(crate) fn visit_and_append_stmt(
         &mut self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
     ) -> Result<(), Error> {
         // Statements nest arbitrarily deep (e.g. hundreds of `{` blocks), and each
         // level stacks a `visit_stmts` + `s_*` frame, so guard here like
@@ -131,7 +131,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_import(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
         data: &mut S::Import,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.namespace_ref);
@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
-        data: &mut S::ExportEquals,
+        data: &mut S::ExportEquals<'a>,
     ) -> Result<(), Error> {
         // "module.exports = value"
         // Evaluate lhs before visiting the rhs
@@ -170,7 +170,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_export_clause(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
         data: &mut S::ExportClause,
     ) -> Result<(), Error> {
         // "export {foo}"
@@ -272,11 +272,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         stmts: &mut StmtList<'a>,
         alias: &'a [u8],
-        entry: &ReplaceableExport,
+        entry: &ReplaceableExport<'a>,
     ) {
         match entry {
             ReplaceableExport::Replace(value) if alias == js_ast::ClauseItem::DEFAULT_ALIAS => {
-                let _ = p.inject_default_export(stmts, *value, bun_ast::Loc::EMPTY);
+                let value = value.to_expr(p.ast_arena, bun_ast::Loc::EMPTY);
+                let _ = p.inject_default_export(stmts, value, bun_ast::Loc::EMPTY);
             }
             ReplaceableExport::Replace(_) => {
                 // In TypeScript, `declare_symbol` lets a declaration replace an import with the same name.
@@ -310,8 +311,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_export_from(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportFrom,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportFrom<'a>,
     ) -> Result<(), Error> {
         // "export {foo} from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
@@ -330,7 +331,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             for i in 0..items.len() {
                 let old_ref = items[i].name.ref_;
 
-                // alias is arena-owned (`ArenaStr`), valid for 'a.
                 let alias = items[i].alias.slice();
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(alias).cloned() {
                     Self::replace_reexport(p, stmts, alias, &entry);
@@ -368,8 +368,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_export_star(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportStar,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportStar<'a>,
     ) -> Result<(), Error> {
         // "export * from 'path'"
         let name = p.load_name_from_ref(data.namespace_ref);
@@ -403,8 +403,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_export_default(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ExportDefault,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ExportDefault<'a>,
     ) -> Result<(), Error> {
         // scopeguard can't borrow `p` across the body; restructured to a tail
         // closure invoked at every return site below. Guard on `is_symbol()`
@@ -633,7 +633,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         .unwrap();
                     if let crate::parser::Runtime::ReplaceableExport::Replace(replace_expr) = entry
                     {
-                        *expr = replace_expr;
+                        *expr = replace_expr.to_expr(p.ast_arena, bun_ast::Loc::EMPTY);
                     } else {
                         let _ = p.inject_replacement_export(
                             stmts,
@@ -725,7 +725,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 replace_expr,
                             ) = entry
                             {
-                                data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                data.value = js_ast::StmtOrExpr::Expr(
+                                    replace_expr.to_expr(p.ast_arena, bun_ast::Loc::EMPTY),
+                                );
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -874,7 +876,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 replace_expr,
                             ) = entry
                             {
-                                data.value = js_ast::StmtOrExpr::Expr(replace_expr);
+                                data.value = js_ast::StmtOrExpr::Expr(
+                                    replace_expr.to_expr(p.ast_arena, bun_ast::Loc::EMPTY),
+                                );
                             } else {
                                 let _ = p.inject_replacement_export(
                                     stmts,
@@ -960,8 +964,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_function(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Function,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Function<'a>,
     ) -> Result<(), Error> {
         // We mark it as dead, but the value may not actually be dead
         // We just want to be sure to not increment the usage counts for anything in the function
@@ -1128,8 +1132,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_class(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Class,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Class<'a>,
     ) -> Result<(), Error> {
         let mark_as_dead = p.options.features.dead_code_elimination
             && data.is_export
@@ -1218,8 +1222,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_local(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Local,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Local<'a>,
         was_after_after_const_local_prefix: bool,
     ) -> Result<(), Error> {
         // TODO: Silently remove unsupported top-level "await" in dead code branches
@@ -1383,7 +1387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_break(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
         data: &mut S::Break,
     ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
@@ -1409,7 +1413,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_continue(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
+        stmt: &mut Stmt<'a>,
         data: &mut S::Continue,
     ) -> Result<(), Error> {
         if let Some(label) = &mut data.label {
@@ -1437,8 +1441,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_label(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Label,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Label<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Label, stmt.loc)
             .expect("unreachable");
@@ -1467,8 +1471,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_expr(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::SExpr,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::SExpr<'a>,
     ) -> Result<(), Error> {
         let should_trim_primitive = p.options.features.dead_code_elimination
             && (p.options.features.minify_syntax && data.value.is_primitive_literal());
@@ -1552,13 +1556,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     js_ast::ExprData::ECommonjsExportIdentifier(_)
                                 )
                             {
-                                // last entry's value — `keys()` borrows the map; wrap as
-                                // `StoreStr` so the borrow is detached before re-borrowing
-                                // `commonjs_named_exports` mutably below.
-                                let key: &'a [u8] = js_ast::StoreStr::new(
-                                    &p.commonjs_named_exports.keys()[to_convert as usize][..],
-                                )
-                                .slice();
+                                let key: &'a [u8] =
+                                    p.commonjs_named_exports.keys()[to_convert as usize].slice();
                                 let decl_value = match bin.right.data {
                                     js_ast::ExprData::EArrow(_)
                                     | js_ast::ExprData::EFunction(_)
@@ -1662,8 +1661,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_throw(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Throw,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Throw<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.value);
         stmts.push(*stmt);
@@ -1673,8 +1672,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_return(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Return,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Return<'a>,
     ) -> Result<(), Error> {
         // Forbid top-level return inside modules with ECMAScript-style exports
         if p.fn_or_arrow_data_visit.is_outside_fn_or_arrow {
@@ -1720,8 +1719,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_block(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Block,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Block<'a>,
     ) -> Result<(), Error> {
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
@@ -1771,8 +1770,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_with(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::With,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::With<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.value);
 
@@ -1797,8 +1796,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_while(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::While,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::While<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test);
         data.body = p.visit_loop_body(data.body);
@@ -1834,8 +1833,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_do_while(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::DoWhile,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::DoWhile<'a>,
     ) -> Result<(), Error> {
         data.body = p.visit_loop_body(data.body);
         p.visit_expr(&mut data.test);
@@ -1848,8 +1847,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_if(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::If,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::If<'a>,
     ) -> Result<(), Error> {
         let prev_in_branch = p.in_branch_condition;
         p.in_branch_condition = true;
@@ -1998,8 +1997,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_for(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::For,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::For<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
@@ -2050,8 +2049,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_for_in(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ForIn,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ForIn<'a>,
     ) -> Result<(), Error> {
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
@@ -2099,8 +2098,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_for_of(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::ForOf,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::ForOf<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
@@ -2204,8 +2203,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_try(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Try,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Try<'a>,
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
@@ -2258,8 +2257,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn s_switch(
         p: &mut Self,
         stmts: &mut StmtList<'a>,
-        stmt: &mut Stmt,
-        data: &mut S::Switch,
+        stmt: &mut Stmt<'a>,
+        data: &mut S::Switch<'a>,
     ) -> Result<(), Error> {
         p.visit_expr(&mut data.test);
         let mut lowered_using = false;
@@ -2312,7 +2311,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
-        data: &mut S::Enum,
+        data: &mut S::Enum<'a>,
         was_after_after_const_local_prefix: bool,
     ) -> Result<(), Error> {
         // Do not end the const local prefix after TypeScript enums. We process
@@ -2528,7 +2527,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         stmts: &mut StmtList<'a>,
         stmt: &mut Stmt,
-        data: &mut S::Namespace,
+        data: &mut S::Namespace<'a>,
     ) -> Result<(), Error> {
         p.record_declared_symbol(data.name.ref_);
 

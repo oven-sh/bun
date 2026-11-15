@@ -164,7 +164,7 @@ pub mod Runtime {
 
     // ─────────────────────────── Runtime.Features ───────────────────────────
 
-    pub struct Features {
+    pub struct Features<'a> {
         /// Enable the React Fast Refresh transform. What this does exactly
         /// is documented in js_parser, search for `const ReactRefresh`
         pub react_fast_refresh: bool,
@@ -217,7 +217,7 @@ pub mod Runtime {
         /// Allow runtime usage of require(), converting `require` into `__require`
         pub auto_polyfill_require: bool,
 
-        pub replace_exports: ReplaceableExportMap,
+        pub replace_exports: ReplaceableExportMap<'a>,
 
         /// Scan for '// @bun' at the top of this file, halting a parse if it is
         /// seen. This is used in `bun run` after a `bun build --target=bun`,
@@ -277,7 +277,7 @@ pub mod Runtime {
         pub jsx_optimization_inline: bool,
     }
 
-    impl Default for Features {
+    impl Default for Features<'_> {
         fn default() -> Self {
             Self {
                 react_fast_refresh: false,
@@ -324,7 +324,7 @@ pub mod Runtime {
         }
     }
 
-    impl Features {
+    impl Features<'_> {
         /// Initialize bundler feature flags for dead-code elimination via `import { feature } from "bun:bundle"`.
         /// Returns an owned `Box<StringSet>`, or `None` if no flags are provided.
         /// Keys are kept sorted so iteration order is deterministic (for RuntimeTranspilerCache hashing).
@@ -424,7 +424,7 @@ pub mod Runtime {
         Imports, ReactCompilerMode, ReplaceableExport, ReplaceableExportMap, ServerComponentsMode,
     };
 }
-pub type RuntimeFeatures = Runtime::Features;
+pub type RuntimeFeatures<'a> = Runtime::Features<'a>;
 pub(crate) type RuntimeImports = Runtime::Imports;
 
 pub use crate::p::P;
@@ -433,7 +433,6 @@ pub use crate::p::P;
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
 pub use bun_ast as js_ast;
-use js_ast::G;
 pub use js_ast::{
     B, Binding, BindingNodeIndex, E, Expr, ExprNodeIndex, ExprNodeList, LocRef, S, Scope, Stmt,
     StmtNodeIndex, StmtNodeList, Symbol,
@@ -449,21 +448,21 @@ use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct ExprListLoc {
-    pub(crate) list: ExprNodeList,
+pub(crate) struct ExprListLoc<'a> {
+    pub(crate) list: ExprNodeList<'a>,
     pub(crate) loc: bun_ast::Loc,
 }
 
 pub(crate) const LOC_MODULE_SCOPE: bun_ast::Loc = bun_ast::Loc { start: -100 };
 
-pub struct DeferredImportNamespace {
+pub struct DeferredImportNamespace<'a> {
     pub(crate) namespace: LocRef,
     pub(crate) import_record_id: u32,
     /// Scope the namespace binding lives in. Used by
     /// `imports_to_convert_from_dynamic_import` to bail when a direct
     /// `eval()` can observe the binding by name. Unused by
     /// `imports_to_convert_from_require`.
-    pub(crate) scope: Option<bun_ast::StoreRef<bun_ast::Scope>>,
+    pub(crate) scope: Option<bun_ast::StoreRef<'a, bun_ast::Scope<'a>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -650,9 +649,9 @@ pub struct MacroRefData<'a> {
 
 type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
 
-pub(crate) enum Substitution {
-    Success(Expr),
-    Failure(Expr),
+pub(crate) enum Substitution<'a> {
+    Success(Expr<'a>),
+    Failure(Expr<'a>),
     Continue,
 }
 
@@ -667,8 +666,8 @@ pub(crate) enum Substitution {
 /// to nothing is unsafe
 /// Because "foo" was defined. And now it's not.
 #[derive(Default)]
-pub struct RelocateVars {
-    pub(crate) stmt: Option<Stmt>,
+pub struct RelocateVars<'a> {
+    pub(crate) stmt: Option<Stmt<'a>>,
     pub(crate) ok: bool,
 }
 
@@ -680,7 +679,7 @@ pub enum RelocateVarsMode {
 
 #[derive(Default)]
 pub struct VisitArgsOpts<'a> {
-    pub(crate) body: &'a [Stmt],
+    pub(crate) body: &'a [Stmt<'a>],
     pub(crate) has_rest_arg: bool,
     /// This is true if the function is an arrow function or a method
     pub(crate) is_unique_formal_parameters: bool,
@@ -694,16 +693,16 @@ pub struct VisitDeclOpts {
 }
 
 #[derive(Clone, Copy)]
-pub struct TransposeState {
+pub struct TransposeState<'a> {
     pub(crate) is_await_target: bool,
     pub(crate) is_then_catch_target: bool,
     pub(crate) is_require_immediately_assigned_to_decl: bool,
     pub(crate) loc: bun_ast::Loc,
     pub(crate) import_loader: Option<bun_ast::Loader>,
-    pub(crate) import_options: Expr,
+    pub(crate) import_options: Expr<'a>,
 }
 
-impl Default for TransposeState {
+impl Default for TransposeState<'_> {
     fn default() -> Self {
         Self {
             is_await_target: false,
@@ -716,13 +715,13 @@ impl Default for TransposeState {
     }
 }
 
-pub(crate) enum JSXTagData {
+pub(crate) enum JSXTagData<'a> {
     Fragment,
-    Tag(Expr),
+    Tag(Expr<'a>),
 }
 
-impl JSXTagData {
-    pub(crate) fn as_expr(&self) -> Option<ExprNodeIndex> {
+impl<'a> JSXTagData<'a> {
+    pub(crate) fn as_expr(&self) -> Option<ExprNodeIndex<'a>> {
         match self {
             JSXTagData::Tag(tag) => Some(*tag),
             _ => None,
@@ -731,7 +730,7 @@ impl JSXTagData {
 }
 
 pub(crate) struct JSXTag<'a> {
-    pub data: JSXTagData,
+    pub data: JSXTagData<'a>,
     pub range: bun_ast::Range,
     /// Empty string for fragments.
     pub name: &'a [u8],
@@ -830,25 +829,6 @@ impl<'a> JSXTag<'a> {
             range: tag_range,
             name,
         })
-    }
-}
-
-pub struct ExprOrLetStmt {
-    pub(crate) stmt_or_expr: js_ast::StmtOrExpr,
-    // `decls` borrows the heap buffer that was just moved into `S::Local`.
-    // The buffer pointer is stable across
-    // the move, but borrowck can't see that — store as `RawSlice` to record the
-    // outlives-holder invariant without a per-site unsafe cast. Read by the
-    // for-loop parser so for-in/for-of heads can validate "let"/"using" decls.
-    pub(crate) decls: bun_collections::RawSlice<G::Decl>,
-}
-
-impl Default for ExprOrLetStmt {
-    fn default() -> Self {
-        Self {
-            stmt_or_expr: js_ast::StmtOrExpr::default(),
-            decls: bun_collections::RawSlice::EMPTY,
-        }
     }
 }
 
@@ -1059,9 +1039,9 @@ pub enum StmtsKind {
 }
 
 #[derive(Default)]
-pub struct ExprBindingTuple {
-    pub(crate) expr: Option<ExprNodeIndex>,
-    pub(crate) binding: Option<Binding>,
+pub struct ExprBindingTuple<'a> {
+    pub(crate) expr: Option<ExprNodeIndex<'a>>,
+    pub(crate) binding: Option<Binding<'a>>,
 }
 
 #[derive(Default)]
@@ -1069,8 +1049,8 @@ pub struct TempRef {
     pub(crate) r#ref: Ref,
 }
 
-pub struct ThenCatchChain {
-    pub(crate) next_target: js_ast::ExprData,
+pub struct ThenCatchChain<'a> {
+    pub(crate) next_target: js_ast::ExprData<'a>,
     pub(crate) has_multiple_args: bool,
     pub(crate) has_catch: bool,
 }
@@ -1123,7 +1103,7 @@ impl InvalidLoc {
 }
 
 pub(crate) type LocList<'bump> = bun_alloc::ArenaVec<'bump, InvalidLoc>;
-pub(crate) type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt>;
+pub(crate) type StmtList<'bump> = bun_alloc::ArenaVec<'bump, Stmt<'bump>>;
 
 /// This hash table is used every time we parse function args
 /// Rather than allocating a new hash table each time, we can just reuse the previous allocation
@@ -1171,36 +1151,10 @@ pub(crate) type StringBoolMap = StringHashMap<bool>;
 pub(crate) type RefMap = HashMap<Ref, ()>;
 pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 
-// `scope` is `*mut` (not `&'arena`) because the visit pass writes
-// through it (push_scope_for_visit_pass assigns it to `current_scope: *mut`)
-// and the parse pass needs Copy for the BumpVec<Option<ScopeOrder>> to be
-// indexable + truncatable. The Scope itself is arena-owned for `'arena`.
 #[derive(Clone, Copy)]
 pub struct ScopeOrder<'arena> {
     pub(crate) loc: bun_ast::Loc,
-    pub(crate) scope: *mut Scope,
-    _phantom: core::marker::PhantomData<&'arena Scope>,
-}
-impl<'arena> ScopeOrder<'arena> {
-    #[inline]
-    pub(crate) fn new(loc: bun_ast::Loc, scope: *mut Scope) -> Self {
-        Self {
-            loc,
-            scope,
-            _phantom: core::marker::PhantomData,
-        }
-    }
-    /// Arena-backed handle to the scope. `StoreRef` has safe `Deref`/`DerefMut`,
-    /// so callers read `order.scope_ref().kind` instead of open-coding
-    /// `unsafe { &*order.scope }` at every visit-pass check.
-    #[inline]
-    pub(crate) fn scope_ref(&self) -> js_ast::StoreRef<Scope> {
-        // `scope` is always set from a live arena allocation in
-        // `push_scope_for_parse_pass`; never null in practice.
-        js_ast::StoreRef::from(
-            core::ptr::NonNull::new(self.scope).expect("ScopeOrder.scope non-null"),
-        )
-    }
+    pub(crate) scope: js_ast::StoreRef<'arena, Scope<'arena>>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -1332,12 +1286,12 @@ impl DeferredErrors {
 pub(crate) struct ImportClause<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Import.items: StoreSlice<ClauseItem>`).
-    pub(crate) items: &'a mut [js_ast::ClauseItem],
+    pub(crate) items: &'a mut [js_ast::ClauseItem<'a>],
     pub(crate) is_single_line: bool,
     pub(crate) had_type_only_imports: bool,
 }
 
-pub struct PropertyOpts {
+pub struct PropertyOpts<'a> {
     pub(crate) declare_range: bun_ast::Range,
     pub(crate) is_async: bool,
     pub(crate) is_generator: bool,
@@ -1348,12 +1302,12 @@ pub struct PropertyOpts {
     pub(crate) class_has_extends: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
-    pub(crate) ts_decorators: js_ast::StoreSlice<Expr>,
+    pub(crate) ts_decorators: js_ast::StoreSlice<'a, Expr<'a>>,
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
 }
 
-impl Default for PropertyOpts {
+impl Default for PropertyOpts<'_> {
     fn default() -> Self {
         Self {
             declare_range: bun_ast::Range::NONE,
@@ -1419,14 +1373,14 @@ pub struct FindSymbolResult {
 pub(crate) struct ExportClauseResult<'a> {
     /// Arena-owned. `&mut` (not `&`) so callers can hand it to AST nodes
     /// (`S::Export{From,Clause}.items: StoreSlice<ClauseItem>`).
-    pub(crate) clauses: &'a mut [js_ast::ClauseItem],
+    pub(crate) clauses: &'a mut [js_ast::ClauseItem<'a>],
     pub(crate) is_single_line: bool,
     pub(crate) had_type_only_exports: bool,
 }
 
 #[derive(Clone, Copy)]
 pub struct DeferredTsDecorators<'a> {
-    pub(crate) values: &'a [js_ast::Expr],
+    pub(crate) values: &'a [js_ast::Expr<'a>],
 
     /// If this turns out to be a "declare class" statement, we need to undo the
     /// scopes that were potentially pushed while parsing the decorator arguments.
@@ -1445,7 +1399,7 @@ pub enum LexicalDecl {
 
 #[derive(Default)]
 pub struct ParseClassOptions<'a> {
-    pub(crate) ts_decorators: &'a [Expr],
+    pub(crate) ts_decorators: &'a [Expr<'a>],
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_type_script_declare: bool,
 }
@@ -1514,17 +1468,6 @@ pub(crate) mod prefill {
     pub(crate) mod value {
         use super::*;
         pub(crate) const ZERO: E::Number = E::Number::new(0.0);
-    }
-
-    pub(crate) mod string {
-        use super::*;
-        pub(crate) const CHILDREN: E::String = E::String::from_static(b"children");
-    }
-
-    pub(crate) mod data {
-        use super::*;
-        pub(crate) const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
-        pub(crate) const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
 }
 
@@ -1671,10 +1614,10 @@ impl Default for DeferredArrowArgErrors {
 
 pub fn new_lazy_export_ast<'bump>(
     bump: &'bump bun_ast::AstArena,
-    define: &'bump mut Define,
+    define: &'bump mut Define<'bump>,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &bun_ast::Log,
-    expr: Expr,
+    expr: Expr<'bump>,
     source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
@@ -1692,10 +1635,10 @@ pub fn new_lazy_export_ast<'bump>(
 
 pub fn new_lazy_export_ast_impl<'bump>(
     bump: &'bump bun_ast::AstArena,
-    define: &'bump mut Define,
+    define: &'bump mut Define<'bump>,
     opts: ParserOptions<'bump>,
     log_to_copy_into: &bun_ast::Log,
-    expr: Expr,
+    expr: Expr<'bump>,
     source: &'bump bun_ast::Source<'bump>,
     runtime_api_call: &'static [u8],
     symbols: js_ast::symbol::List<'bump>,
@@ -1808,7 +1751,7 @@ pub struct ReactRefresh<'a> {
     /// `.s_local`, as we must hash the variable destructure if the
     /// hook's result is assigned directly to a local.
     // ARENA: identity-compared against Store-allocated AST node.
-    pub(crate) last_hook_seen: Option<*const E::Call>,
+    pub(crate) last_hook_seen: Option<*const E::Call<'a>>,
 
     /// Every function sets up stack memory to hold data related to it's
     /// hook tracking. This is a pointer to that ?HookContext, where an
@@ -1826,7 +1769,7 @@ pub struct ReactRefresh<'a> {
     /// modeled as `Option<NonNull<_>>`
     /// (Copy) so the save/set/restore dance in visitStmt/visitExpr can take a
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.
-    pub(crate) hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext>>>,
+    pub(crate) hook_ctx_storage: Option<core::ptr::NonNull<Option<HookContext<'a>>>>,
 
     /// This is the most recently generated `_s` call. This is used to compare
     /// against seen calls to plain identifiers when in "export default" and in
@@ -1853,13 +1796,13 @@ impl<'a> Default for ReactRefresh<'a> {
     }
 }
 
-pub struct HookContext {
+pub struct HookContext<'a> {
     pub(crate) hasher: Wyhash,
     pub(crate) signature_cb: Ref,
-    pub(crate) user_hooks: ArrayHashMap<Ref, Expr>,
+    pub(crate) user_hooks: ArrayHashMap<Ref, Expr<'a>>,
 }
 
-impl ReactRefresh<'_> {
+impl<'a> ReactRefresh<'a> {
     /// Reborrow the stack-allocated `Option<HookContext>` that
     /// `hook_ctx_storage` points at. The returned
     /// borrow is detached from `self` because the storage lives on a *caller*
@@ -1868,7 +1811,7 @@ impl ReactRefresh<'_> {
     /// `visit/mod.rs` stay safe; callers must not hold two results live at
     /// once (same uniqueness contract as `P::log()`).
     #[inline]
-    pub(crate) fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext>> {
+    pub(crate) fn hook_ctx_mut<'s>(&self) -> Option<&'s mut Option<HookContext<'a>>> {
         // SAFETY: `hook_ctx_storage` is `Some` only while a `visit_*` frame
         // higher on the stack has installed `&mut react_hook_data` (a stack
         // local) and will restore the previous value before returning, so the

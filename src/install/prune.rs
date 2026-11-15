@@ -593,7 +593,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         .get_with_path(log, path, Default::default())
         .unwrap()
     {
-        Ok(entry) => (entry.source.clone(), entry.root),
+        Ok(entry) => (entry.source, entry.root),
         Err(err) => {
             if !quiet {
                 print_log_errors(log);
@@ -610,7 +610,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
         &mut to_lockfile,
         &mut ParseFields::new(manager),
         log,
-        &source,
+        source,
         bun_ast::JsonView::from(&json),
         &mut resolver,
         Features::main(),

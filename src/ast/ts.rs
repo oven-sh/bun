@@ -33,9 +33,7 @@ use crate::{AstStringArrayHashMap, Loc, StoreSlice};
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// The `EnumString` payload is a `StoreRef<EString>` (AST back-pointer)
-// rather than an arena-borrowed reference, matching the rest of the AST crate.
-pub struct TSNamespaceScope {
+pub struct TSNamespaceScope<'a> {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
     /// compiled into:
@@ -50,10 +48,7 @@ pub struct TSNamespaceScope {
     pub arg_ref: Ref,
 
     /// This is shared between all sibling namespace blocks
-    // LIFETIMES.tsv: ARENA — p.arena.create(Pair); &pair.map; shared across
-    // sibling scopes. `StoreRef` (arena back-pointer with safe `Deref`) so
-    // callers don't open-code `unsafe { &mut *exported_members }` at every use.
-    pub exported_members: crate::nodes::StoreRef<TSNamespaceMemberMap>,
+    pub exported_members: crate::nodes::StoreRef<'a, TSNamespaceMemberMap<'a>>,
 
     /// This is a lazily-generated map of identifiers that actually represent
     /// property accesses to this namespace's properties. For example:
@@ -79,7 +74,7 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    pub property_accesses: AstStringArrayHashMap<Ref>,
+    pub property_accesses: AstStringArrayHashMap<'a, Ref>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -109,30 +104,28 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = AstStringArrayHashMap<TSNamespaceMember>;
+pub type TSNamespaceMemberMap<'a> = AstStringArrayHashMap<'a, TSNamespaceMember<'a>>;
 
-pub struct TSNamespaceMember {
+pub struct TSNamespaceMember<'a> {
     pub loc: Loc,
-    pub data: Data,
+    pub data: Data<'a>,
 }
 
 #[derive(Clone, Copy)]
-pub enum Data {
+pub enum Data<'a> {
     /// "namespace ns { export let it }"
     Property,
     /// "namespace ns { export namespace it {} }"
-    // LIFETIMES.tsv: ARENA — assigned from ts_namespace.exported_members (parser-arena alloc)
-    Namespace(crate::nodes::StoreRef<TSNamespaceMemberMap>),
+    Namespace(crate::nodes::StoreRef<'a, TSNamespaceMemberMap<'a>>),
     /// "enum ns { it }"
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
-    // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload.
-    EnumString(crate::nodes::StoreRef<EString>),
+    EnumString(crate::nodes::StoreRef<'a, EString<'a>>),
     /// "enum ns { it = something() }"
     EnumProperty,
 }
 
-impl Data {
+impl Data<'_> {
     pub fn is_enum(&self) -> bool {
         matches!(
             self,
@@ -147,7 +140,7 @@ impl Data {
 // `bun_js_parser::typescript`.
 
 #[derive(Clone, Copy, Default)]
-pub enum Metadata {
+pub enum Metadata<'a> {
     #[default]
     MNone,
 
@@ -167,10 +160,10 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    MDot(StoreSlice<Ref>),
+    MDot(StoreSlice<'a, Ref>),
 }
 
-impl Metadata {
+impl Metadata<'_> {
     pub const DEFAULT: Self = Metadata::MNone;
 
     // the logic in finish_union, merge_union, finish_intersection and merge_intersection is

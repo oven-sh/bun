@@ -255,7 +255,7 @@ impl CatalogMap {
         Ok(entry.value_ptr)
     }
 
-    pub(crate) fn parse_count(&mut self, expr: JsonView<'_>, builder: &mut StringBuilder) {
+    pub(crate) fn parse_count(&mut self, expr: JsonView<'_, '_>, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
             Self::count_catalog_group(default_catalog, builder);
         }
@@ -268,7 +268,7 @@ impl CatalogMap {
         }
     }
 
-    fn count_catalog_group(group: JsonView<'_>, builder: &mut StringBuilder) {
+    fn count_catalog_group(group: JsonView<'_, '_>, builder: &mut StringBuilder) {
         group.for_each_property(|dep_name, _, version| {
             builder.count(dep_name);
             if let Some(version_str) = version.as_utf8_string_literal() {
@@ -282,7 +282,7 @@ impl CatalogMap {
         aliases: &mut NpmAliasMap,
         log: &Log,
         source: &Source,
-        expr: JsonView<'_>,
+        expr: JsonView<'_, '_>,
         builder: &mut StringBuilder,
     ) -> crate::Result<bool> {
         let mut found_any = false;
@@ -341,7 +341,7 @@ impl CatalogMap {
         aliases: &mut NpmAliasMap,
         log: &Log,
         source: &Source,
-        catalog: JsonView<'_>,
+        catalog: JsonView<'_, '_>,
         builder: &mut StringBuilder,
     ) -> Result<(), AllocError> {
         catalog.try_for_each_property(|dep_name_str, key_loc, value| {

@@ -1,6 +1,6 @@
 //! JavaScript printer — translates the AST back to source text.
 //!
-//! The `Printer<'a, W, ...>` struct and its full method surface
+//! The `Printer<'a, 'ast, W, ...>` struct and its full method surface
 //! (`print_expr`, `print_stmt`, `print_binding`, `print_property`, …)
 //! compile against `bun_ast::{e,s,b,g,op,expr,stmt}`. The top-level
 //! `print` / `print_with_writer{,_and_platform}` / `print_json` /
@@ -11,8 +11,6 @@
 
 pub mod error;
 pub use error::{Error, Result};
-
-use core::ptr::NonNull;
 
 use bun_ast::{ImportKind, ImportRecord};
 use bun_core::MutableString;
@@ -50,11 +48,7 @@ use bun_ast::ImportRecordFlags;
 use bun_sourcemap as SourceMap;
 
 // ──────────────────────────────────────────────────────────────────────────
-// renamer — defined in `renamer.rs`. The five former leak sites
-// have been replaced with `bumpalo::Bump`-backed allocation (PORTING.md §Forbidden);
-// renamed-name strings are arena-owned and typed `*const [u8]` (PORTING.md §Allocators).
-// A future refactor could thread the AST `'bump` lifetime through Renamer to
-// replace the raw pointers.
+// renamer — defined in `renamer.rs`.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "renamer.rs"]
 pub mod renamer;
@@ -1269,7 +1263,7 @@ impl OnSourceMapChunk for core::cell::Cell<Option<SourceMap::Chunk>> {
 // ───────────────────────────────────────────────────────────────────────────
 use js_ast::{CommonJSNamedExports, TsEnumsMap};
 
-pub struct Options<'a> {
+pub struct Options<'a, 'ast> {
     pub bundling: bool,
     pub to_commonjs_ref: Ref,
     pub to_esm_ref: Ref,
@@ -1289,7 +1283,7 @@ pub struct Options<'a> {
 
     /// Borrowed from `BundledAst.commonjs_named_exports`; the printer only
     /// reads from it.
-    pub commonjs_named_exports: Option<&'a CommonJSNamedExports>,
+    pub commonjs_named_exports: Option<&'a CommonJSNamedExports<'a>>,
     pub commonjs_named_exports_deoptimized: bool,
     pub commonjs_module_exports_assigned_deoptimized: bool,
     pub commonjs_named_exports_ref: Ref,
@@ -1318,10 +1312,10 @@ pub struct Options<'a> {
     // const_values: Ast.ConstValuesMap = .{},
     /// Borrowed from `LinkerGraph.ts_enums` (one shared map for the whole
     /// bundle); the printer only reads from it.
-    pub ts_enums: Option<&'a TsEnumsMap>,
+    pub ts_enums: Option<&'a TsEnumsMap<'ast>>,
     /// Borrowed from `LinkerGraph.import_member_bindings`: `X.name` property
     /// reads the linker bound straight to an export (see `E::Dot::is_import_property_use`).
-    pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings>,
+    pub import_member_bindings: Option<&'a js_ast::ast_result::ImportMemberBindings<'a>>,
     /// Some `import()` / `require()` in this file reads through import items,
     /// so a pattern may bind one (see `Symbol::is_bound_import_item`).
     pub has_dynamic_import_items: bool,
@@ -1332,12 +1326,12 @@ pub struct Options<'a> {
     /// source can print into multiple part-ranges/chunks, so the table must
     /// not be consumed. `get_source_map_builder` moves the borrow into the
     /// builder as `LineOffsetTables::Borrowed`.
-    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::AstList>,
+    pub line_offset_tables: Option<&'a SourceMap::line_offset_table::AstList<'a>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
 }
 
-impl<'a> Options<'a> {
+impl Options<'_, '_> {
     pub(crate) fn require_or_import_meta_for_source(
         &self,
         id: u32,
@@ -1350,7 +1344,7 @@ impl<'a> Options<'a> {
     }
 }
 
-impl<'a> Default for Options<'a> {
+impl Default for Options<'_, '_> {
     fn default() -> Self {
         Self {
             bundling: false,
@@ -1531,7 +1525,7 @@ pub(crate) mod __gated_printer {
     /// Re-borrow an arena-owned `StoreSlice<T>` for the print pass. Kept as a
     /// free fn (vs. calling `.slice()` inline); the printer only ever reads these.
     #[inline(always)]
-    pub(crate) fn slice_of<'a, T>(p: js_ast::StoreSlice<T>) -> &'a [T] {
+    pub(crate) fn slice_of<T>(p: js_ast::StoreSlice<'_, T>) -> &[T] {
         p.slice()
     }
     /// `EnumSet<T>` field-style mutation helper.
@@ -1548,6 +1542,7 @@ pub(crate) mod __gated_printer {
     /// `fn NewPrinter(...) type` → generic struct.
     pub(crate) struct Printer<
         'a,
+        'ast,
         W,
         const ASCII_ONLY: bool,
         const IS_BUN_PLATFORM: bool,
@@ -1558,7 +1553,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) needs_semicolon: bool,
         pub(crate) stmt_start: i32,
-        pub(crate) options: Options<'a>,
+        pub(crate) options: Options<'a, 'ast>,
         pub(crate) export_default_start: i32,
         pub(crate) arrow_expr_start: i32,
         pub(crate) for_of_init_start: i32,
@@ -1566,16 +1561,16 @@ pub(crate) mod __gated_printer {
         pub(crate) prev_op_end: i32,
         pub(crate) prev_num_end: i32,
         pub(crate) prev_reg_exp_end: i32,
-        pub(crate) call_target: Option<ExprData>,
+        pub(crate) call_target: Option<ExprData<'ast>>,
         pub(crate) writer: W,
 
         pub(crate) renamer: rename::Renamer<'a>,
         pub(crate) prev_stmt_tag: StmtTag,
         pub(crate) source_map_builder: SourceMap::chunk::Builder<'a>,
 
-        pub(crate) temporary_bindings: Vec<B::Property>,
+        pub(crate) temporary_bindings: Vec<B::Property<'ast>>,
 
-        pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'a>>,
+        pub(crate) binary_expression_stack: Vec<BinaryExpressionVisitor<'ast>>,
 
         pub(crate) stack_check: bun_core::StackCheck,
         pub(crate) stack_overflowed: bool,
@@ -1586,7 +1581,7 @@ pub(crate) mod __gated_printer {
 
         /// Arena for transient allocations during printing (rope flattening,
         /// UTF-16→UTF-8 transcoding).
-        pub(crate) bump: &'a js_ast::AstArena,
+        pub(crate) bump: &'ast js_ast::AstArena,
     }
 
     /// The handling of binary expressions is convoluted because we're using
@@ -1597,8 +1592,7 @@ pub(crate) mod __gated_printer {
         // Inputs
         // A StoreRef so the
         // visitor stack can outlive the by-value `Expr` argument to `print_expr`.
-        pub(crate) e: js_ast::StoreRef<E::Binary>,
-        _phantom: core::marker::PhantomData<&'ast ()>,
+        pub(crate) e: js_ast::StoreRef<'ast, E::Binary<'ast>>,
         pub(crate) level: Level,
         pub(crate) flags: ExprFlagSet,
 
@@ -1621,12 +1615,13 @@ pub(crate) mod __gated_printer {
 
     impl<
         'a,
+        'ast,
         W,
         const ASCII_ONLY: bool,
         const IS_BUN_PLATFORM: bool,
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
-    > Printer<'a, W, ASCII_ONLY, IS_BUN_PLATFORM, IS_JSON, GENERATE_SOURCE_MAP>
+    > Printer<'a, 'ast, W, ASCII_ONLY, IS_BUN_PLATFORM, IS_JSON, GENERATE_SOURCE_MAP>
     where
         W: WriterTrait,
     {
@@ -1649,7 +1644,7 @@ pub(crate) mod __gated_printer {
         }
 
         // BinaryExpressionVisitor::checkAndPrepare
-        fn binary_check_and_prepare(&mut self, v: &mut BinaryExpressionVisitor<'a>) -> bool {
+        fn binary_check_and_prepare(&mut self, v: &mut BinaryExpressionVisitor<'ast>) -> bool {
             let e = v.e;
 
             let entry: &'static OpInfo = Op::TABLE.get_ptr_const(e.op);
@@ -1745,7 +1740,7 @@ pub(crate) mod __gated_printer {
         }
 
         // BinaryExpressionVisitor::visitRightAndFinish
-        fn binary_visit_right_and_finish(&mut self, v: &BinaryExpressionVisitor<'a>) {
+        fn binary_visit_right_and_finish(&mut self, v: &BinaryExpressionVisitor<'ast>) {
             let e = v.e;
             let entry = v.entry;
             let mut flags = ExprFlagSet::empty();
@@ -2039,7 +2034,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_body(&mut self, stmt: Stmt) {
+        pub(crate) fn print_body(&mut self, stmt: Stmt<'ast>) {
             match &stmt.data {
                 StmtData::SBlock(block) => {
                     self.print_space();
@@ -2055,7 +2050,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_block_body(&mut self, stmts: &[Stmt]) {
+        pub(crate) fn print_block_body(&mut self, stmts: &[Stmt<'ast>]) {
             for stmt in stmts {
                 self.print_semicolon_if_needed();
                 self.print_stmt(*stmt).expect("unreachable");
@@ -2065,7 +2060,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_block(
             &mut self,
             loc: bun_ast::Loc,
-            stmts: &[Stmt],
+            stmts: &[Stmt<'ast>],
             close_brace_loc: Option<bun_ast::Loc>,
         ) {
             self.add_source_mapping(loc);
@@ -2089,7 +2084,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_decls(
             &mut self,
             kind: S::Kind,
-            decls_: &[G::Decl],
+            decls_: &[G::Decl<'ast>],
             flags: ExprFlagSet,
             tlm: TopLevelAndIsExport,
         ) {
@@ -2214,7 +2209,7 @@ pub(crate) mod __gated_printer {
                                 flags: Default::default(),
                                 key: Expr::allocate(
                                     self.bump,
-                                    E::String::init(&target_e_dot.name),
+                                    E::String::init(target_e_dot.name.slice()),
                                     target_e_dot.name_loc,
                                 ),
                                 value: decls[0].binding,
@@ -2224,7 +2219,7 @@ pub(crate) mod __gated_printer {
                                 flags: Default::default(),
                                 key: Expr::allocate(
                                     self.bump,
-                                    E::String::init(&second_e_dot.name),
+                                    E::String::init(second_e_dot.name.slice()),
                                     second_e_dot.name_loc,
                                 ),
                                 value: decls[1].binding,
@@ -2259,7 +2254,7 @@ pub(crate) mod __gated_printer {
                                     flags: Default::default(),
                                     key: Expr::allocate(
                                         self.bump,
-                                        E::String::init(&e_dot.name),
+                                        E::String::init(e_dot.name.slice()),
                                         e_dot.name_loc,
                                     ),
                                     value: decl.binding,
@@ -2267,25 +2262,7 @@ pub(crate) mod __gated_printer {
                                 });
                                 decls = &decls[1..];
                             }
-                            let mut b_object = B::Object {
-                                // SAFETY: `temp_bindings`' heap buffer is stable until the
-                                // matching clear()/drop below; `print_binding` only reads it.
-                                properties: js_ast::StoreSlice::new_mut(
-                                    temp_bindings.as_mut_slice(),
-                                ),
-                                is_single_line: true,
-                                close_brace_loc: bun_ast::Loc::EMPTY,
-                            };
-                            // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
-                            // pointee is a stack local but `print_binding` only reads it and
-                            // returns before `b_object` is dropped (same as the prior `&raw mut`).
-                            let binding = Binding {
-                                loc: target_e_dot.target.loc,
-                                data: BindingData::BObject(js_ast::StoreRef::from_bump(
-                                    &mut b_object,
-                                )),
-                            };
-                            self.print_binding(binding, tlm);
+                            self.print_object_binding(&temp_bindings, true, tlm);
                             // If recursion replaced
                             // `self.temporary_bindings`, drop our local; else clear+restore.
                             if self.temporary_bindings.capacity() > 0 {
@@ -2382,7 +2359,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn print_fn_args(
             &mut self,
             open_paren_loc: Option<bun_ast::Loc>,
-            args: &[G::Arg],
+            args: &[G::Arg<'ast>],
             has_rest_arg: bool,
             // is_arrow can be used for minifying later
             _is_arrow: bool,
@@ -2419,7 +2396,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_func(&mut self, func: &G::Fn) {
+        pub(crate) fn print_func(&mut self, func: &G::Fn<'ast>) {
             self.print_fn_args(
                 Some(func.open_parens_loc),
                 slice_of(func.args),
@@ -2430,7 +2407,7 @@ pub(crate) mod __gated_printer {
             self.print_block(func.body.loc, slice_of(func.body.stmts), None);
         }
 
-        pub(crate) fn print_class(&mut self, class: &G::Class) {
+        pub(crate) fn print_class(&mut self, class: &G::Class<'ast>) {
             if let Some(extends) = &class.extends {
                 self.print(b" extends");
                 self.print_space();
@@ -2566,7 +2543,7 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        fn symbols(&self) -> &'a js_ast::symbol::Map {
+        fn symbols(&self) -> &'a js_ast::symbol::Map<'a> {
             self.renamer.symbols
         }
 
@@ -2607,7 +2584,7 @@ pub(crate) mod __gated_printer {
             import_record_index: u32,
             was_unwrapped_require: bool,
             leading_interior_comments: &[G::Comment],
-            import_options: Expr,
+            import_options: Expr<'ast>,
             level_: Level,
             flags: ExprFlagSet,
         ) {
@@ -3145,7 +3122,7 @@ pub(crate) mod __gated_printer {
             Ok(())
         }
 
-        pub(crate) fn print_expr(&mut self, expr: Expr, level: Level, in_flags: ExprFlagSet) {
+        pub(crate) fn print_expr(&mut self, expr: Expr<'ast>, level: Level, in_flags: ExprFlagSet) {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -4001,7 +3978,7 @@ pub(crate) mod __gated_printer {
                         // `TemplatePart` is structurally
                         // `Copy` but `EString` doesn't derive it; field-wise copy.
                         #[inline]
-                        fn part_clone(p: &E::TemplatePart) -> E::TemplatePart {
+                        fn part_clone<'ast>(p: &E::TemplatePart<'ast>) -> E::TemplatePart<'ast> {
                             E::TemplatePart {
                                 value: p.value,
                                 tail_loc: p.tail_loc,
@@ -4025,7 +4002,9 @@ pub(crate) mod __gated_printer {
                             let inlined_value: Option<Expr> = match &part.value.data {
                                 ExprData::ENameOfSymbol(e2) => Some(Expr::allocate(
                                     self.bump,
-                                    E::String::init(self.mangled_prop_name(e2.ref_)),
+                                    E::String::init(
+                                        self.bump.dupe_str(self.mangled_prop_name(e2.ref_)).slice(),
+                                    ),
                                     part.value.loc,
                                 )),
                                 ExprData::EDot(_) => {
@@ -4063,25 +4042,18 @@ pub(crate) mod __gated_printer {
                                     E::TemplateContents::Raw(r) => E::TemplateContents::Raw(*r),
                                 },
                             };
-                            let e2 = copy.fold(self.bump, expr.loc);
-                            match &e2.data {
-                                ExprData::EString(s) => {
+                            match copy.fold(self.bump, expr.loc).map(|folded| folded.data) {
+                                Some(ExprData::EString(s)) => {
                                     self.print(b'"');
                                     self.print_string_characters_utf8(s.slice8(), b'"');
                                     self.print(b'"');
                                     return;
                                 }
-                                ExprData::ETemplate(t) => {
+                                Some(ExprData::ETemplate(t)) => {
                                     // Use the folded template for the print path
                                     // below — assigned to the thread-local `e`,
                                     // never written back into the shared AST node
                                     // (see the comment at the top of this arm).
-                                    // Field values are arena-backed in both
-                                    // fold paths (the bail-out path aliases the
-                                    // stack `copy`, but its `parts`/`head` payloads
-                                    // are bump-allocated above), so copying the
-                                    // fields out is safe even though `t` itself may
-                                    // point at `copy`.
                                     e = E::Template {
                                         tag: t.tag,
                                         parts: t.parts,
@@ -4095,7 +4067,8 @@ pub(crate) mod __gated_printer {
                                         },
                                     };
                                 }
-                                _ => {}
+                                Some(_) => {}
+                                None => e = copy,
                             }
                         }
 
@@ -4378,7 +4351,6 @@ pub(crate) mod __gated_printer {
                     // stack overflow for deeply-nested ASTs.
                     let mut v = BinaryExpressionVisitor {
                         e: *e,
-                        _phantom: core::marker::PhantomData,
                         level,
                         flags,
                         left_level: Level::Lowest,
@@ -4414,7 +4386,6 @@ pub(crate) mod __gated_printer {
                         let lb = left_binary.unwrap();
                         let next = BinaryExpressionVisitor {
                             e: lb,
-                            _phantom: core::marker::PhantomData,
                             level: v.left_level,
                             flags: v.left_flags,
                             left_level: Level::Lowest,
@@ -4748,7 +4719,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_property(&mut self, item_in: &G::Property) {
+        pub(crate) fn print_property(&mut self, item_in: &G::Property<'ast>) {
             let mut item = *item_in;
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
@@ -4773,17 +4744,11 @@ pub(crate) mod __gated_printer {
                         {
                             match value {
                                 js_ast::InlinedEnumValueDecoded::String(str) => {
-                                    // Arena-owned `*const EString` (encoded non-null at NaN-box time);
-                                    // wrap via the safe `From<NonNull>` ctor — printer only reads it.
-                                    let sref = js_ast::StoreRef::from(
-                                        NonNull::new(str.cast_mut())
-                                            .expect("inlined enum string non-null"),
-                                    );
-                                    item.key.as_mut().unwrap().data = ExprData::EString(sref);
+                                    item.key.as_mut().unwrap().data = ExprData::EString(str);
                                     // Problematic key names must stay computed for correctness
-                                    if !sref.eql_comptime(b"__proto__")
-                                        && !sref.eql_comptime(b"constructor")
-                                        && !sref.eql_comptime(b"prototype")
+                                    if !str.eql_comptime(b"__proto__")
+                                        && !str.eql_comptime(b"constructor")
+                                        && !str.eql_comptime(b"prototype")
                                     {
                                         set_flag(
                                             &mut item.flags,
@@ -5040,14 +5005,14 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_initializer(&mut self, initial: Expr) {
+        pub(crate) fn print_initializer(&mut self, initial: Expr<'ast>) {
             self.print_space();
             self.print(b"=");
             self.print_space();
             self.print_expr(initial, Level::Comma, ExprFlag::none());
         }
 
-        pub(crate) fn print_binding(&mut self, binding: Binding, tlm: TopLevelAndIsExport) {
+        pub(crate) fn print_binding(&mut self, binding: Binding<'ast>, tlm: TopLevelAndIsExport) {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return;
@@ -5114,172 +5079,154 @@ pub(crate) mod __gated_printer {
                     self.print(b"]");
                 }
                 BindingData::BObject(b) => {
-                    let b = b.get();
-                    let properties = slice_of(b.properties);
-                    // A local the linker bound to an export (`const { a } =
-                    // await import(…)`) is that export, so it is not declared.
-                    let is_bound = |printer: &Self, property: &B::Property| {
-                        printer.options.has_dynamic_import_items
-                            && matches!(&property.value.data, BindingData::BIdentifier(id)
-                                if printer.symbols().get_const(id.get().r#ref)
-                                    .is_some_and(|symbol| symbol.is_bound_import_item()))
-                    };
-                    self.print(b"{");
-                    if !properties.is_empty()
-                        && (!self.options.has_dynamic_import_items
-                            || properties.iter().any(|property| !is_bound(self, property)))
-                    {
-                        if !b.is_single_line {
-                            self.indent();
-                        }
-
-                        let mut printed = 0usize;
-                        for property in properties.iter() {
-                            if is_bound(self, property) {
-                                continue;
-                            }
-                            if printed != 0 {
-                                self.print(b",");
-                            }
-                            printed += 1;
-
-                            if b.is_single_line {
-                                self.print_space();
-                            } else {
-                                self.print_newline();
-                                self.print_indent();
-                            }
-
-                            if property.flags.contains(js_ast::flags::Property::IsSpread) {
-                                self.print(b"...");
-                            } else {
-                                // Automatically print numbers that would cause a syntax error as computed properties
-                                let key_must_be_computed = matches!(
-                                    &property.key.data,
-                                    ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value())
-                                );
-
-                                if property.flags.contains(js_ast::flags::Property::IsComputed)
-                                    || key_must_be_computed
-                                {
-                                    self.print(b"[");
-                                    self.print_expr(property.key, Level::Comma, ExprFlag::none());
-                                    self.print(b"]:");
-                                    self.print_space();
-
-                                    self.print_binding(property.value, tlm);
-                                    self.maybe_print_default_binding_value(property);
-                                    continue;
-                                }
-
-                                match &property.key.data {
-                                    ExprData::EString(str) => {
-                                        let str = str.flattened(self.bump);
-                                        self.add_source_mapping(property.key.loc);
-
-                                        if str.is_utf8() {
-                                            self.print_space_before_identifier();
-                                            if lexer::is_identifier(str.slice8()) {
-                                                self.print_identifier(str.slice8());
-
-                                                // Use a shorthand property if the names are the same
-                                                if let BindingData::BIdentifier(id) =
-                                                    &property.value.data
-                                                {
-                                                    let id = id.get();
-                                                    if str.slice8()
-                                                        == self.name_for_symbol(id.r#ref)
-                                                    {
-                                                        if Self::MAY_HAVE_MODULE_INFO
-                                                            && tlm.is_export
-                                                        {
-                                                            if let Some(mi) = self.module_info() {
-                                                                let name_id = mi.str(str.slice8());
-                                                                mi.add_export_info_local(
-                                                                    name_id, name_id,
-                                                                );
-                                                            }
-                                                        }
-                                                        self.maybe_print_default_binding_value(
-                                                            property,
-                                                        );
-                                                        continue;
-                                                    }
-                                                }
-                                            } else {
-                                                self.print_string_literal_utf8(str.slice8(), false);
-                                            }
-                                        } else if self.can_print_identifier_utf16(str.slice16()) {
-                                            self.print_space_before_identifier();
-                                            self.print_identifier_utf16(str.slice16())
-                                                .expect("unreachable");
-
-                                            // Use a shorthand property if the names are the same
-                                            if let BindingData::BIdentifier(id) =
-                                                &property.value.data
-                                            {
-                                                let id = id.get();
-                                                if strings::utf16_eql_string(
-                                                    str.slice16(),
-                                                    self.name_for_symbol(id.r#ref),
-                                                ) {
-                                                    if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
-                                                        // reshaped for borrowck — bump access first.
-                                                        let str8 = bun_core::handle_oom(
-                                                            str.string(self.bump),
-                                                        );
-                                                        if let Some(mi) = self.module_info() {
-                                                            let name_id = mi.str(str8);
-                                                            mi.add_export_info_local(
-                                                                name_id, name_id,
-                                                            );
-                                                        }
-                                                    }
-                                                    self.maybe_print_default_binding_value(
-                                                        property,
-                                                    );
-                                                    continue;
-                                                }
-                                            }
-                                        } else {
-                                            self.print_expr(
-                                                property.key,
-                                                Level::Lowest,
-                                                ExprFlag::none(),
-                                            );
-                                        }
-                                    }
-                                    _ => {
-                                        self.print_expr(
-                                            property.key,
-                                            Level::Lowest,
-                                            ExprFlag::none(),
-                                        );
-                                    }
-                                }
-
-                                self.print(b":");
-                                self.print_space();
-                            }
-
-                            self.print_binding(property.value, tlm);
-                            self.maybe_print_default_binding_value(property);
-                        }
-
-                        if !b.is_single_line {
-                            self.unindent();
-                            self.print_newline();
-                            self.print_indent();
-                        } else {
-                            self.print_space();
-                        }
-                    }
-                    self.print(b"}");
+                    self.print_object_binding(slice_of(b.properties), b.is_single_line, tlm);
                 }
             }
         }
 
-        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue>(
+        fn print_object_binding(
+            &mut self,
+            properties: &[B::Property<'ast>],
+            is_single_line: bool,
+            tlm: TopLevelAndIsExport,
+        ) {
+            // A local the linker bound to an export (`const { a } =
+            // await import(…)`) is that export, so it is not declared.
+            let is_bound = |printer: &Self, property: &B::Property| {
+                printer.options.has_dynamic_import_items
+                    && matches!(&property.value.data, BindingData::BIdentifier(id)
+                        if printer.symbols().get_const(id.get().r#ref)
+                            .is_some_and(|symbol| symbol.is_bound_import_item()))
+            };
+            self.print(b"{");
+            if !properties.is_empty()
+                && (!self.options.has_dynamic_import_items
+                    || properties.iter().any(|property| !is_bound(self, property)))
+            {
+                if !is_single_line {
+                    self.indent();
+                }
+
+                let mut printed = 0usize;
+                for property in properties.iter() {
+                    if is_bound(self, property) {
+                        continue;
+                    }
+                    if printed != 0 {
+                        self.print(b",");
+                    }
+                    printed += 1;
+
+                    if is_single_line {
+                        self.print_space();
+                    } else {
+                        self.print_newline();
+                        self.print_indent();
+                    }
+
+                    if property.flags.contains(js_ast::flags::Property::IsSpread) {
+                        self.print(b"...");
+                    } else {
+                        // Automatically print numbers that would cause a syntax error as computed properties
+                        let key_must_be_computed = matches!(
+                            &property.key.data,
+                            ExprData::ENumber(e) if self.number_property_key_must_be_computed(e.value())
+                        );
+
+                        if property.flags.contains(js_ast::flags::Property::IsComputed)
+                            || key_must_be_computed
+                        {
+                            self.print(b"[");
+                            self.print_expr(property.key, Level::Comma, ExprFlag::none());
+                            self.print(b"]:");
+                            self.print_space();
+
+                            self.print_binding(property.value, tlm);
+                            self.maybe_print_default_binding_value(property);
+                            continue;
+                        }
+
+                        match &property.key.data {
+                            ExprData::EString(str) => {
+                                let str = str.flattened(self.bump);
+                                self.add_source_mapping(property.key.loc);
+
+                                if str.is_utf8() {
+                                    self.print_space_before_identifier();
+                                    if lexer::is_identifier(str.slice8()) {
+                                        self.print_identifier(str.slice8());
+
+                                        // Use a shorthand property if the names are the same
+                                        if let BindingData::BIdentifier(id) = &property.value.data {
+                                            let id = id.get();
+                                            if str.slice8() == self.name_for_symbol(id.r#ref) {
+                                                if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
+                                                    if let Some(mi) = self.module_info() {
+                                                        let name_id = mi.str(str.slice8());
+                                                        mi.add_export_info_local(name_id, name_id);
+                                                    }
+                                                }
+                                                self.maybe_print_default_binding_value(property);
+                                                continue;
+                                            }
+                                        }
+                                    } else {
+                                        self.print_string_literal_utf8(str.slice8(), false);
+                                    }
+                                } else if self.can_print_identifier_utf16(str.slice16()) {
+                                    self.print_space_before_identifier();
+                                    self.print_identifier_utf16(str.slice16())
+                                        .expect("unreachable");
+
+                                    // Use a shorthand property if the names are the same
+                                    if let BindingData::BIdentifier(id) = &property.value.data {
+                                        let id = id.get();
+                                        if strings::utf16_eql_string(
+                                            str.slice16(),
+                                            self.name_for_symbol(id.r#ref),
+                                        ) {
+                                            if Self::MAY_HAVE_MODULE_INFO && tlm.is_export {
+                                                // reshaped for borrowck — bump access first.
+                                                let str8 =
+                                                    bun_core::handle_oom(str.string(self.bump));
+                                                if let Some(mi) = self.module_info() {
+                                                    let name_id = mi.str(str8);
+                                                    mi.add_export_info_local(name_id, name_id);
+                                                }
+                                            }
+                                            self.maybe_print_default_binding_value(property);
+                                            continue;
+                                        }
+                                    }
+                                } else {
+                                    self.print_expr(property.key, Level::Lowest, ExprFlag::none());
+                                }
+                            }
+                            _ => {
+                                self.print_expr(property.key, Level::Lowest, ExprFlag::none());
+                            }
+                        }
+
+                        self.print(b":");
+                        self.print_space();
+                    }
+
+                    self.print_binding(property.value, tlm);
+                    self.maybe_print_default_binding_value(property);
+                }
+
+                if !is_single_line {
+                    self.unindent();
+                    self.print_newline();
+                    self.print_indent();
+                } else {
+                    self.print_space();
+                }
+            }
+            self.print(b"}");
+        }
+
+        pub(crate) fn maybe_print_default_binding_value<P: HasDefaultValue<'ast>>(
             &mut self,
             property: &P,
         ) {
@@ -5291,7 +5238,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_stmt(&mut self, stmt: Stmt) -> crate::Result<()> {
+        pub(crate) fn print_stmt(&mut self, stmt: Stmt<'ast>) -> crate::Result<()> {
             if !self.stack_check.is_safe_to_recurse() {
                 self.stack_overflowed = true;
                 return Ok(());
@@ -6426,7 +6373,11 @@ pub(crate) mod __gated_printer {
             self.print_whitespacer(ws!(b"(() => ({}))"));
         }
 
-        pub(crate) fn print_for_loop_init(&mut self, init_st: Stmt, extra_flags: ExprFlagSet) {
+        pub(crate) fn print_for_loop_init(
+            &mut self,
+            init_st: Stmt<'ast>,
+            extra_flags: ExprFlagSet,
+        ) {
             match &init_st.data {
                 StmtData::SExpr(s) => {
                     self.print_expr(
@@ -6450,7 +6401,7 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        pub(crate) fn print_if(&mut self, s: &S::If, loc: bun_ast::Loc) {
+        pub(crate) fn print_if(&mut self, s: &S::If<'ast>, loc: bun_ast::Loc) {
             // `else if` chains recurse here directly without passing through
             // `print_stmt`, so they need their own guard.
             if !self.stack_check.is_safe_to_recurse() {
@@ -6579,7 +6530,7 @@ pub(crate) mod __gated_printer {
             loc: bun_ast::Loc,
             is_export: bool,
             kind: S::Kind,
-            decls: &[G::Decl],
+            decls: &[G::Decl<'ast>],
         ) {
             self.print_semicolon_if_needed();
             self.print_indent();
@@ -6589,7 +6540,7 @@ pub(crate) mod __gated_printer {
 
         /// The initializer of such a declarator, as a statement. Its value is
         /// `{}`, so an `await` of it is unused too.
-        fn print_unused_load(&mut self, loc: bun_ast::Loc, value: Expr) {
+        fn print_unused_load(&mut self, loc: bun_ast::Loc, value: Expr<'ast>) {
             if matches!(value.data, ExprData::EIdentifier(_)) {
                 return;
             }
@@ -6637,7 +6588,7 @@ pub(crate) mod __gated_printer {
         /// `X.name` where the linker bound the access straight to an export
         /// (`LinkerGraph::import_member_bindings`): the import identifier to
         /// print in its place.
-        fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr> {
+        fn import_member_binding(&self, target: Expr, name: &[u8]) -> Option<Expr<'ast>> {
             let import_ref = self.import_ref(target)?;
             let binding = *self
                 .options
@@ -6654,7 +6605,7 @@ pub(crate) mod __gated_printer {
             &self,
             target: Expr,
             name: &[u8],
-        ) -> Option<js_ast::InlinedEnumValueDecoded> {
+        ) -> Option<js_ast::InlinedEnumValueDecoded<'ast>> {
             let base = self.import_ref(target)?;
             {
                 let ref_ = self.symbols().follow(base);
@@ -6673,7 +6624,7 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn print_inlined_enum(
             &mut self,
-            inlined: js_ast::InlinedEnumValueDecoded,
+            inlined: js_ast::InlinedEnumValueDecoded<'ast>,
             comment: &[u8],
             level: Level,
         ) {
@@ -6681,12 +6632,8 @@ pub(crate) mod __gated_printer {
                 js_ast::InlinedEnumValueDecoded::Number(num) => self.print_number(num, level),
                 // TODO: extract printString
                 js_ast::InlinedEnumValueDecoded::String(str) => self.print_expr(
-                    // Arena-owned `*const EString` (encoded non-null at NaN-box time);
-                    // wrap via the safe `From<NonNull>` ctor — printer only reads it.
                     Expr {
-                        data: ExprData::EString(js_ast::StoreRef::from(
-                            NonNull::new(str.cast_mut()).expect("inlined enum string non-null"),
-                        )),
+                        data: ExprData::EString(str),
                         loc: bun_ast::Loc::EMPTY,
                     },
                     level,
@@ -6709,7 +6656,7 @@ pub(crate) mod __gated_printer {
             loc: bun_ast::Loc,
             is_export: bool,
             kind: S::Kind,
-            decls: &[G::Decl],
+            decls: &[G::Decl<'ast>],
         ) {
             if is_export {
                 self.print(b"export ");
@@ -6898,9 +6845,9 @@ pub(crate) mod __gated_printer {
 
         pub(crate) fn init(
             writer: W,
-            bump: &'a js_ast::AstArena,
+            bump: &'ast js_ast::AstArena,
             import_records: &'a [ImportRecord<'a>],
-            opts: Options<'a>,
+            opts: Options<'a, 'ast>,
             renamer: rename::Renamer<'a>,
             source_map_builder: SourceMap::chunk::Builder<'a>,
         ) -> Self {
@@ -6935,14 +6882,13 @@ pub(crate) mod __gated_printer {
             &mut self,
             source: &bun_ast::Source,
             ast: &BundledAstView,
-            part: &js_ast::Part,
+            stmts: &[Stmt<'ast>],
         ) {
             self.indent();
             self.print_indent();
 
             self.print_string_literal_utf8(source.path.pretty, false);
 
-            let stmts = slice_of(part.stmts);
             let func = &stmts[0]
                 .data
                 .s_expr()
@@ -7135,18 +7081,18 @@ impl<const N: usize> PrintArg for &[u8; N] {
 }
 
 /// Trait covering `B::ArrayItem` / `B::Property` for `maybe_print_default_binding_value`.
-pub trait HasDefaultValue {
-    fn default_value(&self) -> Option<js_ast::Expr>;
+pub trait HasDefaultValue<'ast> {
+    fn default_value(&self) -> Option<js_ast::Expr<'ast>>;
 }
-impl HasDefaultValue for js_ast::b::Property {
+impl<'ast> HasDefaultValue<'ast> for js_ast::b::Property<'ast> {
     #[inline]
-    fn default_value(&self) -> Option<js_ast::Expr> {
+    fn default_value(&self) -> Option<js_ast::Expr<'ast>> {
         self.default_value
     }
 }
-impl HasDefaultValue for js_ast::ArrayBinding {
+impl<'ast> HasDefaultValue<'ast> for js_ast::ArrayBinding<'ast> {
     #[inline]
-    fn default_value(&self) -> Option<js_ast::Expr> {
+    fn default_value(&self) -> Option<js_ast::Expr<'ast>> {
         self.default_value
     }
 }
@@ -7506,8 +7452,8 @@ impl GenerateSourceMap {
 // `bun_sourcemap::chunk::Builder: Default` blockers are all real now, so the
 // former `__gated_entry_points` wrapper has been flattened away).
 // `print_ast` is live (borrowck reshape: `opts` re-reads routed through
-// `printer.options`, `*mut Symbol` for `must_not_be_renamed`, raw-ptr
-// `Scope.parent` backref). `print_json` is live as well.
+// `printer.options`, `*mut Symbol` for `must_not_be_renamed`).
+// `print_json` is live as well.
 // ───────────────────────────────────────────────────────────────────────────
 use self::__gated_printer::{Printer, slice_of};
 use SourceMap::chunk::LineOffsetTables;
@@ -7520,7 +7466,7 @@ use js_ast::Ast;
 // constant in the monomorphized callers.
 pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
-    opts: &mut Options<'a>,
+    opts: &mut Options<'a, '_>,
     source: &'a bun_ast::Source<'a>,
     approximate_newline_count: usize,
 ) -> SourceMap::chunk::Builder<'a> {
@@ -7562,13 +7508,13 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
+pub fn print_ast<'a, 'ast, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     writer: &mut BufferPrinter,
-    bump: &'a js_ast::AstArena,
-    tree: &'a Ast,
+    bump: &'ast js_ast::AstArena,
+    tree: &'a Ast<'ast>,
     mut symbols: js_ast::symbol::Map,
     source: &'a bun_ast::Source<'a>,
-    opts: Options<'a>,
+    opts: Options<'a, 'ast>,
 ) -> crate::Result<usize> {
     bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
@@ -7597,14 +7543,6 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
         }
 
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
-        for child in module_scope.children.slice() {
-            // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
-            // local so the write goes through the encapsulated arena invariant
-            // rather than an open-coded `(*ptr).field = …`.
-            let mut child = *child;
-            child.parent = Some(NonNull::from(module_scope).into());
-        }
-
         rename::compute_reserved_names_for_scope(module_scope, &symbols, &mut reserved_names);
         minify_renamer =
             rename::MinifyRenamer::init(&tree.nested_scope_slot_counts, reserved_names)?;
@@ -7667,8 +7605,8 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     };
 
     // `is_bun_platform = ascii_only` for printAst.
-    type PrinterType<'a, 'w, const A: bool, const G: bool> =
-        Printer<'a, &'w mut BufferPrinter, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
+    type PrinterType<'a, 'w, 'ast, const A: bool, const G: bool> =
+        Printer<'a, 'ast, &'w mut BufferPrinter, A, /*IS_BUN_PLATFORM=*/ A, false, G>;
     // Pre-size the output buffer ~proportional to the source. Transpiled output
     // is almost always within a small factor of the input, so reserving up front
     // keeps the per-token appends below from repeatedly growing+memmoving the
@@ -7788,18 +7726,18 @@ pub fn print_ast<'a, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
     Ok(printer.writer.slice().len())
 }
 
-pub fn print_json<W: WriterTrait>(
+pub fn print_json<'ast, W: WriterTrait>(
     _writer: W,
-    expr: js_ast::Expr,
+    bump: &'ast js_ast::AstArena,
+    expr: js_ast::Expr<'ast>,
     source: &bun_ast::Source,
     opts: PrintJsonOptions<'_>,
 ) -> crate::Result<usize> {
     // NewPrinter(ascii_only=false, Writer, is_bun_platform=false, is_json=true, generate_source_map=false)
-    type PrinterType<'a, W> = Printer<'a, W, false, false, true, false>;
+    type PrinterType<'a, 'ast, W> = Printer<'a, 'ast, W, false, false, true, false>;
     let writer = _writer;
     // The printer only needs default-empty `import_records` and `symbols` for
     // the no-op renamer; construct them directly without an `Ast`.
-    let bump = js_ast::AstArena::new();
     let symbols = js_ast::symbol::Map::init_list(vec![Vec::new()]);
 
     let full_opts = Options {
@@ -7810,7 +7748,7 @@ pub fn print_json<W: WriterTrait>(
     };
     let mut printer = PrinterType::<W>::init(
         writer,
-        &bump,
+        bump,
         &[], // ast.import_records.slice()
         full_opts,
         rename::Renamer::no_op(&symbols, source),
@@ -7831,18 +7769,18 @@ pub struct BundledAstView<'a> {
     pub has_lazy_export: bool,
     pub has_top_level_await: bool,
     pub exports_kind: js_ast::ExportsKind,
-    pub named_exports: &'a js_ast::NamedExports,
+    pub named_exports: &'a js_ast::NamedExports<'a>,
     pub export_star_import_records: &'a [u32],
 }
 
-pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
-    bump: &'a js_ast::AstArena,
+pub fn print<'a, 'ast, const GENERATE_SOURCE_MAPS: bool>(
+    bump: &'ast js_ast::AstArena,
     target: bun_ast::Target,
     ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
-    opts: Options<'a>,
+    opts: Options<'a, 'ast>,
     import_records: &'a [ImportRecord<'a>],
-    parts: &[js_ast::Part],
+    stmts: &[js_ast::Stmt<'ast>],
     renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     let _trace = bun_core::perf::trace("JSPrinter.print");
@@ -7860,20 +7798,20 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
         source,
         opts,
         import_records,
-        parts,
+        stmts,
         renamer,
     )
 }
 
-pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
+pub fn print_with_writer<'a, 'ast, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     writer: W,
-    bump: &'a js_ast::AstArena,
+    bump: &'ast js_ast::AstArena,
     target: bun_ast::Target,
     ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
-    opts: Options<'a>,
+    opts: Options<'a, 'ast>,
     import_records: &'a [ImportRecord<'a>],
-    parts: &[js_ast::Part],
+    stmts: &[js_ast::Stmt<'ast>],
     renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     if target.is_bun() {
@@ -7884,7 +7822,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
             source,
             opts,
             import_records,
-            parts,
+            stmts,
             renamer,
         )
     } else {
@@ -7895,7 +7833,7 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
             source,
             opts,
             import_records,
-            parts,
+            stmts,
             renamer,
         )
     }
@@ -7904,17 +7842,18 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
 /// The real one
 pub(crate) fn print_with_writer_and_platform<
     'a,
+    'ast,
     W: WriterTrait,
     const IS_BUN_PLATFORM: bool,
     const GENERATE_SOURCE_MAPS: bool,
 >(
     mut writer: W,
-    bump: &'a js_ast::AstArena,
+    bump: &'ast js_ast::AstArena,
     ast: &BundledAstView,
     source: &'a bun_ast::Source<'a>,
-    opts: Options<'a>,
+    opts: Options<'a, 'ast>,
     import_records: &'a [ImportRecord<'a>],
-    parts: &[js_ast::Part],
+    stmts: &[js_ast::Stmt<'ast>],
     renamer: rename::Renamer<'a>,
 ) -> PrintResult {
     bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
@@ -7922,8 +7861,8 @@ pub(crate) fn print_with_writer_and_platform<
     // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
     writer.reserve(source.contents().len() as u64);
 
-    type PrinterType<'a, W, const B: bool, const G: bool> =
-        Printer<'a, W, /*ASCII_ONLY=*/ B, B, false, G>;
+    type PrinterType<'a, 'ast, W, const B: bool, const G: bool> =
+        Printer<'a, 'ast, W, /*ASCII_ONLY=*/ B, B, false, G>;
     let module_type = opts.module_type;
     let mut opts = opts;
     let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(
@@ -7951,7 +7890,7 @@ pub(crate) fn print_with_writer_and_platform<
 
     // `Index::is_runtime` ⇔ `index.value == 0`.
     if module_type == bundle_opts::Format::InternalBakeDev && source.index.0 != 0 {
-        printer.print_dev_server_module(source, ast, &parts[0]);
+        printer.print_dev_server_module(source, ast, stmts);
     } else {
         // The IIFE wrapper is done in `postProcessJSChunk`, so we just manually
         // trigger an indent.
@@ -7959,13 +7898,11 @@ pub(crate) fn print_with_writer_and_platform<
             printer.indent();
         }
 
-        for part in parts {
-            for stmt in slice_of(part.stmts).iter() {
-                if let Err(err) = printer.print_stmt(*stmt) {
-                    return PrintResult::Err(err);
-                }
-                printer.print_semicolon_if_needed();
+        for stmt in stmts {
+            if let Err(err) = printer.print_stmt(*stmt) {
+                return PrintResult::Err(err);
             }
+            printer.print_semicolon_if_needed();
         }
     }
 

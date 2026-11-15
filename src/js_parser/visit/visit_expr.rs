@@ -32,7 +32,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     // `Expr -> Expr` shape moved 24B in + 24B out per frame; the in-place form moves 8B
     // and only writes back when the visitor produces a *different* node.
     #[inline]
-    pub(crate) fn visit_expr(&mut self, e: &mut Expr) {
+    pub(crate) fn visit_expr(&mut self, e: &mut Expr<'a>) {
         // SCAN_ONLY monomorphizations must never reach the visit pass.
         debug_assert!(
             !SCAN_ONLY,
@@ -41,10 +41,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.visit_expr_in_out(e, ExprIn::default())
     }
 
-    pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr, in_: ExprIn) {
+    pub(crate) fn visit_expr_in_out(&mut self, e: &mut Expr<'a>, in_: ExprIn) {
         if !self.stack_check.is_safe_to_recurse() || self.reported_stack_overflow.get() {
-            // The caller assumes `e` was visited, so replace it. Don't mutate it on a revisit
-            // because it can be part of a shared `define` value.
+            // The caller assumes `e` was visited, which is only true on a revisit.
             if !self.is_revisit_for_substitution {
                 e.data = Data::EMissing(E::Missing {});
             }
@@ -107,7 +106,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // idc about legacy octal loc
     }
 
-    fn e_this(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_this(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         p.this_expr_count = p.this_expr_count.wrapping_add(1);
         if let Some(exp) = p.value_for_this(e.loc) {
             *e = exp;
@@ -115,20 +114,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    fn e_spread(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_spread(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let js_ast::ExprData::ESpread(mut exp) = e.data {
             p.visit_expr(&mut exp.value);
         }
     }
 
-    fn e_await(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_await(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let js_ast::ExprData::EAwait(mut e_) = e.data {
             p.await_target = Some(e_.value.data);
             p.visit_expr(&mut e_.value);
         }
     }
 
-    fn e_yield(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_yield(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         if let js_ast::ExprData::EYield(mut e_) = e.data {
             if let Some(val) = e_.value.as_mut() {
                 p.visit_expr(val);
@@ -139,7 +138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     // ─── heavy visitors ─────────────────────────────────────────────────────
     // e_* accessors on `expr::Data` return Option<StoreRef<T>> / Option<T>.
 
-    fn e_import_meta(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_import_meta(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         // TODO: delete import.meta might not work
         let is_delete_target = matches!(p.delete_target, Data::EImportMeta(..));
@@ -148,7 +147,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // `dots.get` borrow is tied to `'a`, not `&*p`, and `&mut self`
         // helpers below can be called while iterating without laundering.
         let defines = p.define;
-        if let Some(meta) = defines.dots.get(b"meta".as_slice()) {
+        if let Some(meta) = defines.dots().get(b"meta".as_slice()) {
             for define in meta.as_slice() {
                 if !p.is_dot_define_match(expr, &define.parts) {
                     continue;
@@ -161,7 +160,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    fn e_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_identifier(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         // The substitution revisit re-enters with an already-resolved `Ref`.
         // `find_symbol` below only looks in `scope.members`, so a symbol that
         // lives only in `scope.generated` (e.g. a React Compiler outlined
@@ -362,7 +361,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     // ~968B; deep ASTs then thrash L1d on the spill/reload (the spill into that
     // frame is the #2 hottest bun-native instruction under `bun --bun lint`).
     #[inline(never)]
-    fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_jsx_element(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         use crate::parser::{JSXImport, JSXTransformType, options};
         let _ = in_;
@@ -511,7 +510,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         e_.children.truncate(last_child as usize);
                     }
 
-                    let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
+                    let children_key =
+                        p.new_expr(const { E::String::from_static(b"children") }, expr.loc);
 
                     // Optimization: if the only non-child prop is a spread object
                     // we can just pass the object as the first argument
@@ -641,13 +641,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         );
 
                         args.push(p.ast_arena, p.new_expr(E::Undefined {}, expr.loc));
-                        args.push(
-                            p.ast_arena,
-                            Expr {
-                                data: prefill::data::THIS,
-                                loc: expr.loc,
-                            },
-                        );
+                        args.push(p.ast_arena, Expr::init(E::This {}, expr.loc));
                     }
 
                     let jsx_target = p.jsx_import_automatic(expr.loc, is_static_jsx);
@@ -678,7 +672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_template(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_template(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
@@ -778,7 +772,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // it may no longer be a template literal after this point (it may turn into
         // a plain string literal instead).
         if p.should_fold_typescript_constant_expressions || p.options.features.inlining {
-            *e = e_.fold(p.ast_arena, expr.loc);
+            *e = e_.fold(p.ast_arena, expr.loc).unwrap_or(expr);
             return;
         }
     }
@@ -786,9 +780,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn call_macro(
         &self,
         import_record_id: u32,
-        caller: Expr,
+        caller: Expr<'a>,
         name: &[u8],
-    ) -> Result<Expr, crate::Error> {
+    ) -> Result<Expr<'a>, crate::Error> {
         let record = &self.import_records.items()[import_record_id as usize];
         self.options.macro_context.expect("macro_context").call(
             self.ast_arena,
@@ -816,7 +810,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// `` tag`é${x}` `` to `` tag(__rawTemplate(["é", ""])`\u00E9${0}`, x) ``. Escaped text would reach the tag in `strings.raw`.
     #[optimize(size)]
     #[inline(never)]
-    fn call_tag_with_raw_strings(&mut self, expr: Expr) -> Option<Expr> {
+    fn call_tag_with_raw_strings(&mut self, expr: Expr<'a>) -> Option<Expr<'a>> {
         if !self.options.features.ascii_only || !self.options.features.allow_runtime {
             return None;
         }
@@ -874,7 +868,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             expr.loc,
         ))
     }
-    fn e_binary(p: &mut Self, e: &mut Expr) {
+    fn e_binary(p: &mut Self, e: &mut Expr<'a>) {
         let expr = *e;
         use crate::visit::visit_binary::BinaryExpressionVisitor;
         let e_ = expr.data.e_binary().expect("infallible: variant checked");
@@ -951,7 +945,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         *e = current;
     }
 
-    fn e_index(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_index(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_index().expect("infallible: variant checked");
         let is_call_target = matches!(p.call_target, Data::EIndex(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1167,7 +1161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             if num < literal.len() {
                                 *e = p.new_expr(
                                     E::String {
-                                        data: E::Str::new(&literal[num..num + 1]),
+                                        data: E::Str::new(&literal.slice()[num..num + 1]),
                                         ..Default::default()
                                     },
                                     expr.loc,
@@ -1253,7 +1247,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         // so `*e` is already up to date.
     }
 
-    fn e_unary(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_unary(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_unary().expect("infallible: variant checked");
         match e_.op {
@@ -1284,11 +1278,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         .kind
                         == js_ast::symbol::Kind::Unbound
                 {
-                    e_.value = Expr {
-                        loc: e_.value.loc,
-                        data: prefill::data::ZERO,
-                    }
-                    .join_with_comma(p.ast_arena, e_.value);
+                    e_.value = Expr::init(prefill::value::ZERO, e_.value.loc)
+                        .join_with_comma(p.ast_arena, e_.value);
                 }
 
                 if matches!(e_.value.data, Data::ERequireCallTarget) {
@@ -1432,7 +1423,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             }
         }
     }
-    fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_dot(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_dot().expect("infallible: variant checked");
         let is_delete_target = matches!(p.delete_target, Data::EDot(dt) if core::ptr::eq(&raw const *e_, &raw const *dt));
@@ -1590,7 +1581,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    fn e_if(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_if(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         let mut e_ = e.data.e_if().expect("infallible: variant checked");
         let is_call_target =
             matches!(p.call_target, Data::EIf(ct) if core::ptr::eq(&raw const *e_, &raw const *ct));
@@ -1666,7 +1657,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_array(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_array(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let mut e_ = e.data.e_array().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
@@ -1775,7 +1766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_object(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_object(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let mut e_ = e.data.e_object().expect("infallible: variant checked");
         if in_.assign_target != js_ast::AssignTarget::None {
             p.maybe_comma_spread_error(e_.comma_after_spread);
@@ -1920,7 +1911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         let _ = has_spread;
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_import(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_import(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let _ = in_;
         let mut e_ = e.data.e_import().expect("infallible: variant checked");
         // We want to forcefully fold constants inside of imports
@@ -1980,7 +1971,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p.should_fold_typescript_constant_expressions =
             prev_should_fold_typescript_constant_expressions;
     }
-    fn e_call(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_call(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_call().expect("infallible: variant checked");
         let import_meta_glob = (p.has_import_meta && p.is_import_meta_glob_call(&e_))
@@ -2577,7 +2568,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     }
 
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_new(p: &mut Self, e: &mut Expr, _: ExprIn) {
+    fn e_new(p: &mut Self, e: &mut Expr<'a>, _: ExprIn) {
         let expr = *e;
         let mut e_ = expr.data.e_new().expect("infallible: variant checked");
         p.visit_expr(&mut e_.target);
@@ -2605,7 +2596,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         p: &mut Self,
         e_: &mut E::Call,
         loc: bun_ast::Loc,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         // Check if the target is the `feature` function from "bun:bundle"
         // It could be e_identifier (for unbound) or e_import_identifier (for imports)
         let target_ref: Option<Ref> = match &e_.target.data {
@@ -2681,7 +2672,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         })
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_arrow(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_arrow(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_arrow().expect("infallible: variant checked");
@@ -2817,7 +2808,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_function(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_function(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_function().expect("infallible: variant checked");
@@ -2851,13 +2842,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         if p.options.features.minify_syntax
             && p.options.bundle
             && !p.options.features.minify_keep_names
-            // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.func.name.is_some()
             && !e_.func.name.unwrap().ref_.is_empty()
-            && p.symbols[e_.func.name.unwrap().ref_.inner_index() as usize]
-                .use_count_estimate
-                == 0
+            && p.symbols[e_.func.name.unwrap().ref_.inner_index() as usize].use_count_estimate == 0
         {
             e_.func.name = None;
         }
@@ -2880,7 +2868,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         if let Some(name) = e_.func.name {
             final_expr = p.keep_expr_symbol_name(
                 final_expr,
-                // SAFETY: original_name is arena-owned, valid for 'a.
                 p.symbols[name.ref_.inner_index() as usize]
                     .original_name
                     .slice(),
@@ -2895,7 +2882,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.
-    fn e_class(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+    fn e_class(p: &mut Self, e: &mut Expr<'a>, in_: ExprIn) {
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_class().expect("infallible: variant checked");
@@ -2938,13 +2925,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         if p.options.features.minify_syntax
             && p.options.bundle
             && !p.options.features.minify_keep_names
-            // SAFETY: current_scope is a live arena ptr while the parser exists.
             && !p.current_scope().contains_direct_eval
             && e_.class_name.is_some()
             && !e_.class_name.unwrap().ref_.is_empty()
-            && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize]
-                .use_count_estimate
-                == 0
+            && p.symbols[e_.class_name.unwrap().ref_.inner_index() as usize].use_count_estimate == 0
         {
             e_.class_name = None;
         }

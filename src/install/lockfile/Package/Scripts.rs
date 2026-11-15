@@ -273,7 +273,10 @@ impl Scripts {
     // Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    pub(crate) fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: JsonView<'_>) {
+    pub(crate) fn parse_count<B: bun_semver::StringBuilder>(
+        builder: &mut B,
+        json: JsonView<'_, '_>,
+    ) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.value.is_object() {
                 for script_name in LockfileScripts::NAMES {
@@ -293,7 +296,7 @@ impl Scripts {
     pub(crate) fn parse_alloc<B: bun_semver::StringBuilder>(
         &mut self,
         builder: &mut B,
-        json: JsonView<'_>,
+        json: JsonView<'_, '_>,
     ) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.value.is_object() {
@@ -396,7 +399,7 @@ impl Scripts {
 }
 
 /// The `gypfile` property of a package.json. Only a literal `false` opts out.
-pub(crate) fn gypfile_from_json(json: JsonView<'_>) -> bool {
+pub(crate) fn gypfile_from_json(json: JsonView<'_, '_>) -> bool {
     json.get(b"gypfile").and_then(|value| value.as_bool()) != Some(false)
 }
 

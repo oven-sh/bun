@@ -106,7 +106,7 @@ fn parse_platform_list<T: Npm::NegatableEnum>(
     Ok(list.combine())
 }
 
-fn entry_object(entry: &E::PropertyJSON) -> &E::ObjectJSON {
+fn entry_object<'a>(entry: &'a E::PropertyJSON<'a>) -> &'a E::ObjectJSON<'a> {
     let Some(pkg) = entry.value.as_object() else {
         unreachable!("npm lockfile: build_index rejected non-object entries")
     };
@@ -143,7 +143,7 @@ struct FolderInDependent<'k> {
 struct Migrator<'a> {
     this: &'a mut Lockfile,
     manager: &'a mut PackageManager,
-    entries: &'a [E::PropertyJSON],
+    entries: &'a [E::PropertyJSON<'a>],
     workspace_map: Option<&'a WorkspaceMap>,
     index: StringHashMap<u32>,
     link_entries: DynamicBitSet,

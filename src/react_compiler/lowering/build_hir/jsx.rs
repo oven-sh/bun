@@ -6,12 +6,12 @@
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory};
 use crate::hir::{
-    BuiltinTag, Effect, HirAlloc, HirVec, InstructionValue, JsxAttribute, JsxTag, ObjectProperty,
-    ObjectPropertyOrSpread, ObjectPropertyType, Place, PrimitiveValue, PropertyLiteral,
-    SourceLocation, StoreStr, VariableBinding,
+    BuiltinTag, Effect, Expr, HirAlloc, HirVec, InstructionValue, JsxAttribute, JsxTag,
+    ObjectProperty, ObjectPropertyOrSpread, ObjectPropertyType, Place, PrimitiveValue,
+    PropertyLiteral, SourceLocation, StoreStr, VariableBinding,
 };
 use bun_ast::expr::Data as ExprData;
-use bun_ast::{E, Expr, G, Loc, Ref};
+use bun_ast::{E, G, Loc, Ref};
 
 use super::expr::lower_expression;
 use super::helpers::{
@@ -21,7 +21,7 @@ use super::helpers::{
 use crate::lowering::hir_builder::{HirBuilder, convert_loc};
 use crate::program::JsxImportKind;
 
-fn estring_to_store_str(s: &E::EString) -> StoreStr {
+fn estring_to_store_str(s: &E::EString<'static>) -> StoreStr {
     if s.is_utf16 {
         HirAlloc::dupe_str(&bun_core::strings::to_utf8_alloc(s.slice16()))
     } else if s.next.is_some() {
@@ -102,7 +102,7 @@ fn lower_jsx_element_name(builder: &mut HirBuilder, tag: &Expr) -> Result<JsxTag
 
 fn lower_jsx_member_expression(
     builder: &mut HirBuilder,
-    expr: &E::Dot,
+    expr: &E::Dot<'static>,
     expr_loc: Loc,
 ) -> Result<Place, CompilerError> {
     if !builder.environment().has_stack() {
@@ -144,7 +144,7 @@ fn lower_jsx_member_expression(
     };
     let value = InstructionValue::PropertyLoad {
         object,
-        property: PropertyLiteral::String(StoreStr::new(expr.name.slice())),
+        property: PropertyLiteral::String(expr.name),
         loc: expr_loc,
     };
     lower_value_to_temporary(builder, value)
@@ -199,7 +199,7 @@ fn lower_tag_identifier(
 ///     or the auto-imported `createElement`.
 pub(super) fn lower_jsx_call(
     builder: &mut HirBuilder,
-    call: &E::Call,
+    call: &E::Call<'static>,
     expr_loc: Loc,
 ) -> Result<InstructionValue, CompilerError> {
     let loc = convert_loc(expr_loc);
@@ -469,7 +469,7 @@ fn record_accessor_prop(
 /// key, so the property is wrapped in an object of its own and spread.
 fn lower_prop_as_spread(
     builder: &mut HirBuilder,
-    prop: &G::Property,
+    prop: &G::Property<'static>,
     key_expr: &Expr,
 ) -> Result<Option<JsxAttribute>, CompilerError> {
     use bun_ast::flags::Property as Flag;

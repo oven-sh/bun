@@ -15,28 +15,24 @@ use bun_ast::Indentation;
 use bun_ast::{AstArena, Log, Source};
 use bun_js_printer as js_printer;
 use bun_paths::is_absolute;
+use bun_resolver::fs::{ByteOrderMark, read_file_contents_in_arena};
+use bun_sys::{Fd, File, O};
 
 use crate::bun_json as json;
-use std::borrow::Cow;
 
-pub struct MapEntry {
-    /// Allocated in `WorkspacePackageJSONCache::arena`, or in `save_arena` after [`Self::save`].
-    pub root: Expr,
-    pub source: Source<'static>,
+pub struct MapEntry<'a> {
+    pub root: Expr<'a>,
+    pub source: &'a Source<'a>,
     pub indentation: Indentation,
     indentation_guessed: bool,
-    /// Owns the path bytes that `source.path.{text,pretty,name.*}` borrow,
-    /// so the source's path slices stay valid for the entry's lifetime.
-    /// `StringHashMap` boxes its own key, so keep the duped copy alive here.
-    _path_storage: bun_core::ZBox,
-    /// Superseded `source.contents` buffers: slices of an earlier `root` point into them.
-    stale_contents: Vec<Cow<'static, [u8]>>,
-    save_arena: AstArena,
+    /// See [`WorkspacePackageJSONCache::mark_stale`].
+    stale: bool,
+    arena: &'a AstArena,
 }
 
-impl MapEntry {
-    /// `root` as the text of a package.json, in the entry's indentation.
-    pub(crate) fn print(&self, root: Expr) -> Result<Vec<u8>, js_printer::Error> {
+impl<'a> MapEntry<'a> {
+    /// `root` as the text of a package.json, in the entry's indentation. Allocated in `arena`.
+    pub(crate) fn print(&self, root: Expr<'a>) -> Result<&'a [u8], js_printer::Error> {
         let mut buffer_writer = js_printer::BufferWriter::init();
         buffer_writer
             .buffer
@@ -46,43 +42,37 @@ impl MapEntry {
         let mut writer = js_printer::BufferPrinter::init(buffer_writer);
         js_printer::print_json(
             &mut writer,
+            self.arena,
             root,
-            &self.source,
+            self.source,
             js_printer::PrintJsonOptions {
                 indent: self.indentation,
                 mangled_props: None,
                 ..Default::default()
             },
         )?;
-        Ok(writer.ctx.written_without_trailing_zero().to_vec())
+        let printed = writer.ctx.written_without_trailing_zero();
+        Ok(self.arena.dupe_str(printed).slice())
     }
 
     /// Replaces the text and the tree together: prints `root`, then parses what it printed.
-    pub fn save(&mut self, root: Expr, log: &Log) -> Result<(), Error> {
-        let printed = Source {
-            path: self.source.path,
-            contents: Cow::Owned(self.print(root)?),
-            ..Default::default()
-        };
-        let root = parse_package_json(&printed, log, &mut self.save_arena, false)?.root;
-        // Moving the `Vec` keeps its buffer, which `root` points into.
-        let old = core::mem::replace(&mut self.source.contents, printed.contents);
-        self.stale_contents.push(old);
-        self.root = root;
+    pub fn save(&mut self, root: Expr<'a>, log: &Log) -> Result<(), Error> {
+        let printed = Source::init_path_string(self.source.path.text, self.print(root)?);
+        let printed = self.arena.alloc_node(printed).get();
+        self.root = parse_package_json(printed, log, self.arena, false)?.root;
+        self.source = printed;
         Ok(())
     }
 }
 
-pub type Map = StringHashMap<MapEntry>;
+type Map<'a> = StringHashMap<MapEntry<'a>>;
 
-fn parse_package_json(
-    source: &Source,
+fn parse_package_json<'a>(
+    source: &'a Source<'_>,
     log: &Log,
-    bump: &mut AstArena,
+    bump: &'a AstArena,
     guess_indentation: bool,
-) -> Result<json::JsonResult, crate::Error> {
-    // Auto-install uses the cache from whichever thread is resolving.
-    bump.unlock_thread();
+) -> Result<json::JsonResult<'a>, crate::Error> {
     Ok(json::parse_package_json_utf8_with_opts(
         json::JSONOptions {
             json_warn_duplicate_keys: false,
@@ -100,14 +90,14 @@ pub struct GetJSONOptions {
     pub guess_indentation: bool,
 }
 
-pub enum GetResult<'a> {
-    Entry(&'a mut MapEntry),
+pub enum GetResult<'a, 'ast> {
+    Entry(&'a mut MapEntry<'ast>),
     ReadErr(Error),
     ParseErr(Error),
 }
 
-impl<'a> GetResult<'a> {
-    pub(crate) fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
+impl<'a, 'ast> GetResult<'a, 'ast> {
+    pub(crate) fn unwrap(self) -> Result<&'a mut MapEntry<'ast>, Error> {
         match self {
             GetResult::Entry(entry) => Ok(entry),
             GetResult::ReadErr(err) => Err(err),
@@ -116,21 +106,27 @@ impl<'a> GetResult<'a> {
     }
 }
 
-pub struct WorkspacePackageJSONCache {
-    pub map: Map,
-    arena: AstArena,
+pub struct WorkspacePackageJSONCache<'a> {
+    map: Map<'a>,
+    /// Holds the path, the text and the tree of every entry.
+    pub(crate) arena: &'a AstArena,
 }
 
-impl Default for WorkspacePackageJSONCache {
-    fn default() -> Self {
+impl<'a> WorkspacePackageJSONCache<'a> {
+    pub(crate) fn new(arena: &'a AstArena) -> Self {
         Self {
             map: Map::default(),
-            arena: AstArena::borrowing_default(),
+            arena,
         }
     }
-}
 
-impl WorkspacePackageJSONCache {
+    /// The next lookup of each entry reads its file again, and keeps the entry if the text is the same.
+    pub fn mark_stale(&mut self) {
+        for entry in self.map.values_mut() {
+            entry.stale = true;
+        }
+    }
+
     /// Given an absolute path to a workspace package.json, return the AST
     /// and contents of the file. If the package.json is not present in the
     /// cache, it will be read from disk and parsed, and stored in the cache.
@@ -139,7 +135,7 @@ impl WorkspacePackageJSONCache {
         log: &Log,
         abs_package_json_path: &[u8],
         opts: GetJSONOptions,
-    ) -> GetResult<'_> {
+    ) -> GetResult<'_, 'a> {
         self.get_or_insert(log, abs_package_json_path, opts, None)
     }
 
@@ -148,7 +144,7 @@ impl WorkspacePackageJSONCache {
         &mut self,
         log: &Log,
         abs_package_json_path: &[u8],
-        contents: &'static [u8],
+        contents: &'a [u8],
     ) -> Result<(), Error> {
         self.get_or_insert(
             log,
@@ -165,8 +161,8 @@ impl WorkspacePackageJSONCache {
         log: &Log,
         abs_package_json_path: &[u8],
         opts: GetJSONOptions,
-        unwritten: Option<&'static [u8]>,
-    ) -> GetResult<'_> {
+        mut contents: Option<&'a [u8]>,
+    ) -> GetResult<'_, 'a> {
         debug_assert!(is_absolute(abs_package_json_path));
 
         #[cfg(windows)]
@@ -182,40 +178,45 @@ impl WorkspacePackageJSONCache {
             &buf[..abs_package_json_path.len()]
         };
 
+        let arena = self.arena;
+
         // reshaped for borrowck — we cannot hold an entry borrow across
         // `self.map.remove`, so check
         // membership up front and only insert into the map after a successful
         // read+parse. Net map state is identical on every path.
         if self.map.contains_key(path) {
             let entry = self.map.get_mut(path).unwrap();
-            if opts.guess_indentation && !entry.indentation_guessed {
-                entry.indentation = json::guess_indentation(&entry.source.contents);
-                entry.indentation_guessed = true;
+            if entry.stale {
+                match File::read_from(Fd::cwd(), path) {
+                    Ok(on_disk) if on_disk == *entry.source.contents => entry.stale = false,
+                    Ok(on_disk) => contents = Some(arena.alloc_slice_copy(&on_disk)),
+                    Err(err) => return GetResult::ReadErr(err.into()),
+                }
             }
-            return GetResult::Entry(self.map.get_mut(path).unwrap());
+            if !entry.stale {
+                if opts.guess_indentation && !entry.indentation_guessed {
+                    entry.indentation = json::guess_indentation(&entry.source.contents);
+                    entry.indentation_guessed = true;
+                }
+                return GetResult::Entry(self.map.get_mut(path).unwrap());
+            }
         }
 
-        // Owned NUL-terminated copy reused
-        // both as the map key and the path handed to `File.toSource`. The
-        // returned `Source` *borrows* its `path` slices from this allocation,
-        // so it must outlive the cached `MapEntry` (stored as
-        // `value.path_storage` below).
-        let key = bun_core::ZBox::from_bytes(path);
-
-        // MOVE_DOWN: `bun.sys.File.toSource` lives in `bun_logger` (T1 → T2
-        // cyclebreak; `bun_sys` cannot name `Source`).
-        let source = match unwritten {
-            Some(contents) => Source::init_path_string(key.as_bytes(), contents),
-            None => match bun_ast::to_source(&key, Default::default()) {
-                Ok(s) => s,
-                Err(err) => {
-                    return GetResult::ReadErr(err.into());
-                }
+        let contents = match contents {
+            Some(contents) => contents,
+            None => match File::openat(Fd::cwd(), path, O::RDONLY, 0)
+                .map_err(bun_resolver::Error::from)
+                .and_then(|file| read_file_contents_in_arena(&file, arena, ByteOrderMark::Kept))
+            {
+                Ok(contents) => contents,
+                Err(bun_resolver::Error::Sys(errno)) => return GetResult::ReadErr(errno.into()),
+                Err(err) => return GetResult::ReadErr(err.into()),
             },
         };
+        let source = Source::init_path_string(arena.dupe_str(path).slice(), contents);
+        let source = arena.alloc_node(source).get();
 
-        let parsed = match parse_package_json(&source, log, &mut self.arena, opts.guess_indentation)
-        {
+        let parsed = match parse_package_json(source, log, arena, opts.guess_indentation) {
             Ok(p) => p,
             Err(err) => {
                 return GetResult::ParseErr(err);
@@ -224,14 +225,11 @@ impl WorkspacePackageJSONCache {
 
         let value = MapEntry {
             root: parsed.root,
-            // SAFETY: `source.path` borrows `key`, which the entry keeps beside it.
-            // The heap address is stable across the move into the map.
-            source: unsafe { source.into_static() },
+            source,
             indentation: parsed.indentation,
             indentation_guessed: opts.guess_indentation,
-            _path_storage: key,
-            stale_contents: Vec::new(),
-            save_arena: AstArena::borrowing_default(),
+            stale: false,
+            arena,
         };
 
         bun_core::handle_oom(self.map.put(path, value));

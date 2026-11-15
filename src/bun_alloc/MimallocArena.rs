@@ -787,13 +787,18 @@ impl MimallocArena {
 
     /// Allocate an uninitialized `[MaybeUninit<T>; len]` slice.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
     pub fn alloc_uninit_slice<T>(&self, len: usize) -> &mut [MaybeUninit<T>] {
-        let layout = Layout::array::<T>(len).unwrap_or_else(|_| crate::out_of_memory());
-        let dst = self.alloc_layout(layout).cast::<MaybeUninit<T>>();
+        (self.try_alloc_uninit_slice(len)).unwrap_or_else(|| crate::out_of_memory())
+    }
+
+    /// `None`: there is no memory for `len` values.
+    #[allow(clippy::mut_from_ref)]
+    pub fn try_alloc_uninit_slice<T>(&self, len: usize) -> Option<&mut [MaybeUninit<T>]> {
+        let layout = Layout::array::<T>(len).ok()?;
+        let dst = NonNull::new(self.aligned_alloc(layout.size(), layout.align()))?;
         // SAFETY: `MaybeUninit<T>` has the same layout as `T` and imposes no
         // initialization invariant.
-        unsafe { core::slice::from_raw_parts_mut(dst.as_ptr(), len) }
+        Some(unsafe { core::slice::from_raw_parts_mut(dst.cast().as_ptr(), len) })
     }
 }
 

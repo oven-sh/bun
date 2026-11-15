@@ -10,7 +10,7 @@ use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
     ThreadPool,
 };
-use bun_ast::{AstArena, B, Binding, E, Expr, G, Part, Ref, S, Scope, Stmt, StmtOrExpr};
+use bun_ast::{AstArena, B, Binding, E, Expr, G, Ref, S, Scope, Stmt, StmtOrExpr};
 use bun_ast::{ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::MultiArrayList;
 use bun_collections::VecExt;
@@ -221,22 +221,12 @@ pub(crate) fn post_process_js_chunk(
         let source = c.get_source(chunk.entry_point.source_index());
         let target = c.resolver.opts.target;
 
-        let prefix_stmts = bun_ast::StoreSlice::new_mut(
-            chunk
-                .content
-                .javascript_mut()
-                .cross_chunk_prefix_stmts
-                .slice_mut(),
-        );
-        let suffix_stmts = bun_ast::StoreSlice::new_mut(if exports_join_entry_tail {
-            &mut []
+        let js = chunk.content.javascript();
+        let suffix_stmts: &[Stmt] = if exports_join_entry_tail {
+            &[]
         } else {
-            chunk
-                .content
-                .javascript_mut()
-                .cross_chunk_suffix_stmts
-                .slice_mut()
-        });
+            &js.cross_chunk_suffix_stmts
+        };
 
         cross_chunk_prefix = js_printer::print::<false>(
             worker_arena,
@@ -248,10 +238,7 @@ pub(crate) fn post_process_js_chunk(
                 ..make_print_options()
             },
             cross_chunk_import_records.as_slice(),
-            &[Part {
-                stmts: prefix_stmts,
-                ..Default::default()
-            }],
+            &js.cross_chunk_prefix_stmts,
             c.renamer_for_chunk(chunk),
         );
         if let Some(mi) = module_info.as_deref_mut() {
@@ -276,10 +263,7 @@ pub(crate) fn post_process_js_chunk(
                 ..make_print_options()
             },
             &[],
-            &[Part {
-                stmts: suffix_stmts,
-                ..Default::default()
-            }],
+            suffix_stmts,
             c.renamer_for_chunk(chunk),
         );
     }
@@ -1040,15 +1024,15 @@ pub(crate) fn generate_entry_point_tail_js(
 
                         let own_len = items.len();
                         items.extend_from_slice(cross_chunk_exports);
-                        // arena-owned `*mut [ClauseItem]` — move the
-                        // collected Vec into the linker arena. The arena slice is also iterated
+                        // Move the collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.
-                        let items: &mut [bun_ast::ClauseItem] = arena.alloc_slice_fill_iter(items);
+                        let items =
+                            bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(items));
                         if !items.is_empty() {
                             stmts.push(Stmt::allocate(
                                 temp_arena,
                                 S::ExportClause {
-                                    items: bun_ast::StoreSlice::new_mut(items),
+                                    items,
                                     is_single_line: false,
                                 },
                                 bun_ast::Loc::EMPTY,
@@ -1088,7 +1072,6 @@ pub(crate) fn generate_entry_point_tail_js(
                                         key: Some(Expr::allocate(
                                             temp_arena,
                                             E::String {
-                                                // SAFETY: alias is an arena `*const [u8]`; never null.
                                                 data: export_item.alias.slice().into(),
                                                 is_utf16: false,
                                                 ..Default::default()
@@ -1267,10 +1250,7 @@ pub(crate) fn generate_entry_point_tail_js(
             c.get_source(source_index),
             print_options,
             ast.import_records,
-            &[Part {
-                stmts: bun_ast::StoreSlice::new_mut(stmts.as_mut_slice()),
-                ..Default::default()
-            }],
+            &stmts,
             r,
         ),
         source_index,

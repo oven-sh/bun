@@ -10,7 +10,7 @@ use bun_parsers::xml::{self, XML};
 #[derive(Clone, Copy)]
 pub(crate) struct Node<'a> {
     pub(crate) name: &'a [u8],
-    children: &'a [E::JsonValue],
+    children: &'a [E::JsonValue<'a>],
 }
 
 impl<'a> Node<'a> {

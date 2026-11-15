@@ -147,21 +147,22 @@ macro_rules! pass {
 /// Run the compilation pipeline on a single function.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn compile_fn(
-    func: &FunctionNode<'_>,
+    func: &FunctionNode<'_, 'static>,
     fn_name: Option<&str>,
-    host: &mut dyn Host,
-    arena: &bun_ast::AstArena,
+    host: &mut dyn Host<'static>,
+    arena: &'static bun_ast::AstArena,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
-    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
+    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding<'static>>,
 ) -> Result<CodegenFunction, CompilerError> {
     let mut env = Environment::with_config(env_config.clone());
     env.fn_type = fn_type;
     env.output_mode = context.output_mode;
-    // ProgramContext owns these `String`s for the whole compile; `StoreStr`
-    // borrows their bytes under the same lifetime contract as arena slices.
-    let borrow = |s: &Option<String>| s.as_deref().map(|s| StoreStr::new(s.as_bytes()));
+    // SAFETY: `context` does not change or drop these `String`s before `env` is dropped, and codegen copies what it emits of them.
+    let borrow_str =
+        |s: &String| StoreStr::new(unsafe { bun_collections::detach_lifetime(s.as_bytes()) });
+    let borrow = |s: &Option<String>| s.as_ref().map(borrow_str);
     env.code = borrow(&context.code);
     env.filename = borrow(&context.filename);
     env.instrument_fn_name = borrow(&context.instrument_fn_name);
@@ -170,7 +171,7 @@ pub(crate) fn compile_fn(
     let known: HashSet<StoreStr> = context
         .known_referenced_names()
         .iter()
-        .map(|s| StoreStr::new(s.as_bytes()))
+        .map(borrow_str)
         .collect();
     env.seed_uid_known_names(&known);
 
@@ -292,12 +293,12 @@ pub(crate) fn compile_fn(
 pub(crate) fn compile_outlined_fn(
     codegen_fn: CodegenFunction,
     fn_name: Option<&str>,
-    host: &mut dyn Host,
-    arena: &bun_ast::AstArena,
+    host: &mut dyn Host<'static>,
+    arena: &'static bun_ast::AstArena,
     fn_type: ReactFunctionType,
     env_config: &EnvironmentConfig,
     context: &mut ProgramContext,
-    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding>,
+    import_bindings: &IndexMap<bun_ast::Ref, VariableBinding<'static>>,
 ) -> Result<CodegenFunction, CompilerError> {
     use bun_ast::{G, Loc, StoreSlice, flags};
 

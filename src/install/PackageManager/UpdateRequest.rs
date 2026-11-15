@@ -27,7 +27,7 @@ pub struct UpdateRequest {
     pub(crate) is_aliased: bool,
     pub failed: bool,
     /// Points into the package.json AST being edited, which lives as long as the `PackageManager`.
-    pub(crate) e_string: Option<bun_ast::StoreRef<js_ast::E::String>>,
+    pub(crate) e_string: Option<bun_ast::StoreRef<'static, js_ast::E::String<'static>>>,
 }
 
 impl Default for UpdateRequest {

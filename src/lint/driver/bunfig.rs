@@ -243,7 +243,7 @@ struct Key {
 }
 
 /// The keys of the table `section`, with their values.
-fn entries(section: &Expr) -> Result<Vec<(Key, &Expr)>, BunfigError> {
+fn entries<'a, 'ast>(section: &'a Expr<'ast>) -> Result<Vec<(Key, &'a Expr<'ast>)>, BunfigError> {
     let Data::EObject(table) = &section.data else {
         return expected("object", section);
     };
@@ -657,7 +657,10 @@ fn overrides(value: &Expr) -> Result<Vec<crate::fmt::cli::Override>, BunfigError
 }
 
 /// The tables in `value`, which is the `overrides` array of `section`.
-fn tables_of<'e>(value: &'e Expr, section: &[u8]) -> Result<&'e [Expr], BunfigError> {
+fn tables_of<'e, 'ast>(
+    value: &'e Expr<'ast>,
+    section: &[u8],
+) -> Result<&'e [Expr<'ast>], BunfigError> {
     match &value.data {
         Data::EArray(items) => Ok(items.slice()),
         Data::EObject(_) => reject(

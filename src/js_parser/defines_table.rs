@@ -192,7 +192,7 @@ pub static GLOBAL_NO_SIDE_EFFECT_FUNCTION_CALLS_SAFE_FOR_TO_STRING: &[&[&[u8]]] 
 ];
 
 // `OnceLock` for lazily-initialised statics (`DefineData` is not const-constructible).
-fn pure_global_identifier_define() -> &'static defines::IdentifierDefine {
+fn pure_global_identifier_define() -> &'static defines::IdentifierDefine<'static> {
     static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
     CELL.get_or_init(|| {
         defines::DefineData::init(defines::Options {
@@ -211,7 +211,7 @@ mod identifiers {
     const INF_VAL: js_ast::E::Number = js_ast::E::Number::new(f64::INFINITY);
 
     // Step 2. Swap in certain literal values because those can be constant folded
-    pub(super) fn undefined() -> &'static defines::IdentifierDefine {
+    pub(super) fn undefined() -> &'static defines::IdentifierDefine<'static> {
         static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
         CELL.get_or_init(|| {
             defines::DefineData::init(defines::Options {
@@ -221,7 +221,7 @@ mod identifiers {
             })
         })
     }
-    pub(super) fn nan() -> &'static defines::IdentifierDefine {
+    pub(super) fn nan() -> &'static defines::IdentifierDefine<'static> {
         static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
         CELL.get_or_init(|| {
             defines::DefineData::init(defines::Options {
@@ -230,7 +230,7 @@ mod identifiers {
             })
         })
     }
-    pub(super) fn infinity() -> &'static defines::IdentifierDefine {
+    pub(super) fn infinity() -> &'static defines::IdentifierDefine<'static> {
         static CELL: OnceLock<defines::IdentifierDefine> = OnceLock::new();
         CELL.get_or_init(|| {
             defines::DefineData::init(defines::Options {
@@ -250,7 +250,7 @@ pub(crate) enum PureGlobalIdentifierValue {
 }
 
 impl PureGlobalIdentifierValue {
-    pub(crate) fn value(self) -> &'static defines::IdentifierDefine {
+    pub(crate) fn value(self) -> &'static defines::IdentifierDefine<'static> {
         match self {
             PureGlobalIdentifierValue::NaN => identifiers::nan(),
             PureGlobalIdentifierValue::Infinity => identifiers::infinity(),

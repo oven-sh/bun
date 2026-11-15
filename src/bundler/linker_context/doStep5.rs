@@ -323,9 +323,9 @@ impl LinkerContext<'_, '_> {
     /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
     /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn create_exports_for_file(
+    pub(crate) fn create_exports_for_file<'a>(
         &self,
-        arena: &AstArena,
+        arena: &'a AstArena,
         id: u32,
         resolved_exports: &ResolvedExports,
         imports_to_bind: &[RefImportData],
@@ -334,7 +334,7 @@ impl LinkerContext<'_, '_> {
         lifted_setter_param: Ref,
         meta_flags: &mut js_meta::Flags,
         ast_flags: &mut AstFlags,
-        ast_parts: &mut bun_ast::PartList,
+        ast_parts: &mut bun_ast::PartList<'a>,
     ) {
         // 1 property per export
         let mut properties =
@@ -374,17 +374,14 @@ impl LinkerContext<'_, '_> {
         // doesn't satisfy, so we hand-roll the same shape: one arena slab of
         // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
         // becomes a `write` + sub-slice carve. The slab is held as a safe
-        // `&mut [MaybeUninit<Stmt>]` borrow of the arena allocation; each
-        // carve borrows it briefly and hands the result to `StoreSlice`
-        // (raw-ptr wrapper, no lifetime), so successive carves don't alias.
-        let stmts_slab: &mut [MaybeUninit<Stmt>] =
+        // `&mut [MaybeUninit<Stmt>]` borrow of what is left of the arena allocation.
+        let mut stmts_slab: &mut [MaybeUninit<Stmt>] =
             arena.alloc_slice_fill_with(stmts_count, |_| MaybeUninit::uninit());
-        let mut stmts_head: usize = 0;
         macro_rules! stmts_eat1 {
             ($value:expr) => {{
+                let slot = stmts_slab.split_off_first_mut().unwrap();
                 // `MaybeUninit::write` returns `&mut T` to the now-initialized slot.
-                let written: &mut Stmt = stmts_slab[stmts_head].write($value);
-                stmts_head += 1;
+                let written: &mut Stmt = slot.write($value);
                 bun_ast::StoreSlice::new_mut(core::slice::from_mut(written))
             }};
         }
@@ -527,7 +524,7 @@ impl LinkerContext<'_, '_> {
         // The trailing `all_export_stmts_len` slots of `stmts_slab`
         // (after the per-export `eat1`s above) are filled below in the order
         // {var exports={}, __export(...), module.exports=__toCommonJS(...)}.
-        let all_export_stmts_base = stmts_head;
+        let mut stmts_head: usize = 0;
         macro_rules! emit_export_stmt {
             ($value:expr) => {{
                 stmts_slab[stmts_head].write($value);
@@ -674,7 +671,7 @@ impl LinkerContext<'_, '_> {
             ));
         }
 
-        debug_assert_eq!(stmts_head - all_export_stmts_base, all_export_stmts_len); // all must be used
+        debug_assert_eq!(stmts_head, all_export_stmts_len); // all must be used
 
         // No need to generate a part if it'll be empty
         if all_export_stmts_len > 0 {
@@ -685,13 +682,10 @@ impl LinkerContext<'_, '_> {
             // here will be used after this during tree shaking.
             ast_parts.as_mut_slice()[bun_ast::NAMESPACE_EXPORT_PART_INDEX as usize] = Part {
                 stmts: if self.options.output_format != Format::InternalBakeDev {
-                    let init = &mut stmts_slab[all_export_stmts_base..stmts_head];
+                    let init = &mut stmts_slab[..stmts_head];
                     debug_assert_eq!(init.len(), all_export_stmts_len);
-                    // SAFETY: the `[all_export_stmts_base..stmts_head]` window of
-                    // `stmts_slab` is fully initialized above (`debug_assert_eq!`
-                    // just verified head == base+len); same-layout cast
-                    // `[MaybeUninit<Stmt>]` → `[Stmt]`. The worker arena
-                    // outlives the link pass.
+                    // SAFETY: the `[..stmts_head]` window of `stmts_slab` is fully
+                    // initialized above; same-layout cast `[MaybeUninit<Stmt>]` → `[Stmt]`.
                     bun_ast::StoreSlice::new_mut(unsafe {
                         &mut *(std::ptr::from_mut::<[MaybeUninit<Stmt>]>(init) as *mut [Stmt])
                     })

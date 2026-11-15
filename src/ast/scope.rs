@@ -10,8 +10,8 @@ use crate::{AstArena, AstBox, AstVec};
 /// source text or the lexer's string table, which outlive the arena holding
 /// the scope), the name's `Members::hash`, and the symbol.
 #[derive(Clone, Copy)]
-pub struct MemberEntry {
-    pub name: crate::StoreStr,
+pub struct MemberEntry<'a> {
+    pub name: crate::StoreStr<'a>,
     hash: u32,
     pub member: Member,
 }
@@ -20,14 +20,14 @@ pub struct MemberEntry {
 /// case while resolving an identifier up the scope chain) reads one cache
 /// line. Scopes start with `N = 4` (most have no more) and move to `N = 8`
 /// before becoming a table.
-pub struct InlineMembers<const N: usize> {
+pub struct InlineMembers<'a, const N: usize> {
     hashes: [u32; N],
     len: u32,
     members: [Member; N],
-    names: [crate::StoreStr; N],
+    names: [crate::StoreStr<'a>; N],
 }
 
-impl<const N: usize> InlineMembers<N> {
+impl<'a, const N: usize> InlineMembers<'a, N> {
     fn new() -> Self {
         InlineMembers {
             hashes: [0; N],
@@ -62,7 +62,7 @@ impl<const N: usize> InlineMembers<N> {
 
     /// Caller checks `len < N`.
     #[inline]
-    fn push(&mut self, hash: u32, name: &[u8]) -> usize {
+    fn push(&mut self, hash: u32, name: &'a [u8]) -> usize {
         let i = self.len as usize;
         self.hashes[i] = hash;
         self.names[i] = crate::StoreStr::new(name);
@@ -71,7 +71,7 @@ impl<const N: usize> InlineMembers<N> {
         i
     }
 
-    fn grow<const M: usize>(&self) -> InlineMembers<M> {
+    fn grow<const M: usize>(&self) -> InlineMembers<'a, M> {
         let mut out = InlineMembers::<M>::new();
         let n = self.len as usize;
         out.hashes[..n].copy_from_slice(&self.hashes[..n]);
@@ -86,13 +86,13 @@ impl<const N: usize> InlineMembers<N> {
 /// start as a short inline array and only become a hash table past
 /// `INLINE_MAX`.
 #[derive(Default)]
-pub enum Members {
+pub enum Members<'a> {
     #[default]
     Empty,
     /// In declaration order.
-    Small(AstBox<InlineMembers<4>>),
-    Inline(AstBox<InlineMembers<8>>),
-    Table(AstHashTable<MemberEntry>),
+    Small(AstBox<'a, InlineMembers<'a, 4>>),
+    Inline(AstBox<'a, InlineMembers<'a, 8>>),
+    Table(AstHashTable<'a, MemberEntry<'a>>),
 }
 
 pub struct MembersGetOrPut<'a> {
@@ -100,13 +100,13 @@ pub struct MembersGetOrPut<'a> {
     pub value_ptr: &'a mut Member,
 }
 
-pub enum MembersIter<'a> {
-    Inline(&'a [crate::StoreStr], &'a [Member], usize),
-    Table(bun_collections::hashbrown::hash_table::Iter<'a, MemberEntry>),
+pub enum MembersIter<'a, 'ast> {
+    Inline(&'a [crate::StoreStr<'ast>], &'a [Member], usize),
+    Table(bun_collections::hashbrown::hash_table::Iter<'a, MemberEntry<'ast>>),
 }
 
-impl<'a> Iterator for MembersIter<'a> {
-    type Item = (&'a [u8], &'a Member);
+impl<'a, 'ast> Iterator for MembersIter<'a, 'ast> {
+    type Item = (&'ast [u8], &'a Member);
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
@@ -121,8 +121,8 @@ impl<'a> Iterator for MembersIter<'a> {
     }
 }
 
-impl Members {
-    pub const EMPTY: Members = Members::Empty;
+impl<'a> Members<'a> {
+    pub const EMPTY: Members<'a> = Members::Empty;
     pub const INLINE_MAX: usize = 8;
 
     /// The low 32 bits of wyhash. A match is always confirmed by comparing
@@ -153,7 +153,7 @@ impl Members {
         self.len()
     }
 
-    pub fn iter(&self) -> MembersIter<'_> {
+    pub fn iter(&self) -> MembersIter<'_, 'a> {
         match self {
             Members::Empty => MembersIter::Inline(&[], &[], 0),
             Members::Small(m) => {
@@ -195,18 +195,18 @@ impl Members {
     }
 
     /// Room for about `n` members (the module scope, sized from the source).
-    pub fn reserve(&mut self, arena: &AstArena, n: usize) {
+    pub fn reserve(&mut self, arena: &'a AstArena, n: usize) {
         if n > Self::INLINE_MAX {
             self.to_table(arena, n);
         }
     }
 
-    fn to_table(&mut self, arena: &AstArena, capacity: usize) {
-        fn fill<const N: usize>(
-            arena: &AstArena,
-            inline: &InlineMembers<N>,
+    fn to_table(&mut self, arena: &'a AstArena, capacity: usize) {
+        fn fill<'a, const N: usize>(
+            arena: &'a AstArena,
+            inline: &InlineMembers<'a, N>,
             capacity: usize,
-        ) -> AstHashTable<MemberEntry> {
+        ) -> AstHashTable<'a, MemberEntry<'a>> {
             let mut table =
                 AstHashTable::with_capacity_in(capacity.max(Members::INLINE_MAX * 2), arena);
             for i in 0..inline.len as usize {
@@ -234,16 +234,12 @@ impl Members {
     }
 
     /// The entry for `name`, inserted with `Member::default()` if absent.
-    ///
-    /// # Safety
-    /// `name` is stored by reference: it must outlive this scope (source
-    /// text, the lexer's string table, or the AST arena all do).
-    pub unsafe fn get_or_put_hashed<'m>(
-        &'m mut self,
-        arena: &'m AstArena,
+    pub fn get_or_put_hashed(
+        &mut self,
+        arena: &'a AstArena,
         hash: u32,
-        name: &[u8],
-    ) -> MembersGetOrPut<'m> {
+        name: &'a [u8],
+    ) -> MembersGetOrPut<'_> {
         loop {
             match self {
                 Members::Empty => {
@@ -306,25 +302,23 @@ impl Members {
     }
 
     /// Insert or overwrite.
-    ///
-    /// # Safety
-    /// As for `get_or_put_hashed`.
-    pub unsafe fn put(&mut self, arena: &AstArena, name: &[u8], member: Member) {
-        // SAFETY: forwarded contract.
-        *unsafe { self.get_or_put_hashed(arena, Self::hash(name), name) }.value_ptr = member;
+    pub fn put(&mut self, arena: &'a AstArena, name: &'a [u8], member: Member) {
+        *self
+            .get_or_put_hashed(arena, Self::hash(name), name)
+            .value_ptr = member;
     }
 }
 
-pub struct Scope {
+pub struct Scope<'a> {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
     // back-pointer with safe `Deref`/`DerefMut`) so callers don't open-code
     // `unsafe { &*parent.as_ptr() }` at every walk site.
-    pub parent: Option<StoreRef<Scope>>,
+    pub parent: Option<StoreRef<'a, Scope<'a>>>,
     /// Elements are `StoreRef` so iteration yields safe `Deref` instead of `unsafe { child.as_ref() }`.
-    pub children: AstVec<StoreRef<Scope>>,
-    pub members: Members,
-    pub generated: AstVec<Ref>,
+    pub children: AstVec<'a, StoreRef<'a, Scope<'a>>>,
+    pub members: Members<'a>,
+    pub generated: AstVec<'a, Ref>,
     /// This scope's index in the visit pass's pre-order walk and the index of
     /// the last scope inside it, which `Ast::scope_uses` refers to.
     /// `u32::MAX` for a scope the visit pass never entered.
@@ -352,10 +346,10 @@ pub struct Scope {
     // This will be non-null if this is a TypeScript "namespace" or "enum"
     // ARENA: allocated from p.arena, never freed per-field. `StoreRef` so
     // callers read `scope.ts_namespace?.exported_members` safely.
-    pub ts_namespace: Option<StoreRef<TSNamespaceScope>>,
+    pub ts_namespace: Option<StoreRef<'a, TSNamespaceScope<'a>>>,
 }
 
-impl Scope {
+impl Scope<'_> {
     /// All-empty `Scope` as a `const`. Used with struct-update syntax in the
     /// parser's per-scope allocation hot path (`push_scope_for_parse_pass`
     /// runs once per `{}` / function / class body) so the unspecified fields
@@ -382,14 +376,14 @@ impl Scope {
     };
 }
 
-impl Default for Scope {
+impl Default for Scope<'_> {
     #[inline]
     fn default() -> Self {
         Self::EMPTY
     }
 }
 
-impl Scope {
+impl<'a> Scope<'a> {
     /// `(first, last)`: this scope and everything inside it, as visit-pass
     /// pre-order indices. `None` if the visit pass did not enter and leave it.
     pub fn visit_span(&self) -> Option<(u32, u32)> {
@@ -407,19 +401,14 @@ impl Scope {
         self.members.get_hashed(hash_value, name).copied()
     }
 
-    /// # Safety
-    /// `name` must outlive the scope: see `Members::get_or_put_hashed`. The
-    /// parser's names are slices of the source or of the lexer's string
-    /// table, which outlive the AST arena.
     #[inline]
-    pub unsafe fn get_or_put_member_with_hash<'m>(
-        &'m mut self,
-        arena: &'m AstArena,
-        name: &[u8],
+    pub fn get_or_put_member_with_hash(
+        &mut self,
+        arena: &'a AstArena,
+        name: &'a [u8],
         hash_value: u32,
-    ) -> MembersGetOrPut<'m> {
-        // SAFETY: forwarded contract.
-        unsafe { self.members.get_or_put_hashed(arena, hash_value, name) }
+    ) -> MembersGetOrPut<'_> {
+        self.members.get_or_put_hashed(arena, hash_value, name)
     }
 
     /// Associated-fn form of [`can_merge_symbols`] taking the scope's [`Kind`]

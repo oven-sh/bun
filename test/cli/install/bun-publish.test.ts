@@ -3709,6 +3709,21 @@ describe.concurrent("--recursive and --filter", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a package that ran a script gets the last of two equal `version` keys of a dependency", async () => {
+    using registry = workspaceRegistry();
+    using dir = workspace(
+      registry.mock,
+      {},
+      { "packages/a/package.json": `{ "name": "rec-a", "version": "1.0.0", "version": "2.0.0" }` },
+    );
+
+    const { out, err, exitCode } = await publish(env, String(dir), "--filter", "rec-a", "--filter", "rec-b");
+    expect(lines(err)).toEqual(["$ echo prepublishOnly rec-b", POSTPUBLISH]);
+    expect(published(out)).toEqual([" + rec-a@2.0.0", " + rec-b@1.0.0"]);
+    expect(registry.manifests["rec-b"].versions["1.0.0"].dependencies).toEqual({ "rec-a": "2.0.0" });
+    expect(exitCode).toBe(0);
+  });
+
   test.each([
     ["workspace:../a", "1.0.0-rc.1"],
     ["workspace:rec-a@^", "^1.0.0-rc.1"],

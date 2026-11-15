@@ -4,15 +4,15 @@ use crate::convert::Converted;
 use bun_ast::{Expr, ImportKind, ImportRecord, Loc, Ref, Scope, Symbol};
 use bun_react_compiler::{Host, JsxImportKind};
 
-pub(crate) struct LintHost<'c> {
-    converted: &'c Converted,
+pub(crate) struct LintHost<'c, 'ast> {
+    converted: &'c Converted<'ast>,
     source: &'c [u8],
     /// Always empty. [`Host::is_module_level`] tells the compiler what's bound outside the function.
-    module_scope: Scope,
+    module_scope: Scope<'ast>,
 }
 
-impl<'c> LintHost<'c> {
-    pub(crate) fn new(converted: &'c Converted, source: &'c [u8]) -> Self {
+impl<'c, 'ast> LintHost<'c, 'ast> {
+    pub(crate) fn new(converted: &'c Converted<'ast>, source: &'c [u8]) -> Self {
         LintHost {
             converted,
             source,
@@ -21,14 +21,14 @@ impl<'c> LintHost<'c> {
     }
 }
 
-impl Host for LintHost<'_> {
-    fn symbols(&self) -> &[Symbol] {
+impl<'ast> Host<'ast> for LintHost<'_, 'ast> {
+    fn symbols(&self) -> &[Symbol<'ast>] {
         &self.converted.symbols
     }
-    fn module_scope(&self) -> &Scope {
+    fn module_scope(&self) -> &Scope<'ast> {
         &self.module_scope
     }
-    fn import_records(&self) -> &[ImportRecord<'_>] {
+    fn import_records(&self) -> &[ImportRecord<'ast>] {
         &[]
     }
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -47,11 +47,11 @@ impl Host for LintHost<'_> {
     fn source(&self) -> &[u8] {
         self.source
     }
-    fn ref_name(&self, ref_: Ref) -> &[u8] {
+    fn ref_name(&self, ref_: Ref) -> &'ast [u8] {
         let symbol = self.converted.symbols.get(ref_.inner_index() as usize);
         symbol.map_or(b"", |it| it.original_name.slice())
     }
-    fn scope_for_loc(&self, _: Loc) -> Option<&Scope> {
+    fn scope_for_loc(&self, _: Loc) -> Option<&Scope<'ast>> {
         None
     }
     fn jsx_import_kind(&self, ref_: Ref) -> Option<JsxImportKind> {
@@ -65,7 +65,7 @@ impl Host for LintHost<'_> {
     fn jsx_import(&mut self, _: JsxImportKind) -> Ref {
         Ref::NONE
     }
-    fn jsx_classic_factory(&mut self, _: Loc) -> Expr {
+    fn jsx_classic_factory(&mut self, _: Loc) -> Expr<'ast> {
         Expr::EMPTY
     }
     fn new_generated(&mut self, _: &[u8]) -> Ref {

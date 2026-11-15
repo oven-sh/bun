@@ -378,10 +378,11 @@ impl DevServer {
                 detach_lifetime_mut(&mut *self.client_transpiler),
             )
         };
+        let framework = (server_transpiler.options.framework).expect("set by `DevServer::init`");
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
+                framework,
                 client_transpiler,
                 ssr_transpiler,
                 plugins: self.plugins,

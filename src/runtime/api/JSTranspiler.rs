@@ -12,8 +12,9 @@ use crate::generated_bindgen::transpiler::{
 };
 use crate::node::{Encoding, StringOrBuffer, ThreadIsolated};
 use bun_alloc::ArenaVec;
-use bun_ast::Expr;
+use bun_ast::E::JsonValue;
 use bun_ast::Loader;
+use bun_ast::runtime::ReplacementValue;
 use bun_ast::{AstArena, ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
 use bun_bundler::transpiler::{MacroJSCtx, MacroLoadStates, ParseOptions, ParseResult};
@@ -66,7 +67,7 @@ pub(crate) struct Config {
     pub(crate) tsconfig: Option<Box<TSConfigJSON>>,
     pub(crate) tsconfig_buf: Box<[u8]>,
     pub(crate) macros_buf: Box<[u8]>,
-    pub(crate) runtime: Runtime::Features,
+    pub(crate) runtime: Runtime::Features<'static>,
     pub(crate) tree_shaking: bool,
     pub(crate) trim_unused_imports: Option<bool>,
 
@@ -154,7 +155,7 @@ impl Config {
         &mut self,
         global: &JSGlobalObject,
         object: Option<&TranspilerOptions<'_>>,
-        arena: &AstArena,
+        arena: &'static AstArena,
         log: &bun_ast::Log,
     ) -> JsResult<()> {
         let Some(object) = object else {
@@ -590,7 +591,7 @@ pub(crate) struct TransformTask {
     pub macro_map: MacroMap,
     pub tsconfig: Option<jsc::JsPtr<TSConfigJSON>>,
     pub loader: Loader,
-    pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
+    pub replace_exports: bun_ast::runtime::ReplaceableExportMap<'static>,
 }
 // SAFETY: see the type doc — VM-owned config is read only under the pool
 // borrow; everything else is owned.
@@ -798,57 +799,30 @@ impl TransformTask {
     }
 }
 
-fn export_replacement_value(
+fn export_replacement_value<'a>(
     value: JSValue,
     global: &JSGlobalObject,
-    arena: &AstArena,
-) -> JsResult<Option<bun_ast::Expr>> {
-    if value.is_boolean() {
-        return Ok(Some(Expr {
-            data: bun_ast::ExprData::EBoolean(bun_ast::E::Boolean {
-                value: value.to_boolean(),
-            }),
-            loc: bun_ast::Loc::EMPTY,
-        }));
-    }
-
-    if value.is_number() {
-        return Ok(Some(Expr {
-            data: bun_ast::ExprData::ENumber(bun_ast::E::Number::new(value.as_number())),
-            loc: bun_ast::Loc::EMPTY,
-        }));
-    }
-
-    if value.is_null() {
-        return Ok(Some(Expr {
-            data: bun_ast::ExprData::ENull(bun_ast::E::Null {}),
-            loc: bun_ast::Loc::EMPTY,
-        }));
-    }
-
-    if value.is_undefined() {
-        return Ok(Some(Expr {
-            data: bun_ast::ExprData::EUndefined(bun_ast::E::Undefined {}),
-            loc: bun_ast::Loc::EMPTY,
-        }));
-    }
-
-    if value.is_string() {
+    arena: &'a AstArena,
+) -> JsResult<Option<ReplacementValue<'a>>> {
+    let value = if value.is_boolean() {
+        Some(JsonValue::Boolean(value.to_boolean()))
+    } else if value.is_number() {
+        Some(JsonValue::Number(bun_ast::E::Number::new(
+            value.as_number(),
+        )))
+    } else if value.is_null() {
+        Some(JsonValue::Null)
+    } else if value.is_undefined() {
+        None
+    } else if value.is_string() {
         let str = value.to_js_string_view(global)?;
         let utf8 = str.to_utf8();
-        // Bump-allocate so the bytes
-        // live as long as the JSTranspiler arena that owns the resulting Expr;
-        // `E::EString::init` erases the borrow to `'static` per the AST
-        // crate's `Str` convention (see ast/E.rs).
-        let data = arena.alloc_slice_copy(utf8.slice());
-        return Ok(Some(Expr::allocate(
-            arena,
-            bun_ast::E::EString::init(data),
-            bun_ast::Loc::EMPTY,
-        )));
-    }
-
-    Ok(None)
+        let data: &[u8] = arena.alloc_slice_copy(utf8.slice());
+        Some(JsonValue::String(data.into()))
+    } else {
+        return Ok(None);
+    };
+    Ok(Some(ReplacementValue(value)))
 }
 
 impl JSTranspiler {

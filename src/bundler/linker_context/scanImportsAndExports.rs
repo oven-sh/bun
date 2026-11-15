@@ -728,8 +728,6 @@ pub(crate) fn scan_imports_and_exports(
 
             // Allocate the identifier-name buffer from the linker arena so it is
             // reclaimed when the link pass ends.
-            // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
-            // which is arena-lifetime by construction.
             let mut string_buffer: &mut [u8] =
                 arena.alloc_slice_fill_default::<u8>(string_buffer_len);
 
@@ -1320,7 +1318,11 @@ pub(crate) fn scan_imports_and_exports(
 }
 
 /// Writes `prefix` and `name` to the start of `buffer` and advances `buffer` past them.
-fn split_off_concat(buffer: &mut &mut [u8], prefix: &[u8], name: &[u8]) -> bun_ast::StoreStr {
+fn split_off_concat<'a>(
+    buffer: &mut &'a mut [u8],
+    prefix: &[u8],
+    name: &[u8],
+) -> bun_ast::StoreStr<'a> {
     let len = prefix.len() + name.len();
     let written = buffer.split_off_mut(..len).expect("unreachable");
     bun_ast::StoreStr::new(bun_core::concat_into(written, &[prefix, name]))
@@ -1340,7 +1342,7 @@ struct DependencyWrapper<'a> {
     import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [AstVec<u32>],
+    export_star_records: &'a [AstVec<'a, u32>],
     output_format: options::Format,
     wrap_stack: Vec<IndexInt>,
     export_star_stack: Vec<ExportStarFrame>,
@@ -1742,7 +1744,7 @@ mod __css_validation {
             stack: Vec<Frame>,
             all_import_records: &'a [ImportRecordList<'bump>],
             all_css_asts: &'a CssAsts<'bump>,
-            all_symbols: &'a symbol::Map,
+            all_symbols: &'a symbol::Map<'a>,
             all_sources: &'a [Source<'a>],
             log: &'a Log,
         }

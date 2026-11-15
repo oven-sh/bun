@@ -176,7 +176,7 @@ pub fn updated_version_literal(
 /// (`ts_decorators`, `class_static_block`, …) are always default for parsed
 /// `package.json`.
 #[inline]
-fn copy_property(p: &G::Property) -> G::Property {
+fn copy_property<'a>(p: &G::Property<'a>) -> G::Property<'a> {
     G::Property {
         key: p.key,
         value: p.value,
@@ -190,7 +190,7 @@ pub(crate) fn edit_patched_dependencies(
     patch_key: &[u8],
     patchfile_path: &[u8],
 ) -> Result<(), bun_alloc::AllocError> {
-    let arena = &manager.ast_arena;
+    let arena = manager.workspace_package_json_cache.arena;
     // const pkg_to_patch = manager.
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
@@ -226,42 +226,29 @@ pub(crate) fn edit_patched_dependencies(
     Ok(())
 }
 
-pub fn edit_trusted_dependencies(
-    arena: &bun_ast::AstArena,
-    package_json: &mut Expr,
-    names_to_add: &mut [Box<[u8]>],
+pub fn edit_trusted_dependencies<'a>(
+    arena: &'a bun_ast::AstArena,
+    package_json: &mut Expr<'a>,
+    names_to_add: &mut dyn Iterator<Item = &'a [u8]>,
 ) -> Result<(), bun_alloc::AllocError> {
-    let mut len = names_to_add.len();
-
     let query = package_json.as_property(TRUSTED_DEPENDENCIES_STRING);
     let trusted_dependencies: &[Expr] = match query.as_ref().map(|q| &q.expr.data) {
         Some(bun_ast::ExprData::EArray(arr)) => arr.items.slice(),
         _ => &[],
     };
 
-    let mut i = len;
-    while i > 0 {
-        i -= 1;
-        let name = &names_to_add[i];
-        for item in trusted_dependencies.iter() {
-            if let bun_ast::ExprData::EString(s) = &item.data {
-                if s.eql_bytes(name) {
-                    names_to_add.swap(i, len - 1);
-                    len -= 1;
-                    break;
-                }
-            }
-        }
-    }
-
-    let trusted_dependencies_to_add = len;
+    let is_trusted = |name: &[u8]| {
+        (trusted_dependencies.iter())
+            .any(|item| matches!(&item.data, bun_ast::ExprData::EString(s) if s.eql_bytes(name)))
+    };
     let new_trusted_deps = js_ast::ExprNodeList::from_iter_in(
         (trusted_dependencies.iter().copied()).chain(
-            (names_to_add[..len].iter().rev())
+            (names_to_add.filter(|name| !is_trusted(name)))
                 .map(|name| Expr::allocate(arena, E::EString::init(name), bun_ast::Loc::EMPTY)),
         ),
         arena,
     );
+    let trusted_dependencies_to_add = new_trusted_deps.len() - trusted_dependencies.len();
 
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
@@ -327,7 +314,7 @@ pub(crate) fn edit_update_no_args(
 ) -> Result<bool, bun_alloc::AllocError> {
     edit_update_entries(
         &manager.lockfile,
-        &manager.ast_arena,
+        manager.workspace_package_json_cache.arena,
         &mut manager.updating_packages,
         manager.workspace_name_hash,
         manager.options.do_.contains(Do::UPDATE_TO_LATEST),
@@ -351,7 +338,7 @@ fn edit_update_aliases_of_requests(
     };
     edit_update_entries(
         &manager.lockfile,
-        &manager.ast_arena,
+        manager.workspace_package_json_cache.arena,
         &mut manager.updating_packages,
         manager.workspace_name_hash,
         manager.options.do_.contains(Do::UPDATE_TO_LATEST),
@@ -366,7 +353,7 @@ fn literal_tag(literal: &[u8]) -> dependency::Tag {
     dependency::Tag::infer(dependency::trim_literal(literal))
 }
 
-pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
+pub(crate) fn string_pair<'a>(property: &'a G::Property<'_>) -> Option<(&'a [u8], &'a [u8])> {
     property
         .key
         .as_ref()
@@ -380,13 +367,13 @@ pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
 }
 
 /// Split borrows, for callers holding a `&mut` to another `PackageManager` field.
-pub(crate) fn edit_update_entries(
+pub(crate) fn edit_update_entries<'a>(
     lockfile: &crate::Lockfile,
-    arena: &bun_ast::AstArena,
+    arena: &'a bun_ast::AstArena,
     updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
     workspace_name_hash: Option<PackageNameHash>,
     update_to_latest: bool,
-    current_package_json: &mut Expr,
+    current_package_json: &mut Expr<'a>,
     options: EditOptions,
     selected: &dyn Fn(&[u8], &[u8]) -> bool,
 ) -> Result<bool, bun_alloc::AllocError> {
@@ -521,9 +508,9 @@ pub(crate) fn edit_update_entries(
 
 /// Calls `f(catalog_name, entries_object)` for each catalog in the root
 /// package.json, matching the precedence `CatalogMap::parse_append` uses.
-pub(crate) fn for_each_catalog_object(
-    root_package_json: &Expr,
-    mut f: impl FnMut(&[u8], Expr) -> Result<(), bun_alloc::AllocError>,
+pub(crate) fn for_each_catalog_object<'a>(
+    root_package_json: &Expr<'a>,
+    mut f: impl FnMut(&[u8], Expr<'a>) -> Result<(), bun_alloc::AllocError>,
 ) -> Result<(), bun_alloc::AllocError> {
     let Some(workspaces) = root_package_json.get(b"workspaces") else {
         return Ok(());
@@ -560,11 +547,11 @@ pub(crate) fn for_each_catalog_object(
 
 /// Returns the catalog object in the root package.json that `catalog:<catalog_name>` reads
 /// `dep_name` from. Like `CatalogMap::locate`, it prefers the exact spelling of `catalog_name`.
-pub fn catalog_object_of(
-    root_package_json: &Expr,
+pub fn catalog_object_of<'a>(
+    root_package_json: &Expr<'a>,
     catalog_name: &[u8],
     dep_name: &[u8],
-) -> Option<bun_ast::StoreRef<E::Object>> {
+) -> Option<bun_ast::StoreRef<'a, E::Object<'a>>> {
     let mut found = None;
     let _ = for_each_catalog_object(root_package_json, |name, catalog| {
         if CatalogMap::same_name(name, catalog_name)
@@ -745,7 +732,7 @@ pub(crate) fn edit_catalogs_after_update(
         manager.options.enable.exact_versions(),
     );
 
-    let arena = &manager.ast_arena;
+    let arena = manager.workspace_package_json_cache.arena;
     let mut changed = false;
     for_each_catalog_object(root_package_json, |catalog_name, catalog_expr| {
         let Some(mut entries) = catalog_expr.data.e_object() else {
@@ -917,11 +904,11 @@ pub(crate) fn remove_entry(package_json: &mut Expr, list: &[u8], name: &[u8]) ->
     true
 }
 
-fn string_entry(
-    package_json: &Expr,
+fn string_entry<'a>(
+    package_json: &Expr<'a>,
     list: &[u8],
     name: &[u8],
-) -> Option<bun_ast::StoreRef<E::EString>> {
+) -> Option<bun_ast::StoreRef<'a, E::EString<'a>>> {
     let entry = package_json.as_property(list)?.expr.as_property(name)?;
     entry.expr.data.e_string()
 }
@@ -965,7 +952,7 @@ pub(crate) fn edit(
     manager: &mut PackageManager,
     // Pointer-to-slice whose `.len` is shrunk in place.
     updates: &mut &mut [UpdateRequest],
-    current_package_json: &mut Expr,
+    current_package_json: &mut Expr<'static>,
     dependency_list: &[u8],
     options: EditOptions,
 ) -> Result<bool, bun_alloc::AllocError> {
@@ -986,8 +973,7 @@ pub(crate) fn edit(
     let mut changed = manager.subcommand == Subcommand::Update
         && edit_update_aliases_of_requests(manager, &**updates, current_package_json, options)?;
 
-    // `arena` is a disjoint-field borrow held across the `&mut manager.updating_packages` accesses below.
-    let arena = &manager.ast_arena;
+    let arena = manager.workspace_package_json_cache.arena;
 
     let mut remaining = updates.len();
     let mut replacing: usize = 0;

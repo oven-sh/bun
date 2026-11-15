@@ -80,8 +80,7 @@ impl HotMap {
         self._map.with_taken(|map| map.get(key).copied())
     }
 
-    /// Untyped insert — typed `insert<T>` lives in `bun_runtime` where the
-    /// `TaggedPointerUnion` payload list is named.
+    /// Untyped insert — typed `insert<T>` lives in `bun_runtime`.
     pub fn insert_raw(&self, key: &[u8], entry: HotMapEntry) {
         self._map.with_taken(|map| {
             let gop = bun_core::handle_oom(map.get_or_put(key));

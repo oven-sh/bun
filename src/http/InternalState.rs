@@ -3,6 +3,7 @@ use bun_core::MutableString;
 use bun_core::Output;
 
 use crate::decompressor::has_zlib_header;
+use crate::http_thread::LazyLibdeflater;
 use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
@@ -252,15 +253,19 @@ impl<'a> InternalState<'a> {
     /// `received_last_chunk` on an end-of-body signal that arrives with no
     /// accompanying body bytes (h1 FIN, proxy-tunnel close, h2/h3 END_STREAM).
     /// No-op for complete, empty, or uncompressed bodies.
-    pub(crate) fn finalize_body_on_eof(&mut self) -> Result<(), Error> {
+    pub(crate) fn finalize_body_on_eof(
+        &mut self,
+        deflater: &mut LazyLibdeflater,
+    ) -> Result<(), Error> {
         self.flags.received_last_chunk = true;
         let buffer_snap = core::mem::take(&mut self.get_body_buffer().list);
-        self.process_body_buffer(buffer_snap, true, usize::MAX)
+        self.process_body_buffer(deflater, buffer_snap, true, usize::MAX)
             .map(drop)
     }
 
     pub(crate) fn decompress_bytes(
         &mut self,
+        deflater: &mut LazyLibdeflater,
         buffer: &[u8],
         is_final_chunk: bool,
         max_output: usize,
@@ -303,7 +308,7 @@ impl<'a> InternalState<'a> {
                 self.flags.is_libdeflate_fast_path_disabled = true;
 
                 log!("Decompressing {} bytes with libdeflate\n", buffer.len());
-                let deflater = crate::http_thread().deflater();
+                let deflater = deflater.get_or_init();
 
                 // If we know that the stream is going to be larger than our
                 // pre-allocated buffer, then let's dynamically allocate the exact
@@ -350,7 +355,7 @@ impl<'a> InternalState<'a> {
                 let decompressor = deflater
                     .decompressor
                     .as_ref()
-                    .expect("set in HttpThread::deflater()");
+                    .expect("set in LazyLibdeflater::get_or_init()");
                 let result = decompressor.decompress(buffer, &mut deflater.shared_buffer, format);
 
                 // libdeflate decodes a single member; unconsumed input means
@@ -422,6 +427,7 @@ impl<'a> InternalState<'a> {
     // and pass it here as an owned Vec — no `&` into `self` survives across `&mut self`.
     pub(crate) fn process_body_buffer(
         &mut self,
+        deflater: &mut LazyLibdeflater,
         mut buffer: Vec<u8>,
         is_final_chunk: bool,
         max_output: usize,
@@ -436,8 +442,13 @@ impl<'a> InternalState<'a> {
         match self.encoding {
             Encoding::Brotli | Encoding::Gzip | Encoding::Deflate | Encoding::Zstd => {
                 let start = self.compressed_body_consumed;
-                let consumed =
-                    start + self.decompress_bytes(&buffer[start..], is_final_chunk, max_output)?;
+                let consumed = start
+                    + self.decompress_bytes(
+                        deflater,
+                        &buffer[start..],
+                        is_final_chunk,
+                        max_output,
+                    )?;
                 let held = buffer.len() - consumed;
                 // A decoder can hold output with no input left (brotli copy command, zstd flush).
                 self.flags.decompress_output_pending = self.decoded_body.list.len() >= max_output

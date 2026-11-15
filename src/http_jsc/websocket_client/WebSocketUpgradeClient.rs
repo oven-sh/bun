@@ -21,6 +21,7 @@
 
 use core::cell::Cell;
 use core::ffi::{c_int, c_void};
+use core::mem::MaybeUninit;
 use core::ptr;
 use std::borrow::Cow;
 use std::io::Write as _;
@@ -80,8 +81,8 @@ fn max_response_head_len() -> usize {
 }
 
 /// One slot per line is enough: picohttpparser never emits more than one header per line.
-fn header_slots(head: &[u8]) -> Vec<picohttp::Header> {
-    vec![picohttp::Header::ZERO; strings::count_char(head, b'\n')]
+fn header_slots(head: &[u8]) -> Box<[MaybeUninit<picohttp::Header>]> {
+    Box::new_uninit_slice(strings::count_char(head, b'\n'))
 }
 
 /// `uws.NewSocketHandler(ssl)`

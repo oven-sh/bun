@@ -862,7 +862,10 @@ The other functions that take a module name follow their kind, Jest or Vitest:
 - `jest.requireActual()`, `jest.requireMock()`, `jest.createMockFromModule()`, `jest.unmock()` and `jest.dontMock()` go by the file that `require()` loads. That file is the original for the first three, and for `jest.mock()` and `jest.doMock()` without a factory. `jest.requireMock()` returns the mock that `require()` of the name gets. `jest.unmock()` and `jest.dontMock()` remove that mock and the mock that `import` of the name gets.
 - `vi.importActual()`, `vi.importMock()`, `vi.unmock()` and `vi.doUnmock()` go by the file that `import` loads. That file is the original for the first two, for `importOriginal()`, and for `vi.mock()` and `vi.doMock()` without a factory. `vi.importMock()` returns the mock that `import` of the name gets, and `vi.unmock()` and `vi.doUnmock()` remove it.
 
-There is one exception. If a mock reaches `import` of the name and none reaches `require()`, as after `vi.mock()`, `jest.requireMock()` returns that mock, and the original for `jest.requireActual()` and `jest.createMockFromModule()` is the file that `import` loads.
+There are two exceptions:
+
+- If a mock reaches `import` of the name and none reaches `require()`, as after `vi.mock()`, `jest.requireMock()` returns that mock, and the original for `jest.requireActual()` and `jest.createMockFromModule()` is the file that `import` loads.
+- If a mock that reaches both has an async factory that hasn't been called yet, `jest.requireMock()` returns the real file that `import` loads, not the one that `require()` loads. While the factory is pending, `jest.requireMock()` in the file that made the mock does the same.
 
 A mock that reaches both is still one mock, and Bun keeps it under the path of the file that `import` loads. Two things follow:
 

@@ -4649,13 +4649,19 @@ static bool hasPendingFactory(const JSModuleMock* mock)
     return factory && factory.isCallable() && mock->state == JSModuleMock::State::Running && mock->result && mock->result->inherits<JSC::JSPromise>();
 }
 
+// A mock without a factory is made of its original alone. Where evaluateCompiledOriginalBeforeFactory() runs the original for it, runCompiledMock() then makes the mock without a wait.
+static bool settlesWithOriginal(const JSModuleMock* mock, JSC::AOT::ModuleID module)
+{
+    return mock->importsOriginal && !mock->factory && JSC::AOT::isESModule(module) && !isOneInstanceWithItsOriginal(mock, mock->specifier->tryGetValue().data) && !takesFileWithoutBodyAsOriginal(mock, module);
+}
+
 static void deferMockToNextLoad(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSC::AOT::FactoryFailurePolicy failurePolicy = JSC::AOT::FactoryFailurePolicy::RetryFactory)
 {
     uint32_t module = *mock->unevaluatedCompiledModule;
     auto& waiting = globalObject->onLoadPlugins.pendingCompiledMocks;
     waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
     waiting.append({ module, JSC::Strong<JSC::JSObject> { JSC::getVM(globalObject), mock } });
-    JSC::AOT::deferMock(globalObject, JSC::AOT::ModuleID(module), failurePolicy, mock->isFromPreload);
+    JSC::AOT::deferMock(globalObject, JSC::AOT::ModuleID(module), failurePolicy, mock->isFromPreload, settlesWithOriginal(mock, JSC::AOT::ModuleID(module)));
 }
 
 static bool stillRetainsFailure(Zig::GlobalObject* globalObject, JSModuleMock* mock)
@@ -6404,7 +6410,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         uint32_t module = variant.index();
         waiting.removeAllMatching([&](const auto& entry) { return entry.first == module; });
         waiting.append({ module, JSC::Strong<JSC::JSObject> { vm, mock } });
-        JSC::AOT::deferMock(globalObject, variant, mock->importsOriginal ? JSC::AOT::FactoryFailurePolicy::RetryFactory : JSC::AOT::FactoryFailurePolicy::CacheError);
+        JSC::AOT::deferMock(globalObject, variant, mock->importsOriginal ? JSC::AOT::FactoryFailurePolicy::RetryFactory : JSC::AOT::FactoryFailurePolicy::CacheError, false, settlesWithOriginal(mock, variant));
     };
     bool formsWait = false;
     if (vm.hasCompiledCode() && !loaded.compiledModule && !loaded.esmNamespace && !loaded.commonJSModule) {
@@ -7628,7 +7634,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             auto wait = [&](JSC::AOT::ModuleID variant) {
                 plugins.pendingCompiledMocks.removeAllMatching([&](const auto& entry) { return entry.first == variant.index(); });
                 plugins.pendingCompiledMocks.append({ variant.index(), JSC::Strong<JSC::JSObject> { vm, mock } });
-                JSC::AOT::deferMock(globalObject, variant, mock->importsOriginal ? JSC::AOT::FactoryFailurePolicy::RetryFactory : JSC::AOT::FactoryFailurePolicy::CacheError, mock->isFromPreload);
+                JSC::AOT::deferMock(globalObject, variant, mock->importsOriginal ? JSC::AOT::FactoryFailurePolicy::RetryFactory : JSC::AOT::FactoryFailurePolicy::CacheError, mock->isFromPreload, settlesWithOriginal(mock, variant));
                 if (scope.exception()) [[unlikely]]
                     (void)scope.tryClearException();
             };

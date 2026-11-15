@@ -613,25 +613,6 @@ impl<T> Columns<T> {
         }
     }
 
-    /// Swap rows `a` and `b` in every column.
-    #[inline]
-    fn swap_rows(&mut self, a: usize, b: usize) {
-        if a == b {
-            return;
-        }
-        let (lo, hi) = if a < b { (a, b) } else { (b, a) };
-        debug_assert!(hi < self.len);
-        for fi in 0..Reflected::<T>::COUNT {
-            let sz = Reflected::<T>::META[fi].size;
-            if sz == 0 {
-                continue;
-            }
-            let col = self.column_uninit_mut(fi);
-            let (l, r) = col.split_at_mut(hi * sz);
-            l[lo * sz..(lo + 1) * sz].swap_with_slice(&mut r[..sz]);
-        }
-    }
-
     /// memcpy rows `[0, n)` of `src` → `[dst_off, dst_off+n)` of `self`.
     /// `src` and `self` must be backed by **distinct** allocations (every
     /// internal caller — grow / shrink / clone / append-other — satisfies this).
@@ -978,18 +959,6 @@ impl<T, A: Allocator> MultiArrayList<T, A> {
         Ok(result)
     }
 
-    /// Stable sort by field `NAME`.
-    pub fn sort_by<const NAME: &'static str, F>(&mut self, less: impl Fn(&F, &F) -> bool) {
-        let mut columns = self.columns();
-        for i in 1..self.len {
-            let mut j = i;
-            while j > 0 && less(&self.items::<NAME, F>()[j], &self.items::<NAME, F>()[j - 1]) {
-                columns.swap_rows(j, j - 1);
-                j -= 1;
-            }
-        }
-    }
-
     pub(crate) fn capacity_in_bytes(capacity: usize) -> usize {
         Reflected::<T>::ELEM_BYTES * capacity
     }
@@ -1251,21 +1220,5 @@ mod tests {
 
         list.drop_elements();
         assert_eq!(list.len(), 0);
-    }
-
-    #[test]
-    fn sort_swaps_all_columns() {
-        let mut list = MultiArrayList::<Foo>::default();
-        for i in (0..5u32).rev() {
-            list.push(Foo {
-                a: i,
-                b: i as u8,
-                c: i as u64 * 10,
-            })
-            .unwrap();
-        }
-        list.sort_by::<"a", u32>(|a, b| a < b);
-        assert_eq!(list.items::<"a", u32>(), &[0, 1, 2, 3, 4]);
-        assert_eq!(list.items::<"c", u64>(), &[0, 10, 20, 30, 40]);
     }
 }

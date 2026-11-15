@@ -3,7 +3,19 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  nodeExeAtLeast,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -3222,6 +3234,500 @@ it.each([
     threw: true,
   });
   expect(exitCode).toBe(0);
+});
+
+// node makes the warning of a string with no frames and ends with `ErrorCaptureStackTrace(warning, ctor || process.emitWarning)`:
+// the stack starts at the caller of process.emitWarning, or at the caller of `ctor`.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/process/warning.js#L187-L201
+// Every case runs on both runtimes, so each expected value is what node prints. One case says where bun differs.
+describe.each([
+  ["bun", bunExe()],
+  ["node", nodeExeAtLeast("26.3.0")],
+])("the stack of the warning that process.emitWarning makes (%s)", (runtime, exe) => {
+  // Each row of `seen` is the first line of the stack, then the frames above row() by the name of their function.
+  // `userFramesOnly` drops the frames whose place is in the runtime: node and bun have different frames of their own.
+  const prelude = userFramesOnly => String.raw`
+    const seen = [];
+    const describe = w => {
+      if (typeof w.stack !== "string") return [w.message, typeof w.stack];
+      const lines = w.stack.split("\n");
+      let frames = lines.filter(line => /^\s+at /.test(line));
+      const end = frames.findIndex(line => /\bat row \(/.test(line));
+      if (end >= 0) frames = frames.slice(0, end);
+      if (${userFramesOnly}) frames = frames.filter(line => !/(?:\(|\bat )(?:node|native):/.test(line));
+      return [lines[0], frames.map(line => line.trim().replace(/^at /, "").replace(/ \(.*\)$/, ""))];
+    };
+    process.on("warning", w => seen.push(describe(w)));
+    process.on("exit", () => console.log(JSON.stringify(seen)));
+    function row(fn) {
+      fn();
+    }
+  `;
+
+  // The file is CommonJS and not strict unless a case asks: a call in tail position then keeps its frame, as in V8.
+  async function run(
+    body,
+    { userFramesOnly = false, strict = false, flags = [], env = { NODE_NO_WARNINGS: "1" } } = {},
+  ) {
+    using dir = tempDir("emit-warning-stack", {
+      "warnings.cjs": (strict ? `"use strict";` : "") + prelude(userFramesOnly) + body,
+    });
+    await using proc = Bun.spawn({
+      cmd: [exe, ...flags, "warnings.cjs"],
+      env: { ...bunEnv, NODE_REDIRECT_WARNINGS: undefined, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { seen: stdout && JSON.parse(stdout), stderr, exitCode };
+  }
+
+  it.concurrent.skipIf(!exe)("starts at the caller of process.emitWarning", async () => {
+    const ran = await run(
+      `
+      row(function plain() {
+        process.emitWarning("plain");
+      });
+      row(function typed() {
+        process.emitWarning("typed", "CustomWarning", "CODE");
+      });
+      row(function options() {
+        process.emitWarning("options", { type: "T", code: "C", detail: "D" });
+      });
+      row(function called() {
+        process.emitWarning.call(null, "call");
+      });
+      row(function destructured() {
+        const { emitWarning } = process;
+        emitWarning("destructured");
+      });
+      row(function imported() {
+        require("node:process").emitWarning("node:process");
+      });
+      row(function constructs() {
+        class Made {
+          constructor() {
+            process.emitWarning("in a constructor");
+          }
+        }
+        new Made();
+      });
+      // A ctor that is no function limits nothing.
+      row(function callsNamed() {
+        function named() {
+          process.emitWarning("ctor is an object with a name", { ctor: { name: "named" } });
+        }
+        named();
+      });
+      // V8 finds no frame for a bound function, and node then lists frames of its own.
+      row(function callsBound() {
+        function target() {
+          process.emitWarning("ctor is a bound function", { ctor: bound });
+        }
+        const bound = target.bind(null);
+        bound();
+      });
+      row(function callsLimited() {
+        function limited() {
+          Error.stackTraceLimit = 1;
+          process.emitWarning("limit of 1");
+          Error.stackTraceLimit = 10;
+        }
+        limited();
+      });
+      row(function unlimited() {
+        Error.stackTraceLimit = "no number";
+        process.emitWarning("limit that is no number");
+        Error.stackTraceLimit = 10;
+      });
+    `,
+      { userFramesOnly: true },
+    );
+    expect(ran).toEqual({
+      seen: [
+        ["Warning: plain", ["plain"]],
+        ["CustomWarning: typed", ["typed"]],
+        ["T: options", ["options"]],
+        ["Warning: call", ["called"]],
+        ["Warning: destructured", ["destructured"]],
+        ["Warning: node:process", ["imported"]],
+        ["Warning: in a constructor", ["new Made", "constructs"]],
+        ["Warning: ctor is an object with a name", ["named", "callsNamed"]],
+        ["Warning: ctor is a bound function", ["target", "callsBound"]],
+        ["Warning: limit of 1", ["limited"]],
+        ["limit that is no number", "undefined"],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(!exe)("starts at the caller of ctor", async () => {
+    const ran = await run(`
+      row(function callsFourth() {
+        function fourth() {
+          process.emitWarning("4th argument", "T", "C", fourth);
+        }
+        fourth();
+      });
+      row(function callsThird() {
+        function third() {
+          process.emitWarning("3rd argument", "T", third);
+        }
+        third();
+      });
+      // A function is the ctor and not the options, whatever it has of its own.
+      row(function callsSecond() {
+        function second() {
+          process.emitWarning("2nd argument", second);
+        }
+        second.type = "OfTheFunction";
+        second.code = 1;
+        second();
+      });
+      row(function callsOption() {
+        function option() {
+          process.emitWarning("options.ctor", { ctor: option });
+        }
+        option();
+      });
+      row(function callsDeep() {
+        function inner() {
+          process.emitWarning("ctor is three frames up", "T", "C", deep);
+        }
+        function middle() {
+          inner();
+        }
+        function deep() {
+          middle();
+        }
+        deep();
+      });
+      // The cut is at the innermost frame of ctor.
+      row(function callsRecursive() {
+        function recursive(depth) {
+          if (depth) recursive(depth - 1);
+          else process.emitWarning("ctor calls itself", "T", "C", recursive);
+        }
+        recursive(2);
+      });
+      row(function constructs() {
+        class Made {
+          constructor() {
+            process.emitWarning("ctor is the class", { ctor: Made });
+          }
+        }
+        new Made();
+      });
+      row(function outer() {
+        function limited() {
+          Error.stackTraceLimit = 1;
+          process.emitWarning("limit of 1 below ctor", { ctor: limited });
+          Error.stackTraceLimit = 10;
+        }
+        function callsLimited() {
+          limited();
+        }
+        callsLimited();
+      });
+      row(function callsSelf() {
+        process.emitWarning("ctor is process.emitWarning", "T", "C", process.emitWarning);
+      });
+      // ctor || process.emitWarning
+      row(function callsFalsy() {
+        process.emitWarning("ctor is 0", { ctor: 0 });
+      });
+      row(function passes() {
+        function makes() {
+          const error = new Error("a passed Error keeps its stack");
+          return error;
+        }
+        process.emitWarning(makes(), { ctor: passes });
+      });
+    `);
+    expect(ran).toEqual({
+      seen: [
+        ["T: 4th argument", ["callsFourth"]],
+        ["T: 3rd argument", ["callsThird"]],
+        ["Warning: 2nd argument", ["callsSecond"]],
+        ["Warning: options.ctor", ["callsOption"]],
+        ["T: ctor is three frames up", ["callsDeep"]],
+        ["T: ctor calls itself", ["recursive", "recursive", "callsRecursive"]],
+        ["Warning: ctor is the class", ["constructs"]],
+        ["Warning: limit of 1 below ctor", ["callsLimited"]],
+        ["T: ctor is process.emitWarning", ["callsSelf"]],
+        ["Warning: ctor is 0", ["callsFalsy"]],
+        ["Error: a passed Error keeps its stack", ["makes", "passes"]],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(!exe)("starts at the caller of a function that util.deprecate wraps", async () => {
+    const ran = await run(`
+      const util = require("node:util");
+      process.on("uncaughtException", w => seen.push(describe(w)));
+      row(function user() {
+        util.deprecate(function target() {}, "with a code", "DEP_TEST")();
+      });
+      row(function user() {
+        util.deprecate(function target() {}, "with no code")();
+      });
+      row(function user() {
+        new (util.deprecate(function Target() {}, "of a constructor", "DEP_TEST_NEW"))();
+      });
+      row(function user() {
+        process.throwDeprecation = true;
+        util.deprecate(function target() {}, "thrown", "DEP_TEST_THROWN")();
+      });
+    `);
+    expect(ran).toEqual({
+      seen: [
+        ["DeprecationWarning: with a code", ["user"]],
+        ["DeprecationWarning: with no code", ["user"]],
+        ["DeprecationWarning: of a constructor", ["user"]],
+        ["DeprecationWarning: thrown", ["user"]],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // In strict code JavaScriptCore leaves no frame for a function that ends with a call: `warn` is on no frame.
+  it.concurrent.skipIf(!exe)("starts at the caller of a ctor whose frame a tail call removed", async () => {
+    const ran = await run(
+      `
+      const warn = message => process.emitWarning(message, "T", "C", warn);
+      row(function user() {
+        warn("ctor ends with the call");
+      });
+      // Another function has the name of the ctor. It is not taken for it.
+      row(function run() {
+        class Task {
+          static run(message) {
+            return process.emitWarning(message, "T", "C", Task.run);
+          }
+        }
+        function step() {
+          Task.run("ctor ends with the call and a frame has its name");
+        }
+        step();
+      });
+    `,
+      { strict: true },
+    );
+    expect(ran).toEqual({
+      seen: [
+        ["T: ctor ends with the call", ["user"]],
+        ["T: ctor ends with the call and a frame has its name", ["step", "run"]],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(!exe)(
+    "differs from node where the stack cannot be cut at ctor, for a replaced process.emitWarning and under a limit of 0",
+    async () => {
+      const ran = await run(`
+      // A ctor that was never called is not told from one whose frame a tail call removed: the stack is whole.
+      row(function callsAbsent() {
+        function absent() {}
+        process.emitWarning("ctor is on no frame", "T", "C", absent);
+      });
+      row(function callsLimited() {
+        function absent() {}
+        function limited() {
+          Error.stackTraceLimit = 1;
+          process.emitWarning("ctor is on no frame under a limit of 1", "T", "C", absent);
+          Error.stackTraceLimit = 10;
+        }
+        limited();
+      });
+      // Frames of suspended async functions lie in front of ctor: the stack is whole.
+      row(function user() {
+        const vm = require("node:vm");
+        const sandbox = { process };
+        function api() {
+          const code = "async function warns() { await 1; process.emitWarning('ctor is below a drain of microtasks', { ctor }); }" +
+            "async function awaits() { await warns(); }" +
+            "awaits();";
+          vm.runInContext(code, vm.createContext(sandbox, { microtaskMode: "afterEvaluate" }));
+        }
+        sandbox.ctor = api;
+        api();
+      });
+      // The default limit is the call of the original, not the value of process.emitWarning at the call.
+      row(function user() {
+        const original = process.emitWarning;
+        process.emitWarning = function wrapper(...args) {
+          return original.apply(this, args);
+        };
+        process.emitWarning("process.emitWarning is replaced");
+        process.emitWarning = original;
+      });
+      // An Error that has no frames has no stack.
+      row(function limited() {
+        Error.stackTraceLimit = 0;
+        process.emitWarning("limit of 0");
+        Error.stackTraceLimit = 10;
+      });
+    `);
+      const expected = {
+        bun: [
+          ["T: ctor is on no frame", ["callsAbsent"]],
+          ["T: ctor is on no frame under a limit of 1", ["limited"]],
+          ["Warning: ctor is below a drain of microtasks", ["warns", "async awaits", "runInContext", "api", "user"]],
+          ["Warning: process.emitWarning is replaced", ["wrapper", "user"]],
+          ["limit of 0", "undefined"],
+        ],
+        node: [
+          ["T: ctor is on no frame", []],
+          ["T: ctor is on no frame under a limit of 1", []],
+          ["Warning: ctor is below a drain of microtasks", ["user"]],
+          ["Warning: process.emitWarning is replaced", ["user"]],
+          ["Warning: limit of 0", []],
+        ],
+      };
+      expect(ran).toEqual({ seen: expected[runtime], stderr: "", exitCode: 0 });
+    },
+  );
+
+  it.concurrent.skipIf(!exe)("keeps the functions that await an async ctor", async () => {
+    const ran = await run(
+      `
+      async function resumed() {
+        await 1;
+        process.emitWarning("ctor after its first await", { ctor: resumed });
+      }
+      async function awaitsResumed() {
+        await resumed();
+      }
+      async function started() {
+        process.emitWarning("ctor before its first await", { ctor: started });
+        await 1;
+      }
+      function callsStarted() {
+        started();
+      }
+      async function plain() {
+        await 1;
+        process.emitWarning("no ctor after the first await");
+      }
+      async function awaitsPlain() {
+        await plain();
+      }
+      awaitsResumed().then(() => {
+        row(callsStarted);
+        return awaitsPlain();
+      });
+    `,
+      { userFramesOnly: true },
+    );
+    expect(ran).toEqual({
+      seen: [
+        ["Warning: ctor after its first await", ["async awaitsResumed"]],
+        ["Warning: ctor before its first await", ["callsStarted"]],
+        ["Warning: no ctor after the first await", ["plain", "async awaitsPlain"]],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The frame of process.emitWarning is the only one of the call.
+  it.concurrent.skipIf(!exe)("has no frames when a promise job or an immediate calls process.emitWarning", async () => {
+    const ran = await run(
+      `
+      Promise.resolve("called by a promise job").then(process.emitWarning);
+      setImmediate(process.emitWarning, "called by an immediate");
+    `,
+      { userFramesOnly: true },
+    );
+    expect(ran).toEqual({
+      seen: [
+        ["Warning: called by a promise job", []],
+        ["Warning: called by an immediate", []],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The host function is on top of the stack when it warns, and node starts at its caller.
+  it.concurrent.skipIf(!exe)("starts at the caller of a native function that warns", async () => {
+    const ran = await run(
+      `
+      row(function binds() {
+        process.binding("uv");
+      });
+      row(function names() {
+        process.binding("uv").errname(-2);
+      });
+      row(function posts() {
+        const { port1, port2 } = new MessageChannel();
+        port1.postMessage(null, [port2]);
+      });
+    `,
+      { flags: ["--pending-deprecation"] },
+    );
+    expect(ran).toEqual({
+      seen: [
+        ["DeprecationWarning: process.binding() is deprecated. Please use public APIs instead.", ["binds"]],
+        [
+          "DeprecationWarning: Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead.",
+          ["names"],
+        ],
+        ["Warning: The target port was posted to itself, and the communication channel was lost", ["posts"]],
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // node has frames of its own JavaScript where setTimeout is on top here: `new Timeout`, then `setTimeout`.
+  // No native function is on the stack when a write to process.env warns. On Windows the traps of process.env are.
+  it.concurrent.skipIf(!exe)("keeps every frame of the other warnings that native code makes", async () => {
+    const { seen, stderr, exitCode } = await run(
+      `
+      row(function timer() {
+        clearTimeout(setTimeout(() => {}, NaN));
+      });
+      row(function setsEnv() {
+        process.env.EMIT_WARNING_STACK = {};
+      });
+    `,
+      { flags: ["--pending-deprecation"] },
+    );
+    const lastFrames = (row, count) => row && [row[0].split(":")[0], row[1].slice(-count)];
+    expect({ timer: lastFrames(seen[0], 2), setsEnv: lastFrames(seen[1], 1), stderr, exitCode }).toEqual({
+      timer: ["TimeoutNaNWarning", ["setTimeout", "timer"]],
+      setsEnv: ["DeprecationWarning", ["setsEnv"]],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(!exe).each([
+    ["--trace-warnings", `process.emitWarning("traced");`, "Warning: traced"],
+    [
+      "--trace-deprecation",
+      `require("node:util").deprecate(function target() {}, "traced", "DEP_TRACED")();`,
+      "[DEP_TRACED] DeprecationWarning: traced",
+    ],
+  ])("%s prints the stack from the caller", async (flag, call, first) => {
+    const { stderr, exitCode } = await run(`function caller() { ${call} } caller();`, {
+      flags: [flag],
+      env: { NODE_NO_WARNINGS: undefined },
+    });
+    const printed = stderr.split(/\r?\n/).slice(0, 2);
+    expect({
+      printed: [printed[0].replace(/^\(node:\d+\) /, ""), printed[1]?.trim().replace(/ \(.*\)$/, "")],
+      exitCode,
+    }).toEqual({ printed: [first, "at caller"], exitCode: 0 });
+  });
 });
 
 it("removeAllListeners('warning') silences the default print", async () => {

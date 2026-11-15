@@ -347,10 +347,12 @@ const queuesTick = [
   refusal(["callback"], b.generic),
 ] satisfies b.FunctionField[];
 
-const warningOptions = { type: b.any.optional, code: b.any.optional };
+const warningOptions = { type: b.any.optional, code: b.any.optional, ctor: b.any.optional };
+// `ctor` is looked for among the frames of the stack and never called.
 const warningOptionUses = {
   type: [formattedAfterReading("ctor", "code", "detail", "type")],
   code: [formattedInErrorMessage],
+  ctor: b.inspected,
 };
 
 const emitsWarningOnNextTick = [

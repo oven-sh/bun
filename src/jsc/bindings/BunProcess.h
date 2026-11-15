@@ -85,7 +85,12 @@ public:
     JSObject* ensureOnWarning(Zig::GlobalObject*);
 
     static JSValue emitWarningErrorInstance(JSC::JSGlobalObject* lexicalGlobalObject, JSValue errorInstance);
-    static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor);
+    // StartsBelowTopFrame: the top frame is the host function that warns, and in node the stack starts at its caller.
+    enum class WarningStack : bool {
+        StartsAtTopFrame,
+        StartsBelowTopFrame,
+    };
+    static JSValue emitWarning(JSC::JSGlobalObject* lexicalGlobalObject, JSValue warning, JSValue type, JSValue code, JSValue ctor, WarningStack = WarningStack::StartsAtTopFrame);
 
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }

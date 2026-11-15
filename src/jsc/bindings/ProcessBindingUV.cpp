@@ -138,7 +138,8 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
                 JSC::jsString(vm, WTF::String("Directly calling process.binding('uv').errname(<val>) is being deprecated. Please make sure to use util.getSystemErrorName() instead."_s)),
                 JSC::jsString(vm, WTF::String("DeprecationWarning"_s)),
                 JSC::jsString(vm, WTF::String("DEP0119"_s)),
-                JSC::jsUndefined());
+                JSC::jsUndefined(),
+                Process::WarningStack::StartsBelowTopFrame);
             RETURN_IF_EXCEPTION(scope, {});
         }
     }

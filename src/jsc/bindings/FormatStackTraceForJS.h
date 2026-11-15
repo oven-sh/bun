@@ -47,6 +47,7 @@ class OrdinalNumber;
 namespace Zig {
 class GlobalObject;
 class JSCStackTrace;
+enum class StackWithoutCut : bool;
 } // namespace Zig
 
 using JSC::EncodedJSValue;
@@ -69,6 +70,9 @@ WTF::String formatStackTrace(
     WTF::String& sourceURL,
     WTF::Vector<JSC::StackFrame>& stackTrace,
     JSC::JSObject* errorInstance);
+
+// Error.captureStackTrace(errorObject, caller) for a host function whose own frame is on top of the stack.
+void captureStackTrace(Zig::GlobalObject*, JSC::JSObject* errorObject, JSC::JSValue caller, Zig::StackWithoutCut);
 
 // JSC Host Functions - Error constructor methods
 JSC_DECLARE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace);

@@ -549,6 +549,12 @@ fn conversions() {
                 kernels::copy_ascii_prefix,
                 kernels::copy_ascii_prefix_to_shared,
             );
+            check_prefix(
+                &ascii[..prefix],
+                &from,
+                kernels::copy_ascii_prefix,
+                kernels::copy_short_ascii_prefix_to_shared,
+            );
         }
 
         let wide: Vec<u16> = (0..len)
@@ -563,6 +569,29 @@ fn conversions() {
         check_bswap::<2>(&t, kernels::bswap16_shared);
         check_bswap::<4>(&t, kernels::bswap32_shared);
         check_bswap::<8>(&t, kernels::bswap64_shared);
+    }
+}
+
+#[test]
+fn few_ascii() {
+    let ones = [0xFF; 20];
+    for len in 0..=18 {
+        for not_ascii in 0..=len {
+            let mut from = b"abcdefghijklmnopqr"[..len].to_vec();
+            if let Some(byte) = from.get_mut(not_ascii) {
+                *byte = 0x80;
+            }
+            for room in [len.saturating_sub(1), len, 20] {
+                let is_copied = from.is_ascii() && len <= room.min(16);
+                let copied = if is_copied { len } else { 0 };
+                let all = [&from[..copied], &ones[copied..room]].concat();
+                check((is_copied, all), || {
+                    to_shared(&ones[..room], |out| {
+                        kernels::copy_few_ascii_to_shared(&from, out)
+                    })
+                });
+            }
+        }
     }
 }
 

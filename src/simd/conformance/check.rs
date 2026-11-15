@@ -352,6 +352,13 @@ impl Round<'_> {
             rust::copy_ascii_prefix,
             rust::copy_ascii_prefix_to_shared,
         );
+        self.prefix(
+            "copy_short_ascii_prefix",
+            text,
+            copy,
+            rust::copy_ascii_prefix,
+            rust::copy_short_ascii_prefix_to_shared,
+        );
 
         let hex = all(highway::encode_hex_lower);
         self.from_to("encode_hex_lower", (text, len), &hex, |from, to| {

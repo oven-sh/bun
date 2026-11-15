@@ -184,6 +184,7 @@ shell_builtins! {
         Echo     => (echo::Echo,        "echo",     b""),
         Export   => (export::Export,    "export",   b""),
         Seq      => (seq::Seq,          "seq",      b"usage: seq [-w] [-f format] [-s string] [-t string] [first [incr]] last\n"),
+        Yes      => (yes::Yes,          "yes",      b"usage: yes [expletive]\n"),
     }
     boxed: {
         Cat      => (cat::Cat,          "cat",      b"usage: cat [-belnstuv] [file ...]\n"),
@@ -194,7 +195,6 @@ shell_builtins! {
         Mkdir    => (mkdir::Mkdir,      "mkdir",    b"usage: mkdir [-pv] [-m mode] directory_name ...\n"),
         Touch    => (touch::Touch,      "touch",    b"usage: touch [-A [-][[hh]mm]SS] [-achm] [-r file] [-t [[CC]YY]MMDDhhmm[.SS]]\n       [-d YYYY-MM-DDThh:mm:SS[.frac][tz]] file ...\n"),
         Cp       => (cp::Cp,            "cp",       b"usage: cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file target_file\n       cp [-R [-H | -L | -P]] [-fi | -n] [-aclpsvXx] source_file ... target_directory\n"),
-        Yes      => (yes::Yes,          "yes",      b"usage: yes [expletive]\n"),
     }
     posix_disabled: [Cat, Cp]
 }

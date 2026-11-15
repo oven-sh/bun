@@ -4,7 +4,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
-    PoolTask, ShellTask, ShellWork, parse_flags,
+    PoolTask, ShellWork, parse_flags,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -265,7 +265,7 @@ pub(crate) struct ShellMkdirTask {
 impl ShellWork for ShellMkdirTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 
-    fn run_from_thread_pool(&mut self, _: &ShellTask) {
+    fn run_from_thread_pool(&mut self) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.

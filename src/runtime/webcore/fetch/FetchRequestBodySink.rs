@@ -226,7 +226,10 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
         // SAFETY: same contract, forwarded.
         unsafe { Self::finalize(this) }
     }
-    fn end_from_js(this: &mut Self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
         Self::end_from_js(this, cx)
     }
 }
@@ -236,7 +239,7 @@ impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
         AnyControlledSink::FetchRequestBodySink(this)
     }
 
-    fn source(this: &mut Self) -> &Cell<SourceHandle> {
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
         Cell::from_mut(&mut this.source)
     }
 }

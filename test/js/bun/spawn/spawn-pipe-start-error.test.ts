@@ -112,6 +112,8 @@ try {
 // LOSE_PIDFD_OPEN=1 acts on the main thread's wait4() calls. The first installs a
 // seccomp filter that fails pidfd_open with ENOSYS from then on. The second finds
 // nothing to reap, as when a tracer has yet to let go of the zombie.
+//
+// PIDFD_OPEN_ESRCH=1 fails every pidfd_open with ESRCH, as when something else has reaped the child.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 
 const SHIM_C = /* c */ `
@@ -197,21 +199,29 @@ int kill(pid_t pid, int signal) {
   return real_kill(pid, signal);
 }
 
+static void fail_pidfd_open(unsigned error) {
+  // Spelled out: the kernel's headers are not installed everywhere.
+  struct { unsigned short code; unsigned char jt, jf; unsigned k; } filter[] = {
+    {0x20, 0, 0, 0},                  // load the syscall number
+    {0x15, 0, 1, 434},                // pidfd_open?
+    {0x06, 0, 0, 0x00050000 | error}, // fail
+    {0x06, 0, 0, 0x7fff0000},         // allow
+  };
+  struct { unsigned short len; void *filter; } program = {4, filter};
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program)) abort();
+}
+
+__attribute__((constructor)) static void on_load(void) {
+  if (getenv("PIDFD_OPEN_ESRCH")) fail_pidfd_open(ESRCH);
+}
+
 pid_t wait4(pid_t pid, int *status, int options, struct rusage *usage) {
   static pid_t (*real_wait4)(pid_t, int *, int, struct rusage *);
   static int waits;
   if (getenv("LOSE_PIDFD_OPEN") && syscall(SYS_gettid) == getpid()) {
     int nth = waits++;
     if (nth == 0) {
-      // Spelled out: the kernel's headers are not installed everywhere.
-      struct { unsigned short code; unsigned char jt, jf; unsigned k; } filter[] = {
-        {0x20, 0, 0, 0},                   // load the syscall number
-        {0x15, 0, 1, 434},                 // pidfd_open?
-        {0x06, 0, 0, 0x00050000 | ENOSYS}, // fail
-        {0x06, 0, 0, 0x7fff0000},          // allow
-      };
-      struct { unsigned short len; void *filter; } program = {4, filter};
-      if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || prctl(PR_SET_SECCOMP, 2, &program)) abort();
+      fail_pidfd_open(ENOSYS);
     } else if (nth == 1) {
       *status = 0;
       return 0;
@@ -559,6 +569,27 @@ test.skipIf(!isLinux || !cc)("a child that moves from its pidfd to the waiter th
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout, stderr, exitCode }).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
+});
+
+// The event loop watched fd 0 for its exit.
+test.skipIf(!isLinux || !cc).concurrent.each([
+  ["Bun.spawn", `Bun.spawn({ cmd: ["sh", "-c", "exit 3"], env, onExit: (_, code) => console.log(code) });`],
+  ["Bun.$", `console.log((await Bun.$\`sh -c "exit 3"\`.env(env).nothrow()).exitCode);`],
+])("%s reports the exit of a child that has no pidfd", async (_, code) => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `const env = { PATH: process.env.PATH }; ${code}`],
+    env: {
+      ...bunEnv,
+      FAIL_EPOLL_CTL: "pty-writer-mod",
+      PIDFD_OPEN_ESRCH: "1",
+      LD_PRELOAD: join(String(dir), "shim.so"),
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "3\n", stderr: "", exitCode: 0 });
 });
 
 // Both at once. The exit was reported, which runs onExit, with the writer's error already thrown: onExit's call took the

@@ -217,23 +217,14 @@ mod bun_sys {
     // and reach this module via the `pub use ::bun_sys::*` glob above.
 }
 
-/// `bun_sys::Fd` extension surface — thin method-syntax wrappers over the
-/// free functions `::bun_sys::{close, get_fd_path}` and `Fd::native`, so the
-/// resolver body can spell `fd.close()` / `fd.get_fd_path(buf)`.
+/// Lets the resolver body spell `::bun_sys::close` as `fd.close()`.
 trait FdExt: Sized {
     fn close(self);
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]>;
 }
 impl FdExt for ::bun_sys::Fd {
     #[inline]
     fn close(self) {
         let _ = ::bun_sys::close(self);
-    }
-    #[inline]
-    fn get_fd_path<'b>(self, buf: &'b mut ::bun_paths::PathBuffer) -> crate::CrateResult<&'b [u8]> {
-        ::bun_sys::get_fd_path(self, buf)
-            .map(|s| &*s)
-            .map_err(Into::into)
     }
 }
 trait FdZero {
@@ -410,10 +401,8 @@ macro_rules! bufs {
 // (the resolver mutex is one of the two documented guards for the entries singleton).
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
-type BinFolderArray = BoundedArray<&'static [u8], 128>;
-static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
-    bun_core::RacyCell::new(BoundedArray::new());
-static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
+static BIN_FOLDERS: bun_threading::Guarded<BoundedArray<&'static [u8], 128>> =
+    bun_threading::Guarded::new(BoundedArray::new());
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -4425,12 +4414,7 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let entry = self
-            .caches
-            .fs
-            .read_file_with_allocator(file, dirname_fd, false, None, None)?;
-        let _file = entry.fd.unwrap_valid().map(::bun_sys::File::from_fd);
-        let entry_contents = entry.contents;
+        let contents = self.caches.fs.read_file_and_close(file, dirname_fd)?;
 
         // The file name needs to be persistent because it can have errors
         // and if those errors need to print the filename
@@ -4441,16 +4425,7 @@ impl<'a> Resolver<'a> {
             .append_slice(file)
             .expect("unreachable");
 
-        // `use_shared_buffer = false` above, so `entry_contents` is
-        // `Contents::Owned`/`Empty`. `TSConfigJSON` owns `Box<[u8]>` copies of
-        // every field, so the source bytes are dead once `parse` returns and
-        // can be dropped with the local `Source`.
-        let contents = match entry_contents {
-            crate::cache::Contents::Owned(v) => v,
-            crate::cache::Contents::Empty => Vec::new(),
-            other => other.as_slice().to_vec(),
-        };
-
+        // `TSConfigJSON` owns copies of every field, so the bytes drop with `source`.
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
@@ -4487,10 +4462,17 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
-    pub fn bin_dirs(&self) -> &[&'static [u8]] {
-        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites. The only caller is
-        // `bun getcompletes`, whose one resolver runs on the calling thread: nothing appends.
-        unsafe { (*BIN_FOLDERS.get()).const_slice() }
+    pub fn bin_dirs() -> Vec<&'static [u8]> {
+        BIN_FOLDERS.lock().const_slice().to_vec()
+    }
+
+    fn add_bin_dir(&self, bin_path: &[u8]) {
+        let mut folders = BIN_FOLDERS.lock();
+        if !folders.const_slice().contains(&bin_path)
+            && let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path)
+        {
+            let _ = folders.append(stored);
+        }
     }
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -6495,29 +6477,14 @@ impl<'a> Resolver<'a> {
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
                             Default::default(),
-                        ) else {
+                        )
+                        .map(bun_sys::Dir::from_fd) else {
                             break 'append_bin_dir;
                         };
-                        let _close = bun_sys::CloseOnDrop::new(file);
                         let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                             break 'append_bin_dir;
                         };
-                        let _unlock = BIN_FOLDERS_LOCK.lock_guard();
-
-                        // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
-                        unsafe {
-                            for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
-                                if *existing_folder == bin_path {
-                                    break 'append_bin_dir;
-                                }
-                            }
-
-                            let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path)
-                            else {
-                                break 'append_bin_dir;
-                            };
-                            let _ = (*BIN_FOLDERS.get()).append(stored);
-                        }
+                        self.add_bin_dir(bin_path);
                     }
                 }
 
@@ -6527,30 +6494,14 @@ impl<'a> Resolver<'a> {
                             == Fs::file_system::EntryKind::Dir
                         {
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
+                                .map(bun_sys::Dir::from_fd)
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _close = bun_sys::CloseOnDrop::new(file);
-                            let Ok(bin_path) = bun_sys::get_fd_path(file, bufs!(node_bin_path))
-                            else {
+                            let Ok(bin_path) = file.get_fd_path(bufs!(node_bin_path)) else {
                                 break 'append_bin_dir;
                             };
-                            let _unlock = BIN_FOLDERS_LOCK.lock_guard();
-
-                            // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
-                            unsafe {
-                                for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
-                                    if *existing_folder == bin_path {
-                                        break 'append_bin_dir;
-                                    }
-                                }
-
-                                let Ok(stored) = self.fs_ref().dirname_store.append_slice(bin_path)
-                                else {
-                                    break 'append_bin_dir;
-                                };
-                                let _ = (*BIN_FOLDERS.get()).append(stored);
-                            }
+                            self.add_bin_dir(bin_path);
                         }
                     }
                 }

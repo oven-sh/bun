@@ -148,7 +148,7 @@ use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnecti
 use bun_sql_jsc::postgres::PostgresSQLConnection;
 use bun_sql_jsc::shared::connection_timers::TimedConnection as _;
 
-use crate::test_runner::bun_test::{BunTest, BunTestPtr};
+use crate::test_runner::bun_test::{BunTest, clone_active_strong};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
@@ -981,7 +981,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
             })
         }
         poll_tag::MEMORY_PRESSURE => {
-            crate::node::memory_pressure::on_poll(poll_ref.fd, poll_ref.flags, size_or_offset);
+            crate::node::memory_pressure::on_poll(poll_ref.flags, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -1432,23 +1432,17 @@ pub(crate) unsafe fn fire_timer(
         ),
         EventLoopTimerTag::BunTest => in_features!(
             [Test],
-            (container: *mut BunTest = owner!(BunTest, timer), now: &ElTimespec = now)
-            -> JsResult<()> {
-                // SAFETY: container is the payload of a live `Rc<BunTestCell>`; the
-                // strong count is ≥1 (held by `Jest.active_file`).
-                // `BunTestCell` is a `UnsafeCell<BunTest>` newtype — same
-                // layout as `BunTest`, so the raw `*mut BunTest` recovered above is
-                // also the `Rc` payload pointer.
-                let strong: BunTestPtr = unsafe {
-                    let rc = std::rc::Rc::from_raw(
-                        container as *const crate::test_runner::bun_test::BunTestCell,
-                    );
-                    let cloned = std::rc::Rc::clone(&rc);
-                    // Don't drop the original ref — it's borrowed, not owned here.
-                    let _ = std::rc::Rc::into_raw(rc);
-                    cloned
-                };
-                BunTest::bun_test_timeout_callback(&strong, now, VirtualMachine::get());
+            (t: *mut EventLoopTimer = t, now: &ElTimespec = now) -> JsResult<()> {
+                if let Some(file) = clone_active_strong()
+                    && core::ptr::eq(&raw const *file.timer, t)
+                {
+                    BunTest::bun_test_timeout_callback(&file, now, VirtualMachine::get());
+                } else {
+                    // SAFETY: `t` was just popped, and a timer leaves the heap before it is dropped.
+                    let timer = unsafe { &*t };
+                    timer.next.set(ElTimespec::EPOCH);
+                    timer.state.set(crate::timer::EventLoopTimerState::PENDING);
+                }
                 Ok(())
             }
         ),

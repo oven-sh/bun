@@ -126,7 +126,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 - `src/runtime/bin_entry/` - process entry point (`main`); `bun_runtime` is the root of the crate graph; every crate's rlib is an input of the final link
 - `src/runtime/cli/` - CLI argument parsing and command dispatch
 - `src/js_parser/`, `src/js_printer/` - JavaScript/TypeScript parsing and printing (each is its own crate; the lexer is `src/js_parser/lexer.rs`)
-- `src/transpiler/` - Wrapper around the parser/printer with sourcemap support
+- `src/bundler/transpiler.rs` - Wrapper around the parser/printer with sourcemap support
 - `src/resolver/` - Module resolution system
 - `src/ast/` - AST node types and arena allocation
 - `src/jsc/bindings/` - C++ JavaScriptCore bindings (classes generated from `.bind.ts` + manual bindings)

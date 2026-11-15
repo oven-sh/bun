@@ -4,12 +4,14 @@
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::CStr;
-use core::ffi::c_char;
 #[cfg(target_os = "macos")]
 use core::ffi::{c_int, c_void};
 #[cfg(unix)]
 use core::sync::atomic::Ordering;
 
+#[cfg(unix)]
+use bun_core::CStrList;
+use bun_core::CStrRef;
 #[cfg(target_os = "macos")]
 use bun_core::Output;
 use bun_sys::{self, Fd, File};
@@ -18,9 +20,6 @@ use bun_sys::{self, Fd, File};
 use crate::posix_spawn::posix_spawn;
 #[cfg(unix)]
 use posix_spawn::{Actions as PosixSpawnActions, Attr as PosixSpawnAttr};
-
-#[cfg(unix)]
-use crate::{Argv, Envp};
 
 // ──────────────────────────────────────────────────────────────────────────
 // PID / fd width aliases
@@ -33,9 +32,6 @@ pub type PidT = bun_libuv_sys::uv_pid_t;
 
 #[cfg(unix)]
 pub type FdT = libc::c_int;
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-pub type PidFdType = FdT;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Rusage — platform-uniform resource-usage struct
@@ -297,7 +293,7 @@ impl RusageFields for WinRusage {
 // Spawn option / result types
 // ──────────────────────────────────────────────────────────────────────────
 
-pub struct PosixSpawnOptions {
+pub struct PosixSpawnOptions<'a> {
     pub stdin: PosixStdio,
     pub stdout: PosixStdio,
     pub stderr: PosixStdio,
@@ -309,7 +305,7 @@ pub struct PosixSpawnOptions {
     pub uid: Option<u32>,
     /// Run the child as this group id (`setgid` after fork, like libuv/Node).
     pub gid: Option<u32>,
-    pub argv0: Option<*const c_char>,
+    pub argv0: Option<CStrRef<'a>>,
     pub stream: bool,
     pub sync: bool,
     pub can_block_entire_thread_to_reduce_cpu_usage_in_fast_path: bool,
@@ -342,7 +338,7 @@ pub struct PosixSpawnOptions {
     pub cgroup_fd: Option<Fd>,
 }
 
-impl Default for PosixSpawnOptions {
+impl Default for PosixSpawnOptions<'_> {
     fn default() -> Self {
         Self {
             stdin: PosixStdio::Inherit,
@@ -418,7 +414,7 @@ pub enum PosixStdio {
 pub struct PosixSpawnResult {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub pidfd: Option<PidFdType>,
+    pub pidfd: Option<File>,
     /// The parent's end of a [`PosixStdio::Buffer`].
     pub stdin: Option<File>,
     pub stdout: Option<File>,
@@ -489,7 +485,7 @@ impl PosixSpawnResult {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<PidFdType> {
+    pub(crate) fn pifd_from_pid(&mut self) -> bun_sys::Result<File> {
         if crate::waiter_thread_flag::get() {
             return Err(bun_sys::Error::from_code(
                 bun_sys::E::ENOSYS,
@@ -538,7 +534,7 @@ impl PosixSpawnResult {
                 }
                 Err(err)
             }
-            Ok(fd) => Ok(fd.native()),
+            Ok(fd) => Ok(File::from_fd(fd)),
         }
     }
 }
@@ -582,16 +578,12 @@ impl Drop for PosixSpawnFdGuard {
     }
 }
 
-/// # Safety
-/// `argv` must point to a null-terminated array of NUL-terminated C strings
-/// with at least one non-null element (`argv[0]`); `envp` must point to a
-/// null-terminated array of NUL-terminated C strings. Both must remain valid
-/// for the duration of the call.
+/// Without `envp`, the child inherits the environment of this process.
 #[cfg(unix)]
-pub unsafe fn spawn_process_posix(
-    options: &PosixSpawnOptions,
-    argv: Argv,
-    envp: Envp,
+pub fn spawn_process_posix(
+    options: &PosixSpawnOptions<'_>,
+    argv: CStrList<'_>,
+    envp: Option<CStrList<'_>>,
 ) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
@@ -960,10 +952,8 @@ pub unsafe fn spawn_process_posix(
         }
     }
 
-    // SAFETY: argv is null-terminated, argv[0] is non-null
-    let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
-    // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
-    let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
+    let argv0 = options.argv0.or_else(|| argv.first());
+    let argv0_cstr = argv0.expect("argv[0] is required").to_cstr();
     let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
 
     match spawn_result {

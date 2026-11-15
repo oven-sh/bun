@@ -4,7 +4,7 @@
 
 use bun_collections::VecExt;
 
-use crate::api::bun_spawn::stdio::{Capture, Stdio};
+use crate::api::bun_spawn::stdio::Stdio;
 use crate::shell::interpreter::OutputNeedsIOSafeGuard;
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;
@@ -70,7 +70,7 @@ impl OutFd {
     /// Mutably borrow the JS-side captured stdout/stderr buffer if configured.
     ///
     /// `captured` is a non-owning backref into `ShellExecEnv::_buffered_*`
-    /// (see field doc); the owning `ShellExecEnv` outlives every `Cmd`/builtin
+    /// (see field doc); the root `ShellExecEnv` outlives every `Cmd`/builtin
     /// that holds an `OutFd`. Localises the per-callsite raw deref so callers
     /// can `if let Some(buf) = fd.captured_mut() { buf.extend_from_slice(...) }`.
     ///
@@ -140,13 +140,8 @@ impl OutKind {
         match self {
             OutKind::Fd(val) => {
                 *shellio = Some(std::rc::Rc::clone(&val.writer));
-                if let Some(cap) = val.captured {
-                    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                    let _ = cap;
-                    Stdio::Capture(Capture {
-                        #[cfg(any(target_os = "linux", target_os = "android"))]
-                        buf: cap,
-                    })
+                if val.captured.is_some() {
+                    Stdio::Capture
                 } else {
                     // `IOWriter::fd()` (IOWriter.rs) returns `Fd::INVALID`
                     // once the fd has been handed off to libuv, so the

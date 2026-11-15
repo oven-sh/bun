@@ -5,8 +5,9 @@
 //!
 //!   - the C++ `WorkerMessagingProxy` (the parent<->worker relationship object,
 //!     see WorkerMessagingProxy.h) holds one ref from `create()` until it has
-//!     joined the thread (`releaseWorkerThread()`), and
-//!   - the running thread holds one for the whole of `thread_main`.
+//!     joined the thread (`releaseWorkerThread()`),
+//!   - the running thread holds one for the whole of `thread_main`, and
+//!   - the parent's timer heap holds one while `room_timer` is armed.
 //!
 //! `proxy` points back at the messaging proxy, which the thread also holds a
 //! ref on, so it is valid for the thread's whole life. Everything the thread
@@ -55,7 +56,7 @@ use bun_core::{
     EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl,
     WTFStringImplStruct,
 };
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{Clock, RefCountedTimer, Tag as TimerTag, TimerRef};
 use bun_io::KeepAlive;
 use bun_ptr::{CellExt as _, OptionCellExt as _, ParentRef, VecCellExt as _};
 
@@ -124,7 +125,7 @@ pub struct WebWorker {
     /// What the thread is handed, until one has started.
     thread_start: Cell<Option<Box<ThreadStart>>>,
     /// On the parent's loop while the worker waits for room.
-    pub room_timer: EventLoopTimer,
+    room_timer: RefCountedTimer<{ TimerTag::WorkerWaitsForRoom }>,
     /// How many times `room_timer` has found the thread of a sibling returning and no room yet.
     room_timer_rounds: Cell<u8>,
 
@@ -288,6 +289,8 @@ extern "C" fn WebWorker__getMessagingProxy(vm: &VirtualMachine) -> *mut c_void {
         .map(|w| w.messaging_proxy)
         .unwrap_or(core::ptr::null_mut())
 }
+
+bun_event_loop::impl_timer_owner!(WebWorker; room_timer: RefCountedTimer<WorkerWaitsForRoom>);
 
 impl Drop for WebWorker {
     fn drop(&mut self) {
@@ -514,7 +517,7 @@ impl WebWorker {
             parent_poll_ref: KeepAlive::init(),
             join_handle: Cell::new(None),
             thread_start: Cell::new(None),
-            room_timer: EventLoopTimer::init_paused(TimerTag::WorkerWaitsForRoom),
+            room_timer: RefCountedTimer::init_paused(),
             room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
             exit_called: AtomicBool::new(false),
@@ -552,7 +555,7 @@ impl WebWorker {
             StartOutcome::NoRoom if Self::has_room_to_wait_for(parent) => {
                 log!("[{}] waits for room", this_context_id);
                 WORKERS_WAITING_FOR_ROOM.fetch_add(1, Ordering::Relaxed);
-                worker_ref.arm_room_timer();
+                Self::arm_room_timer(worker.clone(), parent);
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
                 // The thread's ref goes down with this; ours drops on return.
@@ -679,7 +682,7 @@ impl WebWorker {
             match worker.try_start(Self::has_ending_child(parent)) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-                    worker.room_timer.disarm();
+                    drop(worker.room_timer.disarm());
                 }
                 StartOutcome::NoRoom if Self::has_ending_child(parent) => return,
                 StartOutcome::NoRoom | StartOutcome::Failed => {
@@ -690,37 +693,30 @@ impl WebWorker {
         }
     }
 
-    fn arm_room_timer(&self) {
-        self.room_timer
-            .next
-            .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS));
-        // SAFETY: parent thread; the node is unlinked, and the parent's list of children keeps `self` while it is linked.
-        unsafe { (*self.parent).timer_insert(&raw const self.room_timer) };
+    fn arm_room_timer(this: bun_ptr::RefPtr<Self>, parent: &VirtualMachine) {
+        let next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS);
+        parent.timer_update(TimerRef::from_ref_ptr(this), &next, Clock::Real);
     }
 
     /// `Tag::WorkerWaitsForRoom` fire body. The worker takes what room there is, or gets 'error'.
     /// Only the thread of a sibling that is returning is waited for any longer.
-    ///
-    /// # Safety
-    /// `self` waits for room, and `parent` is its parent.
-    pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
-        self.room_timer.state.set(TimerState::FIRED);
-        if parent.is_shutting_down() || !parent.script_allowed() {
+    pub fn on_room_timer(this: bun_ptr::RefPtr<Self>, parent: &VirtualMachine) {
+        if parent.is_shutting_down() || !parent.script_allowed() || this.thread_start.is_none() {
             return;
         }
-        let can_wait = self.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
+        let can_wait = this.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
             && Self::has_returning_child(parent);
-        match self.try_start(can_wait) {
+        match this.try_start(can_wait) {
             StartOutcome::Started => {
                 WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
             }
             StartOutcome::NoRoom if can_wait => {
-                self.room_timer_rounds.set(self.room_timer_rounds.get() + 1);
-                self.arm_room_timer();
+                this.room_timer_rounds.set(this.room_timer_rounds.get() + 1);
+                Self::arm_room_timer(this, parent);
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
-                WebWorker__postFailedToStartError(self.messaging_proxy);
-                self.end_without_thread(1);
+                WebWorker__postFailedToStartError(this.messaging_proxy);
+                this.end_without_thread(1);
             }
         }
     }
@@ -729,7 +725,7 @@ impl WebWorker {
     fn end_without_thread(&self, exit_code: i32) {
         log!("[{}] ends without a thread", self.execution_context_id);
         WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-        self.room_timer.disarm();
+        drop(self.room_timer.disarm());
         self.thread_start.set(None);
         WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }

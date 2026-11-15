@@ -2,9 +2,10 @@
 
 use core::cell::Cell;
 use core::ffi::c_int;
+use core::pin::Pin;
 
 use bun_core::{Timespec, TimespecMockMode, env_var};
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_event_loop::EventLoopTimer::{Clock, OwnedTimer, Tag as TimerTag, TimerRef};
 use bun_uws as uws;
 
 use crate::virtual_machine::VirtualMachine;
@@ -12,7 +13,7 @@ use crate::virtual_machine::VirtualMachine;
 const SLOW_REPEAT_INTERVAL_MS: i32 = 30_000;
 
 pub struct GarbageCollectionController {
-    pub gc_repeating_timer: EventLoopTimer,
+    gc_repeating_timer: OwnedTimer<{ TimerTag::GcRepeating }>,
     /// Written by every `perform_gc` caller, so the fast/slow comparison sees the last such call, not strictly the last fire; external callers are one-shot so worst case is one extra 30 s slow interval.
     pub(crate) gc_last_heap_size: Cell<usize>,
     pub(crate) heap_size_didnt_change_for_repeating_timer_ticks_count: Cell<u8>,
@@ -27,13 +28,13 @@ pub struct GarbageCollectionController {
 
 bun_event_loop::impl_timer_owner!(
     GarbageCollectionController;
-    from_gc_repeating_timer_ptr => gc_repeating_timer,
+    gc_repeating_timer: OwnedTimer<GcRepeating>,
 );
 
 impl Default for GarbageCollectionController {
     fn default() -> Self {
         Self {
-            gc_repeating_timer: EventLoopTimer::init_paused(TimerTag::GcRepeating),
+            gc_repeating_timer: OwnedTimer::init_paused(),
             gc_last_heap_size: Cell::new(0),
             heap_size_didnt_change_for_repeating_timer_ticks_count: Cell::new(0),
             gc_timer_interval: Cell::new(0),
@@ -48,12 +49,13 @@ impl Default for GarbageCollectionController {
 impl GarbageCollectionController {
     /// JS-thread only. Real time, not the mocked clock: GC pacing is
     /// Bun's, not the test's.
-    fn arm(vm: &VirtualMachine, t: &EventLoopTimer, ms: i32) {
-        t.next
-            .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(ms)));
-        // SAFETY: `t` is the embedded node of the per-VM controller, pending or fired, and
-        // address-stable until teardown removes it.
-        unsafe { vm.timer_insert(t) };
+    fn arm(&'static self, vm: &VirtualMachine, ms: i32) {
+        let next = Timespec::now(TimespecMockMode::ForceRealTime).add_ms(i64::from(ms));
+        vm.timer_update(
+            TimerRef::from_pin(Pin::static_ref(self)),
+            &next,
+            Clock::Real,
+        );
     }
 
     #[inline]
@@ -137,12 +139,12 @@ impl GarbageCollectionController {
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
-    pub(crate) fn process_gc_timer(&self) {
-        if self.disabled.get() || self.gc_repeating_timer.state.get() != TimerState::PENDING {
+    pub(crate) fn process_gc_timer(&'static self) {
+        if self.disabled.get() || !self.gc_repeating_timer.is_new() {
             return;
         }
         let interval = self.repeat_interval();
-        Self::arm(VirtualMachine::get(), &self.gc_repeating_timer, interval);
+        self.arm(VirtualMachine::get(), interval);
     }
 
     pub(crate) fn perform_gc(&self, idle_full: bool) {
@@ -159,48 +161,46 @@ impl GarbageCollectionController {
     }
 
     /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
-    ///
-    /// # Safety
-    /// `self` is the controller of `vm`, and its timer was just popped from the heap.
-    pub unsafe fn on_gc_repeating_timer(&self, vm: &VirtualMachine) {
-        self.gc_repeating_timer.state.set(TimerState::FIRED);
-        if self.disabled.get() {
+    pub fn on_gc_repeating_timer() {
+        let vm = VirtualMachine::get();
+        let this = &vm.gc_controller;
+        if this.disabled.get() {
             return;
         }
         // Timer chatter in a parked app churns a few blocks per tick, a few MB per 30 s tick with nothing collecting in
         // between (a TUI at its prompt: 70-200 KB/s); real work grows the heap by far more (one request: 15 MB and up).
         const IDLE_GROWTH_SLACK_MIN: usize = 2 * 1024 * 1024;
         const IDLE_GROWTH_SLACK_PER_MS: usize = 256; // 256 KB/s: 7.5 MB over the 30 s tick
-        let interval = self.repeat_interval();
+        let interval = this.repeat_interval();
         let idle_growth_slack =
             IDLE_GROWTH_SLACK_MIN.max(interval.max(0) as usize * IDLE_GROWTH_SLACK_PER_MS);
-        let prev_heap_size = self.gc_last_heap_size.get();
+        let prev_heap_size = this.gc_last_heap_size.get();
         let grew = vm.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
-        let (full, idle_gc_due_in) = self.idle_tick(vm, grew, interval);
-        self.perform_gc(full);
+        let (full, idle_gc_due_in) = this.idle_tick(vm, grew, interval);
+        this.perform_gc(full);
         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
         // this timer's ticks instead, fast ones for the next 30.
         let needs_ticks_to_finish = full && cfg!(windows);
         if !grew && !needs_ticks_to_finish {
-            let ticks = self
+            let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
                 .get()
                 .saturating_add(1);
-            self.heap_size_didnt_change_for_repeating_timer_ticks_count
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(ticks);
             if ticks >= 30 {
-                self.gc_repeating_timer_fast.set(false);
+                this.gc_repeating_timer_fast.set(false);
             }
         } else {
-            self.heap_size_didnt_change_for_repeating_timer_ticks_count
+            this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(0);
-            self.gc_repeating_timer_fast.set(true);
+            this.gc_repeating_timer_fast.set(true);
         }
         let interval = match idle_gc_due_in {
-            Some(ms) => self.repeat_interval().min(ms.max(1000) as i32),
-            None => self.repeat_interval(),
+            Some(ms) => this.repeat_interval().min(ms.max(1000) as i32),
+            None => this.repeat_interval(),
         };
-        Self::arm(vm, &self.gc_repeating_timer, interval);
+        this.arm(vm, interval);
     }
 }

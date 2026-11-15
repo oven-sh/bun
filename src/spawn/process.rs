@@ -789,10 +789,9 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 #[cfg(unix)]
 pub mod waiter_thread_posix {
     use super::*;
-    use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, TaskTag};
     use bun_event_loop::task_tag;
-    use bun_threading::UnboundedQueue;
+    use bun_threading::OwnedQueue;
 
     pub struct WaiterThreadPosix {
         pub(crate) started: AtomicU32,
@@ -821,11 +820,11 @@ pub mod waiter_thread_posix {
     /// Intrusive node pushed onto `ConcurrentQueue` from the JS thread and
     /// drained on the waiter thread.
     pub struct TaskQueueEntry<T: ProcessLike> {
-        pub(crate) process: RefPtr<T>,
+        process: SendPtr<T>,
         pub(crate) next: bun_threading::Link<TaskQueueEntry<T>>,
     }
 
-    // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
+    // SAFETY: `next` is the sole intrusive link for `ConcurrentQueue<T>`.
     unsafe impl<T: ProcessLike> bun_threading::Linked for TaskQueueEntry<T> {
         #[inline]
         unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
@@ -834,7 +833,7 @@ pub mod waiter_thread_posix {
         }
     }
 
-    pub type ConcurrentQueue<T> = UnboundedQueue<TaskQueueEntry<T>>;
+    pub type ConcurrentQueue<T> = OwnedQueue<Box<TaskQueueEntry<T>>>;
 
     /// Posted to the JS event loop from the waiter thread when a `wait4()`
     /// resolves. Maps to `task_tag::ProcessWaiterThreadTask` in `jsc::Task`.
@@ -863,34 +862,6 @@ pub mod waiter_thread_posix {
 
         pub(crate) fn run_from_main_thread(self) {
             T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &self.rusage);
-        }
-    }
-
-    /// Posted to `MiniEventLoop` from the waiter thread. Self-referential via
-    /// the embedded intrusive `task: AnyTaskWithExtraContext` (`.ctx == self`).
-    #[repr(C)]
-    pub(crate) struct ResultTaskMini<T: ProcessLike> {
-        pub(crate) result: bun_sys::Result<WaitPidResult>,
-        pub(crate) subprocess: RefPtr<T>,
-        pub(crate) task: AnyTaskWithExtraContext,
-    }
-
-    impl<T: ProcessLike> ResultTaskMini<T> {
-        #[inline]
-        pub(crate) fn new(v: ResultTaskMini<T>) -> *mut ResultTaskMini<T> {
-            bun_core::heap::into_raw(Box::new(v))
-        }
-
-        pub(crate) fn run_from_main_thread(self) {
-            T::on_wait_pid_from_waiter_thread(self.subprocess, &self.result, &rusage_zeroed());
-        }
-
-        /// Stored thunk for `AnyTaskWithExtraContext` (`fn(*mut T, *mut C)`
-        /// shape — `C = ()`). Default Rust ABI.
-        fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
-            // SAFETY: `this` was heap-allocated in `loop_()` below; the mini
-            // event loop hands ownership back here exactly once.
-            unsafe { bun_core::heap::take(this) }.run_from_main_thread();
         }
     }
 
@@ -940,37 +911,26 @@ pub mod waiter_thread_posix {
     impl<T: ProcessLike> NewQueue<T> {
         pub(crate) fn append(&self, process: RefPtr<T>) {
             self.watched.fetch_add(1, Ordering::SeqCst);
-            self.queue.push(bun_core::heap::alloc_nn(TaskQueueEntry {
-                process,
+            self.queue.push(Box::new(TaskQueueEntry {
+                process: SendPtr(process),
                 next: bun_threading::Link::new(),
             }));
         }
 
         /// `active` is the waiter thread's list of the processes it has taken off the queue and not reaped yet.
-        fn loop_(&self, active: &mut Vec<RefPtr<T>>) {
-            {
-                let batch = self.queue.pop_batch();
-                active.reserve(batch.count);
-                let mut iter = batch.iterator();
-                loop {
-                    let task = iter.next();
-                    if task.is_null() {
-                        break;
-                    }
-                    // SAFETY: task was heap-allocated in append(). Its process crosses threads here: this one
-                    // reads what never changes, and drops a ref only if there is no loop to post to.
-                    let task = unsafe { bun_core::heap::take(task) };
-                    active.push(task.process);
-                }
-            }
+        fn loop_(&self, active: &mut Vec<SendPtr<T>>)
+        where
+            SendPtr<T>: Send,
+        {
+            active.extend(self.queue.pop_batch().map(|entry| entry.process));
 
             let mut i: usize = 0;
             while i < active.len() {
-                let pid = active[i].pid();
+                let pid = active[i].0.pid();
                 // this case shouldn't really happen
                 if pid == 0 {
                     // Leaked: the process may be attached to a loop that this thread cannot touch.
-                    let _ = active.remove(i).into_raw();
+                    let _ = active.remove(i).0.into_raw();
                 } else {
                     let mut rusage = rusage_zeroed();
                     let result = posix_spawn::wait4(pid, libc::WNOHANG as u32, Some(&mut rusage));
@@ -987,12 +947,15 @@ pub mod waiter_thread_posix {
 
     /// Posts a `wait4` result to the loop that owns `process`, which runs `T::on_wait_pid_from_waiter_thread` there.
     fn post_wait_result<T: ProcessLike>(
-        process: RefPtr<T>,
+        process: SendPtr<T>,
         result: bun_sys::Result<WaitPidResult>,
         rusage: &Rusage,
-    ) {
-        match process.event_loop() {
+    ) where
+        SendPtr<T>: Send,
+    {
+        match process.0.event_loop() {
             EventLoopHandle::Js { .. } => {
+                let process = process.0;
                 // Its own: the JS thread may free the process before `post` has returned.
                 let poster = (process.js_poster().cloned()).expect("JS-owned process has a poster");
                 let ct = ConcurrentTask::create_boxed(Box::new(ResultTask {
@@ -1008,41 +971,18 @@ pub mod waiter_thread_posix {
                 }
             }
             EventLoopHandle::Mini(mini) => {
-                let out = ResultTaskMini::<T>::new(ResultTaskMini {
-                    result,
-                    subprocess: process,
-                    task: AnyTaskWithExtraContext::default(),
+                mini.enqueue_callback_concurrent((process, result), |(process, result), _| {
+                    T::on_wait_pid_from_waiter_thread(process.0, &result, &rusage_zeroed());
                 });
-                // SAFETY: `out` just produced by heap::alloc — non-null.
-                unsafe {
-                    (*out).task = AnyTaskNew::<ResultTaskMini<T>, ()>::init(
-                        out,
-                        ResultTaskMini::<T>::run_from_main_thread_mini,
-                    );
-                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                        core::ptr::addr_of_mut!((*out).task),
-                    ));
-                }
-                // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
             }
         }
     }
 
-    /// The ref that [`reap_on_thread`] moves to its thread.
-    #[cfg(target_os = "macos")]
-    struct SendPtr(RefPtr<Process>);
-    // SAFETY: the pointee is refcounted (`ThreadSafeRefCount`) and the thread touches it only through
-    // `post_wait_result`, as the shared waiter thread does with the pointers in its queue.
-    #[cfg(target_os = "macos")]
-    unsafe impl Send for SendPtr {}
-
-    #[cfg(target_os = "macos")]
-    impl SendPtr {
-        /// By value, so that a closure captures the `Send` wrapper and not its field.
-        fn get(self) -> RefPtr<Process> {
-            self.0
-        }
-    }
+    /// The ref of a thread that waits for the process.
+    struct SendPtr<T: ProcessLike>(RefPtr<T>);
+    // SAFETY: the refcount is atomic. The thread reads what never changes in the process, uses its
+    // loop only to post to it, and drops the ref only if there is no loop to post to.
+    unsafe impl Send for SendPtr<Process> {}
 
     /// Blocks in `wait4(pid, 0)` on a detached thread and posts the result to the owning loop.
     #[cfg(target_os = "macos")]
@@ -1055,7 +995,7 @@ pub mod waiter_thread_posix {
                 Output::Source::configure_named_thread_no_js(bun_core::zstr!("Waitpid"));
                 let mut rusage = rusage_zeroed();
                 let result = posix_spawn::wait4(pid, 0, Some(&mut rusage));
-                post_wait_result(process.get(), result, &rusage);
+                post_wait_result(process, result, &rusage);
             })?;
         drop(thread); // detach
         Ok(())

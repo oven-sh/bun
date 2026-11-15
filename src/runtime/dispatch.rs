@@ -1057,13 +1057,11 @@ unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io
     match tag {
         bun_io::PollableTag::ReadFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-            this.on_ready();
+            unsafe { ReadFile::on_ready(bun_core::from_field_ptr!(ReadFile, io_poll, poll)) };
         }),
         bun_io::PollableTag::WriteFile => in_features!([Bodies], (poll: *mut bun_io::Poll = poll) {
             // SAFETY: per fn contract.
-            let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            this.on_ready();
+            unsafe { WriteFile::on_ready(bun_core::from_field_ptr!(WriteFile, io_poll, poll)) };
         }),
         bun_io::PollableTag::Empty => {
             // Waker / unblock-only — caller already filtered this out.
@@ -1089,8 +1087,9 @@ unsafe fn __bun_io_pollable_on_io_error(
             [Bodies],
             (poll: *mut bun_io::Poll = poll, err: &bun_sys::Error = err) {
                 // SAFETY: per fn contract.
-                let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
-                this.on_io_error(err);
+                unsafe {
+                    ReadFile::on_io_error(bun_core::from_field_ptr!(ReadFile, io_poll, poll), err)
+                };
             }
         ),
         bun_io::PollableTag::WriteFile => in_features!(

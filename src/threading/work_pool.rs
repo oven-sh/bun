@@ -101,40 +101,6 @@ macro_rules! intrusive_work_task {
     };
 }
 
-/// Implements [`OwnedTask`] (and the required `Send`) for a struct that
-/// embeds an intrusive `task: Task` field and is scheduled fire-and-forget
-/// via [`WorkPool::schedule_owned`]. Expands to [`intrusive_work_task!`] +
-/// `unsafe impl Send` + the `run` forward — the implementor supplies only an
-/// inherent `fn run_owned(self: Box<Self>)`.
-///
-/// The `Send` impl is part of the macro because every `OwnedTask` is *by
-/// construction* sent to a worker thread — the per-type fields (raw `*mut
-/// EventLoop`, `*const JSGlobalObject`) are auto-`!Send` only nominally. The
-/// safety obligation
-/// ("all fields are sound to move across threads") is restated once here
-/// rather than at every `WorkPool::schedule(addr_of_mut!((*p).task))` site.
-#[macro_export]
-macro_rules! owned_task {
-    ([$($gen:tt)*] $ty:ty, $field:ident) => {
-        $crate::intrusive_work_task!([$($gen)*] $ty, $field);
-        // SAFETY: see macro doc — the type is moved to a worker thread by design.
-        unsafe impl<$($gen)*> ::core::marker::Send for $ty {}
-        impl<$($gen)*> $crate::work_pool::OwnedTask for $ty {
-            #[inline]
-            fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
-        }
-    };
-    ($ty:ty, $field:ident) => {
-        $crate::intrusive_work_task!($ty, $field);
-        // SAFETY: see macro doc — the type is moved to a worker thread by design.
-        unsafe impl ::core::marker::Send for $ty {}
-        impl $crate::work_pool::OwnedTask for $ty {
-            #[inline]
-            fn run(self: ::std::boxed::Box<Self>) { <$ty>::run_owned(self) }
-        }
-    };
-}
-
 impl Batch {
     /// [`OwnedTaskIn::run`] gets `task` back on a thread of the pool that schedules the batch.
     pub fn from_owned<T, P>(mut task: P) -> Batch
@@ -146,28 +112,52 @@ impl Batch {
         let raw = P::into_raw(task).as_ptr();
         // SAFETY: `raw` is a live value, which the batch now owns. The `Task` is
         // projected from the raw pointer, so that it covers the whole value.
-        Batch::from(unsafe { T::field_of(raw) })
+        unsafe { Batch::from_raw(T::field_of(raw)) }
+    }
+
+    /// The task is freed before `f` is called.
+    pub fn from_fn<F: FnOnce() + Send + 'static>(f: F) -> Batch {
+        struct FnTask<F> {
+            task: Task,
+            f: F,
+        }
+        intrusive_work_task!([F] FnTask<F>, task);
+
+        impl<F: FnOnce() + Send + 'static> OwnedTask for FnTask<F> {
+            fn run(self: Box<Self>) {
+                let f = { self }.f;
+                f();
+            }
+        }
+
+        Batch::from_owned(Box::new(FnTask {
+            task: Task::default(),
+            f,
+        }))
     }
 }
 
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]
-fn create() -> ThreadPool {
-    ThreadPool::init(crate::thread_pool::Config {
+fn config() -> crate::thread_pool::Config {
+    crate::thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
-        stack_size: crate::thread_pool::POOL_THREAD_STACK_SIZE,
-    })
+        ..Default::default()
+    }
 }
 
 impl WorkPool {
     #[inline]
     pub fn get() -> &'static ThreadPool {
-        POOL.get_or_init(create)
+        ThreadPool::get_or_init(&POOL, config)
     }
 
-    pub fn schedule(task: *mut Task) {
-        Self::get().schedule(Batch::from(task));
+    /// # Safety
+    /// Same as [`Batch::from_raw`].
+    pub unsafe fn schedule(task: *mut Task) {
+        // SAFETY: fn contract.
+        Self::get().schedule(unsafe { Batch::from_raw(task) });
     }
 
     /// Schedule a heap-allocated task by value. The pool takes ownership of
@@ -186,35 +176,7 @@ impl WorkPool {
     }
 
     pub fn go<C: Send + 'static>(context: C, function: fn(C)) -> Result<(), bun_alloc::AllocError> {
-        // PERF: `function` is stored as a runtime field rather than
-        // monomorphized into the callback — profile if it shows up on a hot path.
-        #[repr(C)]
-        struct TaskType<C> {
-            task: Task,
-            context: C,
-            function: fn(C),
-        }
-
-        unsafe fn callback<C>(task: *mut Task) {
-            // SAFETY: `task` points to the `task` field of a `TaskType<C>` allocated below
-            // via Box::into_raw; recover the parent pointer, run the user fn, then free.
-            unsafe {
-                let this_task = bun_core::from_field_ptr!(TaskType<C>, task, task);
-                let this_task = Box::from_raw(this_task);
-                (this_task.function)(this_task.context);
-            }
-        }
-
-        let task_ = Box::into_raw(Box::new(TaskType::<C> {
-            task: Task {
-                node: crate::thread_pool::Node::default(),
-                callback: callback::<C>,
-            },
-            context,
-            function,
-        }));
-        // SAFETY: task_ is a valid Box-allocated TaskType<C>; .task is its first field.
-        Self::schedule(unsafe { &raw mut (*task_).task });
+        Self::get().schedule(Batch::from_fn(move || function(context)));
         Ok(())
     }
 }

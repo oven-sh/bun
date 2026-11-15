@@ -1,6 +1,7 @@
 //! A wrapper around a mutex, and a value protected by the mutex.
 
 use core::cell::UnsafeCell;
+use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 
 use crate::Mutex;
@@ -10,44 +11,21 @@ use crate::Mutex;
 ///
 /// Drop-in for `parking_lot::Mutex<T>`: `const fn new(T)`, `.lock()` returns
 /// a guard with `Deref`/`DerefMut`, no poisoning.
-pub type Guarded<Value> = GuardedBy<Value, Mutex>;
-
-/// A wrapper around a mutex, and a value protected by the mutex.
-/// `M` should have `lock` and `unlock` methods.
-pub struct GuardedBy<Value, M: RawMutex> {
-    /// The raw value. Don't use this if there might be concurrent accesses.
+#[derive(Default)]
+pub struct Guarded<Value> {
     // `UnsafeCell` is load-bearing: `lock(&self)` hands out `&mut Value` while other `&self`
-    // borrows of `GuardedBy` exist (the mutex serializes the actual writers). Without the cell,
+    // borrows of `Guarded` exist (the mutex serializes the actual writers). Without the cell,
     // deriving `&mut Value` from `&self` is UB under Stacked Borrows regardless of the mutex.
-    pub(crate) unsynchronized_value: UnsafeCell<Value>,
-    mutex: M,
+    unsynchronized_value: UnsafeCell<Value>,
+    mutex: Mutex,
 }
 
-// SAFETY: access to `unsynchronized_value` is serialized by `mutex`; `M: RawMutex` provides the
+// SAFETY: access to `unsynchronized_value` is serialized by `mutex`, which provides the
 // happens-before edge. `UnsafeCell<Value>` is `!Sync` by default, so re-assert `Sync` here under
 // the same bounds a `std::sync::Mutex<Value>` would require.
-unsafe impl<Value: Send, M: RawMutex + Sync> Sync for GuardedBy<Value, M> {}
+unsafe impl<Value: Send> Sync for Guarded<Value> {}
 
-impl<Value, M: RawMutex + Default> GuardedBy<Value, M> {
-    /// Creates a guarded value with a default-initialized mutex.
-    pub fn init(value: Value) -> Self {
-        Self {
-            unsynchronized_value: UnsafeCell::new(value),
-            mutex: M::default(),
-        }
-    }
-}
-
-impl<Value: Default, M: RawMutex + Default> Default for GuardedBy<Value, M> {
-    fn default() -> Self {
-        Self::init(Value::default())
-    }
-}
-
-impl<Value> GuardedBy<Value, Mutex> {
-    /// `const` constructor for `static` initializers (`Mutex::new()` is `const`;
-    /// `M::default()` in [`init`](Self::init) is not).
-    ///
+impl<Value> Guarded<Value> {
     /// Parity with `parking_lot::Mutex::new` / `parking_lot::const_mutex`.
     pub const fn new(value: Value) -> Self {
         Self {
@@ -62,7 +40,7 @@ impl<Value> GuardedBy<Value, Mutex> {
     /// `this` stays live until the unlock after `f` returns.
     pub unsafe fn with_lock_raw<R>(
         this: *const Self,
-        f: impl FnOnce(&mut GuardedLock<'_, Value, Mutex>) -> R,
+        f: impl FnOnce(&mut GuardedLock<'_, Value>) -> R,
     ) -> R {
         // SAFETY: fn contract.
         let mut guard = ManuallyDrop::new(unsafe { &*this }.lock());
@@ -71,14 +49,15 @@ impl<Value> GuardedBy<Value, Mutex> {
         unsafe { Mutex::unlock_raw(&raw const guard.guarded.mutex) };
         result
     }
-}
 
-impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// Locks the mutex and returns an RAII guard that dereferences to the protected value and
     /// releases the lock on drop.
-    pub fn lock(&self) -> GuardedLock<'_, Value, M> {
+    pub fn lock(&self) -> GuardedLock<'_, Value> {
         self.mutex.lock();
-        GuardedLock { guarded: self }
+        GuardedLock {
+            guarded: self,
+            _not_send: PhantomData,
+        }
     }
 
     /// Lock-free mutable access when the caller already has `&mut self`
@@ -90,26 +69,25 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     }
 }
 
-/// RAII guard returned by [`GuardedBy::lock`]. Dereferences to the protected value and releases
+/// RAII guard returned by [`Guarded::lock`]. Dereferences to the protected value and releases
 /// the underlying mutex when dropped.
-pub struct GuardedLock<'a, Value, M: RawMutex> {
-    guarded: &'a GuardedBy<Value, M>,
+pub struct GuardedLock<'a, Value> {
+    guarded: &'a Guarded<Value>,
+    /// The thread that locked must unlock. Also `!Sync`, because `Value` may not be `Sync`.
+    _not_send: PhantomData<*const ()>,
 }
 
-impl<'a, Value> GuardedLock<'a, Value, Mutex> {
+impl<Value> GuardedLock<'_, Value> {
     /// Borrow the raw [`Mutex`] this guard holds. Used by
-    /// [`Condition::wait_guarded`](crate::Condition::wait_guarded) to unlock /
+    /// [`Condition::wait`](crate::Condition::wait) to unlock /
     /// re-lock around the OS wait without consuming the guard.
-    ///
-    /// The returned `&Mutex` has the guard's lifetime, not `'a`, so it cannot
-    /// outlive the guard and be used to double-unlock.
     #[inline]
     pub(crate) fn mutex(&self) -> &Mutex {
         &self.guarded.mutex
     }
 }
 
-impl<'a, Value, M: RawMutex> core::ops::Deref for GuardedLock<'a, Value, M> {
+impl<Value> core::ops::Deref for GuardedLock<'_, Value> {
     type Target = Value;
     #[inline]
     fn deref(&self) -> &Value {
@@ -120,7 +98,7 @@ impl<'a, Value, M: RawMutex> core::ops::Deref for GuardedLock<'a, Value, M> {
     }
 }
 
-impl<'a, Value, M: RawMutex> core::ops::DerefMut for GuardedLock<'a, Value, M> {
+impl<Value> core::ops::DerefMut for GuardedLock<'_, Value> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Value {
         // SAFETY: see `Deref::deref`.
@@ -128,27 +106,11 @@ impl<'a, Value, M: RawMutex> core::ops::DerefMut for GuardedLock<'a, Value, M> {
     }
 }
 
-impl<'a, Value, M: RawMutex> Drop for GuardedLock<'a, Value, M> {
+impl<Value> Drop for GuardedLock<'_, Value> {
     #[inline]
     fn drop(&mut self) {
-        self.guarded.mutex.unlock();
-    }
-}
-
-/// Trait for the `M` parameter of `GuardedBy`: a raw mutex with `lock`/`unlock`.
-pub trait RawMutex {
-    fn lock(&self);
-    fn unlock(&self);
-}
-
-impl RawMutex for Mutex {
-    #[inline]
-    fn lock(&self) {
-        Mutex::lock(self)
-    }
-    #[inline]
-    fn unlock(&self) {
-        Mutex::unlock(self)
+        // SAFETY: `Guarded::lock` locked it on this thread, and the guard is `!Send`.
+        unsafe { Mutex::unlock_raw(&raw const self.guarded.mutex) };
     }
 }
 

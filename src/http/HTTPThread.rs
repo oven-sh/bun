@@ -8,7 +8,7 @@ use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_errno::SystemErrno;
 use bun_ptr::{AliasableBox, RefCount, RefPtr};
-use bun_threading::{Guarded, UnboundedQueue};
+use bun_threading::{Guarded, OwnedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -232,7 +232,7 @@ impl LibdeflateState {
     }
 }
 
-pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
+pub(crate) type Queue = OwnedQueue<Box<AsyncHttp<'static>>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
 // caller-owned config, not heap we free. The `Vec` itself
@@ -806,7 +806,7 @@ impl HttpThread {
             }
         }
 
-        while let Some(http) = pop_queued_task() {
+        for http in INBOX.tasks.pop_batch() {
             let aborted = http.client.signals.get(crate::signals::Field::Aborted);
             if !aborted && active >= max {
                 // Can't start this one yet. Defer it (preserves FIFO relative to
@@ -907,7 +907,7 @@ impl HttpThread {
         for http in core::mem::take(&mut self.deferred_tasks) {
             http.release_at_shutdown();
         }
-        while let Some(http) = pop_queued_task() {
+        for http in INBOX.tasks.pop_batch() {
             http.release_at_shutdown();
         }
         for http in core::mem::take(&mut self.in_flight) {
@@ -930,7 +930,7 @@ impl HttpThread {
     pub fn schedule(requests: impl IntoIterator<Item = Box<AsyncHttp<'static>>>) {
         let mut any = false;
         for http in requests {
-            INBOX.tasks.push(bun_core::heap::into_raw_nn(http));
+            INBOX.tasks.push(http);
             any = true;
         }
         if any {
@@ -938,12 +938,6 @@ impl HttpThread {
             Self::wakeup();
         }
     }
-}
-
-fn pop_queued_task() -> Option<Box<AsyncHttp<'static>>> {
-    let http = NonNull::new(INBOX.tasks.pop())?;
-    // SAFETY: a box that `schedule` leaked; a pop hands it to one caller.
-    Some(unsafe { bun_core::heap::take(http.as_ptr()) })
 }
 
 /// Evict the least-recently-used SSL context cache entry.
@@ -1216,7 +1210,7 @@ pub fn shutdown_for_exit() -> bool {
         };
         if SHUTDOWN_DONE
             .1
-            .timed_wait_guarded(&mut done, remaining.as_nanos() as u64)
+            .timed_wait(&mut done, remaining.as_nanos() as u64)
             .is_err()
         {
             break;

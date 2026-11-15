@@ -955,9 +955,7 @@ fn download_stream(
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
             poll_ref: JsKeepAlive::active(),
-            mutex: Default::default(),
-            request_error: None,
-            reported_response_buffer: MutableString::default(),
+            received: Default::default(),
             // `State::default()` sets
             // `has_more = true` (bit 48). Passing 0 here would start the task with
             // `has_more == false`, tripping the `assert(state.has_more)` in

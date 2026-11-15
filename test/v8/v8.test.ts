@@ -277,6 +277,15 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     });
   });
 
+  describe("Template", () => {
+    it("frees the properties of collected templates", async () => {
+      await expectRssDeltaBelow(
+        ["--smol", join(directories.bunRelease, "main.js"), "test_v8_template_properties_leak", "[]", "null"],
+        { release: 30, debug: 40 },
+      );
+    });
+  });
+
   describe("FunctionTemplate", () => {
     it("keeps the data parameter alive", async () => {
       await checkSameOutput("test_v8_function_template");

@@ -403,6 +403,27 @@ void create_objects_with_internal_fields(
   return ok(info);
 }
 
+// create_templates_with_properties(count, propertyCount) creates `count` object
+// templates and `count` function templates and drops them all.
+void create_templates_with_properties(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  uint32_t count = info[0]->Uint32Value(context).FromJust();
+  uint32_t property_count = info[1]->Uint32Value(context).FromJust();
+
+  Local<String> name = String::NewFromUtf8(isolate, "name").ToLocalChecked();
+  for (uint32_t i = 0; i < count; i++) {
+    HandleScope handle_scope(isolate);
+    Local<ObjectTemplate> object_template = ObjectTemplate::New(isolate);
+    Local<FunctionTemplate> function_template = FunctionTemplate::New(isolate);
+    for (uint32_t j = 0; j < property_count; j++) {
+      object_template->Set(name, name);
+      function_template->Set(name, name);
+    }
+  }
+  return ok(info);
+}
+
 void return_data_callback(const FunctionCallbackInfo<Value> &info) {
   info.GetReturnValue().Set(info.Data());
 }
@@ -2231,6 +2252,8 @@ void initialize(Local<Object> exports, Local<Value> module,
                   create_object_with_holder_accessor);
   NODE_SET_METHOD(exports, "create_objects_with_internal_fields",
                   create_objects_with_internal_fields);
+  NODE_SET_METHOD(exports, "create_templates_with_properties",
+                  create_templates_with_properties);
   NODE_SET_METHOD(exports, "global_get", GlobalTestWrapper::get);
   NODE_SET_METHOD(exports, "global_set", GlobalTestWrapper::set);
   NODE_SET_METHOD(exports, "test_many_v8_locals", test_many_v8_locals);

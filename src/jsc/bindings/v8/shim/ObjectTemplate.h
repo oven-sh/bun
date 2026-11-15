@@ -11,9 +11,14 @@ class ObjectTemplate;
 
 namespace shim {
 
-class ObjectTemplate : public JSC::InternalFunction {
+class ObjectTemplate : public JSC::JSDestructibleObject {
 public:
-    using Base = JSC::InternalFunction;
+    using Base = JSC::JSDestructibleObject;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<ObjectTemplate*>(cell)->ObjectTemplate::~ObjectTemplate();
+    }
 
     DECLARE_INFO;
 
@@ -54,7 +59,7 @@ private:
     JSC::LazyProperty<ObjectTemplate, JSC::Structure> m_objectStructure;
 
     ObjectTemplate(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, Template::DummyCallback, Template::DummyCallback)
+        : Base(vm, structure)
     {
     }
 

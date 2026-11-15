@@ -365,6 +365,12 @@ class JSMockFunction final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
     static constexpr unsigned StructureFlags = Base::StructureFlags;
+    static constexpr JSC::DestructionMode needsDestruction = JSC::NeedsDestruction;
+
+    static void destroy(JSC::JSCell* cell)
+    {
+        static_cast<JSMockFunction*>(cell)->JSMockFunction::~JSMockFunction();
+    }
 
     static constexpr unsigned prototypeAttributes = JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete;
     static constexpr JSC::PropertyOffset prototypeOffset = JSC::firstOutOfLineOffset;
@@ -895,7 +901,7 @@ public:
     {
         if constexpr (mode == JSC::SubspaceAccess::Concurrently)
             return nullptr;
-        return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::No>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction));
+        return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::Yes>(vm, BUN_SUBSPACE_SLOTS(m_clientSubspaceForJSMockFunction, m_subspaceForJSMockFunction));
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure)
@@ -1908,9 +1914,9 @@ JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(jsMockFunctionGetMockImplementation, __
     return JSValue::encode(function);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnThis, (JSC::JSGlobalObject*, JSC::CallFrame* callframe))
+JSC_DEFINE_HOST_FUNCTION(jsMockFunctionReturnThis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
-    return JSValue::encode(callframe->thisValue());
+    return JSValue::encode(callframe->thisValue().toThis(globalObject, ECMAMode::strict()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsMockFunctionRejectWithThis, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))

@@ -254,7 +254,7 @@ extern "C" size_t Bun__NodeHTTP__takeRequestTrailerBytes(bool is_ssl, us_socket_
     if (trailers->empty()) {
         return 0;
     }
-    static thread_local std::string taken;
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local std::string taken;
     taken = std::move(*trailers);
     trailers->clear();
     *out = taken.data();

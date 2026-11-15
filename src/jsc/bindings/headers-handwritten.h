@@ -489,12 +489,6 @@ bool Bun__deepMatch(
 
 extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
 
-namespace Inspector {
-class ScriptArguments;
-}
-
-using ScriptArguments = Inspector::ScriptArguments;
-
 ALWAYS_INLINE void BunString::ref()
 {
     if (this->tag == BunStringTag::WTFStringImpl) {

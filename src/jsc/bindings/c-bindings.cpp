@@ -736,27 +736,10 @@ static_assert(sizeof(lsxpack_strlen_t) == 4 && offsetof(lsxpack_header_t, chain_
 // Lazily heap-allocated so it doesn't land in the .tls section on Windows
 // (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
 // zeros in bun.exe and is copied into every thread's TLS block at creation).
-static std::unique_ptr<char[]>& shared_header_buffer_slot()
-{
-    static thread_local std::unique_ptr<char[]> buffer;
-    return buffer;
-}
-
 static char* shared_header_buffer_get()
 {
-    auto& buffer = shared_header_buffer_slot();
-    if (!buffer) [[unlikely]] {
-        buffer.reset(new char[LSHPACK_MAX_HEADER_SIZE]);
-    }
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local const std::unique_ptr<char[]> buffer { new char[LSHPACK_MAX_HEADER_SIZE] };
     return buffer.get();
-}
-
-// A Worker returns out of shutdown() instead of calling pthread_exit, and the process can exit
-// before its TLS destructors run, so the worker releases this explicitly at teardown. The getter
-// re-allocates on demand.
-extern "C" void Bun__freeSharedHeaderBufferForThreadExit()
-{
-    shared_header_buffer_slot().reset();
 }
 
 extern "C" {

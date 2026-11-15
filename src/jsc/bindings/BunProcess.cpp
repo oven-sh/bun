@@ -4119,18 +4119,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
     JSValue value = callFrame->argument(0);
 
     // A thread has one table of names and one VM, so the three names are looked up once a thread and kept for as long as it lives.
-    static thread_local UniquedStringImpl* keptNames[3];
-    if (!keptNames[0]) [[unlikely]] {
-        unsigned index = 1;
-        for (ASCIILiteral streamName : { "stdout"_s, "stderr"_s }) {
-            Identifier name = Identifier::fromString(vm, streamName);
-            name.impl()->ref();
-            keptNames[index++] = name.impl();
-        }
-        Identifier nameOfHolder = Identifier::fromString(vm, "process"_s);
-        nameOfHolder.impl()->ref();
-        keptNames[0] = nameOfHolder.impl();
-    }
+    WTF_THREAD_LOCAL_ALWAYS_DESTROY static thread_local const Identifier keptNames[] = {
+        Identifier::fromString(vm, "process"_s),
+        Identifier::fromString(vm, "stdout"_s),
+        Identifier::fromString(vm, "stderr"_s),
+    };
     PropertyName processName(keptNames[0]);
     auto isPlainValue = [](JSValue own) {
         return own && !own.isGetterSetter() && !own.isCustomGetterSetter();
@@ -4153,7 +4146,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsStandardOutputStream, (JSGlobalObject * lex
                 bool isDeclared = lexicalGlobalObject->getPropertySlot(lexicalGlobalObject, processName, slot);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!isDeclared)
-                    return throwVMError(lexicalGlobalObject, scope, createUndefinedVariableError(lexicalGlobalObject, Identifier::fromUid(vm, keptNames[0])));
+                    return throwVMError(lexicalGlobalObject, scope, createUndefinedVariableError(lexicalGlobalObject, keptNames[0]));
                 holder = slot.getValue(lexicalGlobalObject, processName);
                 RETURN_IF_EXCEPTION(scope, {});
             }

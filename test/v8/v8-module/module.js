@@ -89,6 +89,18 @@ module.exports = debugMode => {
       console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
     },
 
+    test_v8_template_properties_leak() {
+      nativeModule.create_templates_with_properties(64, 128);
+      Bun.gc(true);
+      const before = process.memoryUsage.rss();
+      for (let i = 0; i < 24; i++) {
+        nativeModule.create_templates_with_properties(500, 128);
+        Bun.gc(true);
+      }
+      const after = process.memoryUsage.rss();
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+    },
+
     test_v8_global() {
       console.log("global initial value =", nativeModule.global_get());
 

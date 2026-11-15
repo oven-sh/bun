@@ -292,7 +292,7 @@ impl TLSSocket {
         if self.socket.get().is_detached() {
             return Ok(());
         }
-        let Some(sc) = context.to_js().as_class_ref::<SecureContext>() else {
+        let Some(sc) = context.as_class_ref::<SecureContext>() else {
             return Err(global.throw(format_args!("setKeyCert requires a SecureContext")));
         };
         let Some(ssl) = self.ssl(&cx.heap) else {
@@ -604,10 +604,5 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
         message = EncodedSlice::latin1(default_message);
     }
 
-    let exception = message.to_error_instance(global);
-
-    // reference it in stack memory
-    exception.ensure_still_alive();
-
-    exception
+    message.to_error_instance(global)
 }

@@ -11,6 +11,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::{
     JSFunction, JSGlobalObject, JSPromise, JSValue, JsClass as _, JsResult, StringJsc as _,
+    WrapperGuard,
 };
 
 use super::bun_test::{
@@ -120,13 +121,11 @@ impl AroundHook {
         )
     }
 
-    fn of<'a>(value: JSValue) -> Option<&'a AroundHook> {
-        // SAFETY: the wrapper owns the payload, and every caller keeps `value` alive while it uses the borrow.
-        AroundHook::from_js(value).map(|this| unsafe { &*this })
-    }
-
-    fn of_call<'a>(global: &JSGlobalObject, this_value: JsLocal<'a>) -> JsResult<&'a AroundHook> {
-        Self::of(this_value.to_js()).ok_or_else(|| {
+    fn of_call<'a>(
+        global: &JSGlobalObject,
+        this_value: JsLocal<'a>,
+    ) -> JsResult<WrapperGuard<'a, AroundHook>> {
+        this_value.as_class_ref().ok_or_else(|| {
             global.throw_type_error(format_args!("Expected this to be an around hook"))
         })
     }
@@ -258,7 +257,7 @@ pub(crate) fn set_up(
         context.to_js(),
         suite.to_js(),
     );
-    let Some(this) = AroundHook::of(this_value) else {
+    let Some(this) = AroundHook::from_js(&this_value) else {
         return Err(global.throw_type_error(format_args!(
             "Expected the first argument to be an around hook"
         )));

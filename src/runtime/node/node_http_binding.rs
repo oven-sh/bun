@@ -98,5 +98,5 @@ pub(crate) fn send_web_socket_frame<'a>(
     fin: bool,
     compress: bool,
 ) -> JsResult<JSValue> {
-    handle.send_frame(cx.global(), data.to_js(), Opcode(opcode), fin, compress)
+    handle.send_frame(cx.global(), data, Opcode(opcode), fin, compress)
 }

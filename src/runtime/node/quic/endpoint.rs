@@ -832,9 +832,7 @@ impl QuicEndpoint {
                 };
             }
             if let Some(bl_js) = options.get(global, "blockList")?.filter(|v| v.is_object()) {
-                block_list = crate::generated_bindgen::block_list::js_BlockList::from_js(bl_js)
-                    // SAFETY: `bl_js` holds a ref.
-                    .map(|bl| unsafe { RefPtr::init_ref(bl.as_ptr()) });
+                block_list = crate::generated_bindgen::block_list::js_BlockList::ref_from_js(bl_js);
             }
             if let Some(policy) = options
                 .get(global, "blockListPolicy")?

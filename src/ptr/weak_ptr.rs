@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 
@@ -7,41 +8,41 @@ use crate::{AliasableBox, RefCounted, RefPtr};
 ///   bits 0..=30 → reference_count
 ///   bit  31     → finalized
 #[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct WeakPtrData(u32);
+pub struct WeakPtrData(Cell<u32>);
 
 impl WeakPtrData {
-    pub const EMPTY: Self = Self(0); // reference_count = 0, finalized = false
+    pub const EMPTY: Self = Self(Cell::new(0)); // reference_count = 0, finalized = false
 
     const REF_MASK: u32 = 0x7FFF_FFFF; // low 31 bits
     const FINALIZED_BIT: u32 = 0x8000_0000; // bit 31
 
     #[inline]
-    pub(crate) fn reference_count(self) -> u32 {
-        self.0 & Self::REF_MASK
+    pub(crate) fn reference_count(&self) -> u32 {
+        self.0.get() & Self::REF_MASK
     }
 
     #[inline]
-    pub(crate) fn set_reference_count(&mut self, n: u32) {
+    pub(crate) fn set_reference_count(&self, n: u32) {
         debug_assert!(n <= Self::REF_MASK);
-        self.0 = (self.0 & Self::FINALIZED_BIT) | (n & Self::REF_MASK);
+        self.0
+            .update(|bits| (bits & Self::FINALIZED_BIT) | (n & Self::REF_MASK));
     }
 
     #[inline]
-    pub(crate) fn finalized(self) -> bool {
-        (self.0 & Self::FINALIZED_BIT) != 0
+    pub(crate) fn finalized(&self) -> bool {
+        (self.0.get() & Self::FINALIZED_BIT) != 0
     }
 
     #[inline]
-    pub(crate) fn set_finalized(&mut self, v: bool) {
+    pub(crate) fn set_finalized(&self, v: bool) {
         if v {
-            self.0 |= Self::FINALIZED_BIT;
+            self.0.update(|bits| bits | Self::FINALIZED_BIT);
         } else {
-            self.0 &= !Self::FINALIZED_BIT;
+            self.0.update(|bits| bits & !Self::FINALIZED_BIT);
         }
     }
 
-    fn on_finalize(&mut self) -> bool {
+    fn on_finalize(&self) -> bool {
         debug_assert!(!self.finalized());
         self.set_finalized(true);
         self.reference_count() == 0
@@ -63,7 +64,7 @@ pub unsafe trait HasWeakPtrData {
     /// `this` must point to a live allocation of `Self` (the inner contents
     /// may already be finalized, but the allocation itself must not yet be
     /// freed).
-    unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData;
+    unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData;
 }
 
 /// `#[ref_count(destroy = …)]` of a type `WeakPtr`s point to: the last of them frees the allocation.
@@ -121,7 +122,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         // SAFETY: caller contract — `this` points to a live `T`. Projecting
         // straight to the embedded field means no whole-struct `&mut T` is
         // formed, so `this`'s provenance reaches the stored pointer intact.
-        let d = unsafe { &mut *T::weak_ptr_data(this) };
+        let d = unsafe { &*T::weak_ptr_data(this) };
         debug_assert!(!d.finalized());
         d.set_reference_count(d.reference_count() + 1);
         Self {
@@ -151,7 +152,7 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         self.raw_ptr = None;
         // SAFETY: caller guarantees `value` points to a live allocation;
         // projecting to the embedded `WeakPtrData` field.
-        let weak_data = unsafe { &mut *T::weak_ptr_data(value.as_ptr()) };
+        let weak_data = unsafe { &*T::weak_ptr_data(value.as_ptr()) };
         let count = weak_data.reference_count() - 1;
         weak_data.set_reference_count(count);
         let finalized = weak_data.finalized();
@@ -217,9 +218,9 @@ mod tests {
 
     // SAFETY: every test ends its `Owner` with `destroy`.
     unsafe impl HasWeakPtrData for Owner {
-        unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
+        unsafe fn weak_ptr_data(this: *mut Self) -> *const WeakPtrData {
             // SAFETY: caller contract — pure field projection, no read.
-            unsafe { &raw mut (*this).weak }
+            unsafe { &raw const (*this).weak }
         }
     }
 
@@ -238,7 +239,7 @@ mod tests {
 
     #[test]
     fn bit_layout() {
-        let mut d = WeakPtrData::EMPTY;
+        let d = WeakPtrData::EMPTY;
         assert_eq!(d.reference_count(), 0);
         assert!(!d.finalized());
 
@@ -260,10 +261,10 @@ mod tests {
 
     #[test]
     fn on_finalize_reports_last_ref() {
-        let mut d = WeakPtrData::EMPTY;
+        let d = WeakPtrData::EMPTY;
         assert!(d.on_finalize());
 
-        let mut d = WeakPtrData::EMPTY;
+        let d = WeakPtrData::EMPTY;
         d.set_reference_count(1);
         assert!(!d.on_finalize());
     }
@@ -330,6 +331,19 @@ mod tests {
         drop(weak);
         destroy(owner);
         assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn weak_count_changes_while_the_owner_is_borrowed() {
+        fn while_borrowed(owner: &Owner, raw: *mut Owner) -> u32 {
+            // SAFETY: `raw` is the pointer of a new box; live and not finalized.
+            drop(unsafe { WeakPtr::init_ref(raw) });
+            owner.payload
+        }
+        let _serial = serial();
+        let owner = new_owner(3);
+        assert_eq!(while_borrowed(&owner, owner.as_ptr()), 3);
+        destroy(owner);
     }
 
     /// Several weak refs: only the one that takes the count to zero *after*

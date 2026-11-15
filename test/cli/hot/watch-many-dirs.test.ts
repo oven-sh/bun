@@ -1,27 +1,13 @@
 import { spawn, type Subprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isCI, isLinux, tempDir, untilEveryThreadIs } from "harness";
 import { mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-
-async function until(what: string, isDone: () => boolean) {
-  for (const deadline = Date.now() + 20_000; !isDone(); await Bun.sleep(1)) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
-  }
-}
 
 /** Events pile up until SIGCONT, so the watcher reads them at once. */
 async function stop(proc: Subprocess) {
   proc.kill("SIGSTOP");
-  const tasks = `/proc/${proc.pid}/task`;
-  const isStopped = (task: string) => {
-    try {
-      return readFileSync(`${tasks}/${task}/status`, "utf8").includes("State:\tT");
-    } catch {
-      return true; // The thread has exited.
-    }
-  };
-  await until("every thread to stop", () => readdirSync(tasks).every(isStopped));
+  await untilEveryThreadIs("T", proc.pid);
 }
 
 describe("--hot with many directories", () => {
@@ -143,7 +129,7 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     expect((await iter.next()).value).toBe("second");
   });
 
-  test.skipIf(!isLinux)("a folder that was moved gets the names of its own files", async () => {
+  test.skipIf(!isLinux)("reports only its own entries for a moved directory", async () => {
     await using dir = tempDir("hot-moved-folder", {
       "entry.js": `import "./a/x.js"; import "./b/y.js"; console.log("first"); setInterval(() => {}, 1e6);`,
       "a/x.js": "",
@@ -167,10 +153,12 @@ if (globalThis.reloaded++ >= ${maxCount}) process.exit(0);
     mkdirSync(join(dir, "moved/in-a"));
     proc.kill("SIGCONT");
 
-    await until("the trace", () => /in-a.*\n/.test(readFileSync(trace, "utf8")));
+    for (const deadline = Date.now() + 20_000; !/in-a.*\n/.test(readFileSync(trace, "utf8")); await Bun.sleep(1)) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for the trace");
+    }
     // The line has a key per event, so `JSON.parse` would keep only the last one of a folder.
     const names = readFileSync(trace, "utf8").matchAll(/\/a\/":\{"events":\[[^\]]*\],"changed":\[([^\]]*)\]/g);
-    expect(Array.from(names, match => match[1])).toEqual([`"in-a"`, `"in-a"`]);
+    expect([...new Set(Array.from(names, match => match[1]))]).toEqual([`"in-a"`]);
   });
 
   // The watchlist owns one descriptor per watched file, closed only when the

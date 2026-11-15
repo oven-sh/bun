@@ -2614,11 +2614,13 @@ describe.concurrent("a module behind an async onLoad() runs once for a factory a
             await waits.promise;
           });
         `,
+        // The next file loads the module itself, and then reads one more file. An import() of the factory that went on has settled by then.
         "b.test.js": `
           import { expect, test } from "bun:test";
           test("the fetch ends in the next file", async () => {
             globalThis.gate.resolve();
             await globalThis.answered.promise;
+            await import("./mid.js");
             await import("./plain.js");
             expect(globalThis.events).toEqual(["the factory asks"]);
           });

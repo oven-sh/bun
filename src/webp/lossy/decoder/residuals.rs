@@ -32,11 +32,23 @@ pub(super) struct Quantizers {
     pub(super) chroma: [i32; 2],
 }
 
-type ByContext = [[u8; 11]; 3];
-/// For each coefficient those of its band.
-type ByCoefficient = [ByContext; BANDS.len()];
+type Tree = [u8; 11];
 
-pub(super) struct Probabilities(Box<[ByCoefficient; 4]>);
+/// From one coefficient to the next.
+#[derive(Clone, Copy, Default)]
+struct Step {
+    /// Of the one that is left.
+    index: u8,
+    position: u8,
+    is_ac: bool,
+    /// Of the next one, by context.
+    trees: [Tree; 3],
+}
+
+/// The first leads to the first coefficient.
+type Steps = [Step; BANDS.len()];
+
+pub(super) struct Probabilities(Box<[Steps; 4]>);
 
 impl Probabilities {
     pub(super) fn read(reader: &mut BoolReader) -> Result<Self> {
@@ -50,20 +62,23 @@ impl Probabilities {
             .iter_mut()
             .zip(updates.as_flattened())
         {
-            if reader.read(update) {
+            if reader.read_unlikely(update) {
                 *value = reader.read_unsigned(8);
             }
         }
-        let mut by_coefficient = vec::default_array::<ByCoefficient, 4>()?;
-        for (coefficients, bands) in by_coefficient.iter_mut().zip(&by_band) {
-            for (to, band) in coefficients.iter_mut().zip(BANDS) {
-                *to = *bands.at(band.into());
+        let mut by_type = vec::default_array::<Steps, 4>()?;
+        for (steps, bands) in by_type.iter_mut().zip(&by_band) {
+            for (step, band) in steps.iter_mut().zip(BANDS) {
+                step.trees = *bands.at(band.into());
+            }
+            for (step, (index, position)) in steps.iter_mut().skip(1).zip((0..).zip(POSITIONS)) {
+                (step.index, step.position, step.is_ac) = (index, position, index > 0);
             }
         }
-        Ok(Self(by_coefficient))
+        Ok(Self(by_type))
     }
 
-    fn of(&self, block_type: BlockType) -> &ByCoefficient {
+    fn of(&self, block_type: BlockType) -> &Steps {
         self.0.at(block_type as usize)
     }
 }
@@ -72,8 +87,8 @@ impl Probabilities {
 #[derive(Clone, Copy, Default)]
 pub(super) struct Context {
     luma: [bool; 4],
-    u: [bool; 2],
-    v: [bool; 2],
+    /// U, then V.
+    chroma: [bool; 4],
     y2: bool,
 }
 
@@ -112,6 +127,8 @@ impl Residuals {
     }
 
     /// Reads the coefficients and turns them into what is added to the prediction. They were cleared.
+    // Out of line, so that the reader gets the registers.
+    #[inline(never)]
     pub(super) fn read(
         &mut self,
         partition: &mut BoolReader,
@@ -123,11 +140,11 @@ impl Residuals {
     ) {
         let mut reader = *partition;
         let mut non_zero = 0;
-        let [luma @ .., upper_chroma, lower_chroma] = &mut self.rows;
+        let [luma @ .., _, _] = &mut self.rows;
         let (luma_type, first) = if has_y2 {
             let mut y2 = [0; 64];
             let block = Block {
-                probabilities: probabilities.of(BlockType::Y2),
+                steps: probabilities.of(BlockType::Y2),
                 quantizers: quantizers.y2,
                 first: 0,
             };
@@ -143,37 +160,34 @@ impl Residuals {
         };
 
         let block = Block {
-            probabilities: probabilities.of(luma_type),
+            steps: probabilities.of(luma_type),
             quantizers: quantizers.luma,
             first,
         };
-        for (y, (row, left)) in luma.iter_mut().zip(&mut left.luma).enumerate() {
-            for (x, above) in above.luma.iter_mut().enumerate() {
-                let end = block.read(&mut reader, [*above, *left], row, x);
-                *left = end > first;
-                *above = *left;
-                non_zero |= u32::from(is_non_zero(end, row, x)) << (4 * y + x);
-            }
+        // One loop has fewer ends to guess than two.
+        for i in 0..16 {
+            let (x, y) = (i % 4, i / 4);
+            let (above, left, row) = (above.luma.at_mut(x), left.luma.at_mut(y), luma.at_mut(y));
+            let end = block.read(&mut reader, [*above, *left], row, x);
+            *left = end > first;
+            *above = *left;
+            non_zero |= u32::from(is_non_zero(end, row, x)) << i;
         }
 
         let block = Block {
-            probabilities: probabilities.of(BlockType::Chroma),
+            steps: probabilities.of(BlockType::Chroma),
             quantizers: quantizers.chroma,
             first: 0,
         };
-        for (first_x, above, left) in [
-            (0, &mut above.u, &mut left.u),
-            (2, &mut above.v, &mut left.v),
-        ] {
-            let rows = [&mut *upper_chroma, &mut *lower_chroma];
-            for (y, (row, left)) in (4..).zip(rows.into_iter().zip(left)) {
-                for (x, above) in (first_x..).zip(&mut *above) {
-                    let end = block.read(&mut reader, [*above, *left], row, x);
-                    *left = end > 0;
-                    *above = *left;
-                    non_zero |= u32::from(is_non_zero(end, row, x)) << (4 * y + x);
-                }
-            }
+        let [_, _, _, _, chroma @ ..] = &mut self.rows;
+        for i in 0..8 {
+            let (x, y) = (i / 4 * 2 + i % 2, i / 2 % 2);
+            let (above, left) = (above.chroma.at_mut(x), left.chroma.at_mut(i / 2));
+            let row = chroma.at_mut(y);
+            let end = block.read(&mut reader, [*above, *left], row, x);
+            *left = end > 0;
+            *above = *left;
+            non_zero |= u32::from(is_non_zero(end, row, x)) << (16 + 4 * y + x);
         }
         *partition = reader;
         self.non_zero = non_zero;
@@ -183,11 +197,11 @@ impl Residuals {
 
 /// Zeros that were spelled out behind the first coefficient count, for the loop filter.
 fn is_non_zero(end: usize, row: &BlockRow, x: usize) -> bool {
-    end > 1 || *row.at(4 * x) != 0
+    (end > 1) | (*row.at(4 * x) != 0)
 }
 
 struct Block<'a> {
-    probabilities: &'a ByCoefficient,
+    steps: &'a Steps,
     quantizers: [i32; 2],
     /// The index of the first coefficient that is coded.
     first: usize,
@@ -203,30 +217,30 @@ impl Block<'_> {
         row: &mut BlockRow,
         x: usize,
     ) -> usize {
-        let mut index = self.first;
         let context = usize::from(above) + usize::from(left);
-        let mut tree = self.probabilities.at(index).at(context);
-        while index < 16 {
+        let mut tree = self.steps.at(self.first).trees.at(context);
+        let mut steps = self.steps.iter();
+        steps.nth(self.first);
+        while let Some(mut step) = steps.next() {
             if !reader.read(tree[0]) {
-                return index;
+                return step.index.into();
             }
             while !reader.read(tree[1]) {
-                index += 1;
-                if index == 16 {
+                tree = &step.trees[0];
+                let Some(next) = steps.next() else {
                     return 16;
-                }
-                tree = &self.probabilities.at(index)[0];
+                };
+                step = next;
             }
-            let [_, after_one, after_more] = self.probabilities.at(index + 1);
+            let [_, after_one, after_more] = &step.trees;
             let magnitude;
             (magnitude, tree) = match reader.read(tree[2]) {
                 false => (1, after_one),
                 true => (read_above_one(reader, tree), after_more),
             };
-            let quantizer = *self.quantizers.at(usize::from(index > 0));
-            let position = usize::from(*POSITIONS.at(index)) + 4 * x;
+            let quantizer = *self.quantizers.at(step.is_ac.into());
+            let position = usize::from(step.position) + 4 * x;
             *row.at_mut(position) = (reader.read_sign(magnitude) * quantizer) as i16;
-            index += 1;
         }
         16
     }
@@ -234,25 +248,24 @@ impl Block<'_> {
 
 /// Section 13.2.
 #[inline(always)]
-fn read_above_one(reader: &mut BoolReader, tree: &[u8; 11]) -> i32 {
-    let mut read = |probability| i32::from(reader.read(probability));
-    if read(tree[3]) == 0 {
-        if read(tree[4]) == 0 {
+fn read_above_one(reader: &mut BoolReader, tree: &Tree) -> i32 {
+    if !reader.read(tree[3]) {
+        if !reader.read(tree[4]) {
             2
         } else {
-            3 + read(tree[5])
+            3 + reader.read_bit(tree[5])
         }
-    } else if read(tree[6]) == 0 {
-        if read(tree[7]) == 0 {
-            5 + read(159)
+    } else if !reader.read(tree[6]) {
+        if !reader.read(tree[7]) {
+            5 + reader.read_bit(159)
         } else {
-            7 + 2 * read(165) + read(145)
+            7 + 2 * reader.read_bit(165) + reader.read_bit(145)
         }
     } else {
-        let high = read(tree[8]);
-        let category = 2 * high + read(*tree.at(9 + high as usize));
+        let high = reader.read_bit(tree[8]);
+        let category = 2 * high + reader.read_bit(*tree.at(9 + high as usize));
         let extra_bits = CATEGORY_3_TO_6.at(category as usize).iter();
-        3 + (8 << category) + extra_bits.fold(0, |extra, &it| 2 * extra + read(it))
+        3 + (8 << category) + extra_bits.fold(0, |extra, &it| 2 * extra + reader.read_bit(it))
     }
 }
 

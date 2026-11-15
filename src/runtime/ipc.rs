@@ -1289,6 +1289,30 @@ impl SendQueue {
         });
     }
 
+    /// The peer did not get the handle of the cluster message `seq`: its reply callback gets `{accepted: false}`.
+    fn decline_cluster_reply(&self, global: &JSGlobalObject, seq: i32) {
+        let cb = self.internal_msg_queue.with_mut(|q| {
+            let entry = q.callbacks.get(&seq).map(|s| s.get());
+            if entry.is_some() {
+                q.callbacks.swap_remove(&seq);
+            }
+            entry.flatten()
+        });
+        if let Some(cb) = cb {
+            let reply = JSValue::create_empty_object(global, 1);
+            reply.put(global, b"accepted", JSValue::FALSE);
+            let _ = JSValue::call_next_tick_1(cb, global, reply);
+        }
+    }
+
+    /// Ends a queued message that was never written in full.
+    fn finish_unsent(&self, global: &JSGlobalObject, item: SendHandle) {
+        if let Some(seq) = item.handle.as_ref().and_then(|h| h.cluster_seq) {
+            self.decline_cluster_reply(global, seq);
+        }
+        item.abort_unsent(global);
+    }
+
     pub(crate) fn on_ack_nack(&self, global: &JSGlobalObject, ack_nack: AckNack) {
         log!("SendQueue#onAckNack");
         let waiting = self.waiting_for_ack.with_mut(|w| match w {
@@ -1346,18 +1370,7 @@ impl SendQueue {
                 .waiting_for_ack
                 .with_mut(|w| w.as_ref().and_then(|i| i.handle.as_ref()?.cluster_seq));
             if let Some(seq) = cluster_seq {
-                let cb = self.internal_msg_queue.with_mut(|q| {
-                    let entry = q.callbacks.get(&seq).map(|s| s.get());
-                    if entry.is_some() {
-                        q.callbacks.swap_remove(&seq);
-                    }
-                    entry.flatten()
-                });
-                if let Some(cb) = cb {
-                    let reply = JSValue::create_empty_object(global, 1);
-                    reply.put(global, b"accepted", JSValue::FALSE);
-                    let _ = JSValue::call_next_tick_1(cb, global, reply);
-                }
+                self.decline_cluster_reply(global, seq);
             }
             // too many retries; give up - emit warning if possible
             let warning =
@@ -1548,7 +1561,10 @@ impl SendQueue {
             }
             Done::Partial | Done::NoProgress => {}
             Done::Error => {
-                // error. close socket.
+                // error. close socket. What is queued goes now, so that nothing writes it before a deferred close.
+                for item in self.queue.with_mut(std::mem::take) {
+                    self.finish_unsent(&global_this, item);
+                }
                 #[cfg(not(windows))]
                 self.close_after_exit();
                 #[cfg(windows)]

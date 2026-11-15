@@ -28,7 +28,7 @@ export const clusterCloseHandle = b.fn({ args: { fd: b.f64 } });
 
 /** `process[kHandle]` of a `cluster.Worker`, which takes any object as its process. */
 const processHandle = Subprocess.otherAsNull;
-/** `null` when nothing was sent, `false` when the channel asks the sender to back off. */
+/** `null` when nothing was sent (no channel, or one that is not connected), `false` when the channel asks the sender to back off. A handle whose write fails answers `callback` with `{ accepted: false }`. */
 export const sendHelperPrimary = b.fn({
   args: { processHandle, message: b.object, handle: b.object.nullable, callback: b.callable.optional },
   returns: b.bool.nullable,

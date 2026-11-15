@@ -1,3 +1,4 @@
+import { socketFaultInjection } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import {
   bunEnv,
@@ -11,7 +12,10 @@ import {
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import net from "node:net";
+import { constants } from "node:os";
+import { join } from "node:path";
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -1434,6 +1438,163 @@ if (cluster.isPrimary) {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: "live got: hi", stderr: expect.any(String) });
     expect(exitCode).toBe(0);
+  },
+  30_000,
+);
+
+// Two workers on one round-robin port. "first" registers first, so the primary hands the client's connection to it,
+// and the write of that handoff fails. `primary` runs when both workers listen and calls connect(). `atAccept` runs
+// in the primary inside the accept of the connection, before the handoff. `first` is what the first worker does when
+// the primary sends it a message. The workers meet the primary at the fifo "gone".
+async function handoffThatFails({ primary, atAccept, first }: { primary: string; atAccept: string; first: string }) {
+  using dir = tempDir("cluster-handoff-fails", {
+    "main.ts": `const cluster = require("node:cluster");
+const net = require("node:net");
+const fs = require("node:fs");
+if (cluster.isPrimary) {
+  fs.writeFileSync("connections", "");
+  const first = cluster.fork({ ROLE: "first" });
+  first.once("listening", ({ port }) => {
+    const live = cluster.fork({ ROLE: "live" });
+    let listening = 0;
+    live.on("listening", () => {
+      if (++listening !== 2) return;
+      const { emit } = net.Server.prototype;
+      net.Server.prototype.emit = function (name, ...args) {
+        if (name !== "connection") return emit.call(this, name, ...args);
+        delete net.Server.prototype.emit;
+        ${atAccept}
+        return emit.call(this, name, ...args);
+      };
+      let reply = "";
+      let pending = 2;
+      const done = () => {
+        if (--pending !== 0) return;
+        const connections = fs.readFileSync("connections", "utf8").split("\\n").filter(Boolean);
+        console.log(JSON.stringify({ reply, connections, exitedAfterDisconnect: first.exitedAfterDisconnect }));
+        live.send("end");
+      };
+      first.once("exit", done);
+      const connect = () => {
+        const client = net.connect(port, "127.0.0.1", () => client.write("hi"));
+        client.on("data", data => (reply += data));
+        client.on("error", error => (reply += "error " + error.code));
+        client.on("close", done);
+      };
+      ${primary}
+    });
+  });
+} else {
+  const serve = () =>
+    net.createServer(socket => {
+      fs.appendFileSync("connections", process.env.ROLE + "\\n");
+      socket.on("data", data => socket.end(process.env.ROLE + " got: " + data));
+    });
+  const server = serve().listen(0, "127.0.0.1");
+  if (process.env.ROLE === "first") {
+    process.on("message", () => {
+      ${first}
+    });
+  } else {
+    // A second port, so that the primary answers at once when "first" listens on it too.
+    serve().listen(0, "127.0.0.1");
+    process.on("message", () => process.exit(0));
+  }
+}
+`,
+  });
+  mkfifo(join(String(dir), "gone"));
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout: stdout.trim(), stderr, exitCode };
+}
+
+test.skipIf(isWindows)(
+  "round-robin: a connection that could not be sent to a worker that has disconnected goes to another worker",
+  async () => {
+    const result = await handoffThatFails({
+      primary: `connect();`,
+      // The read returns when "first" has closed its end of the channel. Its "close" and "exitedAfterDisconnect" are
+      // unread at the handoff.
+      atAccept: `first.send("leave"); fs.readFileSync("gone");`,
+      first: `
+        process.on("disconnect", () => fs.closeSync(fs.openSync("gone", "w")));
+        cluster.worker.disconnect();
+        server.close(() => process.disconnect());
+      `,
+    });
+    expect(result).toEqual({
+      stdout: JSON.stringify({ reply: "live got: hi", connections: ["live"], exitedAfterDisconnect: true }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+test.skipIf(isWindows)(
+  "round-robin: a connection that could not be sent to a worker that has killed itself goes to another worker",
+  async () => {
+    const result = await handoffThatFails({
+      // kill() sends no "close", so "first" stays a candidate. The primary has read the notice when the flag is set.
+      primary: `
+        first.send("leave");
+        (function poll() {
+          if (first.exitedAfterDisconnect) connect();
+          else setImmediate(poll);
+        })();
+      `,
+      // The read returns when "first" has ended.
+      atAccept: `fs.readFileSync("gone");`,
+      // kill() disconnects when the primary has answered the notice. The open returns when the primary is inside the
+      // accept, so the primary cannot see the end of the channel before it.
+      first: `
+        const { disconnect } = process;
+        process.disconnect = function () {
+          fs.openSync("gone", "w");
+          return disconnect.call(this);
+        };
+        cluster.worker.kill();
+      `,
+    });
+    expect(result).toEqual({
+      stdout: JSON.stringify({ reply: "live got: hi", connections: ["live"], exitedAfterDisconnect: true }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
+
+test.skipIf(isWindows || !socketFaultInjection.available())(
+  "round-robin: a connection whose handoff failed once reaches one worker only",
+  async () => {
+    const fault = { syscall: "sendmsg", action: "errno", errno: constants.errno.ENOMEM, repeat: 1 };
+    const result = await handoffThatFails({
+      primary: `connect();`,
+      // "first" is alive, and its question for the second port is unread at the handoff. The primary's answer to it
+      // must not write the failed handoff again.
+      atAccept: `
+        first.send("listen");
+        fs.readFileSync("gone");
+        require("bun:internal-for-testing").socketFaultInjection.set(${JSON.stringify(fault)});
+      `,
+      first: `
+        serve().listen(0, "127.0.0.1");
+        fs.closeSync(fs.openSync("gone", "w"));
+      `,
+    });
+    expect(result).toEqual({
+      stdout: JSON.stringify({ reply: "live got: hi", connections: ["live"], exitedAfterDisconnect: false }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   },
   30_000,
 );

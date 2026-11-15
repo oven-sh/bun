@@ -89,6 +89,10 @@ pub(crate) fn send_helper_primary<'a>(
     let Some(ipc_data) = subprocess.ipc() else {
         return Ok(None);
     };
+    // As node's `sendHelper`: a channel that is not connected takes nothing more, and the caller keeps the handle.
+    if !ipc_data.is_connected() {
+        return Ok(None);
+    }
 
     let mut native_handle: Option<crate::ipc::Handle> = None;
     if let Some(handle) = handle {

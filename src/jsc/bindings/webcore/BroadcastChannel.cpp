@@ -112,8 +112,8 @@ void BroadcastChannel::close()
 void BroadcastChannel::stop()
 {
     close();
-    if (auto* context = scriptExecutionContext())
-        jsUnref(context->jsGlobalObject());
+    if (auto* context = scriptExecutionContext(); context && std::exchange(m_hasRef, false))
+        context->unrefEventLoop();
 }
 
 void BroadcastChannel::contextDestroyed()

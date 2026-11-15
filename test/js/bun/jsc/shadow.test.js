@@ -149,6 +149,28 @@ describe.concurrent("realms that nothing points to", () => {
         });`),
     ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
   });
+
+  it("get no message on a BroadcastChannel once they are collected", async () => {
+    expect(
+      await run(`${prelude}
+        inRealms("() => void new BroadcastChannel('name')");
+        const [sender, last] = [new BroadcastChannel("name"), new BroadcastChannel("name")];
+        let received = 0;
+        last.onmessage = () => ++received === 40 && (console.log("done"), process.exit(0));
+        // The copies start a collection, which finalizes nothing yet.
+        for (let i = 0; i < 40; i++) sender.postMessage(new Uint8Array(1 << 18));`),
+    ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  });
+
+  it("take their Bun.ModuleGraph along", async () => {
+    expect(
+      await run(`${prelude}
+        inRealms("() => void new Bun.ModuleGraph()");
+        await collectUntil(mostRealmsAreGone);
+        await turn();
+        console.log("done");`),
+    ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  });
 });
 
 it("Bun.isMainThread and node:worker_threads' isMainThread reflect the realm's thread", async () => {

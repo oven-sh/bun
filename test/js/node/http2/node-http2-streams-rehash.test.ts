@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "node:path";
 
@@ -235,3 +235,164 @@ test(
   },
   10_000 * ASAN_MULTIPLIER,
 );
+
+describe.concurrent("JS that runs under a write to a user-supplied Duplex", () => {
+  const prelude = /* js */ `
+    const http2 = require("node:http2");
+    const { once } = require("node:events");
+    const { Duplex } = require("node:stream");
+    function frame(type, flags, streamId, body = Buffer.alloc(0)) {
+      const header = Buffer.alloc(9);
+      header.writeUIntBE(body.length, 0, 3);
+      header[3] = type;
+      header[4] = flags;
+      header.writeUInt32BE(streamId, 5);
+      return Buffer.concat([header, body]);
+    }
+    function u32(n) {
+      const bytes = Buffer.alloc(4);
+      bytes.writeUInt32BE(n);
+      return bytes;
+    }
+    const ping = () => frame(6, 0, 0, Buffer.alloc(8));
+    const windowUpdate = streamId => frame(8, 0, streamId, u32(1 << 20));
+    const tick = () => new Promise(resolve => setImmediate(resolve));
+    async function until(condition) {
+      for (let i = 0; i < 1000 && !condition(); i++) await tick();
+      if (!condition()) throw new Error("never happened: " + condition);
+    }
+    // duplex.inNextWrite runs once, inside _write. duplex.stall holds the write callback back.
+    async function connect(options) {
+      const duplex = new Duplex({
+        ...options,
+        read() {},
+        write(chunk, encoding, callback) {
+          duplex.written.push(Buffer.from(chunk));
+          const hook = duplex.inNextWrite;
+          duplex.inNextWrite = undefined;
+          hook?.();
+          if (duplex.stall) duplex.stalled = callback;
+          else callback();
+        },
+      });
+      duplex.written = [];
+      const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
+      await once(session, "connect");
+      const acked = once(session, "localSettings");
+      duplex.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]));
+      await acked;
+      await tick();
+      duplex.written.length = 0;
+      return { session, duplex };
+    }
+    function isAllocated(session, streamId) {
+      try {
+        session[Symbol.for("::bunhttp2native::")].getStreamContext(streamId);
+        return true;
+      } catch (e) {
+        if (e.message !== "Invalid stream id") throw e;
+        return false;
+      }
+    }
+  `;
+
+  async function run(body: string, env = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + body],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // Sessions share one cork buffer: a's write first flushes b's PING through b's Duplex, which
+  // closes the stream that a is writing and makes a read.
+  const closeFromOtherSession = /* js */ `
+    const result = {};
+    b.duplex.inNextWrite = () => {
+      controller.abort();
+      a.duplex.push(ping());
+      result.duringWrite = isAllocated(a.session, 1);
+    };
+    b.session.ping(() => {});
+    write();
+    await once(req, "error");
+    a.duplex.push(ping());
+    result.afterNextRead = isAllocated(a.session, 1);
+    console.log(JSON.stringify(result));
+    a.session.destroy();
+    b.session.destroy();
+  `;
+
+  test(
+    "does not free the stream that sendTrailers({}) is ending",
+    async () => {
+      const result = await run(/* js */ `
+      const a = await connect();
+      const b = await connect();
+      const controller = new AbortController();
+      const req = a.session.request(
+        { ":method": "POST", ":path": "/" },
+        { waitForTrailers: true, signal: controller.signal },
+      );
+      const wanted = once(req, "wantTrailers");
+      req.end();
+      await wanted;
+      await until(() => a.duplex.written.length > 0);
+      const write = () => req.sendTrailers({});
+      ${closeFromOtherSession}
+    `);
+      expect(result).toEqual({ stdout: '{"duringWrite":true,"afterNextRead":false}', stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "does not free the stream whose queued DATA is being flushed",
+    async () => {
+      const result = await run(/* js */ `
+      const a = await connect({ writableHighWaterMark: 1 });
+      const b = await connect();
+      const controller = new AbortController();
+      const req = a.session.request({ ":method": "POST", ":path": "/" }, { signal: controller.signal });
+      req.write(Buffer.alloc(1 << 19, "a"));
+      await until(() => a.session.state.outboundQueueSize > 0);
+      a.duplex.stall = true;
+      a.duplex.push(Buffer.concat([windowUpdate(0), windowUpdate(1)]));
+      await until(() => a.duplex.stalled);
+      // 'drain' flushes the rest of the queue.
+      const write = () => {
+        a.duplex.stall = false;
+        a.duplex.stalled();
+      };
+      ${closeFromOtherSession}
+    `);
+      expect(result).toEqual({ stdout: '{"duringWrite":true,"afterNextRead":false}', stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "can still write to a stream that the peer reset during that write",
+    async () => {
+      const result = await run(/* js */ `
+      const { session, duplex } = await connect();
+      const req = session.request({ ":method": "POST", ":path": "/" });
+      await until(() => duplex.written.length > 0);
+      duplex.inNextWrite = () => {
+        duplex.push(frame(3, 0, 1, u32(http2.constants.NGHTTP2_INTERNAL_ERROR)));
+        duplex.push(ping());
+        req.write("late");
+      };
+      session.settings({});
+      const [error] = await once(req, "error");
+      console.log(error.code);
+      session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "ERR_HTTP2_STREAM_ERROR", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+});

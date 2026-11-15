@@ -407,6 +407,9 @@ impl<T, const N: usize> SmallList<T, N> {
 pub mod zig_hash_map;
 pub use zig_hash_map::{AutoHashContext, HashContext, HashMap};
 
+mod append_only_map;
+pub use append_only_map::AppendOnlyMap;
+
 /// std-compat path so call sites that wrote `bun_collections::hash_map::Entry`
 /// against the old std-alias keep compiling.
 pub mod hash_map {

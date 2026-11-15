@@ -214,9 +214,8 @@ impl RateLimit {
 }
 
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
-/// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
-/// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
-/// ownership cycle.
+/// `&self`: the sink borrows the H2FrameParser, which owns the `Connection` and which JS can reach
+/// during a callback.
 pub(crate) trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
     /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.

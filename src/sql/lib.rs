@@ -184,9 +184,6 @@ pub mod postgres {
         pub mod sasl_response;
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
-
-        // ── flat re-exports for `bun_sql_jsc` (Write trait surface) ──
-        pub use new_writer::WriterContext;
     }
 
     pub use any_postgres_error::{AnyPostgresError, PostgresErrorOptions};

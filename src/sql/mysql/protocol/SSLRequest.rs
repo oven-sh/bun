@@ -19,11 +19,8 @@ pub struct SSLRequest {
 }
 
 impl SSLRequest {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &mut self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyMySQLError> {
-        let mut packet = writer.start(1)?;
+    pub fn write_internal(&mut self, writer: &mut NewWriter<'_>) -> Result<(), AnyMySQLError> {
+        let packet = writer.start(1)?;
 
         self.capability_flags.CLIENT_CONNECT_ATTRS = self.has_connection_attributes;
 
@@ -48,7 +45,7 @@ impl SSLRequest {
         writer.write(&[0u8; 19])?;
         writer.int4(self.mariadb_capability_flags.to_int())?;
 
-        packet.end()?;
+        packet.end(writer)?;
         Ok(())
     }
 }

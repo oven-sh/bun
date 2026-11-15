@@ -427,11 +427,6 @@ impl Drop for EngineResult {
     }
 }
 
-// SAFETY: nothing but its owner touches the C++ object after `Bun__AOT__compile` returns, and `Bun__AOT__freeResult` may run on any thread.
-unsafe impl Send for EngineResult {}
-// SAFETY: every accessor that shares `self` only reads.
-unsafe impl Sync for EngineResult {}
-
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct BunAOTBytes {

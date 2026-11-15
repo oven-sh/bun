@@ -259,18 +259,6 @@ impl Drop for LinkerGraph<'_> {
     }
 }
 
-// SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
-// - The `MultiArrayList`s. Workers write their columns through `split_raw()` and a copy of
-//   `import_records`, and each task writes only the rows of its own file or chunk. The gap:
-//   a file in two `internal_bake_dev` chunks has its import records written by both.
-//   Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
-// - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
-//   `LinkerContext::link()` shortens them all with `follow_all()` before workers
-//   follow any. The dev server skips `link()`: its links come from the parser and
-//   stay within one file, and tasks that run at the same time work on different files.
-// Only the bundle thread allocates from the arena; workers use `worker.arena()`.
-unsafe impl Sync for LinkerGraph<'_> {}
-
 impl<'a> LinkerGraph<'a> {
     #[inline]
     pub(crate) fn arena(&self) -> &'a Arena {

@@ -2253,17 +2253,17 @@ pub(crate) fn inject<'a>(
             strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
             out_buf[zname.len()] = 0;
 
-            use bun_sys::windows as w;
-            // SAFETY: both buffers NUL-terminated above; `CopyFileW` does not
-            // retain the pointers past return.
-            if unsafe { w::CopyFileW(in_buf.as_ptr(), out_buf.as_ptr(), w::FALSE) } == w::FALSE {
+            use bun_core::WStr;
+            use bun_sys::windows::{self as w, Win32ErrorExt as _};
+            let out = WStr::from_buf(&out_buf[..], zname.len());
+            if let Err(err) = w::CopyFileW(WStr::from_buf(&in_buf[..], self_exe.len()), out, false)
+            {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
-                    w::last_system_errno()
+                    err.to_system_errno()
                 );
                 return None;
             }
-            let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
                 Fd::invalid(),
                 out,
@@ -3179,10 +3179,8 @@ pub fn to_executable(
             || windows_options.copyright.is_some()
         {
             // The file has been moved to dest_path
-            // SAFETY: full-buffer pointer so provenance includes the NUL at
-            // `dest_buf_u16[dest_w_len]` (FFI reads it as a C wide string).
             if let Err(e) = windows::rescle::set_windows_metadata(
-                dest_buf_u16.as_ptr(),
+                bun_core::WStr::from_buf(dest_buf_u16, dest_w_len),
                 windows_options.icon.as_deref(),
                 windows_options.title.as_deref(),
                 windows_options.publisher.as_deref(),

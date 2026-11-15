@@ -791,24 +791,20 @@ impl Execution {
 
     /// Saves a failed attempt's failure before a retry, so it's reported with the test's final result.
     fn save_attempt_failure(buntest: &BunTest, sequence: &ExecutionSequence) {
-        if let Some(reporter) = buntest.reporter {
-            // SAFETY: the reporter outlives every BunTest; single-threaded, no `&mut` to it is live.
-            let reporter = unsafe { reporter.as_ref() };
-            if !reporter.jest.test_options.reporters.junit {
-                return;
-            }
-            let failure = sequence
-                .failure
-                .take()
-                .or_else(|| {
-                    test_command::TestFailure::from_result(
-                        sequence.result.get(),
-                        sequence.expect_call_count.get(),
-                    )
-                })
-                .unwrap_or_default();
-            sequence.earlier_failures.with_taken(|failures| failures.push(failure));
+        if !buntest.reporter.jest.reports_to_junit {
+            return;
         }
+        let failure = sequence
+            .failure
+            .take()
+            .or_else(|| {
+                test_command::TestFailure::from_result(
+                    sequence.result.get(),
+                    sequence.expect_call_count.get(),
+                )
+            })
+            .unwrap_or_default();
+        sequence.earlier_failures.with_taken(|failures| failures.push(failure));
     }
 
     fn reset_sequence(buntest: &BunTest, sequence: &ExecutionSequence) {
@@ -865,10 +861,7 @@ impl Execution {
         // toMatchSnapshot() call. Without this, retries / repeats would
         // increment the counter to N on attempt N and look for a key that does
         // not exist (https://github.com/oven-sh/bun/issues/23705).
-        let counted_snapshots = counted_snapshots.take();
-        if let Some(runner) = super::jest::Jest::runner() {
-            runner.snapshots.undo_counts(&counted_snapshots);
-        }
+        buntest.reporter.jest.with_snapshots(|snapshots| snapshots.undo_counts(&counted_snapshots.take()));
     }
 
     pub(crate) fn handle_uncaught_exception(
@@ -1003,14 +996,8 @@ fn step_group_one(
     now: &mut Timespec,
 ) -> JsResult<AdvanceStatus> {
     let mut final_status = AdvanceStatus::Done;
-    let concurrent_limit: usize = if let Some(reporter) = buntest.reporter {
-        // SAFETY: reporter outlives every BunTest (owned by test_command::exec).
-        let runner = &unsafe { reporter.as_ref() }.jest;
-        runner.vi_config.max_concurrency.unwrap_or(runner.max_concurrency) as usize
-    } else {
-        debug_assert!(false); // probably can't get here because reporter is only set null when the file is exited
-        20
-    };
+    let runner = &buntest.reporter.jest;
+    let concurrent_limit = runner.vi_config.get().max_concurrency.unwrap_or(runner.max_concurrency) as usize;
     let mut active_count: usize = 0;
     for sequence_index in 0..group.sequence_end - group.sequence_start {
         let sequence_status =
@@ -1107,10 +1094,7 @@ fn step_sequence_one(
                 entry: Some(active_entry),
                 attempt: sequence.attempt.get(),
             };
-            buntest
-                .bun_test_root
-                .get()
-                .mark_timed_out(group_index, entry_data);
+            buntest.reporter.jest.bun_test_root.mark_timed_out(group_index, entry_data);
             report_around_timeout(
                 buntest,
                 global_this,

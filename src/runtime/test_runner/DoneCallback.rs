@@ -1,6 +1,6 @@
 use bun_jsc::{JSFunction, JSGlobalObject, JSValue, JsClass as _, JsResult};
 use bun_core::String as BunString;
-use bun_ptr::{JsCell, RefPtr};
+use bun_ptr::RefPtr;
 use core::cell::Cell;
 
 use crate::generated_bindgen::bun_test::Bun__BunTest__bunTestDoneCallback;
@@ -9,7 +9,7 @@ use crate::test_runner::execution::ExecutionSequence;
 
 pub(crate) struct DoneCallback {
     /// Some = not called yet. None = done already called, no-op.
-    pub(crate) r#ref: JsCell<Option<RefPtr<RefData>>>,
+    pub(crate) r#ref: Cell<Option<RefPtr<RefData>>>,
     pub(crate) called: Cell<bool>, // = false
     pub(crate) entry: RefDataValue,
     /// `BunTest::generation` of the file that `entry` is in.
@@ -21,7 +21,7 @@ impl DoneCallback {
         let _g = group_begin!();
 
         let done_callback = DoneCallback {
-            r#ref: JsCell::new(None),
+            r#ref: Cell::new(None),
             called: Cell::new(false),
             entry,
             generation,

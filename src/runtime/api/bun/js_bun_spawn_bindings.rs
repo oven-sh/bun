@@ -280,7 +280,7 @@ pub(crate) fn spawn_sync(
         && result.is_ok()
         && !cx.global().has_exception()
         && let Some(runner) = crate::test_runner::jest::Jest::runner()
-        && let Some(active_file) = runner.bun_test_root.active_file.clone()
+        && let Some(active_file) = runner.bun_test_root.clone_active_file()
     {
         runner.remove_active_timeout();
         crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
@@ -1647,10 +1647,7 @@ fn spawn_maybe_sync(
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if jsc_vm.is_main_thread.get()
-                && let Some(runner) = crate::test_runner::jest::Jest::runner()
-            {
-                // The test runner and its deadlines belong to the main thread.
+            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
                 runner.get_active_timeout()
             } else {
                 Timespec::EPOCH
@@ -1710,11 +1707,8 @@ fn spawn_maybe_sync(
                     {
                         bun_test_fired = true;
                         *bun_test_deadline = Some(absolute_timespec);
-                        if let Some(active_file) = crate::test_runner::jest::Jest::runner()
-                            .unwrap()
-                            .bun_test_root
-                            .active_file
-                            .clone()
+                        if let Some(active_file) =
+                            crate::test_runner::bun_test::clone_active_strong()
                         {
                             active_file.kill_dangling_processes_on_timeout(cx.global());
                         }

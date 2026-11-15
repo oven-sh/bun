@@ -12,8 +12,8 @@ use bun_core::strings;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, BlobExt};
-use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
-use crate::webcore::{ReadableStream, Response, response};
+use crate::webcore::body::{BodyMixin as _, Tag as BodyTag};
+use crate::webcore::{ReadableStream, Response};
 
 unsafe extern "C" {
     // `streaming_compiler` is the opaque C++ `StreamingCompiler*` handed in by
@@ -34,44 +34,30 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 ) -> JsResult<JSValue> {
     // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
     let context = this.bun_vm().context_of_caller();
-    let response: &mut Response = match response::from_js(response_value) {
-        // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
-        // the cell stays live for the duration of this host call (rooted on the
-        // C++ caller's stack).
-        Some(r) => unsafe { &mut *r },
-        None => {
-            return Err(this.throw_invalid_argument_type_value2(
-                b"source",
-                // "an Promise" is byte-for-byte what Node's ERR_INVALID_ARG_TYPE
-                // formatter emits for an uppercase-initial non-class entry.
-                b"an instance of Response or an Promise resolving to Response",
-                response_value,
-            ));
-        }
+    let Some(response) = response_value.as_class_ref::<Response>() else {
+        return Err(this.throw_invalid_argument_type_value2(
+            b"source",
+            // "an Promise" is byte-for-byte what Node's ERR_INVALID_ARG_TYPE formatter emits.
+            b"an instance of Response or an Promise resolving to Response",
+            response_value,
+        ));
     };
 
-    {
-        let content_type_slice = response.get_content_type()?;
-        let content_type: &[u8] = match &content_type_slice {
-            Some(ct) => ct.slice(),
-            None => b"null",
-        };
-
-        // https://webassembly.github.io/spec/web-api/#compile-a-potential-webassembly-response
-        // requires a byte-case-insensitive match for `application/wasm`. Parameters
-        // are disallowed, so this is a whole-value compare, not an essence check.
-        if !strings::eql_case_insensitive_ascii(content_type, b"application/wasm", true) {
-            return Err(this
-                .err(
-                    ErrorCode::WEBASSEMBLY_RESPONSE,
-                    format_args!(
-                        "WebAssembly response has unsupported MIME type '{}'",
-                        bstr::BStr::new(content_type)
-                    ),
-                )
-                .throw());
-        }
-        // `content_type_slice` drops here.
+    // Parameters are disallowed: https://webassembly.github.io/spec/web-api/#compile-a-potential-webassembly-response
+    let is_wasm = response.with_content_type(|content_type| {
+        strings::eql_case_insensitive_ascii(content_type, b"application/wasm", true)
+    });
+    if !is_wasm.unwrap_or(false) {
+        let content_type = response.with_content_type(<[u8]>::to_vec);
+        return Err(this
+            .err(
+                ErrorCode::WEBASSEMBLY_RESPONSE,
+                format_args!(
+                    "WebAssembly response has unsupported MIME type '{}'",
+                    bstr::BStr::new(content_type.as_deref().unwrap_or(b"null"))
+                ),
+            )
+            .throw());
     }
 
     if !response.is_ok() {
@@ -95,28 +81,22 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
             .throw());
     }
 
-    // Holding `body = response.get_body_value()` as a single live pointer
-    // through `getBodyReadableStream` would overlap two `&mut` borrows
-    // of `response`, so we re-borrow per use and capture scalars.
-    {
-        let body = response.get_body_value();
-        if let BodyValue::Error(err) = body {
-            return Err(this.throw_value(err.to_js(this)));
-        }
-
-        // We're done validating. From now on, deal with extracting the body.
-        body.to_blob_if_possible();
+    let body = response.body();
+    if let Some(err) = body.error_to_js(this) {
+        return Err(this.throw_value(err));
     }
 
-    if matches!(response.get_body_value(), BodyValue::Locked(_)) {
+    // We're done validating. From now on, deal with extracting the body.
+    body.to_blob_if_possible();
+
+    if body.tag() == BodyTag::Locked {
         if let Some(stream) = response.get_body_readable_stream() {
             return Ok(stream.value);
         }
     }
 
-    let body = response.get_body_value();
-    let any_blob: AnyBlob = match body {
-        BodyValue::Locked(_) => match body.try_use_as_any_blob() {
+    let any_blob: AnyBlob = match body.tag() {
+        BodyTag::Locked => match body.try_use_as_any_blob() {
             Some(b) => b,
             None => return body.to_readable_stream(&this.js_thread(context)),
         },

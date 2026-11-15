@@ -1410,14 +1410,21 @@ fn reopen_at(fd: Fd, path: &ZStr, is_meant: impl FnOnce() -> bool) -> Maybe<bool
 
 impl StandaloneModuleGraph {
     /// `descriptor` holds the result of `to_graph_bytes` and stays open: the engine maps the code from it.
-    pub fn from_descriptor(
+    ///
+    /// # Safety
+    /// As [`Self::from_descriptor_at`].
+    pub unsafe fn from_descriptor(
         descriptor: Fd,
     ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
-        Self::from_descriptor_at(descriptor, 0)
+        // SAFETY: the caller's contract.
+        unsafe { Self::from_descriptor_at(descriptor, 0) }
     }
 
     /// `offset`: a multiple of the size of a page.
-    pub fn from_descriptor_at(
+    ///
+    /// # Safety
+    /// Nothing writes to the file or truncates it during the call or, if there is a graph, for the rest of the process.
+    pub unsafe fn from_descriptor_at(
         descriptor: Fd,
         offset: usize,
     ) -> crate::Result<Option<&'static StandaloneModuleGraph>> {
@@ -1438,7 +1445,7 @@ impl StandaloneModuleGraph {
             offset: (offset + PAYLOAD_HEADER_SIZE) as i64,
         };
         // SAFETY: `PAYLOAD_HEADER_SIZE + length <= size`. The memory is new, is never released, and nothing else
-        // has its address.
+        // has its address. The caller's contract covers the file behind it.
         let payload =
             unsafe { RawPayload::new(base.add(PAYLOAD_HEADER_SIZE), length as usize, Some(file)) };
         Self::from_payload(payload)
@@ -4016,14 +4023,16 @@ pub(crate) mod tests {
         for malformed in [&b""[..], b"1234567", b"\x09\0\0\0\0\0\0\0payload."] {
             let path = folder.write("malformed", malformed);
             let file = bun_sys::File::open(&path, bun_sys::O::RDONLY, 0).unwrap();
-            let graph = StandaloneModuleGraph::from_descriptor(file.handle());
+            // SAFETY: the file is only rewritten after it was rejected.
+            let graph = unsafe { StandaloneModuleGraph::from_descriptor(file.handle()) };
             assert_eq!(graph.err(), Some(CORRUPTED));
         }
 
         let bytes = with_request(&folder, true, |request| to_graph_bytes(request).unwrap());
         let path = folder.write("graph", &bytes);
         let descriptor = bun_sys::open(&path, bun_sys::O::RDONLY, 0).unwrap();
-        let graph = StandaloneModuleGraph::from_descriptor(descriptor).unwrap();
+        // SAFETY: the file is deleted at the end, which does not change it.
+        let graph = unsafe { StandaloneModuleGraph::from_descriptor(descriptor) }.unwrap();
         let program = graph.unwrap().compiled_program.as_ref().unwrap();
         let backing_file = program.backing_file.unwrap();
         assert_eq!(backing_file.descriptor, descriptor.native() as isize);

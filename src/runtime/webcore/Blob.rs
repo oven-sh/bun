@@ -2018,7 +2018,7 @@ impl BlobExt for Blob {
     /// read-only provenance and make the downstream `&mut *buf` retag UB).
     ///
     /// Returns a dangling-empty slice when there is no byte store.
-    /// An embedded file's bytes are read-only: `template_blob` keeps a ref, so `has_one_ref` is false.
+    /// An embedded file's bytes are read-only: `BlobTemplate` keeps a ref, so `has_one_ref` is false.
     ///
     /// # Aliasing
     /// The returned pointer aliases the Store's payload. Callers must

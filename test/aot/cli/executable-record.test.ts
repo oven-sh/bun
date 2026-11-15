@@ -1,6 +1,6 @@
 import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { built, spawned, withoutDebugInformation } from "../harness/commands";
 import { beforeAll, describe, test } from "../supported";
@@ -89,7 +89,7 @@ function readRecord(file: Buffer) {
       sourcePath: { offset: file.readUInt32LE(entry + 8), length: file.readUInt32LE(entry + 12) },
     };
   });
-  return { base, byteCount, fileCount, flags, at, image, count, entries, orderAt: at + 16 + 16 * count };
+  return { base, byteCount, modules, fileCount, flags, at, image, count, entries, orderAt: at + 16 + 16 * count };
 }
 
 const flagWithoutRecord = "the flag without the record";
@@ -195,6 +195,41 @@ describe.concurrent("the record of an executable", () => {
       const copy = Buffer.from(name === flagWithoutRecord ? bundled : original);
       edits[name]!(copy, readRecord(copy));
       expectRejected(await runCopy(folder, copy, bunEnv));
+    },
+    timeout,
+  );
+
+  // The image of a program that is written alone is relocated at start. MADV_DONTNEED on its pages undoes that.
+  test.skipIf(!isLinux)(
+    "the pages of the image are kept when the contents of a file lie before it",
+    async () => {
+      using dir = tempDir("aot-contents-before-image", {
+        "a.txt": "a",
+        "b.txt": "b",
+        "main.ts": `import "./a.txt" with { type: "file" };
+import "./b.txt" with { type: "file" };
+const words: Record<string, number> = { after: 1, startup: 2 };
+setImmediate(() => console.log(Object.keys(words).join(" ")));
+`,
+      });
+      const env = { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: undefined };
+      built(
+        await spawned([bunExe(), "build", "--compile", "--aot", "main.ts", "--outfile", "program"], String(dir), {
+          ...env,
+          BUN_AOT_WRITES_PROGRAM_ALONE: "1",
+        }),
+      );
+      const copy = readFileSync(join(String(dir), "program"));
+      const { base, modules, fileCount } = readRecord(copy);
+      expect(fileCount).toBe(3);
+      const contentsOfSecondFile = base + modules.offset + 52 + 8;
+      expect(copy.readUInt32LE(contentsOfSecondFile + 4)).toBe(1);
+      copy.writeUInt32LE(0, contentsOfSecondFile);
+      expect(outcome(await runCopy(String(dir), copy, env))).toEqual({
+        stdout: "after startup\n",
+        exitCode: 0,
+        signal: null,
+      });
     },
     timeout,
   );

@@ -120,6 +120,36 @@ describe.skipIf(isWindows).each(kinds)("in %s", kind => {
   });
 });
 
+test.concurrent.skipIf(!isLinux)("a program cannot change the memfd that holds it", async () => {
+  using dir = tempDir("aot-program-handover", {
+    "changes.ts": `
+      import { ftruncateSync, readdirSync, readlinkSync, writeSync } from "node:fs";
+      const descriptor = readdirSync("/proc/self/fd").map(Number).find(descriptor => {
+        try {
+          return readlinkSync("/proc/self/fd/" + descriptor).startsWith("/memfd:bun-compiled-program");
+        } catch {
+          // The descriptor of the listing.
+          return false;
+        }
+      })!;
+      for (const change of [
+        () => writeSync(descriptor, "x", 0),
+        () => ftruncateSync(descriptor, 1 << 30),
+        () => ftruncateSync(descriptor, 0),
+      ]) {
+        try {
+          change();
+          console.log("changed");
+        } catch (error) {
+          console.log((error as NodeJS.ErrnoException).code);
+        }
+      }
+    `,
+  });
+  const { stdout, exitCode } = await run([bunExe(), "run", "--debug-aot", "changes.ts"], String(dir));
+  expect({ stdout, exitCode }).toEqual({ stdout: "EPERM\nEPERM\nEPERM\n", exitCode: 0 });
+});
+
 const inOwnMounts = ["unshare", "-Urm"];
 // The mount hides whatever lay in shared memory: a Bun that is run from there, or a temporary folder there, is gone behind it, and the run prints nothing.
 const liesInSharedMemory = (path: string) => realpathSync(path).startsWith("/dev/shm/");

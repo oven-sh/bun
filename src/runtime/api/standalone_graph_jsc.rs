@@ -10,14 +10,20 @@ use bun_jsc::JSGlobalObject;
 use bun_ptr::RefPtr;
 
 use crate::webcore::Blob;
+use crate::webcore::blob::BlobContentType;
 use crate::webcore::blob::store::{Bytes, Data, Store};
 use bun_standalone_graph::{File, Graph, is_bun_standalone_file_path};
 
-/// The process-wide template of an embedded file's `Blob`: store, content
-/// type and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
-fn template_blob(file: &'static File) -> &'static Blob {
+/// What the `Blob`s of an embedded file share across VMs.
+struct BlobTemplate {
+    /// Never released, so JS is never given these read-only bytes to write to.
+    store: RefPtr<Store>,
+    name: bstring::String,
+}
+
+fn blob_template(file: &'static File) -> &'static BlobTemplate {
     /// By index in `Graph::files`.
-    static TEMPLATES: OnceLock<Box<[OnceLock<Box<Blob>>]>> = OnceLock::new();
+    static TEMPLATES: OnceLock<Box<[OnceLock<BlobTemplate>]>> = OnceLock::new();
     let graph = Graph::get_ref().expect("an embedded file has a graph");
     let files = graph.files.values();
     let templates = TEMPLATES.get_or_init(|| files.iter().map(|_| OnceLock::new()).collect());
@@ -25,28 +31,16 @@ fn template_blob(file: &'static File) -> &'static Blob {
     templates[index].get_or_init(|| {
         let mut bytes = Bytes::init_static(file.utf8_contents());
         bytes.stored_name = file.name.to_vec().into_boxed_slice();
-        let mut store = Store::new(Data::Bytes(bytes), MimeType::NONE);
-        let blob = Blob::default();
-        if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
-            bun_paths::extension(file.name),
-            b'.',
-        )) {
-            blob.content_type
-                .set(crate::webcore::blob::BlobContentType::from_mime(&mime));
-            blob.content_type_was_set.set(true);
-            store.mime_type = mime;
-        }
-        let store = RefPtr::new(store);
-        blob.size.set(store.size());
-        // Never released, so JS is never given these read-only bytes to write to.
-        blob.store.set(Some(store));
-        let name = graph.display_name_of(file);
-        if !name.is_empty() {
-            let mut name = bstring::String::clone_utf8(&name);
+        let extension = strings::trim_leading_char(bun_paths::extension(file.name), b'.');
+        let mime = MimeType::by_extension_no_default(extension).unwrap_or(MimeType::NONE);
+        let store = RefPtr::new(Store::new(Data::Bytes(bytes), mime));
+        let display_name = graph.display_name_of(file);
+        let mut name = bstring::String::DEAD;
+        if !display_name.is_empty() {
+            name = bstring::String::clone_utf8(&display_name);
             name.make_thread_shareable();
-            blob.name.set(name);
         }
-        Box::new(blob)
+        BlobTemplate { store, name }
     })
 }
 
@@ -73,9 +67,13 @@ pub(crate) fn is_asset(blob: &Blob) -> bool {
         && file.is_some_and(|it| is_view_of(store, it) && !graph.is_file_for_file_system_alone(it))
 }
 
-/// A fresh dupe of the template, owned by `global`'s VM.
+/// A new `Blob` of `file`, owned by `global`'s VM.
 pub(crate) fn file_blob(file: &'static File, global: &JSGlobalObject) -> Blob {
-    let blob = template_blob(file).dupe_with_content_type(true);
-    blob.global_this.set(global);
+    let template = blob_template(file);
+    let content_type = BlobContentType::from_mime(&template.store.mime_type);
+    let blob = Blob::init_with_store(template.store.clone(), global);
+    blob.content_type_was_set.set(!content_type.is_empty());
+    blob.content_type.set(content_type);
+    blob.name.set(template.name.clone());
     blob
 }

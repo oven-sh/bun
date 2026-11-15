@@ -4,7 +4,7 @@
 // pending payload *before* the reassignment. When it isn't, the optional reads back as
 // null (or garbage, depending on build mode) and the DevServer is never told that
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
@@ -550,4 +550,58 @@ test.skipIf(isWindows)("responds to a framework request queued behind the reload
 
   expect(stdout, stderr).toBe("index\nafter\nafter\n");
   expect(exitCode).toBe(0);
+});
+
+describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s", development => {
+  async function run(files: Record<string, string>) {
+    using dir = tempDir("serve-plugins-first-request", {
+      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+      "index.html": indexHtml,
+      "entry.ts": `console.log("entry");`,
+      ...files,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A plugin that is already imported is set up without a turn of the event loop.
+  test("a plugin can stop the server as it is set up", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "plugin.ts": `export default { name: "stops", setup: () => globalThis.stop() };`,
+      "server.ts": `
+        import html from "./index.html";
+        import "./plugin.ts";
+        const server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+        let stopped;
+        globalThis.stop = () => void (stopped = server.stop(true));
+        console.log(await fetch(server.url).then(res => res.status, err => err.code));
+        await stopped;
+        console.log(server.pendingRequests);
+      `,
+    });
+    expect(stdout, stderr).toBe("ECONNRESET\n0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the request that starts the load of a plugin that fails at once gets a 500", async () => {
+    const { stdout, stderr, exitCode } = await run({
+      "plugin.ts": `export default { name: "throws", setup() { throw new Error("plugin failed on purpose"); } };`,
+      "server.ts": `
+        import html from "./index.html";
+        import "./plugin.ts";
+        using server = Bun.serve({ port: 0, development: ${development}, routes: { "/": html } });
+        console.log((await fetch(server.url)).status);
+      `,
+    });
+    expect(stderr.match(/^error: plugin failed on purpose$/gm), stderr).toHaveLength(1);
+    expect(stdout).toBe("500\n");
+    expect(exitCode).toBe(0);
+  });
 });

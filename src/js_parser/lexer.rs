@@ -178,16 +178,9 @@ pub struct LexerSnapshot<'a> {
 
 /// `'a` is the lifetime of the source contents (arena/source-owned slices like
 /// `identifier` and `string_literal_raw` borrow from the source or from
-/// the parser arena). The `Log` is *not* tied to `'a`; see the `log` field doc.
-pub struct Lexer<'a> {
-    /// Raw pointer to the caller-owned `Log`. The parser holds a second
-    /// aliasing pointer to the same `Log`; Rust cannot store two `&mut Log`
-    /// to the same allocation (Stacked-Borrows UB), so both the lexer and the
-    /// parser keep `NonNull<Log>` and reborrow at use sites via `log()`. The
-    /// `init*` constructors take a plain `&mut Log` (not tied to `'a`); the
-    /// caller must keep the pointee alive for the lexer's lifetime — see
-    /// `init_without_reading`.
-    pub(crate) log: core::ptr::NonNull<Log>,
+/// the parser arena). The AST borrows for `'a` too, and can outlive the log.
+pub struct Lexer<'a, 'log> {
+    pub(crate) log: &'log Log,
     pub(crate) source: &'a Source<'a>,
     /// Cached `source.contents()` slice. With `source: &'a Source` plus
     /// `Source.contents: Cow<'a,[u8]>`, every inlined `step()` was a
@@ -247,12 +240,11 @@ pub struct Lexer<'a> {
     pub(crate) all_comments: Vec<Range>,
 }
 
-impl<'a> LexerLog<'a> for Lexer<'a> {
+impl<'a> LexerLog<'a> for Lexer<'a, '_> {
     type Err = Error;
     #[inline]
     fn log(&self) -> &Log {
-        // SAFETY: the caller of `init*` keeps the pointee alive for the lexer's lifetime.
-        unsafe { self.log.as_ref() }
+        self.log
     }
     #[inline]
     fn source(&self) -> &'a Source<'a> {
@@ -276,7 +268,7 @@ impl<'a> LexerLog<'a> for Lexer<'a> {
     }
 }
 
-impl<'a> Lexer<'a> {
+impl<'a, 'log> Lexer<'a, 'log> {
     #[inline]
     pub fn loc(&self) -> Loc {
         bun_ast::usize2loc(self.start)
@@ -2222,17 +2214,13 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    /// `log` is *not* tied to `'a`: the lexer stores it as `NonNull<Log>` (see
-    /// the `log` field doc) and the caller must keep the pointee alive for the
-    /// lexer's lifetime. The looser bound lets `'a` (which `Ast<'a>` borrows
-    /// through `arena`) outlive a stack-local scratch log.
-    pub fn init_without_reading(log: &Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
+    pub fn init_without_reading(log: &'log Log, source: &'a Source<'a>, arena: &'a Arena) -> Self {
         // Deref `Cow<'static,[u8]>` once; the resulting `&[u8]` borrows
         // `*source` (lifetime `'a`) regardless of Cow arm, so it is sound to
         // cache for the lexer's lifetime.
         let contents: &'a [u8] = source.contents();
         Self {
-            log: core::ptr::NonNull::from(log),
+            log,
             source,
             contents,
             current: 0,

@@ -90,8 +90,8 @@ pub struct InitOptions {
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
     pub log: Option<&'static bun_ast::Log>,
-    /// The log of a VM that is given no `log`.
-    pub own_log: bun_ast::Log,
+    /// The level of the log that a VM makes when it is given no `log`.
+    pub own_log_level: bun_ast::Level,
     /// Forwarded to
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
@@ -125,7 +125,7 @@ impl Default for InitOptions {
             transform_options: Default::default(),
             debugger: Default::default(),
             log: None,
-            own_log: Default::default(),
+            own_log_level: bun_ast::Log::default().level.get(),
             env_loader: None,
             owned_env_loader: None,
             graph: None,
@@ -3074,7 +3074,10 @@ impl VirtualMachine {
             use core::ptr::addr_of_mut;
             addr_of_mut!((*vm).global).write(Cell::new(core::ptr::null_mut()));
             addr_of_mut!((*vm).console).write(console);
-            addr_of_mut!((*vm).own_log).write(core::mem::take(&mut opts.own_log));
+            addr_of_mut!((*vm).own_log).write(bun_ast::Log {
+                level: Cell::new(opts.own_log_level),
+                ..Default::default()
+            });
             // `'static` as in `get()`: until this thread is done with script.
             addr_of_mut!((*vm).log).write(opts.log.unwrap_or(&(*vm).own_log));
             addr_of_mut!((*vm).log_level).write((*vm).log.level.get());

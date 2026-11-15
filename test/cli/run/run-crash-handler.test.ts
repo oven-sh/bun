@@ -219,19 +219,23 @@ test("the crash report lists the builtin modules that were loaded", async () => 
 });
 
 // The report does not read the arguments as the rest of Bun does. It has to print the same list: after the first
-// argument come those of BUN_OPTIONS. A release build prints the first 196 bytes of the arguments, and on some
-// machines the path of the executable takes most of them.
+// argument come those of BUN_OPTIONS. A release build prints the first 196 bytes of the arguments, so the first one
+// is the name of the executable without its directory.
 test("the crash report lists the arguments, with those of BUN_OPTIONS", async () => {
+  const name = path.basename(bunExe());
+  const rest = ["fixture-crash.js", "panic", "--debug-crash-handler-use-trace-string"];
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "fixture-crash.js", "panic", "--debug-crash-handler-use-trace-string"],
+    cmd: [bunExe(), ...rest],
+    argv0: name,
     cwd: import.meta.dir,
     env: { ...noReportEnv, BUN_OPTIONS: "--smol --no-deprecation" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr.split(/\r?\n/).find(line => line.startsWith("Args: "))).toMatch(
-    /^Args: "[^"]+" "--smol" "--no-deprecation" "/,
+  const listed = [name, "--smol", "--no-deprecation", ...rest];
+  expect(stderr.split(/\r?\n/).find(line => line.startsWith("Args: "))).toBe(
+    `Args: ${listed.map(arg => JSON.stringify(arg)).join(" ")}`,
   );
   expect(exitCode).not.toBe(0);
 });
@@ -881,7 +885,7 @@ int uname(struct utsname *name) {
       await using proc = spawnWithShim(String(dir), crash, shim, [bunExe(), "entry.js"]);
       const [stdout, stderr, exited] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toMatch(/^Linux Kernel v\d+\.\d+\.\d+ \| glibc v\d+\.\d+$/m);
+      expect(stderr).toMatch(/^(Linux|WSL) Kernel v\d+\.\d+\.\d+ \| glibc v\d+\.\d+$/m);
       expect(stderr).toContain(reason);
       expect(stderr).toContain("oh no: Bun has crashed");
       expect({ stdout, exited }).toEqual({ stdout: "", exited: 128 + abort });

@@ -30,7 +30,8 @@ static pid_t pid;
 
 static void fail(const char *what) {
   fprintf(stderr, "signal-at-address: %s: %s\n", what, strerror(errno));
-  kill(pid, SIGKILL);
+  // After a fork() that failed pid is -1, and kill() of -1 signals every process it may.
+  if (pid > 0) kill(pid, SIGKILL);
   exit(1);
 }
 
@@ -48,6 +49,7 @@ int main(int argc, char **argv) {
   int signal_number = atoi(argv[2]);
 
   pid = fork();
+  if (pid < 0) fail("fork");
   if (pid == 0) {
     // A program that never ends is gone when the test that waits for this process gives up.
     prctl(PR_SET_PDEATHSIG, SIGKILL);

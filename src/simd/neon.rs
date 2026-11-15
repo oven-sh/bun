@@ -1,4 +1,5 @@
 use crate::Int;
+use crate::isa::movemask_of;
 pub(crate) use crate::native::{load_shared, store_shared};
 pub use crate::portable::{bit_indices, prefix_xor};
 pub(crate) use crate::portable::{load_shared_masked, store_shared_masked};
@@ -20,8 +21,24 @@ fn pairwise_add(a: u8x16, b: u8x16) -> u8x16 {
     even + odd
 }
 
+/// For each byte, `offset` and its index in the last mask that has it set, or else `none`.
+#[inline(always)]
+fn select_indices<T: Int<N>, const N: usize>(
+    masks: impl Iterator<Item = (Mask<T, N>, usize)>,
+    offset: usize,
+    none: u8,
+) -> u8x16 {
+    static INDICES: [u8; 65] = core::array::from_fn(const |i| i as u8);
+    masks.fold(u8x16::splat(none), |others, (mask, start)| {
+        let is_set = mask.to_vector().first_bytes::<16>();
+        let indices = u8x16::from_slice(&INDICES[offset + start * size_of::<T>()..]);
+        is_set & indices | !is_set & others
+    })
+}
+
 impl crate::Isa for Neon {
     const HAS_INTERLEAVED_MEMORY: bool = true;
+    const HAS_SINGLE_CYCLE_OPS: bool = false;
 
     /// `shrn` leaves 4 bits per byte.
     #[inline(always)]
@@ -38,15 +55,44 @@ impl crate::Isa for Neon {
         mask.0.any()
     }
 
+    #[inline(always)]
+    fn first_set_of<T: Int<N>, const N: usize, const K: usize>(
+        masks: [(Mask<T, N>, usize); K],
+    ) -> Option<usize> {
+        if size_of::<[T; N]>() != 16 {
+            return movemask_of(masks).0.lowest_one().map(|lane| lane as usize);
+        }
+        let first = crate::opaque(
+            select_indices(masks.into_iter().rev(), 0, 0xFF)
+                .reduce_min()
+                .into(),
+        );
+        (first != 0xFF).then_some(first as usize / size_of::<T>())
+    }
+
+    #[inline(always)]
+    fn last_set_of<T: Int<N>, const N: usize, const K: usize>(
+        masks: [(Mask<T, N>, usize); K],
+    ) -> Option<usize> {
+        if size_of::<[T; N]>() != 16 {
+            return movemask_of(masks).0.highest_one().map(|lane| lane as usize);
+        }
+        let end = crate::opaque(select_indices(masks.into_iter(), 1, 0).reduce_max().into());
+        (end != 0).then_some(end.wrapping_sub(1) as usize / size_of::<T>())
+    }
+
     /// There is no `popcnt` for general registers.
     #[inline(always)]
-    fn count_from<T: Int<N>, const N: usize>(mask: Mask<T, N>, lane: usize) -> usize {
-        const STEP: &[u8; 32] = &core::array::from_fn(const |i| i as u8 / 16);
+    fn count_before<T: Int<N>, const N: usize>(mask: Mask<T, N>, lane: usize) -> usize {
+        const STEP: &[u8; 32] = &core::array::from_fn(const |i| 1 - i as u8 / 16);
         if size_of::<[T; N]>() != 16 {
-            return (mask.to_bitmask() >> lane).count_ones() as usize;
+            return (mask.to_bitmask() & !u64::MAX.unbounded_shl(lane as u32)).count_ones()
+                as usize;
         }
-        let ones = u8x16::from_slice(&STEP[16 - lane % N * size_of::<T>()..]);
-        usize::from((mask.to_vector().first_bytes() & ones).reduce_sum()) / size_of::<T>()
+        let ones = u8x16::from_slice(&STEP[16 - lane * size_of::<T>()..]);
+        // LLVM would widen the lanes first.
+        let is_set = bun_simd_trusted::opaque16(mask.to_vector().first_bytes());
+        usize::from((is_set & ones).reduce_sum()) / size_of::<T>()
     }
 
     #[inline(always)]

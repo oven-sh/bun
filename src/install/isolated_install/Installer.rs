@@ -1690,12 +1690,11 @@ impl<'a> Installer<'a> {
     /// Task thread. True: the entry had no directory before.
     fn link_cached_package(&self, entry_id: StoreEntryId) -> TaskResult<bool> {
         let patch_info = self.package_patch_info(self.store.ids(entry_id).pkg_id)?;
-        let subpath = AutoRelPath::from(self.cached_folder_name(
-            &mut **paths::path_buffer_pool::get(),
-            entry_id,
-            patch_info.contents_hash(),
-        ))
-        .assume_ok();
+        let subpath = {
+            let mut buf = paths::path_buffer_pool::get();
+            let name = self.cached_folder_name(&mut buf, entry_id, patch_info.contents_hash());
+            AutoRelPath::from(name).assume_ok()
+        };
         #[cfg(target_os = "macos")]
         let mut subpath = subpath;
 

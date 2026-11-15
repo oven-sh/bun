@@ -849,7 +849,7 @@ static HARDLINK_QUEUE: HardLinkQueue = HardLinkQueue {
 
 #[cfg(windows)]
 impl HardLinkWindowsInstallTask {
-    fn init_queue() -> &'static HardLinkQueue {
+    fn reset_queue() -> &'static HardLinkQueue {
         *HARDLINK_QUEUE.errored_task.lock() = None;
         &HARDLINK_QUEUE
     }
@@ -1106,7 +1106,7 @@ impl LinkBatch {
                     wake_main_thread();
                 }
             },
-            &mut vec![(); threads],
+            &vec![(); threads],
             || {
                 // The threads spend much of their time waiting on the disk, so when there are only
                 // a few of them, this thread links packages too.
@@ -1830,7 +1830,7 @@ impl PackageFiles<'_> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
             #[cfg(windows)]
-            let queue = HardLinkWindowsInstallTask::init_queue();
+            let queue = HardLinkWindowsInstallTask::reset_queue();
             // Workers are already running the tasks that were pushed, so remember any loop error
             // and always reach `queue.wait()`.
             #[cfg(windows)]

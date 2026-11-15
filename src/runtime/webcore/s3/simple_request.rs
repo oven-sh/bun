@@ -172,7 +172,7 @@ pub(crate) enum Callback {
     /// An upload that turned out to fit in one request.
     SingleSend(RefPtr<MultiPartUpload>),
     Start(RefPtr<MultiPartUpload>),
-    /// The index is the part's in the upload's queue.
+    /// The upload and the part's index in `MultiPartUpload::queue`.
     Part(RefPtr<MultiPartUpload>, u8),
     Commit(RefPtr<MultiPartUpload>),
     Rollback(RefPtr<MultiPartUpload>),
@@ -205,7 +205,7 @@ impl RefusedRequest {
 }
 
 impl Callback {
-    /// The request is not sent.
+    /// Fails a request that was never sent.
     fn refuse(
         self,
         context: &bun_jsc::ScriptExecutionContext,
@@ -337,10 +337,10 @@ impl S3HttpSimpleTask {
     }
 
     /// A commit can answer 200 and still carry an `<Error>` document.
-    fn contained_error<'a>(
+    fn response_error<'a>(
         &'a self,
         status: u32,
-        parsed: &'a Option<xml_response::ErrorBody>,
+        parsed: Option<&'a xml_response::ErrorBody>,
     ) -> Option<S3Error<'a>> {
         if (parsed.is_none() && status == 200) || status == 206 {
             return None;
@@ -430,7 +430,7 @@ impl S3HttpSimpleTask {
             (Callback::Commit(upload), status) => {
                 // commit multipart upload can fail with status 200
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
-                let result = match this.contained_error(status, &parsed) {
+                let result = match this.response_error(status, parsed.as_ref()) {
                     Some(err) => S3CommitResult::Failure(err),
                     None => S3CommitResult::Success,
                 };
@@ -438,7 +438,7 @@ impl S3HttpSimpleTask {
             }
             (Callback::Part(upload, index), status) => {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
-                if let Some(err) = this.contained_error(status, &parsed) {
+                if let Some(err) = this.response_error(status, parsed.as_ref()) {
                     UploadPart::on_part_response(&upload, index, S3PartResult::Failure(err))
                 } else if let Some(etag) = response.header(b"etag") {
                     UploadPart::on_part_response(&upload, index, S3PartResult::Etag(etag))
@@ -477,7 +477,7 @@ impl S3HttpSimpleTask {
     /// owned by the HTTP thread for the duration of this call.
     pub(crate) fn http_callback(
         this: *mut Self,
-        finished: bun_http::Finished,
+        finished: Option<bun_http::FinishedRequest>,
         result: HTTPClientResult<'_>,
     ) {
         drop(finished);

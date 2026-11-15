@@ -253,13 +253,11 @@ pub fn edit_trusted_dependencies(
     }
 
     let trusted_dependencies_to_add = len;
-    let new_trusted_deps = js_ast::ExprNodeList::from_owned_slice(
-        (trusted_dependencies.iter().copied())
-            .chain(
-                (names_to_add[..len].iter().rev())
-                    .map(|name| Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY)),
-            )
-            .collect(),
+    let new_trusted_deps = bun_alloc::AstAlloc::vec_from_iter(
+        trusted_dependencies.iter().copied().chain(
+            (names_to_add[..len].iter().rev())
+                .map(|name| Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY)),
+        ),
     );
 
     let mut needs_new_trusted_dependencies_list = true;
@@ -304,7 +302,7 @@ pub fn edit_trusted_dependencies(
         });
         *package_json = Expr::init(
             E::Object {
-                properties: G::PropertyList::move_from_list(root_properties),
+                properties: bun_alloc::AstAlloc::vec_from_iter(root_properties),
                 ..Default::default()
             },
             bun_ast::Loc::EMPTY,
@@ -1396,7 +1394,7 @@ pub(crate) fn edit(
                 .data
                 .e_object_mut()
                 .expect("infallible: variant checked");
-            obj.properties = G::PropertyList::move_from_list(new_dependencies);
+            obj.properties = bun_alloc::AstAlloc::vec_from_iter(new_dependencies);
             if obj.properties.len_u32() > 1 {
                 obj.alphabetize_properties();
             }
@@ -1419,7 +1417,7 @@ pub(crate) fn edit(
             *current_package_json = Expr::allocate(
                 arena,
                 E::Object {
-                    properties: G::PropertyList::move_from_list(root_properties),
+                    properties: bun_alloc::AstAlloc::vec_from_iter(root_properties),
                     ..Default::default()
                 },
                 bun_ast::Loc::EMPTY,

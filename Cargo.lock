@@ -1946,7 +1946,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_boringssl",
  "bun_collections",
  "bun_core",

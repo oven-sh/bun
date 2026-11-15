@@ -58,7 +58,7 @@ pub struct PendingImport {
 
 pub struct BundleV2<'a> {
     pub transpiler: &'a mut Transpiler<'a>,
-    pub(crate) other_transpilers: OtherTranspilers<'a>,
+    pub(crate) target_transpilers: TargetTranspilers<'a>,
     /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
     pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
@@ -130,7 +130,7 @@ pub struct BundleV2<'a> {
 
 /// For the files whose target is not the one of `BundleV2::transpiler`.
 #[derive(Default)]
-pub(crate) struct OtherTranspilers<'a> {
+pub(crate) struct TargetTranspilers<'a> {
     /// For the browser's files of a server-side build.
     client: Option<ClientTranspiler<'a>>,
     /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
@@ -138,14 +138,14 @@ pub(crate) struct OtherTranspilers<'a> {
 }
 
 enum ClientTranspiler<'a> {
-    FromBake(&'a mut Transpiler<'a>),
+    Borrowed(&'a mut Transpiler<'a>),
     Owned(Box<Transpiler<'a>>),
 }
 
-impl<'a> OtherTranspilers<'a> {
+impl<'a> TargetTranspilers<'a> {
     fn client(&self) -> Option<&Transpiler<'a>> {
         self.client.as_ref().map(|client| match client {
-            ClientTranspiler::FromBake(client) => &**client,
+            ClientTranspiler::Borrowed(client) => &**client,
             ClientTranspiler::Owned(client) => &**client,
         })
     }
@@ -162,12 +162,12 @@ impl<'a> OtherTranspilers<'a> {
             }
         });
         match client {
-            ClientTranspiler::FromBake(client) => client,
+            ClientTranspiler::Borrowed(client) => client,
             ClientTranspiler::Owned(client) => client,
         }
     }
 
-    /// `BundleV2::transpiler_for_target`, for callers that use the rest of the bundle meanwhile.
+    /// `BundleV2::transpiler_for_target`, borrowing only these fields.
     fn for_target<'t>(
         &'t mut self,
         main: &'t mut Transpiler<'a>,
@@ -219,7 +219,7 @@ impl<'a> BundleV2<'a> {
 
     #[inline]
     pub(crate) fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
-        self.other_transpilers.client()
+        self.target_transpilers.client()
     }
 
     /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
@@ -264,7 +264,7 @@ impl<'a> BundleV2<'a> {
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
-        self.other_transpilers
+        self.target_transpilers
             .for_target(self.transpiler, self.graph.heap, target)
     }
 }
@@ -276,6 +276,7 @@ pub mod bv2_impl {
     use super::ResolveQueue;
     use crate::IndexInt;
     use crate::mal_prelude::*;
+    use bun_collections::string_hash_map::EntryRef;
     // This is Bun's JavaScript/TypeScript bundler
     //
     // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -1776,7 +1777,7 @@ pub mod bv2_impl {
         }
 
         fn ensure_client_transpiler(&mut self) {
-            self.other_transpilers
+            self.target_transpilers
                 .ensure_client(self.transpiler, self.graph.heap);
         }
 
@@ -1855,7 +1856,7 @@ pub mod bv2_impl {
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> &mut bun_ast::Log {
-            Self::resolution_log(
+            Self::log_for_resolution_failures_impl(
                 &mut self.dev_server,
                 &mut self.transpiler,
                 abs_path,
@@ -1863,8 +1864,8 @@ pub mod bv2_impl {
             )
         }
 
-        /// `log_for_resolution_failures`, for callers that use the rest of the bundle meanwhile.
-        fn resolution_log<'s>(
+        /// `log_for_resolution_failures`, borrowing only these fields.
+        fn log_for_resolution_failures_impl<'s>(
             dev_server: &'s mut Option<dispatch::DevServerHandle>,
             transpiler: &'s mut &mut Transpiler<'_>,
             abs_path: &[u8],
@@ -2419,7 +2420,7 @@ pub mod bv2_impl {
         ) {
             let heap = self.graph.heap;
             let transpiler = self
-                .other_transpilers
+                .target_transpilers
                 .for_target(self.transpiler, heap, target);
             let source_dir =
                 Fs::PathName::init(import_record.source_file).dir_with_trailing_slash();
@@ -2531,7 +2532,7 @@ pub mod bv2_impl {
                         let handles_import_errors;
                         let ignore_module_resolution_errors =
                             self.transpiler.options.ignore_module_resolution_errors;
-                        let log = Self::resolution_log(
+                        let log = Self::log_for_resolution_failures_impl(
                             &mut self.dev_server,
                             &mut self.transpiler,
                             import_record.source_file,
@@ -2953,7 +2954,7 @@ pub mod bv2_impl {
 
             let mut this = Box::new(BundleV2 {
                 transpiler,
-                other_transpilers: Default::default(),
+                target_transpilers: Default::default(),
                 framework: None,
                 graph: Graph::new(heap, ThreadPool::init(thread_pool)),
                 r#loop: event_loop,
@@ -2994,8 +2995,8 @@ pub mod bv2_impl {
                             .chain(&bo.ssr_transpiler)
                             .all(|other| other.options.server_components)
                 );
-                this.other_transpilers = super::OtherTranspilers {
-                    client: Some(super::ClientTranspiler::FromBake(bo.client_transpiler)),
+                this.target_transpilers = super::TargetTranspilers {
+                    client: Some(super::ClientTranspiler::Borrowed(bo.client_transpiler)),
                     ssr: bo.ssr_transpiler,
                 };
                 this.framework = Some(bo.framework);
@@ -3378,7 +3379,7 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub(crate) fn clone_ast(&mut self) -> Result<LinkerGraph<'a>, Error> {
+        pub(crate) fn create_linker_graph(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
             let mut linker_graph = LinkerGraph::new(self.graph.heap);
             linker_graph.ast = self.graph.ast.clone()?;
@@ -3540,7 +3541,7 @@ pub mod bv2_impl {
                                 ..Default::default()
                             })),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
+                                properties: bun_alloc::AstAlloc::vec_from_iter([
                                     G::Property {
                                         key: Some(id_string),
                                         value: Some(client_path),
@@ -3556,7 +3557,7 @@ pub mod bv2_impl {
                                         value: Some(empty_array),
                                         ..Default::default()
                                     },
-                                ])),
+                                ]),
                                 ..Default::default()
                             })),
                             ..Default::default()
@@ -3564,7 +3565,7 @@ pub mod bv2_impl {
                         *client_item = G::Property {
                             key: Some(export_name),
                             value: Some(server.new_expr(E::Object {
-                                properties: bun_ast::g::PropertyList::from_owned_slice(Box::new([
+                                properties: bun_alloc::AstAlloc::vec_from_iter([
                                     G::Property {
                                         key: Some(name_string),
                                         value: Some(export_name),
@@ -3575,7 +3576,7 @@ pub mod bv2_impl {
                                         value: Some(ssr_path),
                                         ..Default::default()
                                     },
-                                ])),
+                                ]),
                                 ..Default::default()
                             })),
                             ..Default::default()
@@ -3585,9 +3586,7 @@ pub mod bv2_impl {
                     client_manifest_props.push(G::Property {
                         key: Some(client_path),
                         value: Some(server.new_expr(E::Object {
-                            properties: bun_ast::g::PropertyList::from_owned_slice(
-                                client_manifest_items,
-                            ),
+                            properties: bun_alloc::AstAlloc::vec_from_iter(client_manifest_items),
                             ..Default::default()
                         })),
                         ..Default::default()
@@ -3600,12 +3599,12 @@ pub mod bv2_impl {
             let server_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"serverManifest")?;
             let server_manifest_value = server.new_expr(E::Object {
-                properties: bun_ast::g::PropertyList::move_from_list(server_manifest_props),
+                properties: bun_alloc::AstAlloc::vec_from_iter(server_manifest_props),
                 ..Default::default()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                decls: bun_alloc::AstAlloc::vec_from_iter([G::Decl {
                     binding: Binding::alloc(
                         alloc,
                         bun_ast::b::Identifier {
@@ -3614,19 +3613,19 @@ pub mod bv2_impl {
                         bun_ast::Loc::EMPTY,
                     ),
                     value: Some(server_manifest_value),
-                }])),
+                }]),
                 is_export: true,
                 ..Default::default()
             })?;
             let ssr_manifest_ref =
                 server.new_symbol(bun_ast::symbol::Kind::Other, b"ssrManifest")?;
             let ssr_manifest_value = server.new_expr(E::Object {
-                properties: bun_ast::g::PropertyList::move_from_list(client_manifest_props),
+                properties: bun_alloc::AstAlloc::vec_from_iter(client_manifest_props),
                 ..Default::default()
             });
             server.append_stmt(S::Local {
                 kind: bun_ast::s::Kind::KConst,
-                decls: bun_ast::g::DeclList::from_owned_slice(Box::new([G::Decl {
+                decls: bun_alloc::AstAlloc::vec_from_iter([G::Decl {
                     binding: Binding::alloc(
                         alloc,
                         bun_ast::b::Identifier {
@@ -3635,7 +3634,7 @@ pub mod bv2_impl {
                         bun_ast::Loc::EMPTY,
                     ),
                     value: Some(ssr_manifest_value),
-                }])),
+                }]),
                 is_export: true,
                 ..Default::default()
             })?;
@@ -3962,7 +3961,7 @@ pub mod bv2_impl {
 
                 this.add_server_component_boundaries_as_extra_entry_points()?;
 
-                let mut linker_graph = this.clone_ast()?;
+                let mut linker_graph = this.create_linker_graph()?;
                 linker_graph.additional_output_files = additional_output_files;
 
                 let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
@@ -4102,7 +4101,7 @@ pub mod bv2_impl {
 
             this.add_server_component_boundaries_as_extra_entry_points()?;
 
-            let mut linker_graph = this.clone_ast()?;
+            let mut linker_graph = this.create_linker_graph()?;
             linker_graph.additional_output_files = additional_output_files;
 
             let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
@@ -4190,7 +4189,7 @@ pub mod bv2_impl {
                                 };
 
                             let asset_naming = &self
-                                .other_transpilers
+                                .target_transpilers
                                 .for_target(self.transpiler, self.graph.heap, target)
                                 .options
                                 .asset_naming;
@@ -4675,7 +4674,7 @@ pub mod bv2_impl {
                         return;
                     }
 
-                    let log = Self::resolution_log(
+                    let log = Self::log_for_resolution_failures_impl(
                         &mut this.dev_server,
                         &mut this.transpiler,
                         resolve.import_record.source_file,
@@ -4957,7 +4956,7 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            let mut linker_graph = self.clone_ast()?;
+            let mut linker_graph = self.create_linker_graph()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -5306,7 +5305,7 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            let linker_graph = self.clone_ast().map_err(|_| AllocError)?;
+            let linker_graph = self.create_linker_graph().map_err(|_| AllocError)?;
             let mut linker = LinkerContext::load(self, linker_graph, js_reachable_files)
                 .map_err(|_| AllocError)?;
 
@@ -5376,7 +5375,7 @@ pub mod bv2_impl {
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, self.graph.heap, &[*entry_point]) {
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, &[*entry_point]) {
                     Ok(order) => chunks.push(Chunk {
                         entry_point: chunk::EntryPoint::non_entry_point(
                             entry_point.get(),
@@ -6008,7 +6007,7 @@ pub mod bv2_impl {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
                         let transpiler =
-                            self.other_transpilers
+                            self.target_transpilers
                                 .for_target(self.transpiler, heap, target);
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
@@ -6026,12 +6025,12 @@ pub mod bv2_impl {
                             continue;
                         }
 
-                        let enqueue = match resolve_queue.get_or_vacant(path_primary.text) {
-                            Ok(task) => {
+                        let entry = match resolve_queue.entry_ref(path_primary.text) {
+                            EntryRef::Occupied(task) => {
                                 import_record.path = task.path;
                                 continue;
                             }
-                            Err(enqueue) => enqueue,
+                            EntryRef::Vacant(entry) => entry,
                         };
 
                         // For virtual files, use the path text as-is (no relative path computation needed).
@@ -6056,7 +6055,7 @@ pub mod bv2_impl {
                         resolve_task.jsx = jsx;
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        enqueue(resolve_task);
+                        entry.insert(resolve_task);
                         continue;
                     }
                 }
@@ -6367,7 +6366,7 @@ pub mod bv2_impl {
                 }
 
                 let transpiler = self
-                    .other_transpilers
+                    .target_transpilers
                     .for_target(self.transpiler, heap, target);
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
@@ -6410,12 +6409,12 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let enqueue = match resolve_queue.get_or_vacant(path.text) {
-                    Ok(task) => {
+                let entry = match resolve_queue.entry_ref(path.text) {
+                    EntryRef::Occupied(task) => {
                         import_record.path = task.path;
                         continue;
                     }
-                    Err(enqueue) => enqueue,
+                    EntryRef::Vacant(entry) => entry,
                 };
 
                 let jsx_development = transpiler.options.forced_jsx_development();
@@ -6449,7 +6448,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                enqueue(resolve_task);
+                entry.insert(resolve_task);
 
                 if is_html_entrypoint {
                     let path = import_record.path;

@@ -1,6 +1,8 @@
 import { dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 // The DNS cache is process-global, so this runs in its own process to get
 // clean counters. Docs promise that a failed connection evicts the host's
@@ -39,6 +41,47 @@ test("a failed connect evicts the host's DNS cache entry", async () => {
     exitCode: 0,
   });
 });
+
+test.skipIf(!isASAN || isWindows)(
+  "a lookup that finds the cache full of entries in use does not leak",
+  async () => {
+    const suppressions = readFileSync(join(import.meta.dirname, "../../../leaksan.supp"), "utf8").split("\n");
+    using dir = tempDir("dns-cache-full", {
+      "leaksan.supp": suppressions.filter(rule => !rule.includes("addrinfo")).join("\n"),
+      "main.js": `
+        import { dnsCacheSeed } from "bun:internal-for-testing";
+        // Out of the module loader's stack, whose leaks are suppressed.
+        await new Promise(resolve => setImmediate(resolve));
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        // With two addresses, a socket uses its entry until it is connected.
+        const connecting = Array.from({ length: 256 }, (_, i) => {
+          dnsCacheSeed("host-" + i, ["127.0.0.1", "127.0.0.1"]);
+          return Bun.connect({ hostname: "host-" + i, port: listener.port, socket: { data() {} } });
+        });
+        Bun.dns.prefetch("one-more.localhost");
+        Bun.dns.prefetch("one-more.localhost");
+        console.log(Bun.dns.getCacheStats().cacheMisses);
+        for (const socket of await Promise.all(connecting)) socket.end();
+        listener.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(String(dir), "leaksan.supp")}`,
+      },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "2\n", stderr: "", exitCode: 0 });
+  },
+  // LSan symbolizes what it reports, which takes seconds on a debug binary.
+  30_000,
+);
 
 test("dns.getCacheStats returns a new plain object of integers", () => {
   const stats = dns.getCacheStats();

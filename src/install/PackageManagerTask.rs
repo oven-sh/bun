@@ -249,7 +249,7 @@ impl Task {
                         // scope is borrowed from manager.options which is not
                         // touched by get_package_metadata (only the cache-dir fields are).
                         scope.get(),
-                        metadata.response,
+                        metadata,
                         body.slice(),
                         &mut this.log,
                         name.slice(),

@@ -726,7 +726,7 @@ pub mod registry {
 
     pub(crate) fn get_package_metadata(
         scope: &Scope,
-        response: picohttp::Response,
+        response: &bun_http::HTTPResponseMetadata,
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],
@@ -734,7 +734,7 @@ pub mod registry {
         package_manager: &mut PackageManager,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
-        match response.status_code {
+        match response.status_code() {
             400 => return Err(crate::Error::BadRequest),
             429 => return Err(crate::Error::TooManyRequests),
             404 => return Ok(PackageVersionResponse::NotFound),
@@ -746,8 +746,8 @@ pub mod registry {
             _ => {}
         }
 
-        let newly_last_modified: &[u8] = response.headers.get(b"last-modified").unwrap_or(b"");
-        let mut new_etag: &[u8] = response.headers.get(b"etag").unwrap_or(b"");
+        let newly_last_modified: &[u8] = response.header(b"last-modified").unwrap_or(b"");
+        let mut new_etag: &[u8] = response.header(b"etag").unwrap_or(b"");
 
         let mut new_etag_buf = [0u8; 64];
 
@@ -763,7 +763,7 @@ pub mod registry {
             package_name,
             newly_last_modified,
             new_etag,
-            manifest_expiry(&response.headers),
+            manifest_expiry(&response.headers()),
             is_extended_manifest,
         )? {
             // If the cache cannot be written, the manifest is still used. It is just not saved.

@@ -99,7 +99,7 @@ async function leakedBytes(count: number, finish: keyof typeof finishes, outcome
 }
 
 // The JS wrapper and the upload's completion callback both hold the heap NetworkSink behind
-// `s3file.writer()`. The one that lets go last frees it (`writer_holders`).
+// `s3file.writer()`. The one that lets go last frees it.
 describe.skipIf(!isASAN)("S3 writer() frees its NetworkSink", () => {
   test.concurrent.each([
     { name: "end() that resolves", finish: "end", outcome: "succeeds", seen: "resolved" },

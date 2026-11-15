@@ -90,7 +90,6 @@
 //                        End
 
 use core::cell::{Cell, OnceCell};
-use core::ffi::c_void;
 use std::io::Write as _;
 
 use bstr::BStr;
@@ -102,7 +101,7 @@ use bun_io::JsKeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
-use bun_ptr::RefPtr;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
 use bun_s3_signing::error::S3Error;
@@ -111,13 +110,14 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
+use crate::webcore::s3::client::{S3UploadStreamWrapper, settle_writer};
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
     S3UploadResult, execute_simple_s3_request,
 };
 use crate::webcore::s3::xml_response;
-use crate::webcore::streams::EncodedChunk;
+use crate::webcore::streams::{EncodedChunk, NetworkSink};
 use bun_collections::index_sort;
 
 declare_scope!(S3MultiPartUpload, hidden);
@@ -166,11 +166,14 @@ pub struct MultiPartUpload {
 
     pub(crate) state: Cell<State>,
 
-    /// Completion. The upload is passed so `uploaded_bytes` can be read by a callee that no
-    /// longer holds a ref to it (a `writer()` sink whose JS wrapper was collected).
-    pub callback: fn(&MultiPartUpload, S3UploadResult, *mut c_void) -> bun_jsc::JsResult<()>,
-    pub(crate) on_writable: Option<fn(&MultiPartUpload, *mut c_void, u64)>,
-    pub(crate) callback_context: Cell<*mut c_void>,
+    /// `None` once it has the result.
+    pub(crate) listener: JsCell<Option<Listener>>,
+}
+
+/// What feeds an upload.
+pub(crate) enum Listener {
+    Writer(RefPtr<NetworkSink>),
+    Stream(RefPtr<S3UploadStreamWrapper>),
 }
 
 bun_jsc::impl_abort_handle_owner!(MultiPartUpload, abort_handle, |this, _cause| {
@@ -227,6 +230,28 @@ pub(crate) enum State {
 impl MultiPartUpload {
     fn context(&self) -> &bun_jsc::ScriptExecutionContext {
         self.vm.context_of(self.context)
+    }
+
+    fn notify_writable(&self, flushed: u64) {
+        let sink = match self.listener.get() {
+            Some(Listener::Writer(sink)) => Some(sink.as_ptr()),
+            Some(Listener::Stream(stream)) if !self.ended.get() => {
+                stream.sink.as_ref().map(AliasableBox::as_ptr)
+            }
+            _ => None,
+        };
+        if let Some(sink) = sink {
+            NetworkSink::on_writable(self, sink, flushed);
+        }
+    }
+
+    fn notify_finished(&self, result: S3UploadResult) -> bun_jsc::JsResult<()> {
+        bun_removable_features::removable_body_behind_value!(S3Client, {
+            match self.listener.take().expect("an upload finishes once") {
+                Listener::Writer(sink) => settle_writer(&sink, self, result),
+                Listener::Stream(stream) => S3UploadStreamWrapper::resolve(&stream, result),
+            }
+        })
     }
 
     const MAX_QUEUE_SIZE: usize = MultiPartUploadOptions::MAX_QUEUE_SIZE as usize;
@@ -424,13 +449,7 @@ impl MultiPartUpload {
             S3UploadResult::Success => {
                 scoped_log!(S3MultiPartUpload, "singleSendUploadResponse success");
 
-                if let Some(callback) = self_.on_writable {
-                    callback(
-                        self_,
-                        self_.callback_context.get(),
-                        self_.buffered.get().size() as u64,
-                    );
-                }
+                self_.notify_writable(self_.buffered.get().size() as u64);
                 self_.done()
             }
         }
@@ -506,18 +525,14 @@ impl MultiPartUpload {
 
         // empty queue
         if this.is_queue_empty() {
-            if let Some(callback) = this.on_writable {
-                callback(this, this.callback_context.get(), flushed);
-            }
+            this.notify_writable(flushed);
             // `on_writable` may re-enter and enqueue a final part; re-check.
             if this.ended.get() && this.is_queue_empty() {
                 this.done()?;
             }
         } else if !this.has_backpressure() && flushed > 0 {
             // we have more space in the queue, we can drain more
-            if let Some(callback) = this.on_writable {
-                callback(this, this.callback_context.get(), flushed);
-            }
+            this.notify_writable(flushed);
         }
         Ok(())
     }
@@ -541,11 +556,7 @@ impl MultiPartUpload {
             let old_state = self.state.replace(State::Finished);
             self.abort_handle.leave();
             let unfinished = self.finish();
-            (self.callback)(
-                self,
-                S3UploadResult::Failure(err),
-                self.callback_context.get(),
-            )?;
+            self.notify_finished(S3UploadResult::Failure(err))?;
             // Nothing more is expected for this upload (a rollback request keeps the loop alive
             // itself), and whoever still holds a ref may hold it for as long as the collector likes.
             self.poll_ref.unref(bun_io::js_vm_ctx());
@@ -602,7 +613,7 @@ impl MultiPartUpload {
             self.state.set(State::Finished);
             // single file upload no need to commit
             let _unfinished = self.finish();
-            (self.callback)(self, S3UploadResult::Success, self.callback_context.get())
+            self.notify_finished(S3UploadResult::Success)
         } else {
             Ok(())
         }
@@ -723,18 +734,14 @@ impl MultiPartUpload {
                     return self_.commit_multi_part_request(self_.clone());
                 }
                 self_.state.set(State::Finished);
-                let r = (self_.callback)(
-                    self_,
-                    S3UploadResult::Failure(err),
-                    self_.callback_context.get(),
-                );
+                let r = self_.notify_finished(S3UploadResult::Failure(err));
                 // The store still holds the parts.
                 let rolled_back = self_.rollback_multi_part_request(self_.clone());
                 r.and(rolled_back)
             }
             S3CommitResult::Success => {
                 self_.state.set(State::Finished);
-                (self_.callback)(self_, S3UploadResult::Success, self_.callback_context.get())
+                self_.notify_finished(S3UploadResult::Success)
             }
         }
     }

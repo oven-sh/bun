@@ -370,8 +370,7 @@ void us_internal_handle_low_priority_sockets(struct us_loop_t *loop) {
 
 // Called when DNS resolution completes
 // Does not wake up the loop.
-void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_req) {
-    (void)addrinfo_req; /* already stored on c by us_socket_group_connect */
+static void us_internal_dns_callback(struct us_connecting_socket_t *c) {
     struct us_loop_t *loop = c->loop;
     Bun__lock(&loop->data.mutex);
     c->next = loop->data.dns_ready_head;
@@ -382,9 +381,9 @@ void us_internal_dns_callback(struct us_connecting_socket_t *c, void* addrinfo_r
 // Called when DNS resolution completes
 // Wakes up the loop.
 // Can be caleld from any thread.
-void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c, void* addrinfo_req) {
+void us_internal_dns_callback_threadsafe(struct us_connecting_socket_t *c) {
     struct us_loop_t *loop = c->loop;
-    us_internal_dns_callback(c, addrinfo_req);
+    us_internal_dns_callback(c);
     us_wakeup_loop(loop);
 }
 

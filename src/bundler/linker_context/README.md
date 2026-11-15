@@ -12,13 +12,13 @@ The LinkerContext operates in several main phases:
 
 ## Main Functions
 
-### 1. `load()` - LinkerContext.rs:187
+### 1. `load()` - LinkerContext.rs
 
 **Purpose**: Creates the LinkerContext, which borrows the bundle, and prepares the graph for linking.
 
 **What it does**:
 
-- Configures code splitting and logging
+- Configures code splitting
 - Loads entry points and reachable files into the graph
 - Sets up runtime symbol references (`__esm`, `__commonJS`)
 - Configures module/exports references for different output formats (CJS, IIFE)
@@ -30,7 +30,7 @@ The LinkerContext operates in several main phases:
 - Entry point processing
 - Memory management setup
 
-### 2. `link()` - LinkerContext.rs:294
+### 2. `link()` - LinkerContext.rs
 
 **Purpose**: The main linking orchestrator that coordinates all bundling phases.
 

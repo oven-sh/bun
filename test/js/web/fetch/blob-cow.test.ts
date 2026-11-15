@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { tempDir } from "harness";
+import { join } from "node:path";
 
 test("Blob.arrayBuffer copy-on-write is not shared", async () => {
   // 8 MB is the threshold for copy-on-write without --smol.
@@ -68,4 +70,47 @@ test("Response.bytes from a Blob body is not shared with text previously read fr
   buf.fill(120);
   expect(text).toBe("hello world");
   expect(await blob.text()).toBe("hello world");
+});
+
+test.each(["arrayBuffer", "bytes"] as const)(
+  "Response.%s from a copy-on-write body is not shared with what its clone read",
+  async method => {
+    // An array part of 8 MiB goes into a memfd on Linux.
+    const response = new Response([new Uint8Array(8 * 1024 * 1024)] as any);
+    const fromClone = new Uint8Array(await response.clone().arrayBuffer());
+    const result = await response[method]();
+    const buf = result instanceof Uint8Array ? result : new Uint8Array(result);
+    buf[0] = buf[buf.length - 1] = 1;
+    expect([buf.length, fromClone[0], fromClone.at(-1)]).toEqual([fromClone.length, 0, 0]);
+  },
+);
+
+test("Response.bytes from an array of one Blob is not shared with the Blob", async () => {
+  const blob = new Blob(["hello world"]);
+  const buf = await new Response([blob] as any).bytes();
+  expect(new TextDecoder().decode(buf)).toBe("hello world");
+  buf.fill(120);
+  expect(await blob.text()).toBe("hello world");
+});
+
+test("a Bun.build() output stays readable after it was a part of a Response body", async () => {
+  using dir = tempDir("blob-cow-build-output", { "in.js": "console.log(1);" });
+  const { outputs } = await Bun.build({ entrypoints: [join(String(dir), "in.js")], minify: true });
+  expect(await new Response(outputs as any).text()).toBe("console.log(1);\n");
+  expect(await outputs[0].text()).toBe("console.log(1);\n");
+});
+
+test("a request body from server.fetch() is not shared with the Blob", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(request) {
+      const buf = await request.bytes();
+      const text = new TextDecoder().decode(buf);
+      buf.fill(120);
+      return new Response(text);
+    },
+  });
+  const blob = new Blob(["hello world"]);
+  const response = await server.fetch(server.url.href, { method: "POST", body: blob });
+  expect([await response.text(), blob.size, await blob.text()]).toEqual(["hello world", 11, "hello world"]);
 });

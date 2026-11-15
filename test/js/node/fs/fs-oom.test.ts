@@ -157,7 +157,7 @@ describe.skipIf(!isASAN)("utf8 to utf16 output buffer allocation failure is catc
           e => results.push(report(e)),
         );
         // Bun.file().text() reaches the converter through
-        // Blob::to_string_with_bytes with Lifetime::Temporary, the one caller
+        // ToStringWithBytesFn::from_owned, the one caller
         // that also owns its input buffer across the failing allocation.
         await Bun.file(file).text().then(
           () => results.push("BUNFILE_UNEXPECTED_SUCCESS"),

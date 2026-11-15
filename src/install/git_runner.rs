@@ -50,7 +50,6 @@ impl PackageManager {
             let Some(task) = self.git_tasks.pop_front() else {
                 break;
             };
-            self.running_git_tasks.fetch_add(1, Ordering::Relaxed);
             GitSubprocess::start(self, task);
         }
     }
@@ -778,6 +777,14 @@ pub(crate) struct GitSubprocess {
     staging: JsCell<Option<CacheStaging>>,
 }
 
+impl Drop for GitSubprocess {
+    fn drop(&mut self) {
+        self.manager()
+            .running_git_tasks
+            .fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 impl GitSubprocess {
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task>) {
         let cache_dir = manager.get_cache_directory();
@@ -789,6 +796,7 @@ impl GitSubprocess {
             Job::GitCheckout { request, .. } => &request.name,
             _ => unreachable!("not a git task"),
         };
+        manager.running_git_tasks.fetch_add(1, Ordering::Relaxed);
         let runner = RefPtr::new(GitSubprocess {
             ref_count: Cell::new(1),
             owner: Cell::new(None),
@@ -1491,11 +1499,7 @@ impl GitSubprocess {
     /// Drops the owning ref: the process handle and readers are torn down on
     /// this (the event loop's) thread, and the git slot is free again.
     fn release(this: ThisPtr<Self>) {
-        let owner = this.owner.take().expect("git runner finished twice");
-        this.manager()
-            .running_git_tasks
-            .fetch_sub(1, Ordering::Relaxed);
-        drop(owner);
+        drop(this.owner.take().expect("git runner finished twice"));
     }
 
     /// Hands a clone or checkout task to the thread pool for `finalize`.

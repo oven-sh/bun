@@ -283,7 +283,7 @@ pub(crate) fn run_callback(global: &JSGlobalObject, callback: JSValue, arguments
 }
 
 pub use bun_event_loop::EventLoopTimer::{
-    EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
+    OwnedTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 
 /// A connection that writes what one turn of JS queued on it in one flush, at the end of the turn.

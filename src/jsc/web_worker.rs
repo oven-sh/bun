@@ -703,7 +703,7 @@ impl WebWorker {
             match worker.try_start(Self::has_ending_child(parent)) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-                    worker.disarm_room_timer();
+                    worker.room_timer.disarm();
                 }
                 StartOutcome::NoRoom if Self::has_ending_child(parent) => return,
                 StartOutcome::NoRoom | StartOutcome::Failed => {
@@ -720,11 +720,6 @@ impl WebWorker {
             .set(Timespec::now(TimespecMockMode::ForceRealTime).add_ms(ROOM_TIMER_MS));
         // SAFETY: parent thread; the node is unlinked, and the parent's list of children keeps `self` while it is linked.
         unsafe { (*self.parent).timer_insert(&raw const self.room_timer) };
-    }
-
-    fn disarm_room_timer(&self) {
-        // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        unsafe { &*self.parent }.timer_remove(&self.room_timer);
     }
 
     /// `Tag::WorkerWaitsForRoom` fire body. The worker takes what room there is, or gets 'error'.
@@ -758,7 +753,7 @@ impl WebWorker {
     fn end_without_thread(&self, exit_code: i32) {
         log!("[{}] ends without a thread", self.execution_context_id);
         WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
-        self.disarm_room_timer();
+        self.room_timer.disarm();
         self.thread_start.set(None);
         WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }

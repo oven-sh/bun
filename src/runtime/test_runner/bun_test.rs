@@ -12,7 +12,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_ptr::{AliasableBox, RefPtr};
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::jsc_hooks::timer_all;
-use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
+use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, OwnedTimer};
 use crate::cli::test_command::CommandLineReporter;
 use crate::generated_bindgen::bun_test::{
     Bun__BunTest__hook, Bun__TestScope__Describe2__bunTestCatch, Bun__TestScope__Describe2__bunTestThen,
@@ -747,7 +747,7 @@ pub(crate) struct BunTest {
     /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
     /// frame, which never returns; `exit_file()` nulls this before drop.
     pub(crate) reporter: Option<NonNull<CommandLineReporter>>,
-    pub(crate) timer: EventLoopTimer,
+    pub(crate) timer: OwnedTimer,
     pub(crate) result_queue: ResultQueue,
     /// Whether tests in this file should default to concurrent execution
     pub(crate) default_concurrent: bool,
@@ -800,7 +800,7 @@ impl BunTest {
             cloned_hook_entries: Vec::new(),
             // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING`.
-            timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
+            timer: OwnedTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
             pending_phase: RefDataValue::Start,
             is_reporting_uncaught: false,
@@ -1056,8 +1056,9 @@ impl BunTest {
         // SAFETY: `this` derived from `UnsafeCell::get`; single-threaded; each
         // deref is a point-use that does not span a re-entrant `.get()`.
         unsafe {
-            (*this).timer.next.set(Timespec::EPOCH);
-            (*this).timer.state.set(EventLoopTimerState::PENDING);
+            let timer = &(*this).timer;
+            timer.next.set(Timespec::EPOCH);
+            timer.state.set(EventLoopTimerState::PENDING);
 
             match (*this).phase {
                 Phase::Collection => {}
@@ -1168,7 +1169,7 @@ impl BunTest {
     fn update_min_timeout(this: &BunTestPtr, min_timeout: &Timespec) {
         let _g = group_begin!();
         // SAFETY: neither caller holds a `&mut BunTest`.
-        let timer = unsafe { &(*this.as_ptr()).timer };
+        let timer: &EventLoopTimer = unsafe { &(*this.as_ptr()).timer };
         // only set the timer if the new timeout is sooner than the current timeout. this unfortunately means that we can't unset an unnecessary timer.
         bun_core::scoped_log!(
             bun_test_group,
@@ -1683,18 +1684,6 @@ pub(crate) fn print_error(
     if !global_this.has_pending_termination_exception() && global_this.try_take_exception().is_some() {
         bun_core::pretty_errorln!("<blue>note<r><d>:<r> printing the error above threw another error");
         Output::flush();
-    }
-}
-
-impl Drop for BunTest {
-    fn drop(&mut self) {
-        let _g = group_begin!();
-
-        if self.timer.state.get() == EventLoopTimerState::ACTIVE {
-            // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
-            timer_all().remove(&self.timer);
-        }
-        // execution, collection, result_queue: dropped automatically
     }
 }
 

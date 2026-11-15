@@ -857,7 +857,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                             .swap(Step::Binaries as u32, Ordering::Release);
                         debug_assert!(previous_step == Step::RunPreinstall as u32);
                         installer.start_task(entry_id);
-                        self.decrement_pending_script_tasks();
                         return;
                     }
                 }
@@ -896,7 +895,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 // the last script finished
                 self.forget_unfinished_scripts();
-                self.decrement_pending_script_tasks();
             }
             Status::Signaled(signal) => {
                 self.print_output();
@@ -980,7 +978,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     fn discard_failed_optional_package(&mut self) {
         self.forget_unfinished_scripts();
-        self.decrement_pending_script_tasks();
         let deleted = match self.ctx.take() {
             Some(InstallCtx::Hoisted { tree_id, .. }) => {
                 crate::package_installer::remove_placed_package(
@@ -1057,8 +1054,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             .pending_lifecycle_script_tasks
             .fetch_add(1, Ordering::Relaxed);
     }
+}
 
-    fn decrement_pending_script_tasks(&self) {
+impl Drop for LifecycleScriptSubprocess<'_> {
+    fn drop(&mut self) {
         // .monotonic is okay because this is just used for progress (see
         // `increment_pending_script_tasks`).
         let _ = self

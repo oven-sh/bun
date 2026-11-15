@@ -1,4 +1,4 @@
-use core::cell::UnsafeCell;
+use core::cell::{OnceCell, UnsafeCell};
 use core::mem::MaybeUninit;
 
 use crate::fs as Fs;
@@ -377,25 +377,12 @@ pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [
 // from/to buffers while `relative_to_common_path_buf()` is borrowed elsewhere
 // without aliasing a single parent payload. Only 3×8 bytes in static TLS instead
 // of 3×PathBuffer (see test/js/bun/binary/tls-segment-size).
-struct LazyPathBuf(core::cell::Cell<*mut PathBuffer>);
-
-impl Drop for LazyPathBuf {
-    fn drop(&mut self) {
-        let p = self.0.get();
-        if !p.is_null() {
-            // SAFETY: `p` came from `heap::into_raw` in `lazy_path_buf`; sole accessor.
-            unsafe { drop(bun_core::heap::take(p)) };
-        }
-    }
-}
+type LazyPathBuf = OnceCell<Box<UnsafeCell<PathBuffer>>>;
 
 thread_local! {
-    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
-    static RELATIVE_FROM_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
-    static RELATIVE_TO_BUF: LazyPathBuf =
-        const { LazyPathBuf(core::cell::Cell::new(core::ptr::null_mut())) };
+    static RELATIVE_TO_COMMON_PATH_BUF: LazyPathBuf = const { OnceCell::new() };
+    static RELATIVE_FROM_BUF: LazyPathBuf = const { OnceCell::new() };
+    static RELATIVE_TO_BUF: LazyPathBuf = const { OnceCell::new() };
 }
 
 /// Lazily allocate (on first use) and borrow a thread-local `PathBuffer`. One
@@ -403,13 +390,9 @@ thread_local! {
 /// 5 sites → 1).
 #[inline]
 fn lazy_path_buf(c: &LazyPathBuf) -> &'static mut PathBuffer {
-    let mut p = c.0.get();
-    if p.is_null() {
-        p = bun_core::heap::into_raw(Box::new(PathBuffer::ZEROED));
-        c.0.set(p);
-    }
-    // SAFETY: `p` is non-null after the init branch; this thread is the sole accessor.
-    unsafe { &mut *p }
+    let buf = c.get_or_init(|| Box::new(UnsafeCell::new(PathBuffer::ZEROED)));
+    // SAFETY: lives until the thread exits, and this thread is the sole accessor.
+    unsafe { &mut *buf.get() }
 }
 
 /// Raw pointer into the thread-local scratch buffer. Callers reborrow

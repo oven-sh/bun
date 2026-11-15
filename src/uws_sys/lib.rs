@@ -536,7 +536,7 @@ pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
-pub use listen_socket::ListenSocket;
+pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};

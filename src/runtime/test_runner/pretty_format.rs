@@ -1,5 +1,6 @@
 use crate::test_runner::expect::JSValueTestExt;
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use bun_collections::HashMap;
 use bun_core::fmt as bun_fmt;
@@ -289,11 +290,12 @@ pub(crate) mod visited {
         }
     }
 
-    // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `INIT` allocates an empty map,
+    // `ObjectPool<T, ..>` requires `T: ObjectPoolType` — `init` makes an empty map,
     // `reset` clears retaining capacity (handled by callers via `.clear()`).
     impl bun_collections::pool::ObjectPoolType for Map {
-        const INIT: Option<fn() -> Result<Self, bun_core::Error>> =
-            Some(|| Ok(Map::default()));
+        fn init() -> Self {
+            Map::default()
+        }
         #[inline]
         fn reset(&mut self) {
             self.0.clear();
@@ -312,7 +314,7 @@ pub(crate) struct Formatter<'a> {
     pub(crate) remaining_values: &'a [JSValue],
     pub(crate) map: visited::Map,
     /// Lazily acquired from `visited::Pool`; released back in `Drop`.
-    pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+    pub(crate) map_node: ManuallyDrop<Option<Box<visited::PoolNode>>>,
     pub global_this: &'a JSGlobalObject,
     pub(crate) indent: u32,
     pub(crate) quote_strings: bool,
@@ -348,7 +350,7 @@ impl<'a> Formatter<'a> {
         Self {
             remaining_values: &[],
             map: visited::Map::default(),
-            map_node: None,
+            map_node: ManuallyDrop::new(None),
             global_this: global,
             indent: 0,
             quote_strings: false,
@@ -399,16 +401,9 @@ impl<'a> Formatter<'a> {
 impl Drop for Formatter<'_> {
     fn drop(&mut self) {
         if let Some(mut node) = self.map_node.take() {
-            // SAFETY: `node` came from `visited::Pool::get_node()` and is
-            // exclusively owned for this `Formatter`'s lifetime; its `data` was
-            // initialized by `Map::INIT`, so `assume_init_mut` observes a valid
-            // `Map`.
-            unsafe {
-                let data = node.as_mut().data.assume_init_mut();
-                *data = core::mem::take(&mut self.map);
-                data.clear();
-                visited::Pool::release(node.as_ptr());
-            }
+            node.data = core::mem::take(&mut self.map);
+            node.data.clear();
+            visited::Pool::release(node);
         }
     }
 }
@@ -1096,23 +1091,11 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // `visited::Pool::get()` returns an RAII `PoolGuard` that
-                // would release on scope exit; instead the raw node is stashed on
-                // `self` and released from `JestPrettyFormat::format`'s tail, so
-                // take the raw node directly. `data` is initialized by
-                // `Map::INIT` (see `visited::Map: ObjectPoolType`).
-                let node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node never returns null");
-                self.map_node = Some(node);
-                // Take the map here and swap it back into
-                // `node.data` at release time (see JestPrettyFormat::format tail),
-                // so the pooled allocation is retained across uses.
-                // SAFETY: see above.
-                unsafe {
-                    let data = (*node.as_ptr()).data.assume_init_mut();
-                    data.clear();
-                    self.map = core::mem::take(data);
-                }
+                // `Drop` puts the map back, so the pooled allocation is retained across uses.
+                let mut node = visited::Pool::get_node();
+                node.data.clear();
+                self.map = core::mem::take(&mut node.data);
+                self.map_node = ManuallyDrop::new(Some(node));
             }
 
             let entry = self.map.get_or_put(value).expect("unreachable");
@@ -4694,7 +4677,7 @@ impl JestPrettyFormat {
         let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
         // SAFETY: `utils_value` is on the stack and owns the payload.
         let utils = unsafe { &*utils };
-        let file = super::jest::Jest::file_generation(global);
+        let file = super::jest::Jest::file_generation();
         let is_same_file = utils.serializers_file.replace(file) == file;
         let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {
             return Ok(None);

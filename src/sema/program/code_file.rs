@@ -6,7 +6,7 @@ use crate::bind::{BindOptions, RuntimeBindOptions};
 use crate::file_analysis::{
     AnalyzedAgain, AnalyzedAgainFrom, FileAnalysis, FileInputs, analyze_file, analyze_file_again,
 };
-use crate::fold::{FoldInputs, StoredByMocks};
+use crate::fold::{Constant, FoldInputs, StoredByMocks};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
 use crate::module_format::{DeclaredModuleType, ModuleFormat, find_format_by_syntax};
@@ -156,6 +156,12 @@ fn write_what_other_files_say<'s>(
         ArenaFew::from_iter_in(inputs.exports_that_others_touch.iter().copied(), arena);
 }
 
+fn learns_unknown_import_of_texts(hir: &hir::File<'_>, constants: &[ImportedConstant]) -> bool {
+    let lacking = &hir.unknown_imports_of_texts;
+    let mut known = (constants.iter()).filter(|it| !matches!(it.value, Constant::BigInt(_)));
+    known.any(|it| lacking.contains(&it.name))
+}
+
 fn fold_inputs_of<'c, 's: 'c>(
     context: &'c CodeLoadContext<'_, 's, '_>,
     arena: &'s Arena,
@@ -251,6 +257,9 @@ pub(super) fn analyze_code_file_again<'s, 'r>(
         mut code,
         payload,
     } = loaded;
+    if learns_unknown_import_of_texts(&parse.hir, inputs.imported_constants) {
+        return None;
+    }
     write_what_other_files_say(&mut parse.hir, inputs, arena);
     parse.hir.runs_beside_loader = context.host.has_loader_at_run_time();
     let previous = &code.analyzed;

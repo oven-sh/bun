@@ -1762,30 +1762,30 @@ fn tarball_may_contain(
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
-    let entry: Box<[u8]> = match res.tag {
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let entry = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
-            crate::package_manager::cached_npm_package_folder_name(
+            crate::package_manager::cached_npm_package_folder_name_print(
                 manager,
+                &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
         ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, res.github(), None)
+            crate::package_manager::cached_github_folder_name(manager, &mut buf, res.github(), None)
         }
         // A tarball dependency can contain anything.
         _ => return true,
-    }
-    .as_bytes()
-    .into();
+    };
     // An installed package is never downloaded again, so a missing cache entry won't come back.
     // Treat it as not having the folder.
-    let folder = zname(&join(&join(&entry, b"node_modules"), alias));
+    let folder = zname(&join(&join(entry.as_bytes(), b"node_modules"), alias));
     sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
 }
 
@@ -2891,9 +2891,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
                 _ => continue,
             }
         } else {
-            let z = zname(name);
-            let z = ZStr::from_slice_with_nul(&z);
-            if let Ok(len) = sys::readlinkat(bin.fd(), z, link.as_mut_slice())
+            if let Ok(len) = sys::readlinkat(bin.fd(), entry.name.as_zstr(), link.as_mut_slice())
                 && (link[..len].strip_prefix(b"../"))
                     .is_some_and(|path| leads_into_package(parent, path))
             {
@@ -2902,7 +2900,6 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         }
         dangling.push(name.into());
     }
-    drop(iter);
     let mut removed = false;
     for name in &dangling {
         removed |= remove_link(bin, name).is_ok();

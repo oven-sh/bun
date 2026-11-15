@@ -432,7 +432,7 @@ pub enum PrintFormat {
 
 // `Clone` — `List` owns `cwd`/`package_name`/`items`, but
 // `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
-// by-value copy while the original allocation in `Store.entries.scripts`
+// by-value copy while the original allocation in the isolated `Task.scripts`
 // must stay live for the post-install pass, so a deep clone is required.
 #[derive(Clone)]
 pub struct List {

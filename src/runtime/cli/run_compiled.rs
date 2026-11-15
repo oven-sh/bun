@@ -569,14 +569,10 @@ impl Program<'_> {
             #[cfg(unix)]
             Program::Written(WrittenProgram { descriptor, length }) => {
                 let (access, flags) = (libc::PROT_READ, libc::MAP_SHARED);
-                let mapped =
-                    bun_sys::mmap(core::ptr::null_mut(), length, access, flags, descriptor, 0);
-                let hash = mapped.map_or(0, |start| {
-                    // SAFETY: the mapping has `length` bytes, and nothing writes to the file until it is unmapped.
-                    let hash =
-                        bun_wyhash::hash(unsafe { core::slice::from_raw_parts(start, length) });
-                    let _ = bun_sys::munmap(start, length);
-                    hash
+                let mapped = bun_sys::Mmap::new(length, access, flags, descriptor, 0);
+                let hash = mapped.map_or(0, |mapped| {
+                    // SAFETY: nothing writes to the file until it is unmapped.
+                    bun_wyhash::hash(unsafe { mapped.as_slice() })
                 });
                 (length, hash)
             }
@@ -646,8 +642,7 @@ enum ProgramFile {
 fn can_map_code(descriptor: Fd) -> bool {
     let size = bun_sys::page_size();
     let (access, flags) = (libc::PROT_READ | libc::PROT_EXEC, libc::MAP_PRIVATE);
-    bun_sys::mmap(core::ptr::null_mut(), size, access, flags, descriptor, 0)
-        .is_ok_and(|page| bun_sys::munmap(page, size).is_ok())
+    bun_sys::Mmap::new(size, access, flags, descriptor, 0).is_ok()
 }
 
 #[cfg(target_os = "linux")]
@@ -765,22 +760,15 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
     if unsafe { libc::fallocate(descriptor.native(), 0, 0, length as libc::off_t) } != 0 {
         return false;
     }
-    let Ok(start) = bun_sys::mmap(
-        core::ptr::null_mut(),
-        length,
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_SHARED,
-        descriptor,
-        0,
-    ) else {
+    let (access, flags) = (libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED);
+    let Ok(mut mapped) = bun_sys::Mmap::new(length, access, flags, descriptor, 0) else {
         return false;
     };
-    // SAFETY: the mapping has `length` bytes that may be written, and nothing else refers to them until `munmap`.
-    let mapped = unsafe { core::slice::from_raw_parts_mut(start, length) };
     let share = length
         .div_ceil(usize::from(bun_core::get_thread_count()))
         .max(MIN_BYTES_OF_THREAD);
-    let mut room = mapped;
+    // SAFETY: the mapping may be written, and nothing else has the file.
+    let mut room = unsafe { mapped.as_mut_slice() };
     let mut shares = Vec::new();
     for part in parts {
         let (target, behind) = room.split_at_mut(part.len());
@@ -788,7 +776,6 @@ fn copy_into_mapping_of_empty_file(descriptor: Fd, parts: &[&[u8]]) -> bool {
         room = behind;
     }
     for_each_on_threads(shares, |(target, source)| target.copy_from_slice(source));
-    let _ = bun_sys::munmap(start, length);
     true
 }
 
@@ -973,7 +960,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
     bun_spawn::ctrl_c::install();
     let spawned = sync::spawn(&sync::Options {
         argv,
-        argv0: Some(executable.as_ptr().cast::<core::ffi::c_char>()),
+        argv0: Some(executable.into()),
         cwd: original_cwd.map(Box::<[u8]>::from).unwrap_or_default(),
         envp: None,
         stderr: sync::SyncStdio::Inherit,
@@ -1387,13 +1374,10 @@ pub(crate) extern "C" fn Bun__AOT__runsTestFilesAgain() -> bool {
 pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
     global: &bun_jsc::JSGlobalObject,
 ) -> bool {
-    let Some(runner) = crate::test_runner::jest::Jest::runner() else {
+    let Some(file) = crate::test_runner::bun_test::clone_active_strong() else {
         return false;
     };
-    let Some(file) = runner.bun_test_root.clone_active_file() else {
-        return false;
-    };
-    file.get().is_loading
+    file.is_loading.get()
         && global
             .bun_vm()
             .pending_internal_promise()

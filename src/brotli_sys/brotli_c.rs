@@ -4,9 +4,9 @@
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
-type brotli_alloc_func =
+pub type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
-type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
+pub type brotli_free_func = Option<unsafe extern "C" fn(opaque: *mut c_void, address: *mut c_void)>;
 
 bun_opaque::opaque_ffi! { pub struct struct_BrotliSharedDictionaryStruct; }
 
@@ -64,24 +64,6 @@ impl BrotliDecoder {
         value: u32,
     ) -> bool {
         BrotliDecoderSetParameter(state, param as c_uint, value) > 0
-    }
-
-    /// # Safety
-    /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
-    /// every `alloc_func`/`free_func` invocation for the lifetime of the
-    /// returned decoder (or null when the default allocator is used).
-    pub unsafe fn create_instance(
-        alloc_func: brotli_alloc_func,
-        free_func: brotli_free_func,
-        opaque: *mut c_void,
-    ) -> Option<&'static mut BrotliDecoder> {
-        // SAFETY: FFI constructor; null on failure
-        unsafe { BrotliDecoderCreateInstance(alloc_func, free_func, opaque).as_mut() }
-    }
-
-    pub fn destroy_instance(state: &mut BrotliDecoder) {
-        // SAFETY: state is a valid &mut BrotliDecoder allocated by create_instance
-        unsafe { BrotliDecoderDestroyInstance(state) }
     }
 
     pub fn decompress_stream(
@@ -261,13 +243,6 @@ pub enum BrotliEncoderOperation {
     flush = 1,
     finish = 2,
     emit_metadata = 3,
-}
-
-impl BrotliEncoder {
-    pub fn destroy_instance(state: &mut BrotliEncoder) {
-        // SAFETY: state is a valid &mut BrotliEncoder allocated by BrotliEncoderCreateInstance
-        unsafe { BrotliEncoderDestroyInstance(state) }
-    }
 }
 
 pub const BROTLI_MIN_QUALITY: c_int = 0;

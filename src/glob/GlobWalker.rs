@@ -70,7 +70,7 @@ pub trait AccessorHandle: Copy {
 
 pub trait Accessor {
     const COUNT_FDS: bool;
-    /// True when the dir iterator's `kind()` is resolved through symlinks (a
+    /// True when the dir iterator's `kind` is resolved through symlinks (a
     /// symlinked directory is reported as `Directory`, never `SymLink`), so the
     /// Directory descent arm must run the followed-link ancestor check itself.
     const ENTRY_KIND_FOLLOWS_SYMLINKS: bool = true;
@@ -87,26 +87,24 @@ pub trait Accessor {
 
 pub trait AccessorDirIter {
     type Handle;
-    type Entry: AccessorDirEntry;
-    fn next(&mut self) -> Maybe<Option<Self::Entry>>;
+    fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>>;
     fn iterate(dir: Self::Handle) -> Self;
+    #[cfg(windows)]
     fn set_name_filter(&mut self, _filter: Option<&[u16]>) {
-        // default: no-op (only SyscallAccessor on Windows uses this)
+        // default: no-op (only SyscallAccessor uses this)
     }
 }
 
-pub trait AccessorDirEntry {
-    fn name_slice(&self) -> &[u8];
-    fn kind(&self) -> bun_sys::FileKind;
+pub struct AccessorDirEntry<'a> {
+    pub name: &'a [u8],
+    pub kind: bun_sys::FileKind,
     /// For accessors with [`Accessor::ENTRY_KIND_FOLLOWS_SYMLINKS`]: the
     /// already-resolved real path of the entry's target when the entry itself
-    /// is a symlink (its `kind()` reports the target's kind). `None` for
+    /// is a symlink (its `kind` is the target's kind). `None` for
     /// non-symlinks and for accessors that never resolve targets. Must come
     /// from data the accessor already holds — the walker uses it for the
     /// followed-link ancestor check without issuing any extra syscall.
-    fn symlink_target(&self) -> Option<&[u8]> {
-        None
-    }
+    pub symlink_target: Option<&'a [u8]>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,11 +136,14 @@ pub struct SyscallDirIter {
 
 impl AccessorDirIter for SyscallDirIter {
     type Handle = SyscallHandle;
-    type Entry = DirIterator::IteratorResult;
 
     #[inline]
-    fn next(&mut self) -> Maybe<Option<DirIterator::IteratorResult>> {
-        self.value.next()
+    fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>> {
+        Ok(self.value.next()?.map(|entry| AccessorDirEntry {
+            name: entry.name.slice_u8(),
+            kind: entry.kind,
+            symlink_target: None,
+        }))
     }
 
     #[inline]
@@ -152,6 +153,7 @@ impl AccessorDirIter for SyscallDirIter {
         }
     }
 
+    #[cfg(windows)]
     #[inline]
     fn set_name_filter(&mut self, filter: Option<&[u16]>) {
         self.value.set_name_filter(filter);
@@ -1022,21 +1024,17 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         self.iter_state = IterState::GetNext;
                         continue;
                     };
-                    // Re-borrow dir after potential &mut self above
-                    let IterState::Directory(dir) = &mut self.iter_state else {
-                        unreachable!()
-                    };
+                    let entry_name = entry.name;
+                    let dir_dir_path = ZStr::from_buf(&dir.path[..], dir.dir_path_len).as_bytes();
                     log!(
                         "dir: {} entry: {}",
-                        bstr::BStr::new(dir.dir_path().as_bytes()),
-                        bstr::BStr::new(entry.name_slice())
+                        bstr::BStr::new(dir_dir_path),
+                        bstr::BStr::new(entry_name)
                     );
 
                     let active = dir.active.clone().expect("OOM: ComponentSet::clone");
-                    let entry_name = entry.name_slice();
-                    let dir_dir_path = dir.dir_path().as_bytes();
                     let dir_fd = dir.fd;
-                    match entry.kind() {
+                    match entry.kind {
                         bun_sys::FileKind::File => {
                             if self.walker.eval_file(&active, entry_name) {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
@@ -1052,7 +1050,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             if child.count() != 0 {
                                 let mut followed_link: Option<FollowedLink> = None;
                                 if self.walker.should_descend_resolved_dir(
-                                    entry.symlink_target(),
+                                    entry.symlink_target,
                                     &mut followed_link,
                                 ) {
                                     let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
@@ -2346,18 +2344,5 @@ fn bun_join<const SENTINEL: bool>(parts: &[&[u8]]) -> Box<[u8]> {
         Box::from(resolve_path::join_spill::<platform::Auto>(
             &mut spill, parts,
         ))
-    }
-}
-
-impl AccessorDirEntry for DirIterator::IteratorResult {
-    fn name_slice(&self) -> &[u8] {
-        // On Windows the `.u8`
-        // NewWrappedIterator transcodes via `strings.fromWPath` at iteration
-        // time. `Name::slice_u8()` exposes that cached transcode (or the native
-        // slice on POSIX) so this is uniformly `&[u8]`.
-        self.name.slice_u8()
-    }
-    fn kind(&self) -> bun_sys::FileKind {
-        self.kind
     }
 }

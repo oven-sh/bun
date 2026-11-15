@@ -190,15 +190,12 @@ pub(crate) fn to_js_from_multipart_data(
                     }
                 }
 
-                let result = wrap.form.append_blob(
+                wrap.form.append_blob(
                     wrap.global,
                     &key,
                     (&raw mut blob).cast::<c_void>(),
                     &filename,
-                );
-                // `append_blob` dupes the content type; release this stack-local.
-                blob.detach();
-                result
+                )
             } else {
                 let value = EncodedSlice::utf8(
                     // > Each part whose `Content-Disposition` header does not

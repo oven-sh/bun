@@ -169,6 +169,24 @@ describe("fs.watch", () => {
     });
   });
 
+  test("a recursive watcher sees subfolders of a folder that is already watched", async () => {
+    using dir = tempDir("watch-flat-then-recursive", { "nested/.keep": "" });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const flat = fs.watch(String(dir), () => {});
+    const recursive = fs.watch(String(dir), { recursive: true }, (_, filename) => {
+      if (filename === path.join("nested", "file.txt")) resolve();
+    });
+    recursive.on("error", reject);
+    const interval = repeat(() => fs.writeFileSync(path.join(String(dir), "nested", "file.txt"), "hello"));
+    try {
+      await promise;
+    } finally {
+      clearInterval(interval);
+      flat.close();
+      recursive.close();
+    }
+  });
+
   test("should emit event when file is deleted", done => {
     const testsubdir = tempDirWithFiles("subdir", {
       "deleted.txt": "hello",
@@ -1664,8 +1682,8 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
 // PathWatcherManager bound to the first caller's VM/uv_loop. A Worker thread
 // calling fs.watch() reused that manager: it mutated the watcher map and drove
 // the main thread's uv_loop from a foreign thread (debug builds tripped a
-// debug_assert and aborted; release builds raced). The manager is now
-// re-allocated per VM, so a Worker's watcher never aliases the main thread's.
+// debug_assert and aborted; release builds raced). The watchers are now
+// kept per VM, so a Worker's watcher never aliases the main thread's.
 //
 // Must run in a subprocess: on an unpatched debug build the Worker's
 // fs.watch() call aborts the whole runtime.

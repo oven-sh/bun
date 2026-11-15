@@ -180,12 +180,8 @@ impl<'a> InternalState<'a> {
     pub(crate) fn reset(&mut self) {
         // Preserve `decoded_body` across the reset so the progress-update path
         // can deliver its bytes after calling `reset()`; clearing happens in
-        // the caller after `callback.run()`.
+        // the caller after `AsyncHTTP::on_result`.
         let decoded_body = core::mem::take(&mut self.decoded_body);
-        // `*self = ...` below drops every field via drop glue. Only
-        // `original_request_body` needs an explicit `deinit()` because
-        // `HTTPRequestBody` deliberately has no `Drop` (see HTTPRequestBody.rs).
-        self.original_request_body.deinit();
         *self = InternalState {
             decoded_body,
             compressed_body: MutableString::init_empty(),

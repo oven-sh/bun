@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -391,6 +391,45 @@ describe.concurrent("bun test --changed", () => {
     const { stderr, exitCode } = await runTestChanged(String(dir));
     const testNames = ["alias.test.ts", "relative.test.ts", "unrelated.test.ts"];
     expect(ranFiles(stderr, testNames)).toEqual(["alias.test.ts", "relative.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)("a scan that cannot start ends the threads it started", async () => {
+    using dir = tempDir("test-changed-scan-fails", {
+      "a.test.js": `
+import { test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+const isPool = tid => {
+  try {
+    return readFileSync("/proc/self/task/" + tid + "/comm", "utf8").startsWith("Bun Pool");
+  } catch {
+    return false;
+  }
+};
+test("threads", () => {
+  // The kernel lists a thread for a moment after it is joined.
+  const deadline = performance.now() + 2000;
+  let left;
+  while ((left = readdirSync("/proc/self/task").filter(isPool).length) && performance.now() < deadline);
+  console.log(left);
+});
+`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "a.test.js"), "// touched\n");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--changed", "--tsconfig-override", "missing.json"],
+      cwd: String(dir),
+      // The scan's transpiler is left to the exit.
+      env: { ...gitEnv, ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("failed to build module graph");
+    expect(stdout.trim().split("\n").at(-1)).toBe("0");
     expect(exitCode).toBe(0);
   });
 

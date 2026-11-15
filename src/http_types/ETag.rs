@@ -191,6 +191,7 @@ pub fn if_none_match(
 /// `bun_http::headers::api::StringPointer` keep resolving.
 pub use bun_core::StringPointer;
 
+#[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct HeaderEntry {
     pub name: StringPointer,
@@ -199,32 +200,12 @@ pub struct HeaderEntry {
 
 pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
-/// Column accessors for `HeaderEntry` MultiArrayList storage.
-///
-/// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
-/// that need to mutate `header_entries` afterwards copy the index out first.
-pub trait HeaderEntryColumns {
-    fn items_name(&self) -> &[StringPointer];
-    fn items_value(&self) -> &[StringPointer];
-}
-impl HeaderEntryColumns for bun_collections::multi_array_list::Slice<HeaderEntry> {
-    #[inline]
-    fn items_name(&self) -> &[StringPointer] {
-        self.items::<"name", StringPointer>()
-    }
-    #[inline]
-    fn items_value(&self) -> &[StringPointer] {
-        self.items::<"value", StringPointer>()
-    }
-}
-impl HeaderEntryColumns for HeaderEntryList {
-    #[inline]
-    fn items_name(&self) -> &[StringPointer] {
-        self.items::<"name", StringPointer>()
-    }
-    #[inline]
-    fn items_value(&self) -> &[StringPointer] {
-        self.items::<"value", StringPointer>()
+bun_core::impl_zeroable!(HeaderEntry);
+
+bun_collections::multi_array_columns! {
+    pub trait HeaderEntryColumns for HeaderEntry {
+        name: StringPointer,
+        value: StringPointer,
     }
 }
 
@@ -259,7 +240,7 @@ impl Headers {
 
     /// [`get`](Self::get), as the value's position in `buf`.
     pub fn get_pointer(&self, name: &[u8]) -> Option<StringPointer> {
-        let entries = self.entries.slice();
+        let entries = &self.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         for (i, name_ptr) in names.iter().enumerate() {

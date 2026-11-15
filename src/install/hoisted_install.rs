@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_collections::{DynamicBitSet as Bitset, DynamicBitSetList, StringHashMap};
@@ -9,44 +8,18 @@ use bun_paths::SEP;
 use bun_sys::{self as sys, Dir, Fd};
 
 use crate::analytics;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::{NodeId, Progress};
 
-use crate::lockfile::tree;
-use crate::{DependencyID, ExtractData, PackageID};
-// Bring the `items_<field>{,_mut}()` column accessors for
-// `MultiArrayList::Slice<Package>` into scope.
 use crate::PackageManager;
 use crate::bin_real as bin;
+use crate::lockfile::tree;
 use crate::package_install;
 use crate::package_installer::{DeferredLinks, NodeModulesFolder, PackageInstaller, TreeContext};
 use crate::package_manager::{self, WorkspaceFilter};
-use crate::package_manager_real::ProgressStrings;
-use crate::package_manager_real::run_tasks;
-use crate::package_manager_task as Task;
+use crate::package_manager_real::run_tasks::{Caller, run_tasks};
 use crate::prune::LinkedNodeModules;
-
-/// `RunTasksCallbacks` impl for the hoisted-install loop, with
-/// `Ctx == PackageInstaller`.
-pub(crate) struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
-    type Ctx = PackageInstaller<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const IS_PACKAGE_INSTALLER: bool = true;
-
-    fn on_extract_package_installer(
-        ctx: &mut Self::Ctx,
-        task_id: Task::Id,
-        dependency_id: DependencyID,
-        data: &mut ExtractData,
-        log_level: package_manager::Options::LogLevel,
-    ) {
-        ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
-    }
-}
+use crate::{DependencyID, PackageID};
 
 /// Restores the trees that `Lockfile::filter` replaced for the install pass, and ends the progress
 /// bar.
@@ -64,10 +37,9 @@ impl Drop for RestoreManager {
         // its borrows have ended.
         let this = unsafe { &mut *self.manager };
         if self.log_level.show_progress() {
-            this.progress.root.end();
+            this.progress.end();
             this.progress = Progress::default();
         }
-        // The progress-node pointers target stack locals of `install_hoisted_packages`.
         this.scripts_node = None;
         this.downloads_node = None;
         this.lockfile.buffers.trees = core::mem::take(&mut self.trees);
@@ -88,7 +60,7 @@ fn run_tasks_until_done(
         // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow.
         let manager = unsafe { &mut *mgr };
         let log_level = manager.options.log_level;
-        run_tasks::run_tasks::<HoistedRunTasksCallbacks>(manager, installer, true, log_level)?;
+        run_tasks(manager, Caller::HoistedLinker(installer), true, log_level)?;
 
         // A script that has ended makes room for one that waits.
         installer.run_available_scripts(log_level);
@@ -146,7 +118,6 @@ fn link_deferred(
 
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
-    ctx: Command::Context,
     workspace_filters: &[WorkspaceFilter],
     install_root_dependencies: bool,
     log_level: package_manager::Options::LogLevel,
@@ -193,25 +164,11 @@ pub(crate) fn install_hoisted_packages(
     // block above, so no other borrow of `*mgr_ptr` is live here.
     let this = unsafe { &mut *mgr_ptr };
 
-    let mut download_node: ProgressNode;
-    let mut install_node: ProgressNode = ProgressNode::default();
-    let mut scripts_node: ProgressNode;
-
     if log_level.show_progress() {
         let hoisted_len = this.lockfile.buffers.hoisted_dependencies.len();
-        let progress = &mut this.progress;
-        progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        let root_node = progress.start(b"", 0);
-        download_node = root_node.start(ProgressStrings::download(), 0);
-        install_node = root_node.start(ProgressStrings::install(), hoisted_len);
-        scripts_node = root_node.start(ProgressStrings::script(), 0);
-        // These are stack locals of this frame. `_restore_manager` clears the pointers before the
-        // function returns.
-        this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
-        this.scripts_node = NonNull::new(&raw mut scripts_node);
+        this.start_install_progress_bar(hoisted_len);
     }
 
-    // Declared after the nodes, so that it ends the progress bar while they're still alive.
     let _restore_manager = RestoreManager {
         manager: mgr_ptr,
         trees: original_trees,
@@ -359,7 +316,7 @@ pub(crate) fn install_hoisted_packages(
             // to make mistakes harder
             //
             // RawSlice invariant: on growth `fix_cached_lockfile_package_slices` re-snapshots.
-            let parts = lockfile_ref.packages.slice();
+            let parts = &lockfile_ref.packages;
             let metas = bun_ptr::RawSlice::new(parts.items_meta());
             let bins = bun_ptr::RawSlice::new(parts.items_bin());
             let names = bun_ptr::RawSlice::new(parts.items_name());
@@ -385,20 +342,16 @@ pub(crate) fn install_hoisted_packages(
                 // up to 64 directories open.
                 deferred: (cfg!(not(windows)) && !FileSystem::get().fs.need_to_close_files())
                     .then(|| DeferredLinks::init(&lockfile_ref)),
-                node: &mut install_node,
                 node_modules: NodeModulesFolder {
                     path: strings::without_trailing_slash(FileSystem::get().top_level_dir())
                         .to_vec(),
                     tree_id: 0,
                 },
-                // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
-                progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
                 workspaces_seen: Vec::new(),
                 summary: &mut summary,
                 successfully_installed: Bitset::init_empty(pkg_len)?,
-                command_ctx: ctx,
                 tree_ids_to_trees_the_id_depends_on,
                 completed_trees,
                 pending_install_count: 0,
@@ -481,12 +434,7 @@ pub(crate) fn install_hoisted_packages(
                 // We want to minimize how often we call this function
                 // That's part of why we unroll this loop
                 if this.pending_task_count() > 0 {
-                    run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        this,
-                        &mut installer,
-                        true,
-                        log_level,
-                    )?;
+                    run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
                     if !this.options.do_.install_packages() {
                         return Err(crate::Error::InstallFailed);
                     }
@@ -499,12 +447,7 @@ pub(crate) fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                this,
-                &mut installer,
-                true,
-                log_level,
-            )?;
+            run_tasks(this, Caller::HoistedLinker(&mut installer), true, log_level)?;
             if !this.options.do_.install_packages() {
                 return Err(crate::Error::InstallFailed);
             }
@@ -534,14 +477,7 @@ pub(crate) fn install_hoisted_packages(
         // .monotonic is okay because this value is only accessed on this thread.
         this.finished_installing.store(true, Ordering::Relaxed);
         if log_level.show_progress() {
-            // Route through the stored `NonNull` (set above) instead of
-            // re-borrowing the `scripts_node` local directly: under Stacked
-            // Borrows a fresh `&mut local` here would invalidate the raw
-            // pointer that lifecycle-script callbacks dereference via
-            // `scripts_node_mut()` while we drain below.
-            if let Some(n) = this.scripts_node_mut() {
-                n.activate();
-            }
+            this.progress.activate(NodeId::Scripts);
         }
 
         if !this.options.do_.install_packages() {
@@ -565,11 +501,7 @@ pub(crate) fn install_hoisted_packages(
             Some(core::mem::take(&mut installer.successfully_installed));
 
         if log_level.show_progress() {
-            // See `activate()` note above — reuse the stored `NonNull`'s
-            // provenance instead of re-borrowing the stack local.
-            if let Some(n) = this.scripts_node_mut() {
-                n.end();
-            }
+            this.progress.end_child(NodeId::Scripts);
         }
     }
 

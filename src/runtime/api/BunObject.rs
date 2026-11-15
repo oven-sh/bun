@@ -73,7 +73,7 @@ use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
-use bun_sys::{self as sys, Fd, FdExt as _};
+use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
 
 use crate::node;
@@ -216,27 +216,7 @@ pub(crate) fn braces(
     let mut arena = bun_alloc::Arena::new();
     let _ = &mut arena;
 
-    let mut lexer_output = 'lexer_output: {
-        if strings::is_all_ascii(brace_slice) {
-            break 'lexer_output match Braces::Lexer::tokenize(brace_slice) {
-                Ok(v) => v,
-                Err(err) => {
-                    return Err(
-                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                    );
-                }
-            };
-        }
-
-        match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice) {
-            Ok(v) => break 'lexer_output v,
-            Err(err) => {
-                return Err(
-                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
-                );
-            }
-        }
-    };
+    let mut lexer_output = Braces::tokenize(brace_slice);
 
     let expansion_count = Braces::calculate_expanded_amount(&lexer_output.tokens[..]);
 
@@ -290,7 +270,6 @@ pub(crate) fn braces(
         lexer_output.contains_nested,
     ) {
         Ok(()) => {}
-        Err(Braces::ParserError::OutOfMemory) => return Err(jsc::JsError::OutOfMemory),
         Err(Braces::ParserError::UnexpectedToken) => {
             return Err(global.throw(format_args!("Unexpected token while expanding braces")));
         }
@@ -545,17 +524,9 @@ pub(crate) fn register_macro<'a>(
     if callback.as_callable().is_none() {
         return Err(heap.error(format_args!("Macro must be a function")));
     }
-    let callback = callback.to_js();
-
-    VirtualMachine::get().macros.with_mut(|macros| {
-        let get_or_put_result = macros.get_or_put(id).expect("unreachable");
-        if get_or_put_result.found_existing {
-            get_or_put_result.value_ptr.unprotect();
-        }
-
-        callback.protect();
-        *get_or_put_result.value_ptr = callback;
-    });
+    let vm = VirtualMachine::get();
+    let callback = jsc::Strong::create(callback.to_js(), vm.global());
+    vm.macros.with_mut(|macros| macros.insert(id, callback));
 
     Ok(())
 }
@@ -600,7 +571,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             }
 
-            let Ok(fd) = sys::openat_a(
+            let Ok(file) = sys::File::openat(
                 if cfg!(windows) {
                     Fd::INVALID
                 } else {
@@ -618,7 +589,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
                 break 'use_resolved_path;
             };
 
-            let _close = scopeguard::guard(fd, |fd: Fd| fd.close());
+            let fd = file.fd();
             #[cfg(windows)]
             {
                 let mut wpath = bun_paths::w_path_buffer_pool::get();
@@ -1076,7 +1047,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
                         server.context.set(context.id());
-                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `drop`.
                         unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
@@ -1108,12 +1079,13 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
+            let route_list_object = <$ServerType>::listen(&server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `listen` frees the server only when it throws.
+            // Its reference count owns it from now on.
+            let server = server.into_raw();
+            // SAFETY: the ref that the wrapper takes below is held.
             let server_ref: &$ServerType = unsafe { &*server };
             let obj = <$ServerType>::ptr_to_js(server, global_object);
             if route_list_object != JSValue::ZERO {
@@ -1159,7 +1131,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             server_ref.gc_hint_after_listen();
 
             // SAFETY: `server` is heap-allocated and leaves its context in
-            // `stop_listening` / `deinit`.
+            // `stop_listening` / `drop`.
             unsafe {
                 (*server).context.set(context.id());
                 bun_jsc::AbortHandle::arm_owner(server, context)
@@ -2080,18 +2052,10 @@ pub(crate) mod JSZstd {
 // Referenced: bun_jsc::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
-//
-// NOTE (layering): `RareData.{stdin,stdout,stderr}_store` are typed as
-// `Option<Arc<high_tier::BlobStore>>` opaque stubs in `bun_jsc`. The real
-// `Blob::Store` (intrusively refcounted, with `File` payload) lives in this
-// crate and can't move down without dragging `node::PathLike`/S3/aio. The
-// stores exist purely for per-VM lazy init; that is per-thread
-// in practice (`VirtualMachine::get()` is thread-local), so cache the
-// `RefPtr<Store>`s here.
 mod stdio_stores {
     use super::*;
     use crate::node::types::PathOrFileDescriptor;
-    use crate::webcore::blob::store::{Data, File as FileStore, IsAllAscii};
+    use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store};
     use bun_ptr::RefPtr;
 
@@ -2107,17 +2071,15 @@ mod stdio_stores {
             Ok(stat) => stat.st_mode as bun_sys::Mode,
             Err(_) => 0,
         };
-        RefPtr::new(Store {
-            data: Data::File(FileStore {
+        RefPtr::new(Store::new(
+            Data::File(FileStore {
                 pathlike: PathOrFileDescriptor::Fd(fd),
                 is_atty: Some(is_atty),
                 mode,
                 ..Default::default()
             }),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        })
+            bun_http_types::MimeType::NONE,
+        ))
     }
 
     fn make_blob(

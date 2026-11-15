@@ -6,6 +6,7 @@ use bun_collections::StringArrayHashMap;
 use bun_core::Utf8Bytes;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use std::borrow::Cow;
+use std::sync::Arc;
 
 /// `bake.Framework.ServerComponents`.
 ///
@@ -99,9 +100,8 @@ impl Framework {
     /// Project the runtime-side `bake::Framework` into the bundler crate's
     /// TYPE_ONLY view (`bun_bundler::bake_types::Framework`). The bundler is a
     /// lower-tier crate and cannot name `bun_runtime::bake::Framework`; this is
-    /// the value `init_transpiler` arena-allocates and hands to
-    /// `out.options.framework`.
-    pub(in crate::bake) fn as_bundler_view(&self) -> bun_bundler::bake_types::Framework {
+    /// a transpiler's `options.framework`.
+    pub(in crate::bake) fn as_bundler_view(&self) -> Arc<bun_bundler::bake_types::Framework> {
         use bun_bundler::bake_types as bt;
         let built_in_modules = bun_core::handle_oom(self.built_in_modules.clone());
         let server_components = self
@@ -145,12 +145,12 @@ impl Framework {
                     .collect(),
             })
             .collect();
-        bt::Framework::new(
+        Arc::new(bt::Framework::new(
             built_in_modules,
             server_components,
             react_fast_refresh,
             client_page_dirs,
-        )
+        ))
     }
 
     /// Resolves built-in module

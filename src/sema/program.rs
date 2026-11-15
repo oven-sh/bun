@@ -7278,7 +7278,7 @@ impl<'s> Files<'s> {
                 |(), (), _| {
                     load(LoadSteps::Read, false);
                 },
-                &mut vec![(); io.max_threads()],
+                &vec![(); io.max_threads()],
                 || on_all_threads(LoadSteps::Process),
             ),
             // Any one of these finishes the load by itself.
@@ -8187,6 +8187,17 @@ impl<'s> Files<'s> {
         self.include_errors
             .iter()
             .filter(move |problem| problem.0 == file)
+    }
+
+    /// The files with `GetIncludeProcessorDiagnostics`.
+    pub fn files_with_include_problems(&self) -> Vec<FileId> {
+        let with_errors = self.include_errors.iter().map(|it| it.0);
+        let files = (0..self.modules.len()).map(|at| FileId(at as u32));
+        let without_references = files.filter(|&it| !self.module(it).missing_references.is_empty());
+        let mut files: Vec<FileId> = without_references.chain(with_errors).collect();
+        files.shared_sort_unstable();
+        files.dedup();
+        files
     }
 
     /// The module that `file` imports implicitly for its JSX.

@@ -317,7 +317,7 @@ impl UvLoop {
     }
 
     /// Returns `vm`'s loop. Returns null before `init_runtime_state` and after
-    /// `VirtualMachine::destroy`, which clears the field before freeing the state.
+    /// `VirtualMachine::drop`, which clears the field before freeing the state.
     ///
     /// # Safety
     /// `vm` hasn't been freed (the main thread's VM never is). Any thread can call
@@ -354,10 +354,8 @@ impl UvLoop {
     fn post_dispatch(&self) {
         let this: *const UvLoop = self;
         let task = ConcurrentTask::create_from(this.cast_mut());
-        if let Posted::Refused(task) = self.handle.post(LoopKind::Regular, task) {
+        if let Posted::Refused(_) = self.handle.post(LoopKind::Regular, task) {
             // The VM is gone, so drop the callback like a closed libuv loop does.
-            // SAFETY: a refused task was never queued, so we own it.
-            unsafe { ConcurrentTask::release_refused(task) };
             self.dispatch_state
                 .store(DispatchState::Idle as u8, Ordering::SeqCst);
         }
@@ -883,10 +881,7 @@ impl UvTimer {
             if !(*handle).ref_state.active {
                 return;
             }
-            let event_loop_timer = &(*(*handle).node).event_loop_timer;
-            if event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-                timer_all().remove(event_loop_timer);
-            }
+            (*(*handle).node).event_loop_timer.disarm();
             (*handle).ref_state.set_active(false);
         }
     }
@@ -1183,10 +1178,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
     // The queued task keeps the loop alive until `close_cb` has run, like libuv's
     // closing list. If the VM is gone, the task is refused and `close_cb` never runs.
     let task = ConcurrentTask::create_from(handle);
-    if let Posted::Refused(task) = loop_.handle.post(LoopKind::Regular, task) {
-        // SAFETY: a refused task was never queued, so we own it.
-        unsafe { ConcurrentTask::release_refused(task) };
-    }
+    let _ = loop_.handle.post(LoopKind::Regular, task);
 }
 
 /// Implements `void uv_ref(uv_handle_t*)`. Idempotent. Only matters while the handle

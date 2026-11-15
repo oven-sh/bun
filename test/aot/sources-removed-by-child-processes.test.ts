@@ -78,9 +78,10 @@ describe.skipIf(unsupported || isWindows)("a source that a child process removes
         const plain = await run([bunExe(), "--no-install", "main.cjs", String(way)], String(dir));
         restore();
         const compiled = await run([executable, String(way)], String(dir));
-        expect({ way: ways[way] ?? way, stdout: compiled.stdout }).toEqual({
+        expect({ way: ways[way] ?? way, stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
           way: ways[way] ?? way,
           stdout: plain.stdout,
+          exitCode: 0,
         });
       }
     });
@@ -97,13 +98,18 @@ describe.skipIf(unsupported || isWindows)("a source that a child process removes
       );
       expect(built.exitCode, built.stderr).toBe(0);
       const there = (name: string) => `${name} true true true false  true true ENOENT`;
+      const lines = async () => {
+        const { stdout, stderr, exitCode } = await run([executable, "none"], String(dir));
+        expect(exitCode, stderr).toBe(0);
+        return stdout.split("\n");
+      };
       rmSync(join(String(dir), "lone"), { recursive: true });
       rmSync(join(String(dir), "src/a.mjs"));
-      const partly = (await run([executable, "none"], String(dir))).stdout.split("\n");
+      const partly = await lines();
       expect(partly).toContain(there("lone/b.cjs"));
       expect(partly).toContain("src/a.mjs false false  ENOENT ENOENT ENOENT ENOENT ENOENT");
       for (const name of ["main.cjs", "src", "node_modules"]) rmSync(join(String(dir), name), { recursive: true });
-      const moved = (await run([executable, "none"], String(dir))).stdout.split("\n");
+      const moved = await lines();
       for (const name of ["main.cjs", "src/a.mjs", "lone/b.cjs", "node_modules/pkg/index.js"])
         expect(moved.filter(line => line === there(name))).toHaveLength(2);
     });
@@ -138,8 +144,11 @@ console.log(askWithoutDescriptors());
       );
       expect(built.exitCode, built.stderr).toBe(0);
       for (const name of ["main.cjs", "lib/a.cjs", "src/c.cjs"]) rmSync(join(String(dir), name));
-      const { stdout } = await run(["sh", "-c", `ulimit -n 128 && exec ${executable}`], String(out));
-      expect(stdout).toBe("lib/a.cjs lib/b.cjs src/c.cjs false,true,false\nfalse,true,false\n");
+      const { stdout, exitCode } = await run(["sh", "-c", `ulimit -n 128 && exec ${executable}`], String(out));
+      expect({ stdout, exitCode }).toEqual({
+        stdout: "lib/a.cjs lib/b.cjs src/c.cjs false,true,false\nfalse,true,false\n",
+        exitCode: 0,
+      });
     });
   });
 });

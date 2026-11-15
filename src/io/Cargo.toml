@@ -27,4 +27,3 @@ bun_errno.workspace = true
 bun_threading.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-scopeguard.workspace = true

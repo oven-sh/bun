@@ -871,7 +871,7 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
     // A virus scanner or indexer may have the new files open. See `cache_publish::RenameRetry`.
     let mut retries: u32 = 0;
     loop {
-        let dir = sys::open_dir_at_windows_a(
+        let dir = sys::Dir::from_fd(sys::open_dir_at_windows_a(
             from_dir,
             from.as_bytes(),
             sys::WindowsOpenDirOptions {
@@ -879,9 +879,9 @@ fn rename_no_replace(from_dir: Fd, from: &ZStr, to_dir: Fd, to: &ZStr) -> sys::M
                 iterable: false,
                 ..Default::default()
             },
-        )?;
-        let result = sys::windows::move_opened_file_at(dir, to_dir, to_w, false);
-        let _ = sys::close(dir);
+        )?);
+        let result = sys::windows::move_opened_file_at(dir.fd(), to_dir, to_w, false);
+        drop(dir);
         let Err(err) = result else {
             return Ok(true);
         };

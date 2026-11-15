@@ -11,6 +11,7 @@
 #include "NodeAsyncHooks.h"
 
 #include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -3225,6 +3226,18 @@ __attribute__((minsize)) static void overrideLoadedModuleExports(Zig::GlobalObje
                 // Read the variable directly, because the namespace object would force a builtin's lazy export.
                 ExportVariable variable = findExportVariable(globalObject, moduleNamespaceObject, name);
                 RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+                if (!variable.record && (!loaded.compiledModule || JSC::AOT::isEvicted(globalObject, *loaded.compiledModule))) {
+                    auto resolution = moduleNamespaceObject->moduleRecord()->resolveExport(globalObject, name);
+                    RETURN_IF_EXCEPTION(scope, );
+                    JSValue compiledOriginal = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readExportOfRecord(resolution.moduleRecord, resolution.localName, overwritten) : JSValue();
+                    RETURN_IF_EXCEPTION(scope, );
+                    if (compiledOriginal) {
+                        overwritten->putDirectMayBeIndex(globalObject, name, compiledOriginal);
+                        RETURN_IF_EXCEPTION(scope, );
+                    }
+                }
+#endif
                 if (!variable.record)
                     continue;
                 JSValue original = variable.record->moduleEnvironment()->readVariable(vm, variable.offset);
@@ -3944,6 +3957,18 @@ static void restoreOverwrittenExports(Zig::GlobalObject* globalObject, JSC::JSMo
         // so only a builtin's lazy export has to be forced here.
         ExportVariable variable = findExportVariable(globalObject, moduleNamespace, name);
         RETURN_IF_EXCEPTION(scope, );
+#if ENABLE(AOT)
+        if (!variable.record && vm.hasCompiledCode()) {
+            auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, );
+            original = resolution.type == JSC::AbstractModuleRecord::Resolution::Type::Resolved ? JSC::AOT::readDeferredExportOfRecord(resolution.moduleRecord, resolution.localName) : JSValue();
+            RETURN_IF_EXCEPTION(scope, );
+            if (original) {
+                moduleNamespace->overrideExportValue(globalObject, name, original);
+                RETURN_IF_EXCEPTION(scope, );
+            }
+        }
+#endif
         if (!variable.record || !variable.record->inherits<JSC::SyntheticModuleRecord>())
             continue;
         BunString builtinKey = Bun::toString(variable.record->moduleKey().string());

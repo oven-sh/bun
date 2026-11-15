@@ -164,7 +164,7 @@ impl IOWriter<'_> {
 
     /// The caller removes it from `interp.io_writers`, which closes `fd`.
     pub(crate) fn init(interp: &mut Interpreter<'_>, fd: Fd, flags: Flags) -> IOWriterId {
-        let (shell_interp, evtloop) = (interp.shell_interp, interp.event_loop);
+        let (shell_interp, evtloop) = (interp.shell_interp(), interp.event_loop);
         interp.io_writers.insert_with(|id| {
             // `Drop` closes the file descriptor.
             let writer = BufferedWriter::borrowing_fd();

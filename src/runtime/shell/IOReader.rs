@@ -76,7 +76,7 @@ impl Inner {
 impl IOReader<'_> {
     /// The caller removes it from `interp.io_readers`, which closes `fd`.
     pub(crate) fn init(interp: &mut Interpreter<'_>, fd: Fd) -> IOReaderId {
-        let (shell_interp, evtloop) = (interp.shell_interp, interp.event_loop);
+        let (shell_interp, evtloop) = (interp.shell_interp(), interp.event_loop);
         interp.io_readers.insert_with(|id| {
             let inner = Rc::new(Inner {
                 reader: BufferedReader::init(),

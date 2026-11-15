@@ -65,7 +65,7 @@ impl Yes {
         }
 
         let evtloop = interp.event_loop;
-        let interp_ptr = interp.shell_interp;
+        let interp_ptr = interp.shell_interp();
         {
             let me = Self::state_mut(interp, cmd);
             me.buffer = buf;

@@ -220,7 +220,7 @@ impl<'a> SubprocExec<'a> {
         cmd: NodeId,
         mut spawn_args: SpawnArgs<'_>,
     ) -> sh::Result<Spawned> {
-        let (shell_interp, event_loop) = (interp.shell_interp, interp.event_loop);
+        let (shell_interp, event_loop) = (interp.shell_interp(), interp.event_loop);
         let owner_ptr = shell_interp.as_ptr().cast();
 
         #[cfg(unix)]

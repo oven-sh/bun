@@ -16,7 +16,7 @@ use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
 use crate::server::{AnyServer, HTTPStatusText, write_status};
-use crate::webcore::body::Value as BodyValue;
+use crate::webcore::body::{Tag as BodyTag, Value as BodyValue};
 use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
@@ -177,38 +177,34 @@ impl StaticRoute {
 
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
-            let body_value = response.get_body_value();
+            let body_value = response.body();
             let was_string = body_value.was_string();
             body_value.to_blob_if_possible();
 
             let blob: AnyBlob = 'brk: {
-                match body_value {
-                    BodyValue::Used => {
+                match body_value.tag() {
+                    BodyTag::Used => {
                         return Err(global_this.throw_invalid_arguments(format_args!(
                             "Response body has already been used"
                         )));
                     }
 
-                    BodyValue::Null | BodyValue::Empty => {
+                    BodyTag::Null | BodyTag::Empty => {
                         break 'brk AnyBlob::InternalBlob(InternalBlob {
                             bytes: Vec::<u8>::new(),
                             was_string: false,
                         });
                     }
 
-                    BodyValue::Blob(_)
-                    | BodyValue::InternalBlob(_)
-                    | BodyValue::WTFStringImpl(_) => {
-                        if let BodyValue::Blob(b) = &*body_value {
-                            if b.needs_to_read_file() {
-                                return Err(global_this
-                                    .throw_todo(b"TODO: support Bun.file(path) in static routes"));
-                            }
+                    BodyTag::Blob | BodyTag::InternalBlob | BodyTag::WTFStringImpl => {
+                        if body_value.needs_to_read_file() {
+                            return Err(global_this
+                                .throw_todo(b"TODO: support Bun.file(path) in static routes"));
                         }
                         let blob = body_value.use_();
                         blob.global_this
                             .set(std::ptr::from_ref::<JSGlobalObject>(global_this));
-                        *body_value = BodyValue::Blob(blob.dupe());
+                        body_value.set(BodyValue::Blob(blob.dupe()));
 
                         break 'brk AnyBlob::Blob(blob);
                     }

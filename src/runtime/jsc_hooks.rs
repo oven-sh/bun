@@ -77,9 +77,9 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
-    /// `vm.body_value_pool` — pooled storage for `Body.Value`
+    /// `vm.body_value_pool` — pooled storage for `Body`
     /// (`Request.body` payloads).
-    /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
+    /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     /// `ManuallyDrop` inside the `Box`: `deinit_runtime_state` runs after
     /// `teardown`, so `HiveArray::Drop` on a leaked body would run

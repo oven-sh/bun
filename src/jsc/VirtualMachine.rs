@@ -4845,7 +4845,7 @@ impl VirtualMachine {
                     bun_sys::exists_at_type(bun_sys::Fd::cwd(), path),
                     Ok(bun_sys::ExistsAtType::File)
                 ) {
-                    if self.transpiler.resolver.opts.preserve_symlinks {
+                    if self.transpiler.get().resolver.opts.preserve_symlinks {
                         ret.path = path.as_bytes().to_vec().into();
                         if self.finds_entry_points_by_path
                             && let Some(entry) =

@@ -706,17 +706,14 @@ impl<'a> LinkOrder<'a> {
     }
 }
 
-// BACKREF — the `PackageInstaller` that owns these queues also borrows the `Lockfile` mutably.
-pub struct PriorityQueueContext {
-    pub(crate) lockfile: bun_ptr::BackRef<Lockfile>,
-    pub(crate) direct_packages: bun_ptr::BackRef<DynamicBitSet>,
+pub struct PriorityQueueContext<'a> {
+    pub(crate) lockfile: &'a Lockfile,
+    pub(crate) direct_packages: &'a DynamicBitSet,
 }
 
-impl PriorityQueueContext {
+impl PriorityQueueContext<'_> {
     fn link_order(&self, dependency_id: DependencyID) -> LinkOrder<'_> {
-        // Read these again on every comparison, because the buffers and the package list can grow
-        // during the install.
-        let lockfile = self.lockfile.get();
+        let lockfile = self.lockfile;
         let package_id = lockfile.buffers.resolutions.as_slice()[dependency_id as usize] as usize;
         LinkOrder::new(
             self.direct_packages
@@ -729,7 +726,7 @@ impl PriorityQueueContext {
     }
 }
 
-impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
+impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext<'_> {
     #[inline]
     fn compare(&self, a: &DependencyID, b: &DependencyID) -> core::cmp::Ordering {
         self.link_order(*a).cmp(&self.link_order(*b))
@@ -738,7 +735,8 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 
 // Port of `std.PriorityQueue(DependencyID, PriorityQueueContext, lessThan)`.
 // Min-heap keyed by `LinkOrder`.
-pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
+pub(crate) type PriorityQueue<'a> =
+    bun_collections::PriorityQueue<DependencyID, PriorityQueueContext<'a>>;
 
 // https://github.com/npm/npm-normalize-package-bin/blob/574e6d7cd21b2f3dee28a216ec2053c2551f7af9/lib/index.js#L38
 fn normalized_bin_name(name: &[u8]) -> &[u8] {

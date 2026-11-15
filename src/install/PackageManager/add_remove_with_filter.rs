@@ -22,7 +22,9 @@ use super::update_package_json_and_install::{
     package_json_entry_or_crash, remove_dependencies_from_package_json,
     remove_leftover_node_modules, save_entry,
 };
-use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
+use super::workspace_package_json_cache::{
+    GetJSONOptions, GetResult, MapEntry, WorkspacePackageJSONCache,
+};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
 use super::{
     Command, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest, UpdateTargetWorkspace,
@@ -229,7 +231,15 @@ pub(crate) fn fetch_entry<'a>(
     target: &WorkspaceTarget,
 ) -> &'a mut MapEntry {
     let log = manager.log();
-    match manager.workspace_package_json_cache.get_with_path(
+    fetch_entry_from(&mut manager.workspace_package_json_cache, log, target)
+}
+
+pub(crate) fn fetch_entry_from<'a>(
+    json_cache: &'a mut WorkspacePackageJSONCache,
+    log: &bun_ast::Log,
+    target: &WorkspaceTarget,
+) -> &'a mut MapEntry {
+    match json_cache.get_with_path(
         log,
         &target.package_json_path,
         GetJSONOptions {
@@ -313,8 +323,8 @@ fn restore_order(updates: &mut [UpdateRequest], before: &[PackageNameHash]) {
 
 /// The `(prefix, path)` of a positional naming a local path, which is relative to the invoking cwd.
 pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [u8], &[u8])> {
-    let buf = request.version_buf();
-    let literal = request.version.literal.slice(buf);
+    let buf = request.input;
+    let literal = request.input_literal();
     let file_prefix: &'static [u8] = if literal.starts_with(b"file:") {
         b"file:"
     } else {
@@ -343,9 +353,7 @@ pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [
 fn local_path_too_long(request: &UpdateRequest) -> ! {
     Output::err_generic(
         "Dependency \"{}\" has an unsafe folder path",
-        (BStr::new(
-            request.version.literal.slice(request.version_buf()),
-        ),),
+        (BStr::new(request.input_literal()),),
     );
     Global::crash();
 }
@@ -399,7 +407,7 @@ fn spell_relative_to(
     positional.extend_from_slice(rel);
     resolve_path::platform_to_posix_in_place(&mut positional[path_start..]);
     // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
-    let typed = request.version.literal.slice(request.version_buf());
+    let typed = request.input_literal();
     if typed.ends_with(b"/") && !positional.ends_with(b"/") {
         positional.push(b'/');
     }
@@ -507,7 +515,7 @@ fn assign_requests(
                     Slot::Shared(name_hash) => *name_hash,
                     Slot::PerTarget(spellings) => requests
                         .iter()
-                        .find(|request| request.version_buf() == spellings[i].as_slice())
+                        .find(|request| request.input == spellings[i].as_slice())
                         .unwrap_or_else(|| {
                             Output::err_generic(
                                 "\"{}\" is spelled differently relative to each selected workspace; add it to one workspace at a time",

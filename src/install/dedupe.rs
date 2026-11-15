@@ -7,7 +7,7 @@ use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
 use crate::lockfile::override_map::OverrideRule;
-use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile::package::{PackageColumns as _, ParseFields};
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry, print_log_errors};
 use crate::package_manager::Options::{Enable, LogLevel};
 use crate::{
@@ -839,7 +839,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
     let mut resolver: () = ();
     if let Err(err) = root.parse_with_json(
         &mut lockfile,
-        manager,
+        &mut ParseFields::new(manager),
         log,
         &source,
         bun_ast::JsonView::from(&json),
@@ -1002,7 +1002,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         Global::exit(manager.options.check as u32);
     }
 
-    if !manager.options.do_.save_lockfile() {
+    if !manager.effective_do().save_lockfile() {
         if !quiet {
             let why = if !manager.options.enable.frozen_lockfile() {
                 "--no-save was passed"

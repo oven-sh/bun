@@ -1270,18 +1270,35 @@ pub enum EnqueueResult {
     Failure(bun_core::Error),
 }
 
+/// The buffer that the strings of a [`DependencyVersion`] point into.
+#[derive(Clone, Copy)]
+pub enum VersionBuf<'a> {
+    Bytes(&'a [u8]),
+    /// The lockfile's string buffer. The version is that of a dependency in the lockfile.
+    Lockfile,
+}
+
+impl<'a> VersionBuf<'a> {
+    pub fn slice(self, lockfile_string_bytes: &'a [u8]) -> &'a [u8] {
+        match self {
+            Self::Bytes(bytes) => bytes,
+            Self::Lockfile => lockfile_string_bytes,
+        }
+    }
+}
+
 // ─── AutoInstaller trait ──────────────────────────────────────────────────
 
 /// Everything `bun_resolver`'s auto-install path needs from
 /// `bun_install::PackageManager` + its `Lockfile`. `bun_install` implements
 /// this for `PackageManager` (see `bun_install::auto_installer`); the
-/// resolver holds `Option<NonNull<dyn AutoInstaller>>` and only enters the
+/// resolver holds `Option<&'static mut dyn AutoInstaller>` and only enters the
 /// auto-install path when it is set.
 ///
 /// No method has a default body — this is a pure capability interface, not a
 /// stub. Calling through an unset `Option` is statically prevented by
 /// `Resolver::use_package_manager()`.
-pub trait AutoInstaller {
+pub trait AutoInstaller: core::any::Any {
     // ── Lockfile reads ────────────────────────────────────────────────────
     fn lockfile_package_dependencies(&self, id: PackageID) -> DependencySlice;
     fn lockfile_package_resolutions(&self, id: PackageID) -> ResolutionSlice;
@@ -1301,7 +1318,7 @@ pub trait AutoInstaller {
     /// Returns the folder that `bun install` would link `name` to: a workspace, or the target of
     /// `file:` or `link:`. `package_json_dir` is `None` unless the package.json is the project's.
     fn project_folder<'b>(
-        &mut self,
+        &self,
         name: &[u8],
         version: &DependencyVersion,
         version_buf: &[u8],
@@ -1324,7 +1341,7 @@ pub trait AutoInstaller {
         &mut self,
         name: &[u8],
         version: &DependencyVersion,
-        version_buf: &[u8],
+        version_buf: VersionBuf<'_>,
         package_json_dir: Option<&[u8]>,
         behavior: Behavior,
         log: Option<&bun_ast::Log>,

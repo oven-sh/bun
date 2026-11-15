@@ -1,6 +1,11 @@
 use core::hint;
+use core::marker::PhantomData;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
+
+use bun_ptr::OwnedPtr;
+
+use crate::Guarded;
 
 /// Intrusive next-pointer accessors for `UnboundedQueue<T>` nodes.
 ///
@@ -325,5 +330,84 @@ impl<T: Node> UnboundedQueue<T> {
 
     pub fn is_empty(&self) -> bool {
         self.back.0.load(Ordering::Acquire).is_null()
+    }
+}
+
+/// An [`UnboundedQueue`] that owns its items. Dropping it leaks them.
+pub struct OwnedQueue<P: OwnedPtr<Target: Node>> {
+    queue: UnboundedQueue<P::Target>,
+    /// The queue is `Sync` if `P` is `Send`.
+    _items: PhantomData<Guarded<P>>,
+}
+
+impl<P: OwnedPtr<Target: Node>> OwnedQueue<P> {
+    pub const fn new() -> Self {
+        Self {
+            queue: UnboundedQueue::new(),
+            _items: PhantomData,
+        }
+    }
+
+    pub fn push(&self, item: P) {
+        self.queue.push(P::into_raw(item));
+    }
+
+    /// Dropping the iterator pushes the remaining items back.
+    pub fn pop_batch(&self) -> OwnedBatchIterator<'_, P> {
+        OwnedBatchIterator {
+            rest: self.queue.pop_batch().iterator(),
+            queue: self,
+        }
+    }
+}
+
+pub struct OwnedBatchIterator<'a, P: OwnedPtr<Target: Node>> {
+    rest: BatchIterator<P::Target>,
+    queue: &'a OwnedQueue<P>,
+}
+
+impl<P: OwnedPtr<Target: Node>> Iterator for OwnedBatchIterator<'_, P> {
+    type Item = P;
+
+    fn next(&mut self) -> Option<P> {
+        let item = NonNull::new(self.rest.next())?;
+        // SAFETY: it came from `into_raw` in `push`, and `pop_batch` gives an item to one caller.
+        Some(unsafe { P::from_raw(item) })
+    }
+}
+
+impl<P: OwnedPtr<Target: Node>> Drop for OwnedBatchIterator<'_, P> {
+    fn drop(&mut self) {
+        while let Some(item) = self.next() {
+            self.queue.push(item);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct Item(u8, Link<Item>);
+    // SAFETY: always the same field.
+    unsafe impl Linked for Item {
+        unsafe fn link(item: *mut Self) -> *const Link<Self> {
+            // SAFETY: fn contract.
+            unsafe { &raw const (*item).1 }
+        }
+    }
+
+    #[test]
+    fn owned_batch_iterator_drop_requeues_the_rest() {
+        let queue = OwnedQueue::<Box<Item>>::new();
+        for i in 0..3 {
+            queue.push(Box::new(Item(i, Link::new())));
+        }
+        assert_eq!(queue.pop_batch().next().map(|item| item.0), Some(0));
+        assert_eq!(
+            queue.pop_batch().map(|item| item.0).collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert!(queue.pop_batch().next().is_none());
     }
 }

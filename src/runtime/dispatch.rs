@@ -154,8 +154,8 @@ use crate::server::{FileResponseStream, ServerAllConnectionsClosedTask};
 
 use crate::cli::test::parallel::worker::Worker as TestParallelWorker;
 use crate::cli::{filter_run, multi_run};
-use bun_install::git_runner::GitSubprocess;
-use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
+use bun_install::SecurityScanSubprocess;
+use bun_install::buffered_subprocess::OutputReaders;
 
 #[cfg(not(windows))]
 use crate::api::bun_process::Process;
@@ -1005,14 +1005,20 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::SecurityScanReader => io_arm!(
             [Install],
             <*mut _>::as_mut_unchecked,
-            SecurityScanSubprocess<'_>,
+            SecurityScanSubprocess,
             |this, _, event| this.on_io(event)
         ),
         PollTag::SecurityScanWriter => io_arm!(
             [Install],
             <*mut _>::as_mut_unchecked,
-            SecurityScanSubprocess<'_>,
+            SecurityScanSubprocess,
             |this, _, event| this.on_writer_io(event)
+        ),
+        PollTag::InstallSubprocess => io_arm!(
+            [Install],
+            <*mut _>::as_ref_unchecked,
+            OutputReaders,
+            |this, owner, event| this.on_io(owner.kind(), event)
         ),
         PollTag::SubprocessStdinWriter => io_arm!(
             [Spawn],
@@ -1022,22 +1028,10 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         ),
 
         // These free themselves once they have read to the end.
-        PollTag::InstallGit => io_arm!(
-            [Install],
-            bun_ptr::ThisPtr::new,
-            GitSubprocess,
-            |this, owner, event| GitSubprocess::on_io(this, owner.kind(), event)
-        ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
                 // SAFETY: the contract of `__bun_run_io`.
                 unsafe { SubprocessPipeReader::on_io(owner.ptr().cast(), event) };
-            })
-        }
-        PollTag::LifecycleScript => {
-            in_features!([Install], (owner: Owner = owner, event: IoEvent = event) {
-                // SAFETY: the contract of `__bun_run_io`.
-                unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.kind(), event) };
             })
         }
         PollTag::CronRegister | PollTag::CronRemove => {

@@ -4273,21 +4273,6 @@ impl VirtualMachine {
         }
     }
 
-    /// `bun_resolver` holds the manager as an opaque forward-decl (it cannot
-    /// depend on `bun_install`). `bun_jsc` *can*, so cast the opaque back to
-    /// the concrete `bun_install::PackageManager` here — the resolver's
-    /// `PackageManager` is exactly that struct, just type-erased at a lower
-    /// tier.
-    ///
-    /// Panics when the lazy init fails. Only for `bun:internal-for-testing`'s `parseLockfile`.
-    #[inline]
-    pub fn package_manager(&self) -> *mut bun_install::PackageManager {
-        self.transpiler
-            .with_mut(Transpiler::get_package_manager)
-            .expect("package manager init")
-            .cast()
-    }
-
     /// Starts the process again with the same arguments, as `--watch` does on a change. Emits the
     /// `--watch-kill-signal` JS handlers first, like node. On Windows, this needs the watcher-manager
     /// parent (`bun_sys::windows::become_watcher_manager`). Returns only when the restart failed and

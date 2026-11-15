@@ -264,10 +264,6 @@ pub mod entry {
         // parent_id: Id,
         pub dependencies: Dependencies,
         pub parents: Vec<Id>,
-        // `AtomicU32` storing the `#[repr(u8)]` `Step` discriminant. Loads and
-        // stores go through `Step as u32` / `Step::from_u32` (see Installer.rs);
-        // no atomic-enum wrapper exists.
-        pub step: core::sync::atomic::AtomicU32,
 
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
         pub hoisted: bool,
@@ -295,7 +291,6 @@ pub mod entry {
             node_id: super::node::Id,
             dependencies: Dependencies,
             parents: Vec<Id>,
-            step: core::sync::atomic::AtomicU32,
             hoisted: bool,
             nested_folder: bool,
             peer_hash: PeerHash,

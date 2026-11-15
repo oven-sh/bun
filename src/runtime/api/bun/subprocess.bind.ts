@@ -78,4 +78,3 @@ export const injectStdioReadError = b.fn({
   capability: "js",
   throws: true,
 });
-export const closeStdinWriter = b.fn({ args: { subprocess: Subprocess }, returns: b.bool, capability: "js" });

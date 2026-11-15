@@ -1560,15 +1560,6 @@ if (!isMainThread) {
 }
 `,
     });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
-      env: { ...bunEnv, THREAD: state },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr }).toEqual({ stdout: "listening\nexit 0 null\n", stderr: "" });
-    expect(exitCode).toBe(0);
+    expect(await bunRun(joinP(String(dir), "index.js"), { THREAD: state })).toSpawn("listening\nexit 0 null");
   },
 );

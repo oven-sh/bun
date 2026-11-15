@@ -638,7 +638,7 @@ impl Lockfile {
         for applied in now {
             self.package_extensions.record(applied);
         }
-        Ok(*self.packages.get(id as usize))
+        Ok(self.packages.get(id as usize))
     }
 
     /// Applies the rules to a lockfile loaded from disk. If anything changed, returns the rows to

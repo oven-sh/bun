@@ -127,6 +127,12 @@ impl<'a> WithUtf8Len<'a, u8> {
         let utf8_len = length::utf8::from::latin1(slice);
         Self { slice, utf8_len }
     }
+
+    /// `None` if the worst case does not fit in `capacity` bytes.
+    pub fn latin1_worst_case(slice: &'a [u8], capacity: usize) -> Option<Self> {
+        let utf8_len = slice.len() * 2;
+        (utf8_len <= capacity).then_some(Self { slice, utf8_len })
+    }
 }
 
 /// UTF-8 text with an upper bound of the UTF-16 units that simdutf writes for it.

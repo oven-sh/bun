@@ -318,7 +318,7 @@ fn read_package_json_from_disk(
         package.meta.id = existing_id;
         crate::lockfile_real::package::Diff::keep_resolutions(manager, existing_id, &package);
         manager.lockfile.packages.set(existing_id as usize, package);
-        return Ok(*manager.lockfile.packages.get(existing_id as usize));
+        return Ok(manager.lockfile.packages.get(existing_id as usize));
     }
 
     Ok(manager.lockfile.append_package(&package)?)

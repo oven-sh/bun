@@ -1,4 +1,3 @@
-use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
@@ -8,7 +7,7 @@ use bun_core::FeatureFlags;
 
 use crate::EntryPoint;
 use crate::WrapKind;
-use crate::bundled_ast::Flags as AstFlags;
+use crate::bundled_ast::{BundledAstRow, Flags as AstFlags};
 use crate::chunk::Chunk;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
@@ -51,7 +50,7 @@ pub(crate) fn convert_stmts_for_chunk(
     chunk: &Chunk,
     bump: &AstArena,
     wrap: WrapKind,
-    ast: &JSAst<'_>,
+    ast: &BundledAstRow<'_>,
 ) -> Result<(), crate::Error> {
     let should_extract_esm_stmts_for_wrap = wrap != WrapKind::None;
     let should_strip_exports = c.options.mode != LinkerOptionsMode::Passthrough

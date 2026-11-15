@@ -17,7 +17,8 @@ use crate::{format_args, write};
 
 pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let context = context_of_function(call.callee(), f);
-    // Nothing in a call of some other function is a class: `cn(a.includes("b c") && "d e")`. `new` and tags don't hide.
+    // Nothing in a call of some other function is a class: `cn(a.includes("b c") && "d e")`. oxfmt 0.72 sorts a
+    // template there, which changes its value. `new` and tags don't hide.
     let hides_context =
         context.is_none() && (f.context().tailwind_context()).is_some_and(|it| !it.follows_plugin);
     if hides_context {

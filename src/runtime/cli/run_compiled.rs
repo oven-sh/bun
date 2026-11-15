@@ -1377,7 +1377,7 @@ pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
     let Some(file) = crate::test_runner::bun_test::clone_active_strong() else {
         return false;
     };
-    file.get().is_loading
+    file.is_loading.get()
         && global
             .bun_vm()
             .pending_internal_promise()

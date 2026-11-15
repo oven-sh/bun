@@ -1025,7 +1025,7 @@ fn step_group_one(
 
 /// `evaluate_timeout` leaves the failure of an around hook that timed out to this error, which says what the reporter can't.
 fn report_around_timeout(
-    buntest_strong: &BunTestPtr,
+    buntest: &BunTest,
     global_this: &JSGlobalObject,
     entry: &ExecutionEntry,
     data: &RefDataValue,
@@ -1034,7 +1034,7 @@ fn report_around_timeout(
         return Ok(());
     };
     let error = around.timeout_error(global_this, phase, entry.timeout)?;
-    buntest_strong.get().on_uncaught_exception(global_this, Some(error), false, data);
+    buntest.on_uncaught_exception(global_this, Some(error), false, data);
     Ok(())
 }
 
@@ -1193,7 +1193,7 @@ fn step_sequence_one(
                 }
                 Err(err) => {
                     let thrown = global_this.take_exception(err);
-                    buntest.get().on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
+                    buntest.on_uncaught_exception(global_this, Some(thrown), false, &callback_data);
                     Execution::advance_sequence(buntest, sequence, group);
                     return Ok(None); // run again
                 }

@@ -130,7 +130,7 @@ impl Collection {
             &Timespec::EPOCH,
         ) {
             // the result is available immediately; queue
-            buntest.get().add_result(cfg_data);
+            buntest.add_result(cfg_data);
         }
 
         Ok(StepResult::Waiting { timeout: Timespec::EPOCH })

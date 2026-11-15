@@ -1650,7 +1650,7 @@ fn retroactively_report_discovered_tests(
 
     // Only report if we're in collection or execution phase (tests have been
     // discovered).
-    match active_file.phase {
+    match active_file.phase.get() {
         Phase::Collection | Phase::Execution => {}
         Phase::Done => return next_test_id,
     }

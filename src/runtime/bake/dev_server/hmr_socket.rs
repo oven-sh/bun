@@ -387,7 +387,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
             (*this).server.unwrap()
         };
         // `upgrade` ends the HTTP connection, and a stopped server frees `this` with its last one.
-        server.on_pending_request();
+        let _pending = PendingRequest::new(server);
         // SAFETY: `res` is live for this callback (see Note above); `on_open`
         // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
         let socket = unsafe {
@@ -406,7 +406,6 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
             // SAFETY: `dw` was allocated above and nothing else owns it.
             drop(unsafe { bun_core::heap::take(dw) });
         }
-        server.on_static_request_complete();
     }
 }
 

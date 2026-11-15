@@ -13,6 +13,7 @@ use crate::generated_bindgen::server_body::{
     BunServe__onRejectPlugins, BunServe__onResolvePlugins,
 };
 use crate::node::types::PathLikeExt as _;
+use crate::server::ServerLike as _;
 use crate::webcore::BlobExt;
 use crate::webcore::body::Value as BodyValue;
 use crate::webcore::fetch as Fetch;
@@ -908,8 +909,7 @@ pub(crate) enum ServePluginsState {
         /// Promise may be empty if the plugin load finishes synchronously.
         plugin: JSBundler::OwnedPlugin,
         promise: jsc::JSPromiseStrong,
-        /// Each holds a ref, released once the route is told the outcome.
-        html_bundle_routes: Vec<RefPtr<html_bundle::Route>>,
+        html_bundle_routes: Vec<html_bundle::PendingBuild>,
         /// Server whose DevServer is waiting for the plugins to load.
         dev_server: Option<super::AnyServer>,
     },
@@ -960,7 +960,8 @@ impl ServePlugins {
                 } => {
                     match cb {
                         ServePluginsCallback::HtmlBundleRoute(route) => {
-                            html_bundle_routes.push(RefPtr::from_this(route));
+                            html_bundle_routes
+                                .push(html_bundle::PendingBuild::new(RefPtr::from_this(route)));
                         }
                         ServePluginsCallback::DevServer => {
                             // one dev server per server
@@ -1107,10 +1108,7 @@ impl ServePlugins {
         self.state = ServePluginsState::Loaded(plugin);
 
         for route in html_bundle_routes {
-            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(
-                route.this_ptr(),
-                Some(loaded),
-            ));
+            bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(route, Some(loaded)));
         }
         if let Some(server) = dev_server {
             if let Some(dev) = server.dev_server_mut() {
@@ -1340,14 +1338,6 @@ where
 }
 
 impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
-    /// Construct the cross-module `super::AnyServer` back-reference. Routes
-    /// (StaticRoute/FileRoute/HTMLBundle) store this so they can call back
-    /// into `on_pending_request` / `on_static_request_complete`.
-    #[inline]
-    fn as_any_server(&self) -> super::AnyServer {
-        super::AnyServer::from(std::ptr::from_ref::<Self>(self))
-    }
-
     /// Shared `&VirtualMachine` accessor.
     #[inline(always)]
     fn vm_ref(&self) -> &jsc::virtual_machine::VirtualMachine {
@@ -2362,7 +2352,6 @@ where
             req.set_yield(true);
             return;
         }
-        self.on_pending_request();
         req.set_yield(false);
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
@@ -2385,7 +2374,6 @@ where
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
         resp.end(buffer, false);
-        self.pending_requests.set(self.pending_requests.get() - 1);
     }
 
     // `on_chrome_dev_tools_json_request` is defined once below (next to
@@ -2561,8 +2549,6 @@ where
             }
             None
         };
-
-        self.on_pending_request();
 
         ReqLike::set_yield(req, false);
         RespLike::timeout(resp, self.config.get().idle_timeout);
@@ -2851,7 +2837,6 @@ where
         resp.send_corked();
         resp.send_when_complete();
         let _entered = this.vm().enter_event_loop_scope_without_checkpoint();
-        this.on_pending_request();
         req.set_yield(false);
         // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
         let ctx_slot = this.request_pool.claim();

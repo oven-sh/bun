@@ -10,7 +10,7 @@ use bun_ptr::{AliasableBox, AnyRefCounted, RefPtr};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
-use crate::server::{RangeRequest, ServerLike};
+use crate::server::{PendingRequest, RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders, Request, Response,
     blob::SizeType as BlobSizeType, body, readable_stream, request, response,
@@ -114,7 +114,7 @@ pub(crate) struct RequestContext<
     ThisServer: ServerLike + 'static,
 {
     /// BACKREF to the `Server`, which outlives its requests. `None` once detached.
-    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer>>>,
+    server: JsCell<Option<PendingRequest<bun_ptr::BackRef<ThisServer>>>>,
     pub(crate) resp: AttachedResponse<Self>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
@@ -458,11 +458,14 @@ where
         // `*self`; it lives independently and outlives every context.
         unsafe {
             &*self
-                .server
-                .get()
+                .try_server()
                 .expect("infallible: server bound")
                 .as_const_ptr()
         }
+    }
+
+    pub(crate) fn try_server(&self) -> Option<bun_ptr::BackRef<ThisServer>> {
+        self.server.get().as_deref().copied()
     }
 
     /// Mutably borrow the pooled request-body slot, if attached.
@@ -529,7 +532,7 @@ where
 
     pub(crate) fn set_signal_aborted(&self, reason: jsc::CommonAbortReason) {
         if let Some(signal) = self.signal.get() {
-            if let Some(server) = self.server.get() {
+            if let Some(server) = self.try_server() {
                 // server is a BACKREF — valid while this RequestContext is alive
                 let global = server.global_this();
                 signal.signal(global, reason);
@@ -540,7 +543,7 @@ where
     /// The microtask checkpoint after a synchronously dispatched handler. `Err`: the VM has stopped; the
     /// caller leaves the request where it is and the stop closes the server's connections.
     fn drain_microtasks(&self) -> Result<(), bun_jsc::Stopped> {
-        let Some(server) = self.server.get() else {
+        let Some(server) = self.try_server() else {
             return Ok(());
         };
         if self.is_async() {
@@ -672,7 +675,7 @@ where
         // Inspecting `value` can run user code (`[inspect.custom]`, `toString`), which can throw.
         let mut inspect_error: Option<JSValue> = None;
 
-        if let Some(server) = self.server.get() {
+        if let Some(server) = self.try_server() {
             // server is a BACKREF — valid while this RequestContext is alive
             let global_this: &JSGlobalObject = server.global_this();
 
@@ -869,9 +872,9 @@ where
             sink.source.detach(&sink.global_this);
         }
 
+        // Taken out to drop last: it can free the dev server, which `deferred_request` points into.
         if let Some(server) = self.server.take() {
             server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
-            server.on_request_complete();
         }
     }
 
@@ -1022,7 +1025,7 @@ where
         // synchronously after the headers were written): report and close.
         if !has_responded && self.flags.has_written_status() {
             if !value.is_empty_or_undefined_or_null()
-                && let Some(server) = self.server.get()
+                && let Some(server) = self.try_server()
             {
                 server.vm().run_error_handler(value, None);
             }
@@ -1383,7 +1386,7 @@ where
                 resp: AttachedResponse(JsCell::new(Some((resp, RefPtr::from_raw(slot))))),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                server: Cell::new(Some(bun_ptr::BackRef::new(server))),
+                server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
                 defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range,
                 if_range,
@@ -2164,7 +2167,7 @@ where
                         // the unhandledRejection reporter, so surface it here.
                         // DEBUG_MODE already reports it in handle_reject_stream.
                         if !DEBUG_MODE
-                            && let Some(server) = this.server.get()
+                            && let Some(server) = this.try_server()
                             && !err.is_empty_or_undefined_or_null()
                         {
                             server.vm().run_error_handler(err, None);
@@ -2388,7 +2391,7 @@ where
             return;
         }
 
-        let Some(server) = this.server.get() else {
+        let Some(server) = this.try_server() else {
             // server detached?
             this.render_metadata();
             // SAFETY: FFI handle
@@ -3332,7 +3335,7 @@ where
         this.render_metadata();
 
         // A null-body status never transmits the body.
-        if let Some(server) = this.server.get()
+        if let Some(server) = this.try_server()
             && let Some(response) = this.response_mut()
             && matches!(response.get_body_value(), Body::Value::Locked(_))
         {
@@ -3413,7 +3416,7 @@ where
         if HTTPStatusText::is_sendable(status) {
             return false;
         }
-        let Some(server) = self.server.get() else {
+        let Some(server) = self.try_server() else {
             self.render_production_error(500);
             return true;
         };
@@ -3440,7 +3443,7 @@ where
 
     fn finish_running_error_handler(&self, value: JSValue, status: u16) {
         self.forbid_upgrade();
-        let Some(server) = self.server.get() else {
+        let Some(server) = self.try_server() else {
             return self.render_production_error(status);
         };
         let server = &*server;
@@ -3479,7 +3482,7 @@ where
         status: u16,
     ) {
         jsc::mark_binding!();
-        if let Some(server) = self.server.get() {
+        if let Some(server) = self.try_server() {
             let server = &*server;
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
@@ -3593,7 +3596,7 @@ where
         }
         // The VM has stopped (the handler "threw" its termination): no error handler, no error page;
         // the stop closes the server's connections.
-        if let Some(server) = self.server.get()
+        if let Some(server) = self.try_server()
             && !server.vm().script_allowed()
         {
             return;
@@ -4137,7 +4140,7 @@ where
         this.flags.set_request_body_paused(false);
         if this.resp.get().is_none()
             || this.flags.aborted()
-            || this.server.get().is_none_or(|s| s.terminated())
+            || this.try_server().is_none_or(|s| s.terminated())
         {
             return;
         }
@@ -4182,7 +4185,7 @@ where
     }
 
     pub(crate) fn on_start_buffering(&self) {
-        if let Some(server) = self.server.get() {
+        if let Some(server) = self.try_server() {
             ctx_log!("onStartBuffering");
             // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
             self.flags.set_request_body_buffer_all(true);

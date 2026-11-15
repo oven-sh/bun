@@ -49,6 +49,10 @@ pub(crate) use web_socket_server_context::Handler as WebSocketServerHandler;
 pub(crate) mod server_config;
 pub(crate) use server_config::ServerConfig;
 
+#[path = "PendingRequest.rs"]
+pub(crate) mod pending_request;
+pub(crate) use pending_request::{PendingRequest, Served};
+
 #[path = "StaticRoute.rs"]
 pub(crate) mod static_route;
 pub(crate) use static_route::StaticRoute;
@@ -434,6 +438,8 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) -> SavedRequest {
+        // Before `to_async`, which releases the context of a request that is already aborted.
+        let ctx = any_request_context::AnyRequestContextRef::new(AnyRequestContext::init(self.ctx));
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
@@ -449,7 +455,7 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         SavedRequest {
             js_request: jsc::Strong::create(self.request.js, global),
             request: self.request.native,
-            ctx: any_request_context::AnyRequestContextRef::new(AnyRequestContext::init(self.ctx)),
+            ctx,
             response: any_response_from::<SSL>(resp),
         }
     }
@@ -495,7 +501,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Some(self.h3_alt_svc.get())
     }
 
-    pub(crate) fn on_pending_request(&self) {
+    fn on_pending_request(&self) {
         self.pending_requests.set(self.pending_requests.get() + 1);
     }
 
@@ -842,8 +848,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Earlier responses of this read leave before JavaScript runs (the 413 above runs none).
         resp_ref.send_corked();
         resp_ref.send_when_complete();
-
-        self.on_pending_request();
 
         req.set_yield(false);
         resp_ref.timeout(self.config.get().idle_timeout);
@@ -1234,7 +1238,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(resp);
             return;
         }
-        self.on_pending_request();
         let vm = self.vm();
         let _entered = vm.enter_event_loop_scope_without_checkpoint();
         // The listener and what it starts continue the script that made the server.
@@ -1306,8 +1309,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 let _ = self.vm().uncaught_exception(global, result, false);
             }
             server_body::respond_stopped_503(resp);
-            // Balances `on_pending_request` above.
-            self.on_static_request_complete();
             return;
         };
 
@@ -1484,12 +1485,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // `on_reload_from_zig` body lives in `server_body.rs` (`impl NewServer { … }`);
     // same crate, separate file, alongside `reload`/`reload_static_routes`.
 
-    pub(crate) fn on_static_request_complete(&self) {
-        self.on_request_complete();
-    }
-
     #[inline]
-    pub(crate) fn on_request_complete(&self) {
+    fn on_request_complete(&self) {
         self.pending_requests.set(self.pending_requests.get() - 1);
         self.deinit_if_we_can();
     }
@@ -3312,7 +3309,7 @@ pub(crate) trait ServerLike {
     /// The context of the script that made the server: what a request starts continues it.
     fn context(&self) -> &jsc::ScriptExecutionContext;
     fn config(&self) -> &ServerConfig;
-    fn on_request_complete(&self);
+    fn as_any_server(&self) -> AnyServer;
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
@@ -3347,8 +3344,8 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         self.config.get()
     }
     #[inline]
-    fn on_request_complete(&self) {
-        Self::on_request_complete(self)
+    fn as_any_server(&self) -> AnyServer {
+        AnyServer::from(self)
     }
     #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
@@ -3701,7 +3698,7 @@ impl AnyServer {
         })
     }
 
-    pub(crate) fn on_pending_request(&self) {
+    fn on_pending_request(&self) {
         any_server_dispatch!(self, |s| s.on_pending_request())
     }
 
@@ -3712,12 +3709,8 @@ impl AnyServer {
         any_server_dispatch_resp!(self, resp, |s, r| s.on_request(req, r))
     }
 
-    pub(crate) fn on_request_complete(&self) {
+    fn on_request_complete(&self) {
         any_server_dispatch!(self, |s| s.on_request_complete())
-    }
-
-    pub(crate) fn on_static_request_complete(&self) {
-        any_server_dispatch!(self, |s| s.on_static_request_complete())
     }
 
     pub(crate) fn num_subscribers(&self, topic: &[u8]) -> u32 {

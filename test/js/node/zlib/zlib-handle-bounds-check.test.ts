@@ -598,6 +598,18 @@ describe.concurrent("zlib native handle argument validation", () => {
     ).toEqual({ stdout: "ok hello world", exitCode: 0 });
   });
 
+  test.concurrent("write() treats a detached output as empty", async () => {
+    expect(
+      await run(
+        `const state = new Uint32Array(2), out = new Uint8Array(new ArrayBuffer(64));
+         out.buffer.transfer();
+         const h = zlib.createDeflate()._handle;
+         h.init(15, 6, 8, 0, state, () => console.log(...state), undefined);
+         h.write(zlib.constants.Z_NO_FLUSH, Buffer.from("abc"), 0, 3, out, 0, 0);`,
+      ),
+    ).toEqual({ stdout: "0 3", exitCode: 0 });
+  });
+
   describe.each(["write", "writeSync"])("%s()", method => {
     const codecs = [
       ["createDeflateRaw", "Z_FINISH", "inflateRawSync"],

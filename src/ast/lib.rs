@@ -2226,6 +2226,12 @@ impl LinePosition {
     #[cold]
     #[inline(never)]
     pub fn utf8(contents: &[u8], offset: usize) -> LinePosition {
+        // An offset clamped to the end of the input can land inside its
+        // last character: the position is that character's.
+        let mut offset = offset.min(contents.len().saturating_sub(1));
+        while offset > 0 && !bun_core::strings::is_utf8_char_boundary(contents[offset]) {
+            offset -= 1;
+        }
         Self::scan(contents, offset, |rest| {
             let (cp, size) = bun_core::strings::wtf8_codepoint_at(rest, 0);
             (cp, size.max(1))
@@ -2243,6 +2249,13 @@ impl LinePosition {
     #[cold]
     #[inline(never)]
     pub fn utf16(contents: &[u16], offset: usize) -> LinePosition {
+        let mut offset = offset.min(contents.len().saturating_sub(1));
+        if offset > 0
+            && (0xDC00..=0xDFFF).contains(&contents[offset])
+            && (0xD800..=0xDBFF).contains(&contents[offset - 1])
+        {
+            offset -= 1;
+        }
         Self::scan(contents, offset, |rest| (u32::from(rest[0]), 1))
     }
 

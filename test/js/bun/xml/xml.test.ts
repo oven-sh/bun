@@ -574,6 +574,9 @@ describe("error position", () => {
     expect(position("<a>\n<b>\n")).toEqual({ line: 2, column: 4, offset: 8, lineText: "<b>" });
     expect(position("<a>\n\n")).toEqual({ line: 2, column: 1, offset: 5, lineText: "" });
     expect(position("<a>\u2014\n")).toEqual({ line: 1, column: 5, offset: 5, lineText: "<a>—" });
+    // The input ends inside its last character: the place is that character.
+    expect(position(Buffer.from("<a>\u00e9"))).toEqual({ line: 1, column: 4, offset: 5, lineText: "<a>é" });
+    expect(position("<a>\u{1F600}")).toEqual({ line: 1, column: 4, offset: 5, lineText: "<a>😀" });
   });
 
   test("\\r and \\r\\n are line ends", () => {

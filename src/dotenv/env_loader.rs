@@ -61,7 +61,7 @@ pub trait DirEntryProbe {
 }
 
 /// Directory-listing basenames copied out under the resolver's
-/// `entries_mutex`, probed between the `.env` file reads in `Loader::load`.
+/// `entries` lock, probed between the `.env` file reads in `Loader::load`.
 pub struct DirEntryKeys(pub Vec<Box<[u8]>>);
 
 impl DirEntryProbe for DirEntryKeys {

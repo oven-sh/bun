@@ -20,7 +20,7 @@ use crate::bun_json as JSON;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_perf::system_timer::Timer;
-use bun_resolver::fs::{self as Fs, FileSystem};
+use bun_resolver::fs::FileSystem;
 use bun_semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;
 use bun_sys::{self as sys, Fd, File};
@@ -632,7 +632,7 @@ impl Lockfile {
         options: Option<&PackageManagerOptions>,
         log: &bun_ast::Log,
     ) -> LoadResult {
-        debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
+        debug_assert!(FileSystem::instance_loaded());
 
         let mut opened = None;
         for format in [LockfileFormat::Text, LockfileFormat::Binary] {
@@ -2020,7 +2020,7 @@ impl Lockfile {
         let config_version = options
             .config_version
             .unwrap_or_else(|| load_result.choose_config_version(self).0);
-        debug_assert!(Fs::INSTANCE_LOADED.load(core::sync::atomic::Ordering::Relaxed));
+        debug_assert!(FileSystem::instance_loaded());
 
         let bytes: Vec<u8> = 'bytes: {
             if save_format == LockfileFormat::Text {

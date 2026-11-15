@@ -20,7 +20,7 @@ use crate::env_var;
 // MOVE_DOWN: bun_core::strings → bun_core (move-in pass).
 use crate::strings;
 // MOVE_DOWN: bun_sys::Fd / bun_sys::fd → bun_core (move-in pass).
-use crate::Fd;
+use crate::{AtomicFd, Fd};
 // MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
 use crate::Mutex;
 // MOVE_DOWN: io::Writer → bun_core (move-in pass) — re-exported as crate::io::Writer.
@@ -160,11 +160,6 @@ static SOURCE: Source = Source::new();
 thread_local! {
     static SOURCE_SET: Cell<bool> = const { Cell::new(false) };
 }
-
-#[cfg(not(windows))]
-type AtomicFd = AtomicI32;
-#[cfg(windows)]
-type AtomicFd = core::sync::atomic::AtomicU64;
 
 // These are not threadlocal so we avoid opening stdout/stderr for every thread
 // Guarded by STDOUT_STREAM_SET (write-once at startup before threads).

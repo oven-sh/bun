@@ -8,6 +8,7 @@ import {
   expectRssDeltaBelow,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   MAX_PATH_BYTES,
   tempDir,
@@ -2278,6 +2279,35 @@ test("Bun.build does not leak its options when define is invalid", async () => {
   `;
   // One banner per build is 200 MiB.
   await expectRssDeltaBelow(["-e", code], { release: 80, debug: 100 });
+});
+
+// Linux only: the growth is measurable with paths of about 4 KiB.
+test.skipIf(!isLinux)("Bun.build does not leak the target of an unchanged symlink", async () => {
+  const links = Array.from({ length: 500 }, (_, i) => `link${i}.js`);
+  using dir = tempDir("bun-build-symlink-target-leak", {
+    "entry.js": links.map(link => `import "./${link}";`).join("\n"),
+  });
+  const segment = Buffer.alloc(200, "d").toString();
+  let deep = String(dir);
+  while (deep.length + 2 * segment.length < MAX_PATH_BYTES) deep = join(deep, segment);
+  mkdirSync(deep, { recursive: true });
+  writeFileSync(join(deep, "target.js"), "");
+  symlinkSync(deep, join(String(dir), "deep"));
+  for (const link of links) symlinkSync("deep/target.js", join(String(dir), link));
+
+  const [warmup, builds] = isASAN || isDebug ? [3, 14] : [10, 150];
+  const code = `
+    const entrypoints = [${JSON.stringify(join(String(dir), "entry.js"))}];
+    async function build(count) {
+      for (let i = 0; i < count; i++) await Bun.build({ entrypoints });
+      Bun.gc(true);
+      return process.memoryUsage.rss();
+    }
+    const before = await build(${warmup});
+    console.log(JSON.stringify({ deltaMiB: ((await build(${builds})) - before) / 1024 / 1024 }));
+  `;
+  // One copy of each target per build is 25 MiB, or 270 MiB on release.
+  await expectRssDeltaBelow(["-e", code], { release: 30, debug: 14 });
 });
 
 // Regression: src/js_printer/renamer.zig:592 `assignNamesRecursiveWithNumberScope`

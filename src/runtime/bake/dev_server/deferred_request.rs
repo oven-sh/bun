@@ -40,6 +40,12 @@ impl List {
         Some(first)
     }
 
+    pub(crate) fn fail_all(mut self) {
+        while let Some(request) = self.pop_first() {
+            request.take_handler().fail();
+        }
+    }
+
     pub(super) fn iter(&self) -> impl Iterator<Item = &DeferredRequest> {
         core::iter::successors(self.first(), |request| {
             // SAFETY: `request` is in this list only, and `pop_first` borrows the list exclusively.

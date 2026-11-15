@@ -8,12 +8,12 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // fns named `*__ref`, `*__deref`, `*__unref`, `*__release`) must be `unsafe fn`.
 //
 // Adjusting an intrusive count is only sound when the caller holds a count on
-// an object that is actually refcounted, and no signature can prove that:
+// an object that is actually refcounted, and a raw pointer cannot prove that:
 // releasing a count nobody owns frees the object out from under its owner, and
 // bumping the count of a by-value instance turns its ordinary teardown into a
 // free of a non-heap address. That obligation has to be an `unsafe` contract on
 // the export itself, because the same symbol is callable from Rust (the
-// `ExternalSharedDescriptor` impl, finalizers) as well as from the C++
+// `ExternalSharedDescriptor` impl) as well as from the C++
 // `RefDerefTraits` it exists for.
 //
 // Motivating instance: `Blob__ref` / `Blob__deref` in src/jsc/webcore_types.rs
@@ -27,6 +27,7 @@ import { globAllSources } from "../../../scripts/glob-sources.ts";
 // functions inside `unsafe extern "C" { .. }` blocks are a separate population,
 // as are `*__destroy` shims over raw pointers. The suffix list is the
 // enforcement boundary: a new refcount export under another name goes here too.
+// An export that takes `RefPtr<T>` by value owns its count and may be safe (`WebWorker__deref`).
 //
 // Sibling guards: unsound-erased-box.test.ts, frozen-nonnull-reborrow.test.ts.
 

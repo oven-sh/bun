@@ -197,7 +197,7 @@ impl bun_event_loop::Taskable for WriterCollected {
     /// Drops the task's +1. The context that stopped fails the upload through `abort_handle`.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — adopts the +1 `fail_writer_collected` was given.
-        drop(unsafe { RefPtr::from_raw(this.cast::<MultiPartUpload>()) });
+        unsafe { RefPtr::decrement_strong_count(this.cast::<MultiPartUpload>()) };
     }
     /// The context of the script that made the writer.
     unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {

@@ -23,7 +23,7 @@ use sealed::{Count, DebugData, Token};
 ///
 /// ```ignore
 /// #[derive(bun_ptr::RefCounted)]
-/// #[ref_count(destroy = Self::deinit)] // optional, like `did_ref` and `will_deref`
+/// #[ref_count(destroy = Self::deinit)] // optional, like `did_ref` and `will_release`
 /// struct Thing {
 ///     ref_count: RefCount, // or `ThreadSafeRefCount`
 ///     other_field: u32,
@@ -38,9 +38,9 @@ pub trait RefCounted: IntrusiveField<Self::Count> {
 
     /// Called before the count is decremented for `this`, and by every [`RefPtr::release_unless_last`].
     #[inline]
-    fn will_deref(_this: &RefPtr<Self>) {}
+    fn will_release(_this: &RefPtr<Self>) {}
 
-    /// Called when the last ref was released. The count is 1 again, as after `init`.
+    /// Called when the last ref was released. The count is 1 again, so `RefPtr::from(last)` can take a ref.
     #[inline]
     fn destroy(last: AliasableBox<Self>) {
         drop(last);
@@ -52,7 +52,7 @@ mod sealed {
     use core::sync::atomic::{AtomicU32, Ordering};
 
     /// Keeps other modules from calling the methods of `T::Count`, which resolve without importing [`Count`].
-    pub struct Token(pub(super) ());
+    pub struct Token;
 
     pub trait Count {
         fn get(&self) -> u32;
@@ -154,7 +154,7 @@ impl Count for RefCount {
         let count = self.raw_count.get().wrapping_add(1);
         self.raw_count.set(count);
         if count == 0 {
-            std::process::abort();
+            core::process::abort_immediate();
         }
     }
 
@@ -230,9 +230,11 @@ impl Count for ThreadSafeRefCount {
 
     #[inline]
     fn increment(&self, _: Token) {
+        let old_count = self.raw_count.fetch_add(1, Ordering::SeqCst);
+        debug_assert!(old_count > 0);
         // As in `Arc::clone`: other threads can increment before this one aborts.
-        if self.raw_count.fetch_add(1, Ordering::SeqCst) > i32::MAX as u32 {
-            std::process::abort();
+        if old_count > i32::MAX as u32 {
+            core::process::abort_immediate();
         }
     }
 
@@ -282,7 +284,7 @@ pub struct RefPtr<T: RefCounted>(NonNull<T>);
 impl<T: RefCounted> Drop for RefPtr<T> {
     #[inline]
     fn drop(&mut self) {
-        if self.begin_release().decrement(Token(())) {
+        if self.begin_release().decrement(Token) {
             // SAFETY: the count reached 0.
             unsafe { Self::drop_slow(self.0) };
         }
@@ -310,7 +312,7 @@ impl<T: RefCounted> RefPtr<T> {
 
     #[inline]
     fn begin_release(&self) -> &T::Count {
-        T::will_deref(self);
+        T::will_release(self);
         let count = self.count();
         count.debug().assert_valid(); // Likely double deref.
         bun_core::scoped_log!(
@@ -323,12 +325,14 @@ impl<T: RefCounted> RefPtr<T> {
         count
     }
 
+    /// Not inlined, as `Rc::drop_slow`.
+    ///
     /// # Safety
     /// The last ref on `last` was just released.
     #[inline(never)]
     unsafe fn drop_slow(last: NonNull<T>) {
         let this = ManuallyDrop::new(Self(last));
-        this.count().reset(Token(()));
+        this.count().reset(Token);
         this.count().debug().deinit();
         // SAFETY: no ref is left, and `last` is a `Box` allocation or a pool slot, see `from_raw`.
         T::destroy(unsafe { AliasableBox::from_non_null(last) });
@@ -352,7 +356,7 @@ impl<T: RefCounted> RefPtr<T> {
         // SAFETY: caller contract
         let this = unsafe { Self::from_raw(raw_ptr) };
         let count = this.count();
-        count.increment(Token(()));
+        count.increment(Token);
         bun_core::scoped_log!(
             ref_count,
             "0x{:x}   ref {} -> {}",
@@ -389,12 +393,33 @@ impl<T: RefCounted> RefPtr<T> {
         this
     }
 
+    /// As `Rc::increment_strong_count`.
+    ///
+    /// # Safety
+    /// As [`init_ref`](Self::init_ref).
+    #[inline]
+    pub unsafe fn increment_strong_count(raw_ptr: *mut T) {
+        // SAFETY: caller contract
+        unsafe { Self::init_ref(raw_ptr) }.into_raw();
+    }
+
+    /// As `Rc::decrement_strong_count`.
+    ///
+    /// # Safety
+    /// As [`from_raw`](Self::from_raw).
+    #[inline]
+    pub unsafe fn decrement_strong_count(raw_ptr: *mut T) {
+        // SAFETY: caller contract
+        drop(unsafe { Self::from_raw(raw_ptr) });
+    }
+
     /// Release this ref, or return it if it is the last one, so that the caller
     /// can drop it later or on another thread.
     #[inline]
+    #[must_use = "dropping the last ref destroys `T` on this thread"]
     pub fn release_unless_last(self) -> Option<Self> {
         let this = ManuallyDrop::new(self);
-        let released = this.begin_release().decrement_unless_one(Token(()));
+        let released = this.begin_release().decrement_unless_one(Token);
         (!released).then(|| ManuallyDrop::into_inner(this))
     }
 
@@ -595,6 +620,22 @@ mod tests {
     }
 
     #[test]
+    fn increment_and_decrement_strong_count() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(3);
+        let raw = t.as_ptr();
+        // SAFETY: `t` holds a ref.
+        unsafe { RefPtr::increment_strong_count(raw) };
+        assert_eq!(t.ref_count.get(), 2);
+        drop(t);
+        assert_eq!(drops(), before);
+        // SAFETY: the ref taken above.
+        unsafe { RefPtr::decrement_strong_count(raw) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
     fn ref_ptr_clone_keeps_mut_borrow_of_other_field_valid() {
         let _serial = serial();
         let t = Thing::new(1);
@@ -649,11 +690,11 @@ mod tests {
     // ── hooks ─────────────────────────────────────────────────────────────
 
     #[derive(crate::RefCounted)]
-    #[ref_count(did_ref = Self::did_ref, will_deref = Self::will_deref, destroy = Self::destroy)]
+    #[ref_count(did_ref = Self::did_ref, will_release = Self::will_release, destroy = Self::destroy)]
     struct WithHooks {
         ref_count: RefCount,
         calls: RefCell<Vec<(&'static str, u32)>>,
-        clone_in_will_deref: Cell<bool>,
+        clone_in_will_release: Cell<bool>,
     }
 
     thread_local! {
@@ -662,11 +703,11 @@ mod tests {
     }
 
     impl WithHooks {
-        fn new(clone_in_will_deref: bool) -> RefPtr<WithHooks> {
+        fn new(clone_in_will_release: bool) -> RefPtr<WithHooks> {
             RefPtr::new(WithHooks {
                 ref_count: RefCount::init(),
                 calls: RefCell::default(),
-                clone_in_will_deref: Cell::new(clone_in_will_deref),
+                clone_in_will_release: Cell::new(clone_in_will_release),
             })
         }
 
@@ -676,11 +717,11 @@ mod tests {
                 .push(("did_ref", this.ref_count.get()));
         }
 
-        fn will_deref(this: &RefPtr<Self>) {
+        fn will_release(this: &RefPtr<Self>) {
             this.calls
                 .borrow_mut()
-                .push(("will_deref", this.ref_count.get()));
-            if this.clone_in_will_deref.take() {
+                .push(("will_release", this.ref_count.get()));
+            if this.clone_in_will_release.take() {
                 CLONED.set(Some(this.clone()));
             }
         }
@@ -691,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn did_ref_and_will_deref_see_count_that_includes_ref() {
+    fn did_ref_and_will_release_see_count_that_includes_ref() {
         let a = WithHooks::new(false);
         drop(a.clone());
         assert!(DESTROYED.take().is_none());
@@ -699,12 +740,12 @@ mod tests {
         let last = DESTROYED.take().expect("destroyed");
         assert_eq!(
             last.calls.take(),
-            [("did_ref", 2), ("will_deref", 2), ("will_deref", 1)]
+            [("did_ref", 2), ("will_release", 2), ("will_release", 1)]
         );
     }
 
     #[test]
-    fn clone_in_will_deref_prevents_destroy() {
+    fn clone_in_will_release_prevents_destroy() {
         drop(WithHooks::new(true));
         assert!(DESTROYED.take().is_none());
         let cloned = CLONED.take().expect("cloned");
@@ -713,7 +754,7 @@ mod tests {
         let last = DESTROYED.take().expect("destroyed");
         assert_eq!(
             last.calls.take(),
-            [("will_deref", 1), ("did_ref", 2), ("will_deref", 1)]
+            [("will_release", 1), ("did_ref", 2), ("will_release", 1)]
         );
     }
 

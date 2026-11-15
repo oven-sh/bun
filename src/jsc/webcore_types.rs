@@ -486,7 +486,7 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for Blob {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__ref(this: *mut Blob) {
     // SAFETY: caller contract above.
-    unsafe { RefPtr::init_ref(this) }.into_raw();
+    unsafe { RefPtr::increment_strong_count(this) };
 }
 
 /// Release half of the refcount protocol behind `BlobImplRefDerefTraits`
@@ -500,7 +500,7 @@ unsafe extern "C" fn Blob__ref(this: *mut Blob) {
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Blob__deref(this: *mut Blob) {
     // SAFETY: caller contract above.
-    drop(unsafe { RefPtr::from_raw(this) });
+    unsafe { RefPtr::decrement_strong_count(this) };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -897,7 +897,7 @@ pub mod store {
             _: usize,
         ) {
             // SAFETY: fn contract.
-            drop(unsafe { RefPtr::from_raw(ptr.cast::<Store>()) });
+            unsafe { RefPtr::decrement_strong_count(ptr.cast::<Store>()) };
         }
 
         /// Mutable access to `data` through a shared handle. The caller must

@@ -780,7 +780,7 @@ impl bun_event_loop::Taskable for StatWatcher {
     /// A continuation the pool posted: drop the ref it carries.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
-        drop(unsafe { RefPtr::from_raw(this) });
+        unsafe { RefPtr::decrement_strong_count(this) };
     }
     /// The watcher closes with the context that started it (`abort_handle`); a hop that arrives
     /// afterwards finds it closed.

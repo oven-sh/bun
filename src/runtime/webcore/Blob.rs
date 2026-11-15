@@ -56,15 +56,13 @@ pub(crate) mod write_file;
 /// type and the `bun_jsc` copy is a forward-dep placeholder.
 ///
 /// # Safety
-/// `ctx` is null or from `RefPtr<Store>::into_raw`. This releases that ref.
+/// `ctx` is from `RefPtr<Store>::into_raw`. This releases that ref.
 pub(crate) unsafe extern "C" fn blob_store_array_buffer_deallocator(
     _bytes: *mut c_void,
     ctx: *mut c_void,
 ) {
-    if !ctx.is_null() {
-        // SAFETY: fn contract.
-        drop(unsafe { RefPtr::from_raw(ctx.cast::<Store>()) });
-    }
+    // SAFETY: fn contract.
+    unsafe { RefPtr::decrement_strong_count(ctx.cast::<Store>()) };
 }
 
 /// WHATWG File API §3.1: a Blob/File `type` is only used when every character

@@ -80,7 +80,8 @@ impl BlockList {
 
     /// May be called from any thread.
     pub(crate) fn estimated_size(&self) -> usize {
-        self.estimated_size.load(AtomicOrdering::SeqCst) as usize / (self.ref_count.get() as usize)
+        self.estimated_size.load(AtomicOrdering::SeqCst) as usize
+            / (self.ref_count.get().max(1) as usize)
     }
 
     pub(crate) fn is_block_list(value: JsLocal<'_>) -> bool {
@@ -347,10 +348,13 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneSerialize(
     serializer: &mut CloneSerializer,
 ) {
     use bun_io::Write as _;
+    let addr = this as usize;
     // SAFETY: the wrapper holds a ref.
-    let this = core::mem::ManuallyDrop::new(unsafe { bun_ptr::RefPtr::init_ref(this) });
+    let this = unsafe {
+        bun_ptr::RefPtr::increment_strong_count(this);
+        &*this
+    };
     let _guard = this.mutex.lock_guard();
-    let addr = this.as_ptr() as usize;
     SERIALIZED_REFS.lock().push((this.serialize_nonce, addr));
     _ = serializer.write_int_le(this.serialize_nonce);
 }

@@ -1,7 +1,7 @@
 //! The query's one callback, `copy(chunk)`, is called when the server enters copy mode, then with
 //! each chunk (out) or each time the socket has drained (in).
 
-use super::{MAX_PIPELINE_SIZE, PostgresSQLConnection, Socket};
+use super::{CurrentRequest, MAX_PIPELINE_SIZE, PostgresSQLConnection, ReadState, Socket};
 use crate::jsc::{AutoFlush as _, JSValue, JsResult, js_error_to_postgres};
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::error_jsc::postgres_error_to_js;
@@ -11,7 +11,7 @@ use bun_core::String as BunString;
 use bun_core::strings;
 use bun_jsc::JSUint8Array;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use bun_ptr::{ParentRef, RefPtr};
+use bun_ptr::RefPtr;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
 use bun_sql::shared::ConnectionFlags;
@@ -22,9 +22,9 @@ const COPY_DONE: [u8; 5] = [b'c', 0, 0, 0, 4];
 const MAX_COPY_DATA_LENGTH: usize = 0x3fff_fffe - 4;
 const MAX_COPY_FAIL_LENGTH: usize = 10_000 - 4 - 1;
 
-fn write_copy_data<Context: protocol::WriterContext>(
+fn write_copy_data(
     data: &[u8],
-    writer: protocol::NewWriter<Context>,
+    writer: &mut protocol::NewWriter<'_>,
 ) -> Result<(), AnyPostgresError> {
     writer.write(b"d")?;
     writer.int4((data.len() + 4) as u32)?;
@@ -83,8 +83,12 @@ fn starts_with_copy(text: &BunString) -> bool {
 }
 
 impl PostgresSQLConnection {
-    fn copying(&self, state: CopyStream) -> Option<ParentRef<PostgresSQLQuery>> {
-        self.current().filter(|head| head.is_copy(state))
+    fn copying_out<'a>(
+        &self,
+        current: &'a mut Option<CurrentRequest>,
+    ) -> Option<&'a PostgresSQLQuery> {
+        let request = &*self.hold_current(current).ok()?.request;
+        request.is_copy(CopyStream::ReadableOpen).then_some(request)
     }
 
     fn call_copy(&self, request: &PostgresSQLQuery, chunk: JSValue) -> JSValue {
@@ -128,10 +132,10 @@ impl PostgresSQLConnection {
         if self.open_copy(request, CopyStream::Writable, CopyStream::WritableOpen) {
             return Ok(());
         }
-        PostgresRequest::write_copy_fail(b"no source stream", self.writer())?;
+        self.with_writer(|writer| PostgresRequest::write_copy_fail(b"no source stream", writer))?;
         // In copy-in mode the server ignored the Sync of the batch.
         if !request.flags.get().simple {
-            self.writer().write(&protocol::SYNC)?;
+            self.with_writer(|writer| writer.write(&protocol::SYNC))?;
         }
         self.flush_data();
         self.reject_copy(request);
@@ -145,29 +149,27 @@ impl PostgresSQLConnection {
     }
 
     /// `upcoming`: how many bytes the read still holds, `data` included.
-    pub(super) fn on_copy_data(&self, data: &[u8], upcoming: usize) {
-        if self.copying(CopyStream::ReadableOpen).is_none() {
-            return;
-        }
-        self.copy_out.with_mut(|out| {
-            if out.is_empty() {
-                out.reserve(upcoming);
+    pub(super) fn on_copy_data(&self, data: &[u8], upcoming: usize, state: &mut ReadState) {
+        if state.copy_out.is_empty() {
+            if self.copying_out(&mut state.current).is_none() {
+                return;
             }
-            out.extend_from_slice(data);
-        });
+            state.copy_out.reserve(upcoming);
+        }
+        state.copy_out.extend_from_slice(data);
     }
 
     /// `false`: the stream has enough for now.
-    fn deliver_copy_out(&self) -> bool {
-        if self.copy_out.get().is_empty() {
+    fn deliver_copy_out(&self, state: &mut ReadState) -> bool {
+        if state.copy_out.is_empty() {
             return true;
         }
-        let bytes = self.copy_out.take();
-        let Some(request) = self.copying(CopyStream::ReadableOpen) else {
+        let bytes = core::mem::take(&mut state.copy_out);
+        let Some(request) = self.copying_out(&mut state.current) else {
             return true;
         };
         match JSUint8Array::from_bytes(self.global(), bytes.into_boxed_slice()) {
-            Ok(chunk) => self.call_copy(&request, chunk) != JSValue::FALSE,
+            Ok(chunk) => self.call_copy(request, chunk) != JSValue::FALSE,
             Err(err) => {
                 self.fail(b"Failed to read data", js_error_to_postgres(err));
                 true
@@ -176,15 +178,15 @@ impl PostgresSQLConnection {
     }
 
     /// What follows is the end of the reply: it is read however much the stream holds.
-    pub(super) fn on_copy_done(&self) {
-        self.deliver_copy_out();
-        if let Some(request) = self.copying(CopyStream::ReadableOpen) {
+    pub(super) fn on_copy_done(&self, state: &mut ReadState) {
+        self.deliver_copy_out(state);
+        if let Some(request) = self.copying_out(&mut state.current) {
             request.update_flags(|f| f.copy = CopyStream::Readable);
         }
     }
 
-    pub(super) fn flush_copy_out(&self) {
-        if !self.deliver_copy_out() {
+    pub(super) fn flush_copy_out(&self, mut state: ReadState) {
+        if !self.deliver_copy_out(&mut state) {
             self.set_reading(false);
         }
     }
@@ -194,7 +196,7 @@ impl PostgresSQLConnection {
             return;
         }
         self.update_flags(|f| f.toggle(ConnectionFlags::COPY_OUT_PAUSED));
-        let _ = match *self.socket.get() {
+        let _ = match self.socket.get() {
             Socket::SocketTcp(socket) if reading => socket.resume_stream(),
             Socket::SocketTcp(socket) => socket.pause_stream(),
             Socket::SocketTls(socket) if reading => socket.resume_stream(),
@@ -207,7 +209,9 @@ impl PostgresSQLConnection {
         if self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) {
             return;
         }
-        if let Some(request) = self.copying(CopyStream::WritableOpen) {
+        if let Some(request) = self.current()
+            && request.is_copy(CopyStream::WritableOpen)
+        {
             self.call_copy(&request, JSValue::UNDEFINED);
         }
     }
@@ -215,11 +219,11 @@ impl PostgresSQLConnection {
     /// `false`: the socket is full, and the callback says when it has drained.
     fn write_copy_chunk(&self, bytes: &[u8]) -> bool {
         for data in bytes.chunks(MAX_COPY_DATA_LENGTH) {
-            if let Err(err) = write_copy_data(data, self.writer()) {
+            if let Err(err) = self.with_writer(|writer| write_copy_data(data, writer)) {
                 return self.fail_write(err);
             }
         }
-        if (self.write_buffer.get().len() as usize) < MAX_PIPELINE_SIZE {
+        if self.write_buffer_len() < MAX_PIPELINE_SIZE {
             self.register_auto_flusher();
         } else {
             self.flush_data();
@@ -228,10 +232,10 @@ impl PostgresSQLConnection {
     }
 
     fn write_copy_end(&self, failure: Option<&[u8]>) {
-        if let Err(err) = match failure {
-            Some(message) => PostgresRequest::write_copy_fail(message, self.writer()),
-            None => self.writer().write(&COPY_DONE),
-        } {
+        if let Err(err) = self.with_writer(|writer| match failure {
+            Some(message) => PostgresRequest::write_copy_fail(message, writer),
+            None => writer.write(&COPY_DONE),
+        }) {
             self.fail_write(err);
             return;
         }

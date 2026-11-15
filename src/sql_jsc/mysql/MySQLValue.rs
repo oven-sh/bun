@@ -10,7 +10,7 @@ use bun_core::Utf8Bytes;
 
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
-use bun_sql::mysql::protocol::new_writer::{NewWriter, WriterContext};
+use bun_sql::mysql::protocol::new_writer::NewWriter;
 use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 
 pub(crate) enum Value<'a> {
@@ -47,7 +47,7 @@ impl ExecuteParam for Value<'_> {
         matches!(self, Value::Uint(_) | Value::Ulong(_))
     }
 
-    fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error> {
+    fn write(&self, writer: &mut NewWriter<'_>) -> Result<(), any_mysql_error::Error> {
         match self {
             Value::Null => Ok(()),
             Value::Bool(value) => writer.write(&[u8::from(*value)]),

@@ -220,11 +220,6 @@ impl SASL {
         &out[..len]
     }
 
-    // Note: takes the password slice rather than `&mut PostgresSQLConnection` —
-    // only `connection.password` is read, and `&mut PostgresSQLConnection` here
-    // would alias the `&mut self.authentication_state` borrow live at the call
-    // site in `PostgresSQLConnection::on`. Caller dereferences the
-    // self-referential `*const [u8]` and passes the slice directly.
     pub(crate) fn compute_salted_password(
         &mut self,
         salt_bytes: &[u8],

@@ -4261,7 +4261,12 @@ impl Drop for EnteredFile<'_> {
             self.bun_test_root.reset_preload_for_test_isolation();
             crate::test_runner::Expect::reset_for_test_isolation(self.global.bun_vm().global());
         }
-        if self.end_output_group && jest::Jest::runner().unwrap().current_file.has_printed_header() {
+        if self.end_output_group
+            && jest::Jest::runner()
+                .unwrap()
+                .current_file
+                .has_printed_header()
+        {
             pretty_errorln!("<r>\n::endgroup::\n");
             Output::flush();
         }

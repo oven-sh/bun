@@ -70,15 +70,15 @@ pub(crate) enum UpgradeState {
 
 /// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
 #[derive(Default)]
-pub(crate) struct ResponseRoot(JsCell<bun_jsc::strong::Optional>);
+pub(crate) struct ResponseRoot(bun_jsc::StrongCell);
 
 impl ResponseRoot {
     pub(crate) fn set_rooted(&self, value: JSValue, global: &JSGlobalObject) {
-        self.0.set(bun_jsc::strong::Optional::create(value, global));
+        self.0.set(global, value);
     }
 
     pub(crate) fn clear(&self) {
-        self.0.set(bun_jsc::strong::Optional::empty());
+        self.0.clear();
     }
 }
 
@@ -150,7 +150,7 @@ pub(crate) struct RequestContext<
     /// The request's `If-Range`, for `do_sendfile`. `None` when `range` is.
     pub(crate) if_range: Option<Box<[u8]>>,
 
-    pub(crate) request_body_readable_stream_ref: JsCell<readable_stream::Strong>,
+    pub(crate) request_body_readable_stream_ref: bun_jsc::StrongCell,
     /// Owning `+1` handle into the per-VM `Body::Value` hive pool. Shared with
     /// `Request.body` (each holds its own `+1`). `Drop` releases the count.
     pub(crate) request_body: JsCell<Option<body::BodyHiveHandle>>,
@@ -164,7 +164,7 @@ pub(crate) struct RequestContext<
     sink: JsCell<Option<AliasableBox<ResponseStream<SSL_ENABLED>>>>,
     pub(crate) byte_stream: Cell<Option<NonNull<ByteStream>>>,
     /// This keeps the Response body's ReadableStream alive.
-    pub(crate) response_body_readable_stream_ref: JsCell<readable_stream::Strong>,
+    pub(crate) response_body_readable_stream_ref: Cell<readable_stream::Strong>,
 
     /// Used in errors
     pub(crate) pathname: JsCell<bun_core::String>,
@@ -1397,14 +1397,14 @@ where
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
                 blob: JsCell::new(AnyBlob::Blob(Blob::default())),
                 sendfile: Cell::new(SendfileContext::default()),
-                request_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
+                request_body_readable_stream_ref: bun_jsc::StrongCell::default(),
                 request_body: JsCell::new(None),
                 request_body_buf: JsCell::new(Vec::new()),
                 request_body_content_len: Cell::new(0),
                 request_body_streamed_len: Cell::new(0),
                 sink: JsCell::new(None),
                 byte_stream: Cell::new(None),
-                response_body_readable_stream_ref: JsCell::new(readable_stream::Strong::default()),
+                response_body_readable_stream_ref: Cell::default(),
                 pathname: JsCell::new(BunString::EMPTY),
                 response_buf_owned: JsCell::new(Vec::new()),
                 deferred_request: Cell::new(None),
@@ -2299,10 +2299,9 @@ where
         }
 
         // Nothing feeds our ByteStream from here on; after `req.clone()`/`textStream()` only this ref reaches it.
-        let strong = self
-            .request_body_readable_stream_ref
-            .replace(readable_stream::Strong::default());
-        if let Some(readable) = strong.get() {
+        let readable = self.request_body_stream();
+        let _strong = self.request_body_readable_stream_ref.take();
+        if let Some(readable) = readable {
             readable.value.ensure_still_alive();
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes
@@ -3858,8 +3857,7 @@ where
         // After the user does request.body,
         // if they then do .text(), .arrayBuffer(), etc
         // we can no longer hold the strong reference from the body value ref.
-        let readable = this.request_body_readable_stream_ref.get().get();
-        if let Some(readable) = readable {
+        if let Some(readable) = this.request_body_stream() {
             debug_assert!(this.request_body_buf.get().is_empty());
 
             // Cap streamed bytes against maxRequestBodySize too — the up-front
@@ -3894,9 +3892,7 @@ where
                 // Release the strong stream ref like the `last` arm does, then
                 // error the stream so a pending or future read rejects instead
                 // of hanging forever.
-                let _strong = this
-                    .request_body_readable_stream_ref
-                    .replace(readable_stream::Strong::default());
+                let _strong = this.request_body_readable_stream_ref.take();
 
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
@@ -3943,10 +3939,8 @@ where
             } else {
                 this.resume_request_body_socket();
                 // Moved out so the Strong (and its underlying GC handle) is
-                // released at scope exit via `Drop` on `strong::Optional`.
-                let _strong = this
-                    .request_body_readable_stream_ref
-                    .replace(readable_stream::Strong::default());
+                // released at scope exit via `Drop` on `StrongCell`.
+                let _strong = this.request_body_readable_stream_ref.take();
                 this.request_body_take_unref();
 
                 readable.value.ensure_still_alive();
@@ -4091,9 +4085,13 @@ where
         self.resp.get()
     }
 
+    fn request_body_stream(&self) -> Option<WebCore::ReadableStream> {
+        WebCore::ReadableStream::from_js_direct(self.request_body_readable_stream_ref.get()?)
+    }
+
     /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
     fn detach_request_body_producer(&self) {
-        let Some(readable) = self.request_body_readable_stream_ref.get().get() else {
+        let Some(readable) = self.request_body_stream() else {
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {
@@ -4200,9 +4198,9 @@ where
     ) {
         // SAFETY: `ptr` is the registered live body-callback context.
         let this = unsafe { ptr.cast::<Self>().as_ref() };
-        debug_assert!(!this.request_body_readable_stream_ref.with_mut(|s| s.has()));
+        debug_assert!(!this.request_body_readable_stream_ref.is_some());
         this.request_body_readable_stream_ref
-            .set(readable_stream::Strong::init(readable, global_this));
+            .set(global_this, readable.value);
     }
 
     pub(crate) fn on_start_buffering_callback(this: NonNull<c_void>) {

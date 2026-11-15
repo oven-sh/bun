@@ -35,7 +35,7 @@ pub struct PostgresSQLQuery {
     pub(crate) query: BunString,
     undescribed: JsCell<Undescribed<ResultDescription>>,
 
-    pub(crate) this_value: JsCell<JsRef>,
+    pub(crate) this_value: JsRef,
 
     pub(crate) status: Cell<Status>,
 
@@ -51,7 +51,7 @@ impl Default for PostgresSQLQuery {
             connection: JsCell::new(None),
             query: BunString::EMPTY,
             undescribed: JsCell::new(Undescribed::default()),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             status: Cell::new(Status::Pending),
             ref_count: bun_ptr::RefCount::init(),
             flags: Cell::new(Flags::default()),
@@ -177,7 +177,7 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         clean_target: bool,
     ) -> Option<JSValue> {
-        let this_value = self.this_value.get().try_get()?;
+        let this_value = self.this_value.try_get()?;
         let target = js::target_get_cached(this_value)?;
         if clean_target {
             js::target_set_cached(this_value, global_object, JSValue::ZERO);
@@ -187,7 +187,7 @@ impl PostgresSQLQuery {
 
     pub fn finalize(&self) {
         bun_core::scoped_log!(Postgres, "PostgresSQLQuery finalize");
-        self.this_value.with_mut(|r| r.finalize());
+        self.this_value.finalize();
     }
 
     /// For a request that is owed no `ReadyForQuery`: its caller takes it out of the queue.
@@ -213,7 +213,7 @@ impl PostgresSQLQuery {
             return;
         }
         self.update_flags(|f| f.discard_response = true);
-        if let Some(this_value) = self.this_value.get().try_get() {
+        if let Some(this_value) = self.this_value.try_get() {
             js::pending_value_set_cached(this_value, global_object, err);
         }
     }
@@ -231,7 +231,7 @@ impl PostgresSQLQuery {
         if !self.flags.get().discard_response {
             return None;
         }
-        js::pending_value_get_cached(self.this_value.get().try_get()?)
+        js::pending_value_get_cached(self.this_value.try_get()?)
     }
 
     pub(crate) fn is_rejected(&self) -> bool {
@@ -240,22 +240,16 @@ impl PostgresSQLQuery {
 
     fn reject(&self, err: JSValue, global_object: &JSGlobalObject) {
         let _guard = self.ref_guard();
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.try_get() else {
             return;
         };
-        let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
+        let _downgrade = scopeguard::guard((), |_| self.this_value.downgrade());
         let Some(target_value) = self.get_target(global_object, true) else {
             return;
         };
 
         let vm = crate::jsc::VirtualMachine::get();
-        let Some(function) = vm
-            .sql_state()
-            .postgresql_context
-            .get()
-            .on_query_reject_fn
-            .get()
-        else {
+        let Some(function) = vm.sql_state().postgresql_context.on_query_reject_fn.get() else {
             return;
         };
         let event_loop = vm.event_loop();
@@ -322,13 +316,13 @@ impl PostgresSQLQuery {
             None => JSValue::NULL,
         };
 
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.try_get() else {
             return;
         };
         let _last = scopeguard::guard((), |_| {
             if is_last {
                 Self::allow_gc(this_value, global_object);
-                self.this_value.with_mut(|r| r.downgrade());
+                self.this_value.downgrade();
             }
         });
         let Some(target_value) = self.get_target(global_object, is_last) else {
@@ -336,13 +330,7 @@ impl PostgresSQLQuery {
         };
 
         let vm = crate::jsc::VirtualMachine::get();
-        let Some(function) = vm
-            .sql_state()
-            .postgresql_context
-            .get()
-            .on_query_resolve_fn
-            .get()
-        else {
+        let Some(function) = vm.sql_state().postgresql_context.on_query_resolve_fn.get() else {
             return;
         };
         let event_loop = vm.event_loop();
@@ -400,7 +388,7 @@ impl PostgresSQLQuery {
         // SAFETY: ptr is exclusively owned here until returned to JS.
         unsafe {
             (*ptr).query = query;
-            (*ptr).this_value.set(JsRef::init_weak(this_value));
+            (*ptr).this_value.set_weak(this_value);
             (*ptr).flags.set(Flags {
                 bigint,
                 simple,
@@ -529,7 +517,7 @@ impl PostgresSQLQuery {
         self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
         connection.poll_ref.ref_(bun_io::js_vm_ctx());
-        self.this_value.with_mut(|r| r.upgrade(global_object));
+        self.this_value.upgrade(global_object);
         js::target_set_cached(this_value, global_object, query);
 
         connection.advance();

@@ -62,7 +62,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             // node:net/node:tls own server-identity (`checkServerIdentity`)
             // policy in JS, so a hostname mismatch is never enforced natively.
             flags: Cell::new(SocketFlags::default() | SocketFlags::DEFERS_SERVER_IDENTITY),
-            this_value: JsCell::new(jsc::JsRef::empty()),
+            this_value: jsc::JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
@@ -77,7 +77,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
         let this = socket.this_ptr();
         let value = NewSocket::to_js(socket, global);
-        this.this_value.set(jsc::JsRef::init_weak(value));
+        this.this_value.set_weak(value);
         value
     }
 

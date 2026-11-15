@@ -39,7 +39,7 @@ bun_core::declare_scope!(MySQLConnection, visible);
 #[derive(bun_ptr::RefCounted)]
 pub struct JSMySQLConnection {
     ref_count: bun_ptr::RefCount,
-    js_value: JsCell<JsRef>,
+    js_value: JsRef,
     global_object: GlobalRef,
     vm: BackRef<VirtualMachine>,
     poll_ref: bun_io::JsKeepAlive,
@@ -122,7 +122,7 @@ impl TimedConnection for JSMySQLConnection {
     }
 
     fn notify_retiring(&self) {
-        let Some(js_value) = self.js_value.get().try_get() else {
+        let Some(js_value) = self.js_value.try_get() else {
             return;
         };
         if let Some(on_retire) = js::onretire_take_cached(js_value, &self.global_object) {
@@ -212,22 +212,22 @@ impl JSMySQLConnection {
     }
 
     fn ensure_js_value_is_alive(&self) {
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.try_get() {
             value.ensure_still_alive();
         }
     }
 
     pub fn finalize(&self) {
         bun_core::scoped_log!(MySQLConnection, "finalize");
-        self.js_value.with_mut(|r| r.finalize());
+        self.js_value.finalize();
     }
 
     fn update_reference_type(&self) {
         if self.connection.get().is_active() {
             bun_core::scoped_log!(MySQLConnection, "connection is active");
-            if self.js_value.get().is_not_empty() && !self.js_value.get().is_strong() {
+            if self.js_value.is_not_empty() && !self.js_value.is_strong() {
                 bun_core::scoped_log!(MySQLConnection, "strong ref until connection is closed");
-                self.js_value.with_mut(|r| r.upgrade(&self.global_object));
+                self.js_value.upgrade(&self.global_object);
             }
             let ctx = self.vm_ctx();
             if self.connection.get().status == my_sql_connection::Status::Connected
@@ -239,9 +239,7 @@ impl JSMySQLConnection {
             }
             return;
         }
-        if self.js_value.get().is_not_empty() && self.js_value.get().is_strong() {
-            self.js_value.with_mut(|r| r.downgrade());
-        }
+        self.js_value.downgrade();
         let ctx = self.vm_ctx();
         self.poll_ref.unref(ctx);
     }
@@ -309,7 +307,7 @@ impl JSMySQLConnection {
 
         let this = RefPtr::new(JSMySQLConnection {
             ref_count: bun_ptr::RefCount::init(),
-            js_value: JsCell::new(JsRef::empty()),
+            js_value: JsRef::empty(),
             global_object: GlobalRef::from(global_object),
             vm: BackRef::new(VirtualMachine::get()),
             poll_ref: Default::default(),
@@ -384,8 +382,7 @@ impl JSMySQLConnection {
         let this = this.into_this_ptr();
         let js_value = js::to_js(ptr, global_object);
         js_value.ensure_still_alive();
-        this.js_value
-            .with_mut(|r| r.set_strong(js_value, global_object));
+        this.js_value.set_strong(js_value, global_object);
         js::onconnect_set_cached(js_value, global_object, on_connected.to_js());
         if let Some(column_transform) = column_transform {
             js::column_transform_set_cached(js_value, global_object, column_transform.to_js());
@@ -430,20 +427,19 @@ impl JSMySQLConnection {
 
     pub(crate) fn check_server_identity_callback(&self) -> Option<JSValue> {
         self.js_value
-            .get()
             .try_get()
             .and_then(js::check_server_identity_get_cached)
     }
 
     fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.try_get() {
             return js::onconnect_take_cached(value, global_object);
         }
         None
     }
 
     fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if let Some(value) = self.js_value.get().try_get() {
+        if let Some(value) = self.js_value.try_get() {
             return js::onclose_take_cached(value, global_object);
         }
         None
@@ -541,7 +537,7 @@ impl JSMySQLConnection {
             return;
         };
         on_connect.ensure_still_alive();
-        let js_value = self.js_value.get().try_get().unwrap_or(JSValue::UNDEFINED);
+        let js_value = self.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
         js_value.ensure_still_alive();
         run_callback(&self.global_object, on_connect, &[JSValue::NULL, js_value]);
     }
@@ -571,7 +567,6 @@ impl JSMySQLConnection {
     ) -> Result<(), AnyMySQLErrorT> {
         let Some(transform) = self
             .js_value
-            .get()
             .try_get()
             .and_then(js::column_transform_get_cached)
         else {
@@ -627,7 +622,7 @@ impl JSMySQLConnection {
             ResultMode::Objects => {
                 // Build unconditionally (matches postgres) so toJS always has
                 // either a Structure or a names array.
-                let owner = self.js_value.get().try_get().unwrap_or_default();
+                let owner = self.js_value.try_get().unwrap_or_default();
                 let cs = statement.structure(owner, &self.global_object);
                 structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                 Some(ParentRef::new(cs))

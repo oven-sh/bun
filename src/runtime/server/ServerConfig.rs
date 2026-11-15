@@ -897,7 +897,7 @@ impl ServerConfig {
                     use bun_options_types::schema::api::DotEnvBehavior;
 
                     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-                    let bake_framework = vm.bake_framework.get().get();
+                    let bake_framework = vm.bake_framework.get();
                     let transpiler = &vm.transpiler;
                     let framework = match bake_framework {
                         Some(object) if bake_pages => {

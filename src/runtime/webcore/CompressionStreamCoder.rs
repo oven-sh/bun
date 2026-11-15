@@ -16,13 +16,16 @@
 //! again once the consumer has room; in between, the coder keeps the chunk's
 //! unconsumed input ([`Pending`]).
 
-use core::ffi::c_int;
-use core::ptr;
+use core::ffi::{c_int, c_void};
 
 use bun_core::EncodedSlice;
+use bun_core::ffi::slice;
 use bun_core::vec::{BorrowedCursor, append_with};
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong};
+use bun_jsc::{
+    ErrorCode, JSGlobalObject, JSUint8Array, JSValue, PinnedArrayBuffer, Strong, ThreadIsolated,
+    ThreadIsolatedArg,
+};
 
 use bun_brotli::c as brotli;
 use bun_zlib as zlib;
@@ -115,15 +118,8 @@ enum Backend {
     ZstdDecode(bun_zstd::OwnedDCtx),
 }
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
 pub(crate) struct CompressionStreamCoder {
     backend: Backend,
-    /// Shared-ownership count: 1 for the JS cell (released by its finalizer /
-    /// `nativeTransformReleaseState` via `CompressionStreamCoder__destroy`), plus 1 per in-flight
-    /// `CompressionAsyncCtx`. VM teardown (`lastChanceToFinalize`) runs the
-    /// cell's finalizer even while a pool thread is inside `transform` — the
-    /// ctx's reference is what keeps the coder alive through that.
-    ref_count: bun_ptr::ThreadSafeRefCount<CompressionStreamCoder>,
     /// DecompressionStream only: the codec has reported end-of-stream. Any
     /// further input is the spec's "trailing junk" TypeError.
     ended: bool,
@@ -225,7 +221,6 @@ impl CompressionStreamCoder {
         };
         Ok(Box::new(Self {
             backend,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
             ended: false,
             zstd_head: [0; 4],
             zstd_head_len: 0,
@@ -554,46 +549,31 @@ impl CompressionStreamCoder {
     }
 }
 
-/// A chunk's bytes for the pool thread: what the paired [`PinnedArrayBuffer`] on the JS side keeps valid, or an owned copy.
-pub(crate) enum AsyncInput {
-    Pinned { ptr: *const u8, len: usize },
+/// A chunk's bytes for the pool thread.
+enum AsyncInput {
+    Pinned(PinnedArrayBuffer),
     Owned(Vec<u8>),
 }
 
+// SAFETY: `new` roots what it pins.
+unsafe impl ThreadIsolatedArg for AsyncInput {}
+
 impl AsyncInput {
     /// JS thread: pin `chunk` if it is a pinnable ArrayBuffer/view, else copy `fallback`.
-    pub(crate) fn new(
-        global: &JSGlobalObject,
-        chunk: JSValue,
-        fallback: &[u8],
-    ) -> (Self, Option<PinnedArrayBuffer>) {
+    fn new(global: &JSGlobalObject, chunk: JSValue, fallback: &[u8]) -> Self {
         // Continuation steps pass no chunk.
-        if !chunk.is_cell() {
-            return (Self::Owned(fallback.to_vec()), None);
+        if chunk.is_cell()
+            && let Some(buffer) = PinnedArrayBuffer::root_read_only(global, chunk)
+        {
+            return Self::Pinned(buffer);
         }
-        if let Some(buf) = PinnedArrayBuffer::root_read_only(global, chunk) {
-            return (
-                Self::Pinned {
-                    ptr: buf.ptr,
-                    len: buf.byte_len,
-                },
-                Some(buf),
-            );
-        }
-        (Self::Owned(fallback.to_vec()), None)
+        Self::Owned(fallback.to_vec())
     }
 
     #[inline]
-    pub(crate) fn slice(&self) -> &[u8] {
+    fn slice(&self) -> &[u8] {
         match self {
-            Self::Pinned { ptr, len } => {
-                if ptr.is_null() {
-                    return &[];
-                }
-                // SAFETY: `ptr` points at bytes the paired `PinnedArrayBuffer` keeps
-                // valid for as long as the job lives.
-                unsafe { core::slice::from_raw_parts(*ptr, *len) }
-            }
+            Self::Pinned(buffer) => buffer.slice(),
             Self::Owned(v) => v.as_slice(),
         }
     }
@@ -610,42 +590,36 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     high_water_mark: usize,
     has_level: bool,
     level: i32,
-) -> *mut CompressionStreamCoder {
+) -> Option<Box<CompressionStreamCoder>> {
     bun_removable_features::removable_definition!(
         CompressionStreams,
         CompressionStreamCoder__create
     );
-    let Some(format) = Format::from_u8(format) else {
-        return ptr::null_mut();
-    };
+    let format = Format::from_u8(format)?;
     let level = (has_level && !decompress).then_some(level);
-    match CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level) {
-        Ok(b) => Box::into_raw(b),
-        Err(_) => ptr::null_mut(),
-    }
+    CompressionStreamCoder::new(format, decompress, high_water_mark.max(1), level).ok()
 }
 
-/// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+pub(crate) extern "C" fn CompressionStreamCoder__destroy(
+    this: Option<Box<CompressionStreamCoder>>,
+) {
     bun_removable_features::removable_definition!(
         CompressionStreams,
         CompressionStreamCoder__destroy
     );
-    if !this.is_null() {
-        // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
-        // the cell's reference has not been released yet.
-        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(this) };
-    }
+    drop(this);
 }
 
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
+///
+/// SAFETY: `this` is the coder that the calling cell owns. `input` is null, or valid for `input_len` bytes.
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__transform(
+pub(crate) unsafe extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -657,19 +631,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
         CompressionStreams,
         CompressionStreamCoder__transform
     );
-    let slice = if input.is_null() {
-        &[][..]
-    } else {
-        // SAFETY: the caller passes a BufferSource's bytes; `slice` does not
-        // escape this call (`step` copies whatever it leaves unconsumed).
-        unsafe { core::slice::from_raw_parts(input, input_len) }
-    };
     let rare = global.bun_vm().rare_data();
     let mut out = rare.take_compression_scratch();
-    // SAFETY: `this` is the live coder owned by the calling JS cell; it is
-    // only driven from the JS thread, so the call-scoped `&mut *this` has no
-    // alias.
-    let result = match unsafe { (*this).step(slice, finish, &mut out) } {
+    // SAFETY: fn contract. Both borrows end with `step`, which runs no JavaScript.
+    let result = match unsafe { (*this).step(slice(input, input_len), finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
             let chunk = if out.is_empty() {
@@ -719,9 +684,11 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// [`CompressionStreamCoder__transform`], but the output is written to the
 /// native sink of `controller`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
+///
+/// SAFETY: as [`CompressionStreamCoder__transform`].
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
+pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
     global: &JSGlobalObject,
     input: *const u8,
@@ -734,16 +701,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
         CompressionStreams,
         CompressionStreamCoder__transformInto
     );
-    let slice = if input.is_null() {
-        &[][..]
-    } else {
-        // SAFETY: as in `CompressionStreamCoder__transform`.
-        unsafe { core::slice::from_raw_parts(input, input_len) }
-    };
     let rare = global.bun_vm().rare_data();
     let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
-    let result = match unsafe { (*this).step(slice, finish, &mut out) } {
+    let result = match unsafe { (*this).step(slice(input, input_len), finish, &mut out) } {
         Ok(has_more) => {
             *more = has_more;
             'write: {
@@ -770,11 +731,11 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
 // ─── off-thread path (chunks > kAsyncCodecThreshold) ───────────────────────
 
 unsafe extern "C" {
-    /// JS-thread completion in `JSCompressionStreamShared.cpp`: consumes
-    /// `out[..out_len]` before anything may release or re-dispatch the coder.
+    /// JS-thread completion in `JSCompressionStreamShared.cpp`. The cell owns `coder` again.
     fn Bun__CompressionStream__deliverAsync(
         global: &JSGlobalObject,
         stream_cell: JSValue,
+        coder: *mut c_void,
         out: *const u8,
         out_len: usize,
         more: bool,
@@ -784,41 +745,25 @@ unsafe extern "C" {
 
 /// One step of a large `CompressionStream`/`DecompressionStream` chunk, run
 /// off the JS thread.
-pub(crate) struct CompressionAsyncCtx {
-    /// See [`CompressionStreamCoder::ref_count`]. TransformStream serializes
-    /// writes, so nothing else touches the coder while the pool has it.
-    coder: bun_ptr::RefPtr<CompressionStreamCoder>,
+struct CompressionAsyncCtx {
+    coder: Box<CompressionStreamCoder>,
     /// Empty on a continuation step: the coder holds the chunk's tail.
-    input: AsyncInput,
+    input: ThreadIsolated<AsyncInput>,
     finish: bool,
     out: Vec<u8>,
     more: bool,
     error: Option<CodecError>,
 }
 
-// SAFETY: the coder is `ThreadSafeRefCounted` and only touched by whoever holds
-// the transform (pool thread, then JS thread); its z_stream / Brotli*Instance /
-// ZSTD_*Ctx handle is heap state with no thread affinity; `AsyncInput` owns or pins its bytes.
-unsafe impl Send for CompressionAsyncCtx {}
-
-#[derive(bun_jsc::JsAffine)]
-pub(crate) struct CompressionAsyncJs {
-    /// GC root for the `JSTransformStream` cell; its `m_asyncCodecInFlight`
-    /// flag defers the eager ClearAlgorithms release while this task holds it,
-    /// and its `m_codecPromise` WriteBarrier keeps the pending
-    /// transform-algorithm promise alive.
-    stream: Strong,
-    _pin: Option<PinnedArrayBuffer>,
-}
-
 impl bun_jsc::JobContext for CompressionAsyncCtx {
     type OffThread = Self;
-    type Js = CompressionAsyncJs;
+    /// The `JSTransformStream` cell, whose `m_codecPromise` keeps the pending promise alive.
+    type Js = Strong;
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        // SAFETY: `coder` is kept alive by the reference this ctx holds (the
-        // cell's finalizer only releases its own); see the field doc.
-        match unsafe { (*this.coder.as_ptr()).step(this.input.slice(), this.finish, &mut this.out) }
+        match this
+            .coder
+            .step(this.input.slice(), this.finish, &mut this.out)
         {
             Ok(more) => this.more = more,
             Err(e) => this.error = Some(e),
@@ -826,23 +771,20 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
         Some(done)
     }
 
-    fn then(
-        this: Self,
-        js: CompressionAsyncJs,
-        cx: &bun_jsc::JsThread<'_>,
-    ) -> bun_jsc::JsResult<()> {
+    fn then(this: Self, stream: Strong, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
         let global = cx.global();
-        let (out, out_len, err) = match &this.error {
-            None => (this.out.as_ptr(), this.out.len(), JSValue::ZERO),
-            Some(e) => (core::ptr::null(), 0, codec_error_to_js(global, e)),
+        let (out, err) = match &this.error {
+            None => (&this.out[..], JSValue::ZERO),
+            Some(e) => (&[][..], codec_error_to_js(global, e)),
         };
-        // SAFETY: FFI into `JSCompressionStreamShared.cpp`; see above.
+        // SAFETY: `stream` is the cell that gave the coder up, and `out` outlives the call.
         unsafe {
             Bun__CompressionStream__deliverAsync(
                 global,
-                js.stream.get(),
-                out,
-                out_len,
+                stream.get(),
+                Box::into_raw(this.coder).cast(),
+                out.as_ptr(),
+                out.len(),
                 this.more,
                 err,
             )
@@ -853,10 +795,12 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 
 /// Schedules one off-thread step; a continuation step passes no chunk and no
 /// input (the coder kept the tail).
+///
+/// SAFETY: `stream_cell` is the cell that owned `this`. `input` is null, or valid for `input_len` bytes.
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
-    this: *mut CompressionStreamCoder,
+pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformAsync(
+    this: Box<CompressionStreamCoder>,
     global: &JSGlobalObject,
     stream_cell: JSValue,
     chunk: JSValue,
@@ -868,23 +812,13 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
         CompressionStreams,
         CompressionStreamCoder__transformAsync
     );
-    let fallback = if input.is_null() {
-        &[][..]
-    } else {
-        // SAFETY: the caller passes a BufferSource's bytes; either pinned (and
-        // `fallback` is ignored) or copied into an owned Vec.
-        unsafe { core::slice::from_raw_parts(input, input_len) }
-    };
-    let (input, pin) = AsyncInput::new(global, chunk, fallback);
+    // SAFETY: fn contract. The job is dropped on the JS thread, and `run` only borrows the bytes.
+    let input =
+        unsafe { ThreadIsolated::new(AsyncInput::new(global, chunk, slice(input, input_len))) };
     // Called by script, the step is that script's; asked for by a native sink, it is the
     // stream's maker's.
     let vm = global.bun_vm();
-    let entered = if vm.jsc_vm().is_entered() {
-        None
-    } else {
-        // SAFETY: `this` is the live coder owned by the calling JS cell.
-        Some(vm.enter_context(unsafe { (*this).context }))
-    };
+    let entered = (!vm.jsc_vm().is_entered()).then(|| vm.enter_context(this.context));
     let cx = global.js_thread(match &entered {
         Some(scope) => scope.context(),
         None => vm.context_of_caller(),
@@ -892,17 +826,13 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,
         CompressionAsyncCtx {
-            // SAFETY: `this` is the live coder owned by the calling JS cell.
-            coder: unsafe { bun_ptr::RefPtr::init_ref(this) },
+            coder: this,
             input,
             finish,
             out: Vec::new(),
             more: false,
             error: None,
         },
-        CompressionAsyncJs {
-            stream: Strong::create(stream_cell, global),
-            _pin: pin,
-        },
+        Strong::create(stream_cell, global),
     );
 }

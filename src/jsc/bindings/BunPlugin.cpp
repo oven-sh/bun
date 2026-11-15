@@ -10,7 +10,6 @@
 #include "ZigGlobalObject.h"
 #include "NodeAsyncHooks.h"
 
-#include <JavaScriptCore/CodeCache.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/FrameTracers.h>
 #include <JavaScriptCore/FunctionCodeBlock.h>
@@ -957,9 +956,6 @@ static ExportVariable findExportVariable(JSC::JSGlobalObject* globalObject, JSC:
 static Bun::ExportOfModuleMock findExportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::AbstractModuleRecord* record, const JSC::Identifier& name)
 {
     auto& vm = JSC::getVM(globalObject);
-    // No record has live exports yet. A record of compiled code can get them while a name is resolved.
-    if (!vm.hasCompiledCode() && !vm.codeCache()->hasModuleRecordWithLiveExports())
-        return {};
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto resolution = record->resolveExport(globalObject, name);
     RETURN_IF_EXCEPTION(scope, {});

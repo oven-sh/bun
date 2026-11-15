@@ -3056,34 +3056,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     JSC::JSObject* object = objectValue.getObject();
-
-    // A module mock's exports are read live from the object its factory returned, so the steps below spy on that object, under the name the export has there.
-    JSObject* mockOfObject = nullptr;
-    if (isNamespaceObjectOfModule(globalObject, object)) {
-        // Module mocks can read each other's namespace objects in a circle. The remembered hop moves ahead at each power of two, so a circle of any length comes back to it.
-        JSObject* rememberedObject = nullptr;
-        Identifier rememberedKey;
-        for (unsigned hops = 0;; ++hops) {
-            Bun::ExportOfModuleMock held = Bun::exportOfModuleMock(globalObject, object, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!held.object)
-                break;
-            if (held.object == rememberedObject && held.name == rememberedKey) {
-                throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
-                return {};
-            }
-            if (hops && hasOneBitSet(hops)) {
-                rememberedObject = held.object;
-                rememberedKey = held.name;
-            }
-            object = held.object;
-            propertyKey = WTF::move(held.name);
-            mockOfObject = held.mock;
-            if (!isNamespaceObjectOfModule(globalObject, object))
-                break;
-        }
-    }
-
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
@@ -3110,6 +3082,33 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object))
             object = env;
         RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    // A module mock's exports are read live from the object its factory returned, so spy on that object, under the name the export has there.
+    JSObject* mockOfObject = nullptr;
+    if (isNamespaceObjectOfModule(globalObject, object)) {
+        // Module mocks can read each other's namespace objects in a circle. The remembered hop moves ahead at each power of two, so a circle of any length comes back to it.
+        JSObject* rememberedObject = nullptr;
+        Identifier rememberedKey;
+        for (unsigned hops = 0;; ++hops) {
+            Bun::ExportOfModuleMock held = Bun::exportOfModuleMock(globalObject, object, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!held.object)
+                break;
+            if (held.object == rememberedObject && held.name == rememberedKey) {
+                throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
+                return {};
+            }
+            if (hops && hasOneBitSet(hops)) {
+                rememberedObject = held.object;
+                rememberedKey = held.name;
+            }
+            object = held.object;
+            propertyKey = WTF::move(held.name);
+            mockOfObject = held.mock;
+            if (!isNamespaceObjectOfModule(globalObject, object))
+                break;
+        }
     }
 
     if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
@@ -3221,6 +3220,9 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
         unsigned attributes = isOwn ? spyAttributes : spyAttributes & ~PropertyAttribute::DontDelete;
+        // The object does not list a name that only the mock serves, and the value of that name can be the object itself.
+        if (isServedByMock)
+            attributes |= PropertyAttribute::DontEnum;
         if (isNamespace)
             spyAttributes |= JSMockFunction::SpyAttributeESModuleNamespace;
         if (isOpaque)

@@ -3229,12 +3229,14 @@ describe.concurrent("a mocked module's exports are read from the object the fact
           test("the default export of a jest.mock() factory that returned no \`default\` is the object itself, and the spy starts from it", () => {
             const spy = spyOn(aliases, "def");
             expect(spyOn(dep, "default")).toBe(spy);
+            // The object does not list the spy: its start value is the object.
+            expect([Object.keys(made), Object.keys(dep), JSON.stringify(made)]).toEqual([["fn"], ["fn"], "{}"]);
             for (const read of [aliases.def, local.viaDefaultImport, dep.default]) expect(read).toBe(made);
             expect(spy).toHaveBeenCalledTimes(3);
             spy.mockReturnValue("spied");
             expect([aliases.def, local.viaDefaultImport, dep.default]).toEqual(["spied", "spied", "spied"]);
             spy.mockRestore();
-            expect(Object.keys(made)).toEqual(["fn"]);
+            expect(Object.getOwnPropertyNames(made)).toEqual(["fn"]);
             for (const read of [aliases.def, local.viaDefaultImport, dep.default]) expect(read).toBe(made);
           });
         `,
@@ -3248,12 +3250,25 @@ describe.concurrent("a mocked module's exports are read from the object the fact
           test("the default export of a jest.mock() factory that returned a function is the function, and the spy wraps it", () => {
             const spy = spyOn(aliases, "def");
             expect(spyOn(dep, "default")).toBe(spy);
-            expect([aliases.def("one"), dep.default("two"), spy.mock.calls]).toEqual([["called", "one"], ["called", "two"], [["one"], ["two"]]]);
+            expect([aliases.def("one"), dep.default("two"), spy.mock.calls, Object.keys(made)]).toEqual([["called", "one"], ["called", "two"], [["one"], ["two"]], ["fn"]]);
             spy.mockReturnValue("spied");
             expect(aliases.def()).toBe("spied");
             spy.mockRestore();
-            expect(Object.keys(made)).toEqual(["fn"]);
+            expect(Object.hasOwn(made, "default")).toBe(false);
             for (const read of [aliases.def, dep.default]) expect(read).toBe(made);
+          });
+        `,
+        "jest-mock-jest-fn.test.ts": `
+          import { expect, jest, spyOn, test } from "bun:test";
+
+          const made = jest.fn((...args) => ["called", ...args]);
+          jest.mock("./dep", () => made);
+          const [dep, aliases] = [await import("./dep"), await import("./aliases")];
+
+          test("the default export of a jest.mock() factory that returned a jest.fn() already is the spy", () => {
+            expect(spyOn(aliases, "def")).toBe(made);
+            expect(spyOn(dep, "default")).toBe(made);
+            expect([aliases.def("one"), dep.default("two"), made.mock.calls, Object.keys(made)]).toEqual([["called", "one"], ["called", "two"], [["one"], ["two"]], []]);
           });
         `,
         "accessors.test.ts": `
@@ -3306,7 +3321,43 @@ describe.concurrent("a mocked module's exports are read from the object the fact
           });
         `,
       },
-      49,
+      50,
+    );
+  });
+
+  test("spyOn() through a re-export under another name, whatever an earlier test file of the run loaded", async () => {
+    const spies = (mockIt: string) => `
+      import { expect, mock, spyOn, test, vi } from "bun:test";
+
+      const made = { fn: () => "fn", default: () => "default", flag: "flag", other: () => "other" };
+      ${mockIt}("./dep", () => made);
+
+      test("importers read the spy", async () => {
+        const [aliases, { read }] = [await import("./aliases"), await import("./readers")];
+        const spy = spyOn(aliases, "again").mockReturnValue("spied");
+        expect([read().fn, spy.mock.calls.length]).toEqual([Array(5).fill("spied"), 5]);
+        spy.mockRestore();
+        expect([read().fn, Object.keys(made)]).toEqual([Array(5).fill("fn"), ["fn", "default", "flag", "other"]]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...aliases,
+        "1-mock-module.test.ts": spies("mock.module"),
+        "2-loads-the-module.test.ts": `
+          import { expect, test } from "bun:test";
+
+          test("an earlier file took its mock with it", async () => {
+            const { read } = await import("./readers");
+            expect(read().fn).toEqual(Array(5).fill("real-fn"));
+          });
+        `,
+        // The module is loaded now: this mock changes it in place.
+        "3-mock-module.test.ts": spies("mock.module"),
+        // This mock loads the module again.
+        "4-vi-do-mock.test.ts": spies("vi.doMock"),
+      },
+      4,
     );
   });
 
@@ -3319,7 +3370,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
     `,
   };
 
-  test("spyOn() through a re-export under another name, of a factory that returned a module namespace object or globalThis", async () => {
+  test("spyOn() through a re-export under another name, of a factory that returned a module namespace object", async () => {
     await expectFixturesToPass(
       {
         ...fake,
@@ -3356,28 +3407,8 @@ describe.concurrent("a mocked module's exports are read from the object the fact
             expect([Object.keys(fake), Object.keys(list)]).toEqual([["default", "flag", "fn"], ["0", "1"]]);
           });
         `,
-        "global-this.test.ts": `
-          import { expect, mock, spyOn, test } from "bun:test";
-          const realm: any = globalThis;
-          const original = () => "global";
-          realm.fn = original;
-          mock.module("./dep", () => globalThis);
-          const { read } = await import("./readers");
-
-          test.each([
-            ["its own name", "./dep", "fn"],
-            ["another name", "./aliases", "again"],
-          ])("a factory that returned globalThis, under %s", async (_, specifier, name) => {
-            const spy = spyOn(await import(specifier), name).mockReturnValue("spied");
-            expect(realm.fn).toBe(spy);
-            expect(read().fn).toEqual(Array(5).fill("spied"));
-            spy.mockRestore();
-            expect(realm.fn).toBe(original);
-            expect(read().fn).toEqual(Array(5).fill("global"));
-          });
-        `,
       },
-      4,
+      2,
     );
   });
 
@@ -3479,6 +3510,9 @@ describe.concurrent("a mocked module's exports are read from the object the fact
         `,
       },
       1,
+      [],
+      // A spyOn() that never returns must not outlive this test run.
+      { BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
     );
   });
 

@@ -972,7 +972,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             })
         }
         // `bun run` and `bun exec` print through it too.
-        PollTag::ShellBufferedWriter => {
+        PollTag::ShellIoWriter => {
             io_arm!([Shell, Tools], clone_rc, ShellIoWriter, |this, _, event| {
                 this.on_io(event)
             })
@@ -1008,21 +1008,21 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             SecurityScanSubprocess<'_>,
             |this, _, event| this.on_io(event)
         ),
-        PollTag::SecurityScanStaticPipeWriter => io_arm!(
+        PollTag::SecurityScanWriter => io_arm!(
             [Install],
             <*mut _>::as_mut_unchecked,
             SecurityScanSubprocess<'_>,
             |this, _, event| this.on_writer_io(event)
         ),
-        PollTag::StaticPipeWriter => io_arm!(
+        PollTag::SubprocessStdinWriter => io_arm!(
             [Spawn],
             <*mut _>::as_ref_unchecked,
             Subprocess<'_>,
             |this, _, event| this.on_stdin_io(event)
         ),
 
-        // The borrow ends before the script goes on.
-        PollTag::ShellStaticPipeWriter => io_arm!(
+        // `this` is not used once `on_stdin_writer_close` runs, which may free it.
+        PollTag::ShellStdinWriter => io_arm!(
             [Shell],
             <*mut _>::as_mut_unchecked,
             ShellSubprocess,

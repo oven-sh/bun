@@ -1249,7 +1249,7 @@ fn spawn_maybe_sync(
         _ => None,
     };
 
-    // SAFETY: stored right here.
+    // SAFETY: the `Ok` arm stores it in `subprocess.stdin`.
     match unsafe {
         Writable::init(
             stdin,
@@ -1499,7 +1499,7 @@ fn spawn_maybe_sync(
     if let Some(err) = &setup_err {
         // A Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
-        subprocess.on_close_stdin();
+        subprocess.close_stdin_buffer();
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
         if !is_sync {
             // Not `kill_signal`, which the child may ignore: nobody is handed it to end it another way.
@@ -1532,9 +1532,6 @@ fn spawn_maybe_sync(
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
     if let Some(signal) = abort_signal.take() {
-        // An already-aborted signal runs the abort callback before this
-        // returns, which re-enters via `subprocess_ptr`: hold no
-        // `&mut Subprocess` across the call.
         // SAFETY: `subprocess_ptr` is live and heap-pinned.
         unsafe { bun_jsc::AbortHandle::follow_owner(subprocess_ptr, signal) };
     }

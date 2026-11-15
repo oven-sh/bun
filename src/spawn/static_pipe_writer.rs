@@ -55,10 +55,13 @@ pub enum PipeState {
 
 impl<S: Source> StaticPipeWriter<S> {
     /// `owner` is handed the events, to pass on to [`Self::on_io`].
-    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until the writer is dropped.
+    ///
+    /// # Safety
+    /// `owner.ptr` points to a live value of the type `__bun_run_io` casts `owner.tag` to, until the
+    /// writer is dropped.
     pub unsafe fn create(owner: Owner, result: StdioResult, source: S) -> Self {
         let state = AliasableBox::new(State {
-            writer: BufferedWriter::new(true),
+            writer: BufferedWriter::owning_fd(),
             #[cfg(not(windows))]
             file: Cell::new(result),
             source,
@@ -92,12 +95,14 @@ impl<S: Source> StaticPipeWriter<S> {
         {
             let _ = event_loop;
             // SAFETY: `source` is never borrowed mutably, and `Drop` leaves it to a write in flight.
-            unsafe { state.writer.write_lent(state) };
+            unsafe { state.writer.write_no_copy(state) };
         }
         #[cfg(not(windows))]
         {
             let file = state.file.take().unwrap();
-            (state.writer).start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;
+            state
+                .writer
+                .start(state, event_loop.as_event_loop_ctx(), file.fd(), true)?;
             // The writer closes it from now on.
             file.into_raw();
             state.writer.set_poll_flag(bun_io::FilePollFlag::Socket);
@@ -131,7 +136,8 @@ impl<S: Source> StaticPipeWriter<S> {
 #[cfg(windows)]
 impl<S: Source> Drop for StaticPipeWriter<S> {
     fn drop(&mut self) {
-        /// SAFETY: `state` is the box of a writer that was dropped.
+        /// # Safety
+        /// `state` is the box of a writer that was dropped.
         unsafe fn free<S>(state: *mut ()) {
             // SAFETY: fn contract.
             unsafe { bun_core::heap::destroy(state.cast::<State<S>>()) };
@@ -139,7 +145,7 @@ impl<S: Source> Drop for StaticPipeWriter<S> {
         let state = self.state.as_ptr().cast();
         // SAFETY: nothing else frees the box, or uses it from here on.
         unsafe {
-            if !self.state.writer.orphan(state, free::<S>) {
+            if !self.state.writer.close_and_detach(state, free::<S>) {
                 free::<S>(state);
             }
         }
@@ -173,7 +179,7 @@ impl<S: Source> WriteHandler for State<S> {
                 WriteStatus::Pending => "pending",
             }
         );
-        self.written.set(self.written.get() + amount);
+        self.written.update(|written| written + amount);
         // After `EndOfFile` the writer closes itself.
         if status != WriteStatus::EndOfFile && self.remaining().is_empty() {
             self.writer.close(self);
@@ -193,6 +199,7 @@ impl<S: Source> WriteHandler for State<S> {
         bun_output::scoped_log!(StaticPipeWriter, "StaticPipeWriter({:p}) onClose()", self);
     }
 
+    /// `Drop` leaves the state to the write's callback.
     #[cfg(windows)]
-    fn on_write_in_flight(&self, _: bool) {}
+    fn set_has_inflight_write(&self, _: bool) {}
 }

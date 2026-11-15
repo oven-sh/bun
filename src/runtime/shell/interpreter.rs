@@ -313,7 +313,7 @@ pub(crate) struct Interpreter<'a> {
     /// Back-ref to the owner of this interpreter.
     shell_interp: NonNull<ShellInterpreter>,
     /// Number of [`ShellInterpreterRef`]s that are out.
-    ref_count: u32,
+    pending_tasks: u32,
     /// Same as [`ShellInterpreter::context`].
     pub(crate) context: Option<bun_jsc::ContextId>,
 
@@ -518,7 +518,7 @@ impl<'a> Interpreter<'a> {
             arena,
             script_ast,
             shell_interp,
-            ref_count: 0,
+            pending_tasks: 0,
             context: None,
             async_commands_executing: 0,
             quiet: false,
@@ -1258,7 +1258,7 @@ impl ShellInterpreter {
 
         self.exit_code.set(Some(exit_code));
         let output = self.with_interp(|interp| {
-            assert_eq!(interp.ref_count, 0, "script finished before its tasks");
+            assert_eq!(interp.pending_tasks, 0, "script finished before its tasks");
             [IoKind::Stdout, IoKind::Stderr].map(|kind| interp.take_buffered(kind))
         });
         // Frees what the script ran on without waiting for the wrapper to be collected.
@@ -2357,14 +2357,14 @@ pub(crate) struct ShellInterpreterRef(NonNull<ShellInterpreter>);
 
 impl ShellInterpreterRef {
     pub(crate) fn new(interp: &mut Interpreter<'_>) -> Self {
-        interp.ref_count += 1;
+        interp.pending_tasks += 1;
         ShellInterpreterRef(interp.shell_interp)
     }
 
     /// # Safety
     /// Called by the event loop of the script, for the queued task that held `self`.
     unsafe fn get(&self) -> &ShellInterpreter {
-        // SAFETY: `ref_count` includes `self`, or a task that shares its `interp_owners`, so `finish`
+        // SAFETY: `pending_tasks` includes `self`, or a task that shares its `interp_owners`, so `finish`
         // has not run. Only a VM teardown frees the interpreter before that, and it releases the queued
         // tasks first. Both callers hold `ensure_still_alive` from before `finish` can run.
         unsafe { self.0.as_ref() }
@@ -2380,7 +2380,7 @@ impl ShellInterpreterRef {
     ) {
         // SAFETY: caller contract.
         unsafe { self.get() }.run_yield_with(|interp| {
-            interp.ref_count -= 1;
+            interp.pending_tasks -= 1;
             f(interp)
         });
     }
@@ -2435,7 +2435,11 @@ impl ShellTask {
     pub(crate) fn new_child(parent: &mut ShellTask) -> Self {
         let poster = parent.poster.as_ref();
         ShellTask {
-            poster: Some(poster.expect("shell task on the pool is armed").clone()),
+            poster: Some(
+                poster
+                    .expect("shell task on the pool holds its poster")
+                    .clone(),
+            ),
             interp: (parent.interp.as_ref()).map(|interp| ShellInterpreterRef(interp.0)),
             interp_owners: Some(Arc::clone(parent.interp_owners.get_or_insert_default())),
             ..Default::default()
@@ -2453,7 +2457,9 @@ impl ShellTask {
     }
 
     pub(crate) fn take_poster(&mut self) -> ConcurrentPoster {
-        self.poster.take().expect("shell task on the pool is armed")
+        self.poster
+            .take()
+            .expect("shell task on the pool holds its poster")
     }
 
     /// Called from the worker thread; enqueues the embedded
@@ -2496,7 +2502,7 @@ impl ShellTask {
         let _keep = shell_interp.ensure_still_alive();
         let is_last = (task.interp_owners.take()).is_none_or(|it| Arc::into_inner(it).is_some());
         if is_last {
-            shell_interp.with_interp(|interp| interp.ref_count -= 1);
+            shell_interp.with_interp(|interp| interp.pending_tasks -= 1);
         }
         ctx.run_from_main_thread(shell_interp, is_last);
     }

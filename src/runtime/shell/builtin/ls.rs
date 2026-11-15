@@ -1,16 +1,15 @@
 use core::ops::ControlFlow;
-use core::sync::atomic::{AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_core::ZBox;
-use bun_ptr::BackRef;
 use bun_sys::{E, O, S, dir_iterator};
+use bun_threading::work_pool::{OwnedTask, WorkPool};
 
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, IoKind, Kind};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, PoolTask, ShellTask, ShellWork,
-    shell_lstatat, shell_openat, shell_statat,
+    Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ShellInterpreter, ShellTask,
+    ShellTaskCtx, WorkPoolTask, shell_lstatat, shell_openat, shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -31,7 +30,8 @@ pub(crate) enum State {
 
 pub(crate) struct ExecState {
     pub(crate) err: Option<bun_sys::Error>,
-    pub(crate) task_count: AtomicUsize,
+    /// One per operand. An operand is done when its subtasks are.
+    pub(crate) task_count: usize,
     pub(crate) tasks_done: usize,
     pub(crate) output_waiting: usize,
     pub(crate) output_done: usize,
@@ -90,35 +90,22 @@ impl Ls {
                 };
                 Self::state_mut(interp, cmd).state = State::Exec(ExecState {
                     err: None,
-                    task_count: AtomicUsize::new(task_count),
+                    task_count,
                     tasks_done: 0,
                     output_waiting: 0,
                     output_done: 0,
                     output_queue: std::collections::VecDeque::new(),
                 });
 
-                // Stable address: `Ls` lives in `Box<Ls>` (Builtin::Impl::Ls),
-                // and the `Exec` variant is held until all tasks finish.
-                let pending = {
-                    let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
-                        unreachable!()
-                    };
-                    BackRef::new(&exec.task_count)
-                };
-
                 let cwd = Builtin::cwd(interp, cmd);
                 let print_directory = task_count > 1;
-                let schedule = |path: &[u8]| {
-                    let path = ZBox::from_bytes(path);
-                    let task = ShellLsTask::new(cmd, opts, print_directory, pending, cwd, path);
-                    PoolTask::schedule_no_ref(interp, task);
-                };
-                if let Some(start) = paths_start {
-                    for i in start..argc {
-                        schedule(Builtin::of(interp, cmd).arg_bytes(i));
-                    }
-                } else {
-                    schedule(b".");
+                for i in 0..task_count {
+                    let path = ZBox::from_bytes(match paths_start {
+                        Some(start) => Builtin::of(interp, cmd).arg_bytes(start + i),
+                        None => b".",
+                    });
+                    let task = ShellTask::new(interp);
+                    ShellLsTask::schedule(cmd, opts, print_directory, cwd, path, task);
                 }
                 Yield::suspended()
             }
@@ -127,8 +114,7 @@ impl Ls {
                     let State::Exec(exec) = &Self::state_mut(interp, cmd).state else {
                         unreachable!()
                     };
-                    exec.tasks_done >= exec.task_count.load(Ordering::Relaxed)
-                        && exec.output_done >= exec.output_waiting
+                    exec.tasks_done >= exec.task_count && exec.output_done >= exec.output_waiting
                 };
                 if done {
                     let exit_code: ExitCode = {
@@ -169,9 +155,13 @@ impl Ls {
         Self::next(interp, cmd)
     }
 
-    fn on_shell_ls_task_done(interp: &mut Interpreter<'_>, task: &mut ShellLsTask) -> Yield {
+    fn on_shell_ls_task_done(
+        interp: &mut Interpreter<'_>,
+        task: &mut ShellLsTask,
+        is_last: bool,
+    ) -> Yield {
         let cmd = task.cmd;
-        if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
+        if is_last && let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
         let output = core::mem::take(&mut task.output);
@@ -307,9 +297,6 @@ pub(crate) struct ShellLsTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub print_directory: bool,
-    /// Shared atomic counter (lives in `ExecState` inside `Box<Ls>`; address
-    /// is stable for the lifetime of the Exec state).
-    pub task_count: BackRef<AtomicUsize>,
     pub cwd: bun_sys::Fd,
     pub path: ZBox,
     pub output: Vec<u8>,
@@ -318,38 +305,43 @@ pub(crate) struct ShellLsTask {
     /// Cached current time (seconds since epoch) for formatting timestamps.
     /// Cached once per task to avoid repeated syscalls.
     now_secs: u64,
+    task: ShellTask,
+    work_task: WorkPoolTask,
 }
 
+bun_threading::intrusive_work_task!(ShellLsTask, work_task);
+bun_core::intrusive_field!(ShellLsTask, task: ShellTask);
+
 impl ShellLsTask {
-    fn new(
+    fn schedule(
         cmd: NodeId,
         opts: Opts,
         print_directory: bool,
-        task_count: BackRef<AtomicUsize>,
         cwd: bun_sys::Fd,
         path: ZBox,
-    ) -> Self {
-        Self {
+        task: ShellTask,
+    ) {
+        WorkPool::schedule_new(Self {
             cmd,
             opts,
             print_directory,
-            task_count,
             cwd,
             path,
             output: Vec::new(),
             is_absolute: false,
             err: None,
             now_secs: 0,
-        }
+            task,
+            work_task: WorkPoolTask::default(),
+        });
     }
 
     /// Spawns a subtask for a recursively
     /// discovered subdirectory.
-    fn enqueue(&self, task: &ShellTask, name: &[u8]) {
+    fn enqueue(&mut self, name: &[u8]) {
         let path = self.join(name);
-        let subtask = Self::new(self.cmd, self.opts, true, self.task_count, self.cwd, path);
-        self.task_count.fetch_add(1, Ordering::Relaxed);
-        PoolTask::schedule_child(task, subtask);
+        let task = ShellTask::new_child(&mut self.task);
+        Self::schedule(self.cmd, self.opts, true, self.cwd, path, task);
     }
 
     fn join(&self, child: &[u8]) -> ZBox {
@@ -374,7 +366,7 @@ impl ShellLsTask {
         ZBox::from_bytes(out)
     }
 
-    fn list(this: &mut ShellLsTask, task: &ShellTask) {
+    fn list(this: &mut ShellLsTask) {
         // Cache current time once per task for timestamp formatting.
         if this.opts.long_listing {
             this.now_secs = bun_core::time::timestamp().max(0) as u64;
@@ -414,7 +406,7 @@ impl ShellLsTask {
                         if matches!(current.kind, bun_sys::EntryKind::Directory)
                             && this.opts.recursive
                         {
-                            this.enqueue(task, name);
+                            this.enqueue(name);
                         }
                     }
                 }
@@ -675,13 +667,26 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
     ((y + (m <= 2) as i64) as i32, m, d)
 }
 
-impl ShellWork for ShellLsTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
-    fn run_from_thread_pool(&mut self, task: &ShellTask) {
-        Self::list(self, task)
+impl OwnedTask for ShellLsTask {
+    fn run(mut self: Box<Self>) {
+        Self::list(&mut self);
+        ShellTask::on_finish(self);
     }
-    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
-        Ls::on_shell_ls_task_done(interp, self)
+}
+
+impl bun_event_loop::BoxedTask for ShellLsTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
+    fn release_unrun(self: Box<Self>) {}
+    /// See [`ShellTaskCtx`]: a step of a shell script always runs.
+    fn context(&self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl ShellTaskCtx for ShellLsTask {
+    fn run_from_main_thread(mut self: Box<Self>, shell_interp: &ShellInterpreter, is_last: bool) {
+        shell_interp
+            .run_yield_with(move |interp| Ls::on_shell_ls_task_done(interp, &mut self, is_last));
     }
 }
 

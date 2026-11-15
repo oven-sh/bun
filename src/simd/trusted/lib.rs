@@ -1,6 +1,6 @@
 //! All the `unsafe` of `bun_simd`, and what it relies on.
 #![no_std]
-#![feature(portable_simd, fn_static)]
+#![feature(cfg_sanitize, fn_static, portable_simd)]
 #![cfg_attr(target_arch = "aarch64", feature(loop_hints))]
 #![deny(unsafe_code)]
 // The decoders for other systems are public, so that every machine can test them.

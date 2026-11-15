@@ -12,6 +12,24 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(target_pointer_width = "64"))]
 compile_error!("the instructions use 64-bit addresses");
 
+// AddressSanitizer does not look into `asm!`.
+cfg_select! {
+    sanitize = "address" => {
+        unsafe extern "C" {
+            #[link_name = "__asan_loadN"]
+            safe fn will_load(start: *const SharedU8, len: usize);
+            #[link_name = "__asan_storeN"]
+            safe fn will_store(start: *const AtomicU8, len: usize);
+        }
+    }
+    _ => {
+        #[inline(always)]
+        fn will_load(_: *const SharedU8, _: usize) {}
+        #[inline(always)]
+        fn will_store(_: *const AtomicU8, _: usize) {}
+    }
+}
+
 /// `asm!` needs literals.
 macro_rules! load_and_store {
     ($feature:literal, $T:ty, $class:ident, $load:ident $load_asm:literal, $store:ident $store_asm:literal) => {
@@ -22,6 +40,7 @@ macro_rules! load_and_store {
             from: &[[SharedU8; size_of::<$T>()]; K],
         ) -> $T {
             const { assert!(AT < K) };
+            will_load(from[AT].as_ptr(), size_of::<$T>());
             let v;
             // SAFETY: reads the bytes of `from[AT]`, with an instruction of the enabled feature.
             unsafe {
@@ -43,6 +62,7 @@ macro_rules! load_and_store {
             to: &[[AtomicU8; size_of::<$T>()]; K],
         ) {
             const { assert!(AT < K) };
+            will_store(to[AT].as_ptr(), size_of::<$T>());
             // SAFETY: writes the bytes of `to[AT]`, with an instruction of the enabled feature.
             unsafe {
                 asm!(
@@ -97,6 +117,7 @@ fn low_bits(count: usize) -> u64 {
 #[inline]
 #[target_feature(enable = "avx512bw")]
 pub fn load64_masked(from: &[SharedU8]) -> u8x64 {
+    will_load(from.as_ptr(), from.len().min(64));
     let v;
     // SAFETY: reads the bytes of `from` that the mask has a bit for, and touches no others.
     unsafe {
@@ -116,6 +137,7 @@ pub fn load64_masked(from: &[SharedU8]) -> u8x64 {
 #[inline]
 #[target_feature(enable = "avx512bw")]
 pub fn store64_masked(v: u8x64, to: &[AtomicU8]) {
+    will_store(to.as_ptr(), to.len().min(64));
     // SAFETY: writes the bytes of `to` that the mask has a bit for, and touches no others.
     unsafe {
         asm!(

@@ -49,7 +49,7 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         onWritable = nullptr;
         writableUserData = nullptr;
         /* Ignore data after this point. node:http clears its own slot: a request body outlives its response there. */
-        if (!HttpContext<SSL>::fromSocket((us_socket_t *) uwsRes)->isNodeHttp()) {
+        if (!HttpContext<SSL>::fromSocket((us_socket_t *) uwsRes)->isNodeHttp() || (state & HTTP_NODE_OTHER_HANDLER)) {
             inStream = nullptr;
         }
 
@@ -171,6 +171,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_NODE_PEER_ENDED = 1 << 22,
         /* node:http socket.end() or destroySoon() ended the write side. Until the socket closes, the request in flight still gets its body. */
         HTTP_NODE_HALF_CLOSED = 1 << 23,
+        /* NodeHTTP.cpp did not take this request: a node:http server can be reloaded to the handlers of Bun.serve. */
+        HTTP_NODE_OTHER_HANDLER = 1 << 24,
 
         /* Bits that describe the connection rather than the response in flight.
          * There is one HttpResponseData per socket, reused by every request on a

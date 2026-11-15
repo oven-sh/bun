@@ -62,9 +62,6 @@ pub struct AtomicCell<T: Copy> {
 // unsound: `&Cell<u32>` is `Copy + !Send`, and shipping one to another thread
 // via `load()` would be a data race.
 unsafe impl<T: Atom> Sync for AtomicCell<T> {}
-// SAFETY: see the `Sync` justification above — the same invariants apply to
-// moving the cell itself across threads; `T: Copy` has no drop glue to race.
-unsafe impl<T: Atom> Send for AtomicCell<T> {}
 
 impl<T: Copy> AtomicCell<T> {
     /// `const` constructor — required because most call sites are `static`
@@ -131,7 +128,7 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   cell only ever stores valid discriminants.
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
-///   itself provides. This is what backs `AtomicCell<T: Atom>: Send + Sync`.
+///   itself provides. This is what backs `AtomicCell<T: Atom>: Sync`.
 ///   Raw pointers / `NonNull` qualify (the *pointee* may be thread-affine, but
 ///   that's the caller's problem, exactly as with `AtomicPtr`). A `Copy`
 ///   reference like `&Cell<_>` does **not** — it would alias unsynchronized

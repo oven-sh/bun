@@ -96,7 +96,7 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
 }
 
 // Clone/Copy: bitwise OK — resolved fn pointers plus a framework-static
-// `*const CFStringRef`; the dlopen handle they came from is leaked (never
+// `CFStringRef`; the dlopen handle they came from is leaked (never
 // dlclosed), so copies stay valid for the process lifetime.
 #[derive(Clone, Copy)]
 pub(crate) struct CoreFoundation {
@@ -125,21 +125,17 @@ pub(crate) struct CoreFoundation {
     pub(crate) run_loop_wake_up: unsafe extern "C" fn(CFRunLoopRef),
     pub(crate) string_create_with_file_system_representation:
         unsafe extern "C" fn(CFAllocatorRef, *const u8) -> CFStringRef,
-    pub(crate) run_loop_default_mode: *const CFStringRef,
+    /// In read-only memory, where only a `Relaxed` load is allowed.
+    run_loop_default_mode: &'static AtomicPtr<c_void>,
 }
-
-// SAFETY: `run_loop_default_mode` points at a process-static CFStringRef
-// inside the loaded (never-dlclosed) framework; every other field is a
-// resolved fn pointer. Sharing/sending bitwise copies across threads is sound.
-unsafe impl Send for CoreFoundation {}
-// SAFETY: all fields are immutable process-lifetime data (framework-static
-// `*const CFStringRef`, resolved fn pointers); none provide interior
-// mutability, so concurrent `&CoreFoundation` access is sound.
-unsafe impl Sync for CoreFoundation {}
 
 impl CoreFoundation {
     pub(crate) fn get() -> CoreFoundation {
         *FSEVENTS_CF.get_or_init(init_core_foundation)
+    }
+
+    fn run_loop_default_mode(&self) -> CFStringRef {
+        self.run_loop_default_mode.load(Ordering::Relaxed)
     }
 }
 
@@ -350,12 +346,12 @@ impl FSEventsLoop {
             let loop_ = (cf.retain)((cf.run_loop_get_current)());
             self.loop_.store(loop_, Ordering::Release);
 
-            (cf.run_loop_add_source)(loop_, signal_source, *cf.run_loop_default_mode);
+            (cf.run_loop_add_source)(loop_, signal_source, cf.run_loop_default_mode());
 
             self.sem.post();
 
             (cf.run_loop_run)();
-            (cf.run_loop_remove_source)(loop_, signal_source, *cf.run_loop_default_mode);
+            (cf.run_loop_remove_source)(loop_, signal_source, cf.run_loop_default_mode());
         }
     }
 
@@ -609,7 +605,7 @@ impl FSEventsLoop {
             (cs.fs_event_stream_schedule_with_run_loop)(
                 r#ref,
                 self.loop_.load(Ordering::Relaxed),
-                *cf.run_loop_default_mode,
+                cf.run_loop_default_mode(),
             );
             if (cs.fs_event_stream_start)(r#ref) != 0 {
                 state.stream = Some(StartedStream {

@@ -291,17 +291,6 @@ impl ArrayBuffer {
         Ok((!clone.is_empty()).then_some(clone))
     }
 
-    pub const EMPTY: ArrayBuffer = ArrayBuffer {
-        ptr: core::ptr::NonNull::<u8>::dangling().as_ptr(), // non-null empty
-        len: 0,
-        byte_len: 0,
-        value: JSValue::ZERO,
-        typed_array_type: JSType::Uint8Array,
-        shared: false,
-        resizable: false,
-        pinned: false,
-    };
-
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
     // `KIND` is a true const-generic and the `match` const-folds (the
     // unreachable arm becomes a post-mono `panic!`).
@@ -549,11 +538,6 @@ impl ArrayBuffer {
                 deallocator,
             )
         }
-    }
-
-    #[inline]
-    pub(crate) fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> ArrayBuffer {
-        Self::from_typed_array(ctx, value)
     }
 
     /// The equivalent of
@@ -1105,117 +1089,6 @@ impl TypedArrayType {
     // crate that depends on `bun_jsc`). The conversion lives next to its target
     // type as `napi_typedarray_type::from_typed_array_type` in
     // `bun_runtime::napi` to avoid the dep cycle.
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// MarkedArrayBuffer
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Default)]
-pub struct MarkedArrayBuffer {
-    pub buffer: ArrayBuffer,
-    owns_buffer: bool,
-    /// The bytes are from [`bun_sys::private_copy::map`].
-    is_private_copy: bool,
-}
-
-/// Bytes produced off-thread (`from_bytes`/`from_string`) are owned until they
-/// are handed to JSC; a result that is never converted (its VM went away, the
-/// conversion path bailed) frees them here.
-impl Drop for MarkedArrayBuffer {
-    fn drop(&mut self) {
-        if !self.owns_buffer {
-            return;
-        }
-        if self.is_private_copy {
-            // SAFETY: set by `from_private_copy`, and not handed to JSC.
-            unsafe {
-                bun_sys::private_copy::unmap(
-                    self.buffer.ptr.cast(),
-                    core::ptr::without_provenance_mut(self.buffer.byte_len),
-                );
-            }
-            return;
-        }
-        // SAFETY: buffer.ptr was allocated by the global allocator (heap::alloc / allocator.dupe).
-        unsafe { bun_alloc::default_alloc::free(self.buffer.ptr.cast()) };
-    }
-}
-
-impl MarkedArrayBuffer {
-    /// Does not free the bytes.
-    pub const fn unowned(buffer: ArrayBuffer) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            owns_buffer: false,
-            is_private_copy: false,
-            buffer,
-        }
-    }
-
-    pub fn from_array_buffer(ctx: &JSGlobalObject, value: JSValue) -> MarkedArrayBuffer {
-        MarkedArrayBuffer::unowned(ArrayBuffer::from_array_buffer(ctx, value))
-    }
-
-    pub fn from_string(str: &[u8]) -> Result<MarkedArrayBuffer, bun_alloc::AllocError> {
-        Ok(MarkedArrayBuffer::from_bytes(
-            Box::from(str),
-            JSType::Uint8Array,
-        ))
-    }
-
-    pub fn from_bytes(bytes: Box<[u8]>, typed_array_type: JSType) -> MarkedArrayBuffer {
-        MarkedArrayBuffer {
-            // An empty boxed slice has no backing allocation (dangling ptr):
-            // nothing to own, so `drop` must not free it.
-            owns_buffer: !bytes.is_empty(),
-            is_private_copy: false,
-            buffer: ArrayBuffer::from_owned_bytes(bytes, typed_array_type),
-        }
-    }
-
-    pub fn from_private_copy(copy: bun_sys::private_copy::PrivateCopy) -> MarkedArrayBuffer {
-        let bytes = copy.into_raw();
-        MarkedArrayBuffer {
-            owns_buffer: true,
-            is_private_copy: true,
-            buffer: ArrayBuffer {
-                len: bytes.len(),
-                byte_len: bytes.len(),
-                typed_array_type: JSType::Uint8Array,
-                ptr: bytes.cast(),
-                ..Default::default()
-            },
-        }
-    }
-
-    pub const EMPTY: MarkedArrayBuffer = MarkedArrayBuffer::unowned(ArrayBuffer::EMPTY);
-
-    #[inline]
-    pub fn slice(&self) -> &[u8] {
-        self.buffer.byte_slice()
-    }
-
-    /// Ownership of the bytes moves to JSC (freed by the buffer's deallocator).
-    pub fn to_node_buffer(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // `JSValue::create_buffer` takes `&mut [u8]` (ownership transfers to JSC
-        // via the deallocator). `ArrayBuffer` is `Copy` over a raw pointer, so
-        // copy the descriptor and project a mutable slice.
-        assert!(core::mem::take(&mut self.owns_buffer) || self.buffer.byte_len == 0);
-        let mut buf = self.buffer;
-        if self.is_private_copy {
-            let len = buf.byte_len;
-            // SAFETY: the mapping is live, and only the deallocator unmaps it.
-            return unsafe {
-                JSValue::create_buffer_with_ctx(
-                    global,
-                    core::ptr::NonNull::from(buf.byte_slice_mut()),
-                    core::ptr::without_provenance_mut(len),
-                    bun_sys::private_copy::unmap,
-                )
-            };
-        }
-        JSValue::create_buffer(global, buf.byte_slice_mut())
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

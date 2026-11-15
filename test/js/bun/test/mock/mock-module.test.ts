@@ -3349,6 +3349,15 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       "node_modules/reverse/esm.mjs": `export const named = () => "real named";`,
       "node_modules/reverse/cjs/index.cjs": `module.exports = { named: require("./load.cjs").named };`,
       "node_modules/reverse/cjs/load.cjs": `module.exports = require("../esm.mjs");`,
+      // The same, where the second file names the ES module by its path: that path is the key of a mock of the name,
+      // and require() of a key of a mock answers before the resolver is asked.
+      "node_modules/reverse-key/package.json": JSON.stringify({
+        name: "reverse-key",
+        exports: { ".": { import: "./esm.mjs", require: "./cjs/index.cjs" } },
+      }),
+      "node_modules/reverse-key/esm.mjs": `export const named = () => "real named";`,
+      "node_modules/reverse-key/cjs/index.cjs": `module.exports = { named: require("./load.cjs").named };`,
+      "node_modules/reverse-key/cjs/load.cjs": `module.exports = require(require.resolve("../esm.mjs"));`,
       // The third file requires the CommonJS file when it is called.
       "node_modules/lazy/package.json": JSON.stringify({
         name: "lazy",
@@ -3556,6 +3565,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             mock.module("reverse", () => ({ named: () => "mock" }));
             expect([require("reverse").named(), jest.requireActual("reverse").named()]).toEqual(["mock", "real named"]);
           });
+          test("and where that second file names the ES module by its path", () => {
+            mock.module("reverse-key", () => ({ named: () => "mock" }));
+            expect([require("reverse-key").named(), jest.requireActual("reverse-key").named()]).toEqual(["mock", "real named"]);
+          });
           test("what the original of a file has loaded gets the mock of that same file", () => {
             mock.module("cycle", () => ({ named: () => "mock" }));
             const actual = jest.requireActual("cycle");
@@ -3689,7 +3702,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           usesWrapB,
         ),
       },
-      31,
+      32,
       args,
     );
   });

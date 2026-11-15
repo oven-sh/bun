@@ -52,7 +52,7 @@ fn from_duplex<const SSL: bool>(duplex: &UpgradedDuplex) -> uws::NewSocketHandle
 /// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
 #[inline]
 fn js_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
+    bun_io::js_vm_ctx()
 }
 
 /// The error behind a close that the event loop initiated: the `recv()`

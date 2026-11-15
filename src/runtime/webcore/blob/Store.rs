@@ -5,7 +5,6 @@
 //! this module re-exports them and layers the `bun_runtime`-tier behaviour
 //! (S3 I/O, async file ops, structured-clone serialize) via extension traits.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::node::fs as node_fs;
@@ -240,46 +239,9 @@ impl S3Ext for S3 {
         cx: &bun_jsc::JsThread<'_>,
         extra_options: Option<JSValue>,
     ) -> JsResult<JSValue> {
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: RefPtr<Store>,
-            // LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject. `BackRef` so the heap
-            // wrapper can outlive the constructing frame while reads stay safe.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            #[inline]
-            fn new(init: Wrapper) -> Box<Wrapper> {
-                Box::new(init)
-            }
-
-            fn resolve(result: S3DeleteResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
-                // SAFETY: opaque_self was created via heap::alloc(Wrapper::new(..)) below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-                match result {
-                    S3DeleteResult::Success => {
-                        self_.promise.resolve(global_object, JSValue::TRUE)?;
-                    }
-                    S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
-        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
+        let mut promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
+        let global = bun_jsc::GlobalRef::from(cx.global());
         let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -287,13 +249,13 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             cx.context(),
             self.path(),
-            Wrapper::resolve,
-            bun_core::heap::into_raw(Wrapper::new(Wrapper {
-                promise,
-                store,
-                global: bun_ptr::BackRef::new(cx.global()),
-            }))
-            .cast::<c_void>(),
+            Box::new(move |result| match result {
+                S3DeleteResult::Success => promise.resolve(&global, JSValue::TRUE),
+                S3DeleteResult::NotFound(err) | S3DeleteResult::Failure(err) => {
+                    let err = err.to_js_with_async_stack(&global, store.get_path(), promise.get());
+                    promise.reject(&global, err)
+                }
+            }),
             aws_options.request_payer,
         )?;
 
@@ -313,54 +275,14 @@ impl S3Ext for S3 {
             )));
         }
 
-        struct Wrapper {
-            promise: bun_jsc::JSPromiseStrong,
-            store: RefPtr<Store>,
-            // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
-            global: bun_ptr::BackRef<JSGlobalObject>,
-        }
-
-        impl Wrapper {
-            fn resolve(result: S3ListObjectsResult<'_>, opaque_self: *mut c_void) -> JsResult<()> {
-                // SAFETY: opaque_self was created via heap::alloc below.
-                let mut self_ = unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                // `defer self.deinit()` → Box drops at scope exit.
-                let global_object = self_.global.get();
-
-                match result {
-                    S3ListObjectsResult::Success(list_result) => {
-                        // `defer list_result.deinit()` → Drop handles it.
-                        let list_result_js = match list_result.to_js(global_object) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                return self_.promise.reject(global_object, Err(e));
-                            }
-                        };
-                        self_.promise.resolve(global_object, list_result_js)?;
-                    }
-
-                    S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
-                        // Split borrows: `reject` takes `&mut promise`, so
-                        // compute the error (which reads `promise.get()`) first.
-                        let err_val = err.to_js_with_async_stack(
-                            global_object,
-                            self_.store.get_path(),
-                            self_.promise.get(),
-                        );
-                        self_.promise.reject(global_object, err_val)?;
-                    }
-                }
-                Ok(())
-            }
-        }
-
         // (`list_objects` puts its request on the HTTP thread itself: asked here, before there is
         // a completion to release, as `execute_simple_s3_request` asks for the others.)
         if crate::webcore::s3::simple_request::nothing_new_leaves(cx.context()) {
             return Ok(bun_jsc::JSPromise::create(cx.global()).to_js());
         }
-        let promise = bun_jsc::JSPromiseStrong::init(cx.global());
+        let mut promise = bun_jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
+        let global = bun_jsc::GlobalRef::from(cx.global());
         let aws_options = self.get_credentials_with_options(extra_options, cx.global())?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -370,13 +292,16 @@ impl S3Ext for S3 {
             &aws_options.credentials,
             cx.context(),
             &options,
-            Wrapper::resolve,
-            bun_core::heap::into_raw(Box::new(Wrapper {
-                promise,
-                store,
-                global: bun_ptr::BackRef::new(cx.global()),
-            }))
-            .cast::<c_void>(),
+            Box::new(move |result| match result {
+                S3ListObjectsResult::Success(list_result) => match list_result.to_js(&global) {
+                    Ok(list_result) => promise.resolve(&global, list_result),
+                    Err(err) => promise.reject(&global, Err(err)),
+                },
+                S3ListObjectsResult::NotFound(err) | S3ListObjectsResult::Failure(err) => {
+                    let err = err.to_js_with_async_stack(&global, store.get_path(), promise.get());
+                    promise.reject(&global, err)
+                }
+            }),
         )?;
 
         Ok(value)

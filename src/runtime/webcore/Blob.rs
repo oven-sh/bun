@@ -459,62 +459,29 @@ impl BlobExt for Blob {
             return Ok(());
         }
         if self.is_s3() {
-            struct Task<H> {
-                ctx: Box<H>,
-                blob: Blob, // dupe for store ref + offset/size
-                poll: bun_io::KeepAlive,
-            }
-            impl<H: ReadBytesHandler> Task<H> {
-                fn done(self: Box<Self>, r: ReadBytesResult) -> JsResult<()> {
-                    self.poll.unref(bun_io::js_vm_ctx());
-                    // The braces move the box: the rest of the `Task` is freed here.
-                    let ctx = { self }.ctx;
-                    ctx.on_read_bytes(r)
-                }
-                fn cb(
-                    result: crate::webcore::__s3_client::S3DownloadResult,
-                    opaque_self: *mut c_void,
-                ) -> JsResult<()> {
-                    // SAFETY: `opaque_self` was heap-allocated below.
-                    let t = unsafe { bun_core::heap::take(opaque_self.cast::<Task<H>>()) };
-                    match result {
-                        // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
-                        crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
-                            t.done(ReadBytesResult::Ok(response.body.list))
-                        }
-                        // S3Error has its own JS-error builder; flatten to a
-                        // SystemError so the callback has one shape to handle.
-                        crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
-                        | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
-                            // reshaped for borrowck — `t.done` moves
-                            // `t`, so build the SystemError (cloning the path
-                            // out of `t.blob.store`) before the call.
-                            let err = bun_jsc::SystemError {
-                                code: BunString::clone_utf8(e.code),
-                                message: BunString::clone_utf8(e.message),
-                                path: BunString::clone_utf8(
-                                    t.blob.store().and_then(|s| s.get_path()).unwrap_or(b""),
-                                ),
-                                syscall: BunString::static_("fetch"),
-                                ..Default::default()
-                            };
-                            t.done(ReadBytesResult::Err(Box::new(err)))
-                        }
+            let store = self.store().expect("infallible: store present");
+            let (s3, store) = (store.data.as_s3(), store.clone());
+            let poll = bun_io::KeepAlive::default();
+            poll.ref_(bun_io::js_vm_ctx());
+            let callback = Box::new(move |result: S3DownloadResult<'_>| {
+                let result = match result {
+                    // `body` is owned by us (simple_request.rs); take the Vec's items as-is.
+                    S3DownloadResult::Success(response) => ReadBytesResult::Ok(response.body.list),
+                    // Flattened to a SystemError so the callback has one shape to handle.
+                    S3DownloadResult::NotFound(e) | S3DownloadResult::Failure(e) => {
+                        ReadBytesResult::Err(Box::new(bun_jsc::SystemError {
+                            code: BunString::clone_utf8(e.code),
+                            message: BunString::clone_utf8(e.message),
+                            path: BunString::clone_utf8(store.get_path().unwrap_or(b"")),
+                            syscall: BunString::static_("fetch"),
+                            ..Default::default()
+                        }))
                     }
-                }
-            }
-            let t = Box::new(Task::<H> {
-                ctx,
-                blob: self.dupe(),
-                poll: bun_io::KeepAlive::default(),
+                };
+                poll.unref(bun_io::js_vm_ctx());
+                drop(store);
+                ctx.on_read_bytes(result)
             });
-            t.poll.ref_(bun_io::js_vm_ctx());
-            let s3 = self
-                .store()
-                .expect("infallible: store present")
-                .data
-                .as_s3();
-            let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
                     Some(self.size.get() as usize)
@@ -527,8 +494,7 @@ impl BlobExt for Blob {
                     s3.path(),
                     self.offset.get() as usize,
                     len,
-                    Task::<H>::cb,
-                    t_ptr,
+                    callback,
                     s3.request_payer,
                 )?;
             } else {
@@ -536,8 +502,7 @@ impl BlobExt for Blob {
                     s3.get_credentials(),
                     cx.context(),
                     s3.path(),
-                    Task::<H>::cb,
-                    t_ptr,
+                    callback,
                     s3.request_payer,
                 )?;
             }
@@ -1225,7 +1190,6 @@ impl BlobExt for Blob {
                 None,
                 aws_options.request_payer,
                 None,
-                core::ptr::null_mut(),
             );
         }
 
@@ -2880,7 +2844,7 @@ use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
 use crate::webcore::s3::client as s3_client;
-use crate::webcore::s3::simple_request::S3UploadResult;
+use crate::webcore::s3::simple_request::{S3DownloadResult, S3UploadResult};
 use crate::webcore::s3_file as S3File;
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_core::string_joiner::StringJoiner;
@@ -3591,36 +3555,10 @@ fn write_file_with_empty_source_to_destination(
                     }
                 };
 
-            struct Wrapper {
-                promise: jsc::JSPromiseStrong,
-                store: RefPtr<Store>,
-                global: bun_ptr::BackRef<JSGlobalObject>,
-            }
-            impl Wrapper {
-                fn resolve(result: S3UploadResult, opaque_this: *mut c_void) -> JsResult<()> {
-                    // SAFETY: opaque_this was heap-allocated in the caller below.
-                    let mut this = unsafe { bun_core::heap::take(opaque_this.cast::<Wrapper>()) };
-                    let global = this.global.get();
-                    match result {
-                        S3UploadResult::Success => {
-                            this.promise.resolve(global, JSValue::js_number(0.0))?
-                        }
-                        S3UploadResult::Failure(err) => {
-                            let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                &err,
-                                global,
-                                this.store.get_path(),
-                                this.promise.get(),
-                            );
-                            this.promise.reject(global, Ok(err_js))?;
-                        }
-                    }
-                    Ok(())
-                }
-            }
-
-            let promise = jsc::JSPromiseStrong::init(cx.global());
+            let mut promise = jsc::JSPromiseStrong::init(cx.global());
             let promise_value = promise.value();
+            let store = destination_store.clone();
+            let global = jsc::GlobalRef::from(cx.global());
             s3_client::upload(
                 &aws_options.credentials,
                 cx.context(),
@@ -3632,13 +3570,18 @@ fn write_file_with_empty_source_to_destination(
                 aws_options.acl,
                 aws_options.storage_class,
                 aws_options.request_payer,
-                Wrapper::resolve,
-                bun_core::heap::into_raw(Box::new(Wrapper {
-                    promise,
-                    store: destination_store.clone(),
-                    global: bun_ptr::BackRef::new(cx.global()),
-                }))
-                .cast::<c_void>(),
+                Box::new(move |result| match result {
+                    S3UploadResult::Success => promise.resolve(&global, JSValue::js_number(0.0)),
+                    S3UploadResult::Failure(err) => {
+                        let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                            &err,
+                            &global,
+                            store.get_path(),
+                            promise.get(),
+                        );
+                        promise.reject(&global, Ok(err_js))
+                    }
+                }),
             )?;
             return Ok(promise_value);
         }
@@ -3812,7 +3755,6 @@ pub(crate) fn write_file_with_source_destination(
                             None,
                             aws_options.request_payer,
                             None,
-                            core::ptr::null_mut(),
                         );
                     } else {
                         return Ok(JSPromise::rejected_promise(
@@ -3824,43 +3766,10 @@ pub(crate) fn write_file_with_source_destination(
                         .to_js());
                     }
                 } else {
-                    struct Wrapper {
-                        store: RefPtr<Store>,
-                        promise: jsc::JSPromiseStrong,
-                        global: bun_ptr::BackRef<JSGlobalObject>,
-                    }
-                    impl Wrapper {
-                        fn resolve(
-                            result: S3UploadResult,
-                            opaque_self: *mut c_void,
-                        ) -> JsResult<()> {
-                            // SAFETY: opaque_self is the heap::alloc(Wrapper) we passed to S3::upload below.
-                            let mut this =
-                                unsafe { bun_core::heap::take(opaque_self.cast::<Wrapper>()) };
-                            let global = this.global.get();
-                            match result {
-                                S3UploadResult::Success => {
-                                    this.promise.resolve(
-                                        global,
-                                        JSValue::js_number(this.store.data.as_bytes().len() as f64),
-                                    )?;
-                                }
-                                S3UploadResult::Failure(err) => {
-                                    let err_js =
-                                        s3_client::error_jsc::s3_error_to_js_with_async_stack(
-                                            &err,
-                                            global,
-                                            this.store.get_path(),
-                                            this.promise.get(),
-                                        );
-                                    this.promise.reject(global, Ok(err_js))?;
-                                }
-                            }
-                            Ok(())
-                        }
-                    }
-                    let promise = jsc::JSPromiseStrong::init(cx.global());
+                    let mut promise = jsc::JSPromiseStrong::init(cx.global());
                     let promise_value = promise.value();
+                    let store = source_store.clone();
+                    let global = jsc::GlobalRef::from(cx.global());
                     s3_client::upload(
                         &aws_options.credentials,
                         cx.context(),
@@ -3872,13 +3781,21 @@ pub(crate) fn write_file_with_source_destination(
                         aws_options.acl,
                         aws_options.storage_class,
                         aws_options.request_payer,
-                        Wrapper::resolve,
-                        bun_core::heap::into_raw(Box::new(Wrapper {
-                            store: source_store.clone(),
-                            promise,
-                            global: bun_ptr::BackRef::new(cx.global()),
-                        }))
-                        .cast::<c_void>(),
+                        Box::new(move |result| match result {
+                            S3UploadResult::Success => promise.resolve(
+                                &global,
+                                JSValue::js_number(store.data.as_bytes().len() as f64),
+                            ),
+                            S3UploadResult::Failure(err) => {
+                                let err_js = s3_client::error_jsc::s3_error_to_js_with_async_stack(
+                                    &err,
+                                    &global,
+                                    store.get_path(),
+                                    promise.get(),
+                                );
+                                promise.reject(&global, Ok(err_js))
+                            }
+                        }),
                     )?;
                     return Ok(promise_value);
                 }
@@ -3911,7 +3828,6 @@ pub(crate) fn write_file_with_source_destination(
                         None,
                         aws_options.request_payer,
                         None,
-                        core::ptr::null_mut(),
                     );
                 } else {
                     return Ok(JSPromise::rejected_promise(
@@ -4204,7 +4120,6 @@ pub(crate) fn write_file_internal(
                                 None,
                                 aws_options.request_payer,
                                 None,
-                                core::ptr::null_mut(),
                             )?));
                         }
                         return Err(cx.global().throw_invalid_arguments(format_args!(
@@ -4850,17 +4765,13 @@ struct S3BlobDownloadTask {
 type S3ReadHandler = unsafe fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, *mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
-    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    pub(crate) fn on_s3_download_resolved(
-        result: crate::webcore::__s3_client::S3DownloadResult,
-        mut this: Box<S3BlobDownloadTask>,
-    ) -> JsResult<()> {
+    fn on_s3_download_resolved(this: &mut Self, result: S3DownloadResult) -> JsResult<()> {
         // Copy the `BackRef` out so the `&JSGlobalObject` borrow is detached
         // from `this` (it must coexist with `&mut this` calls below).
         let global_ref = this.global_this;
         let global = global_ref.get();
         match result {
-            crate::webcore::__s3_client::S3DownloadResult::Success(response) => {
+            S3DownloadResult::Success(response) => {
                 // Move the downloaded body into a Blob store so its lifetime is
                 // tied to the Blob/JS view and freed via the store's finalizer.
                 let store = Store::init(response.body.list);
@@ -4878,8 +4789,7 @@ impl S3BlobDownloadTask {
                 })?;
                 this.promise.resolve(global, value)?;
             }
-            crate::webcore::__s3_client::S3DownloadResult::NotFound(err)
-            | crate::webcore::__s3_client::S3DownloadResult::Failure(err) => {
+            S3DownloadResult::NotFound(err) | S3DownloadResult::Failure(err) => {
                 let path = this.blob.store().and_then(|s| s.get_path());
                 let promise = this.promise.get();
                 let value = crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack(
@@ -4899,31 +4809,24 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let this = Box::new(S3BlobDownloadTask {
+        let mut this = S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),
             poll_ref: bun_io::KeepAlive::default(),
             handler,
-        });
+        };
         this.poll_ref.ref_(bun_io::js_vm_ctx());
         let promise = this.promise.value();
-        let this = bun_core::heap::into_raw(this);
+        let callback = Box::new(move |result: S3DownloadResult<'_>| {
+            Self::on_s3_download_resolved(&mut this, result)
+        });
         let store::Data::S3(s3_store) = &blob.store().expect("infallible: store present").data
         else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
-
-        fn s3_cb(
-            result: crate::webcore::__s3_client::S3DownloadResult<'_>,
-            ctx: *mut c_void,
-        ) -> JsResult<()> {
-            // SAFETY: `ctx` is the box leaked in `init()`; the download callback fires once.
-            let task = unsafe { bun_core::heap::take(ctx.cast::<S3BlobDownloadTask>()) };
-            S3BlobDownloadTask::on_s3_download_resolved(result, task)
-        }
 
         if blob.offset.get() > 0 {
             let len: Option<usize> = if blob.size.get() != MAX_SIZE {
@@ -4938,8 +4841,7 @@ impl S3BlobDownloadTask {
                 path,
                 offset,
                 len,
-                s3_cb,
-                this.cast::<c_void>(),
+                callback,
                 s3_store.request_payer,
             )?;
         } else if blob.size.get() == MAX_SIZE {
@@ -4947,8 +4849,7 @@ impl S3BlobDownloadTask {
                 credentials,
                 cx.context(),
                 path,
-                s3_cb,
-                this.cast::<c_void>(),
+                callback,
                 s3_store.request_payer,
             )?;
         } else {
@@ -4960,8 +4861,7 @@ impl S3BlobDownloadTask {
                 path,
                 offset,
                 Some(len),
-                s3_cb,
-                this.cast::<c_void>(),
+                callback,
                 s3_store.request_payer,
             )?;
         }

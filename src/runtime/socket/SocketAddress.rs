@@ -802,13 +802,11 @@ impl sockaddr {
     }
 
     pub(crate) fn fmt<'a>(&self, buf: &'a mut [u8; inet::INET6_ADDRSTRLEN as usize]) -> &'a ZStr {
-        let len = match self.as_sin6() {
+        let formatted = match self.as_sin6() {
             Some(sin6) => bun_cares_sys::ntop(&sin6.addr, buf),
             None => bun_cares_sys::ntop(&self.sin.addr.to_ne_bytes(), buf),
         }
-        .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
-        .len();
-        let formatted = ZStr::from_buf(&buf[..], len);
+        .expect("Invariant violation: SocketAddress created with invalid IPv6 address");
         debug_assert!(bun_core::is_all_ascii(formatted.as_bytes()));
         formatted
     }

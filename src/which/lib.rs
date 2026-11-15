@@ -24,7 +24,12 @@ use scope::which as which_log;
 
 /// Writes `[cwd/]segment/bin\0` into `buf` and stats it as an executable.
 #[cfg(not(windows))]
-fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Option<u16> {
+fn search_bin_in_path<'a>(
+    buf: &'a mut PathBuffer,
+    cwd: &[u8],
+    segment: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
     fn len_with_sep(part: &[u8]) -> usize {
         match part.last() {
             None => 0,
@@ -49,12 +54,8 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
         buf[cwd_prefix_len + segment.len()] = SEP;
     }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
-    buf[len] = 0;
-    let filepath = ZStr::from_buf(&buf[..], len);
-    if !bun_sys::is_executable_file_path(filepath) {
-        return None;
-    }
-    Some(u16::try_from(filepath.len()).expect("int cast"))
+    let filepath = ZStr::nul_terminate(buf, len);
+    bun_sys::is_executable_file_path(filepath).then_some(filepath)
 }
 
 /// `which()` for spawn-style executable resolution. Windows resolves bare
@@ -128,9 +129,8 @@ fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
     // Capture len/ptr before re-borrowing buf (borrowck).
     let result_converted_len = result_converted.len();
     let result_converted_ptr = result_converted.as_ptr();
-    buf[result_converted_len] = 0;
     debug_assert!(result_converted_ptr == buf.as_ptr());
-    ZStr::from_buf(&buf[..], result_converted_len)
+    ZStr::nul_terminate(buf, result_converted_len)
 }
 
 // Like /usr/bin/which but without needing to exec a child process
@@ -163,8 +163,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         // handle absolute paths
         if is_absolute(bin) {
             buf[..bin.len()].copy_from_slice(bin);
-            buf[bin.len()] = 0;
-            let bin_z = ZStr::from_buf(&buf[..], bin.len());
+            let bin_z = ZStr::nul_terminate(buf, bin.len());
             if bun_sys::is_executable_file_path(bin_z) {
                 return Some(bin_z);
             }
@@ -180,15 +179,12 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
 
         if strings::index_of_char(bin, b'/').is_some() {
             if !cwd.is_empty() {
-                if let Some(len) = is_valid(
+                return search_bin_in_path(
                     buf,
                     b"",
                     cwd_trimmed,
                     strings::without_prefix_comptime(bin, b"./"),
-                ) {
-                    // `is_valid` wrote NUL at buf[len]
-                    return Some(ZStr::from_buf(&buf[..], len as usize));
-                }
+                );
             }
             // Do not lookup paths with slashes in $PATH
             return None;
@@ -202,9 +198,8 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
             } else {
                 cwd_for_relative_segment
             };
-            if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
-                // `is_valid` wrote NUL at buf[len]
-                return Some(ZStr::from_buf(&buf[..], len as usize));
+            if let Some(found) = search_bin_in_path(buf, cwd_prefix, segment, bin) {
+                return Some(found);
             }
         }
 
@@ -296,8 +291,7 @@ fn search_bin<'a>(
 ) -> Option<&'a mut [u16]> {
     {
         if try_as_spelled {
-            // The caller wrote NUL at buf[path_size]
-            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
+            if bun_sys::exists_os_path(WStr::nul_terminate(buf, path_size), true) {
                 return Some(&mut buf[..path_size]);
             }
         }
@@ -307,8 +301,7 @@ fn search_bin<'a>(
             for ext in extensions {
                 let end = path_size + 1 + ext.len();
                 buf[path_size + 1..end].copy_from_slice(ext);
-                buf[end] = 0;
-                if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), true) {
+                if bun_sys::exists_os_path(WStr::nul_terminate(buf, end), true) {
                     return Some(&mut buf[..end]);
                 }
             }
@@ -360,7 +353,6 @@ fn search_bin_in_path<'a>(
     let bin_utf16 =
         bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut buf[segment_utf16_len + 1..], bin);
     let path_size = segment_utf16_len + 1 + bin_utf16.len();
-    buf[path_size] = 0;
 
     search_bin(buf, path_size, try_as_spelled, extensions)
 }
@@ -401,7 +393,6 @@ pub(crate) fn which_win<'a>(
             bun_core::strings::convert_utf8_to_utf16_in_buffer(&mut buf[..], normalized_bin);
         // Capture len before re-borrowing buf (borrowck).
         let bin_utf16_len = bin_utf16.len();
-        buf[bin_utf16_len] = 0;
         return search_bin(buf, bin_utf16_len, try_as_spelled, extensions).map(|w| &*w);
     }
 

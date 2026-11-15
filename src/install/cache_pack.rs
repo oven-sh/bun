@@ -496,7 +496,7 @@ fn pack_entry(
                 #[cfg(unix)]
                 {
                     let len = sys::readlinkat(entry.dir, entry.basename, &mut target_buf[..])?;
-                    let target = ZStr::from_buf(&target_buf[..], len);
+                    let target = ZStr::nul_terminate(&mut target_buf, len);
                     if len > MAX_PACK_PATH_LEN
                         || !bun_archive::is_symlink_target_safe(rel, target, &mut join_buf)
                     {
@@ -726,7 +726,7 @@ impl Drop for Staging {
 }
 
 fn staged_name(buf: &mut [u8; 21], n: usize) -> &ZStr {
-    ZStr::from_cstr(bun_fmt::itoa_z(buf, n as u64))
+    bun_fmt::itoa_z(buf, n as u64)
 }
 
 /// Read the `size` bytes of package `name` into the new directory `staging`/`staged`.

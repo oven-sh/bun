@@ -287,6 +287,7 @@ static JSPromise* encodeAndEnqueue(JSGlobalObject* globalObject, JSTextEncoderSt
         auto scope = DECLARE_THROW_SCOPE(vm);
         bool sinkBackpressure = false;
         if (auto* sinkController = stream->m_nativeSinkController.get()) {
+            JSC::EnsureStillAliveScope keepSinkController(sinkController);
             JSValue wrote = JSValue::decode(flush
                     ? TextEncoderStreamEncoder__flushIntoSink(stream->m_encoder, globalObject, sinkController->payload())
                     : TextEncoderStreamEncoder__encodeIntoSink(stream->m_encoder, globalObject, JSValue::encode(chunk), sinkController->payload()));

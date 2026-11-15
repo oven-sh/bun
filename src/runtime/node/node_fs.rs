@@ -7628,7 +7628,7 @@ impl NodeFS {
         let pre_stat_max = args.max_size.map_or(usize::MAX, |v| v as usize);
         let mut pre_stat_buf = match &mut scratch {
             Some(scratch) => {
-                let scratch = scratch.bytes();
+                let scratch = scratch.as_mut_slice();
                 let len = scratch.len().min(pre_stat_max);
                 BorrowedBuf::from(&mut scratch[..len])
             }

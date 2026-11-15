@@ -410,7 +410,7 @@ pub use source::Source;
 
 #[cfg(not(windows))]
 pub use pipe_reader::PosixFlags;
-pub use pipe_reader::{BufferedReader, ReadStatus};
+pub use pipe_reader::{BufferedReader, ReadResult};
 
 pub use open_for_writing_mod::{open_for_writing, open_for_writing_impl};
 
@@ -1712,7 +1712,7 @@ pub mod waker {
 //
 // Schedules an async fd close on the
 // thread pool (POSIX) or via uv_fs_close (Windows). io (T2) owns it so
-// `pipes::PollOrFd::close` has no upward dep on bun_io (T3).
+// `pipes::PipeHandle::close` has no upward dep on bun_io (T3).
 
 pub mod closer {
     use bun_sys::Fd;

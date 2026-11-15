@@ -569,26 +569,6 @@ impl WorkerLink {
             self.channel.send(frame.finish());
         });
     }
-
-    /// Called from `CommandLineReporter::handle_test_completed` in the worker with the
-    /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
-    /// codes), which the coordinator prints verbatim so output matches serial, and,
-    /// when the coordinator asked for it (`--reporter`), the structured result it
-    /// replays into its own reporters.
-    #[optimize(size)]
-    pub(crate) fn emit_test_done(
-        &self,
-        formatted_line: &[u8],
-        test: Option<&test_command::TestCaseReport<'_>>,
-    ) {
-        self.emit(frame::Kind::TestDone, |wf| {
-            wf.u32(self.file_idx.get());
-            wf.str(formatted_line);
-            if let Some(test) = test {
-                encode_test_case(wf, test);
-            }
-        });
-    }
 }
 
 struct WorkerCommands {
@@ -990,6 +970,26 @@ fn worker_flush_aggregates(
             link.emit(frame::Kind::CoverageFile, |wf| wf.str(&encoded));
         });
     }
+}
+
+/// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
+/// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI
+/// codes), which the coordinator prints verbatim so output matches serial, and,
+/// when the coordinator asked for it (`--reporter`), the structured result it
+/// replays into its own reporters.
+#[optimize(size)]
+pub(crate) fn worker_emit_test_done(
+    link: &WorkerLink,
+    formatted_line: &[u8],
+    test: Option<&test_command::TestCaseReport<'_>>,
+) {
+    link.emit(frame::Kind::TestDone, |wf| {
+        wf.u32(link.file_idx.get());
+        wf.str(formatted_line);
+        if let Some(test) = test {
+            encode_test_case(wf, test);
+        }
+    });
 }
 
 fn encode_test_case(wf: &mut Frame, t: &test_command::TestCaseReport<'_>) {

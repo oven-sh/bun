@@ -30,9 +30,8 @@ pub trait LinearFifoBuffer<T> {
 /// Reinterpret `&[MaybeUninit<T>]` as `&[T]`. `MaybeUninit<T>` has identical
 /// layout to `T`; exposing uninitialized bytes as `T` is sound only when any
 /// bit pattern is a valid `T`. NOT every in-tree element type satisfies this:
-/// besides byte buffers and raw pointers, fifos today store the
-/// `event_loop::Task` enum — see the `StaticBuffer` note below for the pending
-/// MaybeUninit accessor rework.
+/// besides byte buffers and raw pointers, fifos today store `event_loop::Task` — see the
+/// `StaticBuffer` note below for the pending MaybeUninit accessor rework.
 /// Centralises the four per-buffer-kind casts behind one audited block.
 #[inline(always)]
 fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
@@ -82,8 +81,9 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // (`writable_slice` hands out `&mut [T]` over not-yet-written slots) bakes in
 // the same exposure for every buffer kind. Sound only for `T` whose
 // any-bit-pattern is valid — and in-tree element types ALREADY violate that:
-// the `Task` enum is stored in fifos today, so materialising `&[T]` over
-// uninitialized slots for it is latent UB.
+// the `Task` enum is
+// stored in fifos today, so materialising `&[T]` over uninitialized slots for
+// that type is latent UB.
 // The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
 // only assume-init the logically-written subranges; `writable_slice`-family
 // callers in other crates see the signature change, so that lives in #31835.

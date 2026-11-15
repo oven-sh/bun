@@ -234,7 +234,6 @@ impl TimerHeap {
         if r.is_null() { None } else { Some(r) }
     }
 
-    #[inline]
     pub(crate) fn first_deadline(&self) -> Option<Timespec> {
         // SAFETY: `peek` returns a live heap node.
         self.peek().map(|first| unsafe { (*first).next.get() })

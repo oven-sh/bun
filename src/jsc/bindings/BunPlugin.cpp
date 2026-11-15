@@ -611,7 +611,8 @@ public:
 #endif
     // Loaded as a generated ES module that imports the original (or the `__mocks__` file) and calls the factory when evaluated.
     bool importsOriginal { false };
-    // That original is of the file at `requirePath`: the factory asks for it with jest.requireActual(), and for no other.
+    // The factory asks for its original with jest.requireActual() alone, by a name that require() resolved to `requirePath` at the mock call. Whether that call still gives
+    // the file there is decided when the module of the mock is made: see takesOriginalOfRequirePath().
     bool importsOriginalOfRequirePath { false };
     // See JSMock__releaseHeldImports().
     bool providesActualFile { false };
@@ -1315,15 +1316,26 @@ static String originalKeyOfRequirePath(Zig::GlobalObject* globalObject, JSModule
     return path;
 }
 
+// Whether jest.requireActual() in the factory of `mock` gives the file at `requirePath`. moduleMockForRequire() decides that when the factory calls it, not the mock call:
+// it does while a module mock answers require() of that path, a mock of the path itself or the mock of a name. Once none does, it gives the original of the mock's own key,
+// which the mock then takes like a mock of a name with one file.
+static bool takesOriginalOfRequirePath(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+{
+    if (!mock->importsOriginalOfRequirePath)
+        return false;
+    String path = mock->requirePath->tryGetValue().data;
+    return registeredModuleMock(globalObject, path) || moduleMockOfRequirePath(globalObject, path);
+}
+
 static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSModuleMock* mock)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue manualMock = mock->factory.get(); manualMock && manualMock.isString())
         RELEASE_AND_RETURN(scope, asString(manualMock)->value(globalObject));
-    // As in Jest, a mock without a factory is made of the file that require() loads. That file is also the original of a factory that asks for it with jest.requireActual() alone.
+    // As in Jest, a mock without a factory is made of the file that require() loads. That file is also the original of a factory that takes it with jest.requireActual() alone.
     bool isMadeOfRequireFile = mock->requirePath && !mock->factory;
-    if ((isMadeOfRequireFile && !mock->spy) || mock->importsOriginalOfRequirePath)
+    if ((isMadeOfRequireFile && !mock->spy) || takesOriginalOfRequirePath(defaultGlobalObject(globalObject), mock))
         RELEASE_AND_RETURN(scope, originalKeyOfRequirePath(defaultGlobalObject(globalObject), mock));
     String specifier = (isMadeOfRequireFile ? mock->requirePath : mock->specifier)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -8296,7 +8308,8 @@ __attribute__((minsize)) static JSValue evaluateModuleMock(Zig::GlobalObject* gl
 
     JSModuleMock* mock = registeredModuleMock(globalObject, specifier);
     if (!mock) {
-        // The evaluator stood in for an original that the factory was to load itself: see sourceCodeOfModuleMock(). Unmocked since, so the module is the original.
+        // The evaluator stood in for the original of a factory that took it from the file that require() loads: see sourceCodeOfModuleMock(). Unmocked since, so the module
+        // is the original of its own key, which nothing has loaded for it.
         if (isModuleMockEvaluatorKey(dependencyKey)) {
             JSC::JSPromise* loading = importModuleKey(globalObject, originalModuleKey(specifier));
             RETURN_IF_EXCEPTION(scope, {});
@@ -9260,10 +9273,17 @@ __attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalOb
     String dependency = Zig::dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSValue factory = mock->factory.get();
-    // Until an async factory is called, require() of the name loads the file at `requirePath` itself (see keyOfModuleMockAtRequirePath()), and the factory then takes that module.
-    // A copy imported ahead of the factory would run the file twice. So such a factory loads its original when it asks, and the evaluator, which exports no name, stands in here.
-    if (mock->importsOriginalOfRequirePath && dependency != mock->requirePath->tryGetValue().data && hasUncalledAsyncFactory(mock))
+    // A factory that takes its original from the file at `requirePath` reads nothing of this module's `original`. Were that file `original`, a mock that ends while this
+    // module loads would leave it the exports of that file, under the key of the other one. So the evaluator, which exports no name, stands in, and evaluateModuleMock()
+    // loads the original of this module's own key then. The file is imported only to run ahead of the factory, which finds it loaded.
+    // Not ahead of an async factory that nothing has called: until then require() of the name loads the file at `requirePath` itself (see keyOfModuleMockAtRequirePath()),
+    // and the factory takes that module. A copy imported ahead would run the file twice.
+    String loadedAhead;
+    if (Zig::takesOriginalOfRequirePath(globalObject, mock)) {
+        if (dependency == mock->requirePath->tryGetValue().data || !hasUncalledAsyncFactory(mock))
+            loadedAhead = dependency;
         dependency = makeString('\0', Zig::moduleMockEvaluatorName);
+    }
 
     // GlobalObject::moduleLoaderResolve() takes a specifier that starts with NUL as a registry key.
     StringBuilder text;
@@ -9280,6 +9300,10 @@ __attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalOb
     appendKey(key);
     bool isUnwaited = !Zig::specifierOfUnwaitedModuleMockKey(key).isNull();
     if (!isUnwaited) {
+        if (!loadedAhead.isNull()) {
+            text.append(";import "_s);
+            appendKey(loadedAhead);
+        }
         text.append(";import * as original from "_s);
         appendKey(dependency);
         text.append(";export * from "_s);
@@ -9500,6 +9524,16 @@ __attribute__((minsize)) String keyOfModuleMockAtRequirePath(Zig::GlobalObject* 
     }
     if (isLoadedByOriginalOfFile(globalObject, mock->specifier->tryGetValue().data, importer))
         return key;
+    // The module of the mock runs a copy of this file ahead of a factory that takes it with jest.requireActual(): see sourceCodeOfModuleMock(). No factory runs then, so
+    // keyOfImportWhileModuleMocksRun() is not asked about what that copy loads. It gets the copy, as it would there: the mock's key would call the factory in the middle of the copy.
+    if (mock->importsOriginalOfRequirePath && mock->state == Zig::JSModuleMock::State::NotCalled) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        String original = Zig::originalKeyOfRequirePath(globalObject, mock);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        else if (original != key && isLoadedByOriginalOfFile(globalObject, key, importer))
+            return original;
+    }
     return mock->specifier->tryGetValue().data;
 }
 

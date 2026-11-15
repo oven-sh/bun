@@ -482,8 +482,9 @@ impl Channel {
     }
 }
 
+// SAFETY: only these callbacks use `read_chunk`, and the pipe closes with the channel.
 #[cfg(windows)]
-impl uv::StreamReader for Channel {
+unsafe impl uv::StreamReader for Channel {
     #[inline]
     fn on_read_alloc(this: &Self, _: usize) -> *mut [u8] {
         this.backend.read_chunk.as_ptr()
@@ -493,7 +494,7 @@ impl uv::StreamReader for Channel {
         this.on_error(bun_sys::windows::translate_uv_error_to_e(err));
     }
     #[inline]
-    fn on_read(this: &Self, nread: usize) {
+    unsafe fn on_read(this: &Self, nread: usize) {
         this.ingest(&this.backend.read_chunk.get()[..nread]);
     }
 }

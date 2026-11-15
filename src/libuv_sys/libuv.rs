@@ -962,7 +962,8 @@ pub unsafe trait UvStream: UvHandle {
                 let _ = unsafe { uv_read_stop(req) };
                 T::on_read_error(ctx, n as c_int);
             } else {
-                T::on_read(ctx, n as usize);
+                // SAFETY: libuv has read `n` bytes to the buffer of `uv_allocb`.
+                unsafe { T::on_read(ctx, n as usize) };
             }
         }
         // SAFETY: stream prefix invariant.
@@ -974,14 +975,16 @@ pub unsafe trait UvStream: UvHandle {
 /// The `extern "C"` trampolines are monomorphised over
 /// this trait so the callbacks are baked into the codegen (zero-alloc, no
 /// per-handle storage).
-pub trait StreamReader: Sized {
-    /// Where libuv reads to. It has to stay valid until the read is reported or the handle is closed.
+///
+/// SAFETY: what `on_read_alloc` returns stays writable, and nothing else uses it, until the read
+/// is reported or the handle is closed.
+pub unsafe trait StreamReader: Sized {
     fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8];
     /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
     /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
     fn on_read_error(this: &Self, err: c_int);
-    /// libuv has written `nread` bytes to what `on_read_alloc` returned.
-    fn on_read(this: &Self, nread: usize);
+    /// SAFETY: `nread` bytes have been written to what `on_read_alloc` returned.
+    unsafe fn on_read(this: &Self, nread: usize);
 }
 // SAFETY: all of these are `#[repr(C)]` with `UV_STREAM_FIELDS` prefix.
 unsafe impl UvStream for uv_stream_t {}

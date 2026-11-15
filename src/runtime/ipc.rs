@@ -1835,8 +1835,9 @@ impl SendQueue {
 /// callbacks. The three fns are baked
 /// into the trait impl so the `extern "C"` trampoline is monomorphised over
 /// `SendQueue` with zero per-handle storage.
+// SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
 #[cfg(windows)]
-impl uv::StreamReader for SendQueue {
+unsafe impl uv::StreamReader for SendQueue {
     #[inline]
     fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
@@ -1849,7 +1850,7 @@ impl uv::StreamReader for SendQueue {
         IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]
-    fn on_read(this: &Self, nread: usize) {
+    unsafe fn on_read(this: &Self, nread: usize) {
         IPCHandlers::WindowsNamedPipe::on_read(this, nread);
     }
 }

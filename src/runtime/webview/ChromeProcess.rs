@@ -786,8 +786,9 @@ impl WindowsPipes {
     }
 }
 
+// SAFETY: only these callbacks use `read_buf`, and `reply` closes ahead of it.
 #[cfg(windows)]
-impl uv::StreamReader for ChromeProcess {
+unsafe impl uv::StreamReader for ChromeProcess {
     fn on_read_alloc(this: &Self, _suggested_size: usize) -> *mut [u8] {
         this.pipes.read_buf.with_mut(|buf| &raw mut **buf)
     }
@@ -801,7 +802,7 @@ impl uv::StreamReader for ChromeProcess {
         PipeEvent::Closed.post(this.generation);
     }
 
-    fn on_read(this: &Self, nread: usize) {
+    unsafe fn on_read(this: &Self, nread: usize) {
         scoped_log!(Chrome, "read {} bytes", nread);
         PipeEvent::Data(Box::from(&this.pipes.read_buf.get()[..nread])).post(this.generation);
     }

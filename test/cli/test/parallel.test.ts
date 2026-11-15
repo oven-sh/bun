@@ -1292,6 +1292,13 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
         return "X";
       }
     });
+  async function untilEveryThreadIs(state: string, pid: number) {
+    const deadline = performance.now() + 30_000;
+    while (states(pid).some(other => other !== state)) {
+      if (performance.now() > deadline) throw new Error(`threads of ${pid}: ${states(pid)}`);
+      await Bun.sleep(1);
+    }
+  }
   const exitAfterTheFile = `setTimeout(() => process.exit(0));`;
   const exitAfterReady = `writeSync(3, Buffer.alloc(5)); process.exit(0);`;
 
@@ -1328,9 +1335,9 @@ describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", (
       resumed ??= (async () => {
         proc.kill("SIGSTOP");
         try {
-          while (states(proc.pid).some(state => state !== "T")) await Bun.sleep(1);
+          await untilEveryThreadIs("T", proc.pid);
           writeFileSync(path.join(String(dir), "go"), "");
-          while (states(worker).join("") !== "Z") await Bun.sleep(1);
+          await untilEveryThreadIs("Z", worker);
         } finally {
           proc.kill("SIGCONT");
         }

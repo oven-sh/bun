@@ -980,7 +980,8 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for WindowsNamedPipe {
 /// The three `stream.readStart` callbacks (alloc/error/read) baked into a
 /// trait so the
 /// `extern "C"` libuv trampoline is monomorphised over `WindowsNamedPipe`.
-impl uv::StreamReader for WindowsNamedPipe {
+// SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
+unsafe impl uv::StreamReader for WindowsNamedPipe {
     #[inline]
     fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
         this.incoming
@@ -996,7 +997,7 @@ impl uv::StreamReader for WindowsNamedPipe {
         this.on_read_error(e);
     }
     #[inline]
-    fn on_read(this: &Self, nread: usize) {
+    unsafe fn on_read(this: &Self, nread: usize) {
         this.on_read(nread);
     }
 }

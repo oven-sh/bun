@@ -564,30 +564,13 @@ impl Map {
     }
 
     pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
-        if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
+        if ref_.is_source_contents_slice() {
             return None;
         }
-        let src = ref_.source_index() as usize;
-        let idx = ref_.inner_index() as usize;
-        debug_assert!(src < self.symbols_for_source.len());
-        // SAFETY: the validity guards above are exhaustive — every Ref with a
-        // non-null source index and a non-SourceContentsSlice tag was emitted
-        // by the parser as an index into this table (`declare_symbol` /
-        // `new_symbol` write `inner_index = symbols.len()` then push) or
-        // minted by the linker (`LinkerGraph::generate_new_symbol`, which appends
-        // to the same per-source Vec). Both indices are therefore in-bounds.
-        // The bundler never fabricates Refs from untrusted input.
-        //
-        // (Formerly a separate `get_unchecked` method — inlined: it had no
-        // external callers, so the unchecked fast path need not be public
-        // API surface. `follow()` below uses checked indexing for the same
-        // lookup; this site keeps the unchecked path for the printer's hot
-        // inner loop, narrowed to where the guard is visible.)
-        Some(unsafe {
-            let inner = self.symbols_for_source.as_ptr().add(src);
-            debug_assert!(idx < (*inner).len());
-            &*(*inner).as_ptr().add(idx)
-        })
+        let symbols = self.symbols_for_source.get(ref_.source_index() as usize);
+        let symbol = symbols.and_then(|symbols| symbols.get(ref_.inner_index() as usize));
+        debug_assert!(symbol.is_some() || Ref::is_source_index_null(ref_.source_index()));
+        symbol
     }
 
     // Takes ownership of `list` and boxes it into a one-element NestedList.
@@ -672,7 +655,7 @@ impl Map {
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
         // `LinkerGraph::generate_new_symbol`, and (c) prior `follow()` path
         // compression, which stores a `root` that itself satisfied (b). All
-        // such refs satisfy the in-bounds contract (see `get_const`):
+        // such refs are in bounds:
         // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
         // never `SourceContentsSlice` and never the null source sentinel.
         let outer = self.symbols_for_source.as_slice();

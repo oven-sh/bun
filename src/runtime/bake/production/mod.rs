@@ -206,7 +206,12 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
             vm.on_exit();
             vm.global_exit();
         }
-        Err(e) => return Err(e),
+        Err(e) => {
+            // Lookups can still be in flight, and `destroy` frees what their channel closes into.
+            vm.forbid_script();
+            let _ = crate::jsc_hooks::stop_dns_for_vm_teardown();
+            return Err(e);
+        }
     }
     Ok(())
 }

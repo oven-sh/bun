@@ -1,0 +1,2 @@
+// Whoever awaits a step of an async generator awaited where the body first suspended: it goes on in the context that it had there.
+import { AsyncLocalStorage } from "node:async_hooks"; let als; const s = () => String(als?.getStore()); function* two() { yield 1; yield 2; } async function* body() { await 0; const n = new Set(two()).size; new Bun.ModuleGraph(); als = new AsyncLocalStorage(); als.enterWith("in"); yield n; } setTimeout(async () => { await 0; const r = await body().next(); console.log(r.value, s()); }, 1);

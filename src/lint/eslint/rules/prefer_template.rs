@@ -6,7 +6,7 @@ use std::borrow::Cow;
 /// Require template literals instead of string concatenation.
 pub struct PreferTemplate;
 
-const UNEXPECTED_STRING_CONCATENATION: Message = Message::new(
+const UNEXPECTED_STRING_CONCATENATION: &Message = &Message::new(
     "unexpectedStringConcatenation",
     "Unexpected string concatenation.",
 );

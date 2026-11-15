@@ -6,7 +6,7 @@ use bun_lint::rule::Plugin;
 /// Enforces that elements do not use invalid ARIA attributes.
 pub struct AriaProps;
 
-const ARIA_PROPS: Message = Message::new("", "'{{prop_name}}' is not a valid ARIA attribute.");
+const ARIA_PROPS: &Message = &Message::new("", "'{{prop_name}}' is not a valid ARIA attribute.");
 
 impl Rule for AriaProps {
     const META: Meta = Meta::oxlint(Plugin::JsxA11y, "aria-props", Kind::Problem).fixable(Fixable::Code);

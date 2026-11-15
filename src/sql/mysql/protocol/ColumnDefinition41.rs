@@ -1,7 +1,7 @@
 use crate::mysql::mysql_types::FieldType;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::encode_int::decode_length_int;
-use crate::mysql::protocol::stack_reader::PacketReader;
+use crate::mysql::protocol::new_reader::PacketReader;
 use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;
 use bstr::BStr;
@@ -31,7 +31,7 @@ impl Default for ColumnDefinition41 {
             column_type: FieldType::MYSQL_TYPE_NULL,
             flags: ColumnFlags::empty(),
             decimals: 0,
-            name_or_index: ColumnIdentifier::Name(Data::empty()),
+            name_or_index: ColumnIdentifier::Name(Vec::new()),
         }
     }
 }
@@ -116,38 +116,26 @@ impl ColumnDefinition41 {
     ) -> Result<Changed, AnyMySQLError> {
         // Length encoded strings
         let catalog = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "catalog: {}",
-            BStr::new(catalog.slice())
-        );
+        bun_core::scoped_log!(ColumnDefinition41, "catalog: {}", BStr::new(catalog));
 
         let schema = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(schema.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "schema: {}", BStr::new(schema));
 
         let table = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(table.slice()));
-        let mut described_differently = self.table.slice() != table.slice();
+        bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(table));
+        let mut described_differently = self.table.slice() != table;
         if described_differently {
-            self.table = Data::create(table.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            self.table = Data::create(table).map_err(|_| AnyMySQLError::OutOfMemory)?;
         }
 
         let org_table = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "org_table: {}",
-            BStr::new(org_table.slice())
-        );
+        bun_core::scoped_log!(ColumnDefinition41, "org_table: {}", BStr::new(org_table));
 
         let name = reader.encode_len_string()?;
-        bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(name.slice()));
+        bun_core::scoped_log!(ColumnDefinition41, "name: {}", BStr::new(name));
 
         let org_name = reader.encode_len_string()?;
-        bun_core::scoped_log!(
-            ColumnDefinition41,
-            "org_name: {}",
-            BStr::new(org_name.slice())
-        );
+        bun_core::scoped_log!(ColumnDefinition41, "org_name: {}", BStr::new(org_name));
 
         // With MARIADB_CLIENT_EXTENDED_TYPE_INFO negotiated, a lenenc blob of
         // extended metadata sits between org_name and the fixed-length
@@ -155,7 +143,7 @@ impl ColumnDefinition41 {
         let mut json_format = false;
         if extended_type_info {
             let extended = reader.encode_len_string()?;
-            json_format = extended_metadata_is_json(extended.slice())?;
+            json_format = extended_metadata_is_json(extended)?;
         }
 
         reader.encoded_len_int()?; // length of the fixed-length fields
@@ -197,11 +185,10 @@ impl ColumnDefinition41 {
         let renamed = self
             .name
             .as_ref()
-            .is_none_or(|previous| previous.slice() != name.slice());
+            .is_none_or(|previous| previous.slice() != name);
         if renamed {
-            self.name = Some(Data::create(name.slice()).map_err(|_| AnyMySQLError::OutOfMemory)?);
-            self.name_or_index =
-                ColumnIdentifier::init(name).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            self.name = Some(Data::create(name).map_err(|_| AnyMySQLError::OutOfMemory)?);
+            self.name_or_index = ColumnIdentifier::init(name.into());
         }
 
         // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet

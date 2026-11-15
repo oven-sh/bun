@@ -10,8 +10,8 @@ pub struct PreferStructuredClone {
     functions: Vec<(String, Option<String>)>,
 }
 
-const PREFER_STRUCTURED_CLONE: Message = Message::new("", "Use `structuredClone(…)` to create a deep clone.");
-const SWITCH_TO_STRUCTURED_CLONE: Message = Message::new("", "Switch to `structuredClone(…)`.");
+const PREFER_STRUCTURED_CLONE: &Message = &Message::new("", "Use `structuredClone(…)` to create a deep clone.");
+const SWITCH_TO_STRUCTURED_CLONE: &Message = &Message::new("", "Switch to `structuredClone(…)`.");
 
 fn report<'a>(e: Expr<'a>, first_argument: Expr<'a>, cx: &Cx<'a, PreferStructuredClone>) {
     cx.report(e, PREFER_STRUCTURED_CLONE).suggest(SWITCH_TO_STRUCTURED_CLONE, |fixer| {

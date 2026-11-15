@@ -72,13 +72,8 @@ impl ArrayBufferSink {
         streams::result::Writable::Owned(len as u64)
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable {
-        let bytes = data.slice();
-        // The caller guarantees the byte slice is u16-aligned and has even
-        // length when the stream encoding is UTF-16. bytemuck checks both at
-        // runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let len = match self.bytes.write_utf16(utf16) {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable {
+        let len = match self.bytes.write_utf16(text) {
             Ok(len) => len,
             Err(_) => return streams::result::Writable::Err(syscall::Error::oom()),
         };
@@ -87,15 +82,6 @@ impl ArrayBufferSink {
 
     pub(crate) fn end(&mut self, _: Option<syscall::Error>) -> bun_sys::Result<()> {
         Ok(())
-    }
-
-    /// # Safety
-    /// `this` is the allocation `JSSink::constructor` made for the JS wrapper, whose
-    /// `finalize` (the sole caller) frees it exactly once, here.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: reclaiming ownership drops `bytes` (Vec<u8> impls Drop) and
-        // frees the box.
-        drop(unsafe { bun_core::heap::take(this) });
     }
 
     pub(crate) fn end_from_js(
@@ -108,11 +94,11 @@ impl ArrayBufferSink {
 
         self.done = true;
         // `defer this.bytes = bun.Vec<u8>.empty` → take ownership, leave empty.
-        let mut bytes = core::mem::take(&mut self.bytes);
+        let bytes = core::mem::take(&mut self.bytes);
         // Ownership transfers to JSC: the trait impl below converts the returned
         // `ArrayBuffer` with `to_js_unchecked`, which installs
         // `MarkedArrayBuffer_deallocator` (frees via `mi_free` on GC).
-        let owned = bytes.to_owned_slice();
+        let owned = bytes.into_boxed_slice();
         Ok(ArrayBuffer::from_owned_bytes(
             owned,
             if self.as_uint8array {
@@ -130,16 +116,18 @@ impl ArrayBufferSink {
     }
 }
 
+impl crate::webcore::sink::WrappedSink for ArrayBufferSink {
+    type Wrapped = bun_ptr::AliasableBox<Self>;
+    fn as_non_null(wrapped: &Self::Wrapped) -> core::ptr::NonNull<Self> {
+        wrapped.as_non_null()
+    }
+}
+
 impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
     const NAME: &'static str = "ArrayBufferSink";
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is the wrapper's live sink, which
-        // `JSSink::constructor` allocated for it alone; nothing uses it afterwards.
-        unsafe { Self::destroy(this) };
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         match Self::end_from_js(self, cx) {
             // Not `to_js`: its `mi_is_in_heap_region` probe would skip the

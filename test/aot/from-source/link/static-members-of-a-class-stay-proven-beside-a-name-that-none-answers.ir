@@ -1,0 +1,14 @@
+# A name that no member of the class has, that nothing has laid on the class and that Function.prototype does not have gives undefined. The static members that the class has stay proven beside it, its own and those of the class above.
+# f1 = nameOf, f2 = makeOf, f3 = moreOf, f5 = make, f7 = more
+# -- source: static-members-of-a-class-stay-proven-beside-a-name-that-none-answers.js
+# class Base { static make() { return 1; } }
+# class Plain extends Base { static more() { return 2; } }
+# function nameOf(c) { return c.missing; }
+# function makeOf(c) { return c.make; }
+# function moreOf(c) { return c.more; }
+# nameOf(Plain); makeOf(Plain); moreOf(Plain);
+# -- end of source
+# RUN(LINK): link functions mechanisms=all
+# LINK: function f1 {{*}} result=undefined
+# LINK: function f2 {{*}} result=f5
+# LINK: function f3 {{*}} result=f7

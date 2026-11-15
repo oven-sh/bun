@@ -216,10 +216,6 @@ impl hooks::AutoInstaller for PackageManager {
 
     // ── PackageManager ops ────────────────────────────────────────────────
 
-    fn set_on_wake(&mut self, handler: hooks::WakeHandler) {
-        self.on_wake = handler;
-    }
-
     fn project_folder<'b>(
         &mut self,
         name: &[u8],
@@ -277,17 +273,8 @@ impl hooks::AutoInstaller for PackageManager {
         &mut self,
         package_id: PackageID,
         resolution: &hooks::Resolution,
-        buf: &'b mut [u8],
+        path_buf: &'b mut bun_paths::PathBuffer,
     ) -> Result<&'b [u8], bun_core::Error> {
-        // The resolver passes a `bun_paths::PathBuffer`-sized slice
-        // (`bufs!(path_in_global_disk_cache)`); reborrow it as the install
-        // signature's `&mut PathBuffer`.
-        debug_assert!(buf.len() >= bun_paths::MAX_PATH_BYTES);
-        // SAFETY: `PathBuffer` is `#[repr(transparent)]` over
-        // `[u8; MAX_PATH_BYTES]`; caller-provided slice is at least that long
-        // (asserted above).
-        let path_buf: &mut bun_paths::PathBuffer =
-            unsafe { &mut *buf.as_mut_ptr().cast::<bun_paths::PathBuffer>() };
         if let Err(why) = directories::try_get_cache_directory(self) {
             self.exit_or_log(&why);
             return Err(bun_core::Error::WriteFailed);
@@ -415,6 +402,7 @@ impl hooks::AutoInstaller for PackageManager {
 
 // `PackageJSON::parse` runs before the first bare import creates the manager.
 #[unsafe(no_mangle)]
+#[inline(never)]
 fn __bun_resolver_parse_dependency(
     name: SemverString,
     name_hash: hooks::PackageNameHash,
@@ -447,6 +435,7 @@ fn __bun_resolver_parse_dependency(
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as `NonNull<Loader>`.
 #[unsafe(no_mangle)]
+#[inline(never)]
 unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,

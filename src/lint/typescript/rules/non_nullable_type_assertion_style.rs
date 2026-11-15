@@ -6,7 +6,7 @@ use bun_lint::utils::ts_utils::{OperatorPrecedence, get_operator_precedence, ts_
 /// Enforce non-null assertions over explicit type assertions.
 pub struct NonNullableTypeAssertionStyle;
 
-const PREFER_NON_NULL_ASSERTION: Message = Message::new(
+const PREFER_NON_NULL_ASSERTION: &Message = &Message::new(
     "preferNonNullAssertion",
     "Use a ! assertion to more succinctly remove null and undefined from the type.",
 );

@@ -1,0 +1,22 @@
+# -- source: what-a-read-gives.ts
+# interface Holder { row?: Row }
+# interface Row { id: number; other?: string }
+# let noted: Row | undefined;
+# function plain(id: number): Row { return { id }; }
+# function holding(row: Row): Holder { return { row }; }
+# function look(holders: Holder) { noted = holders.row; return () => noted; }
+# (globalThis as any).look = look;
+# console.log(String(look(holding(plain(1)))()?.id) + " " + String(look(holding(plain(2)))()?.other));
+# -- end of source
+# Under the checks a read that claims nothing of what it gives is checked all the same: what it hands over is a value of the language. The pair of an accessor, an environment, a structure pass every test of the tag bits,
+# and `anything` asks no other: CastEmitter::generateCheckProof() looks at the kind of the cell. Where the type lets the empty word in, as of a variable that may be in its dead zone, the check lets it in too.
+# OPTIONS: testing=CheckProofsAtRunTime
+# RUN: walk f0 f4 mechanisms=all
+# CHECK-LABEL: code f0:Body
+# CHECK: [[id]]: anything{{*}} = GetSlot {{*}}key="id"
+# CHECK-NEXT: CheckProof [[id]] checkedType=anything typeWithoutProof=absent|anything source=Field
+# CHECK: [[other]]: anything{{*}} = GetSlotOrUndefined {{*}}key="other"
+# CHECK-NEXT: CheckProof [[other]] checkedType=anything typeWithoutProof=absent|anything source=Field
+# CHECK-LABEL: code f4:Body
+# CHECK: [[noted]]: absent|anything{{*}} = GetModuleVariable variable=g0
+# CHECK-NEXT: CheckProof [[noted]] checkedType=absent|anything typeWithoutProof=absent|anything source=Variable

@@ -209,6 +209,8 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
         m_verifyResult = context.verify(dataBuf, sigBuf);
         if (!m_verifyResult.has_value()) {
             m_opensslError = ERR_get_error();
+        } else if (*m_verifyResult && key.hasSmallOrderEdDsaPoint(sigBuf)) {
+            m_verifyResult = false;
         }
         break;
     }
@@ -319,7 +321,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
 
     Vector<uint8_t> signatureData;
     if (mode == Mode::Verify) {
-        auto signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined(), true);
+        auto signatureView = getArrayBufferOrView2(globalObject, scope, signatureValue, "signature"_s, jsUndefined());
         RETURN_IF_EXCEPTION(scope, {});
         auto copy = copyArgumentBytes(globalObject, scope, std::span { signatureView->data(), signatureView->size() }, "signature"_s);
         if (!copy) return std::nullopt;

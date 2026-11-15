@@ -1,0 +1,10 @@
+# for "collation" ICU opens the collation data of every locale, so the row marks the key as a locale, and the key is no tag
+# -- source: text-that-is-no-tag.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(Intl.supportedValuesOf("collation"));
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown IntlSupportedValuesOf at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant

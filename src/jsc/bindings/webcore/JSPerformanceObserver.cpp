@@ -157,6 +157,7 @@ static const HashTableValue JSPerformanceObserverConstructorTableValues[] = {
 
 template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(PerformanceTimeline, JSPerformanceObserverDOMConstructor::construct);
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = uncheckedDowncast<JSPerformanceObserverDOMConstructor>(callFrame->jsCallee());
@@ -359,11 +360,12 @@ void JSPerformanceObserver::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-void JSPerformanceObserverOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
+JSC::WeakHandleOwner::FinalizeResult JSPerformanceObserverOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
 {
     auto* jsPerformanceObserver = static_cast<JSPerformanceObserver*>(handle.slot()->asCell());
     auto& world = *static_cast<DOMWrapperWorld*>(context);
     uncacheWrapper(world, &jsPerformanceObserver->wrapped(), jsPerformanceObserver);
+    return FinalizeResult::KeepImpl;
 }
 
 #if ENABLE(BINDING_INTEGRITY)

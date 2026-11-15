@@ -1,0 +1,14 @@
+# f2 = Ring.all
+# -- source: main.ts
+# class Ring { readonly items: any[]; constructor(readonly width: number, texts: boolean) { this.items = texts ? ["a", "b", "c", "d", "e", "f", "g"] : [0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5]; }
+#   all(to: number): string { let seen = ""; for (let place = -2; place < to; place++) seen += String(this.items[(place + this.width) % this.width]) + ","; return seen; } }
+# const widths = [3, 5, 2.5, -2];
+# let seen = ""; for (const width of widths) for (const texts of [true, false]) { seen += new Ring(width, texts).all(6) + ";"; } print(seen);
+# -- end of source
+# The remainder is the key of one read: its integer is the index, and its number is made where the read goes on without an index. The list of numbers at the site of texts is read by the number.
+# RUN: emit f2 mechanisms=all
+# REQUIRES: x86_64
+# CHECK-LABEL: unit f2:Body
+# CHECK-COUNT-2: = Select(
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: b,c,a,b,c,a,b,c,;1.5,2.5,0.5,1.5,2.5,0.5,1.5,2.5,;d,e,a,b,c,d,e,a,;3.5,4.5,0.5,1.5,2.5,3.5,4.5,0.5,;undefined,undefined,a,b,c,undefined,undefined,a,;undefined,undefined,0.5,1.5,2.5,undefined,undefined,0.5,;a,undefined,a,undefined,a,b,a,b,;0.5,undefined,0.5,undefined,0.5,1.5,0.5,1.5,;

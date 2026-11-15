@@ -1,0 +1,23 @@
+# Whether a list goes through the loop of a list method by the row for numbers was asked of what the callee takes. Link proves undefined|int|whole of the arrow's parameter whether or not an undefined is stored in the
+# list: the library's slow loop hands it array[i]. A list of whole numbers that does hold an undefined lies in storage for any values: it failed the row in front of the loop in every call and ran the closed copy:
+# 1,915 > 2,226 instructions a call over 96 elements. A guess that fails costs the plain walk and no more: the row goes by the elements that Link proves of the list itself at the call that is copied: whole numbers
+# and nothing else. Where Link says nothing of them, the row that admits any values and int32s stays.
+# Since the loop is bought once more behind the question for int32s, a list that may hold an undefined beside whole numbers is asked too, and finds that row behind the failing answer.
+# f1 = total . f2 = totalOfMixed . f3 = often . f4 = oftenMixed
+# -- source: main.cjs
+# "use strict";
+# const XS = [], YS = [];
+# for (let i = 0; i < 9; i++) { XS.push(i * 3 % 7); YS.push(i * 3 % 7 || undefined); }
+# function total(t) { let s = t; XS.forEach(x => { s += x; }); return s; }
+# function often() { let sum = 0; for (let t = 0; t < XS.length; t++) sum += total(t); return sum; }
+# function totalOfMixed(t) { let s = t; YS.forEach(x => { s += x === undefined ? 1 : x; }); return s; }
+# function oftenMixed() { let sum = 0; for (let t = 0; t < YS.length; t++) sum += totalOfMixed(t); return sum; }
+# print(often(), oftenMixed());
+# -- end of source
+# RUN(WHOLE): walk f3 mechanisms=all
+# WHOLE: = IsElementPresent
+# RUN(MIXED): walk f4 mechanisms=all
+# MIXED: = HasArrayStorage {{*}}arrayStorage=Int32
+# MIXED: = HasArrayStorage {{*}}arrayStorage=Contiguous [admitsInt32Storage]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 252 270

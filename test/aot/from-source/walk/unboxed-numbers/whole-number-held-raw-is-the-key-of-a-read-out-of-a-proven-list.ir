@@ -1,0 +1,28 @@
+# `nodes[i]`: the list is proven, and of `i` all that is known is that it has no fraction: it started from `count - 1`, and `count` starts where nobody in sight knows and is stepped without a bound. (A count that starts at 0 is a whole number of 64 bits.) Such a number is held as a raw double.
+# The read takes it raw and truncates it: what is no index of the list lies behind its length, and goes to the closed read with the number boxed out of line.
+# Boxed in front of the read, the number was asked whether it is an int32 (ten instructions), and the read asked the box for its tag (three).
+# f1 = add, f2 = find
+# -- source: find.ts
+# const nodes: object[] = [];
+# let count = Math.floor(JSON.parse("0"));
+# function add(node: object): void {
+#   nodes[count] = node;
+#   count++;
+# }
+# function find(node: object): number {
+#   for (let i = count - 1; i >= 0; i--) {
+#     if (nodes[i] === node) return i;
+#   }
+#   return -1;
+# }
+# (globalThis as any).kept = nodes;
+# const a = {}, b = {};
+# add(a);
+# add(b);
+# console.log(find(a), find(b), find({}));
+# -- end of source
+# RUN(FORM): walk f2 mechanisms=all-Inlining
+# FORM-LABEL: code f2:Body
+# FORM: int|whole @Double
+# FORM-NOT: int|whole @JSValue = Box
+# FORM: = GetArrayElement {{*}}level=Expected

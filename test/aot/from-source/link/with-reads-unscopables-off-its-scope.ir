@@ -1,0 +1,25 @@
+# `with (scope) y`: where the scope has the name, the run time reads Symbol.unscopables off it, and the name off what that gives. No read was recorded, so Link saw no reader of the member:
+# the getter of the class was unreached and never ran in compiled code, and what it stores into `this` was no store into the layout
+# RUN: link fields functions mechanisms=all
+# CHECK: field L0.0 "x" proven=int[0, 2147483647]|string
+# CHECK: function f4 callers-known
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 2
+# NONE-NEXT: 2
+# NONE-NEXT: text1
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 2
+# ALL-NEXT: 2
+# ALL-NEXT: text1
+# ALL-NEXT: exited with 0
+# -- source: main.cjs
+# class Scope { constructor(n) { this.x = n; this.y = 2; } get [Symbol.unscopables]() { this.x = "text"; return undefined; } }
+# function read(o) { return o.x + 1; }
+# const scope = new Scope(1);
+# print(read(scope));
+# let seen;
+# with (scope) { seen = y; }
+# print(seen);
+# print(read(scope));
+# -- end of source

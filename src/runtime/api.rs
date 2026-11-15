@@ -66,6 +66,8 @@ pub(crate) mod output_file_jsc;
 pub(crate) mod standalone_graph_jsc;
 #[path = "api/TOMLObject.rs"]
 pub(crate) mod toml_object;
+#[path = "api/trim_testing.rs"]
+pub(crate) mod trim_testing;
 #[path = "api/UnsafeObject.rs"]
 pub(crate) mod unsafe_object;
 #[path = "api/XMLObject.rs"]
@@ -134,7 +136,6 @@ pub(crate) mod bun {
 pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
 pub(crate) use crate::api::js_bundler::BuildArtifact;
-pub(crate) use crate::api::js_bundler::JSBundler;
 
 // ─── shared scaffold for Bun.{TOML,JSONC,JSON5,YAML,XML}.parse ───────────────
 //

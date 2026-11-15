@@ -1,0 +1,48 @@
+# `box.late = value` where the layout has a slot for `late` and the maker left it empty: the store CREATES the field. Without mechanisms it goes by name: the field table finds the slot empty and hands the store to the short stub for a field
+# that takes any value. What unseen code has done to the object or to its prototypes in front of the store: frozen . sealed . not extensible . another prototype with a setter | with a read-only value . an own setter . laid and deleted .
+# a name in front . no prototype . a proxy above . a read-only value, then a setter, laid on the prototype of all, and taken off again. The value, the order of keys, the attributes, who was called. As plain, in both modes.
+# RUN(NONE): run-in-shell mechanisms=none globalThis.log = []; globalThis.seen = () => log.splice(0).join("+"); globalThis.deeds = Box => { const list = []; const add = (name, deed) => list.push([name, make => { const box = make(false); return deed(box, make) || box; }]); add("0 as made", box => { }); add("1 laid by the maker", (box, make) => make(true)); add("2 frozen", box => { Object.freeze(box); }); add("3 sealed", box => { Object.seal(box); }); add("4 not extensible", box => { Object.preventExtensions(box); }); add("5 another prototype with a setter", box => { Object.setPrototypeOf(box, { set late(value) { log.push("set " + value); } }); }); add("6 another prototype with a value that is read only", box => { Object.setPrototypeOf(box, Object.freeze({ late: "fixed" })); }); add("7 an own setter", box => { Object.defineProperty(box, "late", { set(value) { log.push("own " + value); }, configurable: true }); }); add("8 laid, then deleted", box => { box.late = 1; delete box.late; }); add("9 a name in front", box => { box.more = 3; }); add("10 no prototype", box => { Object.setPrototypeOf(box, null); }); add("11 a proxy above", box => { Object.setPrototypeOf(box, new Proxy({}, { set(target, key, value, receiver) { log.push("trap " + String(key)); return Reflect.set(target, key, value, receiver); } })); }); add("12 as made, once more", box => { }); add("13 a value that is read only comes to lie on the prototype of all", box => { Object.defineProperty(Box.prototype, "late", { value: "above", writable: false, configurable: true }); }); add("14 a setter comes to lie there", box => { Object.defineProperty(Box.prototype, "late", { set(value) { log.push("above " + value); }, configurable: true }); }); add("15 and goes again", box => { delete Box.prototype.late; }); return list; };
+# NONE: 0 as made | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# NONE-NEXT: 1 laid by the maker | 0:first,late,last:wec | stored | 7:first,late,last:wec | stored | 8:first,late,last:wec |
+# NONE-NEXT: 2 frozen | undefined:first,last:- | TypeError | undefined:first,last:- | TypeError | undefined:first,last:- |
+# NONE-NEXT: 3 sealed | undefined:first,last:- | TypeError | undefined:first,last:- | TypeError | undefined:first,last:- |
+# NONE-NEXT: 4 not extensible | undefined:first,last:- | TypeError | undefined:first,last:- | TypeError | undefined:first,last:- |
+# NONE-NEXT: 5 another prototype with a setter | undefined:first,last:- | stored | undefined:first,last:- | stored | undefined:first,last:- | set 7+set 8
+# NONE-NEXT: 6 another prototype with a value that is read only | fixed:first,last:- | TypeError | fixed:first,last:- | TypeError | fixed:first,last:- |
+# NONE-NEXT: 7 an own setter | undefined:first,last:cs | stored | undefined:first,last:cs | stored | undefined:first,last:cs | own 7+own 8
+# NONE-NEXT: 8 laid, then deleted | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# NONE-NEXT: 9 a name in front | undefined:first,last,more:- | stored | 7:first,last,more,late:wec | stored | 8:first,last,more,late:wec |
+# NONE-NEXT: 10 no prototype | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# NONE-NEXT: 11 a proxy above | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec | trap late
+# NONE-NEXT: 12 as made, once more | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# NONE-NEXT: 13 a value that is read only comes to lie on the prototype of all | above:first,last:- | TypeError | above:first,last:- | TypeError | above:first,last:- |
+# NONE-NEXT: 14 a setter comes to lie there | undefined:first,last:- | stored | undefined:first,last:- | stored | undefined:first,last:- | above 7+above 8
+# NONE-NEXT: 15 and goes again | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# NONE-NEXT: exited with 0
+# RUN(ALL): run-in-shell mechanisms=all globalThis.log = []; globalThis.seen = () => log.splice(0).join("+"); globalThis.deeds = Box => { const list = []; const add = (name, deed) => list.push([name, make => { const box = make(false); return deed(box, make) || box; }]); add("0 as made", box => { }); add("1 laid by the maker", (box, make) => make(true)); add("2 frozen", box => { Object.freeze(box); }); add("3 sealed", box => { Object.seal(box); }); add("4 not extensible", box => { Object.preventExtensions(box); }); add("5 another prototype with a setter", box => { Object.setPrototypeOf(box, { set late(value) { log.push("set " + value); } }); }); add("6 another prototype with a value that is read only", box => { Object.setPrototypeOf(box, Object.freeze({ late: "fixed" })); }); add("7 an own setter", box => { Object.defineProperty(box, "late", { set(value) { log.push("own " + value); }, configurable: true }); }); add("8 laid, then deleted", box => { box.late = 1; delete box.late; }); add("9 a name in front", box => { box.more = 3; }); add("10 no prototype", box => { Object.setPrototypeOf(box, null); }); add("11 a proxy above", box => { Object.setPrototypeOf(box, new Proxy({}, { set(target, key, value, receiver) { log.push("trap " + String(key)); return Reflect.set(target, key, value, receiver); } })); }); add("12 as made, once more", box => { }); add("13 a value that is read only comes to lie on the prototype of all", box => { Object.defineProperty(Box.prototype, "late", { value: "above", writable: false, configurable: true }); }); add("14 a setter comes to lie there", box => { Object.defineProperty(Box.prototype, "late", { set(value) { log.push("above " + value); }, configurable: true }); }); add("15 and goes again", box => { delete Box.prototype.late; }); return list; };
+# ALL: 0 as made | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# ALL-NEXT: 1 laid by the maker | 0:first,late,last:wec | stored | 7:first,late,last:wec | stored | 8:first,late,last:wec |
+# ALL-NEXT: 2 frozen | undefined:first,last:- | TypeError | undefined:first,last:- | TypeError | undefined:first,last:- |
+# ALL-NEXT: 3 sealed | undefined:first,last:- | TypeError | undefined:first,last:- | TypeError | undefined:first,last:- |
+# ALL-NEXT: 4 not extensible | undefined:first,last:- | TypeError | undefined:first,last:- | TypeError | undefined:first,last:- |
+# ALL-NEXT: 5 another prototype with a setter | undefined:first,last:- | stored | undefined:first,last:- | stored | undefined:first,last:- | set 7+set 8
+# ALL-NEXT: 6 another prototype with a value that is read only | fixed:first,last:- | TypeError | fixed:first,last:- | TypeError | fixed:first,last:- |
+# ALL-NEXT: 7 an own setter | undefined:first,last:cs | stored | undefined:first,last:cs | stored | undefined:first,last:cs | own 7+own 8
+# ALL-NEXT: 8 laid, then deleted | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# ALL-NEXT: 9 a name in front | undefined:first,last,more:- | stored | 7:first,last,more,late:wec | stored | 8:first,last,more,late:wec |
+# ALL-NEXT: 10 no prototype | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# ALL-NEXT: 11 a proxy above | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec | trap late
+# ALL-NEXT: 12 as made, once more | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# ALL-NEXT: 13 a value that is read only comes to lie on the prototype of all | above:first,last:- | TypeError | above:first,last:- | TypeError | above:first,last:- |
+# ALL-NEXT: 14 a setter comes to lie there | undefined:first,last:- | stored | undefined:first,last:- | stored | undefined:first,last:- | above 7+above 8
+# ALL-NEXT: 15 and goes again | undefined:first,last:- | stored | 7:first,last,late:wec | stored | 8:first,last,late:wec |
+# ALL-NEXT: exited with 0
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: slot {{*}}"late" JSValue Inline
+# -- source: main.js
+# function Box(early) { this.first = 1; if (early) this.late = 0; this.last = 2; }
+# function make(early) { return new Box(early); }
+# function lay(box, value) { try { box.late = value; return "stored"; } catch (error) { return error.name; } }
+# function tell(box) { const found = Object.getOwnPropertyDescriptor(box, "late"); return String(box.late) + ":" + Object.keys(box).join() + ":" + (found ? (found.writable ? "w" : "") + (found.enumerable ? "e" : "") + (found.configurable ? "c" : "") + (found.set ? "s" : "") : "-"); }
+# for (const [name, deed] of deeds(Box)) { const box = deed(make); const before = tell(box); print(name + " | " + before + " | " + lay(box, 7) + " | " + tell(box) + " | " + lay(box, 8) + " | " + tell(box) + " | " + seen()); }
+# -- end of source

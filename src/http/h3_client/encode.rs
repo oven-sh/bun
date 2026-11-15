@@ -28,8 +28,6 @@ pub(crate) fn write_request(
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // `build_request` returns a `Request<'_>`
-    // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
@@ -73,10 +71,17 @@ pub(crate) fn write_request(
     let mut remaining: &mut [u8] = &mut lower;
 
     let mut authority: &[u8] = host;
-    // SAFETY: capacity for `request.headers.len() + 4` was reserved above; slots
-    // 0..4 are fully written below (the four pseudo-headers) before `headers`
-    // is read by `send_headers`. quic::Header has no Drop.
-    unsafe { headers.set_len(4) };
+    let path = if !request.path.is_empty() {
+        request.path
+    } else {
+        b"/"
+    };
+    headers.extend([
+        quic::Header::init(b":method", request.method, Some(Qpack::MethodGet)),
+        quic::Header::init(b":scheme", b"https", Some(Qpack::SchemeHttps)),
+        quic::Header::init(b":authority", b"", Some(Qpack::Authority)),
+        quic::Header::init(b":path", path, Some(Qpack::Path)),
+    ]);
     for h in request.headers {
         if let Some(class) = Qpack::classify(h.name()) {
             match class {
@@ -96,18 +101,7 @@ pub(crate) fn write_request(
     if authority.is_empty() {
         authority = session.hostname.as_slice();
     }
-    headers[0] = quic::Header::init(b":method", request.method, Some(Qpack::MethodGet));
-    headers[1] = quic::Header::init(b":scheme", b"https", Some(Qpack::SchemeHttps));
     headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
-    headers[3] = quic::Header::init(
-        b":path",
-        if !request.path.is_empty() {
-            request.path
-        } else {
-            b"/"
-        },
-        Some(Qpack::Path),
-    );
 
     let has_inline_body = is_bytes && !req_body.is_empty();
 
@@ -163,10 +157,11 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
             unreachable!()
         };
         let ended = body.ended;
-        let Some(sb) = body.buffer_mut() else {
+        let Some(sb) = body.buffer.as_deref() else {
             return;
         };
-        let buffer = sb.acquire();
+        let mut locked = sb.lock();
+        let buffer = &mut locked.buffer;
         let data_len = buffer.slice().len();
         let mut written: usize = 0;
         while written < data_len {
@@ -188,11 +183,11 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         } else if !drained {
             qs.want_write(true);
         } else if data_len > 0 {
-            sb.report_drain();
+            locked.report_drain();
         }
-        sb.release();
+        drop(locked);
         if stream.request_body_done {
-            body.detach();
+            body.buffer = None;
         }
         return;
     }

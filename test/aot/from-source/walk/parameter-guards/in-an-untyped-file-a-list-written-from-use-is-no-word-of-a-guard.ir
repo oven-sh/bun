@@ -1,0 +1,27 @@
+# -- source: in-an-untyped-file-a-list-written-from-use-is-no-word-of-a-guard.js
+# function writeFixed32(value, bytes, at) {
+#   bytes[at] = value & 255;
+#   bytes[at + 1] = (value >>> 8) & 255;
+#   bytes[at + 2] = (value >>> 16) & 255;
+#   bytes[at + 3] = value >>> 24;
+#   return at + 4;
+# }
+# function ends(list) {
+#   return list[0] + list[1] + list[2] + list[list.length - 1];
+# }
+# const bytes = new Uint8Array(8);
+# sink(writeFixed32, ends);
+# print(writeFixed32(0x01020304, bytes, 0), writeFixed32(7, bytes, 4), bytes.join());
+# print(ends([1, 2, 3, 4]), ends(new Float64Array([0.5, 1.5, 2.5])), ends("abcd"));
+# -- end of source
+# Nobody has written a type in this file. A store or a read under an index makes a list of the parameter, and that word of use stood in the guard: bytes, floats or a text came, the guard failed at every
+# call, and every call ran the slow version. What is read and stored under an index may be a list, a view or a text: the word of use is no word for a guard: the body asks where it reads and has its
+# other way. Where use wrote a list and every caller in sight hands over views, the two do not meet, and the views stand in the list's place: a guess, tested by the guard: `writeFixed32`.
+# f1 = writeFixed32, f2 = ends
+# RUN: plan units mechanisms=all
+# CHECK: unit f1:ParameterGuard {{*}} tests (i32, undefined|null|Uint8Array, i32)
+# RUN(READS): plan units mechanisms=all
+# READS-NOT: unit f2:ParameterGuard
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 4 8 4,3,2,1,7,0,0,0
+# ANSWERS: 10 7 abcd

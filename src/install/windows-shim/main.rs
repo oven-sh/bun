@@ -198,6 +198,7 @@ macro_rules! w_lit {
 pub mod bun_core {
     // Re-export under the path the shared source uses (`bun_core::w!`).
     pub use crate::w_lit as w;
+    pub use bun_pod::slice_as_bytes;
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
     /// interior-mutability cell with no synchronization. The shim is
     /// single-threaded (it never spawns a thread), so the
@@ -241,31 +242,9 @@ pub mod bun_core {
 
     /// Mirrors the subset of `bun_core::ffi` the shim calls.
     pub mod ffi {
-        // `core`-only slice/wstr primitives — single audited copy lives in
-        // `bun_opaque::ffi` (zero-dep, zero `#[no_mangle]`, safe for this
-        // freestanding PE to depend on). `Zeroable`/`zeroed` stay local: the
-        // orphan rule blocks `bun_opaque` from `impl Zeroable for
-        // bun_windows_sys::*`, and `bun_core`'s impls drag in link roots.
+        // Single audited copies, in `#![no_std]` crates with no `#[no_mangle]`.
         pub use bun_opaque::ffi::{slice, slice_mut, wcslen, wstr_units};
-
-        /// Marker: all-zero bit pattern is a valid `Self`. Local re-spelling
-        /// of `bun_core::ffi::Zeroable`; impl'd below for the two
-        /// `bun_windows_sys` POD types the shim zero-inits.
-        ///
-        /// # Safety
-        /// `Self` must be inhabited at the all-zero bit pattern.
-        pub(crate) unsafe trait Zeroable: Sized {}
-        // SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
-        unsafe impl Zeroable for bun_windows_sys::IO_STATUS_BLOCK {}
-        // SAFETY: two raw-pointer HANDLEs (null-valid) + two u32.
-        unsafe impl Zeroable for crate::compat::PROCESS_INFORMATION {}
-
-        /// Mirrors `bun_core::ffi::zeroed`.
-        #[inline(always)]
-        pub(crate) const fn zeroed<T: Zeroable>() -> T {
-            // SAFETY: `T: Zeroable` asserts all-zero is valid for `T`.
-            unsafe { core::mem::zeroed() }
-        }
+        pub use bun_pod::zeroed;
     }
 }
 

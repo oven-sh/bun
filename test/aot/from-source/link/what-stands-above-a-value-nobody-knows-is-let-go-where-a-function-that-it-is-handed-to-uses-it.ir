@@ -1,0 +1,13 @@
+# the mark goes with the value through a parameter, a field and a result
+# -- source: main.js
+# function keep(value) {
+#   return { kept: value };
+# }
+# function use(box) {
+#   return box.kept.toFixed;
+# }
+# const given = JSON.parse(process.argv[2] ?? "5");
+# console.log(typeof use(keep(Object.getPrototypeOf(given))));
+# -- end of source
+# RUN: link lookups mechanisms=all
+# CHECK: lookup let-go NumberPrototype

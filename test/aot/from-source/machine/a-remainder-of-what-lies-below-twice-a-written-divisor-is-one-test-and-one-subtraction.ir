@@ -1,0 +1,18 @@
+# -- source: a-remainder-below-twice-its-divisor.ts
+# function ring(n: number): number { let head = 0, sum = 0; for (let i = 0; i < n; i++) { head = (head + 1) % 1000; sum = (sum + head) | 0; } return sum; }
+# function far(n: number): number { let head = 0, sum = 0; for (let i = 0; i < n; i++) { head = (head + 1) % 1000; sum = (sum + (head + 1001) % 1000) | 0; } return sum; }
+# (globalThis as any).keep = [ring, far];
+# -- end of source
+# f1 = ring, f2 = far
+# `head` lies in [0, 999], so `head + 1` lies from 0 up and below twice the divisor: the remainder is the dividend itself or the dividend less the divisor. The emitter writes one comparison, one
+# subtraction and a choice between the two, in place of the multiplication by the reciprocal, the shift, the multiplication back and the subtraction (9.8 cycles a turn against 4.0).
+# The control: `head + 1001` reaches 2000, twice the divisor, whose remainder is 0 and not 1000: there the reciprocal stays.
+# RUN: emit f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: = ZShr(
+# CHECK: Int32 @[[below]] = Below(
+# CHECK-NEXT: Int32 {{*}} = Select(@[[below]],
+# CHECK-NOT: = ZShr(
+# RUN(FAR): emit f2:Body mechanisms=all
+# FAR-LABEL: unit f2:Body
+# FAR: = ZShr(

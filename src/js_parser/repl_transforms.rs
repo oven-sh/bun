@@ -211,7 +211,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // Add the function declaration itself
                     inner_stmts.push(*stmt);
                 }
-                StmtData::SClass(mut class) => {
+                StmtData::SClass(class) => {
                     // For class declarations:
                     // Hoist as: var ClassName; (use var so it persists to vm context)
                     // Inner: ClassName = class ClassName {}
@@ -234,10 +234,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
 
                         // Convert class declaration to assignment: ClassName = class ClassName {}
-                        // G::Class is non-Copy (owns a Vec); the original
-                        // S::Class store entry is dead after this rewrite, so move it out.
-                        let class_value = core::mem::take(&mut class.class);
-                        let class_expr = self.new_expr(class_value, stmt.loc);
+                        let class_expr = self.new_expr(class.class, stmt.loc);
                         let class_id = self.new_expr(
                             E::Identifier {
                                 ref_: name_ref,
@@ -270,7 +267,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     //   import { a, b } from 'mod' -> var {a, b} = await import('mod')
                     //   import * as X from 'mod'   -> var X = await import('mod')
                     //   import 'mod'              -> await import('mod')
-                    let path_str: &'static [u8] = self.import_records.items()
+                    let path_str: &'a [u8] = self.import_records.items()
                         [import_data.import_record_index as usize]
                         .path
                         .text;
@@ -718,7 +715,6 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
     /// Create { __proto__: null, value: expr } wrapper object
     /// Uses null prototype to create a clean data object
     fn repl_wrap_expr_in_value_object<'bump>(&mut self, expr: Expr, bump: &'bump Bump) -> Expr {
-        // G::Property is non-Copy (owns Vec) → use bump Vec instead of alloc_slice_copy.
         let mut properties = BumpVec::<G::Property>::with_capacity_in(2, bump);
         // __proto__: null - creates null-prototype object
         properties.push(G::Property {

@@ -70,7 +70,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForV8Function { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSNodeHTTPServerSocket { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSX509Certificate { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSNodePerformanceHooksHistogram { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWasmStreamingCompiler { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 

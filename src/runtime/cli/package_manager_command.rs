@@ -74,9 +74,8 @@ impl InstalledFilter {
         if package_id >= lockfile.packages.len() {
             return false;
         }
-        let slice = lockfile.packages.slice();
-        let name = slice.items_name()[package_id];
-        let resolution = &slice.items_resolution()[package_id];
+        let name = lockfile.packages.items_name()[package_id];
+        let resolution = &lockfile.packages.items_resolution()[package_id];
         let buf = lockfile.buffers.string_bytes.as_slice();
         // Local sources live outside of node_modules.
         match resolution.tag {
@@ -131,7 +130,7 @@ pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
     pub(crate) fn handle_load_lockfile_errors_for(
-        load_lockfile: &LoadResult<'_>,
+        load_lockfile: &LoadResult,
         log_level: LogLevel,
         nothing_to: &str,
     ) {
@@ -177,9 +176,10 @@ impl PackageManagerCommand {
         Self::handle_load_lockfile_errors_for(&load_lockfile, LogLevel::Default, "hash");
 
         Output::flush();
-        Output::disable_buffering();
-        Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
-        Output::enable_buffering();
+        {
+            let _unbuffered = Output::disable_buffering_scope();
+            Output::writer().print(format_args!("{}", lockfile.fmt_meta_hash()))?;
+        }
         Global::exit(0);
     }
 
@@ -303,7 +303,7 @@ impl PackageManagerCommand {
         }
 
         if strings::eql_comptime(subcommand, b"scan") {
-            ScanCommand::exec_with_manager(&mut *ctx, pm, &cwd)?;
+            ScanCommand::exec_with_manager(pm, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"pack") {
             PackCommand::exec_with_manager(ctx, pm, &cwd)?;
@@ -384,9 +384,8 @@ impl PackageManagerCommand {
             }
             if !print_string {
                 Output::flush();
-                Output::disable_buffering();
+                let _unbuffered = Output::disable_buffering_scope();
                 Output::writer().print(format_args!("{}", pm.lockfile.fmt_meta_hash()))?;
-                Output::enable_buffering();
             }
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
@@ -782,9 +781,8 @@ impl PackageManagerCommand {
             }
             let log_level = pm.options.log_level;
             let pm_raw: *mut PackageManager = pm;
-            // SAFETY: the `Box<Lockfile>` pointee is a separate allocation, and
-            // `detect_and_load_other_lockfile` never reaches `manager.lockfile`.
-            let mut load_lockfile = unsafe {
+            // SAFETY: same split as `PackageManager::load_lockfile_from_cwd`, with the same FIXME.
+            let load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
@@ -812,12 +810,7 @@ impl PackageManagerCommand {
                 Global::exit(0);
             }
             package_json_write_back::write_migrated(pm);
-            let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
-            // SAFETY: `load_lockfile` is `Ok` (errors exited above), and `save_to_disk` reads only its
-            // scalar fields, never `ok.lockfile`, so `*lf` is the sole live view of the lockfile.
-            unsafe {
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+            pm.lockfile.save_to_disk(&load_lockfile, &pm.options);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;

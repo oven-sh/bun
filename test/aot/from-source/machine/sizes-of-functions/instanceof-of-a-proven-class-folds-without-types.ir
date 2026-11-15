@@ -1,0 +1,17 @@
+# f1 = read
+# -- source: instanceof-of-a-proven-class-folds-without-types.js
+# class Point {
+#   constructor(x) { this.x = x; }
+# }
+# function read(point) {
+#   if (point instanceof Point) return point.x;
+#   return String(point).length;
+# }
+# globalThis.answer = read(new Point(+input));
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 5, patches 0, moves 0, unlikely or rare 0.
+# RUN(X64): steps most:5 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 5

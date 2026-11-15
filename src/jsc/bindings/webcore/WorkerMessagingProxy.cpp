@@ -40,6 +40,7 @@
 #include "Worker.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/OwedOutOfMemoryError.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -71,7 +72,7 @@ void* WebWorker__create(
     size_t execArgvLen,
     BunString* preloadModulesPtr,
     size_t preloadModulesLen);
-// Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Any thread.
+// Raise a TerminationException in the worker VM at its next safepoint and wake its loop. Parent thread.
 void WebWorker__requestTermination(void*);
 // Toggle the keep-alive this worker holds on the parent event loop. Parent thread.
 void WebWorker__setRef(void*, bool);
@@ -464,7 +465,7 @@ void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
     });
 }
 
-bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, JSC::JSValue value)
+bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue value)
 {
     // Top of the worker's error-dispatch stack: neither the structured clone (which can run script
     // through getters even in NonThrowing mode) nor the `code` read may leave an exception behind.
@@ -486,21 +487,26 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         CLEAR_IF_EXCEPTION(scope);
     }
 
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
+    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy(), message = message.isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
         auto* globalObject = context.globalObject();
         auto& vm = JSC::getVM(globalObject);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-        JSC::JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing);
+        bool didFail = false;
+        JSC::JSValue deserialized = serialized->deserialize(*globalObject, globalObject, SerializationErrorMode::NonThrowing, &didFail);
         CLEAR_AND_RETURN_IF_EXCEPTION(scope, );
-        if (!errorCode.isNull()) {
-            if (auto* errorObject = deserialized.getObject())
-                errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
-        }
         ErrorEvent::Init init;
-        init.error = deserialized;
+        if (didFail) {
+            init.message = message;
+        } else {
+            if (!errorCode.isNull()) {
+                if (auto* errorObject = deserialized.getObject())
+                    errorObject->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, errorCode));
+            }
+            init.error = deserialized;
+        }
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     });
 }
@@ -512,10 +518,49 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
         postMessageErrorToWorkerObject(String { message });
         return;
     case WorkerOptions::Kind::Node:
-        if (!postSerializedErrorToWorkerObject(workerGlobalObject, error))
+        if (!postSerializedErrorToWorkerObject(workerGlobalObject, message, error))
             postMessageErrorToWorkerObject(String { message });
         return;
     }
+}
+
+void WorkerMessagingProxy::postOutOfMemoryErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        String limit = JSC::describeLimitOfMarkedBlockCage();
+        ErrorEvent::Init init;
+        switch (protectedThis->m_options.kind) {
+        case WorkerOptions::Kind::Web:
+            init.message = makeString("RangeError: Out of memory: "_s, limit);
+            break;
+        case WorkerOptions::Kind::Node:
+            init.error = JSC::createOutOfMemoryError(context.globalObject(), limit);
+            break;
+        }
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
+}
+
+void WorkerMessagingProxy::postFailedToStartErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        ErrorEvent::Init init;
+        switch (protectedThis->m_options.kind) {
+        case WorkerOptions::Kind::Web:
+            init.message = "TypeError: Failed to spawn worker thread"_s;
+            break;
+        case WorkerOptions::Kind::Node:
+            init.error = JSC::createTypeError(context.globalObject(), "Failed to spawn worker thread"_s);
+            break;
+        }
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
 }
 
 void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent)

@@ -1,0 +1,24 @@
+# -- source: main.cjs
+# const held = JSON.parse("{}"), name = JSON.parse('"rows"');
+# let counted = 9;
+# Object.defineProperty(held, "rows", { get() { counted = Math.max(counted - 1, 0); return [5, 6, 7, 8, 9, 10, 11, 12, 13].slice(0, counted); } });
+# const data = [held][counted & 0], w = [name][counted & 0];
+# function f() { let s = 0; for (let i = 0; i < data[w].length; i++) s = s + data[w][i]; return s; }
+# print(f(), counted);
+# -- end of source
+# The holder and the key of the row `data[w]` are read from module variables. The row is looked up in the preheader and is remembered across the iterations.
+# With testing=CheckProofsAtRunTime the read is also built inside the iteration, and its result is checked against the remembered row.
+# Here an accessor returns a different array at each call. The operation that runs no code returns absent, and the loop runs as written.
+# The injected fault, testing=UseGenericOwnKeyReads, makes the lookup take the generic path, which runs code. The wrong row is remembered, and the check crashes the process.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 18 2
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 18 2
+# HELD-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,UseGenericOwnKeyReads
+# STOPPED: bun: internal AOT error: redundancy elimination check failed
+# STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# STOPPED: crashed with

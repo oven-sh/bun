@@ -1,0 +1,50 @@
+#[path = "../report/build_rows.rs"]
+pub mod build_rows;
+#[path = "../report/message.rs"]
+pub mod message;
+
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
+use bun_trim::{Decision, UsedFeatures};
+
+pub use self::message::{
+    ReportMessage, add_messages_to_log, is_json_report, is_message_report, write_lines,
+};
+use crate::Opaque;
+use crate::engine::EngineResult;
+use crate::linked;
+pub use crate::linked::{
+    bun_aot_collect_report_entries as collect_entries,
+    bun_aot_report_entries_to_messages as to_messages,
+    bun_aot_write_developer_options as write_developer_options,
+    bun_aot_write_summary as write_summary,
+};
+use crate::statistics::Statistics;
+
+pub struct SourceTexts(pub Opaque);
+
+#[derive(Debug)]
+pub struct SourceChanged {
+    pub path: Vec<u8>,
+}
+
+pub struct ReportEntry(pub Opaque);
+
+impl ReportEntry {
+    pub fn line(kind: ExplainSet, text: Vec<u8>) -> ReportEntry {
+        linked::bun_aot_new_report_line(kind, text)
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct ReportInput<'a> {
+    pub engine: &'a EngineResult,
+    pub texts: &'a SourceTexts,
+    pub statistics: &'a Statistics,
+    pub options: &'a AotOptions,
+    pub used_features: &'a UsedFeatures,
+    pub decision: Option<&'a Decision>,
+}
+
+pub mod obfuscation_map {
+    pub use crate::linked::bun_aot_write_obfuscation_map as write;
+}

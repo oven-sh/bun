@@ -5,9 +5,11 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::ptr::NonNull;
+use core::sync::atomic::AtomicU32;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
+use bun_threading::WaitGroup;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
@@ -15,6 +17,7 @@ use bun_core::ThreadLock;
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
+pub(crate) use bv2_impl::write_metafile_output;
 pub use bv2_impl::{
     CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
@@ -26,8 +29,7 @@ pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, Impor
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
-    OnDependenciesAnalyze, singleton,
+    BuildResult, DependenciesScanner, DependenciesScannerResult, OnDependenciesAnalyze,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -37,16 +39,13 @@ use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
 use crate::transpiler::Transpiler;
-use crate::{Index, IndexInt, LinkerContext};
+use crate::{Index, IndexInt};
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
 pub use crate::ParseTask;
 
 /// `jsc::api::JSBundler::Plugin` — re-exported from the canonical def below.
 pub use api::JSBundler::Plugin as JSBundlerPlugin;
-
-/// `BundleV2.JSBundleCompletionTask` — re-exported from the canonical def below.
-pub use bv2_impl::JSBundleCompletionTask;
 
 /// `jsc::api::JSBundler::FileMap` — re-exported from the canonical def below.
 pub use api::JSBundler::FileMap;
@@ -58,40 +57,24 @@ pub struct PendingImport {
 }
 
 pub struct BundleV2<'a> {
-    // `ssr_transpiler` may alias this same transpiler when the SSR graph
-    // isn't separate, so it stays `*mut`; `transpiler` is `&'a mut` for
-    // ergonomic field access throughout the bundler bodies.
     pub transpiler: &'a mut Transpiler<'a>,
-    /// When Server Components is enabled, this is used for the client bundles
-    /// and `transpiler` is used for the server bundles.
-    ///
-    /// `ParentRef` (not raw `NonNull`): set once in `init` (from `BakeOptions`
-    /// or `initialize_client_transpiler`), the pointee is live for `'a`, and
-    /// the read-only projection (`client_transpiler_ref`) is the common path —
-    /// so the safe `Deref` removes the per-accessor `unsafe { p.as_ref() }`.
-    /// The two `&mut` sites in `transpiler_for_target` go through the explicit
-    /// `unsafe assume_mut` escape hatch.
-    pub(crate) client_transpiler: Option<bun_ptr::ParentRef<Transpiler<'a>, bun_ptr::Mut>>,
-    /// Owns the storage backing `client_transpiler` when it was lazily created
-    /// by `initialize_client_transpiler` (browser-target request from a
-    /// server-side build). Stays `None` when `client_transpiler` is borrowed
-    /// from `BakeOptions` (DevServer owns that one). Dropped in
-    /// `deinit_without_freeing_arena` so the deep-cloned `BundleOptions` /
-    /// `Resolver` global-heap fields are released — `arena.alloc` would leak
-    /// them since bumpalo never runs `Drop`.
-    pub(crate) owned_client_transpiler: Option<Box<Transpiler<'a>>>,
-    /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
-    pub(crate) ssr_transpiler: *mut Transpiler<'a>,
+    pub(crate) other_transpilers: OtherTranspilers<'a>,
+    /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
+    pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
     pub(crate) framework: Option<bake::Framework>,
-    pub graph: Graph<'a>,
-    // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`.
-    pub linker: LinkerContext<'a>,
+    pub(crate) r#loop: EventLoop,
+    pub(crate) has_any_css_locals: AtomicU32,
+    /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
+    pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
+    /// For the linker's source map tasks. Here because the linker may move while they run.
+    pub(crate) line_offset_wait_group: WaitGroup,
+    pub(crate) quoted_contents_wait_group: WaitGroup,
     // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
     // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
     pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
-    pub completion: Option<dispatch::CompletionHandle>,
+    pub completion: Option<dispatch::CompletionHandle<'a>>,
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
     /// how parse worker threads deliver work back to it.
     pub js_poster: Option<bun_event_loop::JsPoster>,
@@ -145,43 +128,88 @@ pub struct BundleV2<'a> {
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
 }
 
+/// For the files whose target is not the one of `BundleV2::transpiler`.
+#[derive(Default)]
+pub(crate) struct OtherTranspilers<'a> {
+    /// For the browser's files of a server-side build.
+    client: Option<ClientTranspiler<'a>>,
+    /// See `bake.Framework.ServerComponents.separate_ssr_graph`.
+    ssr: Option<&'a mut Transpiler<'a>>,
+}
+
+enum ClientTranspiler<'a> {
+    FromBake(&'a mut Transpiler<'a>),
+    Owned(Box<Transpiler<'a>>),
+}
+
+impl<'a> OtherTranspilers<'a> {
+    fn client(&self) -> Option<&Transpiler<'a>> {
+        self.client.as_ref().map(|client| match client {
+            ClientTranspiler::FromBake(client) => &**client,
+            ClientTranspiler::Owned(client) => &**client,
+        })
+    }
+
+    fn ensure_client(
+        &mut self,
+        main: &Transpiler<'a>,
+        arena: &'a bun_alloc::Arena,
+    ) -> &mut Transpiler<'a> {
+        let client = self.client.get_or_insert_with(|| {
+            match BundleV2::create_client_transpiler(main, arena) {
+                Ok(client) => ClientTranspiler::Owned(client),
+                Err(e) => panic!("Failed to initialize client transpiler: {}", e.name()),
+            }
+        });
+        match client {
+            ClientTranspiler::FromBake(client) => client,
+            ClientTranspiler::Owned(client) => client,
+        }
+    }
+
+    /// `BundleV2::transpiler_for_target`, for callers that use the rest of the bundle meanwhile.
+    fn for_target<'t>(
+        &'t mut self,
+        main: &'t mut Transpiler<'a>,
+        arena: &'a bun_alloc::Arena,
+        target: options::Target,
+    ) -> &'t mut Transpiler<'a> {
+        match target {
+            Target::Browser if main.options.target.is_server_side() => {
+                self.ensure_client(main, arena)
+            }
+            Target::ServerComponentsSsr => self.ssr.as_deref_mut().unwrap_or(main),
+            _ => main,
+        }
+    }
+}
+
 bun_core::declare_scope!(Bundle, visible);
 bun_core::declare_scope!(scan_counter, visible);
 
-/// Values are raw `*mut ParseTask` (arena-owned by `graph.heap`); the map only
-/// dedups by path during a single `on_parse_task_complete` pass.
-pub(crate) type ResolveQueue = StringHashMap<*mut ParseTask>;
+/// Dedups by path during a single `on_parse_task_complete` pass.
+pub(crate) type ResolveQueue<'a> = StringHashMap<&'a mut ParseTask<'a>>;
 
 pub struct BakeOptions<'a> {
     pub framework: bake::Framework,
-    pub client_transpiler: NonNull<Transpiler<'a>>,
-    pub ssr_transpiler: NonNull<Transpiler<'a>>,
+    pub client_transpiler: &'a mut Transpiler<'a>,
+    /// `Some` with a separate SSR graph.
+    pub ssr_transpiler: Option<&'a mut Transpiler<'a>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
 }
 
 impl<'a> BundleV2<'a> {
-    // ── raw-ptr accessors ─────────────────────────────────────────────────
-    // `ssr_transpiler` is `*mut` because it may alias `transpiler`
-    // (same pointer in both slots when no SSR graph).
-    // Callers go through these accessors so the unsafe deref is centralized.
     #[inline]
     pub(crate) fn transpiler(&self) -> &Transpiler<'a> {
         &*self.transpiler
     }
 
+    /// The loop that runs this bundle pass. Other threads only post to it.
     #[inline]
-    pub fn r#loop(&mut self) -> &mut EventLoop {
-        &mut self.linker.r#loop
-    }
-
-    /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it.
-    #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
-        self.linker
-            .any_loop_mut()
-            .expect("BundleV2.linker.loop must be set before plugins run")
+    pub fn any_loop(&self) -> &bun_event_loop::AnyEventLoop {
+        let any_loop = self.r#loop.expect("BundleV2.loop must be set to parse");
+        // SAFETY: BACKREF — set once in `init` from a loop that outlives the bundle pass.
+        unsafe { any_loop.as_ref() }
     }
 
     #[inline]
@@ -189,12 +217,9 @@ impl<'a> BundleV2<'a> {
         self.dev_server.as_ref()
     }
 
-    /// Safe projection of the `client_transpiler` backref. Set once in `init`
-    /// (from `BakeOptions` or `initialize_client_transpiler`); the pointee is
-    /// live for `'a`.
     #[inline]
     pub(crate) fn client_transpiler_ref(&self) -> Option<&Transpiler<'a>> {
-        self.client_transpiler.as_deref()
+        self.other_transpilers.client()
     }
 
     /// Safe projection of the `plugins` backref (opaque C++ `BunPlugin`).
@@ -239,40 +264,9 @@ impl<'a> BundleV2<'a> {
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
-        // SAFETY: all three pointers are live for `'a` (set in `init`); the
-        // `client_transpiler` arm is only reached when bake populated it.
-        // Outside of server-components / dev-server,
-        // the only case that doesn't return the main transpiler is a
-        // browser-target request from a server-side build, which lazily
-        // spins up a client transpiler.
-        if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
-            if target == Target::Browser && self.transpiler.options.target.is_server_side() {
-                if let Some(p) = self.client_transpiler {
-                    // SAFETY: client_transpiler is live for `'a` (set in `init`);
-                    // pointer carries write provenance (constructed from `&mut`
-                    // / `NonNull::from(&mut _)`), and `&mut self` excludes any
-                    // overlapping `client_transpiler_ref()` borrow.
-                    return unsafe { p.assume_mut() };
-                }
-                return self.initialize_client_transpiler().unwrap_or_else(|e| {
-                    panic!("Failed to initialize client transpiler: {}", e.name())
-                });
-            }
-            return &mut *self.transpiler;
-        }
-        // SAFETY: all three pointers are live for `'a` (set in `init`); the
-        // `client_transpiler` arm is only reached when bake populated it.
-        unsafe {
-            match target {
-                Target::Browser => self.client_transpiler.unwrap().assume_mut(),
-                Target::ServerComponentsSsr => &mut *self.ssr_transpiler,
-                _ => &mut *self.transpiler,
-            }
-        }
+        self.other_transpilers
+            .for_target(self.transpiler, self.graph.heap, target)
     }
-
-    // draft `on_parse_task_complete` / `deinit_without_freeing_arena`
-    // removed — canonical bodies live in the later impl blocks below.
 }
 // ══════════════════════════════════════════════════════════════════════════
 // `BundleV2` method bodies + supporting types.
@@ -324,6 +318,7 @@ pub mod bv2_impl {
     //     make mimalloc-debug
     //
 
+    use core::cell::OnceCell;
     use core::ptr::NonNull;
     use std::io::Write as _;
 
@@ -334,7 +329,7 @@ pub mod bv2_impl {
     use crate::options_impl::TargetExt;
     use crate::transpiler::Transpiler;
 
-    use crate::{bun_css, import_record};
+    use crate::import_record;
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
     use self::bake_types as bake;
@@ -738,7 +733,7 @@ pub mod bv2_impl {
             // `Plugin = opaque {}` — backed by C++ `BunPlugin`. The bundler calls
             // `has_any_matches` / `match_on_load` / `match_on_resolve` directly
             // (no JSC types needed — only `BunString` / raw context ptrs). The
-            // JSC-aware methods (`create`, `add_plugin`, `global_object`, …) are
+            // JSC-aware methods (`add_plugin`, `global_object`, …) are
             // added by `bun_runtime` via the `PluginJscExt` extension trait so
             // this crate stays free of `JSValue` / `JSGlobalObject`.
             bun_opaque::opaque_ffi! { pub struct Plugin; }
@@ -960,30 +955,18 @@ pub mod bv2_impl {
                 /// joined against `dirname(source_file)` (with Windows
                 /// drive-letter / separator normalization).
                 ///
-                /// `arena` is the build's bump arena (`BundleV2::arena()`);
-                /// the matched key is copied into it so the returned
-                /// `bun_resolver::Result`'s `Path<'static>` borrows arena memory
-                /// (lives for the entire build pass) instead of the map's key
-                /// storage.
-                pub(crate) fn resolve(
+                /// The result borrows a copy of the matched key in `arena`, not the map's key storage.
+                pub(crate) fn resolve<'b>(
                     &self,
-                    arena: &bun_alloc::Arena,
+                    arena: &'b bun_alloc::Arena,
                     source_file: &[u8],
                     specifier: &[u8],
-                ) -> Option<bun_resolver::Result> {
+                ) -> Option<bun_resolver::Result<'b>> {
                     if self.map.is_empty() {
                         return None;
                     }
 
-                    // SAFETY: ARENA — `arena` is the build-pass bump arena
-                    // (never freed before the `Result` is consumed); detaching the
-                    // borrow lifetime matches the established `Path<'static>`
-                    // convention used throughout `bun_resolver` (PORTING.md
-                    // §Lifetimes: ARENA → `&'bump T`).
-                    let dupe = |key: &[u8]| -> &'static [u8] {
-                        // SAFETY: see ARENA note above — bytes live in the build-pass arena.
-                        unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(key)) }
-                    };
+                    let dupe = |key: &[u8]| -> &'b [u8] { arena.alloc_slice_copy(key) };
 
                     // Direct key match. Return the map-owned key, not the parameter.
                     if let Some((key, _)) = self.get_key_value(specifier) {
@@ -1000,7 +983,7 @@ pub mod bv2_impl {
                         let abs_source_file: &[u8] = if bun_paths::is_absolute_loose(source_file) {
                             source_file
                         } else {
-                            bun_resolver::fs::FileSystem::instance()
+                            bun_resolver::fs::FileSystem::get()
                                 .abs_buf_checked(&[source_file], &mut *abs_source_buf)?
                         };
 
@@ -1032,7 +1015,7 @@ pub mod bv2_impl {
                             {
                                 b"/"
                             } else {
-                                bun_resolver::fs::FileSystem::instance().top_level_dir()
+                                bun_resolver::fs::FileSystem::get().top_level_dir()
                             }
                         } else {
                             source_dir
@@ -1059,13 +1042,8 @@ pub mod bv2_impl {
                     None
                 }
 
-                /// Build a `bun_resolver::Result` for a matched key. `key` must
-                /// already satisfy `'static` — see [`resolve`], which copies the
-                /// map-owned key into the build's bump arena before calling here so
-                /// the resulting `Path<'static>` borrows arena memory rather than
-                /// forging a `'static` from a map borrow.
                 #[inline]
-                fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
+                fn result_for_key(key: &[u8]) -> bun_resolver::Result<'_> {
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
                             primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
@@ -1123,7 +1101,7 @@ pub mod bv2_impl {
                             b"Bun.build was cancelled: the VM that owns its plugins shut down",
                         ),
                         location: Some(bun_ast::Location {
-                            file: std::borrow::Cow::Owned(file.to_vec()),
+                            file: Box::from(file),
                             line: -1,
                             column: -1,
                             ..Default::default()
@@ -1133,6 +1111,12 @@ pub mod bv2_impl {
                 }
             }
 
+            #[derive(Copy, Clone)]
+            pub enum RequestOwner {
+                Bundle,
+                Waiter(core::ptr::NonNull<crate::aot::plugins::PluginWaiter>),
+            }
+
             /// Both `js_task` and `task`
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
@@ -1140,6 +1124,7 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
+                pub owner: RequestOwner,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
                 pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
@@ -1149,6 +1134,7 @@ pub mod bv2_impl {
                     bv2: core::ptr::null_mut(),
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
+                    owner: RequestOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1199,6 +1185,7 @@ pub mod bv2_impl {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
+                    owner: RequestOwner::Bundle,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
@@ -1227,7 +1214,7 @@ pub mod bv2_impl {
                 pub fn answer_cancelled(&mut self) {
                     self.value = ResolveValue::Err(cancelled_msg(&self.import_record.source_file));
                     // SAFETY: `bv2` outlives every request of its pass (it cannot finish before this answer).
-                    unsafe { &mut *self.bv2 }.on_resolve_async(self);
+                    unsafe { &*self.bv2 }.on_resolve_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1282,7 +1269,8 @@ pub mod bv2_impl {
                 pub path: Box<[u8]>,
                 pub(crate) namespace: Box<[u8]>,
                 pub value: LoadValue,
-                pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
+                pub owner: RequestOwner,
+                pub parse_task: bun_ptr::BackRef<ParseTask<'static>, bun_ptr::Mut>,
                 /// Defer may only be called once.
                 pub called_defer: bool,
                 /// `.defer()`ed during this `Graph::defer_epoch`: until that epoch's batch is drained (or
@@ -1304,10 +1292,17 @@ pub mod bv2_impl {
                         .unwrap_or(Loader::Js);
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
-                    parse_task: bun_ptr::BackRef::new_mut(parse),
+                    // SAFETY: the arena-allocated task outlives the `Load`. Its `'a` is
+                    // erased as for the thread pool: see `parse_task::task_callback`.
+                    parse_task: unsafe {
+                        bun_ptr::BackRef::from_raw_mut(
+                            std::ptr::from_mut::<ParseTask<'_>>(parse).cast::<ParseTask<'static>>(),
+                        )
+                    },
                     source_index: parse.source_index,
                     default_loader,
                     value: LoadValue::Pending,
+                    owner: RequestOwner::Bundle,
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     called_defer: false,
@@ -1323,7 +1318,7 @@ pub mod bv2_impl {
                 /// handed to the thread-pool *after* the plugin load resolves, so
                 /// no concurrent mutation overlaps a `&` borrow here.
                 #[inline]
-                pub(crate) fn parse_task(&self) -> &ParseTask {
+                pub(crate) fn parse_task(&self) -> &ParseTask<'static> {
                     self.parse_task.get()
                 }
                 /// Exclusive access to the wrapped `ParseTask`.
@@ -1332,7 +1327,7 @@ pub mod bv2_impl {
                 /// the `Load` itself is uniquely borrowed; the `ParseTask` is not
                 /// yet scheduled at any call site that uses this accessor.
                 #[inline]
-                pub(crate) fn parse_task_mut(&mut self) -> &mut ParseTask {
+                pub(crate) fn parse_task_mut(&mut self) -> &mut ParseTask<'static> {
                     // SAFETY: see fn doc — exclusivity established by `&mut self`;
                     // backref liveness established by the `BackRef` invariant.
                     unsafe { self.parse_task.get_mut() }
@@ -1363,7 +1358,7 @@ pub mod bv2_impl {
                 pub fn answer_cancelled(&mut self) {
                     self.value = LoadValue::Err(cancelled_msg(&self.path));
                     // SAFETY: as `Resolve::answer_cancelled`.
-                    unsafe { &mut *self.bv2 }.on_load_async(self);
+                    unsafe { &*self.bv2 }.on_load_async(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1435,7 +1430,9 @@ pub mod bv2_impl {
                 }
             }
             impl LoadDeferred {
+                #[inline(never)]
                 pub fn run(&mut self) {
+                    bun_removable_features::removable_definition!(Bundler, Self::run);
                     // SAFETY: `bv2` is a live backref set in `Load::init`.
                     let bv2 = unsafe { &mut *self.0.bv2 };
                     BundleV2::on_notify_defer(&mut self.0, bv2);
@@ -1450,12 +1447,12 @@ pub mod bv2_impl {
     use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
+    use crate::LinkerGraph;
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
 
     use crate::chunk::{self, Chunk};
-    use crate::linker_graph::LinkerGraph;
     use crate::options::{self, Loader, Target};
     use crate::parse_task::{self, ParseTask};
     use crate::thread_pool::ThreadPool;
@@ -1473,6 +1470,8 @@ pub mod bv2_impl {
     // static instances and registers hooks at init. See PORTING.md §Dispatch.
     // ══════════════════════════════════════════════════════════════════════════
     pub mod dispatch {
+        use core::sync::atomic::{AtomicBool, Ordering};
+
         pub use crate::{DevServerHandle, DevServerHandleKind};
 
         impl DevServerHandle {
@@ -1532,7 +1531,6 @@ pub mod bv2_impl {
             ) -> Option<Box<[u8]>>;
 
             safe fn __bun_jsc_encoder_string_table_new() -> core::ptr::NonNull<EncoderStringTable>;
-            pub(crate) safe fn __bun_jsc_destroy_bytecode_cache_vm();
             safe fn __bun_jsc_encoder_string_table_take(
                 table: core::ptr::NonNull<EncoderStringTable>,
                 hot_strings: &[u64],
@@ -1597,8 +1595,7 @@ pub mod bv2_impl {
             /// reloader generic (T6), so this is a definer-prefixed extern hook.
             /// `'static` matches the impl-side signature; the sole caller
             /// (`bun build --watch`) leaks the `Box<BundleV2>` via
-            /// `Box::into_raw` once `generate_from_cli` returns. The watcher is
-            /// installed after the last fallible step in `BundleV2::init`, so the
+            /// `Box::into_raw` once `generate_from_cli` returns, so the
             /// box is never dropped while the watcher holds a pointer to it.
             fn __bun_jsc_enable_hot_module_reloading_for_bundler(
                 bv2: core::ptr::NonNull<super::BundleV2<'static>>,
@@ -1799,52 +1796,16 @@ pub mod bv2_impl {
             )
         }
 
-        /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
-        /// concrete struct lives in `bun_runtime` (its fields name `Config`/
-        /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things
-        /// from it (whether the result is an error, and the concurrent-task
-        /// enqueue), so the high tier hands the bundler an erased owner +
-        /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
-        pub struct CompletionDispatch {
-            /// Whether the VM that owns the plugins is shutting down: stop
-            /// waiting for their answers and fail the build (any thread).
-            pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
-            /// Folds the event-loop field access + enqueue so the bundler
-            /// needn't name the JSC event-loop type.
-            pub enqueue_task_concurrent: unsafe fn(
-                core::ptr::NonNull<super::JSBundleCompletionTask>,
-                *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
-            ),
-        }
+        /// How a `Bun.build` reaches the VM that called it, which owns the plugins.
         #[derive(Copy, Clone)]
-        pub struct CompletionHandle {
-            pub owner: core::ptr::NonNull<super::JSBundleCompletionTask>,
-            pub vtable: &'static CompletionDispatch,
+        pub struct CompletionHandle<'a> {
+            /// That VM is shutting down: stop waiting for the plugins' answers and fail the build.
+            pub cancelled: &'a AtomicBool,
+            pub poster: &'a dyn bun_event_loop::PostToJs,
         }
-        // SAFETY: erased `*mut JSBundleCompletionTask` backref — set by the JS
-        // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
-        // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
-        unsafe impl Send for CompletionHandle {}
-        // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
-        // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
-        // sharing across threads is not justified. The handle only needs to *move*
-        // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
-        // becomes necessary, split out an enqueue-only wrapper and make only that
-        // type `Sync`.
-        impl CompletionHandle {
-            #[inline]
+        impl CompletionHandle<'_> {
             pub(crate) fn is_cancelled(&self) -> bool {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.is_cancelled)(self.owner) }
-            }
-            #[inline]
-            pub(crate) fn enqueue_task_concurrent(
-                &self,
-                task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
-            ) {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task.as_ptr()) }
+                self.cancelled.load(Ordering::SeqCst)
             }
         }
     }
@@ -1852,42 +1813,6 @@ pub mod bv2_impl {
     /// `bun.jsc.AnyEventLoop` — re-export the linker's alias
     /// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
     pub use crate::linker_context_mod::EventLoop;
-
-    // `JSBundleCompletionTask` — typed-ptr marker for
-    // `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
-    // fields name `Config`/`Plugin`/`HTMLBundle::Route`); the bundler only ever
-    // holds a `NonNull<JSBundleCompletionTask>` inside [`dispatch::CompletionHandle`]
-    // and never dereferences it. Nomicon opaque-FFI pattern: ZST with
-    // `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
-    // and has no usable size/layout in this crate.
-    bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
-
-    /// Erase `&[u8]` to `&'static [u8]` for storage in lifetime-erased
-    /// `Path<'static>` slots (`ImportRecord.path`, `Graph.input_files`).
-    ///
-    /// # Safety
-    /// Caller guarantees `s` is one of:
-    ///   - a `'static` literal,
-    ///   - interned in `FilenameStore`/`DirnameStore` (process-lifetime BSS lists),
-    ///   - allocated from the bundle-pass arena (`BundleV2::arena()`), in which
-    ///     case the returned reference is valid only for the bundle pass and the
-    ///     consuming `Path` must not outlive it.
-    /// All call sites in this file satisfy one of these; this is the documented
-    /// arena-erasure convention (PORTING.md §Type Mapping: arena-owned struct
-    /// fields use erased lifetimes).
-    #[inline(always)]
-    unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
-        // SAFETY: upheld by caller per fn contract.
-        unsafe { bun_ptr::detach_lifetime(s) }
-    }
-    /// Erase a resolver-borrowed `Path<'_>` to `'static`. Safe only because every
-    /// caller passes paths whose backing bytes are arena-interned for the bundle's
-    /// lifetime (see `interned_slice` / `dupe_alloc`).
-    #[inline]
-    fn path_as_static(p: &Fs::Path<'_>) -> Fs::Path<'static> {
-        // SAFETY: caller contract above.
-        unsafe { (*p).into_static() }
-    }
 
     /// Logs resolver errors that `resolve()` returns without writing to any
     /// log so `has_errors()` actually fires. Returns `true` when `err` is one
@@ -1929,74 +1854,44 @@ pub mod bv2_impl {
     pub use super::{BakeOptions, BundleV2, PendingImport};
 
     impl<'a> BundleV2<'a> {
-        /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
-        /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
-        /// `completion` handle carries the `&'static` vtable.
         pub(crate) fn enqueue_on_js_loop_for_plugins(
             &mut self,
-            task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+            task: Box<bun_event_loop::ConcurrentTask::ConcurrentTask>,
         ) {
             debug_assert!(self.plugins.is_some());
-            if let Some(completion) = self.completion {
-                // From Bun.build — the completion posts it to its VM (through its ticket, via the vtable).
-                completion.enqueue_task_concurrent(task);
-                return;
-            }
-            // From bake where the loop running the bundle is also the loop running
-            // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
-            let poster = self
-                .js_poster
-                .as_ref()
-                .expect("No JavaScript event loop for transpiler plugins to run on");
-            if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
-                // The JS VM running the plugins was torn down mid-bundle; the
-                // plugin hop will never run. Free the task if it is heap-owned.
-                // SAFETY: refused ⇒ still ours.
-                unsafe { bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(task) };
-            }
+            let poster = match self.completion {
+                Some(completion) => completion.poster,
+                // From bake, where the loop running the bundle also runs the plugins.
+                None => (self.js_poster.as_deref())
+                    .expect("No JavaScript event loop for transpiler plugins to run on"),
+            };
+            // Refused: the VM was torn down mid-bundle, the hop never runs.
+            let _ = poster.post(task);
         }
 
         fn ensure_client_transpiler(&mut self) {
-            if self.client_transpiler.is_none() {
-                let _ = self
-                    .initialize_client_transpiler()
-                    .unwrap_or_else(|e: Error| {
-                        panic!("Failed to initialize client transpiler: {}", e.name());
-                    });
-            }
+            self.other_transpilers
+                .ensure_client(self.transpiler, self.graph.heap);
         }
 
-        pub(crate) fn initialize_client_transpiler(
-            &mut self,
-        ) -> Result<&mut Transpiler<'a>, Error> {
+        #[cold]
+        pub(super) fn create_client_transpiler(
+            this_transpiler: &Transpiler<'a>,
+            arena: &'a bun_alloc::Arena,
+        ) -> Result<Box<Transpiler<'a>>, Error> {
             // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
             // (per-field deep clone), mutates the browser-specific options with
             // ordinary assignment (every field is owned by the clone, so `Drop` on
             // the overwritten value is correct), then boxes it on the global heap
             // (NOT the bump arena — the clone holds `Box`/`Vec`/`MimallocArena`
-            // fields that need `Drop` to run) and wires the self-referential
-            // `linker`/`macro_context`. The box is parked on
-            // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
-            // releases it.
+            // fields that need `Drop` to run).
 
             // `arena` is only the scratch param for `Transpiler::for_worker`; the
             // returned `Transpiler` itself is NOT placed in it.
-            // SAFETY: `graph.heap` outlives the bundle pass; erase the `&self`
-            // borrow so the `'a` widen inside `for_worker` doesn't keep `self`
-            // borrowed.
-            let arena: &'a bun_alloc::Arena =
-                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-
-            let this_transpiler: &Transpiler<'a> = &*self.transpiler;
             let this_compile = this_transpiler.options.compile_mode.is_executable();
             let this_env = this_transpiler.env;
 
-            // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
-            // outlives this `BundleV2<'a>`; `for_worker` widens those borrows to
-            // the same `'a`.
-            let mut ct: Transpiler<'a> =
-                unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
+            let mut ct = Transpiler::for_worker(this_transpiler, arena, this_transpiler.log);
 
             ct.options.target = Target::Browser;
             // Don't inherit SSR mode from the server target: the SSR pass
@@ -2029,14 +1924,10 @@ pub mod bv2_impl {
                 ct.options.public_path = b"/".to_vec().into_boxed_slice();
             }
 
-            // Move into a stable heap slot, then wire self-refs at the final
-            // address. `Box` (global mimalloc heap) so `Drop` runs on the
+            // `Box` (global mimalloc heap) so `Drop` runs on the
             // deep-cloned `BundleOptions`/`Resolver` fields; `arena.alloc` would
             // leak them (bumpalo never drops).
             let mut boxed: Box<Transpiler<'a>> = Box::new(ct);
-            // Log/allocator/linker-resolver/macro-context/cache wiring is all
-            // handled by `for_worker` + `wire_after_move`.
-            boxed.wire_after_move();
 
             // `configure_defines` early-returns on `options.defines_loaded` (cloned
             // as `true`); kept for spec parity.
@@ -2047,15 +1938,7 @@ pub mod bv2_impl {
             boxed.sync_resolver_opts();
             boxed.resolver.env_loader = NonNull::new(this_env.cast());
 
-            // Park the owning Box first, then derive both the published `NonNull`
-            // and the returned `&mut` from its final resting place. Taking the
-            // pointer *before* moving `boxed` into `self` would give it stale
-            // provenance under Stacked Borrows (Box retags on move and asserts
-            // uniqueness, invalidating any previously-derived raw pointer).
-            self.owned_client_transpiler = Some(boxed);
-            let ct: &mut Transpiler<'a> = self.owned_client_transpiler.as_deref_mut().unwrap();
-            self.client_transpiler = Some(bun_ptr::ParentRef::from_ref_mut(&mut *ct));
-            Ok(ct)
+            Ok(boxed)
         }
 
         /// By calling this function, it implies that the returned log *will* be
@@ -2066,21 +1949,34 @@ pub mod bv2_impl {
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> &mut bun_ast::Log {
-            if let Some(dev) = self.dev_server_handle() {
+            Self::resolution_log(
+                &mut self.dev_server,
+                &mut self.transpiler,
+                abs_path,
+                bake_graph,
+            )
+        }
+
+        /// `log_for_resolution_failures`, for callers that use the rest of the bundle meanwhile.
+        fn resolution_log<'s>(
+            dev_server: &'s mut Option<dispatch::DevServerHandle>,
+            transpiler: &'s mut &mut Transpiler<'_>,
+            abs_path: &[u8],
+            bake_graph: bake::Graph,
+        ) -> &'s mut bun_ast::Log {
+            if let Some(dev) = dev_server {
                 // CYCLEBREAK GENUINE: DevServer → vtable.
                 // SAFETY: owner is a live *mut DevServer per handle invariant.
                 return unsafe { &mut *dev.log_for_resolution_failures(abs_path, bake_graph) };
             }
-            // SAFETY: `transpiler.log` is set from a live `*mut Log` in `init` and
-            // outlives `BundleV2`.
-            self.transpiler.log_mut()
+            transpiler.log_mut()
         }
     }
 
-    pub(crate) struct ReachableFileVisitor<'a> {
+    pub(crate) struct ReachableFileVisitor<'a, 'bump> {
         pub(crate) reachable: Vec<Index>,
         pub(crate) visited: DynamicBitSet,
-        pub(crate) all_import_records: &'a mut [import_record::List<'a>],
+        pub(crate) all_import_records: &'a mut [import_record::List<'bump>],
         pub(crate) all_loaders: &'a [Loader],
         pub(crate) all_urls_for_css: &'a [&'a [u8]],
         pub(crate) redirects: &'a [u32],
@@ -2090,7 +1986,7 @@ pub mod bv2_impl {
         pub(crate) all_targets: &'a [Target],
         /// Files which are Server Component Boundaries
         pub(crate) scb_bitset: Option<DynamicBitSetUnmanaged>,
-        pub(crate) scb_list: server_component_boundary::Slice<'a>,
+        pub(crate) scb_list: &'a server_component_boundary::List,
 
         /// Files inlined in CSS whose output path a JS or HTML importer or their own entry point chunk prints
         pub(crate) additional_files_needed_outside_css: &'a mut DynamicBitSetUnmanaged,
@@ -2112,7 +2008,7 @@ pub mod bv2_impl {
         },
     }
 
-    impl<'a> ReachableFileVisitor<'a> {
+    impl ReachableFileVisitor<'_, '_> {
         const MAX_REDIRECTS: usize = 64;
 
         // Find all files reachable from all entry points. This order should be
@@ -2312,24 +2208,6 @@ pub mod bv2_impl {
         }
     }
 
-    /// RAII guard returned by [`BundleV2::decrement_scan_counter_on_drop`].
-    /// Decrements the bundle's pending-scan counter when dropped, without
-    /// holding a unique borrow across
-    /// the body. Stores a raw pointer; caller guarantees the `BundleV2` outlives it.
-    pub struct ScanCounterGuard {
-        bv2: *mut BundleV2<'static>,
-    }
-
-    impl Drop for ScanCounterGuard {
-        fn drop(&mut self) {
-            // SAFETY: constructed from `&mut BundleV2` in
-            // `decrement_scan_counter_on_drop`; the guard is a local that drops at
-            // scope exit while the `BundleV2` it points to is still alive. The
-            // lifetime is erased to `'static` only for storage — never observed.
-            unsafe { (*self.bv2).decrement_scan_counter() };
-        }
-    }
-
     impl<'a> BundleV2<'a> {
         pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop.
@@ -2341,7 +2219,6 @@ pub mod bv2_impl {
                 Some(
                     self.graph
                         .server_component_boundaries
-                        .slice()
                         .bit_set(self.graph.input_files.len())?,
                 )
             } else {
@@ -2358,39 +2235,22 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
 
-            // reshaped for borrowck — hoist the values that would
-            // otherwise re-borrow `self`/`self.graph` while the visitor holds
-            // disjoint column refs.
-            // Always materialize a valid slice; when the boundary list is empty
-            // this is a cheap `{ list: empty, map: &map }`. Avoids constructing a
-            // null `&Map` via `mem::zeroed()` (UB even though it was never read
-            // when `scb_bitset` is `None`).
-            let scb_list = self.graph.server_component_boundaries.slice();
-
-            // reshaped for borrowck — `Slice<T>` is a value-type
-            // snapshot of column pointers (does not borrow `self.graph.ast`), so
-            // `split_mut()` on the local can coexist with the shared borrows
-            // below. The slab does not resize for the duration of this function.
-            let mut ast_slice = self.graph.ast.slice();
-            let all_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
-            let all_urls_for_css = self.graph.ast.items_url_for_css();
-            let all_exports_kinds = self.graph.ast.items_exports_kind();
-            let all_targets = self.graph.ast.items_target();
+            let ast = self.graph.ast.split_mut();
+            let all_urls_for_css = &*ast.url_for_css;
 
             let mut visitor = ReachableFileVisitor {
                 reachable: Vec::with_capacity(self.graph.entry_points.len() + 1),
                 visited: DynamicBitSet::init_empty(self.graph.input_files.len())?,
-                redirects: self.graph.ast.items_redirect_import_record_index(),
-                all_import_records,
+                redirects: ast.redirect_import_record_index,
+                all_import_records: ast.import_records,
                 all_loaders: self.graph.input_files.items_loader(),
                 all_urls_for_css,
                 dynamic_import_entry_points: &mut self.dynamic_import_entry_points,
                 split_require: self.transpiler.options.split_require,
-                all_exports_kinds,
-                all_targets,
+                all_exports_kinds: ast.exports_kind,
+                all_targets: ast.target,
                 scb_bitset,
-                scb_list,
+                scb_list: &self.graph.server_component_boundaries,
                 additional_files_needed_outside_css: &mut additional_files_needed_outside_css,
                 additional_files_imported_by_css_and_inlined:
                     &mut additional_files_imported_by_css_and_inlined,
@@ -2419,7 +2279,7 @@ pub mod bv2_impl {
                     self.graph.input_files.len()
                 );
                 let sources = self.graph.input_files.items_source();
-                let targets = self.graph.ast.items_target();
+                let targets = visitor.all_targets;
                 for idx in visitor.reachable.iter() {
                     let source = &sources[idx.get() as usize];
                     bun_core::scoped_log!(
@@ -2438,10 +2298,7 @@ pub mod bv2_impl {
             // cleanup loop reads them.
             let ReachableFileVisitor { reachable, .. } = visitor;
 
-            // reshaped for borrowck — three disjoint mutable SoA
-            // columns via `split_mut()` on a value-type `Slice` snapshot.
-            let mut input_files_slice = self.graph.input_files.slice();
-            let input_files_cols = input_files_slice.split_mut();
+            let input_files_cols = self.graph.input_files.split_mut();
             let additional_files: &mut [bun_alloc::AstVec<crate::AdditionalFile>] =
                 input_files_cols.additional_files;
             let unique_keys: &mut [Box<[u8], bun_alloc::AstAlloc>] =
@@ -2481,13 +2338,7 @@ pub mod bv2_impl {
             }
 
             if self.graph.pending_items == 0 {
-                let this: *mut Self = self;
-                // reshaped for borrowck — `&self.graph` and
-                // `self` go to the same call. Take a raw ptr so the two `&mut` don't
-                // overlap from rustc's view.
-                // SAFETY: `drain_deferred_tasks` only touches `self.graph.deferred_*`
-                // fields and the `BundleV2` callback surface; no aliasing UB.
-                if unsafe { (*this).graph.drain_deferred_tasks(&mut *this) } {
+                if self.drain_deferred_tasks() {
                     return false;
                 }
                 return true;
@@ -2497,23 +2348,11 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
-            // `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
-            // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
-            // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
-            // callback would be a Stacked-Borrows violation.
-            let self_ptr: *mut Self = self;
-            let any_loop = self
-                .r#loop()
-                .expect("event loop not initialized for waitForParse")
-                .as_ptr();
-            // SAFETY: `any_loop` points into `self.linker.r#loop`, valid for the
-            // duration of this call; `self_ptr` is the live `&mut self`. The
-            // callback's `'static` lifetime erasure is storage-only —
-            // `is_done` only touches by-value fields.
-            unsafe {
-                bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
-                    (*ctx.cast::<BundleV2<'static>>()).is_done()
-                });
+            let any_loop = (self.r#loop).expect("event loop not initialized for waitForParse");
+            // SAFETY: the loop outlives the bundle pass, and it is not part of `*self`.
+            let any_loop = unsafe { any_loop.as_ref() };
+            while !self.is_done() {
+                any_loop.tick(core::ptr::from_mut(self).cast());
             }
             bun_core::scoped_log!(
                 Bundle,
@@ -2524,7 +2363,7 @@ pub mod bv2_impl {
         }
 
         /// Callers require an entry point, so none after parsing means one was dropped without an error.
-        fn fail_if_no_entry_points(&self) -> Result<(), Error> {
+        pub(crate) fn fail_if_no_entry_points(&self) -> Result<(), Error> {
             if !self.graph.entry_points.is_empty() {
                 return Ok(());
             }
@@ -2592,7 +2431,7 @@ pub mod bv2_impl {
                 })
                 .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
-                cwd: self.transpiler.fs().top_level_dir(),
+                cwd: Fs::FileSystem::get().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
@@ -2634,16 +2473,8 @@ pub mod bv2_impl {
             // version and exports a non-object in CommonJS (often a function). If we
             // pick the "module" field and the package is imported with "require" then
             // code expecting a function will crash.
-            //
-            // reshaped for borrowck — the mutable `import_records` column is
-            // needed alongside shared columns. `split_mut()` on a
-            // value-type `Slice` snapshot yields the one mutable column without
-            // borrowing `self.graph.ast`; read the per-target map through the
-            // disjoint `build_graphs` field instead of the `&mut self` accessor.
-            let mut ast_slice = self.graph.ast.slice();
-            let ast_import_records: &mut [import_record::List<'_>] =
-                ast_slice.split_mut().import_records;
-            let targets = self.graph.ast.items_target();
+            let ast = self.graph.ast.split_mut();
+            let (ast_import_records, targets) = (ast.import_records, ast.target);
             let max_valid_source_index = Index::init(self.graph.input_files.len());
             let secondary_paths = self.graph.input_files.items_secondary_path();
             let sources = self.graph.input_files.items_source();
@@ -2680,41 +2511,26 @@ pub mod bv2_impl {
             import_record: &jsc_api::JSBundler::MiniImportRecord,
             target: options::Target,
         ) {
-            // reshaped for borrowck — `transpiler_for_target` borrows `&mut self`, so launder
-            // through a raw pointer to keep `*self` available below.
-            // SAFETY: the returned `&mut Transpiler` lives for `'a` (set in `init`) and is not
-            // invalidated by anything called here. No second `&mut` to the same transpiler is
-            // created while a `&mut` reborrow derived from this raw pointer is live; the later
-            // direct `self.transpiler.options.*` accesses are shared reads that occur after the
-            // last `&mut *transpiler` deref on their control path.
-            let transpiler: *mut Transpiler<'a> = self.transpiler_for_target(target);
+            let heap = self.graph.heap;
+            let transpiler = self
+                .other_transpilers
+                .for_target(self.transpiler, heap, target);
             let source_dir =
                 Fs::PathName::init(&import_record.source_file).dir_with_trailing_slash();
 
             // Check the FileMap first for in-memory files
             if let Some(file_map) = self.file_map {
-                if let Some(_file_map_result) = file_map.resolve(
-                    self.arena(),
-                    &import_record.source_file,
-                    &import_record.specifier,
-                ) {
+                if let Some(_file_map_result) =
+                    file_map.resolve(heap, &import_record.source_file, &import_record.specifier)
+                {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
-                    // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
-                    // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
-                    // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
-                    // until after the last `*value_ptr` access below.
-                    let (found_existing, value_ptr): (bool, *mut u32) = {
-                        let entry = self
-                            .path_to_source_index_map(target)
-                            .get_or_put(path_primary.text)
-                            .expect("oom");
-                        (
-                            entry.found_existing,
-                            std::ptr::from_mut::<u32>(entry.value_ptr),
-                        )
-                    };
-                    if !found_existing {
+                    let entry = self.graph.build_graphs[target]
+                        .get_or_put(path_primary.text)
+                        .expect("oom");
+                    if !entry.found_existing {
+                        let next_index = self.graph.ast.len() as u32;
+                        *entry.value_ptr = next_index;
                         let loader: Loader = 'brk: {
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
@@ -2724,28 +2540,27 @@ pub mod bv2_impl {
                             if let Some(out_loader) = record.loader {
                                 break 'brk out_loader;
                             }
-                            // SAFETY: see `transpiler` note above.
                             break 'brk Fs::Path::init(path_primary.text)
-                                .loader(unsafe { &(*transpiler).options.loaders })
+                                .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File);
                         };
                         // For virtual files, use the path text as-is (no relative path computation needed).
-                        path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
+                        path_primary.pretty = heap.alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
-                            path: path_as_static(&path_primary),
+                            path: path_primary,
                             contents: std::borrow::Cow::Borrowed(&b""[..]),
                             ..Default::default()
                         };
                         let idx = self
                             .enqueue_parse_task(
                                 &file_map_result,
+                                path_primary,
                                 &mut tmp_source,
                                 loader,
                                 import_record.original_target,
                             )
                             .expect("oom");
-                        // SAFETY: see `value_ptr` note above.
-                        unsafe { *value_ptr = idx };
+                        debug_assert_eq!(idx, next_index);
                         let record: &mut ImportRecord =
                             &mut self.graph.ast.items_import_records_mut()
                                 [import_record.importer_source_index as usize]
@@ -2758,17 +2573,15 @@ pub mod bv2_impl {
                                 [import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [import_record.import_record_index as usize];
-                        // SAFETY: see `value_ptr` note above.
-                        record.source_index = Index::init(unsafe { *value_ptr });
+                        record.source_index = Index::init(*entry.value_ptr);
                     }
                     return;
                 }
             }
 
             let mut had_busted_dir_cache = false;
-            let resolve_result: _resolver::Result = loop {
-                // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
+            let resolve_result = loop {
+                match transpiler.resolver.resolve(
                     source_dir,
                     &import_record.specifier,
                     import_record.kind,
@@ -2780,14 +2593,10 @@ pub mod bv2_impl {
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
                                     // Only re-query if we previously had something cached.
-                                    // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
-                                        .resolver
-                                        .bust_dir_cache_from_specifier(
-                                            &import_record.source_file,
-                                            &import_record.specifier,
-                                        )
-                                    {
+                                    if transpiler.resolver.bust_dir_cache_from_specifier(
+                                        &import_record.source_file,
+                                        &import_record.specifier,
+                                    ) {
                                         had_busted_dir_cache = true;
                                         continue;
                                     }
@@ -2814,17 +2623,14 @@ pub mod bv2_impl {
                         }
 
                         let handles_import_errors;
-                        // reshaped for borrowck — `log_for_resolution_failures` borrows
-                        // `&mut self`; the returned log is backed by either a DevServer-owned slot or
-                        // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
-                        // so `self.graph.*` / `self.transpiler.*` reads below type-check.
-                        // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
-                        let log: &mut bun_ast::Log = unsafe {
-                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
-                                target.bake_graph(),
-                            ))
-                        };
+                        let ignore_module_resolution_errors =
+                            self.transpiler.options.ignore_module_resolution_errors;
+                        let log = Self::resolution_log(
+                            &mut self.dev_server,
+                            &mut self.transpiler,
+                            &import_record.source_file,
+                            target.bake_graph(),
+                        );
 
                         {
                             let record: &mut ImportRecord =
@@ -2854,9 +2660,7 @@ pub mod bv2_impl {
                             let add_error = bun_ast::Log::add_resolve_error_with_text_dupe;
                             let path_to_use = &import_record.specifier;
 
-                            if !handles_import_errors
-                                && !self.transpiler.options.ignore_module_resolution_errors
-                            {
+                            if !handles_import_errors && !ignore_module_resolution_errors {
                                 if is_package_path(&import_record.specifier) {
                                     if target == Target::Browser
                                         && options::is_node_builtin(path_to_use)
@@ -2908,22 +2712,17 @@ pub mod bv2_impl {
                                 err,
                                 &import_record.specifier,
                                 import_record.kind,
-                                !handles_import_errors
-                                    && !self.transpiler.options.ignore_module_resolution_errors,
+                                !handles_import_errors && !ignore_module_resolution_errors,
                             );
                         }
                         return;
                     }
                 }
             };
-            let mut resolve_result = resolve_result;
 
             let out_source_index: Option<Index>;
 
-            // borrowck: a `&mut` into `resolve_result` can't be held while
-            // also reading other fields and re-borrowing `self`,
-            // so we clone the active path out and operate on an owned value.
-            let mut path: Fs::Path<'static> = match resolve_result.path() {
+            let mut path = match resolve_result.path_const() {
                 Some(p) => *p,
                 None => {
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
@@ -2951,29 +2750,16 @@ pub mod bv2_impl {
                     bun_resolver::fs::FileSystem::get().top_level_dir(),
                     path.text,
                 );
-                // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
-                path.pretty =
-                    unsafe { bun_ptr::detach_lifetime(self.arena().alloc_slice_copy(rel)) };
+                path.pretty = heap.alloc_slice_copy(rel);
             }
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            if let Some(existing) = self.graph.path_to_source_index_map(target).get(path.text) {
                 out_source_index = Some(Index::init(existing));
             } else {
-                path = self
-                    .path_with_pretty_initialized(&path, target)
-                    .expect("oom");
-                // The borrowck-reshape above cloned
-                // `path` out, so write the prettified path back so
-                // `ParseTask::init(&resolve_result, ..)` (via `enqueue_parse_task`)
-                // sees the relativized `pretty`.
-                if let Some(p) = resolve_result.path() {
-                    *p = path;
-                }
                 let loader: Loader = 'brk: {
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
@@ -2981,20 +2767,23 @@ pub mod bv2_impl {
                     if let Some(out_loader) = record.loader {
                         break 'brk out_loader;
                     }
-                    // SAFETY: see `transpiler` note above.
                     break 'brk path
-                        .loader(unsafe { &(*transpiler).options.loaders })
+                        .loader(&transpiler.options.loaders)
                         .unwrap_or(Loader::File);
                     // HTML is only allowed at the entry point.
                 };
+                let path = self
+                    .path_with_pretty_initialized(&path, target)
+                    .expect("oom");
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
+                    path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
                 let idx = self
                     .enqueue_parse_task(
                         &resolve_result,
+                        self.parse_task_path(&resolve_result, path, target),
                         &mut tmp_source,
                         loader,
                         import_record.original_target,
@@ -3072,24 +2861,20 @@ pub mod bv2_impl {
             {
                 return Ok(());
             }
-            let mut result = match self
+            let dot_slash = OnceCell::new();
+            let result = match self
                 .transpiler_for_target(target)
-                .resolve_entry_point(path_slice)
+                .resolve_entry_point(path_slice, &dot_slash)
             {
                 Ok(r) => r,
                 Err(_) => return Ok(()),
             };
-            let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-            let loader = self.requested_file_loader(&path, loader);
+            let loader = self.requested_file_loader(&result.path_pair.primary, loader);
 
-            path = self.path_with_pretty_initialized(&path, target)?;
+            let path = self.path_with_pretty_initialized(&result.path_pair.primary, target)?;
             path.assert_pretty_is_valid();
-            // see `enqueue_entry_item` — write the prettified path back
-            // into `result` so `ParseTask::init(&result, ..)` reads the relativized
-            // `pretty`.
-            result.path_pair.primary = path;
             self.path_to_source_index_map(target)
                 .put(path_slice, source_index.get())
                 .expect("oom");
@@ -3097,7 +2882,7 @@ pub mod bv2_impl {
 
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
-                    path: path_as_static(&path),
+                    path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     index: bun_ast::Index(source_index.get()),
                     ..Default::default()
@@ -3107,9 +2892,8 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
-            let task_val = ParseTask::init(&result, source_index, self);
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task_val = ParseTask::init(&result, path, source_index, self);
+            let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.known_target = target;
@@ -3147,19 +2931,19 @@ pub mod bv2_impl {
         /// `loader`: see `requested_file_loader`.
         pub(crate) fn enqueue_entry_item(
             &mut self,
-            resolve: &mut _resolver::Result,
+            result: &_resolver::Result<'_>,
             is_entry_point: bool,
             target: options::Target,
             loader: Option<Loader>,
         ) -> Result<Option<IndexInt>, Error> {
-            let result = &mut *resolve;
-            // borrowck: clone the active path out so we don't hold a `&mut`
-            // into `result` across the `&mut self` calls below.
-            let mut path: Fs::Path<'static> = *result.path().expect(
+            let path = result.path_const().expect(
                 "resolve_entry_point rejects disabled results and FileMap results have a path",
             );
 
-            path.assert_file_path_is_absolute();
+            // The path of a file in memory is its key in `files`, as the caller wrote it.
+            if !self.file_map.is_some_and(|files| files.contains(path.text)) {
+                path.assert_file_path_is_absolute();
+            }
             // borrowck: get-then-put instead of a single get-or-put.
             if self
                 .path_to_source_index_map(target)
@@ -3171,35 +2955,10 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = self.requested_file_loader(&path, loader);
+            let loader = self.requested_file_loader(path, loader);
 
-            // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
-            // outlives the bundle pass; erase the arena lifetime back to the resolver's
-            // `Path<'static>` alias so `path` doesn't keep `self` borrowed.
-            path = unsafe {
-                self.path_with_pretty_initialized(&path, target)?
-                    .into_static()
-            };
+            let path = self.path_with_pretty_initialized(path, target)?;
             path.assert_pretty_is_valid();
-            // intern via `dupe_alloc` BEFORE writing back into `result` /
-            // the path-to-source-index map. The dev-server path builds a fresh
-            // `bake_types::EntryPointList` with `Box<[u8]>` keys (bake/dev_server/bundle.rs)
-            // that drops as soon as `enqueue_entry_points_dev_server` returns;
-            // `resolve_with_framework` then lifetime-erases that key into the
-            // returned `Path`, so without interning here `ParseTask.path.text` (and
-            // the map key) would dangle once the entry-point list is freed —
-            // surfacing as "Failed to load bundled module
-            // 'bun-framework-react/server.tsx'" when the worker can no longer match
-            // `built_in_modules`.
-            path = path.dupe_alloc(self.arena()).expect("oom");
-            // The borrowck-reshape
-            // above cloned `path` out, which left `result.path_pair` with the
-            // unrelativized `pretty` — and `ParseTask::init(&result, ..)` reads
-            // exactly that field, so the source comment header would lose its
-            // `top_level_dir`-relative path. Write the prettified path back here.
-            if let Some(p) = result.path() {
-                *p = path;
-            }
             self.path_to_source_index_map(target)
                 .put(path.text, source_index.get())
                 .expect("oom");
@@ -3208,7 +2967,7 @@ pub mod bv2_impl {
             let side_effects = result.primary_side_effects_data;
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: bun_ast::Source {
-                    path: path_as_static(&path),
+                    path,
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     index: bun_ast::Index(source_index.get()),
                     ..Default::default()
@@ -3218,9 +2977,9 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
-            let task_val = ParseTask::init(result, source_index, self);
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task_path = self.parse_task_path(result, path, target);
+            let task_val = ParseTask::init(result, task_path, source_index, self);
+            let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.task.node.next = core::ptr::null_mut();
             task.is_entry_point = is_entry_point;
@@ -3253,48 +3012,55 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
-        /// `heap` is not freed when `deinit`ing the BundleV2
+        /// `heap` is not freed when the BundleV2 drops
         pub fn init(
+            transpiler: &'a mut Transpiler<'a>,
+            bake_options: Option<BakeOptions<'a>>,
+            alloc: &bun_alloc::Arena,
+            event_loop: EventLoop,
+            cli_watch_flag: bool,
+            thread_pool: Option<NonNull<ThreadPoolLib>>,
+            heap: &'a ThreadLocalArena,
+        ) -> Box<BundleV2<'a>> {
+            let this = Self::init_without_starting_threads(
+                transpiler,
+                bake_options,
+                alloc,
+                event_loop,
+                cli_watch_flag,
+                thread_pool,
+                heap,
+            );
+            this.graph.pool().start();
+            this
+        }
+
+        /// Like `init`, for a bundle that may have nothing to parse: the pool starts each thread when there is a task for it.
+        pub fn init_without_starting_threads(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
             cli_watch_flag: bool,
-            // Raw `NonNull` (not `&mut`): the JS-API path threads `WorkPool::get()`
-            // (a `&'static` from `OnceLock`, concurrently read by workers) through
-            // here into `ThreadPool::init`, which stores it as `*mut`. Creating a
-            // `&mut` along the way would violate Stacked Borrows.
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
-        ) -> Result<Box<BundleV2<'a>>, Error> {
+        ) -> Box<BundleV2<'a>> {
             // The Box is heap-owned and dropped by the caller.
             transpiler.options.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
 
-            // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
-            // raw `*mut` until bake installs a separate SSR transpiler; all
-            // derefs go through the centralized accessors.
-            let ssr_alias: *mut Transpiler<'a> = std::ptr::from_mut(transpiler);
             let mut this = Box::new(BundleV2 {
                 transpiler,
-                client_transpiler: None,
-                owned_client_transpiler: None,
-                ssr_transpiler: ssr_alias,
+                other_transpilers: Default::default(),
                 framework: None,
-                graph: Graph {
-                    pool: bun_ptr::BackRef::dangling(), // set below
-                    heap,
-                    kit_referenced_server_data: false,
-                    kit_referenced_client_data: false,
-                    ..Graph::new(heap)
-                },
-                linker: LinkerContext {
-                    r#loop: event_loop,
-                    graph: LinkerGraph::default(),
-                    ..Default::default()
-                },
+                graph: Graph::new(heap, ThreadPool::init(thread_pool)),
+                r#loop: event_loop,
+                has_any_css_locals: Default::default(),
+                bytecode_order: None,
+                line_offset_wait_group: Default::default(),
+                quoted_contents_wait_group: Default::default(),
                 bun_watcher: None,
                 plugins: None,
                 completion: None,
@@ -3317,42 +3083,27 @@ pub mod bv2_impl {
                 requested_exports: Vec::new(),
             });
             if let Some(bo) = bake_options {
-                // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
-                // transpiler pointer; it outlives this BundleV2.
-                this.client_transpiler = Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(bo.client_transpiler.as_ptr())
-                });
-                this.ssr_transpiler = bo.ssr_transpiler.as_ptr();
-                let separate_ssr = bo
-                    .framework
-                    .server_components
-                    .as_ref()
-                    .map(|sc| sc.separate_ssr_graph)
-                    .unwrap_or(false);
+                debug_assert_eq!(
+                    bo.ssr_transpiler.is_some(),
+                    (bo.framework.server_components.as_ref())
+                        .is_some_and(|sc| sc.separate_ssr_graph)
+                );
+                debug_assert!(
+                    !this.transpiler.options.server_components
+                        || core::iter::once(&bo.client_transpiler)
+                            .chain(&bo.ssr_transpiler)
+                            .all(|other| other.options.server_components)
+                );
+                this.other_transpilers = super::OtherTranspilers {
+                    client: Some(super::ClientTranspiler::FromBake(bo.client_transpiler)),
+                    ssr: bo.ssr_transpiler,
+                };
                 this.framework = Some(bo.framework);
-                this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
                 this.plugins = bo.plugins;
                 if let Some(plugins) = this.plugins_ref() {
                     plugins.freeze_filters();
                 }
-                if this.transpiler.options.server_components {
-                    debug_assert!(
-                        this.client_transpiler_ref()
-                            .unwrap()
-                            .options
-                            .server_components
-                    );
-                    if separate_ssr {
-                        // SAFETY: `separate_ssr` ⇒ `ssr_transpiler` was set in `init` and lives for `'a`.
-                        debug_assert!(unsafe { (*this.ssr_transpiler).options.server_components });
-                    }
-                }
             }
-            // `Transpiler<'a>`/`Resolver<'a>` store `&'a Arena` and `Log.msgs`
-            // is a `Vec` (global alloc), so only `linker.graph.bump` needs the
-            // backref into the now-stable `this.graph.heap` slot.
-            this.linker.graph.bump = bun_ptr::BackRef::new(this.graph.heap);
-            this.transpiler.log_mut().clone_line_text = true;
 
             // Bake forbids tree-shaking since every export must always exist in
             // case a future module starts depending on it. The override is only
@@ -3362,11 +3113,6 @@ pub mod bv2_impl {
             );
             this.transpiler.options.tree_shaking = tree_shaking;
             this.transpiler.resolver.opts.tree_shaking = tree_shaking;
-
-            // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
-            // the resolver lives in `transpiler` which outlives `self` (same `'a`).
-            this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
-            this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
 
             // Cross-chunk imports/exports are only generated for ESM (see
             // computeCrossChunkDependencies). Reject other formats up front
@@ -3381,55 +3127,6 @@ pub mod bv2_impl {
                 );
             }
 
-            this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
-            this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
-            this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
-            this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
-            this.linker.options.deprecated_namespace_object_setters =
-                this.transpiler.options.deprecated_namespace_object_setters;
-            this.linker.options.ignore_dce_annotations =
-                this.transpiler.options.ignore_dce_annotations;
-            // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
-            // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
-            // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
-            // (see `interned_slice` contract — these are bundle-pass-interned).
-            this.linker.options.banner = unsafe { interned_slice(&this.transpiler.options.banner) };
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
-            this.linker.options.css_chunking = this.transpiler.options.css_chunking;
-            this.linker.options.min_chunk_size =
-                this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
-                    crate::options::default_min_chunk_size(this.transpiler.options.target)
-                });
-            this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
-            this.linker.options.entry_naming_has_hash = crate::options::path_template_needs(
-                &this.transpiler.options.entry_naming,
-                crate::options::PlaceholderField::Hash,
-            );
-            this.linker.options.module_preload = this.transpiler.options.module_preload;
-            this.linker.options.source_maps = this.transpiler.options.source_map;
-            this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.public_path =
-                unsafe { interned_slice(&this.transpiler.options.public_path) };
-            this.linker.options.target = this.transpiler.options.target;
-            this.linker.options.output_format = this.transpiler.options.output_format;
-            this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
-            this.linker.options.generate_internal_module_bytecode =
-                this.transpiler.options.bytecode
-                    && !matches!(
-                        this.transpiler.options.compile_target_builtins,
-                        crate::options::CompileTargetBuiltins::None
-                    );
-            this.linker.options.target_builtins =
-                match &this.transpiler.options.compile_target_builtins {
-                    crate::options::CompileTargetBuiltins::Target(section) => {
-                        Some(std::sync::Arc::clone(section))
-                    }
-                    _ => None,
-                };
-            this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
-            this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
             // is parsed, not after the link.
             if this.transpiler.options.bytecode
@@ -3454,7 +3151,7 @@ pub mod bv2_impl {
                                 ),
                             );
                         }
-                        this.linker.options.bytecode_order = order;
+                        this.bytecode_order = order;
                     }
                     Err((path, err)) => {
                         this.transpiler.log_mut().add_error_fmt(
@@ -3469,54 +3166,19 @@ pub mod bv2_impl {
                     }
                 }
             }
-            this.linker.options.compile_mode = this.transpiler.options.compile_mode;
-            this.linker.options.metafile = this.transpiler.options.metafile;
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.metafile_json_path =
-                unsafe { interned_slice(&this.transpiler.options.metafile_json_path) };
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.metafile_markdown_path =
-                unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
 
-            this.linker.dev_server = this.dev_server;
-
-            let tp = ThreadPool::init(&*this, thread_pool)?;
-            // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
-            this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
-            // Install the watcher only after `ThreadPool::init()` has succeeded —
-            // the `?` above is the last early-return in this fn, so the watcher's
-            // raw `*mut BundleV2` can't outlive the box it points at (the caller
-            // drops the box on every error path until `generate_from_cli` leaks it).
+            // The watcher keeps a raw `*mut BundleV2`: `generate_from_cli` leaks the box.
             if cli_watch_flag {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
                 // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
                 // via this extern hook and writes `bun_watcher`.
                 dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
             }
-            // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
-            this.graph.pool().start();
-            Ok(this)
+            this
         }
 
         pub(crate) fn arena(&self) -> &'a bun_alloc::Arena {
             self.graph.heap
-        }
-
-        /// Allocate `value` into the bundler's arena (`self.graph.heap`) and return
-        /// a `&'r mut T` whose lifetime is decoupled from `&self`.
-        /// The arena owns the slab and reclaims it on
-        /// `deinit_without_freeing_arena` / `heap.reset()`. The unbounded `'r`
-        /// releases the `&self` borrow at the call site so callers can immediately
-        /// reborrow `&mut self`.
-        ///
-        /// SAFETY (encapsulated): the arena slab is pinned and outlives every
-        /// `&mut T` handed out here (freed only at `heap.reset()` after all
-        /// callers are done); each call returns a fresh disjoint slot, so the
-        /// resulting `&mut T` is unique.
-        #[inline]
-        fn arena_create<'r, T>(&self, value: T) -> &'r mut T {
-            // SAFETY: arena slot is fresh + pinned for the bundle pass; see fn doc.
-            unsafe { bun_ptr::detach_lifetime_mut(self.arena().alloc(value)) }
         }
 
         pub(crate) fn increment_scan_counter(&mut self) {
@@ -3541,21 +3203,17 @@ pub mod bv2_impl {
             self.on_after_decrement_scan_counter();
         }
 
+        #[inline(never)]
         pub(crate) fn on_after_decrement_scan_counter(&mut self) {
+            bun_removable_features::removable_definition!(
+                Bundler,
+                Self::on_after_decrement_scan_counter
+            );
             if self.asynchronous && self.is_done() {
                 let dev = self
                     .dev_server
                     .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
                 self.finish_from_bake_dev_server(&dev).expect("oom");
-            }
-        }
-
-        /// RAII guard that decrements the scan counter on drop. Captures `self` as
-        /// a raw pointer so the returned guard does not hold a `&mut` borrow for the
-        /// rest of the scope; the caller must ensure `self` outlives the guard.
-        pub(crate) fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
-            ScanCounterGuard {
-                bv2: std::ptr::from_mut::<BundleV2<'a>>(self).cast::<BundleV2<'static>>(),
             }
         }
 
@@ -3591,7 +3249,7 @@ pub mod bv2_impl {
                     if let Some(file_map_result) = file_map.resolve(self.arena(), b"", entry_point)
                     {
                         let _ = self.enqueue_entry_item(
-                            &mut { file_map_result },
+                            &file_map_result,
                             true,
                             self.transpiler.options.target,
                             None,
@@ -3601,7 +3259,8 @@ pub mod bv2_impl {
                 }
 
                 // no plugins were matched
-                let mut resolved = match self.transpiler.resolve_entry_point(entry_point) {
+                let dot_slash = OnceCell::new();
+                let resolved = match self.transpiler.resolve_entry_point(entry_point, &dot_slash) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
@@ -3620,7 +3279,7 @@ pub mod bv2_impl {
                     }
                     break 'brk main_target;
                 };
-                let _ = self.enqueue_entry_item(&mut resolved, true, target, None)?;
+                let _ = self.enqueue_entry_item(&resolved, true, target, None)?;
             }
             Ok(())
         }
@@ -3641,16 +3300,6 @@ pub mod bv2_impl {
 
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
             for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
-                // Ensure we have the proper conditions set for client-side entrypoints.
-                // SAFETY: hold the transpiler as a `*mut` across the loop body
-                // so it doesn't keep `self` borrowed through the plugin
-                // dispatch / dev_server calls below; the pointee lives for `'a`.
-                let transpiler: *mut Transpiler<'a> =
-                    if flags.client() && !flags.server() && !flags.ssr() {
-                        std::ptr::from_mut(self.transpiler_for_target(Target::Browser))
-                    } else {
-                        &raw mut *self.transpiler
-                    };
                 let server_target = self.transpiler.options.target;
                 let client_loader = flags.html().then_some(Loader::Html);
 
@@ -3695,10 +3344,17 @@ pub mod bv2_impl {
                 }
 
                 // Fall back to normal resolution if no plugins matched
-                // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                let mut resolved = match unsafe { &mut *transpiler }.resolve_entry_point(abs_path) {
+                let dot_slash = OnceCell::new();
+                // Ensure we have the proper conditions set for client-side entrypoints.
+                let transpiler = if flags.client() && !flags.server() && !flags.ssr() {
+                    self.transpiler_for_target(Target::Browser)
+                } else {
+                    &mut *self.transpiler
+                };
+                let resolved = match transpiler.resolve_entry_point(abs_path, &dot_slash) {
                     Ok(r) => r,
                     Err(err) => {
+                        let log = transpiler.log;
                         let dev = self.dev_server.expect("unreachable");
                         dev.handle_parse_task_failure(
                             err,
@@ -3708,13 +3364,12 @@ pub mod bv2_impl {
                                 bake::Graph::Server
                             },
                             abs_path,
-                            // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                            unsafe { (*transpiler).log }.cast_const(),
+                            log.cast_const(),
                             std::ptr::from_mut(self),
                         )
                         .expect("oom");
                         // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
-                        unsafe { (*(*transpiler).log).reset() };
+                        unsafe { (*log).reset() };
                         continue;
                     }
                 };
@@ -3722,7 +3377,7 @@ pub mod bv2_impl {
                 if flags.client() {
                     'brk: {
                         let Some(source_index) = self.enqueue_entry_item(
-                            &mut resolved,
+                            &resolved,
                             true,
                             Target::Browser,
                             client_loader,
@@ -3742,7 +3397,7 @@ pub mod bv2_impl {
                 }
                 if flags.server() {
                     let _ = self.enqueue_entry_item(
-                        &mut resolved,
+                        &resolved,
                         true,
                         self.transpiler.options.target,
                         None,
@@ -3750,7 +3405,7 @@ pub mod bv2_impl {
                 }
                 if flags.ssr() {
                     let _ = self.enqueue_entry_item(
-                        &mut resolved,
+                        &resolved,
                         true,
                         Target::ServerComponentsSsr,
                         None,
@@ -3785,13 +3440,14 @@ pub mod bv2_impl {
                 }
 
                 // no plugins matched
-                let mut resolved = match self.transpiler.resolve_entry_point(abs_path) {
+                let dot_slash = OnceCell::new();
+                let resolved = match self.transpiler.resolve_entry_point(abs_path, &dot_slash) {
                     Ok(r) => r,
                     Err(_) => continue,
                 };
 
                 // TODO: wrap client files so the exports arent preserved.
-                let Some(_) = self.enqueue_entry_item(&mut resolved, true, target, None)? else {
+                let Some(_) = self.enqueue_entry_item(&resolved, true, target, None)? else {
                     continue;
                 };
             }
@@ -3814,29 +3470,20 @@ pub mod bv2_impl {
             self.path_to_source_index_map(self.transpiler.options.target)
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
-            // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
-            // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
-            // `arena()` ends before we take `&mut self` below.
-            let runtime_parse_task: *mut ParseTask = self.arena().alloc(rt.parse_task);
-            // SAFETY: freshly arena-allocated above; no other references exist yet.
-            unsafe {
-                // BACKREF — lifetime erased per ParseTask::ctx convention.
-                let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
-                    std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                );
-                (*runtime_parse_task).ctx = Some(ctx_mut);
-                (*runtime_parse_task).loader = Some(Loader::Js);
-            }
+            let runtime_parse_task: &mut ParseTask = self.arena().alloc(rt.parse_task);
+            runtime_parse_task.ctx = Some(bun_ptr::ParentRef::from_ref_mut(self));
+            runtime_parse_task.loader = Some(Loader::Js);
             self.increment_scan_counter();
             self.graph.pool().schedule(runtime_parse_task);
             Ok(())
         }
 
-        fn clone_ast(&mut self) -> Result<(), Error> {
+        pub(crate) fn clone_ast(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
-            self.linker.graph.ast = self.graph.ast.clone()?;
+            let mut linker_graph = LinkerGraph::new(self.graph.heap);
+            linker_graph.ast = self.graph.ast.clone()?;
 
-            for module_scope in self.linker.graph.ast.items_module_scope_mut() {
+            for module_scope in linker_graph.ast.items_module_scope_mut() {
                 // `children` are arena-allocated `StoreRef<Scope>`s; we re-point
                 // their `parent` BACKREF at the cloned module scope. `StoreRef`'s
                 // safe `DerefMut` replaces the open-coded `unsafe { child.as_mut() }`.
@@ -3854,8 +3501,8 @@ pub mod bv2_impl {
 
             // Some parts of the AST are owned by worker allocators at this point.
             // Transfer ownership to the graph heap.
-            self.linker.graph.take_ast_ownership(self.graph.heap);
-            Ok(())
+            linker_graph.take_ast_ownership();
+            Ok(linker_graph)
         }
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
@@ -3873,11 +3520,7 @@ pub mod bv2_impl {
                 return Ok(());
             }
 
-            // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; erase the
-            // `&self` borrow so `server`/`client` don't keep `*self` borrowed across
-            // the `self.graph.ast.set(...)` calls at the end of this function.
-            let alloc: &'static bun_alloc::Arena =
-                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
+            let alloc = self.arena();
 
             let hmr = self.transpiler.options.hot_module_reloading;
             let mut server = AstBuilder::init(alloc, &bake::SERVER_VIRTUAL_SOURCE, hmr)?;
@@ -3886,7 +3529,7 @@ pub mod bv2_impl {
             let mut server_manifest_props: Vec<G::Property> = Vec::new();
             let mut client_manifest_props: Vec<G::Property> = Vec::new();
 
-            let scbs = self.graph.server_component_boundaries.list.slice();
+            let scbs = &self.graph.server_component_boundaries.list;
             let named_exports_array = self.graph.ast.items_named_exports();
 
             let id_string = server.new_expr(E::EString {
@@ -3927,20 +3570,15 @@ pub mod bv2_impl {
                     // "production build" part of Bake.
 
                     let keys = named_exports_array[*source_id as usize].keys();
-                    // `G::Property: !Clone` — build via iterator instead of `vec![v; n]`.
                     let mut client_manifest_items: Box<[G::Property]> =
-                        (0..keys.len()).map(|_| G::Property::default()).collect();
+                        vec![G::Property::default(); keys.len()].into();
 
                     if !sc.separate_ssr_graph {
                         bun_core::todo_panic!("separate_ssr_graph=false");
                     }
 
-                    // SAFETY: arena slice — `alloc` (== `self.graph.heap`) outlives
-                    // the produced AST. See `interned_slice` contract.
-                    let astr = |s: &[u8]| -> &'static [u8] { unsafe { interned_slice(s) } };
-
                     let client_path = server.new_expr(E::EString {
-                        data: astr(
+                        data: bun_ast::StoreStr::new(
                             alloc.alloc_slice_copy(
                                 format!(
                                     "{}",
@@ -3952,12 +3590,11 @@ pub mod bv2_impl {
                                 )
                                 .as_bytes(),
                             ),
-                        )
-                        .into(),
+                        ),
                         ..Default::default()
                     });
                     let ssr_path = server.new_expr(E::EString {
-                        data: astr(
+                        data: bun_ast::StoreStr::new(
                             alloc.alloc_slice_copy(
                                 format!(
                                     "{}",
@@ -3969,8 +3606,7 @@ pub mod bv2_impl {
                                 )
                                 .as_bytes(),
                             ),
-                        )
-                        .into(),
+                        ),
                         ..Default::default()
                     });
 
@@ -3978,7 +3614,7 @@ pub mod bv2_impl {
                     for (export_name_string, client_item) in
                         keys.iter().zip(client_manifest_items.iter_mut())
                     {
-                        let server_key_string = astr(
+                        let server_key_string = bun_ast::StoreStr::new(
                             alloc.alloc_slice_copy(
                                 format!(
                                     "{}#{}",
@@ -3993,14 +3629,14 @@ pub mod bv2_impl {
                             ),
                         );
                         let export_name = server.new_expr(E::EString {
-                            data: astr(export_name_string).into(),
+                            data: bun_ast::StoreStr::new(export_name_string),
                             ..Default::default()
                         });
 
                         // write dependencies on the underlying module, not the proxy
                         server_manifest_props.push(G::Property {
                             key: Some(server.new_expr(E::EString {
-                                data: server_key_string.into(),
+                                data: server_key_string,
                                 ..Default::default()
                             })),
                             value: Some(server.new_expr(E::Object {
@@ -4117,8 +3753,9 @@ pub mod bv2_impl {
 
         pub(crate) fn enqueue_parse_task(
             &mut self,
-            resolve_result: &_resolver::Result,
-            source: &mut bun_ast::Source,
+            resolve_result: &_resolver::Result<'_>,
+            path: Fs::Path<'a>,
+            source: &mut bun_ast::Source<'a>,
             loader: Loader,
             known_target: options::Target,
         ) -> Result<IndexInt, AllocError> {
@@ -4136,11 +3773,11 @@ pub mod bv2_impl {
             // Arena-owned; freed on heap reset.
             let task_val = ParseTask::init(
                 resolve_result,
+                path,
                 bun_ast::Index::init(source_index.get()),
                 self,
             );
-            // SAFETY: arena outlives the bundle pass; reborrow `*mut` as `&mut`.
-            let task: &mut ParseTask = self.arena_create(task_val);
+            let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
             task.jsx = self.transpiler_for_target(known_target).options.jsx.clone();
             task.task.node.next = core::ptr::null_mut();
@@ -4170,7 +3807,7 @@ pub mod bv2_impl {
 
         pub(crate) fn enqueue_parse_task2(
             &mut self,
-            source: &mut bun_ast::Source,
+            source: &mut bun_ast::Source<'a>,
             loader: Loader,
             known_target: options::Target,
             module_type: options::ModuleType,
@@ -4189,39 +3826,19 @@ pub mod bv2_impl {
             // graph's stored copy (where the data now lives for the rest of the
             // bundle pass) so the `ParseTask` below sees the actual source bytes.
             let stored = &self.graph.input_files.items_source()[source_index.get() as usize];
-            // The path type is split into
-            // `bun_paths::fs::Path<'static>` (on `Source`) and `bun_resolver::fs::Path`
-            // (on `ParseTask`). Convert field-by-field — `pretty`/`namespace` MUST
+            // `pretty`/`namespace` MUST
             // be preserved here (the SCB `separate_ssr_graph=false` caller passes a
             // source whose path went through `path_with_pretty_initialized`, and
             // `ParseTask::run` builds the `Source` from `task.path` then swaps it
             // back into `input_files`, so dropping `pretty` would surface the
             // absolute path as the dev-server module key).
-            let task_path: Fs::Path<'static> = stored.path;
+            let task_path = stored.path;
             // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
-            // pass (arena lifetime); erase the borrow to `'static` to fit
-            // `ContentsOrFd::Contents`. See `interned_slice` contract.
-            let contents: &'static [u8] = unsafe { interned_slice(stored.contents()) };
-            // Compute borrow-heavy fields up front so the `&self` borrow taken by
-            // `arena()` doesn't overlap `&mut self` uses inside the literal.
-            let jsx = if known_target == Target::ServerComponentsSsr
-                && !self
-                    .framework
-                    .as_ref()
-                    .unwrap()
-                    .server_components
-                    .as_ref()
-                    .unwrap()
-                    .separate_ssr_graph
-            {
-                self.transpiler.options.jsx.clone()
-            } else {
-                self.transpiler_for_target(known_target).options.jsx.clone()
-            };
-            // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
-            // `&mut ParseTask` to `*mut` immediately so the `&self` borrow from
-            // `arena()` ends before we take `&mut self` below.
-            let task: *mut ParseTask = self.arena().alloc(ParseTask {
+            // pass, and the row is not replaced before the task has read it.
+            let contents: &'a [u8] = unsafe { bun_ptr::detach_lifetime(stored.contents()) };
+            let jsx = self.transpiler_for_target(known_target).options.jsx.clone();
+            let task: &mut ParseTask = self.arena().alloc(ParseTask {
+                ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 path: task_path,
                 contents_or_fd: parse_task::ContentsOrFd::Contents(contents),
                 side_effects: bun_ast::SideEffects::HasSideEffects,
@@ -4234,22 +3851,13 @@ pub mod bv2_impl {
                 known_target,
                 ..Default::default()
             });
-            // SAFETY: `task` was just arena-allocated above; no other references exist yet.
-            unsafe {
-                // BACKREF — lifetime erased per ParseTask::ctx convention.
-                let ctx_mut = bun_ptr::ParentRef::from_raw_mut(
-                    std::ptr::from_mut(self).cast::<BundleV2<'static>>(),
-                );
-                (*task).ctx = Some(ctx_mut);
-                (*task).task.node.next = core::ptr::null_mut();
-                (*task).io_task.node.next = core::ptr::null_mut();
-            }
+            task.task.node.next = core::ptr::null_mut();
+            task.io_task.node.next = core::ptr::null_mut();
 
             self.increment_scan_counter();
 
             // Handle onLoad plugins
-            // SAFETY: `task` lives in the bundle-pass arena; sole reference until scheduled.
-            if !self.enqueue_on_load_plugin_if_needed(unsafe { &mut *task }) {
+            if !self.enqueue_on_load_plugin_if_needed(task) {
                 if loader.should_copy_for_bundling() {
                     let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                         &mut self.graph.input_files.items_additional_files_mut()
@@ -4269,8 +3877,8 @@ pub mod bv2_impl {
         /// `source_without_index` is copied and assigned a new source index. That index is returned.
         pub(crate) fn enqueue_server_component_generated_file(
             &mut self,
-            data: crate::ServerComponentParseTask::Data,
-            source_without_index: bun_ast::Source,
+            data: crate::ServerComponentParseTask::Data<'a>,
+            source_without_index: bun_ast::Source<'a>,
         ) -> Result<IndexInt, AllocError> {
             let mut new_source = source_without_index;
             let source_index = self.graph.input_files.len();
@@ -4279,7 +3887,6 @@ pub mod bv2_impl {
             let task_source = bun_ast::Source {
                 path: new_source.path,
                 contents: new_source.contents.clone(),
-                contents_is_recycled: new_source.contents_is_recycled,
                 identifier_name: new_source.identifier_name.clone(),
                 index: new_source.index,
             };
@@ -4291,19 +3898,10 @@ pub mod bv2_impl {
             })?;
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
 
-            // `bun.new(ServerComponentParseTask, …)` — heap-owned by the
-            // worker pool; freed via `bun.destroy` in `on_complete` after the
-            // result posts back to the bundle thread.
+            // The pool's callback takes the box back.
             let task = bun_core::heap::into_raw(Box::new(ServerComponentParseTask {
                 data,
-                // SAFETY: `from_mut(self)` is the live bundle (write provenance for
-                // `on_complete`'s `assume_mut`) and outlives the task; `'a` erased to
-                // `'static` for the BACKREF.
-                ctx: Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        core::ptr::from_mut(&mut *self).cast::<BundleV2<'static>>(),
-                    )
-                }),
+                ctx: Some(bun_ptr::ParentRef::from_ref_mut(self)),
                 source: task_source,
                 // `..Default::default()` supplies `task: ThreadPoolTask { callback: task_callback_wrap }`.
                 ..Default::default()
@@ -4311,7 +3909,7 @@ pub mod bv2_impl {
 
             self.increment_scan_counter();
 
-            // SAFETY: `task` is the just-allocated arena box; sole reference here.
+            // SAFETY: `task` is the box just allocated; sole reference here.
             self.graph
                 .pool()
                 .worker_pool()
@@ -4323,22 +3921,19 @@ pub mod bv2_impl {
         }
     }
 
-    pub struct DependenciesScanner {
-        pub(crate) ctx: *mut (),
+    pub struct DependenciesScanner<'s> {
+        pub analyzer: &'s mut dyn OnDependenciesAnalyze,
         pub entry_points: Box<[Box<[u8]>]>,
-        pub(crate) on_fetch:
-            fn(ctx: *mut (), result: &mut DependenciesScannerResult) -> Result<(), Error>,
     }
 
     pub struct DependenciesScannerResult<'r, 'a> {
         pub dependencies: bun_collections::StringSet,
         pub reachable_files: &'r [Index],
         pub bundle_v2: &'r mut BundleV2<'a>,
+        pub linker_graph: &'r LinkerGraph<'a>,
     }
 
-    /// Callback contract for [`DependenciesScanner`]. Each call site's local
-    /// `Analyzer` struct implements this; [`DependenciesScanner::new`] erases the
-    /// concrete type behind a monomorphized trampoline.
+    /// Callback contract for [`DependenciesScanner`].
     pub trait OnDependenciesAnalyze {
         fn on_analyze(
             &mut self,
@@ -4346,37 +3941,12 @@ pub mod bv2_impl {
         ) -> Result<(), Error>;
     }
 
-    impl DependenciesScanner {
-        /// Type-erase `analyzer` into the `(ctx, on_fetch)` pair. The returned
-        /// scanner borrows `*analyzer` for its lifetime: caller must keep
-        /// `analyzer` alive and exclusively owned until the scan completes.
-        pub fn new<A: OnDependenciesAnalyze>(
-            analyzer: &mut A,
-            entry_points: Box<[Box<[u8]>]>,
-        ) -> Self {
-            fn trampoline<A: OnDependenciesAnalyze>(
-                ctx: *mut (),
-                result: &mut DependenciesScannerResult,
-            ) -> Result<(), Error> {
-                // SAFETY: `ctx` was set from `&mut *analyzer` in `new`; the caller
-                // contract guarantees `*analyzer` outlives the scanner and is not
-                // otherwise borrowed, so reconstituting `&mut A` here is exclusive.
-                let analyzer = unsafe { &mut *ctx.cast::<A>() };
-                analyzer.on_analyze(result)
-            }
-            Self {
-                ctx: core::ptr::from_mut(analyzer).cast::<()>(),
-                entry_points,
-                on_fetch: trampoline::<A>,
-            }
-        }
-    }
-
     impl<'a> BundleV2<'a> {
         pub(crate) fn get_all_dependencies(
             &mut self,
+            linker_graph: &LinkerGraph<'a>,
             reachable_files: &[Index],
-            fetcher: &DependenciesScanner,
+            fetcher: &mut DependenciesScanner<'_>,
         ) -> Result<(), Error> {
             // Find all external dependencies from reachable files
             let mut external_deps = bun_collections::StringSet::new();
@@ -4432,9 +4002,10 @@ pub mod bv2_impl {
             let mut result = DependenciesScannerResult {
                 dependencies: external_deps,
                 bundle_v2: self,
+                linker_graph,
                 reachable_files,
             };
-            (fetcher.on_fetch)(fetcher.ctx, &mut result)
+            fetcher.analyzer.on_analyze(&mut result)
         }
 
         pub fn generate_from_cli(
@@ -4445,7 +4016,7 @@ pub mod bv2_impl {
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
             source_code_size: &mut u64,
-            fetcher: Option<&DependenciesScanner>,
+            fetcher: Option<&mut DependenciesScanner<'_>>,
         ) -> Result<BuildResult, Error> {
             let mut this = BundleV2::init(
                 transpiler,
@@ -4455,10 +4026,10 @@ pub mod bv2_impl {
                 enable_reloading,
                 None,
                 alloc,
-            )?;
+            );
             this.unique_key = generate_unique_key();
 
-            // Wrap so every exit path (incl. `?`) hits the cleanup below.
+            // Wrap so every exit path (incl. `?`) reaches the leak below.
             let result = (|| -> Result<BuildResult, Error> {
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
@@ -4493,39 +4064,22 @@ pub mod bv2_impl {
                 let reachable_files = this.find_reachable_files()?;
                 *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
 
-                this.process_files_to_copy(&reachable_files)?;
+                let additional_output_files = this.process_files_to_copy(&reachable_files)?;
 
                 this.add_server_component_boundaries_as_extra_entry_points()?;
 
-                this.clone_ast()?;
+                let mut linker_graph = this.clone_ast()?;
+                linker_graph.additional_output_files = additional_output_files;
 
-                // SAFETY: `LinkerContext::link` takes `bundle` as a raw `*mut BundleV2` and only
-                // touches fields disjoint from `this.linker` (`graph`, `transpiler`,
-                // `dynamic_import_entry_points`, scalar reads) via `addr_of_mut!`/place
-                // projection, so the `&mut this.linker` receiver and `*bundle_ptr` never produce
-                // overlapping `&mut`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    // `Graph::entry_points: Vec<Index>` and `link()` takes `&[Index]` —
-                    // both are `crate::Index` (= `bun_ast::Index`), so no cast is needed.
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // `this.graph.server_component_boundaries` must stay intact for
-                    // `StaticRouteVisitor` (generateChunksInParallel) to read via
-                    // `parse_graph`. Borrow — do NOT `take`, which would empty the
-                    // graph slot and drop the moved-out `MultiArrayList` heap inside
-                    // `load()` (ASAN use-after-poison / wrong `fully_static`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` (not `this.linker`) so no
-                    // second `Box::deref_mut` retag invalidates `ep`/`scbs` (SB).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
+                let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
+                let mut chunks = linker.link(this.transpiler.log_mut())?;
                 this.dump_pool_stats("link");
 
                 // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
                 if let Some(fetch) = fetcher {
-                    this.get_all_dependencies(&reachable_files, fetch)?;
+                    drop(chunks);
+                    let linker_graph = linker.into_graph();
+                    this.get_all_dependencies(&linker_graph, &reachable_files, fetch)?;
                     return Ok(BuildResult {
                         output_files: Vec::new(),
                         metafile: None,
@@ -4534,17 +4088,15 @@ pub mod bv2_impl {
                 }
 
                 let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                    &mut this.linker,
+                    &mut linker,
+                    this.transpiler.log_mut(),
                     &mut chunks,
                 )?;
                 this.dump_pool_stats("print");
 
                 // Generate metafile if requested (the CLI build command writes the files)
-                let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
-                    match crate::linker_context::metafile_builder::generate(
-                        &mut this.linker,
-                        &mut chunks,
-                    ) {
+                let metafile: Option<Box<[u8]>> = if linker.options.metafile {
+                    match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
                         Ok(m) => Some(m),
                         Err(err) => {
                             bun_core::warn!("Failed to generate metafile: {}", err);
@@ -4569,8 +4121,6 @@ pub mod bv2_impl {
             // Bounded leak: the next file change `execve()`s the process anyway.
             if enable_reloading {
                 let _ = Box::into_raw(this);
-            } else {
-                this.deinit_without_freeing_arena();
             }
 
             result
@@ -4582,7 +4132,7 @@ pub mod bv2_impl {
         /// test entry points transitively depend on a given set of source files.
         ///
         /// The caller owns the returned BundleV2. Dupe anything needed out of
-        /// the graph and then call `deinit_without_freeing_arena()` — the
+        /// the graph and then drop it — the
         /// AST columns (`Vec<Symbol>` / `Vec<Part>` / …) live on
         /// the global heap, not in `graph.heap`, so leaving the bundle alive is
         /// not a bounded arena leak. The
@@ -4594,7 +4144,7 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc);
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -4632,66 +4182,47 @@ pub mod bv2_impl {
                 false,
                 None,
                 alloc,
-            )?;
+            );
             this.unique_key = generate_unique_key();
 
-            // Wrap so every exit path hits the cleanup below; `chunks` must drop
-            // inside the closure, before `deinit_without_freeing_arena()`.
-            let result = (|| -> Result<Vec<options::OutputFile>, Error> {
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
+            }
 
-                this.enqueue_entry_points_bake_production(entry_points)?;
+            this.enqueue_entry_points_bake_production(entry_points)?;
 
-                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
-                this.wait_for_parse();
+            // Drain the pool, then report entry point errors (as `generate_from_cli` does).
+            this.wait_for_parse();
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
+            }
 
-                this.scan_for_secondary_paths();
+            this.scan_for_secondary_paths();
 
-                this.process_server_component_manifest_files()?;
+            this.process_server_component_manifest_files()?;
 
-                let reachable_files = this.find_reachable_files()?;
+            let reachable_files = this.find_reachable_files()?;
 
-                this.process_files_to_copy(&reachable_files)?;
+            let additional_output_files = this.process_files_to_copy(&reachable_files)?;
 
-                this.add_server_component_boundaries_as_extra_entry_points()?;
+            this.add_server_component_boundaries_as_extra_entry_points()?;
 
-                this.clone_ast()?;
+            let mut linker_graph = this.clone_ast()?;
+            linker_graph.additional_output_files = additional_output_files;
 
-                // SAFETY: see `generate_from_cli` — raw-ptr borrow sidestep for
-                // `link` takes a raw `*mut BundleV2` and only touches fields disjoint
-                // from `this.linker`.
-                let mut chunks = unsafe {
-                    let bundle_ptr: *mut BundleV2 = &raw mut *this;
-                    let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                    // Value-copy (original preserved for `StaticRouteVisitor`).
-                    // Borrow — do NOT `take` (see `generate_from_cli`).
-                    let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                    // Project `.linker` via `bundle_ptr` so no second `Box::deref_mut`
-                    // retag invalidates `ep`/`scbs` (SB hygiene).
-                    (*bundle_ptr)
-                        .linker
-                        .link(bundle_ptr, ep, scbs, &reachable_files)?
-                };
+            let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
+            let mut chunks = linker.link(this.transpiler.log_mut())?;
 
-                if chunks.is_empty() {
-                    return Ok(Vec::new());
-                }
+            if chunks.is_empty() {
+                return Ok(Vec::new());
+            }
 
-                crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                    &mut this.linker,
-                    &mut chunks,
-                )
-            })();
-
-            this.deinit_without_freeing_arena();
-
-            result
+            crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                &mut linker,
+                this.transpiler.log_mut(),
+                &mut chunks,
+            )
         }
 
         pub(crate) fn add_server_component_boundaries_as_extra_entry_points(
@@ -4704,7 +4235,7 @@ pub mod bv2_impl {
             // entry points. This way, using two component files in a route does not
             // create two separate chunks. (note: bake passes each route as an entrypoint)
             {
-                let scbs = self.graph.server_component_boundaries.slice();
+                let scbs = &self.graph.server_component_boundaries;
                 self.graph.entry_points.reserve(scbs.list.len() * 2);
                 debug_assert_eq!(
                     scbs.list.items_source_index().len(),
@@ -4727,40 +4258,17 @@ pub mod bv2_impl {
         pub(crate) fn process_files_to_copy(
             &mut self,
             reachable_files: &[Index],
-        ) -> Result<(), Error> {
+        ) -> Result<Vec<options::OutputFile>, Error> {
+            let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
             if self.graph.estimated_file_loader_count > 0 {
-                // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
-                // sidestep so we can hold several read-only column slices, one mutable
-                // column slice (`additional_files`), and call `transpiler_for_target`
-                // (which needs `&mut self`) inside the loop.
-                let self_ptr: *mut Self = self;
-                // SAFETY: see note above — disjoint MultiArrayList columns,
-                // raw-ptr sidestep for split-borrow against `transpiler_for_target`
-                // inside the loop. All six column derefs share the same invariant.
-                let (
-                    unique_key_for_additional_files,
-                    content_hashes_for_additional_files,
-                    sources,
-                    targets,
-                    additional_files,
-                    loaders,
-                ) = unsafe {
-                    (
-                        (*self_ptr)
-                            .graph
-                            .input_files
-                            .items_unique_key_for_additional_file(),
-                        (*self_ptr)
-                            .graph
-                            .input_files
-                            .items_content_hash_for_additional_file(),
-                        (*self_ptr).graph.input_files.items_source_mut(),
-                        (*self_ptr).graph.ast.items_target(),
-                        (*self_ptr).graph.input_files.items_additional_files_mut(),
-                        (*self_ptr).graph.input_files.items_loader(),
-                    )
-                };
-                let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
+                let input_files = self.graph.input_files.split_mut();
+                let unique_key_for_additional_files = &*input_files.unique_key_for_additional_file;
+                let content_hashes_for_additional_files =
+                    &*input_files.content_hash_for_additional_file;
+                let sources = input_files.source;
+                let additional_files = input_files.additional_files;
+                let loaders = &*input_files.loader;
+                let targets = self.graph.ast.items_target();
                 let mut has_unusable_output_path = false;
                 // Without an output directory the paths are only returned, so they can have any length.
                 let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
@@ -4779,7 +4287,7 @@ pub mod bv2_impl {
                             options::PathTemplate::ASSET.into()
                         } else {
                             let mut template: options::PathTemplate =
-                                if self.graph.html_imports.server_source_indices.len() != 0
+                                if self.graph.html_imports.len() != 0
                                     && self.transpiler.options.asset_naming.is_empty()
                                 {
                                     options::PathTemplate::ASSET_WITH_TARGET.into()
@@ -4787,15 +4295,11 @@ pub mod bv2_impl {
                                     options::PathTemplate::ASSET.into()
                                 };
 
-                            // SAFETY: see `self_ptr` note above — `transpiler_for_target` needs
-                            // `&mut self` only to pick between two stored `*mut Transpiler`s; it
-                            // never touches `graph.input_files`.
-                            let asset_naming = unsafe {
-                                &(*self_ptr)
-                                    .transpiler_for_target(target)
-                                    .options
-                                    .asset_naming
-                            };
+                            let asset_naming = &self
+                                .other_transpilers
+                                .for_target(self.transpiler, self.graph.heap, target)
+                                .options
+                                .asset_naming;
                             if !asset_naming.is_empty() {
                                 template.data.clone_from(asset_naming);
                             }
@@ -4918,20 +4422,26 @@ pub mod bv2_impl {
                     }
                 }
 
-                self.graph.additional_output_files = additional_output_files;
                 if has_unusable_output_path {
                     return Err(crate::Error::BuildFailed);
                 }
             }
-            Ok(())
+            Ok(additional_output_files)
         }
 
-        pub fn on_load_async(&mut self, load: &mut jsc_api::JSBundler::Load) {
+        pub fn on_load_async(&self, load: &mut jsc_api::JSBundler::Load) {
+            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = load.owner {
+                let value = load.value.consume();
+                // SAFETY: `aot::plugins` frees no waiter before the build shuts down, and that waits
+                // for this call, the one answer of the request.
+                unsafe { waiter.as_ref() }.answer_load(value);
+                return;
+            }
             // Dispatch to the loop that *owns* `BundleV2`.
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(load).cast::<jsc_api::JSBundler::LoadAnswered>(),
@@ -4940,13 +4450,8 @@ pub mod bv2_impl {
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
+                    // Refused: the VM was torn down mid-bundle, the hop never runs.
+                    let _ = poster.post(ct);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
@@ -4962,9 +4467,15 @@ pub mod bv2_impl {
             }
         }
 
-        pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
+        pub fn on_resolve_async(&self, resolve: &mut jsc_api::JSBundler::Resolve) {
+            if let jsc_api::JSBundler::RequestOwner::Waiter(waiter) = resolve.owner {
+                let value = resolve.value.consume();
+                // SAFETY: as in `on_load_async`.
+                unsafe { waiter.as_ref() }.answer_resolve(value);
+                return;
+            }
             // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
+            match self.any_loop() {
                 bun_event_loop::AnyEventLoop::Js { .. } => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(resolve).cast::<jsc_api::JSBundler::ResolveAnswered>(),
@@ -4973,13 +4484,8 @@ pub mod bv2_impl {
                         .js_poster
                         .as_ref()
                         .expect("JS-owned bundle has a poster");
-                    if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
-                        // Owning JS VM torn down mid-bundle: the hop never runs.
-                        // SAFETY: refused ⇒ we own the task.
-                        unsafe {
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct)
-                        };
-                    }
+                    // Refused: the VM was torn down mid-bundle, the hop never runs.
+                    let _ = poster.post(ct);
                 }
                 bun_event_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
@@ -5009,7 +4515,13 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
+        #[inline(never)]
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_load);
+            debug_assert!(matches!(
+                load.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -5018,22 +4530,15 @@ pub mod bv2_impl {
                 this.graph.pending_items += 1;
             }
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
-            struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
-            impl Drop for LoadDeinitGuard {
-                fn drop(&mut self) {
-                    // SAFETY: `self.0` is the live `&mut Load`; the guard drops before that borrow ends.
-                    unsafe {
-                        let l = &mut *self.0;
-                        drop(core::mem::take(&mut l.path));
-                        drop(core::mem::take(&mut l.namespace));
-                        drop(core::mem::replace(
-                            &mut l.value,
-                            jsc_api::JSBundler::LoadValue::Consumed,
-                        ));
-                    }
-                }
-            }
-            let load_deinit = LoadDeinitGuard(std::ptr::from_mut(load));
+            let mut load_deinit = scopeguard::guard(load, |l| {
+                drop(core::mem::take(&mut l.path));
+                drop(core::mem::take(&mut l.namespace));
+                drop(core::mem::replace(
+                    &mut l.value,
+                    jsc_api::JSBundler::LoadValue::Consumed,
+                ));
+            });
+            let load: &mut jsc_api::JSBundler::Load = &mut **load_deinit;
             bun_core::scoped_log!(
                 Bundle,
                 "onLoad: ({}, {:?})",
@@ -5108,7 +4613,7 @@ pub mod bv2_impl {
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything
                     // else, park them in `free_list` (drained at the very end of
-                    // `deinit_without_freeing_arena`) and borrow, so the per-file
+                    // the bundle's drop) and borrow, so the per-file
                     // teardown loop is a no-op for the common no-plugin path.
                     // SAFETY: the boxed slice is heap-stable under either owner
                     // for as long as the parser holds the borrow.
@@ -5135,37 +4640,29 @@ pub mod bv2_impl {
                             // TODO: support explicit watchFiles array. this is not done
                             // right now because DevServer requires a table to map
                             // watched files and dirs to their respective dependants.
-                            let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                            let file = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
                                 let mut buf = bun_paths::path_buffer_pool::get();
                                 // On kqueue platforms paths are already
                                 // posix-separated so `z()` alone suffices.
-                                match bun_sys::open(
+                                match bun_sys::File::open(
                                     bun_paths::resolve_path::z(load.path.as_ref(), &mut *buf),
                                     bun_watcher::WATCH_OPEN_FLAGS,
                                     0,
                                 ) {
-                                    bun_sys::Result::Ok(fd) => fd,
+                                    bun_sys::Result::Ok(file) => Some(file),
                                     bun_sys::Result::Err(_) => break 'add_watchers,
                                 }
                             } else {
-                                bun_sys::Fd::INVALID
+                                None
                             };
 
                             // Failures to watch are intentionally ignored.
-                            if !matches!(
-                                this.bun_watcher_mut().unwrap().add_file::<true>(
-                                    fd,
-                                    &load.path,
-                                    bun_wyhash::hash(load.path.as_ref()) as u32,
-                                    bun_sys::Fd::INVALID,
-                                    None,
-                                ),
-                                Ok(bun_watcher::FdOwnership::Watcher)
-                            ) && fd.is_valid()
-                            {
-                                // Not adopted; close the fd opened above.
-                                let _ = bun_sys::close(fd);
-                            }
+                            let _ = this.bun_watcher_mut().unwrap().add_owned_file(
+                                file,
+                                &load.path,
+                                bun_wyhash::hash(load.path.as_ref()) as u32,
+                                None,
+                            );
                         }
                     }
                 }
@@ -5176,7 +4673,6 @@ pub mod bv2_impl {
                         // A stack-allocated Log object containing the singular message
                         let kind = msg.kind;
                         let temp_log = bun_ast::Log {
-                            clone_line_text: false,
                             errors: (kind == bun_ast::Kind::Err) as u32,
                             warnings: (kind == bun_ast::Kind::Warn) as u32,
                             msgs: vec![msg],
@@ -5232,26 +4728,25 @@ pub mod bv2_impl {
             self.graph.pending_items += u32::try_from(scheduled).expect("int cast");
         }
 
+        #[inline(never)]
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
-            // RAII guard captures `this`
-            // as a raw pointer so it does not hold a unique borrow across the body.
-            let _dec_guard = this.decrement_scan_counter_on_drop();
+            bun_removable_features::removable_definition!(Bundler, Self::on_resolve);
+            debug_assert!(matches!(
+                resolve.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
+            // Runs last: the decrement can finish a dev server bundle, which frees `resolve`'s arena.
+            let mut this = scopeguard::guard(this, |this| this.decrement_scan_counter());
+            let this: &mut BundleV2 = &mut **this;
             // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
-            struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
-            impl Drop for ResolveDeinitGuard {
-                fn drop(&mut self) {
-                    // SAFETY: `self.0` is the live `&mut Resolve`; the guard drops before that borrow ends.
-                    unsafe {
-                        let r = &mut *self.0;
-                        drop(core::mem::take(&mut r.import_record));
-                        drop(core::mem::replace(
-                            &mut r.value,
-                            jsc_api::JSBundler::ResolveValue::Consumed,
-                        ));
-                    }
-                }
-            }
-            let _resolve_deinit = ResolveDeinitGuard(std::ptr::from_mut(resolve));
+            let mut resolve = scopeguard::guard(resolve, |r| {
+                drop(core::mem::take(&mut r.import_record));
+                drop(core::mem::replace(
+                    &mut r.value,
+                    jsc_api::JSBundler::ResolveValue::Consumed,
+                ));
+            });
+            let resolve: &mut jsc_api::JSBundler::Resolve = &mut **resolve;
             bun_core::scoped_log!(
                 Bundle,
                 "onResolve: ({}:{}, {:?})",
@@ -5271,15 +4766,15 @@ pub mod bv2_impl {
                     if resolve.import_record.namespace.as_ref() == b"file" {
                         if resolve.import_record.kind == ImportKind::EntryPointBuild {
                             let target = resolve.import_record.original_target;
+                            let dot_slash = OnceCell::new();
                             let Ok(resolved) = this
                                 .transpiler_for_target(target)
-                                .resolve_entry_point(&resolve.import_record.specifier)
+                                .resolve_entry_point(&resolve.import_record.specifier, &dot_slash)
                             else {
                                 return;
                             };
-                            let mut resolved = resolved;
                             let Ok(source_index) = this.enqueue_entry_item(
-                                &mut resolved,
+                                &resolved,
                                 true,
                                 target,
                                 resolve.import_record.loader,
@@ -5307,16 +4802,12 @@ pub mod bv2_impl {
                         return;
                     }
 
-                    // SAFETY: Holding the `&mut bun_ast::Log` borrow would alias `&this.graph`
-                    // below; detach the lifetime so borrowck releases `this`. The log
-                    // lives in `this.transpiler`/`this.framework`, disjoint from
-                    // `graph.input_files`.
-                    let log: &mut bun_ast::Log = unsafe {
-                        bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
-                            resolve.import_record.original_target.bake_graph(),
-                        ))
-                    };
+                    let log = Self::resolution_log(
+                        &mut this.dev_server,
+                        &mut this.transpiler,
+                        &resolve.import_record.source_file,
+                        resolve.import_record.original_target.bake_graph(),
+                    );
 
                     // When it's not a file, this is an error and we should report it.
                     //
@@ -5347,47 +4838,25 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
-                    // SAFETY: `result.{path,namespace}` are `Box<[u8]>`. Each arm below
-                    // either moves both boxes into `this.free_list` before it stores
-                    // `path` (`!found_existing`, external import), or drops them and
-                    // never stores `path` (`found_existing`, external entry point).
-                    // `free_list` keeps the bytes until `deinit_without_freeing_arena`,
-                    // and the heap data does not move when a `Box` moves.
-                    let (result_path_static, result_ns_static): (&'static [u8], &'static [u8]) = unsafe {
-                        (
-                            &*std::ptr::from_ref::<[u8]>(result.path.as_ref()),
-                            &*std::ptr::from_ref::<[u8]>(result.namespace.as_ref()),
-                        )
-                    };
-                    let mut path = Fs::Path::init(result_path_static);
+                    let mut path = Fs::Path::init(&result.path);
                     if result.namespace.is_empty() || result.namespace.as_ref() == b"file" {
                         path.namespace = b"file";
                     } else {
-                        path.namespace = result_ns_static;
+                        path.namespace = &result.namespace;
                     }
                     if !result.external {
-                        // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
-                        // lifetime, blocking the `free_list`/`graph` accesses below.
-                        // Capture `value_ptr` as a raw ptr + `found_existing` and drop
-                        // the borrow; the map entry is not rehashed before we write
-                        // through `value_ptr` (no intervening map mutation).
-                        let (value_ptr, found_existing) = {
-                            let existing = this
-                                .path_to_source_index_map(resolve.import_record.original_target)
-                                .get_or_put(path.text)
-                                .expect("oom");
-                            (
-                                std::ptr::from_mut(existing.value_ptr),
-                                existing.found_existing,
-                            )
-                        };
-                        if !found_existing {
-                            // Move (not clone) — `path` keeps borrowing the heap bytes via the
-                            // `'static` erasure above; `Box<[u8]>` heap data does not relocate
-                            // when the Box itself is moved into the Vec.
-                            this.free_list.push(result.namespace);
-                            this.free_list.push(result.path);
-                            path = this
+                        let existing = this.graph.build_graphs
+                            [resolve.import_record.original_target]
+                            .get_or_put(path.text)
+                            .expect("oom");
+                        if !existing.found_existing {
+                            // We need to parse this
+                            let source_index =
+                                Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
+                            *existing.value_ptr = source_index.get();
+                            out_source_index = Some(source_index);
+
+                            let path = this
                                 .path_with_pretty_initialized(
                                     &path,
                                     resolve.import_record.original_target,
@@ -5396,12 +4865,6 @@ pub mod bv2_impl {
                             // `GetOrPutResult` has no `key_ptr` — `get_or_put` already
                             // duped the key into the map (see PathToSourceIndexMap.rs).
 
-                            // We need to parse this
-                            let source_index =
-                                Index::init(u32::try_from(this.graph.ast.len()).expect("int cast"));
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            unsafe { *value_ptr = source_index.get() };
-                            out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
                             // A file that a plugin resolved the record to instead keeps its own loader.
                             let loader = this.requested_file_loader(
@@ -5416,8 +4879,7 @@ pub mod bv2_impl {
                                 .input_files
                                 .append(crate::Graph::InputFile {
                                     source: bun_ast::Source {
-                                        // Shim to the field-identical `bun_paths::fs::Path<'static>`.
-                                        path: path_as_static(&path),
+                                        path,
                                         contents: std::borrow::Cow::Borrowed(&b""[..]),
                                         index: bun_ast::Index(source_index.get()),
                                         ..Default::default()
@@ -5428,14 +4890,7 @@ pub mod bv2_impl {
                                 })
                                 .expect("unreachable");
                             let task_val = ParseTask {
-                                // SAFETY: `from_mut(this)` is the live bundle (write provenance);
-                                // outlives the task.
-                                ctx: Some(unsafe {
-                                    bun_ptr::ParentRef::from_raw_mut(
-                                        std::ptr::from_mut::<BundleV2>(this)
-                                            .cast::<BundleV2<'static>>(),
-                                    )
-                                }),
+                                ctx: Some(bun_ptr::ParentRef::from_ref_mut(this)),
                                 path,
                                 // unknown at this point:
                                 contents_or_fd: parse_task::ContentsOrFd::Fd {
@@ -5457,8 +4912,7 @@ pub mod bv2_impl {
                                 ..Default::default()
                             };
                             // Arena-owned.
-                            // SAFETY: arena outlives the bundle pass.
-                            let task: &mut ParseTask = this.arena_create(task_val);
+                            let task: &mut ParseTask = this.arena().alloc(task_val);
                             task.task.node.next = core::ptr::null_mut();
                             task.io_task.node.next = core::ptr::null_mut();
                             this.increment_scan_counter();
@@ -5481,10 +4935,7 @@ pub mod bv2_impl {
                                 this.graph.pool().schedule(task);
                             }
                         } else {
-                            // SAFETY: map slot from `get_or_put` above; map not mutated since.
-                            out_source_index = Some(Index::init(unsafe { *value_ptr }));
-                            drop(result.namespace);
-                            drop(result.path);
+                            out_source_index = Some(Index::init(*existing.value_ptr));
                         }
                     } else if resolve.import_record.kind == ImportKind::EntryPointBuild {
                         let log = this.log_for_resolution_failures(
@@ -5499,19 +4950,16 @@ pub mod bv2_impl {
                                 bun_core::fmt::quote(&resolve.import_record.specifier),
                             ),
                         );
-                        drop(result.namespace);
-                        drop(result.path);
                     } else {
                         // Like esbuild, print the external import with the path the plugin returned.
-                        this.free_list.push(result.namespace);
-                        this.free_list.push(result.path);
+                        let path = path_in_arena(&path, this.arena());
                         // Answers run as posted tasks, after the importer's records are on the graph.
                         let import_record: &mut ImportRecord =
                             &mut this.graph.ast.items_import_records_mut()
                                 [resolve.import_record.importer_source_index as usize]
                                 .as_mut_slice()
                                 [resolve.import_record.import_record_index as usize];
-                        import_record.path = path_as_static(&path);
+                        import_record.path = path;
                     }
 
                     if let Some(source_index) = out_source_index {
@@ -5562,7 +5010,7 @@ pub mod bv2_impl {
                         resolve.import_record.original_target.bake_graph(),
                     );
                     let kind = err.kind;
-                    log.msgs.push(err.clone());
+                    log.msgs.push(err);
                     log.errors += (kind == bun_ast::Kind::Err) as u32;
                     log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                 }
@@ -5571,24 +5019,18 @@ pub mod bv2_impl {
             }
             // resolve is dropped here (defer resolve.deinit())
         }
+    }
 
-        pub fn deinit_without_freeing_arena(&mut self) {
-            // A build that stops between `compute_data_for_source_map` and the waits in
-            // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
-            // creating `Worker`s and reading `graph`.
-            self.linker.source_maps.line_offset_wait_group.wait();
-            self.linker.source_maps.quoted_contents_wait_group.wait();
-            // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
+    impl Drop for BundleV2<'_> {
+        fn drop(&mut self) {
+            // Dropping the linker waits too, but leaking it does not.
+            self.line_offset_wait_group.wait();
+            self.quoted_contents_wait_group.wait();
+            // The last IO callback may still be using the worker pool that `graph` frees.
             self.graph.pool().wait_for_io_tasks();
 
-            {
-                // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
-                let on_parse_finalizers = core::mem::take(&mut self.finalizers);
-                for finalizer in &on_parse_finalizers {
-                    finalizer.call();
-                }
-                drop(on_parse_finalizers);
-            }
+            // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
+            self.finalizers.clear();
 
             // Plugin file/asset-loader bytes that `process_files_to_copy` will
             // `mem::take` are stored as `Cow::Owned` so that handoff is zero-copy.
@@ -5607,7 +5049,7 @@ pub mod bv2_impl {
             // arena teardown bulk-frees them:
             // `LinkerGraph.File.line_offset_table`
             // is `List<AstAlloc>` (slab + `columns_for_non_ascii` payloads in the
-            // worker AST heap, see `compute_line_offsets`), and every
+            // worker AST heap, see `SourceMapTasks`), and every
             // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` column —
             // `quoted_source_contents`, `Part`s, `NamedImport`s, `Scope`s,
             // `ImportData`/`ExportData`, `ArrayHashMap` buckets — is `AstAlloc`-
@@ -5620,79 +5062,17 @@ pub mod bv2_impl {
             // type). The arena-allocated stylesheet never has `Drop` run by the
             // slab. For JS-only bundles every `css` slot is `None`, so this loop
             // is N×branch with no work; only CSS entries pay a real drop. The
-            // macro takes only one side (`linker.graph.ast` is a bitwise SoA
-            // `memcpy` of `graph.ast`), and `CssChunk::asts` `forget()`s its
-            // aliases, so this is the unique drop.
-            {
-                macro_rules! take_ast_cols {
-                    ($ast:expr) => {{
-                        let ast = $ast;
-                        for v in ast.items_css_mut() {
-                            if let Some(css_ref) = v.take() {
-                                // SAFETY: live arena pointer; dropped exactly once.
-                                unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
-                            }
-                        }
-                    }};
+            // linker's `ast` is a bitwise SoA `memcpy` of `graph.ast`, so this is the unique drop.
+            for v in self.graph.ast.items_css_mut() {
+                if let Some(css_ref) = v.take() {
+                    // SAFETY: live arena pointer; dropped exactly once.
+                    unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
-                if self.linker.graph.ast.len() != 0 {
-                    take_ast_cols!(&mut self.linker.graph.ast);
-                } else {
-                    take_ast_cols!(&mut self.graph.ast);
-                }
-            }
-
-            // `File.entry_bits` is `AutoBitSet::Dynamic` (global-heap) when
-            // entry points exceed the 64-bit static inline. The slab-only
-            // `MultiArrayList::drop` won't run its destructor.
-            for b in self.linker.graph.files.items_entry_bits_mut() {
-                if let bun_collections::AutoBitSet::Dynamic(d) = b {
-                    d.deinit();
-                }
-            }
-
-            // Drop the lazily-created client transpiler (if any) before tearing
-            // down workers — the slot
-            // is invalidated ahead of `pool.workers_assignments` so no worker can
-            // observe a half-torn-down transpiler. Clear the `client_transpiler`
-            // alias first so it never dangles past the Box drop; in the
-            // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
-            // the DevServer-owned pointer is left untouched.
-            if let Some(ct) = self.owned_client_transpiler.as_deref_mut() {
-                // `wire_after_move` boxed a higher-tier
-                // `bun_js_parser_jsc::Macro::MacroContext` behind
-                // `macro_context.data`; the parser-level struct has no `Drop`
-                // (and can't — `RuntimeTranspilerStore` bytewise-clones it),
-                // so the `Box<Transpiler>` drop below would strand it.
-                if let Some(ctx) = ct.macro_context.take() {
-                    ctx.deinit();
-                }
-                self.client_transpiler = None;
-                self.owned_client_transpiler = None;
-            }
-
-            // Worker-assignment teardown.
-            let pool = self.graph.pool_mut();
-            {
-                let mut assignments = pool.workers_assignments.lock();
-                if assignments.count() > 0 {
-                    for worker in assignments.values() {
-                        // SAFETY: worker ptrs are live until `deinit_soon`.
-                        unsafe { (**worker).deinit_soon() };
-                    }
-                    pool.wake_for_idle_events();
-                }
-                // `ThreadPool` is arena-allocated; the arena bulk-free won't
-                // run its `Drop`, so release the map's backing storage here.
-                assignments.clear_and_free();
-            }
-            pool.deinit();
-
-            for free in self.free_list.drain(..) {
-                drop(free);
             }
         }
+    }
 
+    impl<'a> BundleV2<'a> {
         pub fn run_from_js_in_new_thread(
             &mut self,
             entry_points: &[&[u8]],
@@ -5724,46 +5104,32 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.clone_ast()?;
+            let mut linker_graph = self.clone_ast()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             let reachable_files = self.find_reachable_files()?;
 
-            self.process_files_to_copy(&reachable_files)?;
+            linker_graph.additional_output_files = self.process_files_to_copy(&reachable_files)?;
 
             self.add_server_component_boundaries_as_extra_entry_points()?;
 
-            // SAFETY: see `generate_from_cli` — repr(transparent) Index slice cast +
-            // raw-ptr borrow sidestep for `&mut self.linker` / `&mut *self`.
-            let mut chunks = unsafe {
-                let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Value-copy (original preserved for `StaticRouteVisitor`).
-                // Borrow — do NOT `take` (see `generate_from_cli`).
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .link(bundle_ptr, ep, scbs, &reachable_files)?
-            };
+            let mut linker = LinkerContext::load(self, linker_graph, &reachable_files)?;
+            let mut chunks = linker.link(self.transpiler.log_mut())?;
 
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
 
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut self.linker,
+                &mut linker,
+                self.transpiler.log_mut(),
                 &mut chunks,
             )?;
 
             // Generate metafile if requested
-            let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
-                match crate::linker_context::metafile_builder::generate(
-                    &mut self.linker,
-                    &mut chunks,
-                ) {
+            let metafile: Option<Box<[u8]>> = if linker.options.metafile {
+                match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
                     Ok(m) => Some(m),
                     Err(err) => {
                         bun_core::warn!("Failed to generate metafile: {}", err.name());
@@ -5776,7 +5142,7 @@ pub mod bv2_impl {
 
             // Generate markdown if metafile was generated and path specified
             let metafile_markdown: Option<Box<[u8]>> = match &metafile {
-                Some(mf) if !self.linker.options.metafile_markdown_path.is_empty() => {
+                Some(mf) if !self.transpiler.options.metafile_markdown_path.is_empty() => {
                     match crate::linker_context::metafile_builder::generate_markdown(mf) {
                         Ok(m) => Some(m),
                         Err(err) => {
@@ -5790,25 +5156,24 @@ pub mod bv2_impl {
 
             // Write metafile outputs to disk and add them as OutputFiles.
             // Metafile paths are relative to outdir, like all other output files.
-            // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
-            let outdir = &self.linker.resolver().opts.output_dir;
-            if !self.linker.options.metafile_json_path.is_empty() {
+            let outdir = &self.transpiler.resolver.opts.output_dir;
+            if !self.transpiler.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(
                         &mut output_files,
                         outdir,
-                        self.linker.options.metafile_json_path,
+                        &self.transpiler.options.metafile_json_path,
                         mf,
                         crate::options::OutputKind::MetafileJson,
                     )?;
                 }
             }
-            if !self.linker.options.metafile_markdown_path.is_empty() {
+            if !self.transpiler.options.metafile_markdown_path.is_empty() {
                 if let Some(md) = &metafile_markdown {
                     write_metafile_output(
                         &mut output_files,
                         outdir,
-                        self.linker.options.metafile_markdown_path,
+                        &self.transpiler.options.metafile_markdown_path,
                         md,
                         crate::options::OutputKind::MetafileMarkdown,
                     )?;
@@ -5825,7 +5190,7 @@ pub mod bv2_impl {
 
     /// Writes a metafile (JSON or markdown) to disk and appends it to the output_files list.
     /// Metafile paths are relative to outdir, like all other output files.
-    fn write_metafile_output(
+    pub(crate) fn write_metafile_output(
         output_files: &mut Vec<options::OutputFile>,
         outdir: &[u8],
         file_path: &[u8],
@@ -5945,10 +5310,6 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.clone_ast().map_err(|_| AllocError)?;
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
 
@@ -5959,36 +5320,18 @@ pub mod bv2_impl {
                 let mut js_files: Vec<Index> =
                     Vec::with_capacity(self.graph.ast.len() - self.graph.css_file_count - 1);
 
-                let asts = self.graph.ast.slice();
-                let css_asts = asts.items_css();
-                // SoA columns are physically disjoint slabs but rustc cannot
-                // see that through `&Slice`. Route the two columns we mutate (`parts`,
-                // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
-                // no `&mut` intermediate) so the per-index `&mut` does not conflict
-                // with the `&asts` reads (`css`, `target`). Mirrors the pattern at
-                // `find_reachable_files` (~L1457). The slab does not resize for the
-                // duration of this loop and no other `&mut` to these columns exists.
-                let ast_raw = asts.split_raw();
-                let parts_col: *mut bun_ast::PartList = ast_raw.parts.cast::<bun_ast::PartList>();
-                let import_records_col: *mut import_record::List =
-                    ast_raw.import_records.cast::<import_record::List>();
-
-                let input_files = self.graph.input_files.slice();
-                let loaders = input_files.items_loader();
-                let sources = input_files.items_source();
                 for index in 1..self.graph.ast.len() {
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let part_list = unsafe { &mut *parts_col.add(index) };
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let import_records = unsafe { &mut *import_records_col.add(index) };
-                    let maybe_css = &css_asts[index];
-                    let target = asts.items_target()[index];
+                    let ast = self.graph.ast.split_mut();
+                    let loaders = self.graph.input_files.items_loader();
+                    let sources = self.graph.input_files.items_source();
+                    let import_records = &mut ast.import_records[index];
+                    let target = ast.target[index];
                     // Dev Server proceeds even with failed files.
                     // These files are filtered out via the lack of any parts.
                     //
                     // Actual empty files will contain a part exporting an empty object.
-                    if part_list.len() != 0 {
-                        if maybe_css.is_some() {
+                    if ast.parts[index].len() != 0 {
+                        if ast.css[index].is_some() {
                             // CSS has restrictions on what files can be imported.
                             // This means the file can become an error after
                             // resolution, which is not usually the case.
@@ -5998,10 +5341,7 @@ pub mod bv2_impl {
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                // `scan_css_imports` takes the column as a raw
-                                // `*const` slice (the scanImportsAndExports caller holds raw
-                                // SoA pointers); it only reads via `is_none()`.
-                                std::ptr::from_ref(css_asts),
+                                ast.css,
                                 sources,
                                 loaders,
                                 &mut log,
@@ -6037,7 +5377,7 @@ pub mod bv2_impl {
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast")));
 
-                                // Part liveness for HMR is seeded after `linker.load`
+                                // Part liveness for HMR is seeded after `LinkerContext::load`
                                 // (every part of every JS file is marked live).
                             }
 
@@ -6049,13 +5389,7 @@ pub mod bv2_impl {
                                 if loaders[record.source_index.get() as usize] != Loader::Css {
                                     continue;
                                 }
-                                // SAFETY: `source_index < ast.len()` (validated above); read
-                                // via the raw column ptr so we don't reborrow `asts.parts()`
-                                // while `import_records` (a sibling column) is held `&mut`.
-                                if unsafe {
-                                    (*parts_col.add(record.source_index.get() as usize)).len()
-                                } == 0
-                                {
+                                if ast.parts[record.source_index.get() as usize].len() == 0 {
                                     record.source_index = Index::INVALID;
                                     // The importer isn't bundled again when the stylesheet is fixed, so its
                                     // output must treat this import the same as a stylesheet that didn't fail.
@@ -6089,7 +5423,7 @@ pub mod bv2_impl {
                 // Find CSS entry points. Originally, this was computed up front, but
                 // failed files do not remember their loader, and plugins can
                 // asynchronously decide a file is CSS.
-                let css = asts.items_css();
+                let css = self.graph.ast.items_css();
                 for entry_point in &self.graph.entry_points {
                     if css[entry_point.get() as usize].is_some() {
                         start.css_entry_points.put(
@@ -6101,13 +5435,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives
-                // this function. Erase the `&self` lifetime via `*const` so the borrow on
-                // `self.arena()` does not extend across the `&mut self` calls below
-                // (arena-erasure convention; see also `path.pretty` ~L4770).
-                break 'reachable_files unsafe {
-                    &*std::ptr::from_ref::<[Index]>(self.arena().alloc_slice_copy(&js_files))
-                };
+                break 'reachable_files self.arena().alloc_slice_copy(&js_files);
             };
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -6124,28 +5452,14 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            // SAFETY: `LinkerContext::load` takes `bundle` as a raw `*mut BundleV2` and only
-            // touches fields disjoint from `self.linker` (`graph`, `transpiler`,
-            // `dynamic_import_entry_points`) via `addr_of_mut!`, so the `&mut self.linker`
-            // receiver and `*bundle_ptr` never produce overlapping `&mut`. Both Index newtypes
-            // are `#[repr(transparent)]` u32 — see `generate_from_cli` for the slice cast.
-            unsafe {
-                let bundle_ptr: *mut BundleV2 = self;
-                let ep = (*bundle_ptr).graph.entry_points.as_slice();
-                // Value-copy (original preserved). Borrow — do NOT `take`.
-                let scbs = &(*bundle_ptr).graph.server_component_boundaries;
-                // Project `.linker` via `bundle_ptr` so no `&mut *self` reborrow
-                // retag invalidates `ep`/`scbs` (SB hygiene).
-                (*bundle_ptr)
-                    .linker
-                    .load(bundle_ptr, ep, scbs, js_reachable_files)
-                    .map_err(|_| AllocError)?;
-            }
+            let linker_graph = self.clone_ast().map_err(|_| AllocError)?;
+            let mut linker = LinkerContext::load(self, linker_graph, js_reachable_files)
+                .map_err(|_| AllocError)?;
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
             // here: every part of every JS file is considered live.
             {
-                let parts_col = self.linker.graph.ast.items_parts();
+                let parts_col = linker.graph.ast.items_parts();
                 let mut parts_live: Vec<bun_collections::AutoBitSet> =
                     Vec::with_capacity(parts_col.len());
                 for parts in parts_col {
@@ -6154,7 +5468,7 @@ pub mod bv2_impl {
                 for &idx in js_reachable_files {
                     parts_live[idx.get() as usize].set_all(true);
                 }
-                self.linker.graph.parts_live = parts_live;
+                linker.graph.parts_live = parts_live;
             }
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -6166,7 +5480,7 @@ pub mod bv2_impl {
                     debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
                 }
             }
-            self.linker.compute_data_for_source_map(js_reachable_files);
+            linker.compute_data_for_source_map();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -6186,8 +5500,6 @@ pub mod bv2_impl {
                 };
             }
 
-            // `Chunk: !Default` (Vec fields). Allocate via Vec then
-            // leak into the arena.
             let mut chunks: Vec<Chunk> =
                 Vec::with_capacity(1 + start.css_entry_points.count() + html_files.count());
 
@@ -6208,16 +5520,53 @@ pub mod bv2_impl {
             });
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
-            let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]) {
-                    Ok(order) => css_orders.push((*entry_point, order)),
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, self.graph.heap, &[*entry_point]) {
+                    Ok(order) => chunks.push(Chunk {
+                        entry_point: chunk::EntryPoint::non_entry_point(
+                            entry_point.get(),
+                            entry_point.get(),
+                        ),
+                        content: chunk::Content::Css(chunk::CssChunk {
+                            imports_in_chunk_in_order: order,
+                        }),
+                        output_source_map: SourceMap::SourceMapPieces::init(),
+                        ..Chunk::default()
+                    }),
                     Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
                 }
             }
-            // Treat an `@import` chain that's too deep like an invalid import. The
-            // dev server reports the error for that file and skips its chunk.
+
+            // Then all HTML files
+            for source_index in html_files.keys() {
+                chunks.push(Chunk {
+                    entry_point: chunk::EntryPoint::non_entry_point(
+                        source_index.get(),
+                        source_index.get(),
+                    ),
+                    content: chunk::Content::Html,
+                    output_source_map: SourceMap::SourceMapPieces::init(),
+                    ..Chunk::default()
+                });
+            }
+
+            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
+
+            crate::linker_context_mod::generate_chunks_in_parallel::<true>(
+                &mut linker,
+                self.transpiler.log_mut(),
+                &mut chunks,
+            )
+            .map_err(|_| AllocError)?;
+
+            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
+
+            // Nothing reads it after printing.
+            chunks[0].renamer = Default::default();
+            let linker_graph = linker.into_graph();
+
+            // An `@import` chain that is too deep has no chunk. It is reported like an invalid import.
             for (entry_point, too_deep) in css_too_deep {
                 let sources = self.graph.input_files.items_source();
                 let mut log = bun_ast::Log::init();
@@ -6233,62 +5582,14 @@ pub mod bv2_impl {
                     .map_err(|_| AllocError)?;
                 let _ = start.css_entry_points.ordered_remove(&entry_point);
             }
-            for (entry_point, order) in css_orders {
-                let order_len = order.len() as usize;
-                chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::non_entry_point(
-                        entry_point.get(),
-                        entry_point.get(),
-                    ),
-                    content: chunk::Content::Css(chunk::CssChunk {
-                        imports_in_chunk_in_order: order,
-                        asts: (0..order_len)
-                            .map(|_| bun_css::BundlerStyleSheet::empty())
-                            .collect::<Vec<_>>()
-                            .into_boxed_slice(),
-                    }),
-                    output_source_map: SourceMap::SourceMapPieces::init(),
-                    ..Chunk::default()
-                });
-            }
-
-            // Then all HTML files
-            for source_index in html_files.keys() {
-                chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::non_entry_point(
-                        source_index.get(),
-                        source_index.get(),
-                    ),
-                    content: chunk::Content::Html,
-                    output_source_map: SourceMap::SourceMapPieces::init(),
-                    ..Chunk::default()
-                });
-            }
-            // Arena-owned; the
-            // `DevServerOutput` lifetime is documented as "tied to the bundler's
-            // arena". `alloc_slice_fill_iter` moves each `Chunk` into the bump.
-            let chunks: *mut [Chunk] =
-                std::ptr::from_mut::<[Chunk]>(self.arena().alloc_slice_fill_iter(chunks));
-            // SAFETY: arena outlives this fn and the `DevServerOutput` it produces.
-            let chunks: &mut [Chunk] = unsafe { &mut *chunks };
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
-            crate::linker_context_mod::generate_chunks_in_parallel::<true>(
-                &mut self.linker,
-                chunks,
-            )
-            .map_err(|_| AllocError)?;
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             dev_server
                 .finalize_bundle(
                     self,
-                    &mut DevServerOutput {
+                    DevServerOutput {
                         chunks,
+                        linker_graph,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
-                        html_files,
                     },
                 )
                 .map_err(|_| AllocError)
@@ -6324,9 +5625,8 @@ pub mod bv2_impl {
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Resolve` until the JS thread calls
                     // back, at which point the bundle pass is still alive.
-                    // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
+                        self.arena().alloc(jsc_api::JSBundler::Resolve::default());
                     *resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
@@ -6368,9 +5668,8 @@ pub mod bv2_impl {
                     );
 
                     // Arena-owned.
-                    // SAFETY: arena outlives the bundle pass.
                     let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
+                        self.arena().alloc(jsc_api::JSBundler::Resolve::default());
                     self.increment_scan_counter();
 
                     *resolve = jsc_api::JSBundler::Resolve::init(
@@ -6416,7 +5715,7 @@ pub mod bv2_impl {
                 // bundle's lifetime; `ParseTask` is strictly shorter-lived, so the
                 // raw-slice borrow is sound. No clone, no leak.
                 self.free_list.push(maybe_decoded.into_boxed_slice());
-                // SAFETY: `free_list` is append-only until `deinit_without_freeing_arena`
+                // SAFETY: `free_list` is append-only until `BundleV2::drop`
                 // (after all ParseTasks have completed); the `Box<[u8]>` is heap-stable.
                 let decoded: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(self.free_list.last().unwrap()) };
@@ -6448,8 +5747,7 @@ pub mod bv2_impl {
                     // Arena-owned; the dispatch
                     // chain holds the raw `*mut Load` until the JS thread calls back.
                     let load_val = jsc_api::JSBundler::Load::init(self, parse);
-                    // SAFETY: arena outlives the bundle pass.
-                    let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
+                    let load: &mut jsc_api::JSBundler::Load = self.arena().alloc(load_val);
                     load.dispatch();
                     return true;
                 }
@@ -6458,22 +5756,32 @@ pub mod bv2_impl {
             false
         }
 
+        /// A task reads the primary path, also when `active` (`Result::path`) is the secondary one.
+        fn parse_task_path(
+            &self,
+            result: &_resolver::Result<'_>,
+            active: Fs::Path<'a>,
+            target: options::Target,
+        ) -> Fs::Path<'a> {
+            if result.path_pair.primary.is_disabled {
+                self.path_with_pretty_initialized(&result.path_pair.primary, target)
+                    .expect("oom")
+            } else {
+                active
+            }
+        }
+
         fn path_with_pretty_initialized(
             &self,
-            path: &Fs::Path<'static>,
+            path: &Fs::Path<'_>,
             target: options::Target,
-        ) -> Result<Fs::Path<'static>, Error> {
-            // SAFETY: arena outlives the bundle pass; erase the `&self` lifetime so the
-            // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
-            let bump: &'static bun_alloc::Arena =
-                unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-            let out = generic_path_with_pretty_initialized(
+        ) -> Result<Fs::Path<'a>, Error> {
+            generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir(),
-                bump,
-            )?;
-            Ok(out)
+                Fs::FileSystem::get().top_level_dir(),
+                self.graph.heap,
+            )
         }
 
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
@@ -6558,10 +5866,10 @@ pub mod bv2_impl {
         // The problem is that module resolution has many mutexes.
         // The downside is cached resolutions are faster to do in threads since they only lock very briefly.
         fn run_resolution_for_parse_task(
-            parse_result: &mut parse_task::Result,
-            this: &mut BundleV2,
-        ) -> ResolveQueue {
-            let result = match &mut parse_result.value {
+            parse_result: &mut parse_task::Result<'a>,
+            this: &mut BundleV2<'a>,
+        ) -> ResolveQueue<'a> {
+            let result = match &mut *parse_result.value {
                 parse_task::ResultValue::Success(r) => r,
                 _ => unreachable!(),
             };
@@ -6625,7 +5933,7 @@ pub mod bv2_impl {
                     unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
 
-                parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
+                *parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,
                     step: crate::parse_task::Step::Resolve,
                     log: bun_ast::Log::init(),
@@ -6638,17 +5946,17 @@ pub mod bv2_impl {
         }
     }
 
-    pub(crate) struct ResolveImportRecordCtx<'a> {
-        pub(crate) import_records: &'a mut [ImportRecord],
-        pub(crate) source: &'a bun_ast::Source,
+    pub(crate) struct ResolveImportRecordCtx<'r, 'a> {
+        pub(crate) import_records: &'r mut [ImportRecord<'a>],
+        pub(crate) source: &'r bun_ast::Source<'a>,
         pub(crate) loader: Loader,
         pub(crate) target: options::Target,
         /// See `only_selected_record`.
-        pub(crate) only_records: Option<&'a [u32]>,
+        pub(crate) only_records: Option<&'r [u32]>,
     }
 
-    pub(crate) struct ResolveImportRecordResult {
-        pub(crate) resolve_queue: ResolveQueue,
+    pub(crate) struct ResolveImportRecordResult<'a> {
+        pub(crate) resolve_queue: ResolveQueue<'a>,
         pub(crate) last_error: Option<Error>,
     }
 
@@ -6667,8 +5975,9 @@ pub mod bv2_impl {
         /// Used by both initial parse resolution and barrel un-deferral.
         pub(crate) fn resolve_import_records(
             &mut self,
-            ctx: &mut ResolveImportRecordCtx,
-        ) -> ResolveImportRecordResult {
+            ctx: &mut ResolveImportRecordCtx<'_, 'a>,
+        ) -> ResolveImportRecordResult<'a> {
+            let heap = self.graph.heap;
             let source = ctx.source;
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
@@ -6842,17 +6151,10 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                // borrowck — `transpiler_for_target` returns `&mut Transpiler`
-                // tied to `&mut self`, but the underlying storage is raw `*mut Transpiler`
-                // backrefs valid for `'a` (see `init`). Compute the raw ptr first, then
-                // deref once, so the `&mut self` borrow doesn't span the rest of the loop
-                // body.
                 // `bake_graph` is the imported file's graph. Resolution failures are logged under the importer's graph.
-                let (transpiler_ptr, bake_graph, target): (
-                    *mut Transpiler<'a>,
-                    bake::Graph,
-                    options::Target,
-                ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
+                let (bake_graph, target) = if import_record.tag
+                    == bun_ast::ImportRecordTag::BakeResolveToSsrGraph
+                {
                     if self.framework.is_none() {
                         self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
@@ -6880,30 +6182,21 @@ pub mod bv2_impl {
                         continue;
                     }
 
-                    (
-                        self.ssr_transpiler,
-                        bake::Graph::Ssr,
-                        Target::ServerComponentsSsr,
-                    )
+                    (bake::Graph::Ssr, Target::ServerComponentsSsr)
                 } else {
-                    (
-                        std::ptr::from_mut::<Transpiler<'a>>(
-                            self.transpiler_for_target(ctx.target),
-                        ),
-                        ctx.target.bake_graph(),
-                        ctx.target,
-                    )
+                    (ctx.target.bake_graph(), ctx.target)
                 };
-                // SAFETY: see note above — raw `*mut Transpiler` lives for `'a`.
-                let transpiler: &mut Transpiler<'a> = unsafe { &mut *transpiler_ptr };
 
                 // Check the FileMap first for in-memory files
                 if let Some(file_map) = self.file_map {
                     if let Some(_file_map_result) =
-                        file_map.resolve(self.arena(), source.path.text, import_record.path.text)
+                        file_map.resolve(heap, source.path.text, import_record.path.text)
                     {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
+                        let transpiler =
+                            self.other_transpilers
+                                .for_target(self.transpiler, heap, target);
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
@@ -6911,63 +6204,62 @@ pub mod bv2_impl {
                         });
                         import_record.loader = Some(import_record_loader);
 
-                        if let Some(id) =
-                            self.path_to_source_index_map(target).get(path_primary.text)
+                        if let Some(id) = self
+                            .graph
+                            .path_to_source_index_map(target)
+                            .get(path_primary.text)
                         {
                             import_record.source_index = Index::init(id);
                             continue;
                         }
 
-                        let resolve_entry =
-                            resolve_queue.get_or_put(path_primary.text).expect("oom");
-                        if resolve_entry.found_existing {
-                            // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                            import_record.path =
-                                path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                            continue;
-                        }
+                        let enqueue = match resolve_queue.get_or_vacant(path_primary.text) {
+                            Ok(task) => {
+                                import_record.path = task.path;
+                                continue;
+                            }
+                            Err(enqueue) => enqueue,
+                        };
 
                         // For virtual files, use the path text as-is (no relative path computation needed).
-                        // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
-                        // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`
-                        // (otherwise `path_primary: Path<'static>` forces `&self: 'static`,
-                        // cascading borrow conflicts into every `&mut self` call below).
-                        path_primary.pretty = unsafe {
-                            bun_ptr::detach_lifetime(
-                                self.arena().alloc_slice_copy(path_primary.text),
-                            )
-                        };
-                        import_record.path = path_as_static(&path_primary);
-                        let _ = path_primary.text; // key already interned by get_or_put
+                        path_primary.pretty = heap.alloc_slice_copy(path_primary.text);
+                        import_record.path = path_primary;
                         bun_core::scoped_log!(
                             Bundle,
                             "created ParseTask from FileMap: {}",
                             bstr::BStr::new(&path_primary.text)
                         );
                         file_map_result.path_pair.primary = path_primary;
-                        // Arena-owned.
-                        let resolve_task_val =
-                            ParseTask::init(&file_map_result, bun_ast::Index::INVALID, self);
-                        // SAFETY: arena outlives the bundle pass.
-                        let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
-                        resolve_task.known_target = target;
                         // Use transpiler JSX options, applying force_node_env like the disk path does
-                        resolve_task.jsx = transpiler.options.jsx.clone();
-                        resolve_task.jsx.development = transpiler.options.forced_jsx_development();
+                        let mut jsx = transpiler.options.jsx.clone();
+                        jsx.development = transpiler.options.forced_jsx_development();
+                        // Arena-owned.
+                        let resolve_task_val = ParseTask::init(
+                            &file_map_result,
+                            file_map_result.path_pair.primary,
+                            bun_ast::Index::INVALID,
+                            self,
+                        );
+                        let resolve_task = heap.alloc(resolve_task_val);
+                        resolve_task.known_target = target;
+                        resolve_task.jsx = jsx;
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        *resolve_entry.value_ptr = resolve_task;
+                        enqueue(resolve_task);
                         continue;
                     }
                 }
 
                 let mut had_busted_dir_cache = false;
-                let resolve_result: _resolver::Result = 'inner: loop {
-                    match transpiler.resolver.resolve_with_framework(
-                        source_dir,
-                        import_record.path.text,
-                        import_record.kind,
-                    ) {
+                let resolve_result: _resolver::Result<'a> = 'inner: loop {
+                    match self
+                        .transpiler_for_target(target)
+                        .resolver
+                        .resolve_with_framework(
+                            source_dir,
+                            import_record.path.text,
+                            import_record.kind,
+                        ) {
                         Ok(r) => break r,
                         Err(err) => {
                             // borrowck — `log_for_resolution_failures` returns
@@ -6995,10 +6287,14 @@ pub mod bv2_impl {
                                             bstr::BStr::new(&import_record.path.text)
                                         );
                                         // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
-                                            source.path.text,
-                                            import_record.path.text,
-                                        ) {
+                                        if self
+                                            .transpiler_for_target(target)
+                                            .resolver
+                                            .bust_dir_cache_from_specifier(
+                                                source.path.text,
+                                                import_record.path.text,
+                                            )
+                                        {
                                             had_busted_dir_cache = true;
                                             continue 'inner;
                                         }
@@ -7155,24 +6451,15 @@ pub mod bv2_impl {
                         }
                     }
                 };
-                let mut resolve_result = resolve_result;
                 // if there were errors, lets go ahead and collect them all
                 if last_error.is_some() {
                     continue;
                 }
 
-                // borrowck — `Result.path()` returns `Option<&mut Path>`, which
-                // would lock the whole struct while the loop body still needs to
-                // read other `resolve_result` fields (`.flags`, `.path_pair`,
-                // `.primary_side_effects_data`, `.jsx`). Detach via raw ptr.
-                let path: &mut Fs::Path = match resolve_result.path() {
-                    // SAFETY: `resolve_result` outlives this borrow; see note above.
-                    Some(p) => unsafe { bun_ptr::detach_lifetime_mut::<Fs::Path>(p) },
-                    None => {
-                        import_record.path.is_disabled = true;
-                        import_record.source_index = Index::INVALID;
-                        continue;
-                    }
+                let Some(path) = resolve_result.path_const() else {
+                    import_record.path.is_disabled = true;
+                    import_record.source_index = Index::INVALID;
+                    continue;
                 };
 
                 if resolve_result.flags.is_external() {
@@ -7184,7 +6471,7 @@ pub mod bv2_impl {
                             true,
                         )
                     {
-                        import_record.path = path_as_static(&resolve_result.path_pair.primary);
+                        import_record.path = resolve_result.path_pair.primary;
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -7228,7 +6515,7 @@ pub mod bv2_impl {
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
                             >(
-                                self.transpiler.fs().top_level_dir(), path.text
+                                Fs::FileSystem::get().top_level_dir(), path.text
                             );
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html
@@ -7239,31 +6526,24 @@ pub mod bv2_impl {
                                 // This information cannot be queried while printing because a lock wouldn't get held.
                                 import_record.path.text = path.text;
                                 import_record.path.namespace = b"file";
-                                // SAFETY: `alloc_str` returns into the bundler arena which
-                                // outlives this `ImportRecord`. See `interned_slice` contract.
-                                import_record.path.pretty = unsafe {
-                                    interned_slice(
-                                        self.arena()
-                                            .alloc_str(&format!(
-                                                "{}/{}{}",
-                                                bake_types::ASSET_PREFIX,
-                                                bun_core::fmt::bytes_to_hex_lower_string(
-                                                    &hash.to_ne_bytes()
-                                                ),
-                                                bstr::BStr::new(bun_paths::extension(path.text)),
-                                            ))
-                                            .as_bytes(),
-                                    )
-                                };
+                                import_record.path.pretty = self
+                                    .arena()
+                                    .alloc_str(&format!(
+                                        "{}/{}{}",
+                                        bake_types::ASSET_PREFIX,
+                                        bun_core::fmt::bytes_to_hex_lower_string(
+                                            &hash.to_ne_bytes()
+                                        ),
+                                        bstr::BStr::new(bun_paths::extension(path.text)),
+                                    ))
+                                    .as_bytes();
                                 import_record.path.is_disabled = false;
                             } else {
                                 import_record.path.text = path.text;
                                 import_record.path.pretty = rel;
-                                import_record.path = path_as_static(
-                                    &self
-                                        .path_with_pretty_initialized(path, target)
-                                        .expect("oom"),
-                                );
+                                import_record.path = self
+                                    .path_with_pretty_initialized(path, target)
+                                    .expect("oom");
                                 if loader == Loader::Html
                                     || entry.kind == bake_types::CacheKind::Css
                                 {
@@ -7275,6 +6555,9 @@ pub mod bv2_impl {
                     }
                 }
 
+                let transpiler = self
+                    .other_transpilers
+                    .for_target(self.transpiler, heap, target);
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
@@ -7302,7 +6585,7 @@ pub mod bv2_impl {
                     && target.is_server_side()
                     && self.dev_server.is_none();
 
-                if let Some(id) = self.path_to_source_index_map(target).get(path.text) {
+                if let Some(id) = self.graph.path_to_source_index_map(target).get(path.text) {
                     if self.dev_server.is_some() && loader != Loader::Html {
                         import_record.path =
                             self.graph.input_files.items_source()[id as usize].path;
@@ -7316,26 +6599,27 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let resolve_entry = resolve_queue.get_or_put(path.text).expect("oom");
-                if resolve_entry.found_existing {
-                    // SAFETY: arena-allocated `ParseTask` stored in the queue; arena outlives the pass.
-                    import_record.path =
-                        path_as_static(&unsafe { &**resolve_entry.value_ptr }.path);
-                    continue;
-                }
+                let enqueue = match resolve_queue.get_or_vacant(path.text) {
+                    Ok(task) => {
+                        import_record.path = task.path;
+                        continue;
+                    }
+                    Err(enqueue) => enqueue,
+                };
 
-                *path = self
+                let jsx_development = transpiler.options.forced_jsx_development();
+                import_record.path = self
                     .path_with_pretty_initialized(path, target)
                     .expect("oom");
-
-                import_record.path = path_as_static(path);
-                // key already interned by get_or_put — no key_ptr on StringHashMapGetOrPut
                 bun_core::scoped_log!(Bundle, "created ParseTask: {}", bstr::BStr::new(&path.text));
                 // Arena-owned.
-                let resolve_task_val =
-                    ParseTask::init(&resolve_result, bun_ast::Index::INVALID, self);
-                // SAFETY: arena outlives the bundle pass.
-                let resolve_task: &mut ParseTask = self.arena_create(resolve_task_val);
+                let resolve_task_val = ParseTask::init(
+                    &resolve_result,
+                    self.parse_task_path(&resolve_result, import_record.path, target),
+                    bun_ast::Index::INVALID,
+                    self,
+                );
+                let resolve_task = heap.alloc(resolve_task_val);
 
                 resolve_task.known_target = if import_record.kind == ImportKind::HtmlManifest {
                     Target::Browser
@@ -7344,10 +6628,9 @@ pub mod bv2_impl {
                 };
 
                 resolve_task.jsx = resolve_result.jsx.clone();
-                resolve_task.jsx.development = transpiler.options.forced_jsx_development();
+                resolve_task.jsx.development = jsx_development;
 
                 resolve_task.loader = Some(import_record_loader);
-                *resolve_entry.value_ptr = resolve_task;
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
                     if !secondary.is_disabled
                         && !core::ptr::eq(secondary, path)
@@ -7357,8 +6640,11 @@ pub mod bv2_impl {
                     }
                 }
 
+                enqueue(resolve_task);
+
                 if is_html_entrypoint {
-                    self.generate_server_html_module(path, target, import_record, path.text)
+                    let path = import_record.path;
+                    self.generate_server_html_module(&path, target, import_record, path.text)
                         .expect("unreachable");
                 }
             }
@@ -7373,7 +6659,7 @@ pub mod bv2_impl {
         /// Returns the number of newly scheduled tasks (for pending_items accounting).
         pub(crate) fn process_resolve_queue(
             &mut self,
-            resolve_queue: &ResolveQueue,
+            mut resolve_queue: ResolveQueue<'a>,
             target: options::Target,
             importer_source_index: IndexInt,
         ) -> i32 {
@@ -7381,20 +6667,11 @@ pub mod bv2_impl {
             // reshaped for borrowck — `graph` and the
             // path map are both needed across the loop body. We (a) capture a raw self ptr for
             // ParseTask.ctx, (b) hoist dev_server check, and (c) scope the map
-            // borrow to the get_or_put so later `self.graph.*` writes don't overlap.
-            // SAFETY: write provenance from `ptr::from_mut`; outlives every ParseTask.
-            let self_ptr: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>> =
-                Some(unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(
-                        std::ptr::from_mut::<Self>(self).cast::<BundleV2<'static>>(),
-                    )
-                });
+            // borrow to the `build_graphs` field so later `self.graph.*` writes don't overlap.
+            let self_ptr = Some(bun_ptr::ParentRef::from_ref_mut(self));
             let dev_server_is_none = self.dev_server.is_none();
-            for (key, value) in resolve_queue.iter() {
-                let value: *mut ParseTask = *value;
-                // SAFETY: ParseTask was arena-allocated in `resolve_import_records`;
-                // the arena outlives this loop.
-                let value = unsafe { &mut *value };
+            for (key, value) in resolve_queue.iter_mut() {
+                let value = &mut **value;
                 let loader = value.loader.unwrap_or_else(|| {
                     value
                         .path
@@ -7403,22 +6680,14 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
-                // Select map and perform get_or_put, capturing the slot as a raw ptr
-                // so the &mut on self.graph is released before we touch other fields.
-                let (found_existing, value_ptr): (bool, *mut IndexInt) = {
-                    let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
-                        self.graph.path_to_source_index_map(Target::Browser)
-                    } else {
-                        self.graph.path_to_source_index_map(target)
-                    };
-                    let existing = map.get_or_put(key).expect("oom");
-                    (
-                        existing.found_existing,
-                        std::ptr::from_mut::<IndexInt>(existing.value_ptr),
-                    )
+                let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
+                    &mut self.graph.build_graphs[Target::Browser]
+                } else {
+                    &mut self.graph.build_graphs[target]
                 };
+                let existing = map.get_or_put(key).expect("oom");
 
-                if !found_existing {
+                if !existing.found_existing {
                     let new_task: &mut ParseTask = value;
                     let mut new_input_file = crate::Graph::InputFile {
                         source: bun_ast::Source::init_empty_file(new_task.path.text),
@@ -7438,16 +6707,12 @@ pub mod bv2_impl {
 
                     new_input_file.source.index =
                         bun_ast::Index(self.graph.input_files.len() as u32);
-                    new_input_file.source.path = path_as_static(&new_task.path);
+                    new_input_file.source.path = new_task.path;
                     new_input_file.loader = loader;
                     let new_source_index: u32 = new_input_file.source.index.0;
                     new_task.source_index = bun_ast::Index(new_source_index);
                     new_task.ctx = self_ptr;
-                    // SAFETY: value_ptr points into PathToSourceIndexMap storage; no
-                    // intervening insert into that map has occurred since get_or_put.
-                    unsafe {
-                        *value_ptr = new_task.source_index.get();
-                    }
+                    *existing.value_ptr = new_task.source_index.get();
 
                     diff += 1;
 
@@ -7484,8 +6749,7 @@ pub mod bv2_impl {
                     self.graph.pool().schedule(new_task);
                 } else {
                     if loader.should_copy_for_bundling() {
-                        // SAFETY: value_ptr is valid (see above).
-                        let existing_idx = unsafe { *value_ptr };
+                        let existing_idx = *existing.value_ptr;
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
                             &mut self.graph.input_files.items_additional_files_mut()
                                 [importer_source_index as usize];
@@ -7594,7 +6858,7 @@ pub mod bv2_impl {
 
         fn generate_server_html_module(
             &mut self,
-            path: &Fs::Path,
+            path: &Fs::Path<'a>,
             target: options::Target,
             import_record: &mut ImportRecord,
             path_text: &[u8],
@@ -7605,8 +6869,8 @@ pub mod bv2_impl {
             // Re-borrow `self.graph`
             // at each use so the `self.*` method calls below don't conflict.
             let heap = self.graph.heap;
-            let empty_html_file_source: &mut bun_ast::Source = self.arena_create(bun_ast::Source {
-                path: path_as_static(path),
+            let empty_html_file_source: &mut bun_ast::Source = heap.alloc(bun_ast::Source {
+                path: *path,
                 index: bun_ast::Index(self.graph.input_files.len() as u32),
                 contents: std::borrow::Cow::Borrowed(&b""[..]),
                 ..Default::default()
@@ -7617,23 +6881,17 @@ pub mod bv2_impl {
             );
             js_parser_options.bundle = true;
 
-            // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
-            // outlives this AST. `E::EString.data` is `&'static [u8]` per the
-            // arena-erasure convention. See `interned_slice` contract.
-            let unique_key: &'static [u8] = unsafe {
-                interned_slice(
-                    self.arena()
-                        .alloc_str(&format!(
-                            "{}",
-                            chunk::UniqueKey {
-                                prefix: self.unique_key,
-                                kind: chunk::QueryKind::HtmlImport,
-                                index: self.graph.html_imports.server_source_indices.len() as u32,
-                            },
-                        ))
-                        .as_bytes(),
-                )
-            };
+            let unique_key: &[u8] = self
+                .arena()
+                .alloc_str(&format!(
+                    "{}",
+                    chunk::UniqueKey {
+                        prefix: self.unique_key,
+                        kind: chunk::QueryKind::HtmlImport,
+                        index: self.graph.html_imports.len() as u32,
+                    },
+                ))
+                .as_bytes();
 
             // Extract raw pointers so the `&mut self` borrow from
             // `transpiler_for_target` doesn't overlap `self.arena()` below.
@@ -7680,10 +6938,7 @@ pub mod bv2_impl {
             let _ = self
                 .path_to_source_index_map(target)
                 .put(path_text, fake_source_index.0); // OOM-only Result
-            self.graph
-                .html_imports
-                .server_source_indices
-                .push(fake_source_index.0);
+            self.graph.html_imports.push(fake_source_index.0);
             self.ensure_client_transpiler();
             Ok(())
         }
@@ -7693,16 +6948,22 @@ pub mod bv2_impl {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            debug_assert!(matches!(
+                load.owner,
+                jsc_api::JSBundler::RequestOwner::Bundle
+            ));
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
             this.decrement_scan_counter();
         }
 
+        #[inline(never)]
         pub(crate) fn on_parse_task_complete(
-            parse_result: &mut parse_task::Result,
-            this: &mut BundleV2,
+            parse_result: &mut parse_task::Result<'a>,
+            this: &mut BundleV2<'a>,
         ) {
+            bun_removable_features::removable_definition!(Bundler, Self::on_parse_task_complete);
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes
@@ -7725,10 +6986,10 @@ pub mod bv2_impl {
             let mut resolve_queue = ResolveQueue::default();
             let mut process_log = true;
 
-            if matches!(parse_result.value, parse_task::ResultValue::Success(_)) {
+            if matches!(*parse_result.value, parse_task::ResultValue::Success(_)) {
                 barrel_imports::apply_barrel_optimization(this, parse_result);
                 resolve_queue = Self::run_resolution_for_parse_task(parse_result, this);
-                if matches!(parse_result.value, parse_task::ResultValue::Err(_)) {
+                if matches!(*parse_result.value, parse_task::ResultValue::Err(_)) {
                     process_log = false;
                 }
             }
@@ -7771,7 +7032,7 @@ pub mod bv2_impl {
                 }
             }
 
-            match &mut parse_result.value {
+            match &mut *parse_result.value {
                 parse_task::ResultValue::Empty {
                     source_index: empty_source_index,
                 } => {
@@ -7791,9 +7052,7 @@ pub mod bv2_impl {
                 }
                 parse_task::ResultValue::Success(result) => {
                     // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                    result
-                        .log
-                        .clone_to_with_recycled(this.transpiler.log_mut(), true);
+                    result.log.append_to(this.transpiler.log_mut());
 
                     this.has_any_top_level_await_modules = this.has_any_top_level_await_modules
                         || !result.ast.top_level_await_keyword.is_empty();
@@ -7821,8 +7080,8 @@ pub mod bv2_impl {
                     // Borrowck forbids holding `&input_files.source[i]` while writing
                     // other `input_files` columns through the MultiArrayList accessor
                     // methods (each takes `&mut input_files`), so copy out the
-                    // `'static` path text now and re-borrow `source` per-use below.
-                    let source_path_text: &'static [u8] = this.graph.input_files.items_source()
+                    // path text now and re-borrow `source` per-use below.
+                    let source_path_text: &'a [u8] = this.graph.input_files.items_source()
                         [result_source_index]
                         .path
                         .text;
@@ -7886,7 +7145,7 @@ pub mod bv2_impl {
                     }
 
                     diff += this.process_resolve_queue(
-                        &resolve_queue,
+                        resolve_queue,
                         result.ast.target,
                         result_source_index as IndexInt,
                     );
@@ -8023,14 +7282,12 @@ pub mod bv2_impl {
                             // `fs_path_from_logger`/`fs_path_to_logger` until the
                             // three `Path` mirrors unify.
                             ssr_source.path.pretty = ssr_source.path.text;
-                            ssr_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &ssr_source.path,
-                                        Target::ServerComponentsSsr,
-                                    )
-                                    .expect("oom"),
-                            );
+                            ssr_source.path = this
+                                .path_with_pretty_initialized(
+                                    &ssr_source.path,
+                                    Target::ServerComponentsSsr,
+                                )
+                                .expect("oom");
                             let ssr_index = this
                                 .enqueue_parse_task2(
                                     &mut ssr_source,
@@ -8047,14 +7304,9 @@ pub mod bv2_impl {
                                 this.graph.input_files.items_source()[result_source_index].clone();
                             server_source.path.pretty = server_source.path.text;
                             let server_target = this.transpiler.options.target;
-                            server_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &server_source.path,
-                                        server_target,
-                                    )
-                                    .expect("oom"),
-                            );
+                            server_source.path = this
+                                .path_with_pretty_initialized(&server_source.path, server_target)
+                                .expect("oom");
                             let server_index = this
                                 .enqueue_parse_task2(
                                     &mut server_source,
@@ -8086,9 +7338,9 @@ pub mod bv2_impl {
                 parse_task::ResultValue::Err(err) => {
                     if process_log {
                         if let Some(dev_server) = this.dev_server {
-                            // Copy out the `'static` path slice so the `input_files`
+                            // Copy out the path slice so the `input_files`
                             // borrow ends before we coerce `this` to `*mut _`.
-                            let abs_path: &'static [u8] = this.graph.input_files.items_source()
+                            let abs_path: &'a [u8] = this.graph.input_files.items_source()
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
@@ -8103,8 +7355,7 @@ pub mod bv2_impl {
                                 .expect("oom");
                         } else if !err.log.msgs.is_empty() {
                             // SAFETY: `transpiler.log` is a live BACKREF set in BundleV2::init.
-                            err.log
-                                .clone_to_with_recycled(this.transpiler.log_mut(), true);
+                            err.log.append_to(this.transpiler.log_mut());
                         } else {
                             let step_name = match err.step {
                                 crate::parse_task::Step::Pending => "pending",
@@ -8276,15 +7527,15 @@ pub mod bv2_impl {
         }
     }
 
-    pub struct CompileResultForSourceMap {
-        pub source_map_chunk: bun_sourcemap::Chunk,
+    pub struct CompileResultForSourceMap<'r> {
+        pub source_map_chunk: &'r bun_sourcemap::Chunk,
         pub generated_offset: bun_sourcemap::LineColumnOffset,
         pub source_index: u32,
     }
 
     bun_collections::multi_array_columns! {
-        pub trait CompileResultForSourceMapColumns for CompileResultForSourceMap {
-            source_map_chunk: bun_sourcemap::Chunk,
+        pub trait CompileResultForSourceMapColumns ['r] for CompileResultForSourceMap<'r> {
+            source_map_chunk: &'r bun_sourcemap::Chunk,
             generated_offset: bun_sourcemap::LineColumnOffset,
             source_index: u32,
         }
@@ -8313,7 +7564,7 @@ pub mod bv2_impl {
         }
         pub(crate) fn write_ints(&mut self, i: &[u32]) {
             bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
-            self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
+            self.hasher.update(bun_core::slice_as_bytes(i));
         }
         pub(crate) fn digest(&self) -> u64 {
             self.hasher.digest()
@@ -8340,12 +7591,12 @@ pub mod bv2_impl {
         None
     }
 
-    pub fn generic_path_with_pretty_initialized(
-        path: &bun_paths::fs::Path<'static>,
+    pub fn generic_path_with_pretty_initialized<'b>(
+        path: &bun_paths::fs::Path<'_>,
         target: options::Target,
         top_level_dir: &[u8],
-        bump: &bun_alloc::Arena,
-    ) -> crate::Result<bun_paths::fs::Path<'static>> {
+        bump: &'b bun_alloc::Arena,
+    ) -> crate::Result<bun_paths::fs::Path<'b>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
 
@@ -8354,7 +7605,7 @@ pub mod bv2_impl {
             && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
                 || !bun_paths::is_absolute(path.text))
         {
-            return Ok(*path);
+            return Ok(path_in_arena(path, bump));
         }
 
         // `pretty` is only displayed, never opened, so it can be longer than MAX_PATH_BYTES.
@@ -8385,6 +7636,25 @@ pub mod bv2_impl {
             &prefixed
         };
         path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
+    }
+
+    /// `pretty` stays an alias of `text` if it is one: some readers compare the pointers.
+    fn path_in_arena<'b>(
+        path: &bun_paths::fs::Path<'_>,
+        bump: &'b bun_alloc::Arena,
+    ) -> bun_paths::fs::Path<'b> {
+        let text: &'b [u8] = bump.alloc_slice_copy(path.text);
+        bun_paths::fs::Path {
+            pretty: if core::ptr::eq(path.pretty, path.text) {
+                text
+            } else {
+                bump.alloc_slice_copy(path.pretty)
+            },
+            text,
+            namespace: bump.alloc_slice_copy(path.namespace),
+            is_disabled: path.is_disabled,
+            is_symlink: path.is_symlink,
+        }
     }
 
     fn push_escaped_namespace(out: &mut Vec<u8>, namespace: &[u8]) {
@@ -8431,30 +7701,22 @@ pub mod bv2_impl {
         ProbablyTypescriptType,
     }
 
-    /// `import_data` is a raw slice into
-    /// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`.
-    /// The graph SoA is never reallocated during `match_import_with_export`, so
-    /// the pointer stays valid for the iterator's lifetime; the caller only reads
-    /// `.data` from each entry.
-    pub struct ImportTrackerIterator {
+    pub struct ImportTrackerIterator<'a> {
         pub(crate) status: ImportTrackerStatus,
         pub(crate) value: crate::ImportTracker,
-        /// Backref into the link-graph SoA (`graph.meta[..].resolved_exports[..].
-        /// potentially_ambiguous_export_star_refs`). `BackRef` (not `*const [T]`)
-        /// so the single read site in `match_import_with_export` is a safe `Deref`;
-        /// the pointee slab is never reallocated while the iterator is live.
-        pub(crate) import_data: bun_ptr::BackRef<[crate::ImportData]>,
+        /// `potentially_ambiguous_export_star_refs` of the export that was found.
+        pub(crate) import_data: &'a [crate::ImportData],
         /// `Found` an `export default X` where `X` is an import in that file
         /// (`Ast::export_default_alias_of_import`).
         pub(crate) default_alias_of: bun_ast::Ref,
     }
 
-    impl Default for ImportTrackerIterator {
+    impl Default for ImportTrackerIterator<'_> {
         fn default() -> Self {
             Self {
                 status: ImportTrackerStatus::default(),
                 value: crate::ImportTracker::default(),
-                import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
+                import_data: &[],
                 default_alias_of: bun_ast::Ref::NONE,
             }
         }
@@ -8480,9 +7742,9 @@ pub mod bv2_impl {
 
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
-        pub chunks: &'a mut [Chunk],
+        pub chunks: Vec<Chunk<'a>>,
+        pub linker_graph: LinkerGraph<'a>,
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
-        pub html_files: ArrayHashMap<Index, ()>,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {
@@ -8509,13 +7771,12 @@ pub mod bv2_impl {
         key
     }
 
-    // LAYERING: `BuildResult` / `BundleV2Result` are defined once in
-    // `BundleThread.rs` (the trait that consumes them lives there). The previous
-    // duplicate here meant `CompletionStruct::set_result` and `BundleV2::
-    // run_from_js_in_new_thread` named two distinct types with identical fields.
-    // Re-export the canonical defs so `bundle_v2::` and `BundleThread::` paths
-    // resolve to the same nominal type.
-    pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
+    /// Result of a `Bun.build` invocation handed back to the JS thread.
+    pub struct BuildResult {
+        pub output_files: Vec<crate::options::OutputFile>,
+        pub metafile: Option<Box<[u8]>>,
+        pub metafile_markdown: Option<Box<[u8]>>,
+    }
 
     // re-exports
     pub use bun_ast::Loc;

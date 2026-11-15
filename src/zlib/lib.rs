@@ -2,8 +2,6 @@
 
 use core::ffi::{c_char, c_int, c_uint};
 
-use bun_collections::VecExt as _;
-
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
 
@@ -120,6 +118,8 @@ unsafe extern "C" {
 
     pub fn inflateReset(stream: *mut zStream_struct) -> ReturnCode;
 
+    pub fn inflateValidate(stream: *mut zStream_struct, check: c_int) -> ReturnCode;
+
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
@@ -153,27 +153,16 @@ pub struct ZlibReaderArrayList<'a> {
     pub(crate) list_ptr: &'a mut Vec<u8>,
     pub(crate) zlib: ZStream,
     pub(crate) state: ZlibReaderArrayListState,
-    /// Decompression-bomb guard: `read_all` errors instead of growing the
-    /// output past this many bytes. Defaults to unbounded.
-    pub(crate) max_output_size: usize,
 }
 
 impl<'a> Drop for ZlibReaderArrayList<'a> {
     fn drop(&mut self) {
-        self.end();
+        // SAFETY: zlib was initialized via inflateInit2_, or has no state to free.
+        unsafe { inflateEnd(self.zlib.as_ptr()) };
     }
 }
 
 impl<'a> ZlibReaderArrayList<'a> {
-    pub(crate) fn end(&mut self) {
-        // always free with `inflateEnd`
-        if self.state != ZlibReaderArrayListState::End {
-            // SAFETY: zlib was initialized via inflateInit2_; safe to end.
-            unsafe { inflateEnd(self.zlib.as_ptr()) };
-            self.state = ZlibReaderArrayListState::End;
-        }
-    }
-
     pub fn init(input: &'a [u8], list: &'a mut Vec<u8>) -> Result<Self, ZlibError> {
         let options = Options {
             window_bits: 15 + 32,
@@ -192,16 +181,11 @@ impl<'a> ZlibReaderArrayList<'a> {
             list_ptr: list,
             zlib: ZStream::new(),
             state: ZlibReaderArrayListState::Uninitialized,
-            max_output_size: usize::MAX,
         };
 
         zlib_reader
             .zlib
             .set_input(input.as_ptr(), input.len() as uInt);
-        let list_len = zlib_reader.list_ptr.len();
-        zlib_reader
-            .zlib
-            .set_output(zlib_reader.list_ptr.as_mut_ptr(), list_len as uInt);
 
         match zlib_reader.zlib.inflate_init(options.window_bits) {
             ReturnCode::Ok => Ok(zlib_reader),
@@ -215,113 +199,68 @@ impl<'a> ZlibReaderArrayList<'a> {
         self.zlib.error_message()
     }
 
+    /// Appends to the list.
     pub fn read_all(&mut self, is_done: bool) -> Result<(), ZlibError> {
-        // We mutate list_ptr directly, so the output-length sync-back is just
-        // truncate/set_len. The unconditional epilogue is implemented as an
-        // IIFE for the body + a manual epilogue that runs before returning `result`.
-        let result = (|| -> Result<(), ZlibError> {
-            while self.state == ZlibReaderArrayListState::Uninitialized
-                || self.state == ZlibReaderArrayListState::Inflating
-            {
-                // Before the call of inflate(), the application should ensure
-                // that at least one of the actions is possible, by providing
-                // more input and/or consuming more output, and updating the
-                // next_* and avail_* values accordingly. If the caller of
-                // inflate() does not provide both available input and available
-                // output space, it is possible that there will be no progress
-                // made. The application can consume the uncompressed output
-                // when it wants, for example when the output buffer is full
-                // (avail_out == 0), or after each call of inflate(). If inflate
-                // returns Z_OK and with zero avail_out, it must be called again
-                // after making room in the output buffer because there might be
-                // more output pending.
-
-                // - Decompress more input starting at next_in and update
-                //   next_in and avail_in accordingly. If not all input can be
-                //   processed (because there is not enough room in the output
-                //   buffer), then next_in and avail_in are updated accordingly,
-                //   and processing will resume at this point for the next call
-                //   of inflate().
-
-                // - Generate more output starting at next_out and update
-                //   next_out and avail_out accordingly. inflate() provides as
-                //   much output as possible, until there is no more input data
-                //   or no more space in the output buffer (see below about the
-                //   flush parameter).
-
-                if self.zlib.avail_out() == 0 {
-                    let produced = self.zlib.total_out() as usize;
-                    let remaining_budget = self.max_output_size.saturating_sub(produced);
-                    if remaining_budget == 0 {
-                        self.state = ZlibReaderArrayListState::Error;
-                        return Err(ZlibError::ZlibError);
-                    }
-                    if self
-                        .list_ptr
-                        .try_reserve(remaining_budget.min(4096))
-                        .is_err()
-                    {
-                        self.state = ZlibReaderArrayListState::Error;
-                        return Err(ZlibError::OutOfMemory);
-                    }
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
-                    // Clamp so a single inflate call cannot write past `max_output_size`.
-                    self.zlib
-                        .set_output(next_out, avail_out.min(remaining_budget) as uInt);
+        while self.state == ZlibReaderArrayListState::Uninitialized
+            || self.state == ZlibReaderArrayListState::Inflating
+        {
+            if self.zlib.avail_out() == 0 {
+                if self.list_ptr.try_reserve(4096).is_err() {
+                    self.state = ZlibReaderArrayListState::Error;
+                    return Err(ZlibError::OutOfMemory);
                 }
-
-                // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
-                // SAFETY: self.zlib was initialized via inflateInit2_.
-                let rc = unsafe { inflate(self.zlib.as_ptr(), FlushValue::NoFlush) };
-                self.state = ZlibReaderArrayListState::Inflating;
-
-                match rc {
-                    ReturnCode::StreamEnd => {
-                        self.end();
-                        return Ok(());
-                    }
-                    ReturnCode::MemError => {
-                        self.state = ZlibReaderArrayListState::Error;
-                        return Err(ZlibError::OutOfMemory);
-                    }
-                    ReturnCode::BufError => {
-                        // BufError with avail_in == 0 means we need more input data
-                        if self.zlib.avail_in() == 0 {
-                            if is_done {
-                                // Stream is truncated - we're at EOF but decoder needs more data
-                                self.state = ZlibReaderArrayListState::Error;
-                                return Err(ZlibError::ZlibError);
-                            }
-                            // Not at EOF - we can retry with more data
-                            return Err(ZlibError::ShortRead);
-                        }
-                        self.state = ZlibReaderArrayListState::Error;
-                        return Err(ZlibError::ZlibError);
-                    }
-                    ReturnCode::StreamError
-                    | ReturnCode::DataError
-                    | ReturnCode::NeedDict
-                    | ReturnCode::VersionError
-                    | ReturnCode::ErrNo => {
-                        self.state = ZlibReaderArrayListState::Error;
-                        return Err(ZlibError::ZlibError);
-                    }
-                    ReturnCode::Ok => {}
-                }
+                let spare = self.list_ptr.spare_capacity_mut();
+                let room = spare.len().min(u32::MAX as usize);
+                self.zlib
+                    .set_output(spare.as_mut_ptr().cast::<u8>(), room as uInt);
             }
-            Ok(())
-        })();
+            let room = self.zlib.avail_out();
 
-        let total_out = self.zlib.total_out() as usize;
-        if self.list_ptr.len() > total_out {
-            self.list_ptr.truncate(total_out);
-        } else if total_out < self.list_ptr.capacity() {
-            // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-            unsafe { self.list_ptr.set_len(total_out) };
+            // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
+            // SAFETY: self.zlib was initialized via inflateInit2_.
+            let rc = unsafe { inflate(self.zlib.as_ptr(), FlushValue::NoFlush) };
+            self.state = ZlibReaderArrayListState::Inflating;
+
+            // `total_out` is 32 bits on Windows.
+            let produced = room - self.zlib.avail_out();
+            // SAFETY: zlib has initialized `produced` bytes at the start of the spare capacity.
+            unsafe { bun_core::vec::commit_spare(self.list_ptr, produced as usize) };
+
+            match rc {
+                ReturnCode::StreamEnd => {
+                    self.state = ZlibReaderArrayListState::End;
+                    return Ok(());
+                }
+                ReturnCode::MemError => {
+                    self.state = ZlibReaderArrayListState::Error;
+                    return Err(ZlibError::OutOfMemory);
+                }
+                ReturnCode::BufError => {
+                    // BufError with avail_in == 0 means we need more input data
+                    if self.zlib.avail_in() == 0 {
+                        if is_done {
+                            // Stream is truncated - we're at EOF but decoder needs more data
+                            self.state = ZlibReaderArrayListState::Error;
+                            return Err(ZlibError::ZlibError);
+                        }
+                        // Not at EOF - we can retry with more data
+                        return Err(ZlibError::ShortRead);
+                    }
+                    self.state = ZlibReaderArrayListState::Error;
+                    return Err(ZlibError::ZlibError);
+                }
+                ReturnCode::StreamError
+                | ReturnCode::DataError
+                | ReturnCode::NeedDict
+                | ReturnCode::VersionError
+                | ReturnCode::ErrNo => {
+                    self.state = ZlibReaderArrayListState::Error;
+                    return Err(ZlibError::ZlibError);
+                }
+                ReturnCode::Ok => {}
+            }
         }
-
-        result
+        Ok(())
     }
 }
 
@@ -604,14 +543,6 @@ pub struct ZlibCompressorArrayList<'a> {
 }
 
 impl<'a> ZlibCompressorArrayList<'a> {
-    pub(crate) fn end(&mut self) {
-        if self.state != ZlibCompressorArrayListState::End {
-            // SAFETY: zlib was initialized via deflateInit2_; safe to end.
-            unsafe { deflateEnd(self.zlib.as_ptr()) };
-            self.state = ZlibCompressorArrayListState::End;
-        }
-    }
-
     pub fn init(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
@@ -673,7 +604,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
             if self.list_ptr.len() == self.list_ptr.capacity()
                 && self.list_ptr.try_reserve(4096).is_err()
             {
-                self.end();
                 self.state = ZlibCompressorArrayListState::Error;
                 return Err(ZlibError::OutOfMemory);
             }
@@ -693,11 +623,10 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
             match rc {
                 ReturnCode::StreamEnd => {
-                    self.end();
+                    self.state = ZlibCompressorArrayListState::End;
                     return Ok(());
                 }
                 ReturnCode::MemError => {
-                    self.end();
                     self.state = ZlibCompressorArrayListState::Error;
                     return Err(ZlibError::OutOfMemory);
                 }
@@ -707,7 +636,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 | ReturnCode::NeedDict
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
-                    self.end();
                     self.state = ZlibCompressorArrayListState::Error;
                     return Err(ZlibError::ZlibError);
                 }
@@ -720,7 +648,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
 impl<'a> Drop for ZlibCompressorArrayList<'a> {
     fn drop(&mut self) {
-        self.end();
+        // SAFETY: zlib was initialized via deflateInit2_, or has no state to free.
+        unsafe { deflateEnd(self.zlib.as_ptr()) };
     }
 }
 
@@ -768,6 +697,14 @@ impl DeflateEncoder {
         unsafe { deflateReset(self.strm.as_ptr()) }
     }
 
+    /// `deflateBound()`: room in which one `Finish` step over `source_len` bytes is sure to end the stream,
+    /// if both fit in 32 bits, which is all a step takes and gives.
+    pub fn bound(&mut self, source_len: usize) -> usize {
+        let source_len = uLong::try_from(source_len).unwrap_or(uLong::MAX);
+        // SAFETY: strm was initialized via deflateInit2_.
+        unsafe { deflateBound(self.strm.as_ptr(), source_len) as usize }
+    }
+
     /// One `deflate()` call writing into `out`'s spare capacity.
     ///
     /// Reserves at least `reserve` spare bytes in `out`, points
@@ -783,15 +720,31 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            reserve,
-            usize::MAX,
-            flush,
-            deflate,
-        )
+        self.step_up_to(input, out, reserve, usize::MAX, flush)
+    }
+
+    /// Like [`step`](Self::step), but `deflate()` sees exactly `limit` bytes of output space,
+    /// whatever `out`'s capacity is. At level 0 that space decides where a stored block ends.
+    pub fn step_limited(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        self.step_up_to(input, out, limit, limit, flush)
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_up_to(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        reserve: usize,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, reserve, limit, flush, deflate)
     }
 }
 
@@ -847,9 +800,19 @@ impl InflateDecoder {
         rc
     }
 
+    /// `inflateValidate()`: whether the stream's check value (Adler-32 or CRC-32) is computed and compared.
+    pub fn set_validate(&mut self, check: bool) -> ReturnCode {
+        // SAFETY: strm was initialized via inflateInit2_.
+        unsafe { inflateValidate(self.strm.as_ptr(), c_int::from(check)) }
+    }
+
     #[inline]
     pub fn is_inflating(&self) -> bool {
         matches!(self.state, State::Inflating)
+    }
+
+    pub fn is_gzip_only(&self) -> bool {
+        self.multi_member
     }
 
     /// One `inflate()` call writing into `out`'s spare capacity. Same
@@ -861,15 +824,29 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            reserve,
-            usize::MAX,
-            flush,
-            inflate,
-        )
+        self.step_up_to(input, out, reserve, usize::MAX, flush)
+    }
+
+    /// Like [`step_up_to`](Self::step_up_to), with room reserved for all of `limit`.
+    pub fn step_limited(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        limit: usize,
+    ) -> (usize, ReturnCode) {
+        self.step_up_to(input, out, limit, limit, FlushValue::NoFlush)
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_up_to(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        reserve: usize,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, reserve, limit, flush, inflate)
     }
 
     /// Append decompressed output to `out` (growing by 4096-byte steps, capped at

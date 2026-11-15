@@ -1,6 +1,6 @@
 use super::super::status_flags::StatusFlags;
 use super::any_mysql_error::Error as AnyMySQLError;
-use super::stack_reader::PacketReader;
+use super::new_reader::PacketReader;
 
 pub struct EOFPacket {
     pub(crate) header: u8,

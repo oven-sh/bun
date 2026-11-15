@@ -22,7 +22,7 @@ use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_io::KeepAlive;
+use bun_io::{JsKeepAlive, KeepAlive};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 use crate::debugger::AsyncTaskTracker;
@@ -131,26 +131,7 @@ unsafe impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
 // SAFETY: see the group note above.
 unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
 // SAFETY: see the group note above.
-unsafe impl JsAffine for Protected {}
-
-/// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
-/// the req_wrap). Unprotected on drop.
-pub struct Protected(crate::JSValue);
-impl Protected {
-    pub fn new(value: crate::JSValue) -> Self {
-        value.protect();
-        Self(value)
-    }
-    #[inline]
-    pub fn value(&self) -> crate::JSValue {
-        self.0
-    }
-}
-impl Drop for Protected {
-    fn drop(&mut self) {
-        self.0.unprotect();
-    }
-}
+unsafe impl JsAffine for crate::ProtectedJSValue {}
 
 /// A pointer into JS-owned memory (an ArrayBuffer's bytes, a pinned cell, the
 /// creating global) that a job carries off-thread. It can be *passed around*
@@ -178,6 +159,10 @@ impl<T: ?Sized> JsPtr<T> {
     #[inline]
     pub fn as_ptr(self) -> *mut T {
         self.0.as_ptr()
+    }
+    #[inline]
+    pub fn as_non_null(self) -> NonNull<T> {
+        self.0
     }
     /// # Safety
     /// No other live reference aliases the pointee for `'b`.
@@ -317,7 +302,7 @@ pub struct Job<C: JobContext> {
     /// from then on (never touched on the JS side).
     ticket: Option<Ticket>,
     task: WorkPoolTask,
-    keep_alive: KeepAlive,
+    _keep_alive: JsKeepAlive,
     off: C::OffThread,
     js: C::Js,
 }
@@ -340,8 +325,6 @@ impl<C: JobContext> Job<C> {
     /// JS thread: build the job, keep the loop alive for it, hand it to the pool.
     #[track_caller]
     pub fn schedule(cx: &JsThread<'_>, off: C::OffThread, js: C::Js) {
-        let mut keep_alive = KeepAlive::default();
-        keep_alive.ref_(bun_io::js_vm_ctx());
         let job = bun_core::heap::into_raw(Box::new(Self {
             header: JobHeader {
                 // SAFETY: (this and the entry below) the erased dispatchers are
@@ -356,14 +339,14 @@ impl<C: JobContext> Job<C> {
                 prev: core::ptr::null_mut(),
                 next: core::ptr::null_mut(),
                 context: cx.context().id(),
-                generation: cx.vm().test_isolation_generation,
+                generation: cx.vm().test_isolation_generation.get(),
             },
             ticket: Some(cx.vm().ticket()),
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::run_on_pool,
             },
-            keep_alive,
+            _keep_alive: JsKeepAlive::active(),
             off,
             js,
         }));
@@ -401,20 +384,12 @@ impl<C: JobContext> Job<C> {
     /// # Safety
     /// `this` is the job its `Completion` posted; called once, on `vm`'s thread.
     unsafe fn take(this: *mut Self, vm: &VirtualMachine) -> (C::OffThread, C::Js) {
-        if C::CANCELLABLE {
-            // SAFETY: fn contract.
-            vm.jobs
-                .with_mut(|j| j.unlink(unsafe { &raw mut (*this).header }));
-        }
         // SAFETY: fn contract.
-        let Job {
-            mut keep_alive,
-            off,
-            js,
-            ..
-        } = unsafe { *Box::from_raw(this) };
-        keep_alive.unref(bun_io::js_vm_ctx());
-        (off, js)
+        let mut job = unsafe { Box::from_raw(this) };
+        if C::CANCELLABLE {
+            vm.jobs.with_mut(|j| j.unlink(&raw mut job.header));
+        }
+        (job.off, job.js)
     }
 
     /// JS thread dispatch: run the completion and free the job.
@@ -474,7 +449,7 @@ pub unsafe fn complete_erased(ptr: *mut (), global: &JSGlobalObject) -> JsResult
     // exit, and a `then` that calls back directly (node:crypto's callback forms) would run its
     // script under the next file.
     // SAFETY: `Job<C>` is `#[repr(C)]` with the header first.
-    if unsafe { (*header).generation } != vm.test_isolation_generation {
+    if unsafe { (*header).generation } != vm.test_isolation_generation.get() {
         // SAFETY: as below; released exactly once, here.
         unsafe { ((*header).release_unrun)(header) };
         return Ok(());

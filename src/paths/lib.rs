@@ -752,8 +752,7 @@ pub mod fs {
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
     ///
-    /// CANONICAL: `bun_paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports
-    /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
+    /// CANONICAL: `bun_resolver::fs::Path` is a re-export of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
@@ -783,32 +782,6 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
-        /// Erase the borrow lifetime — some storage types
-        /// (`ImportRecord.path`, `Graph.input_files`) are pinned to
-        /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
-        ///
-        /// # Safety
-        /// Every borrowed slice in `self` (text/pretty/namespace) must outlive
-        /// every read through the returned `Path<'static>`.
-        #[inline]
-        pub unsafe fn into_static(self) -> Path<'static> {
-            #[inline(always)]
-            unsafe fn d(s: &[u8]) -> &'static [u8] {
-                // SAFETY: caller contract on `into_static`.
-                unsafe { &*core::ptr::from_ref::<[u8]>(s) }
-            }
-            // SAFETY: caller contract — see fn doc.
-            unsafe {
-                Path {
-                    pretty: d(self.pretty),
-                    text: d(self.text),
-                    namespace: d(self.namespace),
-                    is_disabled: self.is_disabled,
-                    is_symlink: self.is_symlink,
-                }
-            }
-        }
-
         pub(crate) const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",
@@ -941,6 +914,22 @@ pub mod fs {
         /// parsed dir component (`name.dir`, NOT `text`).
         pub fn is_node_module(&self) -> bool {
             crate::strings::contains(self.name().dir, crate::NODE_MODULES_NEEDLE)
+        }
+
+        /// Checks for a package in `node_modules` (in any case) or in the install cache.
+        pub fn is_dependency(&self) -> bool {
+            let separators: &[u8] = if cfg!(windows) { b"/\\" } else { b"/" };
+            let mut components = crate::strings::split_any(self.name().dir, separators).peekable();
+            while let Some(component) = components.next() {
+                if crate::strings::contains(component, b"@@@")
+                    || component.starts_with(b"@G@")
+                    || (component.eq_ignore_ascii_case(b"node_modules")
+                        && components.peek().is_some())
+                {
+                    return true;
+                }
+            }
+            false
         }
 
         /// Key used to identify this path in the incremental graph: the real

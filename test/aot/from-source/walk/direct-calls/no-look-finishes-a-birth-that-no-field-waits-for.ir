@@ -1,0 +1,23 @@
+# the mark of a cell answers for the fields of the birth. Where no slot is typed no field is one, so the mark is set only where a field has left its slot for good, and the look behind the body could clear nothing: it is not built
+# where x and y are fields of the birth the look stands behind the call
+# f1 = Point, f2 = make
+# -- source: no-look-finishes-a-birth-that-no-field-waits-for.ts
+# declare function sink(...values: unknown[]): void;
+# declare function next(): number;
+# function Point(this: any, x: number) { this.x = next(); this.y = x; }
+# function make(x: number) { return new (Point as any)(x); }
+# sink(make, Point);
+# -- end of source
+# RUN: walk f2 mechanisms=all-Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject
+# CHECK: = CallDirect {{*}}function=f1 {{*}}[isConstruction]
+# RUN(NEVER): walk f2 mechanisms=all-Inlining-TypedSlots
+# NEVER-NOT: TryFinishBirth
+# RUN(WAITS): walk f2 mechanisms=all-Inlining
+# WAITS: = CallDirect {{*}}function=f1 {{*}}[isConstruction]
+# WAITS: = TryFinishBirth
+# RUN(FEWEST): walk f2 mechanisms=none+DirectCalls
+# FEWEST-NOT: TryFinishBirth
+# RUN(COPIED): walk f2 mechanisms=all-TypedSlots
+# COPIED-NOT: TryFinishBirth

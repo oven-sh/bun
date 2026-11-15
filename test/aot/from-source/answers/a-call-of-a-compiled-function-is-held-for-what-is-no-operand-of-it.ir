@@ -1,0 +1,31 @@
+# -- source: main.ts
+# declare function print(value: any): void;
+# let level = 1;
+# const table: any = { held: 1 };
+# function raise(): number { let work = 0; for (let i = 0; i < 3; i++) work = (work + i) | 0; level += work; return work; }
+# function spoil(): number { let work = 0; for (let i = 0; i < 3; i++) work = (work + i) | 0; table.held += work; return work; }
+# function readLevel(): number { const before = level; raise(); return before * 100 + level; }
+# function readTable(): number { const mine = table; const before = mine.held; spoil(); return before * 100 + mine.held; }
+# print(readLevel());
+# print(readTable());
+# print("went on");
+# -- end of source
+# testing=CheckEffectsAtRunTime: a call of a compiled function is held to what Link says of the callee not for its operands alone:
+# f1 = raise, f2 = spoil
+# RUN(NET): run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# NET: 104
+# NET-NEXT: 104
+# NET-NEXT: went on
+# What emitted code stores into a variable of a module is counted, and the counts hold a call that runs no unknown code.
+# RUN(VARIABLE): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Callee/f1/ModuleVariables mechanisms=all
+# VARIABLE: the declared effects of operation:CallDirect and of the callee's effect summary say that the call does not write ModuleVariables, but compiled code stored to a module variable
+# VARIABLE-NOT: went on
+# VARIABLE: crashed
+# VARIABLE: with
+# What the variables of modules hold that the caller's unit reads is hashed round the call: the callee reaches the object without an operand.
+# RUN(OBJECT): run-in-shell testing=CheckEffectsAtRunTime,UnderstateEffects:Callee/f2/ObjectFields mechanisms=all
+# OBJECT: 104
+# OBJECT: the declared effects of operation:CallDirect and of the callee's effect summary say that the call does not write ObjectFields, but the value of module variable g{{*}} (not an operand of the call) changed there
+# OBJECT-NOT: went on
+# OBJECT: crashed
+# OBJECT: with

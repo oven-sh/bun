@@ -111,14 +111,6 @@ impl Optional {
         Some(result)
     }
 
-    /// Explicit teardown. Idempotent; equivalent to dropping in place and
-    /// leaving `self` empty so `Drop` is a no-op.
-    pub fn deinit(&mut self) {
-        let Some(r) = self.handle.take() else { return };
-        // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
-        unsafe { Impl::destroy(r) };
-    }
-
     pub fn set(&mut self, global: &JSGlobalObject, value: JSValue) {
         let Some(r) = self.handle else {
             if value.is_empty() {
@@ -200,9 +192,7 @@ impl Impl {
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
         match crate::virtual_machine::VirtualMachine::get_or_null() {
             Some(vm) => {
-                // SAFETY: `get_or_null` returns the thread-local pointer set by
-                // `init()`; the allocation outlives the thread.
-                if unsafe { (*vm).is_shutting_down() } {
+                if vm.is_shutting_down() {
                     return;
                 }
             }

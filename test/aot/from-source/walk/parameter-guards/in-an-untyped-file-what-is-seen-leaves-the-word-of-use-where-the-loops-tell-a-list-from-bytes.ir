@@ -1,0 +1,13 @@
+# -- source: in-an-untyped-file-what-is-seen-leaves-the-word-of-use-where-the-loops-tell-a-list-from-bytes.js
+# const table = { mix(d, e) { let c = 0; for (let i = 0; i < d.length; i++) c = (c + (d[i] ^ e[i])) | 0; return c; } }, name = JSON.parse('"mix"');
+# const first = new Uint8Array([1, 2, 3, 4]), second = new Uint8Array([7, 7, 7, 7]);
+# print(table[name](first, second), table[name](second, first));
+# -- end of source
+# Use writes lists of numbers of `d` and `e`; the one call that may reach it, through the table, is seen to hand over bytes. Elsewhere the bytes would stand in the lists' place. Here the function's own loop tells a list from bytes in front of itself,
+# and in the copy for bytes the second holder is expected bytes too, with its bound asked once in front: what is seen adds nothing and took that away: the second bound was asked in every turn.
+# f1 = mix
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=Buffer|Uint8Array
+# CHECK-NOT: testedType=Uint8Array
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 18 18

@@ -24,9 +24,9 @@ use crate::lockfile_real::LinkedMembers;
 use crate::lockfile_real::package::{Diff, DiffSummary, DroppedRow, Package};
 use crate::package_install::{StagingLock, StagingPath};
 use crate::package_manager::Options::{Enable, LogLevel};
+use crate::package_manager::WorkspaceFilter;
 use crate::package_manager::patch_package::{isolated_store_folders, package_for_folder};
 use crate::package_manager::workspace_selection::{self, RootSelection};
-use crate::package_manager::{ROOT_PACKAGE_JSON_PATH, WorkspaceFilter};
 use crate::{DependencyID, Features, PackageID, PackageManager, ResolutionTag, invalid_package_id};
 
 const STORE_DIR: &[u8] = b"node_modules/.bun";
@@ -274,27 +274,19 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
     let quiet = manager.options.log_level == LogLevel::Silent;
     let dry_run = manager.options.dry_run;
 
-    let configured_linker = manager.options.node_linker;
-    let loaded = {
-        let load = manager.load_lockfile_from_cwd::<false>();
-        match &load {
-            LoadResult::NotFound => Err(None),
-            LoadResult::Err(cause) => Err(Some(cause.value.name())),
-            LoadResult::Ok(_) => Ok(load.node_linker(configured_linker)),
-        }
-    };
-    let linker = match loaded {
-        Ok(linker) => linker,
-        Err(None) => {
+    let load = manager.load_lockfile_from_cwd::<false>();
+    let linker = match &load {
+        LoadResult::Ok(_) => load.node_linker(&manager.lockfile, manager.options.node_linker),
+        LoadResult::NotFound => {
             if !quiet {
                 Output::err_generic("missing lockfile, nothing to prune", ());
                 bun_core::note!("run 'bun install' first");
             }
             Global::exit(1);
         }
-        Err(Some(name)) => {
+        LoadResult::Err(cause) => {
             if !quiet {
-                Output::err_generic("failed to load lockfile: {s}", (name,));
+                Output::err_generic("failed to load lockfile: {s}", (cause.value.name(),));
                 print_log_errors(manager.log_mut());
             }
             Global::exit(1);
@@ -601,8 +593,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let quiet = manager.options.log_level == LogLevel::Silent;
 
     let log = manager.log_mut();
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let path: &[u8] = manager.root_package_json_path.as_bytes();
     let (source, json) = match manager
         .workspace_package_json_cache
         .get_with_path(log, path, Default::default())
@@ -622,7 +613,8 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
     let mut to_root = Package::default();
     let mut resolver: () = ();
     let pm: *mut PackageManager = manager;
-    // SAFETY: same split as `hoist_install_tree`; neither call reaches `lockfile` through `pm`.
+    // SAFETY: same split as `hoist_tree`. `from_lockfile` is only live for `Diff::generate`, which
+    // does not reach `lockfile` through `pm`.
     let summary = unsafe {
         let parsed = to_root.parse_with_json(
             &mut to_lockfile,
@@ -644,7 +636,7 @@ pub(crate) fn exit_unless_lockfile_matches_package_json(
                     &mut to_lockfile,
                     &root,
                     &to_root,
-                    None,
+                    false,
                     Some(&mut mapping[..]),
                 )
             }
@@ -1770,30 +1762,30 @@ fn tarball_may_contain(
 ) -> bool {
     let lockfile: &Lockfile = &manager.lockfile;
     let res = &lockfile.packages.items_resolution()[pkg_id as usize];
-    let entry: Box<[u8]> = match res.tag {
+    let buf = &mut **bun_paths::path_buffer_pool::get();
+    let entry = match res.tag {
         // Apart from bundled dependencies, Bun doesn't install the `node_modules` folder of a
         // workspace, a `file:` folder or a git checkout.
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
-            crate::package_manager::cached_npm_package_folder_name(
+            crate::package_manager::cached_npm_package_folder_name_print(
                 manager,
+                buf,
                 name.slice(&lockfile.buffers.string_bytes),
                 res.npm().version,
                 None,
             )
         }
         ResolutionTag::Github => {
-            crate::package_manager::cached_github_folder_name(manager, res.github(), None)
+            crate::package_manager::cached_github_folder_name(manager, buf, res.github(), None)
         }
         // A tarball dependency can contain anything.
         _ => return true,
-    }
-    .as_bytes()
-    .into();
+    };
     // An installed package is never downloaded again, so a missing cache entry won't come back.
     // Treat it as not having the folder.
-    let folder = zname(&join(&join(&entry, b"node_modules"), alias));
+    let folder = zname(&join(&join(entry.as_bytes(), b"node_modules"), alias));
     sys::directory_exists_at(cache, ZStr::from_slice_with_nul(&folder)).unwrap_or(true)
 }
 
@@ -1905,7 +1897,7 @@ fn links_package(
         ResolutionTag::Workspace => res.workspace().slice(buf).into(),
         ResolutionTag::Symlink => match res.symlink().slice(buf) {
             path if crate::dependency::is_link_path(path) => path.into(),
-            name => join(&manager.global_link_dir_path, name),
+            name => join(manager.global_link_dir_path, name),
         },
         _ => {
             let Some(found) = store_link_target(entry.dir, entry.name) else {
@@ -2899,9 +2891,7 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
                 _ => continue,
             }
         } else {
-            let z = zname(name);
-            let z = ZStr::from_slice_with_nul(&z);
-            if let Ok(len) = sys::readlinkat(bin.fd(), z, link.as_mut_slice())
+            if let Ok(len) = sys::readlinkat(bin.fd(), entry.name.as_zstr(), link.as_mut_slice())
                 && (link[..len].strip_prefix(b"../"))
                     .is_some_and(|path| leads_into_package(parent, path))
             {
@@ -2910,7 +2900,6 @@ fn remove_dangling_bins(bin: &Dir, parent: &Dir, global: Option<(&[u8], &[u8])>)
         }
         dangling.push(name.into());
     }
-    drop(iter);
     let mut removed = false;
     for name in &dangling {
         removed |= remove_link(bin, name).is_ok();

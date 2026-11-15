@@ -9,7 +9,7 @@ pub struct NoArrayJustToCount {
     count_function: Option<Box<[u8]>>,
 }
 
-const ARRAY_TO_COUNT: Message = Message::new(
+const ARRAY_TO_COUNT: &Message = &Message::new(
     "arrayToCount",
     "`split()` builds an array only to read its length. Count the separators instead.",
 );

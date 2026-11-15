@@ -73,7 +73,30 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
 
 /* Reports "Bun ran out of memory" through the crash handler and aborts. For
  * allocations this library has no way to fail gracefully from. */
-extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+#ifdef __cplusplus
+extern "C"
+#else
+extern
+#endif
+void __attribute__((__noreturn__)) Bun__outOfMemory(void);
+
+/* With AddressSanitizer us_malloc and us_calloc are the C library's. Below bsd.h,
+ * which defines _GNU_SOURCE for the system headers. */
+#include <stdlib.h>
+
+/* mimalloc returns NULL when the system has no more memory or address space to
+ * give. These never do: use them where the caller can't report a failure. */
+static inline void *us_xmalloc(size_t size) {
+    void *p = us_malloc(size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
+
+static inline void *us_xcalloc(size_t count, size_t size) {
+    void *p = us_calloc(count, size);
+    if (!p) Bun__outOfMemory();
+    return p;
+}
 
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
@@ -167,10 +190,10 @@ void *sni_find(void *sni, const char *hostname);
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, uint16_t port,  struct addrinfo_request** ptr);
 /* Fills *out when host is a numeric address (incl. inet_aton shorthand and %zone); 0 when it is a name. */
 extern int Bun__parseIpAddress(const char* host, uint16_t port, struct sockaddr_storage* out);
-extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
+extern void Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
-extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+extern struct addrinfo_result Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
 
 
 /* Loop related */
@@ -267,6 +290,7 @@ struct us_socket_t *us_internal_ssl_on_timeout(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_close(us_socket_r s, int code, void *reason);
 struct us_socket_t *us_internal_ssl_on_end(us_socket_r s);
 struct us_socket_t *us_internal_ssl_on_end_after_rejected_send(us_socket_r s);
+int us_internal_ssl_defer_end(us_socket_r s);
 int us_internal_ssl_is_low_prio(us_socket_r s);
 
 int us_internal_ssl_is_handshake_finished(us_socket_r s);

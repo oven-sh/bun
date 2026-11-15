@@ -1,6 +1,5 @@
-#![feature(adt_const_params, generic_const_exprs, allocator_api)]
+#![feature(adt_const_params, allocator_api)]
 #![warn(unused_must_use)]
-#![allow(incomplete_features)]
 
 pub mod error;
 pub use error::{Error, Result};

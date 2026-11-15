@@ -11,9 +11,8 @@ use bun_sys::{Dir, Fd};
 
 use crate::bin_real as bin;
 use crate::bin_real::Bin;
-use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::NodeId;
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -44,6 +43,7 @@ type Bitset = DynamicBitSet;
 
 pub struct PendingLifecycleScript {
     pub(crate) list: lockfile::package::scripts::List,
+    pub(crate) dependency_id: DependencyID,
     pub(crate) tree_id: lockfile::tree::Id,
     pub(crate) optional: bool,
 }
@@ -53,8 +53,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) manager: *mut PackageManager,
     /// BACKREF into `(*manager).lockfile`. Never null.
     pub lockfile: *mut Lockfile,
-    /// BACKREF into `(*manager).progress`. Never null.
-    pub(crate) progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
     pub(crate) node_modules: NodeModulesFolder,
@@ -79,11 +77,9 @@ pub struct PackageInstaller<'a> {
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
     pub(crate) bins: bun_ptr::RawSlice<Bin>,
     pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
-    pub(crate) node: &'a mut ProgressNode,
     pub(crate) destination_dir_subpath_buf: PathBuffer,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
-    pub(crate) command_ctx: Command::Context<'a>,
     pub(crate) current_tree_id: lockfile::tree::Id,
     /// Trees that live under a self-contained workspace: packages there are copied
     /// (real files) rather than hardlinked/cloned/symlinked from the cache, so tools
@@ -101,6 +97,7 @@ pub struct PackageInstaller<'a> {
     pub(crate) tree_ids_to_trees_the_id_depends_on: bun_collections::DynamicBitSetList,
     pub(crate) pending_lifecycle_scripts: Vec<PendingLifecycleScript>,
     pub(crate) unfinished_scripts: UnfinishedScripts,
+    pub(crate) direct_packages: bun_ptr::BackRef<DynamicBitSet>,
 
     pub(crate) trusted_dependencies_from_update_requests: ArrayHashMap<PackageID, ()>,
 
@@ -231,7 +228,7 @@ impl NodeModulesFolder {
     /// Returns the path of `file_path` in this folder, relative to the root `node_modules`, so a
     /// syscall on that directory's fd does not walk the directories above it.
     fn path_from_root<'b>(&self, buf: &'b mut [u8], file_path: &ZStr) -> &'b ZStr {
-        let top_level_dir = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        let top_level_dir = strings::without_trailing_slash(FileSystem::get().top_level_dir());
         let folder = (self.path.strip_prefix(top_level_dir))
             .and_then(|rest| rest.strip_prefix(&[SEP]))
             .and_then(|rest| rest.strip_prefix(b"node_modules"))
@@ -315,9 +312,7 @@ impl NodeModulesFolder {
         file_path: &ZStr,
     ) -> crate::Result<bun_sys::file::ReadToEndResult> {
         let file = self.open_file(root_node_modules_dir, file_path)?;
-        let res = file.read_to_end_small();
-        let _ = file.close(); // close error is non-actionable
-        Ok(match res {
+        Ok(match file.read_to_end_small() {
             Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
             Err(e) => bun_sys::file::ReadToEndResult {
                 bytes: Vec::new(),
@@ -504,7 +499,7 @@ fn find_native_binlink_target_tree(
     }
 }
 
-fn abs_node_modules_path(
+pub(crate) fn abs_node_modules_path(
     lockfile: &Lockfile,
     string_buf: &[u8],
     tree_id: lockfile::tree::Id,
@@ -631,14 +626,6 @@ impl<'a> PackageInstaller<'a> {
         unsafe { &mut *self.lockfile }
     }
 
-    #[inline]
-    fn progress_mut(&self) -> &'a mut Progress {
-        // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
-        // `*self`; the install pass is single-threaded so no concurrent `&mut
-        // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
-        unsafe { &mut *self.progress }
-    }
-
     /// Increments the number of installed packages for the current tree and runs available scripts
     /// if the tree is finished.
     fn increment_tree_install_count(
@@ -723,7 +710,7 @@ impl<'a> PackageInstaller<'a> {
             AbsPath::from(self.node_modules.path.as_slice()).unwrap_or_oom();
         let mut is_behind_link = (!lockfile.is_importer_tree_id(tree_id)).then_some(false);
 
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_name_hashes = pkgs.items_name_hash();
         let pkg_metas = pkgs.items_meta();
         let pkg_resolutions_lists = pkgs.items_resolutions();
@@ -767,8 +754,7 @@ impl<'a> PackageInstaller<'a> {
             let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
                 .name
                 .slice(string_buf);
-            let package_name_ = strings::StringOrTinyString::init(alias);
-            let mut target_package_name = package_name_;
+            let mut target_package_name = alias;
             let mut can_retry_without_native_binlink_optimization = false;
             let mut target_node_modules_path_opt: Option<AbsPath> = None;
             let mut defer_this_bin = false;
@@ -832,10 +818,8 @@ impl<'a> PackageInstaller<'a> {
                                     }
                                 }
 
-                                let replacement_name =
-                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 target_package_name =
-                                    strings::StringOrTinyString::init(replacement_name);
+                                    pkg_names[replacement_pkg_id as usize].slice(string_buf);
                                 can_retry_without_native_binlink_optimization = true;
                             }
                         }
@@ -865,40 +849,24 @@ impl<'a> PackageInstaller<'a> {
             }
 
             loop {
-                // `node_modules_path` (mut) and `target_node_modules_path`
-                // (read-only) refer to the same buffer when no replacement is
-                // set. Derive both from a single `*mut` so the read pointer
-                // shares the write reference's provenance (a `*const` taken
-                // from `&node_modules_path` would be popped by the later
-                // `&mut` reborrow under stacked-borrows).
-                // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
-                // never writes through it while `node_modules_path` is borrowed.
-                let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
                 let mut bin_linker = bin::Linker {
                     bin,
                     global_bin_path: manager.options.bin_path,
-                    package_name: package_name_,
+                    package_name: alias,
                     target_package_name,
                     string_buf,
                     extern_string_buf: lockfile.buffers.extern_strings.as_slice(),
                     seen: Some(&mut self.seen_bin_links),
-                    target_node_modules_path: target_node_modules_path_opt
-                        .as_ref()
-                        .map(std::ptr::from_ref::<AbsPath>)
-                        .unwrap_or_else(|| nm_ptr.cast_const()),
-                    // SAFETY: `nm_ptr` = `&raw mut node_modules_path` (live local); the only
-                    // other pointer derived from it is the read-only `target_node_modules_path`
-                    // above, which `bin::Linker::link` never writes through.
-                    node_modules_path: unsafe { &mut *nm_ptr },
+                    target_node_modules_path: target_node_modules_path_opt.as_ref(),
+                    node_modules_path: &mut node_modules_path,
                     abs_target_buf: link_target_buf,
-                    abs_dest_buf: link_dest_buf,
                     rel_buf: link_rel_buf,
                     is_behind_link,
                     err: None,
                     skipped_due_to_missing_bin: false,
                 };
 
-                bin_linker.link(global);
+                bin_linker.link(global, link_dest_buf);
                 is_behind_link = bin_linker.is_behind_link;
 
                 if can_retry_without_native_binlink_optimization
@@ -908,11 +876,11 @@ impl<'a> PackageInstaller<'a> {
                     if PackageManager::verbose_install() {
                         bun_core::pretty_errorln!(
                             "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
-                            bstr::BStr::new(package_name_.slice()),
-                            bstr::BStr::new(target_package_name.slice()),
+                            bstr::BStr::new(alias),
+                            bstr::BStr::new(target_package_name),
                         );
                     }
-                    target_package_name = package_name_;
+                    target_package_name = alias;
                     target_node_modules_path_opt = None;
                     continue;
                 }
@@ -975,8 +943,7 @@ impl<'a> PackageInstaller<'a> {
             if self.trees[tree_id].binaries.count() > 0 {
                 self.seen_bin_links.clear();
                 self.node_modules.path.truncate(
-                    strings::without_trailing_slash(FileSystem::instance().top_level_dir()).len()
-                        + 1,
+                    strings::without_trailing_slash(FileSystem::get().top_level_dir()).len() + 1,
                 );
                 let (rel_path, _) = lockfile::tree::relative_path_and_depth::<
                     { lockfile::tree::IteratorPathStyle::NodeModules },
@@ -1032,11 +999,18 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    fn spawn_scripts(&mut self, entry: PendingLifecycleScript, log_level: Options::LogLevel) {
+    fn spawn_scripts(&mut self, mut entry: PendingLifecycleScript, log_level: Options::LogLevel) {
         let name = entry.list.package_name.clone();
         let output_in_foreground = false;
+        if entry.list.is_dependency {
+            entry.list.bin_conflicts = bin::find_bin_conflicts(
+                self.lockfile(),
+                self.direct_packages.get(),
+                entry.tree_id,
+                entry.dependency_id,
+            );
+        }
         if let Err(err) = self.manager_mut().spawn_package_lifecycle_scripts(
-            self.command_ctx,
             entry.list,
             entry.optional,
             output_in_foreground,
@@ -1045,7 +1019,11 @@ impl<'a> PackageInstaller<'a> {
                 unfinished: std::rc::Rc::clone(&self.unfinished_scripts),
             }),
         ) {
-            self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
+            // The next install runs the scripts.
+            remove_placed_package(self.lockfile(), entry.tree_id, &name);
+            if !entry.optional {
+                self.on_scripts_error(log_level, "spawn life-cycle", &name, err);
+            }
         }
     }
 
@@ -1060,7 +1038,7 @@ impl<'a> PackageInstaller<'a> {
         let name = bstr::BStr::new(name);
         if log_level.show_progress() {
             if Output::enable_ansi_colors_stderr() {
-                self.progress_mut().log(format_args!(
+                self.manager().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         true
@@ -1070,7 +1048,7 @@ impl<'a> PackageInstaller<'a> {
                     err.name(),
                 ));
             } else {
-                self.progress_mut().log(format_args!(
+                self.manager().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         false
@@ -1182,9 +1160,9 @@ impl<'a> PackageInstaller<'a> {
             self.manager_mut().report_slow_lifecycle_scripts();
 
             if log_level.show_progress() {
-                if let Some(scripts_node) = self.manager_mut().scripts_node_mut() {
-                    scripts_node.activate();
-                    self.manager_mut().progress.refresh();
+                if let Some(scripts_node) = self.manager().scripts_node {
+                    self.manager().progress.activate(scripts_node);
+                    self.manager().progress.refresh();
                 }
             }
 
@@ -1272,40 +1250,6 @@ impl<'a> PackageInstaller<'a> {
         Ok(open.dir.fd())
     }
 
-    /// The entry of the cache that a package which `can_enqueue_install_task` is linked from.
-    fn cache_entry_name(
-        &self,
-        package_id: PackageID,
-        pkg_name: String,
-        resolution: &Resolution,
-        patch_contents_hash: Option<u64>,
-    ) -> &'static ZStr {
-        match resolution.tag {
-            resolution::Tag::Npm => package_manager::cached_npm_package_folder_name(
-                self.manager(),
-                pkg_name.slice(self.lockfile().buffers.string_bytes.as_slice()),
-                resolution.npm().version,
-                patch_contents_hash,
-            ),
-            resolution::Tag::Git => package_manager::cached_git_folder_name(
-                self.manager(),
-                resolution.git(),
-                patch_contents_hash,
-            ),
-            resolution::Tag::Github => package_manager::cached_github_folder_name(
-                self.manager(),
-                resolution.github(),
-                patch_contents_hash,
-            ),
-            _ => package_manager::cached_tarball_folder_name(
-                self.manager(),
-                &self.metas[package_id as usize].integrity,
-                resolution,
-                patch_contents_hash,
-            ),
-        }
-    }
-
     /// Returns true if the thread pool can link this package's files. The package is in the current
     /// tree.
     fn can_defer_link(&self, alias: &[u8], pkg_name: &[u8], package_id: PackageID) -> bool {
@@ -1367,7 +1311,7 @@ impl<'a> PackageInstaller<'a> {
         let path = &mut self.node_modules.path;
         path.clear();
         path.extend_from_slice(strings::without_trailing_slash(
-            FileSystem::instance().top_level_dir(),
+            FileSystem::get().top_level_dir(),
         ));
         path.push(SEP);
         path.extend_from_slice(rel_path.as_bytes());
@@ -1551,7 +1495,7 @@ impl<'a> PackageInstaller<'a> {
         // pointee outlives `'a`; the packages column buffers are not freed for
         // the lifetime of this `PackageInstaller` (only grow, which is why
         // this fn exists — to re-snapshot after growth).
-        let packages = self.lockfile_mut().packages.slice();
+        let packages = &self.lockfile_mut().packages;
         self.metas = bun_ptr::RawSlice::new(packages.items_meta());
         self.names = bun_ptr::RawSlice::new(packages.items_name());
         self.pkg_name_hashes = bun_ptr::RawSlice::new(packages.items_name_hash());
@@ -1678,7 +1622,12 @@ impl<'a> PackageInstaller<'a> {
         let mut count: usize = 0;
         let (scripts, gypfile) = 'brk: {
             let scripts = self.lockfile().packages.items_scripts()[package_id as usize];
-            if scripts.filled {
+            // These may have no package.json.
+            let is_folder = matches!(
+                resolution_tag,
+                resolution::Tag::Folder | resolution::Tag::Symlink
+            );
+            if scripts.filled && is_folder {
                 break 'brk (scripts, None);
             }
 
@@ -1887,8 +1836,39 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::Github
             | resolution::Tag::LocalTarball
             | resolution::Tag::RemoteTarball => {
-                installer.cache_dir_subpath =
-                    self.cache_entry_name(package_id, pkg_name, resolution, patch_contents_hash);
+                let (manager, buf) = (self.manager(), self.folder_path_buf.as_mut_slice());
+                let len = match resolution.tag {
+                    resolution::Tag::Npm => package_manager::cached_npm_package_folder_name_print(
+                        manager,
+                        buf,
+                        pkg_name.slice(string_buf!()),
+                        resolution.npm().version,
+                        patch_contents_hash,
+                    ),
+                    resolution::Tag::Git => package_manager::cached_git_folder_name(
+                        manager,
+                        buf,
+                        resolution.git(),
+                        patch_contents_hash,
+                    ),
+                    resolution::Tag::Github => package_manager::cached_github_folder_name(
+                        manager,
+                        buf,
+                        resolution.github(),
+                        patch_contents_hash,
+                    ),
+                    _ => package_manager::cached_tarball_folder_name(
+                        manager,
+                        buf,
+                        &self.metas[package_id as usize].integrity,
+                        resolution,
+                        patch_contents_hash,
+                    ),
+                }
+                .len();
+                if len > 0 {
+                    installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
+                }
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {
@@ -2023,7 +2003,7 @@ impl<'a> PackageInstaller<'a> {
             );
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
-            self.node.complete_one();
+            self.manager().progress.complete_one(NodeId::Install);
         }
 
         // `install_from_link` only re-points one symlink. Everything else replaces the folder.
@@ -2471,7 +2451,7 @@ impl<'a> PackageInstaller<'a> {
                 self.successfully_installed.set(package_id as usize);
 
                 if log_level.show_progress() {
-                    self.node.complete_one();
+                    self.manager().progress.complete_one(NodeId::Install);
                 }
 
                 if self.bins[package_id as usize].tag != bin::Tag::None {
@@ -2743,21 +2723,15 @@ impl<'a> PackageInstaller<'a> {
                 .lockfile()
                 .has_trusted_dependency(folder_name, folder_name, resolution);
         let log = self.manager().log_mut();
-        let scripts_list = match scripts.get_list(
-            log,
-            self.lockfile(),
-            package_path,
-            folder_name,
-            resolution,
-            trusted,
-        ) {
-            Ok(Some(list)) => list,
-            Ok(None) => return false,
-            Err(err) => {
-                self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
-                return false;
-            }
-        };
+        let scripts_list =
+            match scripts.get_list(log, package_path, folder_name, resolution, trusted) {
+                Ok(Some(list)) => list,
+                Ok(None) => return false,
+                Err(err) => {
+                    self.on_scripts_error(log_level, "enqueue lifecycle", folder_name, err);
+                    return false;
+                }
+            };
 
         if !self
             .manager()
@@ -2768,21 +2742,18 @@ impl<'a> PackageInstaller<'a> {
             return false;
         }
 
-        // Bind once: a second `manager_mut()` would invalidate `scripts_node`, derived from this.
         let m = self.manager_mut();
         m.total_scripts += scripts_list.total as usize;
-        if let Some(scripts_node) = m.scripts_node_mut() {
-            m.set_node_name::<true>(
+        if let Some(scripts_node) = m.scripts_node {
+            m.set_node_name(
                 scripts_node,
                 &scripts_list.package_name,
                 ProgressStrings::SCRIPT_EMOJI.as_bytes(),
             );
-            scripts_node.set_estimated_total_items(
-                scripts_node
-                    .unprotected_estimated_total_items
-                    .load(Ordering::Relaxed)
-                    + scripts_list.total as usize,
-            );
+            m.progress
+                .node(scripts_node)
+                .estimated_total_items
+                .update(|total| total + scripts_list.total as usize);
         }
         let optional = !self
             .manager()
@@ -2797,6 +2768,7 @@ impl<'a> PackageInstaller<'a> {
             .push((self.current_tree_id, scripts_list.package_name.clone()));
         self.pending_lifecycle_scripts.push(PendingLifecycleScript {
             list: scripts_list,
+            dependency_id,
             tree_id: self.current_tree_id,
             optional,
         });

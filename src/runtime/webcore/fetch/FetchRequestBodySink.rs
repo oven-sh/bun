@@ -1,5 +1,4 @@
-use bun_collections::ByteVecExt;
-use bun_ptr::BackRef;
+use bun_ptr::RefPtr;
 use bun_sys::Error as SysError;
 
 use crate::webcore::blob::SizeType as BlobSizeType;
@@ -7,57 +6,16 @@ use crate::webcore::fetch::fetch_tasklet::FetchTasklet;
 use crate::webcore::jsc::{JSGlobalObject, JSPromise, JSValue};
 use crate::webcore::sink::AnyControlledSink;
 use crate::webcore::streams::{
-    SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
+    EncodedChunk, SourceHandle, Start, StreamError, StreamResult, Writable, WritablePending,
 };
 
 bun_core::declare_scope!(FetchRequestBodySinkLog, visible);
 
-/// One sink chunk in its source encoding; `write_request_data` converts
-/// directly into the locked stream buffer so no intermediate UTF-8 buffer is
-/// allocated.
-#[derive(Clone, Copy)]
-pub(crate) enum RequestBodyChunk<'a> {
-    Bytes(&'a [u8]),
-    Latin1(&'a [u8]),
-    Utf16(&'a [u16]),
-}
-
-impl<'a> RequestBodyChunk<'a> {
-    #[inline]
-    pub(crate) fn utf8_len(&self) -> usize {
-        match *self {
-            Self::Bytes(b) => b.len(),
-            Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
-            Self::Utf16(u) => {
-                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement(u)
-            }
-        }
-    }
-
-    #[inline]
-    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
-        match *self {
-            Self::Bytes(b) => out.extend_from_slice(b),
-            Self::Latin1(b) => {
-                let _ = out.write_latin1(b);
-            }
-            Self::Utf16(u) => {
-                let _ = out.write_utf16(u);
-            }
-        }
-    }
-}
-
 /// JSSink streaming a fetch() request body into the HTTP thread's ThreadSafeStreamBuffer
 /// with chunked framing; one write per drain-ack.
 pub struct FetchRequestBodySink {
-    /// Non-owning back-reference; `FetchTasklet` is kept alive by a +1
-    /// intrusive ref taken in `start_request_stream` and released exactly once
-    /// by the `assign_to_stream`-result path (`on_resolve_request_stream` /
-    /// `on_reject_request_stream` / synchronous branches), which clears this to
-    /// `None` first. `finalize` releases it as a fallback if that path never
-    /// ran.
-    pub task: Option<BackRef<FetchTasklet, bun_ptr::Mut>>,
+    /// Held until the request body ends.
+    pub task: Option<RefPtr<FetchTasklet>>,
     pub source: SourceHandle,
     pub high_water_mark: BlobSizeType,
     /// Shared pending drain promise for `write()` and `flush(true)`; resolved
@@ -87,15 +45,10 @@ impl FetchRequestBodySink {
     pub const NAME: &'static str = "FetchRequestBodySink";
 
     /// Exclusive borrow of the owning `FetchTasklet`, if still attached.
-    ///
-    /// SAFETY (invariant): the tasklet is intrusively ref-counted and this
-    /// sink holds (indirectly, via the `+1` taken in `start_request_stream`) a
-    /// counted ref while `task` is `Some`; JS-thread-only so no concurrent
-    /// `&mut` exists.
     #[inline]
     fn task_mut(&mut self) -> Option<&mut FetchTasklet> {
-        // SAFETY: see doc comment — exclusive while `&mut self` held.
-        self.task.as_mut().map(|p| unsafe { p.get_mut() })
+        // SAFETY: `task` is a ref; JS thread only, and exclusive while `&mut self` is held.
+        self.task.as_ref().map(|p| unsafe { &mut *p.as_ptr() })
     }
 
     pub fn start(&mut self, stream_start: &Start) -> bun_sys::Result<()> {
@@ -111,7 +64,7 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(())
     }
 
-    fn write_chunk(&mut self, chunk: RequestBodyChunk<'_>) -> Writable {
+    fn write_chunk(&mut self, chunk: EncodedChunk<'_>) -> Writable {
         if self.ended {
             return Writable::Done;
         }
@@ -149,20 +102,19 @@ impl FetchRequestBodySink {
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "write({})", data.slice().len());
-        self.write_chunk(RequestBodyChunk::Bytes(data.slice()))
+        self.write_chunk(EncodedChunk::Bytes(data.slice()))
     }
 
     pub fn write_latin1(&mut self, data: &StreamResult) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
-            return self.write_chunk(RequestBodyChunk::Bytes(bytes));
+            return self.write_chunk(EncodedChunk::Bytes(bytes));
         }
-        self.write_chunk(RequestBodyChunk::Latin1(bytes))
+        self.write_chunk(EncodedChunk::Latin1(bytes))
     }
 
-    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        // Caller guarantees u16 alignment / even length; bytemuck checks at runtime.
-        self.write_chunk(RequestBodyChunk::Utf16(bytemuck::cast_slice(data.slice())))
+    pub fn write_utf16(&mut self, text: &[u16]) -> Writable {
+        self.write_chunk(EncodedChunk::Utf16(text))
     }
 
     pub fn flush_from_js(
@@ -172,7 +124,7 @@ impl FetchRequestBodySink {
     ) -> bun_sys::Result<JSValue> {
         use crate::webcore::streams::PendingState;
         if self.pending.state == PendingState::Pending {
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
+            return bun_sys::Result::Ok(self.pending.promise(cx));
         }
         if self.done || self.ended {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
@@ -184,7 +136,7 @@ impl FetchRequestBodySink {
             // Bytes were scheduled to the HTTP thread since the last drain ack,
             // so an `on_drain` is guaranteed to arrive and resolve this.
             self.pending.result = Writable::Owned(self.pending_bytes);
-            return bun_sys::Result::Ok(JSPromise::opaque_ref(self.pending.promise(cx)).to_js());
+            return bun_sys::Result::Ok(self.pending.promise(cx));
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
             cx.global(),
@@ -213,17 +165,14 @@ impl FetchRequestBodySink {
             // field; detach (not cancel) so we don't re-enter the source while
             // it is still on the stack (FileReader.on_reader_error ref-leak).
             self.source.clear();
-            if let Some(mut task) = self.task.take() {
+            if let Some(task) = self.task.take() {
                 let err_js = err.map(|e| e.to_js(&task.global_this));
-                // SAFETY: the `+1` taken in `start_request_stream` keeps the
-                // tasklet live while `task` was `Some`; `write_end_request` is
-                // the balancing release and may free `*self` via `clear_sink`,
-                // so do not touch `self` afterwards.
-                unsafe { task.get_mut() }.write_end_request(err_js);
+                // SAFETY: `task` is a ref. Dropping it may free `*self`.
+                unsafe { (*task.as_ptr()).write_end_request(err_js) };
             }
             return;
         }
-        // JS pump path: the assign_to_stream result handler is the single balancing release.
+        // JS pump path: the assign_to_stream result handler releases `task`.
         let sys_err = match err {
             Some(StreamError::Error(e)) => Some(e),
             _ => None,
@@ -236,20 +185,6 @@ impl FetchRequestBodySink {
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
 
-    /// # Safety
-    /// `this` must be live and must not be used after the call: the tasklet
-    /// owns this allocation, and if the ref released here was its last one,
-    /// its `deinit` → `clear_sink` frees `*this`.
-    pub unsafe fn finalize(this: *mut Self) {
-        // SAFETY: caller contract; `this` is not touched again after this line.
-        let task = unsafe { (*this).task.take() };
-        if let Some(task) = task {
-            // Balances the `ref_()` taken in `start_request_stream` when the
-            // assign_to_stream-result handler never ran to release it.
-            FetchTasklet::deref(task.as_ptr());
-        }
-    }
-
     /// HTTP-thread drain ack: resolves the pending write/flush promise and wakes source.ready().
     pub fn on_drain(&mut self, _global_this: &JSGlobalObject) {
         bun_core::scoped_log!(FetchRequestBodySinkLog, "onDrain");
@@ -260,8 +195,8 @@ impl FetchRequestBodySink {
 
     pub fn memory_cost(&self) -> usize {
         if let Some(task) = self.task.as_ref() {
-            if let Some(buf) = task.stream_buffer_mut() {
-                return buf.lock().size();
+            if let Some(buf) = task.request_body_streaming_buffer.as_deref() {
+                return buf.lock().buffer.size();
             }
         }
         0
@@ -273,10 +208,6 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 
     crate::impl_js_sink_forwarders!();
 
-    unsafe fn finalize(this: *mut Self) {
-        // SAFETY: same contract, forwarded.
-        unsafe { Self::finalize(this) }
-    }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         Self::end_from_js(self, cx)
     }
@@ -285,6 +216,11 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
 impl crate::webcore::sink::ControlledSink for FetchRequestBodySink {
     fn to_any_sink(this: core::ptr::NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::FetchRequestBodySink(this)
+    }
+
+    unsafe fn controller_finalize(this: *mut Self) {
+        // SAFETY: trait contract. The tasklet owns `*this`, and `task` can be its last ref.
+        drop(unsafe { (*this).task.take() });
     }
 
     fn source(&mut self) -> &mut SourceHandle {

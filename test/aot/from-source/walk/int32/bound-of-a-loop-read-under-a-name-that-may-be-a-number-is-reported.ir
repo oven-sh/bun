@@ -1,0 +1,11 @@
+# THE LYING CONTROL of bound-of-a-loop-read-under-one-of-two-names.ir: one of the two names holds a number: nothing is stated behind the read, the relation bounds nothing, and the step IS REPORTED.
+# f1 = countTo
+# -- source: bound-of-a-loop-read-under-a-name-that-may-be-a-number-is-reported.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; f: number = 1.5; }
+# function countTo(point: Point, key: "x" | "f"): Bun.int32 { let sum: Bun.int32 = 0; for (let i: Bun.int32 = 0; i < point[key]; i++) sum = (sum + i) | 0; return sum; }
+# sink(countTo);
+# -- end of source
+# DIAGNOSTIC: UnprovenInt32 1
+# RUN: walk f1 mechanisms=all
+# CHECK: the walk of f1:Body failed

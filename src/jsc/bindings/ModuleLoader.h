@@ -55,9 +55,18 @@ struct OnLoadResult {
 
 extern "C" bool isBunTest;
 
-class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
+class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<8> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<3>;
+    using Base = JSC::JSInternalFieldObjectImpl<8>;
+
+    // Fields 0 to 2 are the specifier, the referrer and the promise. These are empty when unused.
+    enum Field : unsigned {
+        TypeAttribute = 3,
+        ModuleGraph,
+        OnLoadPath, // Set while waiting on an onLoad callback's promise.
+        OnLoadCallbacks, // The callbacks to try next if that one declines.
+        ModuleMock, // Set while waiting for Bun::runModuleMock().
+    };
 
     template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -67,7 +76,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
-    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleMock);
+    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     JSC::JSPromise* internalPromise();
@@ -77,8 +86,6 @@ public:
 
     PendingVirtualModuleResult(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
-
-    bool wasModuleMock = false;
 };
 
 // `graph`: the Bun.ModuleGraph whose loader is fetching, or null. A CommonJS file
@@ -101,6 +108,13 @@ JSValue fetchESMSourceCodeAsync(
     BunString* referrer,
     BunString* typeAttribute);
 
+// Appends { ...object, default: object }. Returns object if any export was deferred (its value is empty), null otherwise or on exception.
+JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject*, JSC::JSObject* object, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
+// Appends what an `import` of a module in NativeModuleList.h gets. Returns the object that a deferred export (its value is empty) is read from, null for a module that never defers or on exception.
+JSC::JSObject* appendNativeModuleExports(Zig::GlobalObject*, uint32_t registryID, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
+
+JSC::JSObject* createAsyncModuleRequiredError(JSC::JSGlobalObject*, const WTF::String& specifier);
+
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
@@ -122,7 +136,8 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
-    JSC::ThrowScope& scope);
+    JSC::ThrowScope& scope,
+    const CodeString* pluginContents = nullptr);
 
 JSValue resolveAndFetchBuiltinModule(
     Zig::GlobalObject* globalObject,

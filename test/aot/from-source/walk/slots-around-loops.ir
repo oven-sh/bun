@@ -1,0 +1,185 @@
+# -- source: main.ts
+# class Reader { at = 0; constructor(readonly bytes: Uint8Array, readonly list: number[]) {} next(): number { return this.list[this.at++]; } }
+# function views(o: Reader, count: number): number { let sum = 0; for (let k = 0; k < count; k++) { sum = (sum + o.bytes[o.at]) | 0; o.at++; } return sum; }
+# function lists(o: Reader, limit: number): number { let sum = 0; while (o.at < limit) sum = (sum + o.next()) | 0; return sum; }
+# const reader = new Reader(new Uint8Array([1, 2, 3, 4]), [5, 6, 7, 8]);
+# const seen = [views(reader, 3), reader.at]; reader.at = 1; seen.push(lists(reader, 3), reader.at); reader.at = 2147483646; seen.push(views(reader, 3), reader.at);
+# print(seen.join());
+# -- end of source
+# f1 = views, f2 = lists, f3 = Reader, f4 = next
+# A field that every iteration reads and stores is a parameter of the head: no iteration reads it out of the object. The field is proven a whole number from zero up, so an integer comes round and nothing is asked for in front.
+# RUN(VIEWS): walk f1 mechanisms=all
+# VIEWS: = GetSlot {{*}}key="at"
+# VIEWS: : int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
+# VIEWS-NOT: = GetSlot
+# VIEWS: = PutSlot {{*}}key="at"
+# RUN(LISTS): walk f2 mechanisms=all
+# LISTS-NOT: testedType=i32
+# LISTS: : int[0, 9007199254740992] @Int64) isInLoop=true isLoopHead=true
+# LISTS-NOT: = GetSlot {{*}}key="at"
+# LISTS: = PutSlot {{*}}key="at"
+# With loop invariants withheld each iteration reads.
+# RUN(WITHHELD): walk f1 mechanisms=all-LoopInvariants
+# WITHHELD: isLoopHead=true
+# WITHHELD: = GetSlot {{*}}key="at"
+# RUN(ANSWER): run-in-shell
+# ANSWER: 6,3,13,3,0,2147483649
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime,CheckWalkAtRunTime
+# CHECKED: 6,3,13,3,0,2147483649
+# CHECKED-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 kind=Instance name="Reader" module=m0 position=6 constructor=f3 fields=[{key="bytes" declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="list" declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="at" declared={type=number} flags=[IsRequired]}] place=6 ownFieldCount=3
+data d0 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=5}, Number{value=6}, Number{value=7}, Number{value=8}]} module=m0
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable] place=33
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = NewClass v4 layout=L0 @0
+    PutModuleVariable v5 variable=g0 @0
+    v7 = NewClosure function=f4 @91
+    DefineMethod v5, v7 layout=L0 key="next" @91
+    v9 = FinishClass v5 layout=L0 @0
+    v10 = Convert v9 declared={type=f3 flags=[IsFromCompiler]} @0
+    v11 = Convert v9 declared={type=f3 flags=[IsFromCompiler]} @0
+    v12 = Builtin builtin=Uint8Array @453
+    v13 = Data data=d0 @464
+    v14 = Construct v12, -, v13 calleeName="Uint8Array" @453 @449
+    v15 = Convert v14 declared={type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @449
+    v16 = Data data=d1 @479
+    v17 = Construct v11, -, v15, v16 calleeName="Reader" @442 @438
+    v18 = Integer integer=3 @522
+    v19 = Call v1, -, v17, v18 calleeName="views" @508
+    v20 = PropGet v17 key="at" @526
+    v21 = NewArray v19, v20 contents=anything @507
+    v22 = Integer integer=1 @550
+    PropSet v17, v22 key="at" @538
+    v24 = PropGet v21 key="push" @553
+    v25 = Integer integer=3 @577
+    v26 = Call v3, -, v17, v25 calleeName="lists" @563
+    v27 = PropGet v17 key="at" @581
+    v28 = Call v24, v21, v26, v27 calleeKey="push" calleeName="seen.push" @558
+    v29 = Convert v28 declared={type=number} illTypedCause=DeclarationWithoutBody @553
+    v30 = Integer integer=2147483646 @605
+    PropSet v17, v30 key="at" @593
+    v32 = PropGet v21 key="push" @617
+    v33 = Integer integer=3 @641
+    v34 = Call v1, -, v17, v33 calleeName="views" @627
+    v35 = PropGet v17 key="at" @645
+    v36 = Call v32, v21, v34, v35 calleeKey="push" calleeName="seen.push" @622
+    v37 = Convert v36 declared={type=number} illTypedCause=DeclarationWithoutBody @617
+    v38 = Builtin builtin=GlobalThis @657
+    v39 = PropGet v38 key="print" [isFreeName] @657
+    v40 = PropGet v21 key="join" @663
+    v41 = Call v40, v21 calleeKey="join" calleeName="seen.join" @668
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @663
+    v43 = Call v39, -, v42 calleeName="print" @657
+    v44 = Undefined @657
+    Return v44 @657
+}
+function f1 name="views" module=m0 position=141 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer @202
+    v3 = Convert v2 declared={type=number} @202
+    v4 = Integer @218
+    v5 = Convert v4 declared={type=number} @218
+    Jump -> next b1(v3, v5) @214
+  b1(v6: number, v7: number):
+    LoopHint @214
+    v9 = Less v7, v1 @221
+    Branch v9 -> taken b2(), notTaken b3() @221
+  b2():
+    v10 = PropGet v0 key="bytes" @252
+    v11 = PropGet v0 key="at" @260
+    v12 = ElemGet v10, v11 @254
+    v13 = Add v6, v12 @246
+    v14 = Integer @269
+    v15 = BitOr v13, v14 @245
+    v16 = Convert v15 declared={type=number} @239
+    v17 = PropGet v0 key="at" @272
+    v18 = Increment v17 @272
+    PropSet v0, v18 key="at" @272
+    v20 = Increment v7 @232
+    v21 = Convert v20 declared={type=number} @232
+    Jump -> next b1(v16, v21) @232
+  b3():
+    v22 = Convert v6 declared={type=number} @289
+    Return v22 @289
+}
+function f2 name="lists" module=m0 position=296 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = Integer @357
+    v3 = Convert v2 declared={type=number} @357
+    Jump -> next b1(v3) @360
+  b1(v4: number):
+    LoopHint @360
+    v6 = PropGet v0 key="at" @367
+    v7 = Less v6, v1 @367
+    Branch v7 -> taken b2(), notTaken b3() @367
+  b2():
+    v8 = PropGet v0 key="next" @394
+    v9 = Call v8, v0 calleeKey="next" calleeName="o.next" @396
+    v10 = Add v4, v9 @388
+    v11 = Integer @406
+    v12 = BitOr v10, v11 @387
+    v13 = Convert v12 declared={type=number} @381
+    Jump -> next b1(v13) @381
+  b3():
+    v14 = Convert v4 declared={type=number} @416
+    Return v14 @416
+}
+function f3 name="Reader" module=m0 position=34 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Uint8Array flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: undefined|null|Uint8Array, v2: undefined|null|Array<number>):
+    v3 = GetConstructPrototype v0 layout=L0 @34
+    v4 = NewObject v3 layout=L0 @34
+    v5 = Convert v4 declared={type=L0} @34
+    PropDefine v5, v1 key="bytes" @63
+    PropDefine v5, v2 key="list" @63
+    v8 = Integer @20
+    v9 = Convert v8 declared={type=number} @20
+    PropDefine v5, v9 key="at" @15
+    v11 = Undefined @63
+    v12 = TypeTest v11 testedType=object @63
+    Branch v12 -> taken b1(| 0), notTaken b2(v5) @63
+  b1(v13):
+    Jump -> next b2(v13) @63
+  b2(v14):
+    Return v14 @63
+}
+function f4 name="next" module=m0 position=91 kind=Method flags=[HasThis, IsChecked, HasExplicitName] thisType={type=L0} results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="list" @115
+    v2 = PropGet v0 key="at" @125
+    v3 = ToNumeric v2 @125
+    v4 = Increment v3 @125
+    PropSet v0, v4 key="at" @125
+    v6 = ElemGet v1, v3 @120
+    v7 = Convert v6 declared={type=number} @115
+    Return v7 @115
+}
+function f5 name="next" module=m1 position=25 kind=Method role=Library flags=[HasThis, IsChecked, IsHiddenInStackTraces, HasExplicitName] enclosingRuntimeFunction=ArrayIteratorPrototypeNext thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = HasJSType v0 first=5 last=5 @78
+    v2 = ToBoolean v1 @78
+    Branch v2 -> taken b1(| 0), notTaken b2(| 0) @78
+  b1(v3):
+    v4 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @229
+    v5 = StepArrayIterator v4 @229
+    v6 = ResultAt v5 index=1 @286
+    v7 = ResultAt v5 @334
+    v8 = Convert v7 declared={type=boolean flags=[IsFromCompiler, IsClaim]} @266
+    v9 = CreateIteratorResult v6, v8 @266
+    Return v9 @266
+  b2(v10):
+    v11 = ThrowNewError errorKind=TypeError message="%ArrayIteratorPrototype%.next requires that |this| be an Array Iterator instance" @110
+    Unreachable @110
+}
+runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private

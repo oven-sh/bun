@@ -6,11 +6,11 @@ use core::ffi::{c_char, c_int};
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, uLong, zStream_struct};
+use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, zStream_struct};
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
-    bun_alloc::c_thunks_for_zone!("zlib");
+    bun_alloc::c_thunks_for_zone!(c"zlib");
     pub(crate) use malloc_items as alloc;
 }
 
@@ -107,12 +107,6 @@ impl ZStream {
     pub fn avail_out(&self) -> uInt {
         // SAFETY: see `next_in`.
         unsafe { (*self.as_ptr()).avail_out }
-    }
-
-    #[inline]
-    pub fn total_out(&self) -> uLong {
-        // SAFETY: see `next_in`.
-        unsafe { (*self.as_ptr()).total_out }
     }
 
     #[inline]

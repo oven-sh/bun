@@ -1,0 +1,18 @@
+# `each` only calls the arrow that it is handed. The arrow of `leaks` lays its capture in a variable, that of `compares` asks whether it is the function that came last, and that of `reads` reads a name off it: the word that the capture does not get is taken back from `f`, and from `outer`, which only hands on to `leaks`.
+# f1 = each, f2 = leaks, f3 = compares, f4 = reads, f5 = outer, f6 = maker
+# -- source: captured-by-a-closure-that-does-more-with-it.ts
+# declare function sink(...values: unknown[]): void;
+# let held: ((x: number) => number) | undefined;
+# function each(list: number[], f: (x: number) => number): number { let t = 0; for (let i = 0; i < list.length; i++) t += f(list[i]); return t; }
+# function leaks(list: number[], f: (x: number) => number): number { const t = each(list, x => { held = f; return f(x); }); return t + 1; }
+# function compares(list: number[], f: (x: number) => number): number { const t = each(list, x => f === held ? x : f(x)); return t + 1; }
+# function reads(list: number[], f: (x: number) => number): number { const t = each(list, x => f(x) + f.length); return t + 1; }
+# function outer(list: number[], f: (x: number) => number): number { const t = leaks(list, f); return t + 1; }
+# function maker(list: number[], k: number) { const a = leaks(list, x => x * k); const b = compares(list, x => x + k); const c = reads(list, x => x - k); const d = outer(list, x => x % k); return a + b + c + d; }
+# sink(maker([1, 2], 3), maker([4], 5), () => held);
+# -- end of source
+# RUN: link functions mechanisms=all
+# CHECK-LABEL: function f1
+# CHECK: parameter 1 {{*}}only-called
+# CHECK-LABEL: function f2
+# CHECK-NOT: only-called

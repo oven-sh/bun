@@ -980,7 +980,7 @@ impl UpdateInteractiveCommand {
             }
 
             if needs_redraw {
-                let synchronized = Output::synchronized();
+                let _synchronized = Output::synchronized();
 
                 if !initial_draw {
                     Output::up(total_lines);
@@ -1201,7 +1201,6 @@ impl UpdateInteractiveCommand {
 
                 total_lines = lines_displayed + 1;
                 Output::clear_to_end();
-                synchronized.end();
             }
             Output::flush();
 

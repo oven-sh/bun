@@ -1,0 +1,36 @@
+// Map.prototype.delete() and Set.prototype.delete() called by text made at run time: keys of every kind that are there, absent, deleted before and added again, in collections of every size that the program and the text make, while they are walked, of subclasses, in contexts and of receivers that are none.
+"use strict";
+const hidden = t => [t, "0"][process.argv.length > 90 ? 1 : 0], F = (...a) => new Function(...a.slice(0, -1), hidden(a[a.length - 1]));
+const vm = require("node:vm");
+const lines = [];
+const told = f => { try { return String(f()); } catch (e) { return e.name + ": " + e.message; } };
+const shown = c => c instanceof Map ? [...c].map(([k, v]) => `${String(typeof k === "symbol" ? k.toString() : Object.is(k, -0) ? "-0" : typeof k === "object" && k ? JSON.stringify(k) : k)}=${String(v)}`).join() : [...c].map(k => String(typeof k === "symbol" ? k.toString() : typeof k === "object" && k ? JSON.stringify(k) : k)).join();
+const remove = F("c", "k", "return c.delete(k);"), called = F("c", "k", "return c.delete.call(c, k) + '' + c.delete.apply(c, [k, 1]) + c.delete();"), all = F("c", "let r = ''; for (const k of c.keys()) r += c.delete(k) ? 1 : 0; return r + c.size;"), again = F("c", "k", "v", "const a = c.delete(k); c.set ? c.set(k, v) : c.add(k); return a + '' + c.delete(k) + c.has(k) + c.size;"), taken = F("c", "k", "const d = c.delete; return d.call(c, k) + d.bind(c)(k);");
+const object = { id: 1 }, frozen = Object.freeze({ id: 2 }), symbol = Symbol("s"), func = () => 1, join = (a, b) => a + b, flat = t => JSON.parse(JSON.stringify(t));
+const keys = [0, 1, -1, 1.5, -0, NaN, 2 ** 31, 2 ** 53, Infinity, "a", "b", "", "key1", join("key", "2"), flat("key3"), "Ж", "a longer text that is a key of the collection", true, false, null, undefined, object, frozen, symbol, func, 1n, 12345678901234567890n, [1]];
+const others = [join("ke", "y1"), flat("a"), "key" + 1, 0.0, "absent", 99, { id: 1 }, Symbol("s"), 12345678901234567890n, "a longer text that is a key of " + flat("the collection"), "wxkey2".slice(2), -1.0];
+const written = new Map([["one", 1], ["two", 2], ["three", 3]]), writtenSet = new Set(["one", "two", 3]);
+for (const [name, make] of [["Map", () => new Map(keys.map((k, i) => [k, i]))], ["Set", () => new Set(keys)], ["Map by text", () => F("l", "const m = new Map(); for (let i = 0; i < l.length; i++) m.set(l[i], i); return m;")(keys)], ["Set by text", () => F("l", "const s = new Set(); for (const k of l) s.add(k); return s;")(keys)]]) {
+  for (const k of keys) { const c = make(); lines.push(`${name} ${told(() => String(k))} ${remove(c, k)} ${c.has(k)} ${c.size} ${remove(c, k)} ${shown(c)}`); }
+  for (const k of others) { const c = make(); lines.push(`${name} of another ${told(() => String(k))} ${remove(c, k)} ${c.size} ${told(() => called(c, k))} ${told(() => again(c, k, "v"))} ${shown(c)}`); }
+  const c = make(); lines.push(`${name} all ${all(c)} ${shown(c)}`); for (const k of keys) lines.push(`${name} emptied ${told(() => again(c, k, 5))} ${told(() => taken(c, k))}`);
+}
+for (const size of [1, 2, 3, 7, 8, 9, 15, 16, 17, 31, 33, 64, 100, 255, 257, 1000, 5000]) for (const [kind, key] of [["int", i => i], ["text", i => "k" + i], ["made", i => join("k", String(i))], ["double", i => i + 0.5], ["mixed", i => i % 3 ? "k" + i : i], ["objects", (o => i => o[i] ??= { i })([])]]) {
+  const m = new Map(), s = new Set(); for (let i = 0; i < size; i++) { m.set(key(i), i); s.add(key(i)); }
+  let r = 0; for (let i = 0; i < size; i += 1 + (size >> 4)) r = (r * 31 + (remove(m, key(i)) ? 2 : 1) + (remove(s, key(i)) ? 4 : 3) + m.size + s.size) | 0;
+  for (let i = 0; i < size; i += 2) { remove(m, key(i)); remove(s, key(i)); }
+  for (let i = 0; i < size; i++) { if (i % 5 === 0) { m.set(key(i), -i); s.add(key(i)); } r = (r * 7 + (m.has(key(i)) ? 1 : 0) + (m.get(key(i)) ?? 3) + (s.has(key(i)) ? 2 : 0)) | 0; }
+  lines.push(`${kind} ${size} ${r} ${m.size} ${s.size} ${shown(m).slice(0, 120)} ${all(m).slice(-30)} ${all(s).slice(-30)}`);
+}
+const walk = F("c", "del", "add", "const seen = []; for (const e of c) { const k = Array.isArray(e) ? e[0] : e; seen.push(k); const d = del(k); if (d !== undefined) c.delete(d); const a = add(k); if (a !== undefined && seen.length < 40) c.set ? c.set(a, 1) : c.add(a); } return seen.join();");
+for (const make of [() => new Map([1, 2, 3, 4, 5, 6].map(k => [k, "v" + k])), () => new Set([1, 2, 3, 4, 5, 6]), () => new Set(["a", "b", "c", "d"]), () => new Map(["a", "b", "c", "d"].map(k => [k, 1]))]) for (const [d, a] of [[k => k, () => {}], [k => typeof k === "number" ? k + 1 : "c", () => {}], [k => k, k => k], [k => typeof k === "number" ? k - 1 : "a", k => typeof k === "number" ? k + 6 : "z"], [k => "absent", () => {}]]) { const c = make(); lines.push(`walk ${walk(c, d, a)} then ${shown(c)}`); }
+const steps = new Map([1, 2, 3, 4].map(k => [k, k])), it = steps.entries(), st = []; st.push(it.next().value); remove(steps, 1); remove(steps, 2); st.push(it.next().value); remove(steps, 3); steps.set(1, "late"); for (const e of it) st.push(e); lines.push(`an iterator ${JSON.stringify(st)}`);
+const each = []; const eached = new Map([["a", 1], ["b", 2], ["c", 3]]); F("m", "f", "m.forEach((v, k) => { f(k); m.delete(k); m.delete('c'); });")(eached, k => each.push(k)); lines.push(`forEach ${each} ${eached.size}`);
+lines.push(`written ${remove(written, "two")} ${remove(written, flat("one"))} ${remove(written, "absent")} ${shown(written)} ${remove(writtenSet, 3)} ${remove(writtenSet, "o" + flat("ne"))} ${shown(writtenSet)} ${remove(written, "two")}`);
+class Counted extends Map { calls = 0; delete(k) { this.calls++; return super.delete(k); } } class Plain extends Set {} const counted = new Counted([["a", 1], ["b", 2]]), plain = new Plain([1, "x"]); lines.push(`${remove(counted, "a")} ${remove(counted, "z")} ${counted.calls} ${counted.size} ${remove(plain, "x")} ${remove(plain, 2)} ${plain.size}`);
+for (const r of [undefined, null, 5, "text", {}, [], new WeakMap(), new WeakSet(), Map.prototype, Set.prototype, new Proxy(new Map([[1, 2]]), {}), { delete: k => "own " + k }]) lines.push(told(() => remove(r, 1)), told(() => F("r", "return Map.prototype.delete.call(r, 1);")(r)), told(() => F("r", "return Set.prototype.delete.call(r, 1);")(r)));
+const context = vm.createContext({}), theirs = vm.runInContext("[new Map([['a', 1], [2, 'b'], ['key1', 3]]), new Set(['a', 2, 'key1'])]", context), theirRemove = vm.runInContext(hidden("(c, k) => c.delete(k) + '' + c.size"), context);
+for (const c of theirs) lines.push(`${remove(c, "a")} ${theirRemove(c, 2)} ${remove(c, join("key", "1"))} ${c.size}`); for (const c of [new Map([["a", 1], [2, 2]]), new Set(["a", 2])]) lines.push(`${theirRemove(c, flat("a"))} ${theirRemove(c, 2)} ${theirRemove(c, 3)}`);
+lines.push(F("n", "const m = new Map(), s = new Set(); let r = 0; for (let i = 0; i < n; i++) { const k = i % 97, t = 'k' + (i % 31); m.set(k, i); s.add(t); if (i % 3 === 0) r += m.delete((i * 7) % 97) ? 1 : 2; if (i % 5 === 0) r += s.delete('k' + ((i * 3) % 31)) ? 3 : 4; if (i % 7 === 0) { const l = []; for (const x of m.keys()) if (l.length < 3) l.push(x); for (const x of l) r = (r * 31 + (m.delete(x) ? x : -1)) | 0; } } return r + '/' + m.size + '/' + s.size;")(6000));
+for (const l of lines) console.log(l);
+console.log(lines.length);

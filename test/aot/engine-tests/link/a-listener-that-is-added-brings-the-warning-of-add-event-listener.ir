@@ -1,0 +1,39 @@
+# new AbortController().signal.addEventListener("abort", () => {})
+# addEventListener() warns of a listener that is null or undefined: whoever calls it brings what emits the warning. The control: class-that-is-constructed-brings-what-hangs-on-its-objects.ir, where nobody calls it.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f2 unreached
+# CHECK-NOT: function f3 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f2
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="AbortController" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(AbortController) flags=[IsExpected]}
+    v3 = Construct v2 calleeName="AbortController"
+    v4 = PropGet v3 key="signal"
+    v5 = PropGet v4 key="addEventListener"
+    v6 = String string="abort"
+    v7 = NewClosure function=f1
+    v8 = Call v5, v4, v6, v7 calleeKey="addEventListener" calleeName="addEventListener"
+    v9 = Undefined
+    Return v9
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f3 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

@@ -1,0 +1,19 @@
+# -- source: main.js
+# const n = (value) => Number(globalThis.nothingOfThisName ?? value);
+# const s = (value) => String(globalThis.nothingOfThisName ?? value);
+# function byKey(start, name) { let count = start; const made = { up: () => ++count, down: () => --count, same: () => count }; const got = made[name]; return (got === made.up) + "," + (got === made.down); }
+# for (const start of [n(1), n(5)]) {
+#   print(byKey(start, s("up")));
+#   print(byKey(start, s("down")));
+# }
+# -- end of source
+# A read under a text of the run off a plain record runs no code of the program. Where the text names a field whose closure the literal left unmade, the read makes the closure and stores it: the walk takes it to write ObjectFields.
+# RUN: run-in-shell testing=CheckEffectsAtRunTime mechanisms=all
+# CHECK: true,false
+# CHECK-NEXT: false,true
+# CHECK-NEXT: true,false
+# CHECK-NEXT: false,true
+# CHECK-NEXT: exited with 0
+# RUN(WALK): walk f1:Body mechanisms=all
+# WALK: closureForm=Deferred
+# WALK: = ElemGet {{*}}traits=[mayThrow, mayCollect, mayWriteObservableState, mayTouchMemory]

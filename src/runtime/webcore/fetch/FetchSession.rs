@@ -410,7 +410,7 @@ impl FetchSession {
     /// finish, and the session stays usable.
     pub(crate) fn close(&self) {
         if self.used.get() && http::http_thread::is_initialized() {
-            http::http_thread().schedule_pool_close(self.pool.id);
+            http::HTTPThread::schedule_pool_close(self.pool.id);
         }
     }
 

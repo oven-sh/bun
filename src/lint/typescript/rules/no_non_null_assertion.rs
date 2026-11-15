@@ -4,8 +4,8 @@ use bun_lint::utils::ts_utils::is_assignee;
 /// Disallow non-null assertions using the `!` postfix operator.
 pub struct NoNonNullAssertion;
 
-const NO_NON_NULL: Message = Message::new("noNonNull", "Forbidden non-null assertion.");
-const SUGGEST_OPTIONAL_CHAIN: Message = Message::new(
+const NO_NON_NULL: &Message = &Message::new("noNonNull", "Forbidden non-null assertion.");
+const SUGGEST_OPTIONAL_CHAIN: &Message = &Message::new(
     "suggestOptionalChain",
     "Consider using the optional chain operator `?.` instead. This operator includes runtime checks, so it is safer than the compile-only non-null assertion operator.",
 );

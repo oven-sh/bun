@@ -725,9 +725,11 @@ test.concurrent.skipIf(!isLinux)(
       // the PTY's foreground pgroup (bun's stat field 8 = tpgid = scriptPid),
       // proving `JobControl.give()` ran with `isatty(0) && tcgetpgrp(0)>0`.
       expect(readFileSync(`/proc/${scriptPid}/stat`, "utf8")).toMatch(new RegExp(`\\) . ${runPid} ${scriptPid} `));
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      // The script can write its ids before the spawn returns, and `give()` runs behind it.
+      const inForeground = new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `);
+      const deadline = Date.now() + 4000;
+      while (!inForeground.test(readFileSync(`/proc/${runPid}/stat`, "utf8")) && Date.now() < deadline) await sleep(10);
+      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(inForeground);
 
       // Ctrl-Z: SIGTSTP to the script's pgroup (what the line discipline would
       // send to the foreground pgroup on ^Z). bun's WUNTRACED wait observes the
@@ -748,6 +750,8 @@ test.concurrent.skipIf(!isLinux)(
         // only ever observe 'S'. The post-condition is what matters.
         await waitState(scriptPid, st => st === "T" || st === "t", 200);
         const resumed = await waitState(scriptPid, st => st === "S" || st === "R", 3000);
+        // bun still runs for a moment behind the SIGCONT.
+        await waitState(runPid, st => st === "S", 3000);
         expect({
           round: i,
           resumed,
@@ -762,9 +766,7 @@ test.concurrent.skipIf(!isLinux)(
       }
 
       // Foreground pgroup is back on the script after each dance round.
-      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(
-        new RegExp(`\\) . \\d+ ${runPid} ${runPid} \\d+ ${scriptPid} `),
-      );
+      expect(readFileSync(`/proc/${runPid}/stat`, "utf8")).toMatch(inForeground);
     } finally {
       if (runPid > 0) reap(runPid);
       if (scriptPid > 0) reap(-scriptPid, scriptPid);

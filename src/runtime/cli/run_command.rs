@@ -1088,7 +1088,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 period = bstr::BStr::new(&escaped_period),
             );
             // process-lifetime (runner never returns) — store both
-            // the script bytes and the synthetic entry path in the runner arena
+            // the script bytes and the synthetic entry path in `cli_arena()`
             // so the `Source` stored in the VM can backref into them.
             let cron_script: &'static [u8] = cli_arena().alloc_slice_copy(cron_script.as_bytes());
 
@@ -1340,7 +1340,7 @@ pub(crate) struct Run<'a> {
     vm: &'a VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
-    /// the runner arena). `None` for `bun bake`, which has no entry module.
+    /// `cli_arena()`). `None` for `bun bake`, which has no entry module.
     entry_path: Option<&'static [u8]>,
     /// `--check` under `--watch`: what to type check before the program runs. With errors the
     /// program is not run, and the process waits for a change.
@@ -3937,7 +3937,7 @@ impl BunXFastPath {
     /// If this returns, it implies the fast path cannot be taken.
     pub(crate) fn try_launch(
         ctx: &mut ContextData,
-        direct_launch_buffer: &mut WPathBuffer,
+        path_then_command_line: &mut WPathBuffer,
         path_len: usize,
         env: &mut DotEnv::Loader,
         passthrough: &[Box<[u8]>],
@@ -3946,7 +3946,7 @@ impl BunXFastPath {
             return;
         }
 
-        let (path_to_use, command_line) = direct_launch_buffer.split_at_mut(path_len);
+        let (path_to_use, command_line) = path_then_command_line.split_at_mut(path_len);
 
         bun_core::scoped_log!(
             BUNX_FAST_PATH_LOG,

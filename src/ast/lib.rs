@@ -2988,21 +2988,6 @@ pub fn initialize_store() {
     stmt::data::Store::create();
 }
 
-/// This thread's AST node stores, which a `#[thread_local]` does not free when the thread ends.
-pub struct OwnedStores(core::marker::PhantomData<*const ()>);
-impl OwnedStores {
-    pub fn create() -> Self {
-        initialize_store();
-        Self(core::marker::PhantomData)
-    }
-}
-impl Drop for OwnedStores {
-    fn drop(&mut self) {
-        expr::data::Store::deinit();
-        stmt::data::Store::deinit();
-    }
-}
-
 /// Create both AST node stores on first call, **reset** them on every
 /// subsequent call. Maps to `Store::begin()` (create-or-reset) on each
 /// slab, so callers that re-enter — e.g. the install pipeline parsing many

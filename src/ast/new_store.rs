@@ -447,7 +447,7 @@ macro_rules! thread_local_ast_store {
                 DISABLE_RESET.get()
             }
 
-            pub(crate) fn deinit() {
+            pub fn deinit() {
                 if instance().is_null() || !memory_allocator().is_null() {
                     return;
                 }

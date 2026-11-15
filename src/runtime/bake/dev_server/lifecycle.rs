@@ -1,7 +1,7 @@
 //! Creating and destroying the dev server, and loading the framework's server runtime.
 
 use super::*;
-use bun_ptr::AliasableBox;
+use std::sync::Arc;
 
 /// DevServer is stored on the heap, storing its allocator.
 #[inline(never)]
@@ -35,7 +35,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
-    let bundler_framework_view = AliasableBox::new(options.framework.as_bundler_view());
+    let unresolved_view = options.framework.as_bundler_view();
     let mut log = Log::init();
     let mut init_transpiler = |renderer, bundler_options| {
         (options.framework)
@@ -44,8 +44,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut log,
                 bake::Mode::Development,
                 renderer,
-                // SAFETY: dropped after the transpilers, or once they borrow another one.
-                unsafe { &*bundler_framework_view.as_ptr() },
+                &unresolved_view,
                 bundler_options,
             )
             .map_err(|err| global.throw_error(err, generic_action))
@@ -113,12 +112,10 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             generation: 0,
             bundles_since_last_error: 0,
             framework: options.framework,
-            plugins: (options.bundler_options.plugin.as_ref()).map(|plugin| plugin.as_non_null()),
-            _bundler_options: options.bundler_options,
+            plugins: options.bundler_options.plugin.map(Plugins::Owned),
             server_transpiler,
             client_transpiler,
             ssr_transpiler,
-            bundler_framework_view,
             log,
             plugin_state: PluginState::Unknown,
             current_bundle: None,
@@ -185,18 +182,16 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         )?));
     }
 
-    // `bundler_framework_view` is a snapshot of the framework, so the
+    // `unresolved_view` is a snapshot of the framework, so the
     // transpilers do not see the resolved
     // `server_runtime_import` / `react_fast_refresh.import_source`;
     // re-project after resolve so parser-generated imports (e.g.
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
-    let resolved_view = AliasableBox::new(dev.framework.as_bundler_view());
+    let resolved_view = dev.framework.as_bundler_view();
     for transpiler in dev.transpilers() {
-        // SAFETY: `dev` drops it after the transpilers.
-        transpiler.options.framework = Some(unsafe { &*resolved_view.as_ptr() });
+        transpiler.options.framework = Some(Arc::clone(&resolved_view));
     }
-    dev.bundler_framework_view = resolved_view;
 
     dev.configuration_hash_key = 'hash_key: {
         let mut h = Wyhash::init(128);
@@ -431,8 +426,6 @@ impl Drop for DevServer {
                 generation: _,
                 bundles_since_last_error: _,
                 framework: _,
-                bundler_framework_view: _,
-                _bundler_options: _,
                 server_transpiler: _,
                 client_transpiler: _,
                 ssr_transpiler: _,

@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
@@ -16,6 +15,7 @@ use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
 use bun_js_parser as js_parser;
+use bun_ptr::AliasableBox;
 use bun_resolver::Resolver;
 use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
@@ -407,18 +407,20 @@ impl Macro {
             // into its loader, so give the VM its own copy.
             // SAFETY: `env` is the build's loader. It outlives the build and nothing writes to
             // it while parse tasks run.
-            let owned_env_loader = match unsafe { env.as_ref() } {
-                Some(env) => Some(Box::new(env.clone_loaded()?)),
+            let env_loader = match unsafe { env.as_ref() } {
+                Some(env) => Some(AliasableBox::new(env.clone_loaded()?)),
                 None => None,
             };
 
-            let vm = VirtualMachine::init(VirtualMachineInitOptions {
+            let options = VirtualMachineInitOptions {
                 transform_options,
-                log: Some(NonNull::from(&mut *log)),
-                owned_env_loader,
+                env_loader: env_loader.as_ref().map(AliasableBox::as_non_null),
                 is_main_thread: false,
                 ..Default::default()
-            })?;
+            };
+            let vm = VirtualMachine::init(log, options)?;
+            // This VM is never freed.
+            let _ = env_loader.map(AliasableBox::into_raw);
             (vm, true)
         };
 

@@ -74,8 +74,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             generation: _,
             bundles_since_last_error: _,
             framework: _,
-            bundler_framework_view: _,
-            _bundler_options: _,
             server_transpiler: _,
             client_transpiler: _,
             ssr_transpiler: _,
@@ -121,7 +119,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .ssr_transpiler
     //   .log
     //   .framework
-    //   .bundler_framework_view, ._bundler_options
     //   .broadcast_console_log_from_browser_to_server
 
     // to be counted.

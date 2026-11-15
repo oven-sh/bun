@@ -68,17 +68,17 @@ impl ReplCommand {
                 Global::exit(1);
             });
 
-        let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+        let options = jsc::VirtualMachineInitOptions {
             transform_options: core::mem::take(&mut ctx.args),
             argv: core::mem::take(&mut ctx.passthrough).leak(),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-            log: core::ptr::NonNull::new(ctx.log),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
             ..Default::default()
-        })?;
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
 
         vm.preload.set(core::mem::take(&mut ctx.preloads));
         vm.dns_result_order.set(dns_order as u8);

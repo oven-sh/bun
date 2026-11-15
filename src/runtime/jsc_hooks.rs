@@ -89,7 +89,7 @@ pub(crate) struct RuntimeState {
     pub(crate) request_pools: crate::server::RequestPools,
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
-    _wake_ctx: bun_ptr::AliasableBox<bun_jsc::async_module::WakeContext>,
+    pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
     /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
@@ -292,16 +292,7 @@ fn ssl_ctx_cache_get_or_create(
 /// Timer state + body hive-allocator + debugger configuration — everything
 /// VM init does that names a `bun_runtime` type.
 fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeState {
-    let wake_ctx = bun_ptr::AliasableBox::new(bun_jsc::async_module::WakeContext {
-        queue: &raw const vm.modules,
-        handle: vm.handle(),
-        kind: vm.current_loop_kind(),
-    });
-    let wake_target = bun_resolver::install_types::WakeTarget {
-        context: wake_ctx.as_non_null().cast(),
-        handler: bun_jsc::async_module::Queue::on_wake_handler,
-    };
-    let state = bun_core::heap::alloc(RuntimeState {
+    let mut state = Box::new(RuntimeState {
         timer: timer::All::init(),
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
@@ -327,7 +318,7 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         #[cfg(windows)]
         path_watchers: Default::default(),
         request_pools: Default::default(),
-        _wake_ctx: wake_ctx,
+        wake_ctx: None,
         cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),
         matcher_pass: Cell::new(ptr::null()),
@@ -337,11 +328,22 @@ fn init_runtime_state(vm: &VirtualMachine, opts: &InitOptions) -> OpaqueRuntimeS
         #[cfg(unix)]
         uv_loop: crate::napi::uv_posix::UvLoop::new(ptr::NonNull::from(vm), vm.handle()),
     });
+    let wake_ctx = (state.wake_ctx).insert(Box::new(bun_jsc::async_module::WakeContext {
+        queue: &raw const vm.modules,
+        handle: vm.handle(),
+        kind: vm.current_loop_kind(),
+    }));
+    let context = ptr::NonNull::from(&mut **wake_ctx).cast();
+    let state = bun_core::heap::into_raw(state);
     RUNTIME_STATE.set(state);
 
     vm.transpiler.with_mut(|t| {
-        t.resolver.on_wake_package_manager =
-            bun_resolver::install_types::WakeHandler(Some(wake_target));
+        t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler(Some(
+            bun_resolver::install_types::WakeTarget {
+                context,
+                handler: bun_jsc::async_module::Queue::on_wake_handler,
+            },
+        ));
         // Not for stored code: `compile.autoloadTsconfig: false` is applied later than this.
         let reads_tsconfig = opts.graph.is_none_or(|graph| {
             graph

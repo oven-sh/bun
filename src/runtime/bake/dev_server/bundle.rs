@@ -270,7 +270,7 @@ impl DevServer {
         &mut self,
         plugins: ::core::ptr::NonNull<crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.plugins = Some(plugins);
+        self.plugins = Some(Plugins::Lent(plugins));
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())
@@ -383,13 +383,14 @@ impl DevServer {
                 detach(&mut self.client_transpiler),
             )
         };
+        let framework = server_transpiler.options.framework.clone();
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: self.framework.as_bundler_view(),
+                framework: framework.expect("set by init_transpiler"),
                 client_transpiler,
                 ssr_transpiler,
-                plugins: self.plugins,
+                plugins: self.plugins.as_ref().map(Plugins::as_non_null),
             }),
             heap_ref,
             event_loop,

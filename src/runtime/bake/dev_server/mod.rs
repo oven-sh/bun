@@ -353,6 +353,22 @@ pub(crate) enum PluginState {
     Err,
 }
 
+pub(crate) enum Plugins {
+    /// From `Options::bundler_options`.
+    Owned(crate::api::js_bundler::OwnedPlugin),
+    /// The server's.
+    Lent(::core::ptr::NonNull<crate::api::js_bundler::Plugin>),
+}
+
+impl Plugins {
+    fn as_non_null(&self) -> ::core::ptr::NonNull<crate::api::js_bundler::Plugin> {
+        match self {
+            Plugins::Owned(plugins) => plugins.as_non_null(),
+            Plugins::Lent(plugins) => *plugins,
+        }
+    }
+}
+
 pub(crate) enum TestingBatchEvents {
     Disabled,
     /// A meta-state where the DevServer has been requested to start a batch,
@@ -513,7 +529,6 @@ pub(crate) struct DevServer {
     pub(crate) bundles_since_last_error: usize,
 
     pub(crate) framework: bake::Framework,
-    pub(crate) _bundler_options: bake::SplitBundlerOptions,
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
@@ -523,15 +538,12 @@ pub(crate) struct DevServer {
     pub(crate) client_transpiler: Transpiler<'static>,
     /// With a separate SSR graph.
     pub(crate) ssr_transpiler: Option<Transpiler<'static>>,
-    /// After the transpilers, whose `options.framework` it is.
-    pub(crate) bundler_framework_view: bun_ptr::AliasableBox<bun_bundler::bake_types::Framework>,
     /// The log used by all `server_transpiler`, `client_transpiler` and `ssr_transpiler`.
     /// Note that it is rarely correct to write messages into it. Instead, associate
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
-    /// Owned by `_bundler_options` or by the server.
-    pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
+    pub(crate) plugins: Option<Plugins>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,

@@ -109,13 +109,13 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     jsc::initialize(jsc::InitializeOptions::default());
     bun_ast::initialize_store();
 
-    let vm = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        log: NonNull::new(ctx.log),
+    let vm_options = jsc::virtual_machine::Options {
         args: ctx.args.clone(),
         argv: ctx.passthrough.clone().leak(),
         smol: ctx.runtime_options.smol,
         ..Default::default()
-    })?;
+    };
+    let vm = VirtualMachine::init_bake(ctx.log, vm_options)?;
 
     vm.event_loop().ensure_waker();
     vm.preload.set(ctx.preloads.clone());

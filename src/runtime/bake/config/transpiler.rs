@@ -4,6 +4,7 @@ use super::{BuildConfigSubset, Framework};
 use crate::bake::{Graph, Mode, Side, dev_server};
 use bun_alloc::Arena;
 use bun_options_types::schema as bun_schema;
+use std::sync::Arc;
 
 impl Framework {
     /// `bundler_view` is [`Self::as_bundler_view`].
@@ -13,7 +14,7 @@ impl Framework {
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        bundler_view: &'a bun_bundler::bake_types::Framework,
+        bundler_view: &Arc<bun_bundler::bake_types::Framework>,
         bundler_options: &BuildConfigSubset,
     ) -> crate::Result<bun_bundler::Transpiler<'a>> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
@@ -81,7 +82,7 @@ impl Framework {
         out.options.minify_identifiers = minify(bundler_options.minify_identifiers);
         out.options.minify_whitespace = minify(bundler_options.minify_whitespace);
         out.options.css_chunking = true;
-        out.options.framework = Some(bundler_view);
+        out.options.framework = Some(Arc::clone(bundler_view));
         out.options.inline_entrypoint_import_meta_main = true;
 
         out.options.source_map = match mode {

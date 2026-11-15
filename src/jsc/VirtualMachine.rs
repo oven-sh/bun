@@ -89,14 +89,8 @@ pub struct InitOptions {
     pub transform_options: bun_options_types::schema::api::TransformOptions,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
-    /// When `Some`, [`init`] adopts
-    /// the caller's log instead of boxing a fresh one (CLI-path macros pass the
-    /// transpiler's log so macro load errors land in the bundle output).
-    pub log: Option<NonNull<bun_ast::Log>>,
-    /// For `Transpiler::init`, in place of the process's.
+    /// In place of the process's. Outlives the VM.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
-    /// Overrides `env_loader`. The VM owns it.
-    pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     /// `--install=...`; the resolver needs it before `configure_linker()` caches package.json.
     pub global_cache: bun_options_types::global_cache::GlobalCache,
@@ -123,9 +117,7 @@ impl Default for InitOptions {
         Self {
             transform_options: Default::default(),
             debugger: Default::default(),
-            log: None,
             env_loader: None,
-            owned_env_loader: None,
             graph: None,
             global_cache: bun_options_types::global_cache::GlobalCache::disable,
             smol: false,
@@ -440,11 +432,6 @@ pub struct VirtualMachine {
     pub test_isolation_generation: Cell<u32>,
     pub test_isolation_state: TestIsolationState,
 
-    // Last: `transpiler` points into these.
-    _transpiler_arena: AliasableBox<bun_alloc::Arena>,
-    _owned_env_loader: Option<AliasableBox<bun_dotenv::Loader>>,
-    _owned_log: Option<AliasableBox<bun_ast::Log>>,
-    _ast_stores: bun_ast::OwnedStores,
     /// What is dropped with the VM still reaches it through [`get`](Self::get).
     _pin: core::marker::PhantomPinned,
 }
@@ -1542,7 +1529,7 @@ impl VirtualMachine {
             .swap(0, core::sync::atomic::Ordering::Relaxed)
     }
 
-    /// The VM's own log, or the one its creator keeps alive for it.
+    /// The log that [`init`](Self::init) was lent.
     #[inline]
     pub fn log_ref(&self) -> Option<&bun_ast::Log> {
         // Reborrow `&mut Log` → `&Log`; the single `unsafe` deref lives in
@@ -2330,6 +2317,9 @@ impl VirtualMachine {
             bun_core::heap::destroy(this);
         }
         VMHolder::set_vm(None);
+        // A `#[thread_local]` is not dropped with its thread.
+        bun_ast::expr::data::Store::deinit();
+        bun_ast::stmt::data::Store::deinit();
         exit_code
     }
 
@@ -3069,8 +3059,11 @@ impl VirtualMachine {
     /// Note: every step that names a `bun_runtime` / `bun_webcore` type
     /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`) is
     /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
-    /// not name those types directly.
-    pub fn init(mut opts: InitOptions) -> crate::CrateResult<&'static VirtualMachine> {
+    /// not name those types directly. `log` outlives the VM.
+    pub fn init(
+        log: *mut bun_ast::Log,
+        mut opts: InitOptions,
+    ) -> crate::CrateResult<&'static VirtualMachine> {
         jsc::mark_binding();
 
         let origin_timer = std::time::Instant::now();
@@ -3092,29 +3085,16 @@ impl VirtualMachine {
             let _ = STANDALONE_MODULE_GRAPH.set(graph);
         }
 
-        let mut owned_log = None;
-        let log = opts.log.unwrap_or_else(|| {
-            (owned_log.insert(AliasableBox::new(bun_ast::Log::default()))).as_non_null()
-        });
-        let owned_env_loader = opts.owned_env_loader.take().map(AliasableBox::from);
-        let env_loader = (owned_env_loader.as_ref())
-            .map(AliasableBox::as_non_null)
-            .or(opts.env_loader);
-        // On the main heap, which saves a `mi_heap_new`/`mi_heap_destroy` pair.
-        let transpiler_arena = AliasableBox::new(bun_alloc::Arena::borrowing_default());
-        let ast_stores = bun_ast::OwnedStores::create();
+        // Saves a `mi_heap_new`/`mi_heap_destroy` pair.
+        static MAIN_HEAP: std::sync::LazyLock<bun_alloc::Arena> =
+            std::sync::LazyLock::new(bun_alloc::Arena::borrowing_default);
 
         let mut args = core::mem::take(&mut opts.transform_options);
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
-        let transpiler = Transpiler::init(
-            // SAFETY: the VM drops the arena after the transpiler.
-            unsafe { &*transpiler_arena.as_ptr() },
-            log.as_ptr(),
-            args,
-            env_loader.map(NonNull::as_ptr),
-        )?;
+        let transpiler =
+            Transpiler::init(&MAIN_HEAP, log, args, opts.env_loader.map(NonNull::as_ptr))?;
 
         let this = Box::into_non_null(Box::<VirtualMachine>::new_uninit()).cast::<VirtualMachine>();
         let mut regular_event_loop = EventLoop::new(this);
@@ -3124,7 +3104,7 @@ impl VirtualMachine {
             transpiler: JsCell::new(transpiler),
             bun_watcher: Cell::new(core::ptr::null_mut()),
             console,
-            log: Cell::new(Some(log)),
+            log: Cell::new(NonNull::new(log)),
             main: JsCell::new(None),
             main_entry_point: Cell::new(MainEntryPoint::File),
             did_look_for_server: Cell::new(false),
@@ -3243,10 +3223,6 @@ impl VirtualMachine {
             test_isolation_enabled: Cell::new(false),
             test_isolation_generation: Cell::new(0),
             test_isolation_state: Default::default(),
-            _transpiler_arena: transpiler_arena,
-            _owned_env_loader: owned_env_loader,
-            _owned_log: owned_log,
-            _ast_stores: ast_stores,
             _pin: core::marker::PhantomPinned,
         };
         // SAFETY: a fresh allocation for a `VirtualMachine`, which lasts as `get` says.
@@ -3873,7 +3849,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 #[derive(Default)]
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
-    pub log: Option<NonNull<bun_ast::Log>>,
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
@@ -4757,12 +4732,14 @@ impl VirtualMachine {
     /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
     /// `configureLinker()`. Rather than re-open-code the 80-line struct init,
     /// we route through [`init`] and patch the deltas.
-    pub fn init_with_module_graph(opts: Options) -> crate::CrateResult<&'static VirtualMachine> {
+    pub fn init_with_module_graph(
+        log: *mut bun_ast::Log,
+        opts: Options,
+    ) -> crate::CrateResult<&'static VirtualMachine> {
         let graph = opts.graph.expect("init_with_module_graph requires graph");
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: Some(graph),
-            log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
@@ -4771,7 +4748,7 @@ impl VirtualMachine {
             argv: opts.argv,
             ..Default::default()
         };
-        let vm = Self::init(init_opts)?;
+        let vm = Self::init(log, init_opts)?;
         vm.transpiler
             .with_mut(|t| t.resolver.standalone_module_graph = Some(graph));
         vm.let_heap_take_initial_module_graph(graph);
@@ -4788,12 +4765,12 @@ impl VirtualMachine {
     /// note). All accesses on `worker` here are read-only.
     pub(crate) fn init_worker(
         worker: &crate::web_worker::WebWorker,
+        log: *mut bun_ast::Log,
         opts: Options,
     ) -> crate::CrateResult<&'static VirtualMachine> {
         let init_opts = InitOptions {
             transform_options: opts.args,
             graph: opts.graph,
-            log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,
             eval_mode: opts.eval,
@@ -4808,7 +4785,7 @@ impl VirtualMachine {
         // Route through
         // [`init`] (which already wires console / event-loop / global / jsc_vm
         // / RuntimeHooks) and then patch the worker-specific fields.
-        let vm = Self::init(init_opts)?;
+        let vm = Self::init(log, init_opts)?;
         vm.worker.set(Some(
             std::ptr::from_ref::<crate::web_worker::WebWorker>(worker).cast(),
         ));
@@ -4829,10 +4806,12 @@ impl VirtualMachine {
     }
 
     /// Creates a `VirtualMachine` configured for the bake (dev server) runtime.
-    pub fn init_bake(opts: Options) -> crate::CrateResult<&'static VirtualMachine> {
+    pub fn init_bake(
+        log: *mut bun_ast::Log,
+        opts: Options,
+    ) -> crate::CrateResult<&'static VirtualMachine> {
         let init_opts = InitOptions {
             transform_options: opts.args,
-            log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
@@ -4845,7 +4824,7 @@ impl VirtualMachine {
         // the only delta is the global is created via `BakeCreateProdGlobal`
         // instead of `ZigGlobalObject__create`. Route through `init` then
         // swap the global.
-        let vm = Self::init(init_opts)?;
+        let vm = Self::init(log, init_opts)?;
         // `console` is the opaque round-trip pointer C++ stores into the new global.
         let new_global = BakeCreateProdGlobal(vm.console.as_ptr().cast());
         vm.global.set(new_global);

@@ -1040,10 +1040,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         });
         bun_ast::initialize_store();
 
-        let vm = VirtualMachine::init(VmInitOptions {
+        let options = VmInitOptions {
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
-            log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -1052,7 +1051,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             graph: crate::cli::run_compiled::graph(),
             ..Default::default()
-        })?;
+        };
+        let vm = VirtualMachine::init(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
 
         vm.preload.set(std::mem::take(&mut ctx.preloads));
@@ -1237,8 +1237,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::cli::startup_options::reject_unusable_bunfig_settings(ctx, None);
         }
 
-        let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: std::ptr::NonNull::new(ctx.log),
+        let options = bun_jsc::virtual_machine::Options {
             args: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             graph: Some(graph),
@@ -1251,7 +1250,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 &ctx.runtime_options.dns_result_order,
             ) as u8,
             ..Default::default()
-        })?;
+        };
+        let vm = VirtualMachine::init_with_module_graph(ctx.log, options)?;
         crate::cli::run_compiled::decode_requested_crash_report();
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()

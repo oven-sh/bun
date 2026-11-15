@@ -775,15 +775,7 @@ impl DeflateEncoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            reserve,
-            usize::MAX,
-            flush,
-            deflate,
-        )
+        self.step_up_to(input, out, reserve, usize::MAX, flush)
     }
 
     /// Like [`step`](Self::step), but `deflate()` sees exactly `limit` bytes of output space,
@@ -795,7 +787,19 @@ impl DeflateEncoder {
         limit: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(&mut self.strm, input, out, limit, limit, flush, deflate)
+        self.step_up_to(input, out, limit, limit, flush)
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_up_to(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        reserve: usize,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, reserve, limit, flush, deflate)
     }
 }
 
@@ -862,6 +866,10 @@ impl InflateDecoder {
         matches!(self.state, State::Inflating)
     }
 
+    pub fn is_gzip_only(&self) -> bool {
+        self.multi_member
+    }
+
     /// One `inflate()` call writing into `out`'s spare capacity. Same
     /// contract as [`DeflateEncoder::step`].
     pub fn step(
@@ -871,33 +879,29 @@ impl InflateDecoder {
         reserve: usize,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            reserve,
-            usize::MAX,
-            flush,
-            inflate,
-        )
+        self.step_up_to(input, out, reserve, usize::MAX, flush)
     }
 
-    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    /// Like [`step_up_to`](Self::step_up_to), with room reserved for all of `limit`.
     pub fn step_limited(
         &mut self,
         input: &[u8],
         out: &mut Vec<u8>,
         limit: usize,
     ) -> (usize, ReturnCode) {
-        step(
-            &mut self.strm,
-            input,
-            out,
-            limit,
-            limit,
-            FlushValue::NoFlush,
-            inflate,
-        )
+        self.step_up_to(input, out, limit, limit, FlushValue::NoFlush)
+    }
+
+    /// Like [`step`](Self::step), but appends at most `limit` bytes to `out`.
+    pub fn step_up_to(
+        &mut self,
+        input: &[u8],
+        out: &mut Vec<u8>,
+        reserve: usize,
+        limit: usize,
+        flush: FlushValue,
+    ) -> (usize, ReturnCode) {
+        step(&mut self.strm, input, out, reserve, limit, flush, inflate)
     }
 
     /// Append decompressed output to `out` (growing by 4096-byte steps, capped at

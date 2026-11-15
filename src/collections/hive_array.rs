@@ -275,9 +275,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
         // Several `T` carry owned heap data (e.g. `NumberScope.name_counts:
         // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
-        // before recycling so the put/get cycle does not leak it. Callers that
-        // pre-clean fields (`PooledSocket::release_parked_refs`) leave only
-        // trivially-droppable residuals, so this is idempotent for them.
+        // before recycling so the put/get cycle does not leak it.
         // SAFETY: caller contract — `value` is a fully-initialized `T` in `buffer`.
         unsafe { core::ptr::drop_in_place(value) };
         asan::poison(value.cast(), size_of::<T>());

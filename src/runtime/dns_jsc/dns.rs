@@ -2245,7 +2245,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
-    pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
+    channel: JsCell<Option<c_ares::OwnedChannel>>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
@@ -2278,6 +2278,7 @@ bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
 });
 
 impl Drop for Resolver {
+    /// The channel goes first: its callbacks read the other fields.
     fn drop(&mut self) {
         self.destroy_channel();
     }
@@ -2403,7 +2404,7 @@ impl Resolver {
     pub(crate) fn setup(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
-            channel: Cell::new(None),
+            channel: JsCell::new(None),
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
@@ -2473,7 +2474,7 @@ impl Resolver {
         // A query that found its cache full has no slot; c-ares' own
         // queue length covers those too. Its channel lock is recursive, so this
         // is safe from inside a completion callback.
-        if let Some(channel) = self.channel.get() {
+        if let Some(channel) = self.channel_ptr() {
             // SAFETY: `channel` is the live c-ares channel owned by `self`.
             if c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
                 return true;
@@ -2524,15 +2525,21 @@ impl Resolver {
         self.timer_ref.set(None);
     }
 
+    fn channel_ptr(&self) -> Option<*mut c_ares::Channel> {
+        let channel = self.channel.get().as_ref();
+        channel.map(c_ares::OwnedChannel::as_ptr)
+    }
+
     pub(crate) fn get_channel(&self) -> ChannelResult<'_> {
         if self.channel.get().is_none() {
-            let opts = self.options.get();
-            if let Some(err) = c_ares::Channel::init(self, opts) {
-                return ChannelResult::Err(err);
+            // SAFETY: a resolver is reached through its `RefPtr`, and its `Drop` ends the channel.
+            match unsafe { c_ares::OwnedChannel::new(self, self.options.get()) } {
+                Ok(channel) => self.set_channel(channel),
+                Err(err) => return ChannelResult::Err(err),
             }
         }
-        // SAFETY: channel set by init() on success
-        ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
+        // SAFETY: set above
+        ChannelResult::Result(unsafe { &mut *self.channel_ptr().unwrap() })
     }
 
     fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<&mut c_ares::Channel> {
@@ -2583,7 +2590,7 @@ impl Resolver {
                 // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
                 let _guard = RefPtr::init_ref(parent);
                 // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-                let channel = (*parent).channel.get().unwrap();
+                let channel = (*parent).channel_ptr().unwrap();
                 if status < 0 {
                     // an error occurred. just pretend that the socket is both readable and writable.
                     // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
@@ -2640,7 +2647,7 @@ impl Resolver {
     pub(crate) fn on_dns_poll(&self, poll: &mut FilePoll) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
-        let Some(channel) = self.channel.get() else {
+        let Some(channel) = self.channel_ptr() else {
             self.polls.with_mut(|p| {
                 let _ = p.remove(&poll.fd.native());
             });
@@ -3045,15 +3052,15 @@ macro_rules! resolve_record_fn {
     };
 }
 
-// `c_ares::Channel::init` requires this to wire the socket-state callback and
-// hand the allocated channel pointer back into `self.channel`.
 impl c_ares::ChannelContainer for Resolver {
     #[inline]
     fn on_dns_socket_state(&self, socket: c_ares::ares_socket_t, readable: bool, writable: bool) {
         Resolver::on_dns_socket_state(self, socket, readable, writable);
     }
-    #[inline]
-    fn set_channel(&self, channel: *mut c_ares::Channel) {
+}
+
+impl Resolver {
+    fn set_channel(&self, channel: c_ares::OwnedChannel) {
         self.channel.set(Some(channel));
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
@@ -3064,9 +3071,7 @@ impl c_ares::ChannelContainer for Resolver {
         // SAFETY: as above.
         unsafe { bun_jsc::AbortHandle::arm_owner(self.as_ctx_ptr(), context) };
     }
-}
 
-impl Resolver {
     /// The one place a channel is torn down: `ares_destroy` fails every
     /// pending query with `ARES_EDESTRUCTION` into its callback (releasing the
     /// request's ref on this resolver) and closes the channel's sockets.
@@ -3076,8 +3081,7 @@ impl Resolver {
             return false;
         };
         self.abort_handle.leave();
-        // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
-        unsafe { c_ares::Channel::destroy(channel) };
+        drop(channel);
         true
     }
 }
@@ -3225,30 +3229,16 @@ impl Resolver {
         channel: &mut c_ares::Channel,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
-        // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
-        let r = unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) };
-        if r != c_ares::ARES_SUCCESS {
-            let err = c_ares::Error::get(r).unwrap();
-            return Err(
-                global_this.throw_value(global_this.create_error_instance(format_args!(
-                    "ares_get_servers_ports error: {}",
-                    err.label()
-                ))),
-            );
-        }
-        scopeguard::defer! {
-            // SAFETY: `servers` was allocated by ares_get_servers_ports; ares_free_data is its deallocator.
-            unsafe { c_ares::ares_free_data(servers.cast()) }
-        };
+        let servers = channel.servers().map_err(|err| {
+            global_this.throw_value(global_this.create_error_instance(format_args!(
+                "ares_get_servers_ports error: {}",
+                err.label()
+            )))
+        })?;
 
         let values = JSValue::create_empty_array(global_this, 0)?;
 
-        let mut i: u32 = 0;
-        let mut cur = servers;
-        while !cur.is_null() {
-            // SAFETY: `cur` is non-null (loop guard) and walks the c-ares-allocated list.
-            let current = unsafe { &*cur };
+        for (i, current) in (0u32..).zip(servers.iter()) {
             // Formatting reference: https://nodejs.org/api/dns.html#dnsgetservers
             // Brackets '[' and ']' consume 2 bytes, used for IPv6 format (e.g., '[2001:4860:4860::8888]:1053').
             // Port range is 6 bytes (e.g., ':65535').
@@ -3312,9 +3302,6 @@ impl Resolver {
                     bun_string_jsc::create_utf8_for_js(global_this, &buf[1..size + port_len])?,
                 )?;
             }
-
-            i += 1;
-            cur = current.next;
         }
 
         Ok(values)

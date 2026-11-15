@@ -528,6 +528,8 @@ pub(crate) struct DevServer {
     /// messages with the IncrementalGraph file or Route using `SerializedFailure`
     pub(crate) log: Log,
     pub(crate) plugin_state: PluginState,
+    /// Owned by `bundler_options` or by the server.
+    pub(crate) plugins: Option<::core::ptr::NonNull<crate::api::js_bundler::Plugin>>,
     /// See `CurrentBundle` doc comment.
     pub(crate) current_bundle: Option<CurrentBundle>,
     /// When `current_bundle` is non-null and new requests to bundle come in,

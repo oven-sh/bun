@@ -1325,7 +1325,7 @@ pub(crate) unsafe fn fire_timer(
                 [NodeFs],
                 StatWatcherScheduler,
                 event_loop_timer,
-                |c, _now, _vm| (*c).timer_callback()
+                |c, _now, _vm| StatWatcherScheduler::timer_callback(bun_ptr::ThisPtr::new(c))
             )
         }
         EventLoopTimerTag::UpgradedDuplex => {

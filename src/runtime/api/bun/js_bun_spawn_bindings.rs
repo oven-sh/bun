@@ -1358,7 +1358,7 @@ fn spawn_maybe_sync(
     }
 
     subprocess.stdout.set(Readable::init(
-        core::mem::replace(&mut stdio[1], Stdio::Ignore),
+        &stdio[1],
         event_loop,
         subprocess_nn,
         spawned_stdout,
@@ -1366,7 +1366,7 @@ fn spawn_maybe_sync(
         is_sync,
     ));
     subprocess.stderr.set(Readable::init(
-        core::mem::replace(&mut stdio[2], Stdio::Ignore),
+        &stdio[2],
         event_loop,
         subprocess_nn,
         spawned_stderr,

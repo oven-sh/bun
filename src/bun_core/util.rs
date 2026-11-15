@@ -517,7 +517,7 @@ macro_rules! opaque_extern {
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
 /// Guard returned by [`Mutex::lock`]. Re-exported so
-/// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
+/// callers can name it in return types.
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
 impl<T> Mutex<T> {

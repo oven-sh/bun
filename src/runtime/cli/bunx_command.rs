@@ -955,7 +955,8 @@ impl BunxCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        let env_loader = this_transpiler.env_mut();
+        // Taken, so that it does not borrow the transpiler.
+        let env_loader = &mut ::core::mem::take(this_transpiler.env_mut());
         env_loader
             .map
             .put(b"npm_command", b"exec")
@@ -1392,10 +1393,7 @@ impl BunxCommand {
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: a reborrow through the live `env_loader`, not a second `env_mut()` aliasing it.
-                        Some(unsafe { &mut *(env_loader as *mut _) }),
-                    ),
+                    bun_event_loop::MiniEventLoop::init_global(),
                 ),
                 ..Default::default()
             },

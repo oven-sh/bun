@@ -970,6 +970,40 @@ describe("macro VM env loader", () => {
     expect(withoutMacro).toEqual({ resolved: false, unresolved: true, exitCode: 1 });
     expect(withMacro).toEqual(withoutMacro);
   });
+
+  test.skipIf(!isASAN)("a pool thread copies the loader while the program assigns a proxy variable", async () => {
+    using dir = tempDir("macro-env-loader-proxy-write", {
+      "macro.ts": files["macro.ts"],
+      "main.ts": `
+        const macro = JSON.stringify(import.meta.dir + "/macro.ts");
+        const source = \`import { value } from \${macro} with { type: "macro" }; export default value("a");\`;
+        // The allocation for a large value gives the assignment time to free it.
+        const value = Buffer.alloc(1_000_000, "a").toString();
+        process.env.NO_PROXY = value;
+        const transpiler = new Bun.Transpiler({ loader: "ts" });
+        let pending = ${macroModules};
+        for (let i = pending; i > 0; i--) transpiler.transform(source).then(() => pending--);
+        while (pending) {
+          for (let i = 0; i < 50; i++) process.env.NO_PROXY = value;
+          await new Promise(setImmediate);
+        }
+      `,
+    });
+    const results = await Promise.all(
+      Array.from({ length: 2 }, async () => {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "main.ts"],
+          env: { ...bunEnv, UV_THREADPOOL_SIZE: "8" },
+          cwd: String(dir),
+          stdout: "ignore",
+          stderr: "pipe",
+        });
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        return { stderr, exitCode };
+      }),
+    );
+    expect(results).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
+  });
 });
 
 describe("errors in a file that calls a macro", () => {

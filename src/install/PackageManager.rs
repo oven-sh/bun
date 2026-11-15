@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -619,10 +619,8 @@ pub struct PackageManager {
 /// The fields of `PackageManager` that downloading, extracting and linking use, besides the options and the lockfile.
 pub struct InstallState {
     log: &'static bun_ast::Log,
-    // Set once in `init()`/`init_with_runtime()` to the process-singleton
-    // `DotEnv.Loader` (leaked allocation; outlives the manager). `BackRef`
-    // encapsulates the liveness invariant so `env()` is a safe accessor.
-    env: Option<bun_ptr::BackRef<dot_env::Loader, bun_ptr::Mut>>,
+    /// Shared with the VM for auto-install.
+    env: Arc<dot_env::Loader>,
     pub(crate) event_loop: &'static AnyEventLoop,
 
     /// Install thread only.
@@ -1063,15 +1061,6 @@ impl PackageManager {
 static TIME_PASSER_LAST_TIME: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 mod holder {
-    use bun_dotenv as dot_env;
-
-    // Process-lifetime env storage for `init()`. Owned by the singleton, never
-    // freed. Avoids `Box::leak` per PORTING.md §Forbidden. Write-once during
-    // single-threaded init. `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write.
-    pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
-
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
     /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
     pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<bun_core::ZBox> =
@@ -1138,12 +1127,6 @@ impl PackageManager {
         self.install_fields().crash()
     }
 
-    pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
-        // `env_mut()` yields an unbounded `&'a Loader` (process-lifetime
-        // singleton), so the returned `URL<'_>` borrows for `'static`.
-        self.env_mut().get_http_proxy_for(url)
-    }
-
     pub fn tls_reject_unauthorized(&self) -> bool {
         self.env().get_tls_reject_unauthorized()
     }
@@ -1158,14 +1141,12 @@ impl PackageManager {
         headers_buf: &'a [u8],
         body: &'a [u8],
     ) -> Box<http::AsyncHTTP<'a>> {
-        let http_proxy = self.http_proxy(&url);
         let mut req = http::AsyncHTTP::init_sync(
             method,
             url,
             headers,
             headers_buf,
             body,
-            http_proxy,
             self.state.proxy_settings(),
             http::FetchRedirect::Follow,
         );
@@ -1182,11 +1163,11 @@ impl PackageManager {
         }
     }
 
-    pub(crate) fn env(&self) -> &dot_env::Loader {
+    pub fn env(&self) -> &dot_env::Loader {
         self.state.env()
     }
 
-    pub fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
+    pub fn env_mut(&mut self) -> &mut dot_env::Loader {
         self.state.env_mut()
     }
 }
@@ -1216,38 +1197,23 @@ impl InstallState {
 
     pub(crate) fn configure_env_for_scripts(&mut self) -> Result<(), Error> {
         if !self.has_configured_env_for_scripts {
-            configure_env_for_scripts_run(self)?;
+            configure_env_for_scripts_run(self.env_mut())?;
             self.has_configured_env_for_scripts = true;
         }
         Ok(())
     }
 
-    /// The proxy settings in the environment. They are passed along with `http_proxy` so that a
-    /// redirect uses the proxy that applies to its own URL.
     pub(crate) fn proxy_settings(&self) -> Option<Box<http::ProxySettings>> {
-        http::ProxySettings::from_env(self.env())
+        http::ProxySettings::from_env(&self.env)
     }
 
-    // Helper: deref env (set-once BackRef to process-singleton loader)
-    #[inline]
     pub(crate) fn env(&self) -> &dot_env::Loader {
-        // `env` is set during init() and never None afterward; `BackRef::get`
-        // encapsulates the deref under the back-reference invariant.
-        self.env.as_ref().expect("env initialised").get()
+        &self.env
     }
 
-    /// Reborrow the process-global env loader.
-    ///
-    /// Lifetime is decoupled from `&self`: the loader is a leaked allocation
-    /// outside the manager (set once in `init()`), and callers interleave env
-    /// mutation with disjoint `&mut self.X` field writes.
-    #[inline]
-    fn env_mut<'a>(&self) -> &'a mut dot_env::Loader {
-        // SAFETY: `env` is set during `init()` and never None afterward; the
-        // pointee is a process-lifetime singleton (leaked `DotEnv.Loader`)
-        // that lives outside `self`.
-        // `BackRef` guarantees liveness; exclusivity is the caller's contract.
-        unsafe { &mut *self.env.expect("env initialised").as_ptr() }
+    /// Panics for auto-install, which shares the loader of the VM.
+    fn env_mut(&mut self) -> &mut dot_env::Loader {
+        Arc::get_mut(&mut self.env).expect("the env loader is not shared")
     }
 }
 
@@ -1287,16 +1253,16 @@ impl InstallFields<'_> {
 // run-once wrappers
 // ──────────────────────────────────────────────────────────────────────────
 
-fn configure_env_for_scripts_run(this: &mut InstallState) -> Result<(), Error> {
-    RunCommand::seed_script_env(this.env_mut());
+fn configure_env_for_scripts_run(env: &mut dot_env::Loader) -> Result<(), Error> {
+    RunCommand::seed_script_env(env);
 
     // Overwritten like npm does: an outer `bun run` in another project may have left a stale value.
-    (this.env_mut().map).put(
+    env.map.put(
         b"npm_config_local_prefix",
         FileSystem::get().top_level_dir(),
     )?;
 
-    let init_cwd_entry = this.env_mut().map.get_or_put_without_value(b"INIT_CWD")?;
+    let init_cwd_entry = env.map.get_or_put_without_value(b"INIT_CWD")?;
     if !init_cwd_entry.found_existing {
         *init_cwd_entry.value_ptr = dot_env::HashTableValue {
             value: Box::<[u8]>::from(without_trailing_slash_windows_path(
@@ -1308,14 +1274,13 @@ fn configure_env_for_scripts_run(this: &mut InstallState) -> Result<(), Error> {
     // The resolver-tier
     // `FileSystem` mirrors `bun_paths::fs::FileSystem` for `top_level_dir`.
     let paths_fs = bun_paths::fs::FileSystem::instance();
-    this.env_mut().load_ccache_path(paths_fs);
+    env.load_ccache_path(paths_fs);
 
     {
         // Run node-gyp jobs in parallel.
         // https://github.com/nodejs/node-gyp/blob/7d883b5cf4c26e76065201f85b0be36d5ebdcc0e/lib/build.js#L150-L184
         let thread_count = bun_core::get_thread_count();
         if thread_count > 2 {
-            let env = this.env_mut();
             if !env.has(b"JOBS") {
                 let mut int_buf = bun_core::fmt::ItoaBuf::new();
                 let jobs_str = bun_core::fmt::itoa(&mut int_buf, thread_count);
@@ -1328,13 +1293,11 @@ fn configure_env_for_scripts_run(this: &mut InstallState) -> Result<(), Error> {
 
     {
         let mut node_path = bun_paths::path_buffer_pool::get();
-        if let Some(node_path_z) = this.env_mut().get_node_path(paths_fs, &mut node_path) {
-            let _ = this
-                .env_mut()
-                .load_node_js_config(paths_fs, node_path_z.as_ref())?;
+        if let Some(node_path_z) = env.get_node_path(paths_fs, &mut node_path) {
+            let _ = env.load_node_js_config(paths_fs, node_path_z.as_ref())?;
         } else {
             'brk: {
-                let current_path = this.env().get(b"PATH").unwrap_or(b"");
+                let current_path = env.get(b"PATH").unwrap_or(b"");
                 let mut path_var: Vec<u8> = Vec::with_capacity(current_path.len());
                 path_var.extend_from_slice(current_path);
                 let mut bun_path: &[u8] = b"";
@@ -1343,13 +1306,13 @@ fn configure_env_for_scripts_run(this: &mut InstallState) -> Result<(), Error> {
                 {
                     break 'brk;
                 }
-                this.env_mut().map.put(b"PATH", &path_var)?;
-                let _ = this.env_mut().load_node_js_config(paths_fs, bun_path)?;
+                env.map.put(b"PATH", &path_var)?;
+                let _ = env.load_node_js_config(paths_fs, bun_path)?;
             }
         }
     }
 
-    package_manager_lifecycle::resolve_bin_dirs_in_path(this.env_mut())?;
+    package_manager_lifecycle::resolve_bin_dirs_in_path(env)?;
     Ok(())
 }
 
@@ -1536,7 +1499,7 @@ fn allocate_package_manager(
     options: Options,
     log: &'static bun_ast::Log,
     root_dir: &'static fs::DirEntry,
-    env: &mut dot_env::Loader,
+    env: Arc<dot_env::Loader>,
     // NUL-terminated
     original_package_json_path: Vec<u8>,
     root_package_json_path: &'static ZStr,
@@ -1565,7 +1528,7 @@ fn allocate_package_manager(
             unfinished_scripts: Vec::new(),
             retry_queue: Default::default(),
             log,
-            env: Some(bun_ptr::BackRef::new_mut(env)),
+            env,
             extracted_count: 0,
             progress: Progress::default(),
             downloads_node: None,
@@ -2215,18 +2178,8 @@ pub fn init(
     if cli.log_level.is_silent() {
         bun_ast::DEFAULT_LOG_LEVEL.store(bun_ast::Level::Err);
     }
-    // SAFETY: `init()` runs on the main thread before any other access to the
-    // loader.
-    let env: &mut dot_env::Loader = unsafe {
-        let mut loader_ptr = holder::ENV_LOADER.load();
-        // A second `init()` runs with a different cwd, so it keeps what the first one read from the
-        // `--env-file` paths.
-        if loader_ptr.is_null() {
-            loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
-            holder::ENV_LOADER.store(loader_ptr);
-        }
-        &mut *loader_ptr
-    };
+    // A second `init()`, in a different cwd, keeps what the first one read from `--env-file`.
+    let env = Arc::make_mut(ctx.env_loader.get_or_insert_default());
     // The `[Nms] ".env"` line is a timing trace, like the other `print_elapsed` traces of install.
     env.quiet_loaded_files = !cli.log_level.is_verbose();
     if !cli.env_files.is_empty() {
@@ -2464,6 +2417,8 @@ pub fn init(
         .read_directory(top_level_dir, 0, true)?
         .try_entries()?;
 
+    let mut env_loader = ctx.env_loader.take().unwrap_or_default();
+    let env = Arc::make_mut(&mut env_loader);
     env.load_process()?;
     // This is read before the project's `.env` files are loaded, so they cannot set it.
     let env_ignores_scripts = env_ignores_scripts(env);
@@ -2552,7 +2507,7 @@ pub fn init(
         options,
         ctx.log(),
         entries_option,
-        env,
+        env_loader,
         original_package_json_path_buf,
         root_package_json_path,
         workspace_package_json_cache,
@@ -2591,7 +2546,7 @@ pub fn init(
     {
         // `options.load` applies BUN_CONFIG_MAX_HTTP_REQUESTS on top of this default.
         http::async_http::MAX_SIMULTANEOUS_REQUESTS.store(
-            if env.has_http_proxy() {
+            if manager.env().snapshot().has_http_proxy() {
                 DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES
             } else {
                 DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL
@@ -2601,7 +2556,7 @@ pub fn init(
 
         manager.options.load(
             ctx.log(),
-            env,
+            &manager.state.env,
             cli,
             ctx.install.as_deref(),
             None,
@@ -2694,7 +2649,9 @@ pub fn init(
 
     let timestamp_for_manifest_cache_control: u32 = 'brk: {
         if cfg!(debug_assertions) {
-            if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
+            if let Some(cache_control) =
+                (manager.env()).get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP")
+            {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly
                 if let Ok(int) = bun_core::parse_int::<u32>(cache_control, 10) {
                     break 'brk int;
@@ -2718,7 +2675,7 @@ pub(crate) fn init_with_runtime(
     // the resolver call site.
     bun_install: Option<&Api::BunInstall>,
     cli: &CommandLineArguments,
-    env: &mut dot_env::Loader,
+    env: &Arc<dot_env::Loader>,
     // The directory of the file whose import needs a package.
     importer_dir: &[u8],
 ) -> crate::Result<&'static mut PackageManager> {
@@ -2743,9 +2700,10 @@ fn init_with_runtime_once(
     log: &bun_ast::Log,
     bun_install: Option<&Api::BunInstall>,
     cli: &CommandLineArguments,
-    env: &mut dot_env::Loader,
+    env_loader: &Arc<dot_env::Loader>,
     importer_dir: &[u8],
 ) -> crate::Result<&'static mut PackageManager> {
+    let env = &*env_loader.snapshot();
     if env.get(b"BUN_INSTALL_VERBOSE").is_some() {
         PackageManager::set_verbose_install(true);
     }
@@ -2877,7 +2835,7 @@ fn init_with_runtime_once(
         // Outlives every caller's log, and is drained into it.
         Box::leak(Box::default()),
         root_dir,
-        env,
+        Arc::clone(env_loader),
         original_package_json_path,
         ZStr::EMPTY,
         workspace_package_json_cache,

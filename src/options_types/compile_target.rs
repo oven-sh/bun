@@ -196,7 +196,6 @@ impl CompileTarget {
         &self,
         buf: &'a mut PathBuffer,
         version_str: &'a ZStr,
-        _env: &mut bun_dotenv::Loader,
         needs_download: &mut bool,
     ) -> Result<&'a ZStr, crate::Error> {
         if self.is_default() {
@@ -220,7 +219,6 @@ impl CompileTarget {
             return Ok(version_str);
         }
 
-        // T1 fallback ignores `_env` (full env-override chain lives in bun_install).
         let cache_dir = bun_sys::fetch_cache_directory_path();
         let dest = path::resolve_path::join_abs_string_buf_z_checked::<path::platform::Auto>(
             path::fs::FileSystem::instance().top_level_dir(),

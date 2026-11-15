@@ -7,13 +7,12 @@ use crate::bundle_v2::BundleV2;
 use bun_aot::engine::ExecutableIdentity;
 use bun_aot::{Options, SourceProvider};
 use bun_ast::Log;
-use bun_dotenv::Loader;
 use bun_options_types::aot_options::AotOptions;
 use bun_options_types::schema::api;
 use bun_resolver::fs::{DirnameStore, FileSystem};
 use bun_sema_driver::Libs;
 use core::ptr::NonNull;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 const MODULE_PREFIX: &[u8] = if cfg!(windows) {
     b"B:/~BUN/root/"
@@ -33,8 +32,6 @@ pub struct FrontEndInputs<'r> {
 fn set_up_process(directory: &'static [u8]) -> bool {
     static IS_SET_UP: OnceLock<bool> = OnceLock::new();
     *IS_SET_UP.get_or_init(|| {
-        // `Transpiler::init` takes the first loader it is handed for the one of the process, which outlives every build.
-        bun_dotenv::set_instance(bun_core::heap::into_raw(Box::new(Loader::init())));
         // The file system of the resolver is made once, with the folder of the first build.
         FileSystem::init(Some(directory)).is_ok()
     })
@@ -47,8 +44,6 @@ pub fn with_front_end_inputs<R>(
     log: &Log,
     then: impl FnOnce(&Options<'_>, &dyn SourceProvider, &Log) -> R,
 ) -> Option<R> {
-    // A build fills the loader it is handed, so each has its own, as in `Bun.build`.
-    let mut environment = Loader::init();
     let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = bun_ast::AstArena::new();
     let transform_options = crate::options::TransformOptions {
@@ -62,8 +57,7 @@ pub fn with_front_end_inputs<R>(
         return None;
     }
     FileSystem::get().set_top_level_dir(directory);
-    let environment = Some(&raw mut environment);
-    let transpiler = Transpiler::init(&arena, log, transform_options, environment);
+    let transpiler = Transpiler::init(&arena, log, transform_options, Arc::default());
     let transpiler = arena.alloc(transpiler.ok()?);
     transpiler.options.compile_mode = crate::options::CompileMode::Executable;
     // As the command line has it without `--env`.

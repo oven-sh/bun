@@ -1068,15 +1068,13 @@ describe("CLI argument error messages", () => {
           ? "built"
           : exitCode === 1 && stderr.includes("error: Maximum call stack size exceeded while generating code")
             ? "too deep to print"
-            : exitCode === 1 && /error: Maximum call stack size exceeded\r?\n/.test(stderr)
-              ? "too deep to copy"
-              : exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")
-                ? "too deep to define"
-                : `depth ${depth}: exit ${exitCode}\n${stderr.slice(-600)}`,
+            : exitCode === 1 && stderr.includes("error: JSON document is too deeply nested")
+              ? "too deep to define"
+              : `depth ${depth}: exit ${exitCode}\n${stderr.slice(-600)}`,
       );
     }
 
-    const inOrder = ["built", "too deep to print", "too deep to copy", "too deep to define"];
+    const inOrder = ["built", "too deep to print", "too deep to define"];
     expect(outcomes.filter(outcome => !inOrder.includes(outcome))).toEqual([]);
     expect(outcomes).toEqual(outcomes.toSorted((a, b) => inOrder.indexOf(a) - inOrder.indexOf(b)));
   });

@@ -2727,32 +2727,6 @@ export const after = { a: 1 };
       expect([transpiler.transformSync(source), transpiler.transformSync(source)]).toEqual([expected, expected]);
     });
 
-    it("reports a stack overflow when an array define cannot be copied", () => {
-      const nested = Buffer.alloc(200, "[").toString() + Buffer.alloc(200, "]").toString();
-      const transpiler = new Bun.Transpiler({ loader: "js", define: { FLAT: "[]", NESTED: nested } });
-      // The parser reads a member chain in a loop and visits it recursively, and scan() does not print.
-      const scan = (name, depth) => {
-        try {
-          transpiler.scan(`f(${name}${Buffer.alloc(depth * 2, ".a")})`);
-          return "ok";
-        } catch (error) {
-          return error.message;
-        }
-      };
-      let [fits, overflows] = [1, isDebug ? 1 << 15 : 1 << 17];
-      while (overflows - fits > 1) {
-        const depth = (fits + overflows) >> 1;
-        if (scan("FLAT", depth) === "ok") fits = depth;
-        else overflows = depth;
-      }
-      const margin = 10; // room for FLAT, not for 200 levels
-      expect([scan("FLAT", fits - margin), scan("NESTED", fits - margin), scan("NESTED", 1)]).toEqual([
-        "ok",
-        "Maximum call stack size exceeded",
-        "ok",
-      ]);
-    });
-
     // transform() parses on a pool thread, and every call shares the transpiler's define table.
     it("prints the full object in every concurrent transform()", async () => {
       await using proc = Bun.spawn({

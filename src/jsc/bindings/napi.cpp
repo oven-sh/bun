@@ -3376,9 +3376,9 @@ extern "C" bool NapiEnv__registerThreadSafeFunction(napi_env env, void* tsfn)
     return env->registerThreadSafeFunction(tsfn);
 }
 
-extern "C" void NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
+extern "C" bool NapiEnv__unregisterThreadSafeFunction(napi_env env, void* tsfn)
 {
-    env->unregisterThreadSafeFunction(tsfn);
+    return env->unregisterThreadSafeFunction(tsfn);
 }
 
 extern "C" void Bun__napi_remove_finalizer(napi_env env, napi_finalize callback, void* hint, void* data)

@@ -115,6 +115,10 @@ describe.concurrent("realms that nothing points to", () => {
 
   it.each([
     ["fetch()", "(url, done) => void fetch(url).then(response => done(void (globalThis.body = response.body)))"],
+    [
+      "S3 download",
+      "(endpoint, done) => done(void (globalThis.body = Bun.S3Client.file('key', { endpoint, bucket: 'b', accessKeyId: 'a', secretAccessKey: 's' }).stream()))",
+    ],
   ])("outlive the %s whose body fails", async (_, start) => {
     expect(
       await run(`${prelude}

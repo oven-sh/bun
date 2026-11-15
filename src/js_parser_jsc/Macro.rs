@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::ffi::c_void;
+use std::sync::Arc;
 
 use bun_ast::{AstVec, E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
@@ -12,7 +13,6 @@ use bun_dotenv::Loader as DotEnvLoader;
 
 use crate::Error;
 use bun_js_parser::Macro::{MacroContext, MacroLoadState};
-use bun_ptr::AliasableBox;
 
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
@@ -135,12 +135,11 @@ fn call_macro(
             ctx.macro_load_states.set(hash, MacroLoadState::Disabled);
             let is_new_vm = !VirtualMachine::is_loaded();
             let vm = if is_new_vm {
-                // SAFETY: the contract of `MacroContext::new`. `env` is the build's loader: it
-                // outlives the build and nothing writes to it while parse tasks run.
+                // SAFETY: the contract of `MacroContext::new`.
                 let (options, env) = unsafe {
                     (
                         &*(*transpiler).options.transform_options,
-                        (*transpiler).env.as_ref(),
+                        (*transpiler).env(),
                     )
                 };
                 init_macro_vm(log, env, options)?
@@ -249,7 +248,7 @@ fn __bun_macro_context_call(
 
 fn init_macro_vm(
     log: &Log,
-    env: Option<&DotEnvLoader>,
+    env: &Arc<DotEnvLoader>,
     transform_options: &TransformOptions,
 ) -> crate::Result<&'static VirtualMachine> {
     let mut transform_options = transform_options.clone();
@@ -261,22 +260,14 @@ fn init_macro_vm(
     // JSC needs to be initialized if building from CLI
     jsc::initialize(jsc::InitializeOptions::default());
 
-    // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
-    // into its loader, so give the VM its own copy.
-    let env_loader = match env {
-        Some(env) => Some(AliasableBox::new(env.clone_loaded()?)),
-        None => None,
-    };
-
     let options = VirtualMachineInitOptions {
         transform_options,
-        env_loader: env_loader.as_ref().map(AliasableBox::as_non_null),
+        env_loader: Some(Arc::clone(env)),
         is_main_thread: false,
         ..Default::default()
     };
-    // This VM, and what it borrows, stays until the process exits.
+    // This VM stays until the process exits.
     let vm = VirtualMachine::init(Box::leak(Box::new(Log::init())), options)?;
-    let _ = env_loader.map(AliasableBox::into_raw);
     vm.log.append_to(log);
     Ok(vm)
 }

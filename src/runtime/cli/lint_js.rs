@@ -218,7 +218,7 @@ fn start_vm(log: &'static bun_ast::Log) -> Result<(), Vec<u8>> {
     vm.transpiler_store.enabled.set(false);
     vm.transpiler
         .with_mut(|t| {
-            t.resolver.env_loader = NonNull::new(t.env);
+            t.resolver.care_about_node_path = true;
             t.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
             // Same as for config files: see `run_script` in `lint_command.rs`.

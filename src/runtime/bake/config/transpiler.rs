@@ -1,10 +1,12 @@
 //! Turning the config into bundler setup: transpilers and `import.meta` defines.
 
+use std::sync::Arc;
+
 use super::{BuildConfigSubset, Framework};
 use crate::bake::{Graph, Mode, Side, dev_server};
 use bun_ast::AstArena;
 use bun_options_types::schema as bun_schema;
-use std::sync::Arc;
+use bun_options_types::schema::api::DotEnvBehavior;
 
 impl Framework {
     /// `bundler_view` is [`Self::as_bundler_view`].
@@ -12,18 +14,27 @@ impl Framework {
         &self,
         arena: &'a AstArena,
         log: &'a bun_ast::Log,
+        mut env: Arc<bun_dotenv::Loader>,
         mode: Mode,
         renderer: Graph,
         bundler_view: &Arc<bun_bundler::bake_types::Framework>,
         bundler_options: &BuildConfigSubset,
     ) -> crate::Result<bun_bundler::Transpiler<'a>> {
+        if matches!(
+            bundler_options.env,
+            DotEnvBehavior::prefix | DotEnvBehavior::load_all
+        ) {
+            // `configure_defines` loads `.env` files into it.
+            Arc::make_mut(&mut env);
+        }
+
         let mut out = bun_bundler::Transpiler::init(
             arena,
             log,
             // `TransformOptions::default()`: every `Option` is `None`, every
             // slice empty, every scalar zero/false.
             bun_schema::api::TransformOptions::default(),
-            None,
+            env,
         )?;
 
         out.options.target = match renderer {
@@ -86,7 +97,7 @@ impl Framework {
                 bun_bundler::options::SourceMapOption::from_api(Some(bundler_options.source_map))
             }
         };
-        if bundler_options.env != bun_schema::api::DotEnvBehavior::_none {
+        if bundler_options.env != DotEnvBehavior::_none {
             out.options.env.behavior = bundler_options.env;
             out.options.env.prefix = bundler_options.env_prefix.clone().unwrap_or_default();
         }

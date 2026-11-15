@@ -2725,7 +2725,7 @@ pub use bun_options_types::compile_target::CompileTarget;
 /// two `download*` fns below in this crate.
 pub(crate) fn download_to_path(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     dest_z: &ZStr,
 ) -> crate::Result<()> {
     bun_http::http_thread::init(&Default::default());
@@ -2752,10 +2752,7 @@ pub(crate) fn download_to_path(
             // `refresher.end()` below is sufficient: no fallible call sits between
             // `refresher.start` and it, so every exit path (including the
             // error returns after it) ends the node exactly once.
-            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
-            // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
-            let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
             refresher.start(b"Downloading", 0);
 
             let mut async_http = bun_http::AsyncHTTP::init_sync(
@@ -2764,7 +2761,6 @@ pub(crate) fn download_to_path(
                 Default::default(),
                 b"",
                 b"",
-                http_proxy,
                 bun_http::ProxySettings::from_env(env),
                 bun_http::FetchRedirect::Follow,
             );
@@ -2882,7 +2878,7 @@ pub(crate) fn download_to_path(
 /// host target, otherwise the cached download of that platform's bun at this version (fetched now if missing).
 pub fn target_executable(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<bun_core::ZBox, CompileError> {
     Ok(if let Some(path) = self_exe_path {
@@ -2906,17 +2902,16 @@ pub fn target_executable(
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;
-        let dest_z =
-            match target.exe_path(&mut exe_path_buf, version_zstr, env, &mut needs_download) {
-                Ok(dest) => dest,
-                Err(_) => {
-                    return Err(CompileError::fmt(format_args!(
-                        "Cache directory path for '{}' is too long: {}",
-                        target,
-                        bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
-                    )));
-                }
-            };
+        let dest_z = match target.exe_path(&mut exe_path_buf, version_zstr, &mut needs_download) {
+            Ok(dest) => dest,
+            Err(_) => {
+                return Err(CompileError::fmt(format_args!(
+                    "Cache directory path for '{}' is too long: {}",
+                    target,
+                    bstr::BStr::new(&bun_sys::fetch_cache_directory_path())
+                )));
+            }
+        };
 
         if needs_download {
             if let Err(e) = download_to_path(target, env, dest_z) {
@@ -2955,7 +2950,7 @@ pub fn target_executable(
 /// can read; builtin bytecode is skipped then.
 pub fn target_builtins(
     target: &CompileTarget,
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     self_exe_path: Option<&[u8]>,
 ) -> Result<Option<std::sync::Arc<[u8]>>, CompileError> {
     use bun_exe_format::builtins::{Builtins, BuiltinsError, find_section};
@@ -3011,7 +3006,7 @@ pub fn to_executable(
     root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     output_format: Format,
     windows_options: &WindowsOptions,
     compile_exec_argv: &[u8],

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bun_aot::report::ReportMessage;
 use bun_ast::{Data, Kind, Log, Msg};
 use bun_bundler::aot::{MetafileFiles, write_metafile_files};
@@ -44,7 +46,7 @@ pub(super) fn add_notes(log: &Log, lines: Vec<Vec<u8>>) {
 pub(super) fn plan_bundle_trimming(
     compile_options: &CompileOptions,
     output_files: &[options::OutputFile],
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     flags: StandaloneFlags,
 ) -> Result<Option<bun_trim::TrimPlan>, Vec<u8>> {
     let template_path = compile_options.executable_path.list.as_slice();
@@ -171,7 +173,8 @@ pub(super) fn compile(
     bundler: BundlerInputs<'_>,
 ) -> Result<CompiledExecutable, CompileError> {
     let destination = executable_destination(config, compile_options)?;
-    let (log, env) = (bundler.transpiler.log(), bundler.transpiler.env);
+    let log = bundler.transpiler.log();
+    let env = Arc::clone(bundler.transpiler.env());
 
     // Without an output directory a metafile is handed to the caller and not written.
     let outdir = &config.outdir.list[..];

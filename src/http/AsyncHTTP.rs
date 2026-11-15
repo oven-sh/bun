@@ -14,8 +14,8 @@ use bun_dotenv::Loader as DotEnvLoader;
 use crate::headers::api::StringPointer;
 use crate::headers::{self, Headers};
 use crate::{
-    FetchRedirect, FinishedRequest, Flags, HTTPClient, HTTPRequestBody, HTTPVerboseLevel,
-    InternalState, Method, Signals,
+    FetchRedirect, FinishedRequest, Flags, HTTPClient, HTTPRequestBody, HTTPThread,
+    HTTPVerboseLevel, InternalState, Method, PendingH2Resolution, Signals,
 };
 use crate::{HTTPClientResult, HTTPClientResultCallback};
 
@@ -90,12 +90,6 @@ const fn noop_callback() -> HTTPClientResultCallback {
         function: noop_result_callback,
         release_at_shutdown: None,
     }
-}
-
-/// Read the HTTP-thread monotonic timer in nanoseconds.
-#[inline]
-fn http_thread_timer_read() -> u64 {
-    crate::http_thread().timer.elapsed().as_nanos() as u64
 }
 
 /// A CR, LF or NUL ends the header line that a configured value (token, OTP, user agent) is written into as is.
@@ -666,11 +660,11 @@ impl core::ops::DerefMut for InFlightRequest {
 }
 
 impl InFlightRequest {
-    pub(crate) fn start(http: Box<AsyncHTTP<'static>>) {
+    pub(crate) fn start(thread: &mut HTTPThread, http: Box<AsyncHTTP<'static>>) {
         let mut this = Self::new(http.into());
-        crate::http_thread().in_flight.push(this.http.as_non_null());
-        this.http.on_start();
-        this.connect();
+        thread.in_flight.push(this.http.as_non_null());
+        this.http.on_start(thread);
+        this.connect(thread);
     }
 
     /// `finish` panics unless `http` is in `HttpThread::in_flight`.
@@ -690,17 +684,18 @@ impl InFlightRequest {
         self.into_inner().into_non_null()
     }
 
-    pub(crate) fn fail(mut self, err: crate::Error) {
+    pub(crate) fn fail(mut self, thread: &mut HTTPThread, err: crate::Error) {
         self.record_failure(err);
-        self.finish();
+        self.finish(thread);
     }
 
     /// Moves the request to its callback with the last result.
-    pub(crate) fn finish(mut self) {
-        self.unregister_abort_tracker();
+    pub(crate) fn finish(mut self, thread: &mut HTTPThread) {
+        self.resolve_pending_h2(thread, PendingH2Resolution::LeaderFailed);
+        self.unregister_abort_tracker(thread);
         // Shrink the abort tracker once it has drained from a high-water mark.
         {
-            let tracker = crate::abort_tracker();
+            let tracker = &mut thread.abort_tracker;
             let count = tracker.count();
             if count > 0 {
                 bun_core::scoped_log!(
@@ -714,11 +709,11 @@ impl InFlightRequest {
             }
         }
 
-        let in_flight = &mut crate::http_thread().in_flight;
+        let in_flight = &mut thread.in_flight;
         let index = in_flight.iter().position(|&n| n == self.http.as_non_null());
         in_flight.swap_remove(index.expect("in flight"));
         let mut this = self.into_inner().into_box();
-        this.elapsed = http_thread_timer_read().saturating_sub(this.elapsed);
+        this.elapsed = thread.timer_read().saturating_sub(this.elapsed);
         bun_core::scoped_log!(AsyncHTTP, "finish: {:?}", this.elapsed);
 
         let mut result = this.client.to_result();
@@ -737,7 +732,7 @@ impl InFlightRequest {
         let active_requests = ACTIVE_REQUESTS_COUNT.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(active_requests > 0);
 
-        if crate::http_thread().has_unstarted_tasks()
+        if thread.has_unstarted_tasks()
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
                 < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
@@ -762,7 +757,7 @@ impl AsyncHTTP<'static> {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<'a> AsyncHTTP<'a> {
-    fn on_start(&mut self) {
+    fn on_start(&mut self, thread: &HTTPThread) {
         let _ = ACTIVE_REQUESTS_COUNT.fetch_add(1, Ordering::Relaxed);
 
         match self.original {
@@ -781,7 +776,7 @@ impl<'a> AsyncHTTP<'a> {
             self.client.proxy_authorization = basic_authorization(proxy);
         }
 
-        self.elapsed = http_thread_timer_read();
+        self.elapsed = thread.timer_read();
 
         let body = match self.request_body {
             // Stays for the next attempt.

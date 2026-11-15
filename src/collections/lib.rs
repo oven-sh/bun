@@ -150,9 +150,9 @@ pub use hashbrown;
 pub mod string_map;
 pub use string_map::StringMap;
 
-// Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
+// Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtr`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
-pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};
+pub use bun_ptr::tagged_pointer::TaggedPtr;
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
 // crates that already depend on `bun_collections` (logger, js_parser,
 // watcher, http_types) can route the borrowck-dodge through

@@ -44,11 +44,7 @@ impl PendingConnect {
             && strings::eql_long(&self.hostname, hostname)
     }
 
-    /// Remove `this` from `ctx.pending_h2_connects` and hand the owning
-    /// `Box<Self>` back to the caller. Associated fn (not `&mut self`) because
-    /// the list owns `Box<Self>` — `swap_remove` would otherwise drop the very
-    /// allocation `&mut self` borrows from (UAF). Caller holds the returned
-    /// Box until scope exit.
+    /// Removes the entry at address `this`.
     pub(crate) fn unregister_from(
         this: *const Self,
         ctx: &mut NewHTTPContext<true>,

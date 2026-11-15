@@ -1728,10 +1728,10 @@ pub(crate) mod internal {
     /// QUIC analogue of `Bun__addrinfo_set`, declared in `bun_http`.
     #[unsafe(no_mangle)]
     fn __bun_dns_register_quic(pc: PendingConnect) {
-        // SAFETY: `pc` holds this ref from `Bun__addrinfo_get` until `on_dns_resolved`.
+        // SAFETY: `pc` holds this ref from `Bun__addrinfo_get` until it is resolved or dropped.
         let request = unsafe { &*pc.addrinfo().cast::<Request>() };
         if let Err(DNSRequestOwner::Quic(pc)) = request.join(DNSRequestOwner::Quic(pc)) {
-            pc.on_dns_resolved();
+            pc.on_dns_resolved_threadsafe();
         }
     }
 }

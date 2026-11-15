@@ -6,11 +6,10 @@
 //! from here:
 //!   * `bun_safety::thread_id`       → `pub use bun_core::thread_id::*;`
 //!   * `bun_threading::current_thread_id` → `current() as u64`
-//!   * `bun_core::util::debug_thread_id`  → `current() as u64` (debug-only)
 //!
 //! Rust's `std::thread::ThreadId` is intentionally NOT used: it is an opaque,
 //! process-local monotonic counter (no `MAX`, no atomic repr, not the kernel
-//! TID), whereas every consumer (`ThreadLock`, `ThreadCell`) needs a plain
+//! TID), whereas every consumer (`ThreadLock`) needs a plain
 //! integer it can store in an atomic and compare against a sentinel.
 
 // ── ThreadId width ─────────────────────────────────────────────────────────

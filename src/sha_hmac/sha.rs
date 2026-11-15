@@ -18,8 +18,6 @@ pub(crate) mod ffi {
 // Digest-length constants (Rust has no stdlib equivalents, so the literal
 // values are inlined here).
 // ──────────────────────────────────────────────────────────────────────────
-const SHA1_DIGEST_LENGTH: usize = 20;
-const SHA256_DIGEST_LENGTH: usize = 32;
 const SHA384_DIGEST_LENGTH: usize = 48;
 const SHA512_DIGEST_LENGTH: usize = 64;
 const SHA512_256_DIGEST_LENGTH: usize = 32;
@@ -61,13 +59,13 @@ macro_rules! new_evp {
 pub mod evp {
     use super::*;
 
-    new_evp!(SHA1, SHA1_DIGEST_LENGTH, EVP_sha1);
+    new_evp!(SHA1, hashers::SHA1::DIGEST, EVP_sha1);
     new_evp!(MD5, 16, EVP_md5);
     new_evp!(MD4, 16, EVP_md4);
     new_evp!(SHA224, 28, EVP_sha224);
     new_evp!(SHA512, SHA512_DIGEST_LENGTH, EVP_sha512);
     new_evp!(SHA384, SHA384_DIGEST_LENGTH, EVP_sha384);
-    new_evp!(SHA256, SHA256_DIGEST_LENGTH, EVP_sha256);
+    new_evp!(SHA256, hashers::SHA256::DIGEST, EVP_sha256);
     new_evp!(SHA512_256, SHA512_256_DIGEST_LENGTH, EVP_sha512_256);
 
     // ──────────────────────────────────────────────────────────────────────

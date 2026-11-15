@@ -5632,11 +5632,7 @@ pub(crate) trait FileOpener: Sized {
 
     fn get_fd_by_opening(&mut self, callback: fn(&mut Self, Fd)) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path_string = match self.pathlike() {
-            PathOrFileDescriptor::Path(p) => p.clone(),
-            PathOrFileDescriptor::Fd(_) => unreachable!(),
-        };
-        let path = path_string.slice_z(&mut buf);
+        let path = self.pathlike().path().slice_z(&mut buf);
 
         loop {
             match bun_sys::open(
@@ -5650,7 +5646,7 @@ pub(crate) trait FileOpener: Sized {
                 }
                 bun_sys::Result::Err(err) => {
                     if err.get_errno() == bun_sys::E::ENOENT {
-                        match self.try_mkdirp(err.clone(), path, path_string.slice()) {
+                        match self.try_mkdirp(err.clone(), path, path.as_bytes()) {
                             Retry::Continue => continue,
                             Retry::Fail => {
                                 // `mkdir_if_not_exists` has set `errno` and `system_error`.
@@ -5660,10 +5656,7 @@ pub(crate) trait FileOpener: Sized {
                             Retry::No => {}
                         }
                     }
-                    let err = node::fs::error_for_caller(
-                        [Some(&path_string), None],
-                        err.with_path(path_string.slice()),
-                    );
+                    let err = sys_error_with_path_like(&err, self.pathlike());
                     self.set_errno(bun_errno::from_errno(err.errno as i32).into());
                     self.set_system_error(jsc::SysErrorJsc::to_system_error(&err));
                     self.set_opened_fd(Fd::INVALID);

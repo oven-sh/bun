@@ -923,16 +923,11 @@ fn spawn_maybe_sync(
                 }
             };
 
-            let pipe_env = {
-                let mut cursor = &mut ipc_env_buf[..];
-                match write!(cursor, "NODE_CHANNEL_FD={}\0", ipc_fd) {
-                    Ok(()) => {
-                        let written = 32 - cursor.len();
-                        // SAFETY: NUL written above at buf[written-1]
-                        ZStr::from_buf(&ipc_env_buf[..], written - 1)
-                    }
-                    Err(_) => return Err(cx.global().throw_out_of_memory()),
-                }
+            let Ok(pipe_env) = bun_core::fmt::buf_print_z(
+                &mut ipc_env_buf,
+                format_args!("NODE_CHANNEL_FD={ipc_fd}"),
+            ) else {
+                return Err(cx.global().throw_out_of_memory());
             };
             env_array.push(Some(pipe_env.into()));
 

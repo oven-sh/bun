@@ -17,11 +17,9 @@ pub mod winsock {
 pub use c_ares_draft as c_ares;
 
 /// Thin wrapper over `ares_inet_ntop`: writes the text of the 4 or 16 `octets` into `dst`
-/// and returns the slice up to (excluding) the trailing NUL on success.
-/// `dst[len] == 0` is guaranteed on `Some`, so callers needing a C string can
-/// rely on it.
+/// and returns it on success.
 #[inline]
-pub fn ntop<'a>(octets: &[u8], dst: &'a mut [u8]) -> Option<&'a [u8]> {
+pub fn ntop<'a>(octets: &[u8], dst: &'a mut [u8]) -> Option<&'a bun_core::ZStr> {
     let af = match octets.len() {
         4 => c_ares::AF::INET,
         16 => c_ares::AF::INET6,
@@ -41,7 +39,7 @@ pub fn ntop<'a>(octets: &[u8], dst: &'a mut [u8]) -> Option<&'a [u8]> {
     {
         return None;
     }
-    Some(bun_core::ffi::slice_to_nul(dst))
+    bun_core::ZStr::from_slice_until_nul(dst)
 }
 
 /// `ares_inet_pton` for IPv4 (`N` is 4) or IPv6 (`N` is 16).

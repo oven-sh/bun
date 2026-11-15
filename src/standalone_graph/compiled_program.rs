@@ -1098,8 +1098,7 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     if cfg!(not(windows)) && name.len() < buffer.len() && is_normalized_posix_path(name) {
         let length = name.strip_suffix(b"/").unwrap_or(name).len();
         buffer[..length].copy_from_slice(&name[..length]);
-        buffer[length] = 0;
-        return Some(ZStr::from_buf(&buffer[..], length));
+        return Some(ZStr::nul_terminate(buffer, length));
     }
     let mut working_directory = path_buffer_pool::get();
     // On Windows an absolute name can still take its drive from the working directory.
@@ -1111,8 +1110,7 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     };
     if cfg!(not(windows)) {
         let length = join_posix_key(base, name, buffer)?;
-        buffer[length] = 0;
-        return Some(ZStr::from_buf(&buffer[..], length));
+        return Some(ZStr::nul_terminate(buffer, length));
     }
     let joined = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>(
         base,
@@ -1124,8 +1122,7 @@ fn absolute_key<'a>(name: &[u8], buffer: &'a mut PathBuffer) -> Option<&'a ZStr>
     while length > 0 && buffer[length - 1] == b'/' {
         length -= 1;
     }
-    buffer[length] = 0;
-    Some(ZStr::from_buf(&buffer[..], length))
+    Some(ZStr::nul_terminate(buffer, length))
 }
 
 fn is_shared_library_name(name: &[u8]) -> bool {

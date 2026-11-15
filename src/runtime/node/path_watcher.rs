@@ -343,15 +343,8 @@ pub(crate) fn watch(
             }
         }
     };
-    let resolved: &ZStr = match sys::get_fd_path(probe.fd(), &mut resolve_buf) {
-        Err(_) => path, // fall back to the caller's path; best effort
-        Ok(r) => {
-            let len = r.len();
-            resolve_buf[len] = 0;
-            // SAFETY: resolve_buf[len] == 0 written above; buf lives for the rest of this fn.
-            ZStr::from_buf(&resolve_buf[..], len)
-        }
-    };
+    // fall back to the caller's path; best effort
+    let resolved = sys::get_fd_path_z(probe.fd(), &mut resolve_buf).unwrap_or(path);
 
     let mut key_buf = path::path_buffer_pool::get();
     let key = PathWatcherManager::make_key(key_buf.as_mut_slice(), resolved.as_bytes(), recursive);
@@ -430,42 +423,45 @@ struct WalkLevel {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 impl WalkScratch {
-    /// Truncates `abs` and `rel` to the directory's path, then appends `name`.
-    fn set_entry(
-        abs: &mut Vec<u8>,
+    /// Truncates `abs` and `rel` to the directory's path, then appends `name`. Returns `abs`.
+    fn set_entry<'a>(
+        abs: &'a mut Vec<u8>,
         rel: &mut Vec<u8>,
         abs_len: usize,
         rel_len: usize,
         name: &[u8],
-    ) {
+    ) -> &'a ZStr {
+        rel.truncate(rel_len);
+        if rel_len != 0 {
+            rel.push(path::SEP);
+        }
+        rel.extend_from_slice(name);
         abs.truncate(abs_len);
         // Only the root directory ends with a separator.
         if abs.last() != Some(&path::SEP) {
             abs.push(path::SEP);
         }
         abs.extend_from_slice(name);
+        let len = abs.len();
         abs.push(0);
-        rel.truncate(rel_len);
-        if rel_len != 0 {
-            rel.push(path::SEP);
-        }
-        rel.extend_from_slice(name);
+        ZStr::nul_terminate(abs, len)
     }
 
-    /// Reads every entry of the directory at `self.abs` and closes it before the walk descends.
+    fn open_dir(abs: &ZStr) -> sys::Result<sys::Dir> {
+        sys::open(abs, sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
+            .map(sys::Dir::from_fd)
+    }
+
+    /// Reads every entry of `dir`, which is at `self.abs`, so that it is closed before the walk descends.
     #[inline(never)]
-    fn read_dir<const DIRS_ONLY: bool>(&mut self, cb: &mut impl FnMut(&ZStr, &[u8], bool)) {
+    fn read_dir<const DIRS_ONLY: bool>(
+        &mut self,
+        dir: &sys::Dir,
+        cb: &mut impl FnMut(&ZStr, &[u8], bool),
+    ) {
         let abs_len = self.abs.len() - 1;
         let rel_len = self.rel.len();
         let start = self.pending.len();
-        let Ok(dir) = sys::open(
-            ZStr::from_slice_with_nul(&self.abs),
-            sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
-            0,
-        )
-        .map(sys::Dir::from_fd) else {
-            return;
-        };
         let mut it = sys::dir_iterator::iterate(dir.fd());
         let mut found_dir = false;
         while let Ok(Some(entry)) = it.next() {
@@ -477,8 +473,8 @@ impl WalkScratch {
             let name = entry.name.slice_u8();
             if is_file && !found_dir {
                 // No subdirectory precedes this file, so it's next in walk order.
-                Self::set_entry(&mut self.abs, &mut self.rel, abs_len, rel_len, name);
-                cb(ZStr::from_slice_with_nul(&self.abs), &self.rel, true);
+                let abs = Self::set_entry(&mut self.abs, &mut self.rel, abs_len, rel_len, name);
+                cb(abs, &self.rel, true);
                 continue;
             }
             // Copy the name because this entry is visited after the directory is closed.
@@ -516,7 +512,9 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         rel: rel_dir.to_vec(),
         ..Default::default()
     };
-    scratch.read_dir::<DIRS_ONLY>(cb);
+    if let Ok(dir) = WalkScratch::open_dir(abs_dir) {
+        scratch.read_dir::<DIRS_ONLY>(&dir, cb);
+    }
     while let Some(level) = scratch.levels.last_mut() {
         if level.next == scratch.pending.len() {
             scratch.pending.truncate(level.start);
@@ -528,21 +526,17 @@ fn walk_subtree<const DIRS_ONLY: bool>(
         let name = &record[1..];
         let name = &name[..strings::index_of_char_usize(name, 0).unwrap_or(name.len())];
         level.next += 1 + name.len() + 1;
-        WalkScratch::set_entry(
+        let abs = WalkScratch::set_entry(
             &mut scratch.abs,
             &mut scratch.rel,
             level.abs_len,
             level.rel_len,
             name,
         );
-        cb(
-            ZStr::from_slice_with_nul(&scratch.abs),
-            &scratch.rel,
-            is_file,
-        );
-        if !is_file {
+        cb(abs, &scratch.rel, is_file);
+        if !is_file && let Ok(dir) = WalkScratch::open_dir(abs) {
             // `cb` already watches this directory, so entries created during the read still get events.
-            scratch.read_dir::<DIRS_ONLY>(cb);
+            scratch.read_dir::<DIRS_ONLY>(&dir, cb);
         }
     }
 }

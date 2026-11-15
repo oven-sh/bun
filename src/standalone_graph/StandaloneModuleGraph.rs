@@ -2154,15 +2154,14 @@ impl<'a> Injected<'a> {
         cwd: &[u8],
         temp_path_buf: &'a mut PathBuffer,
     ) -> Injected<'a> {
-        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+        let temp_path = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
             cwd,
             &mut temp_path_buf[..],
             &[copy.name.as_bytes()],
-        )
-        .len();
+        );
         Injected {
             file: copy.file.take().expect("taken once"),
-            temp_path: ZStr::from_buf(&temp_path_buf[..], len),
+            temp_path,
         }
     }
 }
@@ -2253,16 +2252,14 @@ pub(crate) fn inject<'a>(
 
             let mut in_buf = bun_paths::w_path_buffer_pool::get();
             strings::copy_u8_into_u16(&mut in_buf, self_exe.as_bytes());
-            in_buf[self_exe.len()] = 0;
             let mut out_buf = bun_paths::w_path_buffer_pool::get();
             strings::copy_u8_into_u16(&mut out_buf, zname.as_bytes());
-            out_buf[zname.len()] = 0;
 
             use bun_core::WStr;
             use bun_sys::windows::{self as w, Win32ErrorExt as _};
-            let out = WStr::from_buf(&out_buf[..], zname.len());
-            if let Err(err) = w::CopyFileW(WStr::from_buf(&in_buf[..], self_exe.len()), out, false)
-            {
+            let in_ = WStr::nul_terminate(&mut in_buf, self_exe.len());
+            let out = WStr::nul_terminate(&mut out_buf, zname.len());
+            if let Err(err) = w::CopyFileW(in_, out, false) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     err.to_system_errno()
@@ -2900,7 +2897,6 @@ pub fn target_executable(
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
-        // SAFETY: trailing 0 byte appended above.
         let version_zstr = ZStr::from_slice_with_nul(&version_str[..]);
 
         let mut needs_download: bool = true;

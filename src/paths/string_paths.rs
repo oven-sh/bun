@@ -12,16 +12,6 @@ use crate::windows;
 use bun_core::strings;
 use bun_core::{WStr, ZStr};
 
-/// Borrow `wbuf[..len]` as a `&WStr`, where `wbuf[len] == 0`. Safe-surface
-/// form of [`WStr::from_raw`] for the dominant call shape in this module: a
-/// stack `WPathBuffer` filled to `len` with a NUL written at `wbuf[len]`.
-/// The slice borrow proves `wbuf[..=len]` lies in one allocation and ties the
-/// returned lifetime to it. Mirrors [`ZStr::from_buf`].
-#[inline(always)]
-fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
-    WStr::from_buf(wbuf, len)
-}
-
 #[inline(always)]
 fn ch<T: PathChar>(c: u8) -> T {
     T::from_u8(c)
@@ -62,8 +52,7 @@ pub fn from_w_path<'a>(buf: &'a mut [u8], utf16: &[u16]) -> &'a ZStr {
     let encode_into_result = strings::copy_utf16_into_utf8(&mut buf[..last], to_copy);
     let written = encode_into_result.written;
     debug_assert!(written < buf.len());
-    buf[written] = 0;
-    ZStr::from_buf(buf, written)
+    ZStr::nul_terminate(buf, written)
 }
 
 pub fn without_nt_prefix<T: PathChar>(path: &[T]) -> &[T] {
@@ -102,20 +91,20 @@ pub fn to_nt_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
             wbuf[..prefix.len()].copy_from_slice(&prefix);
             let n = to_w_path_normalized(&mut wbuf[prefix.len()..], &utf8[4..]).len();
             let total = n + prefix.len();
-            return wstr_in_buf(wbuf, total);
+            return WStr::nul_terminate(wbuf, total);
         }
         let prefix = windows::NT_UNC_OBJECT_PREFIX;
         wbuf[..prefix.len()].copy_from_slice(&prefix);
         let n = to_w_path_normalized(&mut wbuf[prefix.len()..], &utf8[2..]).len();
         let total = n + prefix.len();
-        return wstr_in_buf(wbuf, total);
+        return WStr::nul_terminate(wbuf, total);
     }
 
     let prefix = windows::NT_OBJECT_PREFIX;
     wbuf[..prefix.len()].copy_from_slice(&prefix);
     let n = to_w_path_normalized(&mut wbuf[prefix.len()..], utf8).len();
     let total = n + prefix.len();
-    wstr_in_buf(wbuf, total)
+    WStr::nul_terminate(wbuf, total)
 }
 
 pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
@@ -135,35 +124,33 @@ pub fn to_nt_path16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
             wbuf[..prefix.len()].copy_from_slice(&prefix);
             let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[4..]).len();
             let total = n + prefix.len();
-            return wstr_in_buf(wbuf, total);
+            return WStr::nul_terminate(wbuf, total);
         }
         let prefix = windows::NT_UNC_OBJECT_PREFIX;
         wbuf[..prefix.len()].copy_from_slice(&prefix);
         let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], &path[2..]).len();
         let total = n + prefix.len();
-        return wstr_in_buf(wbuf, total);
+        return WStr::nul_terminate(wbuf, total);
     }
 
     let prefix = windows::NT_OBJECT_PREFIX;
     wbuf[..prefix.len()].copy_from_slice(&prefix);
     let n = to_w_path_normalized16(&mut wbuf[prefix.len()..], path).len();
     let total = n + prefix.len();
-    wstr_in_buf(wbuf, total)
+    WStr::nul_terminate(wbuf, total)
 }
 
 fn add_nt_path_prefix<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     let plen = windows::NT_OBJECT_PREFIX.len();
     wbuf[..plen].copy_from_slice(&windows::NT_OBJECT_PREFIX);
     wbuf[plen..plen + utf16.len()].copy_from_slice(utf16);
-    wbuf[utf16.len() + plen] = 0;
-    wstr_in_buf(wbuf, utf16.len() + plen)
+    WStr::nul_terminate(wbuf, utf16.len() + plen)
 }
 
 pub fn add_nt_path_prefix_if_needed<'a>(wbuf: &'a mut [u16], utf16: &[u16]) -> &'a WStr {
     if utf16.starts_with(&windows::NT_OBJECT_PREFIX) {
         wbuf[..utf16.len()].copy_from_slice(utf16);
-        wbuf[utf16.len()] = 0;
-        return wstr_in_buf(wbuf, utf16.len());
+        return WStr::nul_terminate(wbuf, utf16.len());
     }
     if utf16.starts_with(&windows::LONG_PATH_PREFIX) {
         // Replace prefix
@@ -181,7 +168,7 @@ pub fn to_extended_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a 
     }
     wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
     let n = to_w_path_normalized(&mut wbuf[4..], utf8).len();
-    wstr_in_buf(wbuf, n + 4)
+    WStr::nul_terminate(wbuf, n + 4)
 }
 
 pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -199,8 +186,7 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     // address) — fail-safe to "" like `to_w_path_maybe_dir` does, instead of
     // panicking in the `normalize_slashes_only` copy below.
     if utf8.len() > renormalized.len() {
-        wbuf[0] = 0;
-        return wstr_in_buf(wbuf, 0);
+        return WStr::nul_terminate(wbuf, 0);
     }
 
     let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
@@ -218,8 +204,7 @@ fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
     // `to_w_path_maybe_dir` does, instead of panicking in the
     // `normalize_slashes_only_t` copy below.
     if path.len() >= wbuf.len() {
-        wbuf[0] = 0;
-        return wstr_in_buf(wbuf, 0);
+        return WStr::nul_terminate(wbuf, 0);
     }
 
     // Capture the length and re-derive the mutable slice (borrowck-friendly
@@ -236,9 +221,7 @@ fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
         path_to_use.len()
     };
 
-    wbuf[len] = 0;
-
-    wstr_in_buf(wbuf, len)
+    WStr::nul_terminate(wbuf, len)
 }
 
 fn normalize_slashes_only_t<'a, T: PathChar, const DESIRED_SLASH: u8, const ALWAYS_COPY: bool>(
@@ -342,7 +325,7 @@ pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     {
         wbuf[..4].copy_from_slice(&windows::LONG_PATH_PREFIX);
         let n = to_w_path(&mut wbuf[4..], path).len();
-        return wstr_in_buf(wbuf, n + 4);
+        return WStr::nul_terminate(wbuf, n + 4);
     }
     to_w_path(wbuf, path)
 }
@@ -370,8 +353,7 @@ fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     let Some(converted) =
         crate::strings::try_convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8)
     else {
-        wbuf[0] = 0;
-        return wstr_in_buf(wbuf, 0);
+        return WStr::nul_terminate(wbuf, 0);
     };
     let mut count = converted.len();
 
@@ -388,9 +370,7 @@ fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
         count += 1;
     }
 
-    wbuf[count] = 0;
-
-    wstr_in_buf(wbuf, count)
+    WStr::nul_terminate(wbuf, count)
 }
 
 pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {

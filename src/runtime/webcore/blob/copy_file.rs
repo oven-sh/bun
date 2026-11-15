@@ -1318,9 +1318,7 @@ impl CopyFileWindows {
                                     }
                                 };
                                 let len = out.len();
-                                pathbuf1[len] = 0;
-                                // SAFETY: pathbuf1[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf1[..], len);
+                                break 'brk bun_core::ZStr::nul_terminate(&mut pathbuf1, len);
                             }
                         },
                     }
@@ -1361,9 +1359,7 @@ impl CopyFileWindows {
                                     }
                                 };
                                 let len = out.len();
-                                pathbuf2[len] = 0;
-                                // SAFETY: pathbuf2[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
+                                break 'brk bun_core::ZStr::nul_terminate(&mut pathbuf2, len);
                             }
                         },
                     }

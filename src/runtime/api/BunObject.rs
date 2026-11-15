@@ -1233,13 +1233,11 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
 
         let written = bun_standalone_graph::find_written_file(joined);
         let path_len = joined.len();
-        buf[path_len] = 0;
         let written = written.map(|path| bun_core::ZBox::from_vec(path.into_vec()));
 
-        // SAFETY: buf[path_len] == 0 written above
         let buf_z = match &written {
             Some(path) => &**path,
-            None => bun_core::ZStr::from_buf(&buf[..], path_len),
+            None => bun_core::ZStr::nul_terminate(&mut buf, path_len),
         };
 
         // Conforming applications must specify either MAP_PRIVATE or MAP_SHARED.

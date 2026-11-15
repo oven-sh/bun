@@ -73,7 +73,7 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
+    retry(|| rustix::fs::openat(dir, path.to_cstr(), oflags, mode)).map(own_fd)
 }
 
 /// Android's seccomp answers `openat2`/`fchmodat2` with SIGSYS; Termux runs the linux build.
@@ -107,7 +107,7 @@ pub(crate) fn openat2(
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
+    retry(|| rustix::fs::openat2(dir, path.to_cstr(), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]
@@ -172,19 +172,19 @@ pub(crate) fn fstat(fd: Fd) -> Result<libc::stat, i32> {
 
 #[inline]
 pub(crate) fn stat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::stat(path.as_cstr())).map(stat_to_libc)
+    retry(|| rustix::fs::stat(path.to_cstr())).map(stat_to_libc)
 }
 
 #[inline]
 pub(crate) fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
-    retry(|| rustix::fs::lstat(path.as_cstr())).map(stat_to_libc)
+    retry(|| rustix::fs::lstat(path.to_cstr())).map(stat_to_libc)
 }
 
 #[inline]
 pub(crate) fn fstatat(dir: Fd, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
     let dir = dir.as_borrowed_fd();
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
-    retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
+    retry(|| rustix::fs::statat(dir, path.to_cstr(), at)).map(stat_to_libc)
 }
 
 /// `faccessat(2)`, the syscall without a `flags` argument. Do not use libc's
@@ -199,7 +199,7 @@ pub(crate) fn faccessat(dir: Fd, path: &ZStr, mode: i32) -> Result<(), i32> {
     // libc backend (Android, where bionic's `faccessat` is already flag-less).
     let access = rustix::fs::Access::from_bits_retain(mode as _);
     let dir = dir.as_borrowed_fd();
-    retry(|| rustix::fs::accessat(dir, path.as_cstr(), access, rustix::fs::AtFlags::empty()))
+    retry(|| rustix::fs::accessat(dir, path.to_cstr(), access, rustix::fs::AtFlags::empty()))
 }
 
 /// Map rustix's kernel `struct stat` → `libc::stat`.

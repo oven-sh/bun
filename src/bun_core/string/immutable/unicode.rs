@@ -8,13 +8,6 @@ use bun_alloc::AllocError;
 use core::mem::MaybeUninit;
 
 use crate::string::immutable::CodePoint; // i32
-/// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
-/// helper that moved to `bun_paths::string_paths` with the rest of the
-/// Windows path-shape transcoders.
-#[inline(always)]
-fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
-    WStr::from_buf(wbuf, len)
-}
 use bun_simdutf_sys::simdutf::{self, WithUtf8Len};
 
 crate::declare_scope!(strings, hidden);
@@ -956,8 +949,7 @@ pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -
     let len = crate::string::immutable::try_convert_utf8_to_utf16_in_buffer(&mut buf[..cap], input)
         .map(|converted| converted.len())
         .unwrap_or(0);
-    buf[len] = 0;
-    wstr_in_buf(buf, len)
+    WStr::nul_terminate(buf, len)
 }
 
 #[rustfmt::skip]

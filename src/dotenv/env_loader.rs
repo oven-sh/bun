@@ -6,7 +6,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
 use bun_core::{self, Mutex, Output};
 use bun_core::{CStringList, ZStr, strings};
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
+use bun_paths::{self, PathBuffer};
 use bun_sys;
 use bun_url::URL;
 use bun_which::which;
@@ -304,14 +304,11 @@ impl Loader {
         if let Some(node) = self
             .get(b"NODE")
             .or_else(|| self.get(b"npm_node_execpath"))
-            .filter(|n| !n.is_empty() && n.len() < MAX_PATH_BYTES)
+            .filter(|n| !n.is_empty())
+            && let Some(node) = strings::copy_z(buf, node)
+            && bun_sys::is_executable_file_path(node)
         {
-            buf[..node.len()].copy_from_slice(node);
-            buf[node.len()] = 0;
-            let node = ZStr::from_buf(&buf[..], node.len());
-            if bun_sys::is_executable_file_path(node) {
-                return Some(node);
-            }
+            return Some(node);
         }
 
         let path = self.get(b"PATH")?;

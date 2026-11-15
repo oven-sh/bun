@@ -16556,7 +16556,11 @@ it("the progress line of a running script keeps its name while another package a
     pack({
       "package/package.json": JSON.stringify({ name: "one", scripts: { postinstall: "bun wait.js" } }),
       "package/wait.js": `await fetch("${server.url}started");
-        while (!(await Bun.file(${JSON.stringify(join(String(dir), "node_modules/another/package.json"))}).exists())) await Bun.sleep(1);`,
+        const deadline = Date.now() + 30_000;
+        while (!(await Bun.file(${JSON.stringify(join(String(dir), "node_modules/another/package.json"))}).exists())) {
+          if (Date.now() > deadline) throw new Error("another/package.json did not appear");
+          await Bun.sleep(1);
+        }`,
     }),
     pack({ "package/package.json": JSON.stringify({ name: "another" }) }),
   ]);
@@ -16567,6 +16571,7 @@ it("the progress line of a running script keeps its name while another package a
       env: { ...env, BUN_INSTALL_PROGRESS: "1", NO_COLOR: "1", BUN_INSTALL_CACHE_DIR: join(String(dir), cache) },
       stdout: "ignore",
       stderr: "pipe",
+      timeout: 30_000,
     });
     return await Promise.all([proc.stderr.text(), proc.exited]);
   }

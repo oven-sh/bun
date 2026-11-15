@@ -16,7 +16,7 @@ use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::transpiler::{LoadedMacros, MacroJSCtx, ParseOptions, ParseResult};
+use bun_bundler::transpiler::{MacroJSCtx, MacroLoadStates, ParseOptions, ParseResult};
 use bun_bundler::{self as Transpiler};
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
@@ -41,7 +41,7 @@ use bun_options_types::schema::api;
 pub(crate) struct JSTranspiler {
     pub(crate) transpiler: JsCell<Transpiler::Transpiler<'static>>,
     pub(crate) config: Config,
-    pub(crate) loaded_macros: LoadedMacros,
+    pub(crate) macro_load_states: MacroLoadStates,
     /// Empty between calls: kept for its capacity.
     pub(crate) scan_pass_result: Cell<ScanPassResult<'static>>,
     pub(crate) buffer_writer: Cell<Option<JSPrinter::BufferWriter>>,
@@ -687,7 +687,7 @@ impl TransformTask {
         let arena = Arena::new();
 
         let transpiler = &mut *self.transpiler;
-        let loaded_macros = LoadedMacros::default();
+        let macro_load_states = MacroLoadStates::default();
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
@@ -720,7 +720,7 @@ impl TransformTask {
                 .and_then(|ts| ts.use_define_for_class_fields)
                 .unwrap_or(true),
             macro_js_ctx: MacroJSCtx::ZERO,
-            loaded_macros: &loaded_macros,
+            macro_load_states: &macro_load_states,
             opened_file: None,
             inject_jest_globals: false,
             is_test_entry_point: false,
@@ -932,7 +932,7 @@ impl JSTranspiler {
             config,
             _arena: arena,
             transpiler: JsCell::new(transpiler),
-            loaded_macros: LoadedMacros::default(),
+            macro_load_states: MacroLoadStates::default(),
             scan_pass_result: Cell::new(ScanPassResult::init()),
             buffer_writer: Cell::new(None),
             ref_count: bun_ptr::RefCount::init(),
@@ -1042,7 +1042,7 @@ impl JSTranspiler {
             virtual_source: Some(source),
             replace_exports: config.runtime.replace_exports.entries.clone().expect("OOM"),
             macro_js_ctx,
-            loaded_macros: &self.loaded_macros,
+            macro_load_states: &self.macro_load_states,
             experimental_decorators: config
                 .tsconfig
                 .as_deref()
@@ -1072,10 +1072,10 @@ impl JSTranspiler {
         // SAFETY: JS thread. Does not hold for a macro that calls this object while this parse
         // still borrows the transpiler.
         let transpiler = unsafe { self.transpiler.get_mut() };
-        let outer_log = transpiler.log;
+        let old_log = transpiler.log;
         transpiler.set_log(log);
         let result = transpiler.parse(parse_options, None);
-        self.transpiler.with_mut(|t| t.set_log(outer_log));
+        self.transpiler.with_mut(|t| t.set_log(old_log));
         result
     }
 
@@ -1214,11 +1214,11 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        // Every call loads its macros.
-        let loaded_macros = LoadedMacros::default();
-        self.loaded_macros.swap(&loaded_macros);
+        // `transformSync` does not reuse what an earlier call loaded.
+        let macro_load_states = MacroLoadStates::default();
+        self.macro_load_states.swap(&macro_load_states);
         let parse_result = self.get_parse_result(&arena, code, loader, macro_js_ctx, &mut log);
-        self.loaded_macros.swap(&loaded_macros);
+        self.macro_load_states.swap(&macro_load_states);
         if (log.warnings + log.errors) > 0 {
             return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
         }

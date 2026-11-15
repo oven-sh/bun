@@ -277,7 +277,7 @@ pub struct Worker {
     /// `'static` stands for the borrow of `heap`.
     pub(crate) transpiler: Transpiler<'static>,
     other_transpiler: Option<Box<Transpiler<'static>>>,
-    pub(crate) loaded_macros: js_ast::Macro::LoadedMacros,
+    pub(crate) macro_load_states: js_ast::Macro::MacroLoadStates,
 
     pub(crate) temporary_arena: bun_alloc::Arena,
     pub(crate) stmt_list: StmtList,
@@ -330,7 +330,7 @@ impl Drop for Worker {
     fn drop(&mut self) {
         bun_core::scoped_log!(ThreadPool, "Worker.drop()");
         // `collect_vm_garbage` needs the macros released first.
-        drop(core::mem::take(&mut self.loaded_macros));
+        drop(core::mem::take(&mut self.macro_load_states));
         js_ast::Macro::collect_vm_garbage();
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
@@ -369,7 +369,7 @@ impl Worker {
             ctx,
             transpiler: Transpiler::for_worker(ctx.transpiler(), arena, log),
             other_transpiler: None,
-            loaded_macros: Default::default(),
+            macro_load_states: Default::default(),
             temporary_arena: bun_alloc::Arena::new(),
             stmt_list: StmtList::init(),
             // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.

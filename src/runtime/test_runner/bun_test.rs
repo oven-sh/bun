@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue, JsClass as _, JsResult, Strong, StrongCell};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_ptr::{CellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
 use bun_sema::util::SmallLocalVec;
 use super::jest::{File, Jest};
 use crate::jsc_hooks::timer_all;
@@ -503,7 +503,7 @@ impl BunTestRoot {
     }
 
     pub(crate) fn has_active_file(&self) -> bool {
-        self.active_file.with_taken(|active_file| active_file.is_some())
+        self.active_file.is_some()
     }
 
     pub(crate) fn on_before_print(&self) {

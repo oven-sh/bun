@@ -1,5 +1,5 @@
+use core::cell::{Cell, OnceCell};
 use core::ffi::{c_int, c_void};
-use core::mem;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
@@ -35,7 +35,7 @@ use bun_jsc::{
     Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
-use bun_ptr::{AsCtxPtr, RefPtr};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -892,22 +892,29 @@ pub(crate) struct ServerInitContext<'a> {
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
 #[derive(bun_ptr::CellRefCounted)]
 pub(crate) struct ServePlugins {
-    state: ServePluginsState,
-    ref_count: core::cell::Cell<u32>,
+    names: Box<[Box<[u8]>]>,
+    state: Cell<ServePluginsState>,
+    /// Set when `state` becomes `Loaded`.
+    plugin: OnceCell<JSBundler::OwnedPlugin>,
+    /// `Some` from `load_and_resolve_plugins` until the promise settles.
+    pending: Cell<Option<PendingLoad>>,
+    html_bundle_routes: Cell<Vec<html_bundle::PendingBuild>>,
+    /// Server whose DevServer is waiting for the plugins to load.
+    dev_server: Cell<Option<super::AnyServer>>,
+    ref_count: Cell<u32>,
 }
 
-// Reference count is incremented while there are other objects waiting on plugin loads.
-pub(crate) enum ServePluginsState {
-    Unqueued(Box<[Box<[u8]>]>),
-    Pending {
-        /// Promise may be empty if the plugin load finishes synchronously.
-        plugin: JSBundler::OwnedPlugin,
-        promise: jsc::JSPromiseStrong,
-        html_bundle_routes: Vec<html_bundle::PendingBuild>,
-        /// Server whose DevServer is waiting for the plugins to load.
-        dev_server: Option<super::AnyServer>,
-    },
-    Loaded(JSBundler::OwnedPlugin),
+struct PendingLoad {
+    plugin: JSBundler::OwnedPlugin,
+    _promise: jsc::Strong,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ServePluginsState {
+    Unqueued,
+    /// A ref is held by `ServePluginsLoadTask`, then by the promise reaction.
+    Pending,
+    Loaded,
     /// Error information is not stored as it is already reported.
     Err,
 }
@@ -927,63 +934,56 @@ pub(crate) enum ServePluginsCallback {
 }
 
 impl ServePlugins {
-    pub(crate) fn init(plugins: Box<[Box<[u8]>]>) -> RefPtr<ServePlugins> {
+    pub(crate) fn init(names: Box<[Box<[u8]>]>) -> RefPtr<ServePlugins> {
         RefPtr::new(ServePlugins {
-            ref_count: core::cell::Cell::new(1),
-            state: ServePluginsState::Unqueued(plugins),
+            names,
+            state: Cell::new(ServePluginsState::Unqueued),
+            plugin: OnceCell::new(),
+            pending: Cell::new(None),
+            html_bundle_routes: Cell::new(Vec::new()),
+            dev_server: Cell::new(None),
+            ref_count: Cell::new(1),
         })
     }
 
+    /// Runs no JS: `server.stop(true)` would free the response that the caller has not deferred yet.
     pub(crate) fn get_or_start_load(
-        &mut self,
-        global: &JSGlobalObject,
+        this: &RefPtr<Self>,
         cb: ServePluginsCallback,
         server: super::AnyServer,
-    ) -> JsResult<GetOrStartLoadResult<'_>> {
-        loop {
-            match &mut self.state {
-                ServePluginsState::Unqueued(_) => {
-                    self.load_and_resolve_plugins(global)?;
-                    // could jump to any branch if synchronously resolved
-                    continue;
-                }
-                ServePluginsState::Pending {
-                    html_bundle_routes,
-                    dev_server,
-                    ..
-                } => {
-                    match cb {
-                        ServePluginsCallback::HtmlBundleRoute(route) => {
-                            html_bundle_routes
-                                .push(html_bundle::PendingBuild::new(RefPtr::from_this(route)));
-                        }
-                        ServePluginsCallback::DevServer => {
-                            // one dev server per server
-                            debug_assert!(dev_server.is_none_or(|s| s == server));
-                            *dev_server = Some(server);
-                        }
-                    }
-                    return Ok(GetOrStartLoadResult::Pending);
-                }
-                ServePluginsState::Loaded(_) => break,
-                ServePluginsState::Err => return Ok(GetOrStartLoadResult::Err),
+    ) -> GetOrStartLoadResult<'_> {
+        match this.state.get() {
+            ServePluginsState::Unqueued => {
+                this.state.set(ServePluginsState::Pending);
+                let task = jsc::Task::from_boxed(Box::new(ServePluginsLoadTask {
+                    plugins: this.clone(),
+                    server: super::PendingRequest::new(server),
+                }));
+                server.vm().enqueue_task(task);
+            }
+            ServePluginsState::Pending => {}
+            ServePluginsState::Loaded => {
+                return GetOrStartLoadResult::Ready(this.plugin.get().map(|plugin| &**plugin));
+            }
+            ServePluginsState::Err => return GetOrStartLoadResult::Err,
+        }
+        match cb {
+            ServePluginsCallback::HtmlBundleRoute(route) => {
+                let route = html_bundle::PendingBuild::new(RefPtr::from_this(route));
+                this.html_bundle_routes
+                    .with_taken(|routes| routes.push(route));
+            }
+            ServePluginsCallback::DevServer => {
+                // one dev server per server
+                debug_assert!(this.dev_server.get().is_none_or(|s| s == server));
+                this.dev_server.set(Some(server));
             }
         }
-        // NOTE: split out of the loop so the `Loaded` arm's borrow of
-        // `self.state` doesn't conflict with the `Unqueued` arm's `&mut self`.
-        match &mut self.state {
-            ServePluginsState::Loaded(plugins) => Ok(GetOrStartLoadResult::Ready(Some(plugins))),
-            _ => unreachable!(),
-        }
+        GetOrStartLoadResult::Pending
     }
 
-    fn load_and_resolve_plugins(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        debug_assert!(matches!(self.state, ServePluginsState::Unqueued(_)));
-        let ServePluginsState::Unqueued(plugin_list) = &self.state else {
-            unreachable!()
-        };
-        // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
-        let plugin_list: Vec<_> = plugin_list.iter().collect();
+    fn load_and_resolve_plugins(this: &RefPtr<Self>, global: &JSGlobalObject) -> JsResult<()> {
+        debug_assert!(this.state.get() == ServePluginsState::Pending);
         let bunfig_path: &[u8] = &global.bun_vm().transpiler.get().options.bunfig_path;
         // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
         let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
@@ -992,15 +992,9 @@ impl ServePlugins {
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
         };
 
-        // NOTE: the keep-alive ref/deref pair
-        // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
-        // `*mut ServePlugins` directly. Deriving the guard's pointer from `&mut self`
-        // here would give it a tag that is invalidated by the writes to `self.state`
-        // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
-
         let plugin = JSBundler::OwnedPlugin::new(global, JSBundler::BunPluginTarget::Browser);
-        let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(plugin_list.len());
-        for raw_plugin in &plugin_list {
+        let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(this.names.len());
+        for raw_plugin in &this.names {
             bunstring_array.push(StringView::from_bytes(raw_plugin));
         }
         let plugin_js_array =
@@ -1014,146 +1008,110 @@ impl ServePlugins {
         }
         let bunfig_folder_bunstr = bun_string_jsc::create_utf8_for_js(global, bunfig_folder)?;
 
-        self.state = ServePluginsState::Pending {
-            promise: jsc::JSPromiseStrong::init(global),
+        let _entered = global.bun_vm().enter_event_loop_scope();
+        let promise = jsc::host_fn::from_js_host_call(global, || {
+            plugin.load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
+        })?;
+        debug_assert!(promise.as_any_promise().is_some());
+        this.pending.set(Some(PendingLoad {
             plugin,
-            html_bundle_routes: Vec::new(),
-            dev_server: None,
-        };
-
-        let result = {
-            let _entered = global.bun_vm().enter_event_loop_scope();
-            jsc::host_fn::from_js_host_call(global, || {
-                match &self.state {
-                    ServePluginsState::Pending { plugin, .. } => plugin,
-                    _ => unreachable!(),
-                }
-                .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
-            })?
-        };
-
-        // handle the case where js synchronously throws an error
-        if let Some(e) = global.try_take_exception() {
-            self.handle_on_reject(global, e);
-            return Ok(());
-        }
-
-        if !result.is_empty_or_undefined_or_null() {
-            // handle the case where js returns a promise
-            if let Some(promise) = result.as_any_promise() {
-                match promise.status() {
-                    // promise not fulfilled yet
-                    jsc::js_promise::Status::Pending => {
-                        // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
-                        self.ref_();
-                        let promise_value = promise.as_value();
-                        if let ServePluginsState::Pending {
-                            promise: pending_promise,
-                            ..
-                        } = &mut self.state
-                        {
-                            pending_promise.set(global, promise_value);
-                        }
-                        promise_value.then(
-                            global,
-                            std::ptr::from_mut::<Self>(self),
-                            BunServe__onResolvePlugins,
-                            BunServe__onRejectPlugins,
-                        );
-                        return Ok(());
-                    }
-                    jsc::js_promise::Status::Fulfilled => {
-                        self.handle_on_resolve();
-                        return Ok(());
-                    }
-                    jsc::js_promise::Status::Rejected => {
-                        let value = promise.result(global.vm());
-                        self.handle_on_reject(global, value);
-                        return Ok(());
-                    }
-                }
-            }
-
-            if let Some(e) = result.to_error() {
-                self.handle_on_reject(global, e);
-            } else {
-                self.handle_on_resolve();
-            }
-        }
+            _promise: jsc::Strong::create(promise, global),
+        }));
+        // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
+        promise.then(
+            global,
+            this.clone().into_raw(),
+            BunServe__onResolvePlugins,
+            BunServe__onRejectPlugins,
+        );
         Ok(())
     }
 
     #[inline(never)]
-    pub(crate) fn handle_on_resolve(&mut self) {
+    pub(crate) fn handle_on_resolve(&self) {
         bun_removable_features::removable_definition!(Bundler, Self::handle_on_resolve);
-        debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
-        let ServePluginsState::Pending {
-            plugin,
-            dev_server,
-            html_bundle_routes,
-            promise,
-        } = mem::replace(&mut self.state, ServePluginsState::Err)
-        else {
-            unreachable!()
-        };
-        drop(promise); // Drop on JscStrong releases the slot.
+        debug_assert!(self.state.get() == ServePluginsState::Pending);
+        self.state.set(ServePluginsState::Loaded);
+        let pending = self.pending.take().expect("set before `then`");
+        let loaded = self.plugin.get_or_init(|| pending.plugin).as_non_null();
 
-        let loaded = plugin.as_non_null();
-        self.state = ServePluginsState::Loaded(plugin);
-
-        for route in html_bundle_routes {
+        for route in self.html_bundle_routes.take() {
             bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(route, Some(loaded)));
         }
-        if let Some(server) = dev_server {
-            if let Some(dev) = server.dev_server_mut() {
-                bun_core::handle_oom(dev.on_plugins_resolved(loaded));
-            }
+        if let Some(server) = self.dev_server.take() {
+            server.with_dev_server(|dev| bun_core::handle_oom(dev.on_plugins_resolved(loaded)));
         }
     }
 
     #[inline(never)]
-    pub(crate) fn handle_on_reject(&mut self, global: &JSGlobalObject, err: JSValue) {
+    pub(crate) fn handle_on_reject(&self, global: &JSGlobalObject, err: JSValue) {
         bun_removable_features::removable_definition!(Bundler, Self::handle_on_reject);
-        debug_assert!(matches!(self.state, ServePluginsState::Pending { .. }));
-        let ServePluginsState::Pending {
-            plugin,
-            dev_server,
-            html_bundle_routes,
-            promise,
-        } = mem::replace(&mut self.state, ServePluginsState::Err)
-        else {
-            unreachable!()
-        };
-        drop(plugin);
-        drop(promise); // Drop on JscStrong releases the slot.
-
-        for route in html_bundle_routes {
-            bun_core::handle_oom(route.on_plugins_rejected());
-        }
-        if let Some(server) = dev_server {
-            if let Some(dev) = server.dev_server_mut() {
-                bun_core::handle_oom(dev.on_plugins_rejected());
-            }
-        }
+        self.fail_pending();
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         global.bun_vm().run_error_handler(err, None);
     }
 
-    /// Clears the pending `server` before it's freed, so a load that settles later can't call into it.
-    pub(crate) fn forget_server(&mut self, server: super::AnyServer) {
-        if let ServePluginsState::Pending { dev_server, .. } = &mut self.state {
-            if *dev_server == Some(server) {
-                *dev_server = None;
+    fn fail_pending(&self) {
+        debug_assert!(self.state.get() == ServePluginsState::Pending);
+        self.state.set(ServePluginsState::Err);
+        self.pending.set(None);
+
+        for route in self.html_bundle_routes.take() {
+            bun_core::handle_oom(route.on_plugins_rejected());
+        }
+        if let Some(server) = self.dev_server.take() {
+            drop(server.with_dev_server(|dev| dev.on_plugins_rejected()));
+        }
+    }
+
+    /// Clears the pending server before it's freed, so a load that settles later can't call into it.
+    pub(crate) fn forget_server(&self) {
+        self.dev_server.set(None);
+    }
+}
+
+pub(crate) struct ServePluginsLoadTask {
+    plugins: RefPtr<ServePlugins>,
+    server: super::PendingRequest,
+}
+
+impl ServePluginsLoadTask {
+    pub(crate) fn run(&self) -> JsResult<()> {
+        if self.server.terminated() {
+            self.plugins.fail_pending();
+            return Ok(());
+        }
+        let global = self.server.global_this();
+        match ServePlugins::load_and_resolve_plugins(&self.plugins, global) {
+            Ok(()) => Ok(()),
+            Err(JsError::Terminated) => {
+                self.plugins.fail_pending();
+                Err(JsError::Terminated)
+            }
+            Err(err) => {
+                self.plugins
+                    .handle_on_reject(global, global.take_exception(err));
+                Ok(())
             }
         }
     }
 }
 
+impl bun_event_loop::BoxedTask for ServePluginsLoadTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServePluginsLoadTask;
+    fn release_unrun(self: Box<Self>) {
+        self.plugins.fail_pending();
+    }
+    /// The server stops with the context that started it (`abort_handle`); `run` checks for that.
+    fn context(&self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
 impl Drop for ServePlugins {
     fn drop(&mut self) {
-        // The promise reaction holds a ref while pending.
-        debug_assert!(!matches!(self.state, ServePluginsState::Pending { .. }));
+        debug_assert!(self.state.get() != ServePluginsState::Pending);
     }
 }
 
@@ -1164,12 +1122,9 @@ pub(crate) fn on_resolve_plugins(
 ) {
     ctx_log!("onResolve");
 
-    // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(context) };
     plugins_result.to_js().ensure_still_alive();
-
-    // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *context }.handle_on_resolve();
+    // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
+    unsafe { RefPtr::from_raw(context) }.handle_on_resolve();
 }
 
 pub(crate) fn on_reject_plugins(
@@ -1180,9 +1135,7 @@ pub(crate) fn on_reject_plugins(
     ctx_log!("onReject");
 
     // SAFETY: `context` was heap-allocated and ref()'d before .then(); this adopts that ref.
-    let _guard = unsafe { RefPtr::from_raw(context) };
-    // SAFETY: pointer was passed via .then() above
-    unsafe { &mut *context }.handle_on_reject(cx.global(), error_js.to_js());
+    unsafe { RefPtr::from_raw(context) }.handle_on_reject(cx.global(), error_js.to_js());
 }
 
 /// The `options` argument of `server.upgrade(request, options)`. Each property is read once.
@@ -1438,21 +1391,8 @@ where
         &self,
         callback: ServePluginsCallback,
     ) -> GetOrStartLoadResult<'_> {
-        if let Some(p) = self.plugins.get() {
-            // Keep `*p` alive across re-entrant JS in `load_and_resolve_plugins`.
-            let p = p.clone();
-            let global = self.global();
-            let server = self.as_any_server();
-            // SAFETY: intrusive refcount permits mutation through any owner. No
-            // other `&mut ServePlugins` is live on this (single-threaded) JS
-            // thread for the call's duration.
-            return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback, server) {
-                Ok(r) => r,
-                Err(JsError::Thrown | JsError::Terminated) => {
-                    panic!("unhandled exception from ServePlugins.getStartOrLoad")
-                }
-                Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            };
+        if let Some(plugins) = self.plugins.get() {
+            return ServePlugins::get_or_start_load(plugins, callback, self.as_any_server());
         }
         // no plugins
         GetOrStartLoadResult::Ready(None)
@@ -1859,12 +1799,10 @@ where
         }
 
         // These get re-applied when we set the static routes again.
-        self.dev_server.with_mut(|dev_server| {
-            if let Some(dev_server) = dev_server.as_deref_mut() {
-                // Prevent a use-after-free in the hash table keys.
-                dev_server.html_router.clear();
-                dev_server.html_router.fallback = None;
-            }
+        self.with_dev_server(|dev_server| {
+            // Prevent a use-after-free in the hash table keys.
+            dev_server.html_router.clear();
+            dev_server.html_router.fallback = None;
         });
 
         // NOTE: `Vec<StaticRouteEntry>` impls `Drop`, so
@@ -2859,15 +2797,15 @@ where
         }
 
         let authorized = 'brk: {
-            let Some(dev_server) = self.dev_server.get().as_deref() else {
-                break 'brk false;
-            };
-
             // The loopback source-IP check below is not enough on its own: a
             // DNS-rebound origin connects from 127.0.0.1 but presents the
             // attacker's hostname in `Host`. Apply the same Host allowlist as
             // the `/_bun/*` routes before disclosing the project root path.
-            if !bake::is_allowed_dev_host(dev_server, req) {
+            let allowed_host = self.dev_server.with_taken(|dev| {
+                dev.as_deref()
+                    .is_some_and(|dev| bake::is_allowed_dev_host(dev, req))
+            });
+            if !allowed_host {
                 break 'brk false;
             }
 
@@ -2886,6 +2824,15 @@ where
             return;
         }
 
+        let json_string = self
+            .dev_server
+            .with_taken(|dev| self.chrome_dev_tools_json(&dev.as_ref().unwrap().graphs.root));
+        resp.write_status(b"200 OK");
+        resp.write_header(b"Content-Type", b"application/json");
+        resp.end(&json_string, resp.should_close_connection());
+    }
+
+    fn chrome_dev_tools_json(&self, root: &[u8]) -> Vec<u8> {
         // They need a 16 byte uuid. It needs to be somewhat consistent. We don't want to store this field anywhere.
 
         // So we first use a hash of the main field:
@@ -2901,7 +2848,6 @@ where
         // And then we use a hash of their project root directory:
         let second_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
-            let root = &self.dev_server.get().as_ref().unwrap().graphs.root;
             let len = root.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&root[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -2923,16 +2869,10 @@ where
         let _ = write!(
             &mut json_string,
             "{{ \"workspace\": {{ \"root\": {}, \"uuid\": \"{}\" }} }}",
-            bun_fmt::format_json_string_utf8(
-                &self.dev_server.get().as_ref().unwrap().graphs.root,
-                Default::default()
-            ),
+            bun_fmt::format_json_string_utf8(root, Default::default()),
             uuid,
         );
-
-        resp.write_status(b"200 OK");
-        resp.write_header(b"Content-Type", b"application/json");
-        resp.end(&json_string, resp.should_close_connection());
+        json_string
     }
 
     pub(crate) fn on_client_error_callback(

@@ -814,4 +814,66 @@ const server = net.createServer().listen(0, '127.0.0.1', () => {
     });
     expect(exitCode).toBe(0);
   });
+
+  test.concurrent("an index setter on Array.prototype does not see the callbacks of queued send() calls", async () => {
+    using dir = tempDir("ipc-queued-callbacks", {
+      "parent.js": `
+const { fork } = require('node:child_process');
+const child = fork('child.js', { stdio: ['pipe', 'inherit', 'inherit', 'ipc'] });
+const server = require('node:net').createServer().listen(0, '127.0.0.1', () => {
+  const sent = [];
+  const send = (name, message = name) => child.send(message, () => sent.push(name));
+  // The child doesn't read yet, so what follows the first message is queued as one write.
+  send('large', Buffer.alloc(1 << 22, 'x').toString());
+  send('a');
+  send('b');
+  let sawCallback = false;
+  Object.defineProperty(Array.prototype, 2, {
+    configurable: true,
+    set(value) {
+      Object.defineProperty(this, 2, { value, writable: true, enumerable: true, configurable: true });
+      if (typeof value !== 'function' || sawCallback) return;
+      sawCallback = true;
+      for (let i = 0; i < 8; i++) child.send('handle', server);
+    },
+  });
+  send('c');
+  delete Array.prototype[2];
+  child.stdin.end();
+  child.on('close', code => {
+    console.log(JSON.stringify({ sawCallback, sent, code }));
+    server.close();
+  });
+});
+`,
+      "child.js": `
+process.stdin.resume().on('end', () => {
+  const got = [];
+  process.on('message', (m, handle) => {
+    handle?.close();
+    got.push(m.slice(0, 6));
+    if (m !== 'c') return;
+    console.log(JSON.stringify(got));
+    process.disconnect();
+  });
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "parent.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(
+      stdout
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+    ).toEqual([["xxxxxx", "a", "b", "c"], { sawCallback: false, sent: ["large", "a", "b", "c"], code: 0 }]);
+    expect(exitCode).toBe(0);
+  });
 });

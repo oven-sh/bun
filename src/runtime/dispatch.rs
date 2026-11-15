@@ -158,7 +158,7 @@ use crate::node::zlib::{
 };
 
 use crate::dns_jsc::Resolver as DNSResolver;
-use crate::server::ServerAllConnectionsClosedTask;
+use crate::server::{ServePluginsLoadTask, ServerAllConnectionsClosedTask};
 
 #[cfg(not(windows))]
 use crate::api::bun_process::Process;
@@ -728,6 +728,11 @@ pub(crate) fn run_task(
         ),
 
         // ── server / bundler / streams ───────────────────────────────────
+        task_tag::ServePluginsLoadTask => boxed_arm!(
+            task,
+            [Bundler],
+            |load: ServePluginsLoadTask| -> JsResult<()> { load.run() }
+        )?,
         task_tag::ServerAllConnectionsClosedTask => boxed_arm!(
             task,
             [Serve],
@@ -833,7 +838,7 @@ fn run_task_cold(task: &Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 85,
+    task_tag::COUNT == 86,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1697,6 +1702,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::S3RefusedRequest => release_boxed_in!([S3Client], S3RefusedRequest),
         task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
+        task_tag::ServePluginsLoadTask => release_boxed_in!([Bundler], ServePluginsLoadTask),
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
         }

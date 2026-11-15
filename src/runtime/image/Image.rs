@@ -8,8 +8,9 @@
 //! work happens off-thread when a terminal (`bytes`/`buffer`/`blob`/
 //! `toBase64`/`metadata`) is awaited, as a `bun_jsc::Job` (`PipelineTask`).
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::mem;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
@@ -24,7 +25,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     self as jsc, ArrayBuffer, EncodedSliceJsc as _, JSGlobalObject, JSPromise, JSValue, JsCell,
-    JsClass as _, JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
+    JsClass as _, JsRef, JsResult, StringJsc as _, Strong, StrongCell, SysErrorJsc as _,
 };
 use bun_sys as sys;
 
@@ -54,7 +55,12 @@ use crate::generated_bindgen::image::js_Image as js;
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 pub(crate) struct Image {
-    source: JsCell<Source>,
+    /// Empty while `unread_blob` is `Some`.
+    source: OnceCell<Source>,
+    /// A Blob with no bytes in memory (`Bun.file()`, `Bun.s3()`, an fd), until `set_source`.
+    unread_blob: StrongCell,
+    /// The bytes that `source` owns. Read on GC threads.
+    estimated_size: AtomicUsize,
     pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
@@ -77,7 +83,9 @@ pub(crate) struct Image {
 impl Default for Image {
     fn default() -> Self {
         Self {
-            source: JsCell::new(Source::JsBuffer),
+            source: OnceCell::new(),
+            unread_blob: StrongCell::default(),
+            estimated_size: AtomicUsize::new(0),
             pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
@@ -106,17 +114,7 @@ pub(crate) enum Source {
     Owned(Vec<u8>),
     /// Owned, NUL-terminated. Read on the worker thread.
     Path(ZBox),
-    /// `Bun.file()`, `Bun.s3()`, an fd-backed Blob — anything whose bytes
-    /// don't exist until read. We hold a Strong on the JS Blob and, at
-    /// terminal time, just call its own `.bytes()` (whatever that means for
-    /// that kind of Blob — file, S3, pipe, slice) and chain the pipeline
-    /// task off the resulting Promise. After the first read completes the
-    /// source is swapped to `.owned` so subsequent terminals reuse the bytes.
-    Blob(Strong),
 }
-
-// `Vec<u8>`, `ZString`, and
-// `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
 // Image-specific (pins typed-array storage for the off-thread pipeline); no `bun_jsc` wrapper.
 unsafe extern "C" {
@@ -260,9 +258,9 @@ impl Image {
             )));
         }
         let mut img = Image::default();
-        img.source.set(source_from_js(global, input)?);
+        img.set_source_from_js(global, input)?;
         apply_options(&mut img, global, options.to_js())?;
-        let borrows_input = matches!(img.source.get(), Source::JsBuffer);
+        let borrows_input = matches!(img.source.get(), Some(Source::JsBuffer));
         let this_value = structure.create(&cx.heap, img);
         if borrows_input {
             js::source_js_set_cached(this_value.to_js(), cx.global(), input);
@@ -279,23 +277,40 @@ impl Image {
     ) -> JsResult<JSValue> {
         let mut img = Image::default();
         apply_options(&mut img, global, options)?;
-        // For Blob receivers `source_from_js` either dupes (in-memory blob) or
+        // For Blob receivers `set_source_from_js` either dupes (in-memory blob) or
         // creates a Strong (file/S3); the cached `sourceJS` slot is only used
         // for the `.js_buffer` path, which a Blob never produces.
-        img.source.set(source_from_js(global, blob_value)?);
-        debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
+        img.set_source_from_js(global, blob_value)?;
+        debug_assert!(!matches!(img.source.get(), Some(Source::JsBuffer)));
         Ok(img.to_js(global))
     }
 
-    pub(crate) fn estimated_size(&self) -> usize {
+    fn set_source_from_js(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<()> {
+        match source_from_js(global, value)? {
+            Some(source) => self.set_source(source),
+            None => self.unread_blob.set(Strong::create(value, global)),
+        }
+        Ok(())
+    }
+
+    /// Ignored once `source` is set: a `PipelineTask` can be reading it.
+    fn set_source(&self, source: Source) {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
         // task-scoped and freed before any GC could observe it.
-        match self.source.get() {
-            Source::JsBuffer | Source::Blob(_) => 0,
+        let size = match &source {
+            Source::JsBuffer => 0,
             Source::Owned(b) => b.len(),
             Source::Path(p) => p.len(),
+        };
+        if self.source.set(source).is_ok() {
+            self.estimated_size.store(size, Ordering::Relaxed);
+            self.unread_blob.clear();
         }
+    }
+
+    pub(crate) fn estimated_size(&self) -> usize {
+        self.estimated_size.load(Ordering::Relaxed)
     }
 }
 
@@ -314,8 +329,8 @@ fn apply_options(img: &mut Image, global: &JSGlobalObject, opt: JSValue) -> JsRe
     Ok(())
 }
 
-/// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot.
-fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
+/// The caller of a `Source::JsBuffer` result puts `value` in the `sourceJS` slot. `None` for a Blob that has to be read first.
+fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Source>> {
     // String → file path or data:/base64 URL. Everything else → bytes.
     if value.is_string() {
         let str = value.to_bun_string(global)?;
@@ -345,10 +360,10 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
                 )));
             }
             out.truncate(r.written);
-            return Ok(Source::Owned(out));
+            return Ok(Some(Source::Owned(out)));
         }
         crate::node::types::Valid::path_null_bytes(s, global)?;
-        return Ok(Source::Path(ZBox::from_bytes(s)));
+        return Ok(Some(Source::Path(ZBox::from_bytes(s))));
     }
     if let Some(ab) = value.as_array_buffer(global) {
         // A resizable/growable buffer can shrink or reallocate underneath any
@@ -365,14 +380,14 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
         }
         // Just remember the JS object — see Source::JsBuffer for why we don't
         // cache the pointer or pin here.
-        return Ok(Source::JsBuffer);
+        return Ok(Some(Source::JsBuffer));
     }
     if let Some(blob) = value.as_class_ref::<Blob>() {
         // In-memory blob: dupe its bytes (the store may be sliced/replaced
         // independently).
         let view = blob.shared_view();
         if !view.is_empty() {
-            return Ok(Source::Owned(view.to_vec()));
+            return Ok(Some(Source::Owned(view.to_vec())));
         }
         // Anything with a backing store but no in-memory view yet
         // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
@@ -380,7 +395,7 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
         // that store type does (file → ReadFile, S3 → fetch, etc.) without
         // knowing about it here.
         if blob.store.get().is_some() {
-            return Ok(Source::Blob(Strong::create(value, global)));
+            return Ok(None);
         }
     }
     Err(global.throw_invalid_arguments(format_args!(
@@ -676,7 +691,7 @@ impl Image {
         this_value: JSValue,
         _global: &JSGlobalObject,
     ) -> Result<(Input, Pin), PinError> {
-        match self.source.get() {
+        match self.source.get().expect("`unread_blob` was read") {
             Source::JsBuffer => {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
@@ -752,8 +767,6 @@ impl Image {
                 },
                 Pin::NONE,
             )),
-            // schedule() peels this off before pin_for_task is reached.
-            Source::Blob(_) => unreachable!(),
         }
     }
 }
@@ -809,10 +822,8 @@ impl Image {
                 // BackendUnavailable (and any other backend error) ⇔ no image present.
                 Err(_) => return Ok(None),
             };
-            let img = Image {
-                source: JsCell::new(Source::Owned(bytes)),
-                ..Default::default()
-            };
+            let img = Image::default();
+            img.set_source(Source::Owned(bytes));
             return Ok(Some(img.into_js(&cx.heap)));
         }
         #[cfg(not(any(target_os = "macos", windows)))]
@@ -878,13 +889,13 @@ impl Image {
         // here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
         let view;
         let bytes: Option<&[u8]> = match self.source.get() {
-            Source::JsBuffer => {
+            Some(Source::JsBuffer) => {
                 view = js::source_js_get_cached(this_value)
                     .and_then(|v: JSValue| v.as_array_buffer(global));
                 view.as_ref().map(ArrayBuffer::byte_slice)
             }
-            Source::Owned(b) => Some(b.as_slice()),
-            Source::Path(_) | Source::Blob(_) => None,
+            Some(Source::Owned(b)) => Some(b.as_slice()),
+            Some(Source::Path(_)) | None => None,
         };
         if let Some(buf) = bytes {
             match codecs::probe(buf, self.max_pixels) {
@@ -1078,8 +1089,8 @@ impl Image {
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
-        if matches!(self.source.get(), Source::Blob(_)) {
-            return BlobReadChain::start(self, cx, this_value, kind, deliver);
+        if let Some(blob_js) = self.unread_blob.get() {
+            return BlobReadChain::start(self, cx, this_value, blob_js, kind, deliver);
         }
         let (input, pin) = match self.pin_for_task(this_value, cx.global()) {
             Ok(i) => i,
@@ -1134,27 +1145,24 @@ impl Image {
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
         bun_removable_features::removable_definition!(Image, Self::encode_for_body);
-        // The body-init contract is synchronous, so a `.blob` source can't go
+        // The body-init contract is synchronous, so an `unread_blob` can't go
         // through the async read chain here. For the common case (file by path)
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
         // BunFiles would block or need network; refuse with a clear message until
         // the body path is made `.Locked`.
-        if let Source::Blob(strong) = self.source.get() {
+        if let Some(blob_js) = self.unread_blob.get() {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
-            let blob_js = strong.get();
             let Some(blob) = blob_js.as_class_ref::<Blob>() else {
                 return Err(global.throw(format_args!("{REFUSE}")));
             };
             // Braced so the `else` can't dangle onto the inner `if` — a null
-            // store would otherwise fall through to `pin_for_task`'s `.blob =>
-            // unreachable`. (The Strong-held wrapper makes that nominally
+            // store would otherwise fall through to `pin_for_task` with no
+            // source. (The Strong-held wrapper makes that nominally
             // unreachable, but this path should throw, not abort, when it isn't.)
             if let Some(store) = blob.store.get() {
                 if let blob_store::Data::File(file) = &store.data {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                        let p = ZBox::from_bytes(path.slice());
-                        // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source.set(Source::Path(p));
+                        self.set_source(Source::Path(ZBox::from_bytes(path.slice())));
                     } else {
                         return Err(global.throw(format_args!("{REFUSE}")));
                     }
@@ -1210,10 +1218,10 @@ fn into_buffer(out: codecs::Encoded, global: &JSGlobalObject) -> JsResult<JSValu
 
 // ───────────────────────────── worker task ──────────────────────────────────
 
-/// `.blob` source: ask the Blob for its bytes via the store-agnostic
+/// `unread_blob`: ask the Blob for its bytes via the store-agnostic
 /// `Blob.readBytesToHandler` (file → ReadFile/ReadFileUV, S3 → S3.download,
 /// memory → dupe), receive the owned `[]u8` directly — never wrapped in a
-/// JSValue — swap it into `image.source = .owned`, and re-enter `schedule()`.
+/// JSValue — store it as `image.source = .owned`, and re-enter `schedule()`.
 /// Promise-of-promise flattens, so the caller sees one `await` for
 /// read+decode+ops+encode. After the first read, subsequent terminals on the
 /// same instance reuse the `.owned` bytes without re-reading.
@@ -1232,16 +1240,13 @@ impl BlobReadChain {
         image: &Image,
         cx: &bun_jsc::JsThread<'_>,
         this_value: JSValue,
+        blob_js: JSValue,
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
         // `deliver` may carry a `.write_dest` Strong; on these defensive
         // early-returns the chain is never created so its Drop can't free it.
         // (Same contract as schedule()'s detached-buffer branch.)
-        let Source::Blob(strong) = image.source.get() else {
-            unreachable!()
-        };
-        let blob_js = strong.get();
         let Some(blob) = blob_js.as_class_ref::<Blob>() else {
             drop(deliver);
             return Err(cx
@@ -1274,21 +1279,10 @@ impl BlobReadChain {
             ReadBytesResult::Ok(bytes) => {
                 let cx = global.js_thread(global.bun_vm().context_of(self.context));
                 let image = self.image.image(&cx);
-                // Concurrent terminals can have started multiple BlobReadChains
-                // (no in-flight serialisation — `start()` re-enters every time
-                // it sees `.blob`). The FIRST resolver wins and swaps to
-                // `.owned`; that buffer is then *borrowed* by `pin_for_task`
-                // into a worker-thread PipelineTask. A later resolver MUST NOT
-                // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and re-enter `schedule()`
-                // on the already-swapped source.
-                if matches!(image.source.get(), Source::Blob(_)) {
-                    image.source.set(Source::Owned(bytes));
-                } else {
-                    drop(bytes);
-                }
+                // Concurrent terminals each start a `BlobReadChain`, so `source` may already be set.
+                image.set_source(Source::Owned(bytes));
                 let this_value = image.this_ref.get().get();
-                // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
+                // `source` is set; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
                 let inner = image.schedule(&cx, this_value, kind, deliver);
                 outer.settle(global, inner)

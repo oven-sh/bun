@@ -6,7 +6,7 @@ use bun_core::fmt::{quote, redacted_npm_url};
 use bun_core::{self, MutableString, strings};
 use bun_http::headers::api::StringPointer;
 use bun_http::{
-    self as http, HTTPClientResult, HTTPVerboseLevel, HeaderBuilder, OwnedRequest,
+    self as http, HTTPClientResult, HTTPVerboseLevel, HeaderBuilder, HeaderCounter, OwnedRequest,
     async_http::Options as AsyncHTTPOptions,
 };
 use bun_url::{PercentEncoding, URL};
@@ -230,12 +230,11 @@ fn append_auth(header_builder: &mut HeaderBuilder, authorization: AuthorizationP
     header_builder.append("npm-auth-type", "legacy");
 }
 
-fn count_auth(header_builder: &mut HeaderBuilder, authorization: AuthorizationParts<'_>) {
+fn count_auth(header_builder: &mut HeaderCounter, authorization: AuthorizationParts<'_>) {
     let Some((scheme, value)) = authorization else {
         return;
     };
-    header_builder.count("Authorization", "");
-    header_builder.content.cap += scheme.len() + value.len();
+    header_builder.count_bytes_value("Authorization", scheme, value);
     header_builder.count("npm-auth-type", "legacy");
 }
 
@@ -510,7 +509,7 @@ impl NetworkTask {
 
         let authorization = scope.authorization_parts(&URL::parse(&url));
 
-        let mut header_builder = HeaderBuilder::default();
+        let mut header_builder = HeaderCounter::default();
 
         count_auth(&mut header_builder, authorization);
 
@@ -522,7 +521,7 @@ impl NetworkTask {
 
         // Left empty if `If-Modified-Since` is sent: the client then takes it from the headers.
         let mut if_modified_since = StringPointer::default();
-        let headers_buf = if header_builder.header_count > 0 {
+        let (entries, headers_buf) = if header_builder.header_count > 0 {
             let accept_header = if needs_extended {
                 ACCEPT_HEADER_VALUE_EXTENDED
             } else {
@@ -533,7 +532,7 @@ impl NetworkTask {
             if trailing_last_modified {
                 header_builder.content.count(last_modified);
             }
-            header_builder.allocate()?;
+            let mut header_builder = header_builder.allocate()?;
 
             append_auth(&mut header_builder, authorization);
 
@@ -546,21 +545,22 @@ impl NetworkTask {
             header_builder.append("Accept", accept_header);
 
             if trailing_last_modified {
-                if_modified_since = StringPointer {
-                    offset: header_builder.content.len as u32,
-                    length: last_modified.len() as u32,
-                };
-                let _ = header_builder.content.append(last_modified);
+                if_modified_since = header_builder.content.append_count(last_modified);
             }
-            debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
-            Cow::Owned(header_builder.content.move_to_slice().into_vec())
+            debug_assert_eq!(
+                header_builder.content.len(),
+                header_builder.content.capacity()
+            );
+            let headers_buf = Cow::Owned(header_builder.content.into_vec());
+            (header_builder.entries, headers_buf)
         } else {
             let header_buf: &'static str = if needs_extended {
                 EXTENDED_HEADERS_BUF
             } else {
                 DEFAULT_HEADERS_BUF
             };
-            header_builder.entries.append(http::headers::Entry {
+            let mut entries = http::headers::EntryList::default();
+            entries.append(http::headers::Entry {
                 name: StringPointer {
                     offset: 0,
                     length: "Accept".len() as u32,
@@ -570,17 +570,10 @@ impl NetworkTask {
                     length: (header_buf.len() - "Accept".len()) as u32,
                 },
             })?;
-            Cow::Borrowed(header_buf.as_bytes())
+            (entries, Cow::Borrowed(header_buf.as_bytes()))
         };
 
-        let mut request = new_request(
-            manager,
-            url,
-            header_builder.entries,
-            headers_buf,
-            false,
-            false,
-        );
+        let mut request = new_request(manager, url, entries, headers_buf, false, false);
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if !last_modified.is_empty()
@@ -713,24 +706,22 @@ impl NetworkTask {
             }
         };
 
-        let mut header_builder = HeaderBuilder::default();
-
         // Configured credentials win over the URL's userinfo, as in npm.
-        match (credentials, &url_authorization) {
-            (Some(_), _) => {
+        let header_builder = match (credentials, &url_authorization) {
+            (None, Some(value)) => HeaderBuilder::from_pairs(&[(b"Authorization", value)])?,
+            _ => {
+                let mut header_builder = HeaderCounter::default();
                 count_auth(&mut header_builder, credentials);
-                header_builder.allocate()?;
+                let mut header_builder = header_builder.allocate()?;
                 append_auth(&mut header_builder, credentials);
+                header_builder
             }
-            (None, Some(value)) => {
-                header_builder.count("Authorization", value);
-                header_builder.allocate()?;
-                header_builder.append("Authorization", value);
-            }
-            (None, None) => {}
-        }
-        debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
-        let headers_buf = Cow::Owned(header_builder.content.move_to_slice().into_vec());
+        };
+        debug_assert_eq!(
+            header_builder.content.len(),
+            header_builder.content.capacity()
+        );
+        let headers_buf = Cow::Owned(header_builder.content.into_vec());
 
         // A manifest says what else has to be fetched, so a burst of tarballs must not hold it up.
         let yields_to_other_requests = true;

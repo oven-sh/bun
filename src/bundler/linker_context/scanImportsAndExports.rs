@@ -730,17 +730,8 @@ pub(crate) fn scan_imports_and_exports(
             // reclaimed when the link pass ends.
             // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
             // which is arena-lifetime by construction.
-            let string_buffer: &mut [u8] = arena.alloc_slice_fill_default::<u8>(string_buffer_len);
-            // `StringBuilder::drop` reconstructs a `Box<[u8]>` from
-            // `ptr`/`cap` and frees it via the global arena. Here the
-            // backing buffer is arena-owned (bumpalo), so dropping would hand
-            // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
-            // the arena reclaims the storage on reset.
-            let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
-                len: 0,
-                cap: string_buffer.len(),
-                ptr: core::ptr::NonNull::new(string_buffer.as_mut_ptr()),
-            });
+            let mut string_buffer: &mut [u8] =
+                arena.alloc_slice_fill_default::<u8>(string_buffer_len);
 
             // Pre-generate symbols for re-exports CommonJS symbols in case they
             // are necessary later. This is done now because the symbols map cannot be
@@ -748,10 +739,12 @@ pub(crate) fn scan_imports_and_exports(
             if is_entry_point && output_format == Format::Esm {
                 let mut copies = AstVec::with_capacity_in(aliases.len(), ast_arena);
                 for alias in aliases {
-                    let original_name = builder.fmt(format_args!(
-                        "export_{}",
-                        bun_core::fmt::fmt_identifier(alias)
-                    ));
+                    let len = bun_core::fmt::buf_print_len(
+                        string_buffer,
+                        format_args!("export_{}", bun_core::fmt::fmt_identifier(alias)),
+                    )
+                    .expect("unreachable");
+                    let original_name = string_buffer.split_off_mut(..len).expect("unreachable");
                     let copy = crate::linker_graph::generate_new_symbol(
                         ast_arena,
                         &mut this.graph.symbols,
@@ -769,13 +762,8 @@ pub(crate) fn scan_imports_and_exports(
             if wrap == WrapKind::Esm {
                 let r#ref = ast.wrapper_ref[id];
                 if r#ref.is_valid() {
-                    let start = builder.len;
-                    builder.append(b"init_");
-                    builder.append(ident);
-                    let end = builder.len;
-                    let original_name = &builder.allocated_slice()[start..end];
                     this.graph.symbols.get_mut(r#ref).unwrap().original_name =
-                        bun_ast::StoreStr::new(original_name);
+                        split_off_concat(&mut string_buffer, b"init_", ident);
                 }
             }
 
@@ -788,16 +776,8 @@ pub(crate) fn scan_imports_and_exports(
                 && export_kind != ExportsKind::Cjs
                 && output_format != Format::InternalBakeDev
             {
-                let start = builder.len;
-                builder.append(b"exports_");
-                builder.append(ident);
-                let end = builder.len;
-                let exports_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
-                let start = builder.len;
-                builder.append(b"module_");
-                builder.append(ident);
-                let end = builder.len;
-                let module_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
+                let exports_name = split_off_concat(&mut string_buffer, b"exports_", ident);
+                let module_name = split_off_concat(&mut string_buffer, b"module_", ident);
 
                 if exports_ref.is_valid() {
                     if let Some(s) = this.graph.symbols.get_mut(exports_ref) {
@@ -813,7 +793,7 @@ pub(crate) fn scan_imports_and_exports(
 
             // End-of-scope assert; relies on there being no
             // early returns inside this block.
-            debug_assert!(builder.len == builder.cap);
+            debug_assert!(string_buffer.is_empty());
 
             // Include the "__export" symbol from the runtime if it was used in the
             // previous step. The previous step can't do this because it's running in
@@ -1337,6 +1317,13 @@ pub(crate) fn scan_imports_and_exports(
     }
 
     Ok(())
+}
+
+/// Writes `prefix` and `name` to the start of `buffer` and advances `buffer` past them.
+fn split_off_concat(buffer: &mut &mut [u8], prefix: &[u8], name: &[u8]) -> bun_ast::StoreStr {
+    let len = prefix.len() + name.len();
+    let written = buffer.split_off_mut(..len).expect("unreachable");
+    bun_ast::StoreStr::new(bun_core::concat_into(written, &[prefix, name]))
 }
 
 #[inline]

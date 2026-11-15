@@ -2241,7 +2241,7 @@ impl PackageManifest {
         };
         debug_assert!(self.pkg.has_extended_manifest());
 
-        let left = group.head.head.range.left;
+        let left = group.first_comparator();
         let mut newest_filtered: Option<Semver::Version> = None;
 
         if let Some(exact) = group.get_exact_version() {
@@ -2312,7 +2312,7 @@ impl PackageManifest {
         group: &Semver::query::Group,
         group_buf: &[u8],
     ) -> Option<FindResult<'_>> {
-        let left = group.head.head.range.left;
+        let left = group.first_comparator();
         // Fast path: exact version
         if let Some(exact) = group.get_exact_version() {
             return self.find_by_version(exact);

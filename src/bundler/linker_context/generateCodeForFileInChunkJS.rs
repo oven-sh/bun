@@ -1,7 +1,8 @@
-use crate::bundled_ast::Flags as AstFlags;
+use crate::bundled_ast::{BundledAstRow, Flags as AstFlags};
 use crate::mal_prelude::*;
 use bun_alloc::ArenaVecExt as _;
 use bun_collections::BoundedArray;
+use core::mem::ManuallyDrop;
 
 use bun_js_printer::renamer;
 use bun_js_printer::{self as js_printer, PrintResult, PrintResultSuccess};
@@ -45,14 +46,6 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
         Index::INVALID
     };
 
-    // referencing everything by array makes the code a lot more annoying :(
-    //
-    // `MultiArrayList::get` returns `ManuallyDrop<BundledAst>` — the
-    // storage retains ownership of every Drop field (`parts`, `symbols`,
-    // `named_imports`, …). The local `flags` mutation below is intentional and
-    // stays scoped to this read view.
-    let mut ast = c.graph.ast.get(source_index);
-
     // For HMR, part generation is entirely special cased.
     // - export wrapping is already done.
     // - imports are split from the main code.
@@ -64,16 +57,27 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 break 'brk; // this is from `bun build --format=internal_bake_dev`
             }
 
-            let hmr_api_ref = ast.wrapper_ref;
-
+            // SAFETY: the copy is neither dropped nor grown. See `Sync for LinkerGraph` for who
+            // else accesses the records that are written through it.
+            let mut import_records = ManuallyDrop::new(unsafe {
+                core::ptr::read(&raw const c.graph.ast.items_import_records()[source_index])
+            });
             for part in parts {
                 let part_stmts: &[Stmt] = part.stmts.slice();
                 if let Err(err) = convert_stmts_for_chunk_for_dev_server(
-                    c, stmts, part_stmts, temp_arena, &mut ast,
+                    c,
+                    stmts,
+                    part_stmts,
+                    temp_arena,
+                    source_index,
+                    &mut import_records,
                 ) {
                     return PrintResult::Err(err.into());
                 }
             }
+
+            let mut ast = BundledAstRow::new(&c.graph.ast, source_index);
+            let hmr_api_ref = ast.wrapper_ref;
 
             let main_stmts_len =
                 stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len();
@@ -201,6 +205,7 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
         }
     }
 
+    let ast = BundledAstRow::new(&c.graph.ast, source_index);
     let mut needs_wrapper = false;
 
     let namespace_export_part_index = bun_ast::NAMESPACE_EXPORT_PART_INDEX;

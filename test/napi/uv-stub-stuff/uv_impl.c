@@ -800,6 +800,136 @@ static napi_value test_cancel_work(napi_env env, napi_callback_info info) {
   return result;
 }
 
+// --- uv_default_loop on another thread ---------------------------------------
+
+static uv_work_t default_loop_work;
+static uv_timer_t default_loop_timer;
+static pthread_t default_loop_caller;
+
+static void print_thread(void) {
+  printf("on the calling thread: %d\n",
+         pthread_equal(pthread_self(), default_loop_caller) != 0);
+  fflush(stdout);
+}
+
+static void default_loop_work_cb(uv_work_t *req) { (void)req; }
+
+static void default_loop_after_work_cb(uv_work_t *req, int status) {
+  (void)req;
+  (void)status;
+  print_thread();
+}
+
+static void default_loop_timer_cb(uv_timer_t *handle) {
+  print_thread();
+  uv_close((uv_handle_t *)handle, NULL);
+}
+
+static napi_value test_default_loop_work(napi_env env,
+                                         napi_callback_info info) {
+  default_loop_caller = pthread_self();
+  uv_queue_work(uv_default_loop(), &default_loop_work, default_loop_work_cb,
+                default_loop_after_work_cb);
+  return NULL;
+}
+
+static napi_value test_default_loop_timer(napi_env env,
+                                          napi_callback_info info) {
+  default_loop_caller = pthread_self();
+  uv_timer_init(uv_default_loop(), &default_loop_timer);
+  uv_timer_start(&default_loop_timer, default_loop_timer_cb, 1, 0);
+  return NULL;
+}
+
+static uv_async_t main_async, other_async;
+static uv_check_t main_check, other_check;
+static uv_idle_t other_idle;
+static uv_prepare_t other_prepare;
+static uv_timer_t stopped_timer, other_timer;
+
+static void other_close_cb(uv_handle_t *handle) {
+  (void)handle;
+  print_thread();
+}
+
+static napi_value start_main_handles(napi_env env, napi_callback_info info) {
+  uv_async_init(uv_default_loop(), &main_async, unused_async_cb);
+  uv_check_init(uv_default_loop(), &main_check);
+  uv_check_start(&main_check, (uv_check_cb)unused_idle_cb);
+  uv_unref((uv_handle_t *)&main_check);
+  uv_timer_init(uv_default_loop(), &stopped_timer);
+  uv_timer_start(&stopped_timer, unused_timer_cb, 1, 1);
+  uv_timer_stop(&stopped_timer);
+  return NULL;
+}
+
+static napi_value close_main_handles(napi_env env, napi_callback_info info) {
+  uv_close((uv_handle_t *)&main_async, NULL);
+  uv_close((uv_handle_t *)&main_check, NULL);
+  uv_close((uv_handle_t *)&stopped_timer, NULL);
+  return NULL;
+}
+
+// Writes nine results, listed in uv.test.ts.
+static void use_main_loop(int32_t *results) {
+  uv_loop_t *loop = uv_default_loop();
+  default_loop_caller = pthread_self();
+
+  results[0] = uv_check_stop(&main_check);
+  uv_unref((uv_handle_t *)&main_async);
+  results[1] = uv_has_ref((uv_handle_t *)&main_async);
+  uv_ref((uv_handle_t *)&main_check);
+  results[2] = uv_has_ref((uv_handle_t *)&main_check);
+  uv_close((uv_handle_t *)&main_async, NULL);
+  results[3] = uv_is_closing((uv_handle_t *)&main_async);
+  uv_close((uv_handle_t *)&main_check, NULL);
+  results[4] = uv_is_closing((uv_handle_t *)&main_check);
+
+  results[5] = uv_async_init(loop, &other_async, unused_async_cb);
+  uv_async_send(&other_async);
+  uv_idle_init(loop, &other_idle);
+  results[6] = uv_idle_start(&other_idle, unused_idle_cb);
+  uv_prepare_init(loop, &other_prepare);
+  results[7] = uv_prepare_start(&other_prepare, (uv_prepare_cb)unused_idle_cb);
+  uv_check_init(loop, &other_check);
+  results[8] = uv_check_start(&other_check, (uv_check_cb)unused_idle_cb);
+  uv_timer_init(loop, &other_timer);
+
+  uv_close((uv_handle_t *)&other_async, other_close_cb);
+  uv_close((uv_handle_t *)&other_idle, other_close_cb);
+  uv_close((uv_handle_t *)&other_prepare, other_close_cb);
+  uv_close((uv_handle_t *)&other_check, other_close_cb);
+  uv_close((uv_handle_t *)&other_timer, other_close_cb);
+}
+
+static napi_value use_main_loop_here(napi_env env, napi_callback_info info) {
+  int32_t results[9];
+  use_main_loop(results);
+  return make_int32_array(env, results, 9);
+}
+
+static void *use_main_loop_thread(void *out) {
+  int32_t *results = out;
+  use_main_loop(results);
+  results[9] = uv_timer_start(&stopped_timer, unused_timer_cb, 1, 0);
+  results[10] = uv_timer_again(&stopped_timer);
+  results[11] = uv_queue_work(uv_default_loop(), &default_loop_work,
+                              default_loop_work_cb, NULL);
+  return NULL;
+}
+
+static napi_value use_main_loop_from_thread(napi_env env,
+                                            napi_callback_info info) {
+  int32_t results[12];
+  pthread_t thread;
+  if (pthread_create(&thread, NULL, use_main_loop_thread, results) != 0) {
+    napi_throw_error(env, NULL, "pthread_create failed");
+    return NULL;
+  }
+  pthread_join(thread, NULL);
+  return make_int32_array(env, results, 12);
+}
+
 // --- uv_idle_t / uv_prepare_t / uv_check_t -----------------------------------
 
 struct watcher_test {
@@ -1253,6 +1383,24 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_cancel_work, NULL, &fn);
   napi_set_named_property(env, exports, "testCancelWork", fn);
+
+  napi_create_function(env, NULL, 0, test_default_loop_work, NULL, &fn);
+  napi_set_named_property(env, exports, "testDefaultLoopWork", fn);
+
+  napi_create_function(env, NULL, 0, test_default_loop_timer, NULL, &fn);
+  napi_set_named_property(env, exports, "testDefaultLoopTimer", fn);
+
+  napi_create_function(env, NULL, 0, start_main_handles, NULL, &fn);
+  napi_set_named_property(env, exports, "startMainHandles", fn);
+
+  napi_create_function(env, NULL, 0, close_main_handles, NULL, &fn);
+  napi_set_named_property(env, exports, "closeMainHandles", fn);
+
+  napi_create_function(env, NULL, 0, use_main_loop_here, NULL, &fn);
+  napi_set_named_property(env, exports, "useMainLoopHere", fn);
+
+  napi_create_function(env, NULL, 0, use_main_loop_from_thread, NULL, &fn);
+  napi_set_named_property(env, exports, "useMainLoopFromThread", fn);
 
   napi_create_function(env, NULL, 0, test_mutex_init_destroy, NULL, &fn);
   napi_set_named_property(env, exports, "testMutexInitDestroy", fn);

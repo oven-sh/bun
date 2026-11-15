@@ -791,8 +791,7 @@ pub struct ParseOptions<'a, 'b> {
 use bun_options_types::schema::api;
 
 // ── type unification (parse_maybe Js/Ts arm) ─────────────────────────────
-// `ModuleType` and `Define` are single nominal types
-// shared between `bun_js_parser` and this crate (canonical defs live in the
+// `ModuleType` and `Define` are shared with `bun_js_parser` (canonical defs live in the
 // lower-tier crate; bundler re-exports). There are no by-value conversion
 // shims — `to_parser_module_type` is an identity fn and `parse_maybe`
 // threads `self.options.define` directly.
@@ -1452,10 +1451,14 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let cache = this_parse.runtime_transpiler_cache;
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source, cache)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    source,
+                    this_parse.runtime_transpiler_cache,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };

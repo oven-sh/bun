@@ -64,7 +64,7 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslCo
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
-/// What other threads hand to the HTTP thread.
+/// The HTTP thread's state that other threads touch.
 struct Inbox {
     /// The uSockets loop of the HTTP thread, null until it has started.
     uws_loop: AtomicPtr<uws::Loop>,
@@ -110,7 +110,7 @@ pub struct HttpThread {
     /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
     /// and processed before `INBOX.tasks` on the next `drainEvents`. Owned by
     /// the HTTP thread; never accessed concurrently.
-    // A request arrives in its box and leaves in it.
+    // `Box` is load-bearing: `schedule` and the result callback pass `Box<AsyncHTTP>`.
     #[expect(clippy::vec_box)]
     deferred_tasks: Vec<Box<AsyncHttp<'static>>>,
     /// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
@@ -1034,7 +1034,7 @@ mod _event_loop_draft {
     fn init_once(opts: &InitOpts) {
         // Initialize the global (with timer
         // started on the calling thread) BEFORE spawning, so `on_start`'s
-        // `crate::http_thread()` finds `Some(..)` and can fill in the contexts.
+        // `crate::http_thread()` finds it initialized and can fill in the contexts.
         // SAFETY: `init_once` runs under `Once`; only the thread spawned below
         // reads `HTTP_THREAD`.
         unsafe {

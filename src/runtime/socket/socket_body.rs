@@ -1583,8 +1583,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // SAFETY: `s` is live, and nothing in this block closes it.
             if let Some(ssl) = unsafe { s.ssl() } {
                 let hostname = this.server_identity_hostname();
-                // SAFETY: this is the handshake handler of `ssl`.
-                if rejected_in_handshake || !unsafe { uws::check_server_identity(ssl, hostname) } {
+                if rejected_in_handshake || !uws::check_server_identity(ssl, hostname) {
                     authorized = false;
                     hostname_mismatch = true;
                     hostname_mismatch_message = Some(

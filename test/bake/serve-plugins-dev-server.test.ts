@@ -5,7 +5,8 @@
 // null (or garbage, depending on build mode) and the DevServer is never told that
 // plugin loading finished, so the request it deferred to `next_bundle` waits forever.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isWindows, tempDir } from "harness";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -552,9 +553,18 @@ test.skipIf(isWindows)("responds to a framework request queued behind the reload
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("server.reload() keeps the DevServer routes while a rejected plugin load fails a request", async () => {
-  using dir = tempDir("serve-plugins-devserver-reject-reload", {
+async function run(files: Record<string, string>) {
+  using dir = tempDir("serve-plugins-first-request", {
     "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": indexHtml,
+    "entry.ts": `console.log("entry");`,
+    ...files,
+  });
+  return await bunRun(join(String(dir), "server.ts"));
+}
+
+test.concurrent("server.reload() keeps the DevServer routes while a rejected plugin load fails a request", async () => {
+  const { stdout, stderr, exitCode } = await run({
     "plugin.ts": parkedPlugin,
     "render.ts": `export function render() { return new Response("rendered"); }`,
     "routes/index.ts": `export default {};`,
@@ -580,39 +590,11 @@ test.concurrent("server.reload() keeps the DevServer routes while a rejected plu
       await server.stop(true);
     `,
   });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "server.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  expect(stdout, stderr).toBe("Plugin Error\n");
+  expect(stdout, stderr).toBe("Plugin Error");
   expect(exitCode).toBe(0);
 });
 
 describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s", development => {
-  async function run(files: Record<string, string>) {
-    using dir = tempDir("serve-plugins-first-request", {
-      "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
-      "index.html": indexHtml,
-      "entry.ts": `console.log("entry");`,
-      ...files,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "server.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
   // server.ts imports the plugin so that setup() runs without waiting for the module to load.
   test("a plugin's setup() can call server.stop(true)", async () => {
     const { stdout, stderr, exitCode } = await run({
@@ -628,7 +610,7 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
         console.log(server.pendingRequests);
       `,
     });
-    expect(stdout, stderr).toBe("ECONNRESET\n0\n");
+    expect(stdout, stderr).toBe("ECONNRESET\n0");
     expect(exitCode).toBe(0);
   });
 
@@ -654,7 +636,7 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
         console.log(server.pendingRequests);
       `,
     });
-    expect(stdout, stderr).toBe("0\n");
+    expect(stdout, stderr).toBe("0");
     expect(exitCode).toBe(0);
   });
 
@@ -670,7 +652,7 @@ describe.concurrent.each(["true", "{ hmr: false }", "false"])("development: %s",
       `,
     });
     expect(stderr.match(/^error: plugin failed on purpose$/gm), stderr).toHaveLength(1);
-    expect(stdout).toBe("500 0\n");
+    expect(stdout).toBe("500 0");
     expect(exitCode).toBe(0);
   });
 });

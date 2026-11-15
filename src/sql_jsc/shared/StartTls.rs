@@ -42,8 +42,7 @@ pub(crate) fn start_tls<T>(
     };
     // SAFETY: `raw` is a live connected socket in a group of its context's `SocketGroups`.
     let groups = unsafe { SocketGroups::of((*raw).group()) };
-    // SAFETY: a live `SSL_CTX*`, made with the connection when its sslmode is not `disable`.
-    let ssl_ctx = unsafe { &mut *secure.expect("sslmode asks for TLS").as_ptr() };
+    let ssl_ctx = secure.expect("sslmode asks for TLS");
     // What the dispatch (uws_handlers.rs) reads from the slot. `Option<*mut T>` is twice the size.
     let ext_size = size_of::<Option<NonNull<T>>>() as i32;
     // SAFETY: `raw` is live. `adopt_tls` may move the socket.

@@ -106,7 +106,7 @@ impl UpgradeClientRef {
 
     fn tunnel_server_identity(
         self,
-        ssl: &mut bun_boringssl::c::SSL,
+        ssl: &bun_boringssl::c::SSL,
         hostname: &[u8],
     ) -> bun_boringssl::ServerIdentity {
         match self {
@@ -121,7 +121,7 @@ impl UpgradeClientRef {
 
     fn accepts_tunnel_peer(
         self,
-        ssl: Option<&mut bun_boringssl::c::SSL>,
+        ssl: Option<&bun_boringssl::c::SSL>,
         chain_verified: bool,
         hostname: &[u8],
     ) -> bool {
@@ -233,6 +233,7 @@ impl WebSocketProxyTunnel {
                 on_session: None,
                 on_keylog: None,
                 server_identity: Some(Self::server_identity),
+                alpn_select: None,
             },
         )
         .map_err(|_| crate::Error::InvalidOptions)?;
@@ -244,7 +245,7 @@ impl WebSocketProxyTunnel {
         if reject_unauthorized {
             wrapper.set_inline_reject();
         }
-        let ssl = wrapper.ssl.get();
+        let ssl = wrapper.ssl();
 
         // Configure SNI with hostname.
         //
@@ -254,22 +255,18 @@ impl WebSocketProxyTunnel {
         // `&SslWrapper` across the `on_open` dispatch. The observable order vs
         // BoringSSL is identical: SNI is set on the `SSL*` before the handshake
         // is driven.
-        if let Some(ssl_ptr) = ssl {
+        if let Some(ssl) = ssl {
             if let Some(hostname) = this.sni_hostname.as_deref() {
                 if !bun_core::ip_address::is_ip_host(hostname) {
-                    // Set SNI hostname
-                    let hostname_z = bun_core::ZBox::from_vec_with_nul(hostname.to_vec());
                     // Route through bun_http's
                     // tier-neutral helper which does SNI + ALPN(h1) (no
                     // verify-hostname — that is checked manually in
                     // `on_handshake`).
-                    // `hostname_z` is a NUL-terminated owned buffer in scope.
                     bun_http::configure_http_client_with_alpn(
-                        bun_opaque::opaque_deref_mut(ssl_ptr.as_ptr()),
-                        hostname_z.as_ptr(),
+                        ssl,
+                        hostname,
                         bun_http::AlpnOffer::H1,
                     );
-                    // hostname_z dropped here (owned NUL-terminated copy)
                 }
             }
         }
@@ -287,7 +284,7 @@ impl WebSocketProxyTunnel {
     /// SSLWrapper callback: the name check inside the handshake. The WebSocket decides.
     fn server_identity(
         this: ThisPtr<Self>,
-        ssl: &mut bun_boringssl::c::SSL,
+        ssl: &bun_boringssl::c::SSL,
     ) -> bun_boringssl::ServerIdentity {
         match (this.upgrade_client.get(), this.sni_hostname.as_deref()) {
             (Some(upgrade_client), Some(hostname)) => {
@@ -354,11 +351,7 @@ impl WebSocketProxyTunnel {
             return;
         }
 
-        let ssl = this
-            .wrapper
-            .get()
-            .and_then(|w| w.ssl.get())
-            .map(|ssl| bun_opaque::opaque_deref_mut(ssl.as_ptr()));
+        let ssl = this.wrapper.get().and_then(|w| w.ssl());
         let accepted = upgrade_client.accepts_tunnel_peer(
             ssl,
             ssl_error.error_no == 0,

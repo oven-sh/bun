@@ -12,7 +12,7 @@
 //! and integrates with Bun's event loop for timeouts and async operations. It maintains
 //! JavaScript callbacks for handling connection events and errors.
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::{CStr, c_uint, c_void};
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
@@ -29,7 +29,7 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 bun_output::declare_scope!(UpgradedDuplex, visible);
 
 pub(crate) struct UpgradedDuplex {
-    pub wrapper: JsCell<Option<WrapperType>>,
+    pub wrapper: OnceCell<WrapperType>,
     /// The owning `JSTLSSocket` wrapper. Its `internalFields` root `origin` and
     /// the four listener thunks; the `JSValue` fields below are read-side
     /// shadows of those slots.
@@ -110,7 +110,8 @@ pub(crate) struct Handlers {
     /// An NSS key-log line - node's `'keylog'` event.
     pub(crate) on_keylog: fn(*mut (), &[u8]),
     pub(crate) server_identity:
-        fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
+        fn(*mut (), &bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
+    pub(crate) alpn_select: super::ssl_wrapper::AlpnSelectFn<*mut ()>,
 }
 
 use crate::jsc_hooks::timer_all;
@@ -146,7 +147,7 @@ impl UpgradedDuplex {
 
     #[inline]
     fn wrapper_ref(&self) -> Option<&WrapperType> {
-        self.wrapper.get().as_ref()
+        self.wrapper.get()
     }
 
     /// Holds a ref on the owning context until the returned guard drops.
@@ -202,11 +203,21 @@ impl UpgradedDuplex {
 
     fn server_identity(
         this: *mut Self,
-        ssl: &mut bun_boringssl_sys::SSL,
+        ssl: &bun_boringssl_sys::SSL,
     ) -> bun_boringssl::ServerIdentity {
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
         (this.handlers.server_identity)(this.handlers.ctx, ssl)
+    }
+
+    fn alpn_select<'a>(
+        this: *mut Self,
+        ssl: &bun_boringssl_sys::SSL,
+        offered: &'a [u8],
+    ) -> bun_boringssl::AlpnSelection<'a> {
+        // SAFETY: see handler note above.
+        let this = unsafe { &*this };
+        (this.handlers.alpn_select)(this.handlers.ctx, ssl, offered)
     }
 
     fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
@@ -479,7 +490,7 @@ impl UpgradedDuplex {
             js_wrapper,
             origin: Cell::new(origin),
             global: Some(GlobalRef::from(global)),
-            wrapper: JsCell::new(None),
+            wrapper: OnceCell::new(),
             handlers,
             ssl_error: JsCell::new(CertError::default()),
             on_data_callback: Cell::new(JSValue::ZERO),
@@ -564,12 +575,13 @@ impl UpgradedDuplex {
             on_session: Some(Self::on_session),
             on_keylog: Some(Self::on_keylog),
             server_identity: Some(Self::server_identity),
+            alpn_select: Some(Self::alpn_select),
         }
     }
 
     fn install_and_start(&self, wrapper: WrapperType, verify: ServerVerify) {
-        self.wrapper.set(Some(wrapper));
-        let w = self.wrapper_ref().unwrap();
+        debug_assert!(self.wrapper.get().is_none(), "TLS was started twice");
+        let w = self.wrapper.get_or_init(|| wrapper);
         w.set_server_verify(verify.request_cert, verify.reject_unauthorized);
         w.start();
     }
@@ -590,7 +602,7 @@ impl UpgradedDuplex {
     /// memoised `SecureContext` can be reused on the duplex/named-pipe path.
     pub(crate) fn start_tls_with_ctx(
         &self,
-        ctx: bun_boringssl_sys::OwnedSslCtx,
+        ctx: &bun_boringssl_sys::SSL_CTX,
         is_client: bool,
         verify: ServerVerify,
     ) -> Result<(), crate::Error> {
@@ -673,12 +685,6 @@ impl UpgradedDuplex {
         !self.is_closed()
     }
 
-    fn ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
-        self.wrapper_ref()
-            .and_then(|w| w.ssl.get())
-            .map(|p| p.as_ptr())
-    }
-
     #[uws_callback(export = "UpgradedDuplex__ssl_error", no_catch)]
     pub(crate) fn ssl_error(&self) -> us_bun_verify_error_t {
         let err = self.ssl_error.get();
@@ -726,20 +732,8 @@ impl UpgradedDuplex {
         // clear the timer
         self.set_timeout(0);
 
-        // Neuter in place rather than `self.wrapper.set(None)`: `teardown()`
-        // can run re-entrantly from `on_close` while a
-        // `SSLWrapper::handle_traffic` frame is still on the stack with a
-        // `&SSLWrapper` into the `Some` payload. Assigning `None` runs `Drop`
-        // (fine - `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
-        // `Option::None` value over the slot, whose payload bytes are stack
-        // garbage - the in-flight frame's `self.ssl` then reads junk and
-        // `flush_pending_events` UAFs into BoringSSL. `deinit()` alone leaves
-        // `ssl == None` / `closed_notified` readable so those guards work; the
-        // `Option` is dropped for real when the parent `DuplexUpgradeContext`
-        // is freed, by the hop it queues once no entry point holds it. See
-        // WindowsNamedPipe's WRAPPER_BUSY for the sibling pattern.
         if let Some(w) = self.wrapper_ref() {
-            w.deinit();
+            w.stop();
         }
 
         // Neuter the listener thunks so a late `origin` event sees null
@@ -858,35 +852,24 @@ pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
 // the runtime without an upward crate dep. Signatures MUST match the
 // `unsafe extern "C"` block there.
 //
-// All but `ssl` are emitted by `#[uws_callback(export = "...")]` on the
-// inherent methods above; `ssl` keeps a hand-written shim because the safe
-// method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
-// raw pointer.
+// The other `UpgradedDuplex__*` symbols are emitted by `#[uws_callback(export = "...")]` above.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[unsafe(no_mangle)]
-extern "C" fn UpgradedDuplex__set_inline_reject(this: *const c_void) {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    if let Some(wrapper) = unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() } {
+extern "C" fn UpgradedDuplex__set_inline_reject(this: &UpgradedDuplex) {
+    if let Some(wrapper) = this.wrapper_ref() {
         wrapper.set_inline_reject();
     }
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn UpgradedDuplex__latest_session(
-    this: *const c_void,
-) -> *mut bun_boringssl_sys::SSL_SESSION {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe { (*this.cast::<UpgradedDuplex>()).wrapper_ref() }
-        .map_or(core::ptr::null_mut(), |wrapper| wrapper.latest_session())
+    this: &UpgradedDuplex,
+) -> Option<bun_boringssl_sys::OwnedSslSession> {
+    this.wrapper_ref()?.latest_session()
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn UpgradedDuplex__ssl(this: *const c_void) -> *mut bun_boringssl_sys::SSL {
-    // SAFETY: `this` is a live `*const UpgradedDuplex` from the uws_sys opaque handle.
-    unsafe {
-        (*this.cast::<UpgradedDuplex>())
-            .ssl()
-            .unwrap_or(core::ptr::null_mut())
-    }
+extern "C" fn UpgradedDuplex__ssl(this: &UpgradedDuplex) -> Option<&bun_boringssl_sys::SSL> {
+    this.wrapper_ref()?.ssl()
 }

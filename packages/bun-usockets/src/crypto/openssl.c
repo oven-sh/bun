@@ -247,6 +247,8 @@ extern int us_ssl_wrapper_server_identity(void *wrapper, SSL *ssl);
 extern int us_ssl_wrapper_identity_checked(void *wrapper);
 extern void us_ssl_wrapper_new_session(void *wrapper, SSL_SESSION *session);
 extern void us_ssl_wrapper_keylog(void *wrapper, const char *line, size_t length);
+extern int us_ssl_wrapper_alpn_select(void *wrapper, SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                                      const unsigned char *in, unsigned int inlen);
 
 static inline void *us_ssl_wrapper(const SSL *ssl) {
   return us_ssl_wrapper_ex_idx >= 0 ? SSL_get_ex_data(ssl, us_ssl_wrapper_ex_idx) : NULL;
@@ -500,10 +502,9 @@ static long BIO_s_custom_ctrl(BIO *bio, int cmd, long num, void *user) {
  * flag is saved-and-zeroed so a write or close_notify for a different socket
  * inside the callback goes to that socket's fd via the per-record BIO path
  * instead of appending to the interrupted handshake's batch. */
-int us_internal_ssl_loop_state_slots(void) { return US_SSL_LOOP_STATE_SLOTS; }
+#define US_SSL_LOOP_STATE_SLOTS 6
 
-void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
-  SSL *ssl = (SSL *)ssl_ptr;
+static void us_internal_ssl_loop_state_save(SSL *ssl, void **out) {
   struct loop_ssl_data *d = (struct loop_ssl_data *)BIO_get_data(SSL_get_wbio(ssl));
   out[0] = d;
   out[1] = d ? (void *)d->ssl_socket : NULL;
@@ -514,7 +515,7 @@ void us_internal_ssl_loop_state_save(void *ssl_ptr, void **out) {
   if (d) d->ssl_write_batching = 0;
 }
 
-void us_internal_ssl_loop_state_restore(void **saved) {
+static void us_internal_ssl_loop_state_restore(void **saved) {
   struct loop_ssl_data *d = (struct loop_ssl_data *)saved[0];
   if (!d) return;
   d->ssl_socket = (struct us_socket_t *)saved[1];
@@ -522,6 +523,24 @@ void us_internal_ssl_loop_state_restore(void **saved) {
   d->ssl_read_input_length = (unsigned int)(uintptr_t)saved[3];
   d->ssl_read_input_offset = (unsigned int)(uintptr_t)saved[4];
   d->ssl_write_batching = (int)(uintptr_t)saved[5];
+}
+
+static int us_alpn_select_cb(SSL *ssl, const unsigned char **out, unsigned char *outlen,
+                             const unsigned char *in, unsigned int inlen, void *arg) {
+  (void)arg;
+  void *wrapper = us_ssl_wrapper(ssl);
+  if (wrapper) return us_ssl_wrapper_alpn_select(wrapper, ssl, out, outlen, in, inlen);
+  struct us_socket_t *s = us_ssl_socket(ssl);
+  if (!s) return SSL_TLSEXT_ERR_NOACK;
+  void *saved_loop_state[US_SSL_LOOP_STATE_SLOTS];
+  us_internal_ssl_loop_state_save(ssl, saved_loop_state);
+  int result = us_dispatch_alpn_select(s, ssl, out, outlen, in, inlen);
+  us_internal_ssl_loop_state_restore(saved_loop_state);
+  return result;
+}
+
+void us_ssl_ctx_enable_alpn_select(SSL_CTX *ctx) {
+  SSL_CTX_set_alpn_select_cb(ctx, us_alpn_select_cb, NULL);
 }
 
 /* A send() that no retry can save loses sealed records: nothing may follow them, but what the peer sent is still read. */

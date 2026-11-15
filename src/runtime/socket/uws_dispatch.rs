@@ -7,7 +7,7 @@
 //! kind to `SocketKind` forces a compile error here until every event has an
 //! arm — no silent fallthrough.
 
-use core::ffi::{c_int, c_void};
+use core::ffi::{c_int, c_uint, c_void};
 
 use bun_uws::NewSocketHandler;
 // `SocketKind` / `us_bun_verify_error_t` must come from `bun_uws_sys` — that's
@@ -267,12 +267,11 @@ pub(crate) unsafe extern "C" fn us_dispatch_session(
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_server_identity(
     s: *mut us_socket_t,
-    ssl: *mut bun_boringssl_sys::SSL,
+    ssl: &bun_boringssl_sys::SSL,
 ) -> c_int {
     use bun_boringssl::ServerIdentity::Unchecked;
     use bun_uws_sys::thunk::ExtSlot;
     let s_ref = us_socket_t::opaque_mut(s);
-    let ssl = bun_boringssl_sys::SSL::opaque_mut(ssl);
     let verdict = match s_ref.kind() {
         SocketKind::BunSocketTls => s_ref
             .ext::<NativeRef<true>>()
@@ -305,13 +304,39 @@ pub(crate) extern "C" fn us_dispatch_server_identity(
     verdict as c_int
 }
 
+/// BoringSSL's ALPN select callback, routed to the owner of the socket in the handshake.
+///
+/// # Safety
+/// `offered` must point to `offered_len` bytes that stay readable until BoringSSL has copied from `out`.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn us_dispatch_alpn_select(
+    s: *mut us_socket_t,
+    ssl: &bun_boringssl_sys::SSL,
+    out: &mut *const u8,
+    out_len: &mut u8,
+    offered: *const u8,
+    offered_len: c_uint,
+) -> c_int {
+    // SAFETY: fn contract.
+    let offered = unsafe { core::slice::from_raw_parts(offered, offered_len as usize) };
+    let s_ref = us_socket_t::opaque_mut(s);
+    let tls = match s_ref.kind() {
+        SocketKind::BunSocketTls => s_ref.ext::<NativeRef<true>>().get(),
+        _ => None,
+    };
+    tls.map_or(bun_boringssl::AlpnSelection::NoAck, |tls| {
+        super::TLSSocket::alpn_select(tls, ssl, offered)
+    })
+    .write_to(out, out_len)
+}
+
 /// BoringSSL's new-session callback, routed to the owner of the socket in `SSL_read`: 1 asks for `us_dispatch_session`.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn us_dispatch_new_session(
     s: *mut us_socket_t,
-    session: *mut bun_boringssl_sys::SSL_SESSION,
+    session: &bun_boringssl_sys::SSL_SESSION,
 ) -> c_int {
-    use bun_boringssl_sys::{OwnedSslSession, SSL_SESSION};
+    use bun_boringssl_sys::OwnedSslSession;
     let s_ref = us_socket_t::opaque_mut(s);
     match s_ref.kind() {
         SocketKind::HttpClientTls => {
@@ -322,7 +347,6 @@ pub(crate) extern "C" fn us_dispatch_new_session(
             let Some(tls) = s_ref.ext::<NativeRef<true>>().get() else {
                 return 0;
             };
-            let session = SSL_SESSION::opaque_ref(session);
             tls.latest_session
                 .set(Some(OwnedSslSession::retain(session)));
             1

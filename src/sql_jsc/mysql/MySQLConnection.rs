@@ -305,10 +305,7 @@ impl MySQLConnection {
     }
 
     /// verify-full's name check, asked inside the handshake.
-    pub fn server_identity(
-        &self,
-        ssl: &mut bun_boringssl_sys::SSL,
-    ) -> bun_boringssl::ServerIdentity {
+    pub fn server_identity(&self, ssl: &bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity {
         bun_boringssl::server_identity(ssl, self.native_identity_hostname())
     }
 
@@ -369,19 +366,13 @@ impl MySQLConnection {
                         // match the intended host. Absence of a configured server name is
                         // not a license to skip the check — fail closed.
                         let identity_ok = self.native_identity_hostname().is_none_or(|hostname| {
-                            // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                            let ssl_ptr: *mut bun_boringssl_sys::SSL = self
-                                .socket
-                                .get_native_handle()
-                                .map(|h| h.cast())
-                                .unwrap_or(core::ptr::null_mut());
+                            // SAFETY: the caller is the handshake handler of `socket`, and `ssl` is used at once.
                             !hostname.is_empty()
-                                && !ssl_ptr.is_null()
-                                && uws::check_server_identity(
-                                    // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
-                                    unsafe { &mut *ssl_ptr },
-                                    hostname,
-                                )
+                                && unsafe {
+                                    self.socket.ssl().is_some_and(|ssl| {
+                                        uws::check_server_identity(ssl, hostname)
+                                    })
+                                }
                         });
                         if !identity_ok {
                             self.tls_status = TLSStatus::None;

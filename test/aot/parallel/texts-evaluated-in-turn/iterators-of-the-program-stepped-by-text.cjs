@@ -1,0 +1,44 @@
+// Text evaluated at run time walks iterators of the program and of the host: generators, objects with a next() of their own, results of every layout, done and value of every kind, next() that throws, changes, is bound, a class or no function, walks that end early, one inside the other and while collections run.
+const hidden = t => [t, "0"][process.argv.length > 90 ? 1 : 0], F = (...a) => new Function(...a.slice(0, -1), hidden(a[a.length - 1]));
+const lines = [];
+const text = v => Array.isArray(v) ? "[" + v.map(text) + "]" : v === null ? "null" : typeof v === "function" ? "function" : typeof v === "symbol" ? "symbol" : typeof v === "object" ? "{" + Object.entries(v).map(([k, x]) => k + ":" + text(x)) + "}" : Object.is(v, -0) ? "-0" : typeof v === "bigint" ? v + "n" : typeof v === "string" ? JSON.stringify(v) : String(v);
+const attempt = f => { try { return f(); } catch (e) { return "!" + (e && e.constructor ? e.constructor.name + ":" + String(e.message).slice(0, 40) : e); } };
+const values = [0, -0, 1, 2147483648, 0.5, NaN, "s", "", null, undefined, true, false, 7n, Symbol.iterator, { a: 1 }, [1, 2], () => 1];
+const log = [];
+function* ints(n) { for (let i = 0; i < n; i++) yield i; }
+function* every() { for (const v of values) yield v; return "returned"; }
+function* careful(n) { try { for (let i = 0; i < n; i++) yield "c" + i; } finally { log.push("closed"); } }
+function* throws(at) { for (let i = 0; ; i++) { if (i === at) throw new RangeError("at " + at); yield i; } }
+function* inner() { yield 1; yield* [2, 3]; yield* ints(2); return 9; }
+async function* never() { yield 1; }
+class Walk { constructor(n) { this.n = n; } [Symbol.iterator]() { let i = 0; const n = this.n; return { next() { return i < n ? { value: i++, done: false } : { value: undefined, done: true }; }, return() { log.push("return " + i); return {}; } }; } }
+class Counter { constructor(n) { this.i = 0; this.n = n; } [Symbol.iterator]() { return this; } next() { return this.i < this.n ? { done: false, value: this.i++ } : { done: true, value: this.i }; } }
+class Reused { constructor(n) { this.n = n; this.result = { done: false, value: -1 }; } [Symbol.iterator]() { return this; } next() { this.result.value++; this.result.done = this.result.value >= this.n; return this.result; } }
+class Heir extends Counter { next() { const r = super.next(); return { ...r, extra: 1 }; } }
+const made = (n, result) => ({ [Symbol.iterator]() { let i = 0; return { next() { const r = result(i, n); i++; return r; }, return(v) { log.push("return " + i); return { value: v }; } }; } });
+const sources = {
+  ints: () => ints(5), every: () => every(), careful: () => careful(3), inner: () => inner(), walk: () => new Walk(4), counter: () => new Counter(4), reused: () => new Reused(4), heir: () => new Heir(3), throws: () => throws(2), "throws at once": () => throws(0), empty: () => ints(0),
+  "only done": () => made(3, (i, n) => i < n ? { value: i } : { done: true }), "done of every kind": () => made(values.length, (i, n) => ({ value: i, done: i >= n ? true : values[i] })), "done late": () => made(3, (i, n) => { const r = {}; r.value = i; if (i >= n) r.done = 1; return r; }), "values of every kind": () => made(values.length, (i, n) => i < n ? { done: false, value: values[i] } : { done: true, value: undefined }),
+  "by getters": () => made(3, (i, n) => ({ get done() { log.push("done " + i); return i >= n; }, get value() { log.push("value " + i); return "g" + i; } })), "a proxy": () => made(2, (i, n) => new Proxy({ value: i, done: i >= n }, { get(t, k) { log.push("get " + String(k)); return t[k]; } })), "a class of results": () => { class R { constructor(v, d) { this.value = v; this.done = d; } } return made(3, (i, n) => new R(i, i >= n)); }, inherited: () => made(3, (i, n) => Object.create({ value: "up" + i, done: i >= n })), "no object": () => made(3, i => i), "a string": () => made(3, () => "x"), nothing: () => made(3, () => undefined), "a list": () => made(3, (i, n) => Object.assign(["l" + i], { value: i, done: i >= n })), frozen: () => made(3, (i, n) => Object.freeze({ value: i, done: i >= n })), "in turn": () => made(6, (i, n) => i & 1 ? { value: i, done: false } : i < n ? { done: false, value: "t" + i, more: 1 } : { done: true }), functions: () => made(3, (i, n) => Object.assign(() => i, { value: i, done: i >= n })),
+  "a bound next": () => ({ [Symbol.iterator]() { const c = new Counter(3); return { next: c.next.bind(c) }; } }), "a host next": () => ({ [Symbol.iterator]: () => ({ next: [].values().next }) }), "a class for next": () => ({ [Symbol.iterator]: () => ({ next: class { } }) }), "no next": () => ({ [Symbol.iterator]: () => ({}) }), "next of text": () => ({ [Symbol.iterator]: () => ({ i: 0, next: F("return this.i < 3 ? { value: this.i++, done: false } : { value: 0, done: true };") }) }), "a next that changes": () => { const o = { i: 0, next() { o.next = () => ({ done: true }); return { value: o.i++, done: o.i > 3 }; } }; return { [Symbol.iterator]: () => o }; }, "a proxy for next": () => ({ [Symbol.iterator]: () => { const c = new Counter(2); return { next: new Proxy(() => c.next(), {}) }; } }), "an arrow": () => { let i = 0; return { [Symbol.iterator]: () => ({ next: () => ({ value: i, done: i++ > 2 }) }) }; }, "with arguments": () => ({ [Symbol.iterator]: () => ({ i: 0, next(...a) { return { value: a.length + ":" + (this !== undefined), done: this.i++ > 1 }; } }) }), "with few arguments": () => ({ [Symbol.iterator]: () => ({ i: 0, next(a, b, c) { return { value: [a, b, c], done: this.i++ > 1 }; } }) }),
+  array: () => [1, , 3], string: () => "añ😀", map: () => new Map([[1, 2], [3, 4]]), set: () => new Set([1, "a"]), entries: () => new Map([[1, 2]]).entries(), matches: () => "a1b2".matchAll(/\d/g), arguments: () => (function () { return arguments; })(1, "b"), bytes: () => new Uint8Array([1, 2]), helpers: () => ints(6).map(x => x * 2).filter(x => x % 4), "async one": () => never(), "no iterable": () => 5, params: () => new URLSearchParams("a=1&b=2"), headers: () => new Headers({ x: "1", y: "2" }),
+};
+const uses = {
+  walked: "const out = []; for (const x of s) out.push(x); return out;", counted: "let n = 0; for (const x of s) n++; return n;", "left early": "for (const x of s) return ['left', x];", "broken off": "let n = 0; for (const x of s) { if (++n === 2) break; } return n;", "thrown out of": "let n = 0; for (const x of s) { if (++n === 2) throw new TypeError('thrown'); } return n;", caught: "const out = []; try { for (const x of s) out.push(x); } catch (e) { out.push('caught ' + e.constructor.name); } finally { out.push('finally'); } return out;", "continued": "const out = []; a: for (const i of [1, 2]) for (const x of s) { out.push(i); if (i === 1) continue a; } return out;",
+  spread: "return [...s];", "spread among": "return [0, ...s, 'end'];", called: "return f(...s);", destructured: "const [a, b, ...c] = s; return [c, b, a];", "destructured short": "const [a] = s; return a;", from: "return Array.from(s, x => [x]);", set: "return new Set(s).size;", "passed on": "return [...(function* () { const r = yield* s; yield r; })()];", "of a pattern": "const out = []; for (const { length = 'none' } of [...s].filter(x => x != null)) out.push(length); return out;", nested: "const out = []; for (const x of [...s]) for (const y of g()) out.push([x, y]); return out.length;", awaited: "return typeof (async () => { for await (const x of s) break; })().catch(() => 0).then;",
+};
+for (const [use, body] of Object.entries(uses)) {
+  const f = attempt(() => F("s", "f", "g", body)), seen = [];
+  for (const [of, make] of Object.entries(sources)) for (let i = 0; i < 3; i++) { log.length = 0; const r = attempt(() => f(make(), (...l) => l, () => ints(2))); if (i) seen.push(of + " " + text(r) + (log.length ? " " + log.join() : "")); }
+  lines.push(use + ": " + seen.join(" | "));
+}
+{ // one site for long, of one iterator and then of others, with collections, and a stack that a next() shows
+  const f = F("s", "let n = 0; for (const x of s) n += typeof x === 'number' ? x : 1; return n;"); let n = 0;
+  for (let i = 0; i < 1500; i++) { n += f(i < 900 ? ints(6) : [new Walk(5), new Counter(4), new Reused(3), every(), [1, 2], new Set([3]), new Heir(2)][i % 7]); if (i % 500 === 499 && typeof Bun === "object") Bun.gc(true); }
+  lines.push("one site: " + n);
+  const shown = []; const deep = made(2, (i, n) => { if (i === 1) shown.push(new Error("here").stack.split("\n").slice(1, 3).map(l => l.trim().split(" ").slice(0, 2).join(" ").replace(/\(.*/, "")).join()); return { value: i, done: i >= n }; });
+  f(deep); lines.push("stack: " + shown);
+  const list = F("n", "g", "const out = []; for (let i = 0; i < n; i++) { const it = g(3); let t = 0; for (const x of it) t += x; out.push(t, it.next().done); } return out;");
+  lines.push("made and ended: " + text(list(6, ints)));
+}
+console.log(lines.join("\n"));

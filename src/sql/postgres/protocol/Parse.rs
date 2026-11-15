@@ -17,10 +17,7 @@ pub struct Parse<'a> {
 }
 
 impl<'a> Parse<'a> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
+    pub fn write_internal(&self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
         let parameters = self.params;
         if parameters.len() > u16::MAX as usize {
             return Err(AnyPostgresError::TooManyParameters);

@@ -57,7 +57,7 @@ impl Drop for SuppressMicrotaskDrain<'_> {
 pub struct SpawnSyncEventLoop {
     /// Separate JSC EventLoop instance for this spawnSync
     /// This is a FULL event loop, not just a handle
-    // Boxed: other threads hold its address until `Drop` closes the poster.
+    // Boxed: other threads post to it until `Drop`, which borrows `self` exclusively, closes its poster.
     event_loop: Box<EventLoop>,
 
     /// Completely separate uws.Loop instance - critical for avoiding recursive event loop execution

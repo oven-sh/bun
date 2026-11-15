@@ -4748,7 +4748,7 @@ fn try_find_or_create_file_from_path(
 
 struct S3BlobDownloadTask {
     pub(crate) blob: Blob,
-    /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe.
+    /// JSC_BORROW: the global outlives the task; `BackRef` so the deref is safe.
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) handler: S3ReadHandler,
@@ -4758,7 +4758,7 @@ struct S3BlobDownloadTask {
 type S3ReadHandler = unsafe fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, *mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
-    fn on_s3_download_resolved(mut self, result: S3DownloadResult) -> JsResult<()> {
+    fn on_s3_download_resolved(&mut self, result: S3DownloadResult) -> JsResult<()> {
         let global = self.global_this.get();
         match result {
             S3DownloadResult::Success(response) => {
@@ -4799,7 +4799,7 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let this = S3BlobDownloadTask {
+        let mut this = S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),

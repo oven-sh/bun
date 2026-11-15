@@ -2393,8 +2393,7 @@ impl Resolver {
     }
 
     /// POSIX `FilePoll` callback (kqueue/epoll). Windows drives c-ares via
-    /// libuv (`on_dns_poll_uv`) instead, and the only caller
-    /// (`dispatch::__bun_run_io`) is itself `#[cfg(not(windows))]`.
+    /// libuv (`on_dns_poll_uv`) instead.
     ///
     /// R-2: `&self` (no `noalias`). `Channel::process` (== `ares_process_fd`)
     /// synchronously fires c-ares completion callbacks which re-enter this

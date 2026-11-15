@@ -155,23 +155,6 @@ impl uv_buf_t {
         // SAFETY: caller-supplied (base, len); valid for the buffer's lifetime.
         unsafe { core::slice::from_raw_parts(self.base, self.len as usize) }
     }
-    /// Mutable view of the buffer.
-    ///
-    /// SAFETY: caller asserts that `(base, len)` came from a writeable
-    /// allocation and that no other `&mut`/`&` to that storage is live for the
-    /// returned slice's lifetime. Takes `&mut self` so borrowck rejects the
-    /// obvious double-call aliasing footgun at the type level; this does *not*
-    /// by itself make the call safe (the pointee may still be aliased
-    /// elsewhere).
-    #[inline]
-    pub unsafe fn slice_mut(&mut self) -> &mut [u8] {
-        // See `slice()`: guard `(null, 0)` — `from_raw_parts_mut` requires a
-        // non-null pointer even for zero-length slices.
-        if self.len == 0 || self.base.is_null() {
-            return &mut [];
-        }
-        unsafe { core::slice::from_raw_parts_mut(self.base, self.len as usize) }
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

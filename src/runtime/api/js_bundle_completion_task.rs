@@ -4,6 +4,7 @@ use bun_options_types::TargetExt as _;
 use core::cell::Cell;
 use core::ptr::NonNull;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bun_ast::AstArena;
 use bun_bundler::aot::PluginSetup;
@@ -53,8 +54,8 @@ pub(crate) struct JSBundleCompletionTask {
     /// (see `arm_owner` below), so one for a `Bun.ModuleGraph` that stopped meanwhile runs to
     /// its end and its result is dropped.
     context: jsc::ContextId,
-    /// This build's copy of the VM's env.
-    env: bun_dotenv::Loader,
+    /// This build's copy of the VM's env. `None` while the transpiler loads files into it.
+    env: Option<Arc<bun_dotenv::Loader>>,
     log: bun_ast::Log,
     result: bun_bundler::Result<BuildResult>,
     plugins: Option<JsPtr<Plugin>>,
@@ -186,8 +187,7 @@ impl JSBundleCompletionTask {
         let task = Box::new(JSBundleCompletionTask {
             config,
             context,
-            // Copy on the JS thread because only the JS thread writes to the VM's loader.
-            env: bun_core::handle_oom(vm.env_loader().clone_loaded()),
+            env: Some(Arc::new(bun_dotenv::Loader::clone(vm.env_loader()))),
             log: bun_ast::Log::init(),
             result: Err(bun_bundler::Error::BuildFailed),
             plugins,
@@ -414,7 +414,7 @@ impl JSBundleCompletionTask {
     /// Port of `JSBundleCompletionTask.doCompilation`.
     fn do_compilation(
         config: &JSBundlerConfig,
-        env: &mut bun_dotenv::Loader,
+        env: &bun_dotenv::Loader,
         log: &bun_ast::Log,
         output_files: &mut Vec<OutputFile>,
     ) -> CompileResult {
@@ -709,12 +709,9 @@ impl JSBundleCompletionTask {
         if let Ok(build) = &mut self.result
             && self.config.compile.is_some()
         {
-            let compile_result = Self::do_compilation(
-                &self.config,
-                &mut self.env,
-                &self.log,
-                &mut build.output_files,
-            );
+            let env = self.env.as_deref().expect("set by `build`");
+            let compile_result =
+                Self::do_compilation(&self.config, env, &self.log, &mut build.output_files);
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
             // with owned `Vec<u8>` payloads; drops at end of scope.
 
@@ -1099,7 +1096,7 @@ impl JSBundleCompletionTask {
             {
                 match bun_standalone_graph::StandaloneModuleGraph::target_builtins(
                     &compile.compile_target,
-                    transpiler.env_mut(),
+                    transpiler.env(),
                     Some(&compile.executable_path.list[..]).filter(|p| !p.is_empty()),
                 ) {
                     Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
@@ -1123,9 +1120,7 @@ impl JSBundleCompletionTask {
                 .conditions
                 .append_slice(&[b"development"])?;
         }
-        // `transpiler.env` is the dotenv loader installed by
-        // `Transpiler::init`; non-null and valid for `'a`.
-        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
+        transpiler.resolver.care_about_node_path = true;
         // `Resolver.opts` is the resolver-crate subset
         // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();
@@ -1204,9 +1199,10 @@ impl JSBundleCompletionTask {
     ) -> bun_bundler::Result<BuildResult> {
         let log = &self.log;
         let opts = Self::transform_options(&self.config);
-        let env = Some(&raw mut self.env);
+        let env = self.env.take().expect("a task builds once");
         let transpiler = transpiler.insert(Transpiler::init(ast_arena, log, opts, env)?);
         let config = Self::configure_bundler(&mut self.config, &mut self.declarations, transpiler)?;
+        self.env = Some(Arc::clone(transpiler.env()));
         transpiler.resolver.generation = generation;
 
         // Declared before `bv2` so it outlives the BACKREF in `BundleV2.loop`.

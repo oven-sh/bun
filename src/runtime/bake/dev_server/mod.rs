@@ -511,8 +511,7 @@ pub(crate) struct DevServer {
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
-    // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
-    // the server.
+    // `Fs::FileSystem` singleton, which outlives the server.
     pub(crate) server_transpiler: Transpiler<'static>,
     pub(crate) client_transpiler: Transpiler<'static>,
     /// `Some` with a separate SSR graph.

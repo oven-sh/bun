@@ -20,7 +20,7 @@ use bun_collections::VecExt;
 use bun_core::{CStrList, CStrRef};
 use bun_io::max_buf::Kind;
 use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, ReadState};
-use bun_jsc::{self as jsc, EventLoopHandle};
+use bun_jsc as jsc;
 use bun_spawn::subprocess::PipeState;
 use bun_sys::{self, SystemError};
 
@@ -582,7 +582,7 @@ impl<'a> SpawnArgs<'a> {
     /// Resolve `bin` via PATH (`bun_which::which`).
     pub(crate) fn which(
         &self,
-        event_loop: EventLoopHandle,
+        env_loader: &bun_dotenv::Loader,
         cwd: &[u8],
         bin: &[u8],
     ) -> Option<Vec<u8>> {
@@ -590,14 +590,12 @@ impl<'a> SpawnArgs<'a> {
         // has no PATH). PATH="" (explicit empty) is preserved — that's a
         // deliberate "search nothing" and substituting a default would
         // change argv[0] resolution on existing platforms.
-        // SAFETY: `event_loop.env()` returns the long-lived `*mut Loader`
-        // owned by the VM, which nothing changes before this returns, and
-        // `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string constant.
-        let path = self.path.unwrap_or_else(|| unsafe {
-            if let Some(p) = (*event_loop.env()).get(b"PATH") {
+        let path = self.path.unwrap_or_else(|| {
+            if let Some(p) = env_loader.get(b"PATH") {
                 p
             } else if cfg!(unix) {
-                core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN).to_bytes()
+                // SAFETY: `BUN_DEFAULT_PATH_FOR_SPAWN` is a NUL-terminated C-string constant.
+                unsafe { core::ffi::CStr::from_ptr(BUN_DEFAULT_PATH_FOR_SPAWN) }.to_bytes()
             } else {
                 b""
             }

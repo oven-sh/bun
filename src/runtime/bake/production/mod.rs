@@ -3,10 +3,9 @@
 //! Implements building a Bake application to production
 
 use bun_paths::strings;
-use core::cell::UnsafeCell;
 use core::ptr::NonNull;
 use std::io::Write as _;
-use std::sync::OnceLock;
+use std::sync::Arc;
 
 use bstr::BStr;
 
@@ -68,16 +67,6 @@ fn side_name(s: bun_bundler::options::Side) -> &'static str {
     }
 }
 
-/// Process-lifetime backing storage for the dotenv singleton; `OnceLock` owns
-/// the allocation.
-struct DotenvSingleton {
-    loader: UnsafeCell<dotenv::Loader>,
-}
-// SAFETY: `build_command` runs single-threaded during CLI init; the singleton
-// is set exactly once before any reader exists.
-unsafe impl Sync for DotenvSingleton {}
-static DOTENV_SINGLETON: OnceLock<DotenvSingleton> = OnceLock::new();
-
 pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     bake::print_warning();
 
@@ -131,12 +120,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         b.resolver.opts.install_preference = offline;
         b.options.global_cache = b.resolver.opts.global_cache;
         b.options.install_preference = offline;
-        // SAFETY: `b.env` is the Transpiler-owned `*mut Loader`; store it
-        // as `NonNull` (not `&Loader`) because `configure_defines()` below
-        // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
-        // which would alias a live `&Loader` here. The Loader outlives the
-        // resolver (process-lifetime singleton).
-        b.resolver.env_loader = NonNull::new(b.env);
+        b.resolver.care_about_node_path = true;
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
@@ -365,34 +349,39 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         .unwrap_or(false);
 
     // this is probably wrong
-    // Note: process-lifetime dotenv singleton owned via `OnceLock`
-    // (PORTING.md §Forbidden: no leaking).
-    let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
-        loader: UnsafeCell::new(dotenv::Loader::init()),
-    });
-    // SAFETY: single-threaded CLI init; `get_or_init` guarantees one-time
-    // setup and `backing` is never moved (static storage).
-    let loader = unsafe { &mut *backing.loader.get() };
+    let mut loader = dotenv::Loader::init();
     loader.map.put(b"NODE_ENV", b"production")?;
-    dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
     let unresolved_view = framework.as_bundler_view();
-    let init_transpiler = |renderer, bundler_options| {
+    let init_transpiler = |env, renderer, bundler_options| {
         framework.init_transpiler(
             &options.arena,
             vm.log,
+            env,
             bake::Mode::ProductionStatic,
             renderer,
             &unresolved_view,
             bundler_options,
         )
     };
-    let mut server_transpiler =
-        init_transpiler(bake::Graph::Server, &options.bundler_options.server)?;
-    let mut client_transpiler =
-        init_transpiler(bake::Graph::Client, &options.bundler_options.client)?;
+    let mut server_transpiler = init_transpiler(
+        Arc::new(loader),
+        bake::Graph::Server,
+        &options.bundler_options.server,
+    )?;
+    let mut client_transpiler = init_transpiler(
+        Arc::clone(server_transpiler.env()),
+        bake::Graph::Client,
+        &options.bundler_options.client,
+    )?;
     let mut ssr_transpiler = separate_ssr_graph
-        .then(|| init_transpiler(bake::Graph::Ssr, &options.bundler_options.ssr))
+        .then(|| {
+            init_transpiler(
+                Arc::clone(client_transpiler.env()),
+                bake::Graph::Ssr,
+                &options.bundler_options.ssr,
+            )
+        })
         .transpose()?;
 
     if ctx.bundler_options.bake_debug_disable_minify {
@@ -416,9 +405,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 Box::from(b"_bun/[dir]/[name].[hash].asset.[ext]".as_slice());
         }
     }
-
-    // these share pointers right now, so setting NODE_ENV == production on one should affect all
-    debug_assert!(core::ptr::eq(server_transpiler.env, client_transpiler.env));
 
     if framework
         .resolve(

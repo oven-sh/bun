@@ -1,6 +1,7 @@
 use core::fmt;
 use std::borrow::Cow;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use crate::cli::publish_command as Publish;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
@@ -1652,23 +1653,25 @@ pub(crate) fn pack(
         apply_publish_config(ctx.manager, &json, package_name)?;
     }
 
-    if let Err(err) = RunCommand::configure_env_for_run(
+    match RunCommand::configure_env_for_run(
         &mut *ctx.command_ctx,
         &mut None,
-        Some(std::ptr::from_mut(ctx.manager.env_mut())),
+        // Lent to `configure_env_for_run`, swapped back below.
+        Some(Arc::new(core::mem::take(ctx.manager.env_mut()))),
         ConfigureEnvOptions {
             log_errors: ctx.manager.options.log_level != LogLevel::Silent,
             store_root_fd: false,
         },
     ) {
-        if matches!(err, crate::Error::Alloc(_)) {
-            return Err(PackError::OutOfMemory);
+        Ok((transpiler, _)) => core::mem::swap(ctx.manager.env_mut(), transpiler.env_mut()),
+        Err(crate::Error::Alloc(_)) => return Err(PackError::OutOfMemory),
+        Err(err) => {
+            Output::err_generic(
+                "failed to run pack scripts due to error: {}\n",
+                format_args!("{}", err.name()),
+            );
+            Global::crash();
         }
-        Output::err_generic(
-            "failed to run pack scripts due to error: {}\n",
-            format_args!("{}", err.name()),
-        );
-        Global::crash();
     }
 
     let abs_workspace_path: &[u8] = path::string_paths::without_trailing_slash_windows_path(
@@ -2069,13 +2072,14 @@ fn run_lifecycle_script(
     name: &[u8],
     abs_workspace_path: &[u8],
 ) -> Result<(), PackError> {
+    let silent = ctx.manager.options.log_level == LogLevel::Silent;
     match RunCommand::run_lifecycle_script_foreground(
         ctx.command_ctx,
         script,
         name,
         abs_workspace_path,
         ctx.manager.env_mut(),
-        ctx.manager.options.log_level == LogLevel::Silent,
+        silent,
     ) {
         Ok(()) => Ok(()),
         Err(crate::Error::MissingShell) => {

@@ -1,4 +1,5 @@
 use std::io::Write as _;
+use std::sync::Arc;
 
 use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
@@ -116,7 +117,7 @@ impl BuildCommand {
         let arena: &'static bun_ast::AstArena = crate::cli::cli_arena();
         // In the arena: `exec` diverges, so it is never dropped.
         let this_transpiler: &mut transpiler::Transpiler<'static> = arena.alloc(
-            transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?,
+            transpiler::Transpiler::init(arena, log, ctx.args.clone(), Arc::default())?,
         );
         bun_core::asan::register_root_region(
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
@@ -525,8 +526,7 @@ impl BuildCommand {
             .clone_from(&ctx.bundler_options.env_prefix);
 
         if ctx.bundler_options.production {
-            // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-            unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
+            (this_transpiler.env_mut().map).put(b"NODE_ENV", b"production")?;
         }
 
         this_transpiler.configure_defines()?;
@@ -540,8 +540,7 @@ impl BuildCommand {
         {
             match bun_standalone_module_graph::StandaloneModuleGraph::target_builtins(
                 &ctx.bundler_options.compile_target,
-                // SAFETY: `env` is a process-lifetime singleton.
-                unsafe { &mut *this_transpiler.env },
+                this_transpiler.env(),
                 ctx.bundler_options.compile_executable_path.as_deref(),
             ) {
                 Ok(Some(section)) => options::CompileTargetBuiltins::Target(section),
@@ -566,7 +565,7 @@ impl BuildCommand {
         // `bun_resolver::options::BundleOptions` subset, distinct from the
         // bundler-side `BundleOptions<'a>`; re-project the mutated options.
         this_transpiler.sync_resolver_opts();
-        this_transpiler.resolver.env_loader = core::ptr::NonNull::new(this_transpiler.env);
+        this_transpiler.resolver.care_about_node_path = true;
 
         // Allow tsconfig.json overriding, but always set it to false if --production is passed.
         if ctx.bundler_options.production || ctx.bundler_options.library {
@@ -617,7 +616,7 @@ impl BuildCommand {
         let opt_output_format = this_transpiler.options.output_format;
         let opt_source_map = this_transpiler.options.source_map;
         let opt_transform_only = this_transpiler.options.transform_only;
-        let env_ptr = this_transpiler.env;
+        let env = Arc::clone(this_transpiler.env());
 
         let mut output_files: Vec<options::OutputFile> = 'brk: {
             if ctx.bundler_options.transform_only {
@@ -983,8 +982,7 @@ impl BuildCommand {
                 let trim_plan = match plan_bundle_trimming(
                     compile_target,
                     output_files,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    &env,
                     ctx.bundler_options.compile_executable_path.as_deref(),
                     ctx.bundler_options
                         .compile_exec_argv
@@ -1013,8 +1011,7 @@ impl BuildCommand {
                     root_dir.fd,
                     &opt_public_path,
                     outfile,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    &env,
                     opt_output_format,
                     &ctx.bundler_options.windows,
                     ctx.bundler_options
@@ -1565,7 +1562,7 @@ pub(crate) fn collect_compile_assets(
 pub(crate) fn plan_bundle_trimming(
     target: &bun_options_types::compile_target::CompileTarget,
     output_files: &[options::OutputFile],
-    env: &mut bun_dotenv::Loader,
+    env: &bun_dotenv::Loader,
     executable_path: Option<&[u8]>,
     exec_argv: &[u8],
     flags: bun_standalone_module_graph::StandaloneModuleGraph::Flags,

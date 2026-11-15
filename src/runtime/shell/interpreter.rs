@@ -27,6 +27,7 @@
 
 use bun_collections::VecExt;
 use bun_core::IntrusiveField;
+use bun_dotenv::Loader as DotEnvLoader;
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::BoxedTask;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
@@ -333,6 +334,8 @@ pub(crate) struct Interpreter<'a> {
     /// `bun run` CLI context for `$N` expansion on the mini event loop.
     /// `None` when constructed from JS (no `ContextData` is reachable).
     pub(crate) command_ctx: Option<&'a ContextData>,
+    /// `None` when constructed from JS: the VM has it.
+    env_loader: Option<&'a DotEnvLoader>,
 }
 
 /// Owns the [`Interpreter`], which JS and the event loop reach only through `with_interp`.
@@ -443,6 +446,7 @@ impl<'a> Interpreter<'a> {
     /// `run()`) upgrades them to real `IOWriter`s unless `quiet` was set.
     fn init(
         ctx: Option<&'a ContextData>,
+        env_loader: Option<&'a DotEnvLoader>,
         event_loop: EventLoopHandle,
         shell_interp: NonNull<ShellInterpreter>,
         arena: &'a bun_alloc::Arena,
@@ -530,6 +534,7 @@ impl<'a> Interpreter<'a> {
             exit_code: None,
             vm_args_utf8: Vec::new(),
             command_ctx: ctx,
+            env_loader,
         };
         interpreter.root_io.stdin = IOReader::init(&mut interpreter, stdin_fd);
 
@@ -565,6 +570,7 @@ impl ShellInterpreter {
     unsafe fn init(
         this: NonNull<Self>,
         ctx: Option<&'static ContextData>,
+        env_loader: Option<&'static DotEnvLoader>,
         mut shargs: ShellArgs,
         export_env: EnvMap<'static>,
         cwd: Option<&[u8]>,
@@ -572,8 +578,17 @@ impl ShellInterpreter {
         // SAFETY: caller contract.
         let me = unsafe { this.as_ref() };
         shargs.with_mut(|arena, ast, interp| {
-            Interpreter::init(ctx, me.event_loop, this, arena, *ast, export_env, cwd)
-                .map(|i| *interp = Some(i))
+            Interpreter::init(
+                ctx,
+                env_loader,
+                me.event_loop,
+                this,
+                arena,
+                *ast,
+                export_env,
+                cwd,
+            )
+            .map(|i| *interp = Some(i))
         })?;
         me.args.set(Some(shargs));
         Ok(())
@@ -587,11 +602,11 @@ impl ShellInterpreter {
     /// not bumping `standalone_shell` analytics.
     pub(crate) fn init_and_run_from_file(
         ctx: &ContextData,
-        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
+        env_loader: &DotEnvLoader,
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
+        Self::init_and_run_impl(ctx, env_loader, bun_paths::basename(path), src, None, false)
     }
 
     /// Standalone-shell entrypoint for `bun run <script>` / `bun exec` when
@@ -604,12 +619,12 @@ impl ShellInterpreter {
     /// without a diagnostic.
     pub(crate) fn init_and_run_from_source(
         ctx: &ContextData,
-        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
+        env_loader: &DotEnvLoader,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
     ) -> crate::Result<ExitCode> {
-        Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
+        Self::init_and_run_impl(ctx, env_loader, path_for_errors, src, cwd, true)
     }
 
     /// Shared body for `init_and_run_from_file` / `init_and_run_from_source`.
@@ -618,7 +633,7 @@ impl ShellInterpreter {
     /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &ContextData,
-        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
+        env_loader: &DotEnvLoader,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -657,18 +672,31 @@ impl ShellInterpreter {
         })?;
 
         // ── init ───────────────────────────────────────────────────────────
+        let mini = bun_event_loop::MiniEventLoop::init_global();
         let evtloop = EventLoopHandle::init_mini(mini);
         // SAFETY: only `interp` keeps these borrows, and it is dropped before this returns.
-        // `init_global()` has set the loader, and nothing changes it while the script runs.
-        let (ctx, env_loader) = unsafe { (&*core::ptr::from_ref(ctx), &*evtloop.env()) };
+        let (ctx, env_loader) = unsafe {
+            (
+                &*core::ptr::from_ref(ctx),
+                &*core::ptr::from_ref(env_loader),
+            )
+        };
         let mut export_env = EnvMap::init_with_capacity(env_loader.map.map.count());
         for (key, value) in env_loader.map.map.iter() {
             export_env.insert(EnvStr::init_slice(key), EnvStr::init_slice(&value.value));
         }
         let interp = AliasableBox::new(Self::new(evtloop, None, 0));
         // SAFETY: the box keeps it in place and is never borrowed mutably.
-        let result =
-            unsafe { Self::init(interp.as_non_null(), Some(ctx), shargs, export_env, cwd) };
+        let result = unsafe {
+            Self::init(
+                interp.as_non_null(),
+                Some(ctx),
+                Some(env_loader),
+                shargs,
+                export_env,
+                cwd,
+            )
+        };
         if let Err(e) = result {
             ShellErr::new_sys(&e).throw_mini();
         }
@@ -755,6 +783,11 @@ macro_rules! shell_state_dispatch {
 }
 
 impl<'a> Interpreter<'a> {
+    pub(crate) fn env_loader(&self) -> &DotEnvLoader {
+        self.env_loader
+            .unwrap_or_else(|| bun_jsc::virtual_machine::VirtualMachine::get().env_loader())
+    }
+
     pub(crate) fn shell_interp(&self) -> NonNull<ShellInterpreter> {
         self.shell_interp
     }
@@ -2623,11 +2656,12 @@ pub(crate) fn create_shell_interpreter<'a>(
     let payload = this_value.payload_ptr();
     let cwd = cwd_slice.as_ref().map(|c| c.slice());
     // SAFETY: the payload of `this_value` does not move, and its class has only `&self` methods.
-    let interp = match unsafe { ShellInterpreter::init(payload, None, shargs, export_env, cwd) } {
-        // SAFETY: as above.
-        Ok(()) => unsafe { payload.as_ref() },
-        Err(e) => return Err(ShellErr::new_sys(&e).throw_js(global)),
-    };
+    let interp =
+        match unsafe { ShellInterpreter::init(payload, None, None, shargs, export_env, cwd) } {
+            // SAFETY: as above.
+            Ok(()) => unsafe { payload.as_ref() },
+            Err(e) => return Err(ShellErr::new_sys(&e).throw_js(global)),
+        };
     interp.with_interp(|interp| interp.quiet = quiet);
 
     let js_value = this_value.to_js();

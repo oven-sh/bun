@@ -105,7 +105,9 @@ extern "C" int Bun__writeHTTPDate(char* buffer, size_t length, uint64_t timestam
     time_t timestamp = timestampMs / 1000;
     struct tm tstruct = {};
 #ifdef _WIN32
-    gmtime_s(&tstruct, &timestamp);
+    // gmtime_s fails past the year 3000 and sets every field to -1.
+    if (gmtime_s(&tstruct, &timestamp))
+        return 0;
 #else
     gmtime_r(&timestamp, &tstruct);
 #endif

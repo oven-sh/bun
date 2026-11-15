@@ -1,8 +1,8 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
+use crate::shell::interpreter::{Interpreter, Node, NodeId};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
@@ -11,6 +11,7 @@ pub(crate) struct If {
     pub node: bun_ptr::BackRef<ast::If>,
     pub(crate) io: IO,
     pub(crate) state: IfState,
+    shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -57,13 +58,14 @@ pub(crate) enum ExecBranch {
 impl If {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: Env,
         node: &ast::If,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::If(If {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: IfState::Idle,
@@ -168,7 +170,7 @@ impl If {
                 Action::SpawnStmt(stmt_node) => {
                     let (shell, io) = {
                         let me = interp.as_if(this);
-                        (me.base.shell, me.io.clone())
+                        (me.shell.as_ptr(), me.io.clone())
                     };
                     let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
                     Stmt::start(interp, new_stmt)

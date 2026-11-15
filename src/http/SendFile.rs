@@ -5,9 +5,8 @@ use bun_url::URL;
 // Allocated at the first copy: the executable's zero-filled data is the one mapping that can't opt out of transparent huge pages.
 static COPY_BUFFER: RacyCell<Option<Box<[u8]>>> = RacyCell::new(None);
 
-#[derive(Copy, Clone)]
 pub struct SendFile {
-    pub fd: Fd,
+    pub file: bun_sys::File,
     pub remain: usize,
     pub offset: usize,
     pub content_size: usize,
@@ -53,7 +52,7 @@ impl SendFile {
                 return Status::Done;
             }
             let offset = i64::try_from(self.offset).expect("int cast");
-            let read = match bun_sys::pread(self.fd, &mut buf[..want], offset) {
+            let read = match bun_sys::pread(self.file.fd(), &mut buf[..want], offset) {
                 Ok(0) => return self.at_end_of_file(),
                 Ok(n) => n,
                 Err(err) => return Status::Err(bun_errno::SystemErrno::from(err).into()),
@@ -88,7 +87,7 @@ impl SendFile {
             // this does the syscall directly, without libc
             let val = bun_sys::linux::sendfile(
                 socket_fd.native(),
-                self.fd.native(),
+                self.file.fd().native(),
                 Some(&mut signed_offset),
                 self.remain,
             );
@@ -120,7 +119,7 @@ impl SendFile {
             let signed_offset: i64 = self.offset as u64 as i64;
             // FreeBSD: sendfile(fd, s, offset, nbytes, *sbytes, flags)
             let errcode = bun_sys::get_errno(bun_sys::c::sendfile(
-                self.fd.native(),
+                self.file.fd().native(),
                 socket_fd.native(),
                 signed_offset,
                 adjusted_count as usize,

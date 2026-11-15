@@ -2262,7 +2262,7 @@ impl<'a> HTTPClient<'a> {
         self.is_in_progress()
             && self.allow_retry
             && self.method.is_idempotent()
-            && self.request_body_from_start().is_some()
+            && !self.state.original_request_body.is_stream()
             && self.state.response_stage != ResponseStage::Body
             && self.state.response_stage != ResponseStage::BodyChunk
     }
@@ -2292,7 +2292,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if self.retries_on_close()
-            && let Some(body) = self.request_body_from_start()
+            && let Some(body) = self.take_request_body_from_start()
         {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
@@ -2691,7 +2691,7 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        let request_body = self.request_body_for_redirect();
+        let request_body = self.take_request_body_for_redirect();
 
         self.state.response_message_buffer = MutableString::default();
 
@@ -2725,21 +2725,20 @@ impl<'a> HTTPClient<'a> {
     }
 
     /// The request body as it was before any of it was written, or `None` for a `Stream`, which is consumed as it's written.
-    fn request_body_from_start(&self) -> Option<HTTPRequestBody<'a>> {
-        match self.state.original_request_body {
-            HTTPRequestBody::Bytes(bytes) => Some(HTTPRequestBody::Bytes(bytes)),
-            HTTPRequestBody::Sendfile(mut sendfile) => {
-                sendfile.rewind();
-                Some(HTTPRequestBody::Sendfile(sendfile))
-            }
-            HTTPRequestBody::Stream(_) => None,
+    fn take_request_body_from_start(&mut self) -> Option<HTTPRequestBody<'a>> {
+        let body = &mut self.state.original_request_body;
+        match body {
+            HTTPRequestBody::Bytes(_) => {}
+            HTTPRequestBody::Sendfile(sendfile) => sendfile.rewind(),
+            HTTPRequestBody::Stream(_) => return None,
         }
+        Some(core::mem::replace(body, HTTPRequestBody::Bytes(b"")))
     }
 
     /// A `Stream` body only gets here on a 303, which is already a bodiless GET.
-    fn request_body_for_redirect(&self) -> HTTPRequestBody<'a> {
+    fn take_request_body_for_redirect(&mut self) -> HTTPRequestBody<'a> {
         (self.state.flags.resend_request_body_on_redirect)
-            .then(|| self.request_body_from_start())
+            .then(|| self.take_request_body_from_start())
             .flatten()
             .unwrap_or(HTTPRequestBody::Bytes(b""))
     }

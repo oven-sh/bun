@@ -905,7 +905,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 {
                     continue;
                 }
-                bun_http::async_http::preconnect(url, Vec::new(), None);
+                bun_http::async_http::preconnect(url_str.into(), None);
             }
         })
     }

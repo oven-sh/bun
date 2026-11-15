@@ -1698,8 +1698,8 @@ impl PackageFiles<'_> {
                     continue;
                 }
 
-                let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)?;
-                let _close_in = sys::CloseOnDrop::new(in_file);
+                let in_file = sys::openat(entry.dir, entry.basename, sys::O::RDONLY, 0)
+                    .map(sys::CloseOnDrop::new)?;
 
                 bun_output::scoped_log!(
                     install,
@@ -1716,6 +1716,7 @@ impl PackageFiles<'_> {
                             sys::O::WRONLY | sys::O::CREAT | sys::O::EXCL,
                             0o666,
                         )
+                        .map(sys::CloseOnDrop::new)
                     };
                     match open() {
                         Err(err) if err.get_errno() == sys::E::EEXIST => {
@@ -1742,14 +1743,17 @@ impl PackageFiles<'_> {
                         })?
                     }
                 };
-                let _close_out = sys::CloseOnDrop::new(outfile);
 
-                let stat = sys::fstat(in_file)?;
+                let stat = in_file.stat()?;
                 // Best effort: filesystems without permission bits reject fchmod.
-                let _ = sys::fchmod(outfile, stat.st_mode as bun_sys::Mode);
+                let _ = sys::fchmod(outfile.fd(), stat.st_mode as bun_sys::Mode);
 
-                bun_sys::copy_file::copy_file_with_state(in_file, outfile, &mut copy_file_state)
-                    .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
+                bun_sys::copy_file::copy_file_with_state(
+                    in_file.fd(),
+                    outfile.fd(),
+                    &mut copy_file_state,
+                )
+                .map_err(|err| copy_failed(err.into(), entry.path.as_bytes(), failed_file))?;
             }
 
             Ok(())

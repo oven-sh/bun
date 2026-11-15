@@ -63,7 +63,7 @@ fn create_page_outputs(
             heap,
             Some(NonNull::from(&any_loop)),
             false,
-            NonNull::new(carrier.graph.pool().worker_pool),
+            Some(NonNull::from(carrier.graph.pool().worker_pool())),
             heap,
         );
         bundle.plugins = carrier.plugins;

@@ -1573,8 +1573,7 @@ impl<'a> Installer<'a> {
         let path: &[u8] = self.lockfile().str(self.resolution(entry_id).folder());
         // The folder isn't in the cache, so whether it's on another device is checked for each
         // folder dependency.
-        let folder_dir = sys::open_dir_for_iteration(Fd::cwd(), path)?;
-        let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
+        let folder_dir = sys::Dir::open(path)?;
 
         self.remove_planted_links_in(entry_id, Self::store_path_len())?;
 
@@ -1593,7 +1592,7 @@ impl<'a> Installer<'a> {
             self.append_store_path(&mut dest, entry_id)?;
 
             let mut hardlinker =
-                bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
+                bun_core::handle_oom(Hardlinker::init(folder_dir.fd(), src, dest, skip_dirnames));
             match hardlinker.link() {
                 Ok(()) => true,
                 Err(err) if needs_copy(&err) => false,
@@ -1612,7 +1611,7 @@ impl<'a> Installer<'a> {
         if !hardlinked {
             // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
             #[cfg(not(windows))]
-            sys::set_file_offset(folder_dir, 0)?;
+            sys::set_file_offset(folder_dir.fd(), 0)?;
 
             #[cfg(windows)]
             let mut src_path = OsAutoAbsPath::init();
@@ -1629,7 +1628,7 @@ impl<'a> Installer<'a> {
                 // points into a writable WPathBuffer of `cap` elements.
                 let src_path_len = unsafe {
                     bun_sys::windows::GetFinalPathNameByHandleW(
-                        folder_dir.native(),
+                        folder_dir.fd().native(),
                         ptr,
                         u32::try_from(cap).expect("int cast"),
                         0,
@@ -1655,8 +1654,12 @@ impl<'a> Installer<'a> {
             let mut dest = OsAutoPath::init();
             self.append_store_path(&mut dest, entry_id)?;
 
-            let mut file_copier =
-                bun_core::handle_oom(FileCopier::init(folder_dir, src_path, dest, skip_dirnames));
+            let mut file_copier = bun_core::handle_oom(FileCopier::init(
+                folder_dir.fd(),
+                src_path,
+                dest,
+                skip_dirnames,
+            ));
             if let Err(err) = file_copier.copy() {
                 print_link_error(
                     "copy package",
@@ -1792,8 +1795,8 @@ impl<'a> Installer<'a> {
                     }
 
                     InstallMethod::Hardlink => {
-                        let dir = match sys::open_dir_for_iteration(cache_dir, subpath.slice()) {
-                            Ok(fd) => fd,
+                        let dir = match sys::Dir::borrow(&cache_dir).open_at(subpath.slice()) {
+                            Ok(dir) => dir,
                             Err(err) => {
                                 if PackageManager::verbose_install() {
                                     bun_core::pretty_errorln!(
@@ -1805,7 +1808,6 @@ impl<'a> Installer<'a> {
                                 return Err(TaskError::LinkPackage(err));
                             }
                         };
-                        let _dir_guard = sys::CloseOnDrop::new(dir);
 
                         let mut src =
                             OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
@@ -1813,8 +1815,12 @@ impl<'a> Installer<'a> {
                             break 'backend Err(name_too_long(err));
                         }
 
-                        let mut hardlinker =
-                            bun_core::handle_oom(Hardlinker::init(dir, src, dest_subpath, &[]));
+                        let mut hardlinker = bun_core::handle_oom(Hardlinker::init(
+                            dir.fd(),
+                            src,
+                            dest_subpath,
+                            &[],
+                        ));
                         let Err(err) = hardlinker.link() else {
                             break 'backend Ok(());
                         };
@@ -1832,7 +1838,8 @@ impl<'a> Installer<'a> {
                     }
 
                     _ => {
-                        let dir = sys::open_dir_for_iteration(cache_dir, subpath.slice())
+                        let dir = sys::Dir::borrow(&cache_dir)
+                            .open_at(subpath.slice())
                             .inspect_err(|err| {
                                 print_link_error(
                                     "open cache directory for copyfile",
@@ -1842,15 +1849,18 @@ impl<'a> Installer<'a> {
                                 );
                             })
                             .map_err(TaskError::LinkPackage)?;
-                        let _dir_guard = sys::CloseOnDrop::new(dir);
 
                         let mut src = OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
                         if let Err(err) = PathLike::append(&mut src, subpath.slice()) {
                             break 'backend Err(err);
                         }
 
-                        let mut file_copier =
-                            bun_core::handle_oom(FileCopier::init(dir, src, dest_subpath, &[]));
+                        let mut file_copier = bun_core::handle_oom(FileCopier::init(
+                            dir.fd(),
+                            src,
+                            dest_subpath,
+                            &[],
+                        ));
                         let Err(err) = file_copier.copy() else {
                             break 'backend Ok(());
                         };

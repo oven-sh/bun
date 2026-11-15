@@ -4329,8 +4329,10 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     str: &BunString,
     needs_async: &mut bool,
 ) -> JSValue {
-    let fd: Fd = if !NEEDS_OPEN {
-        pathlike.fd()
+    let (lent, opened);
+    let file: &bun_sys::File = if !NEEDS_OPEN {
+        lent = pathlike.fd();
+        bun_sys::File::borrow(&lent)
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
         match bun_sys::open(
@@ -4341,8 +4343,9 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => {
+                opened = bun_sys::CloseOnDrop::new(result);
                 node::fs::note_opened_for_write(pathlike.path().slice(), true);
-                result
+                &opened
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
@@ -4358,9 +4361,6 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         }
     };
 
-    // Declared before the truncate guard so it drops *after* it (close runs last).
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
-
     // scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
@@ -4371,7 +4371,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // if it's a file descriptor, we assume they want manual control over that behavior
     scopeguard::defer! {
         if truncate.get() {
-            let _ = bun_sys::ftruncate(fd, i64::try_from(written.get()).expect("int cast"));
+            let _ = bun_sys::ftruncate(file.fd(), i64::try_from(written.get()).expect("int cast"));
         }
     }
 
@@ -4379,7 +4379,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
         let decoded = str.to_utf8();
         let mut remain = decoded.slice();
         while !remain.is_empty() {
-            match bun_sys::write(fd, remain) {
+            match bun_sys::write(file.fd(), remain) {
                 bun_sys::Result::Ok(res) => {
                     written.set(written.get() + res);
                     remain = &remain[res..];
@@ -4414,8 +4414,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     bytes: &[u8],
     needs_async: &mut bool,
 ) -> JSValue {
-    let fd: Fd = if !NEEDS_OPEN {
-        pathlike.fd()
+    let (lent, opened);
+    let file: &bun_sys::File = if !NEEDS_OPEN {
+        lent = pathlike.fd();
+        bun_sys::File::borrow(&lent)
     } else {
         let mut file_path = bun_paths::path_buffer_pool::get();
         let flags = if cfg!(not(windows)) {
@@ -4429,8 +4431,9 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
             WRITE_PERMISSIONS,
         ) {
             bun_sys::Result::Ok(result) => {
+                opened = bun_sys::CloseOnDrop::new(result);
                 node::fs::note_opened_for_write(pathlike.path().slice(), true);
-                result
+                &opened
             }
             bun_sys::Result::Err(err) => {
                 if err.get_errno() == bun_sys::E::ENOENT {
@@ -4450,11 +4453,10 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 
     let truncate = NEEDS_OPEN || bytes.is_empty();
     let mut written: usize = 0;
-    let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
     let mut remain = bytes;
     while !remain.is_empty() {
-        match bun_sys::write(fd, remain) {
+        match bun_sys::write(file.fd(), remain) {
             bun_sys::Result::Ok(res) => {
                 written += res;
                 remain = &remain[res..];
@@ -4478,7 +4480,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
     }
 
     if truncate {
-        let _ = bun_sys::ftruncate(fd, i64::try_from(written).expect("int cast"));
+        let _ = bun_sys::ftruncate(file.fd(), i64::try_from(written).expect("int cast"));
     }
 
     JSPromise::resolved_promise_value(global_this, JSValue::js_number(written as f64))

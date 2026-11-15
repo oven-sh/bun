@@ -269,44 +269,41 @@ impl<'a> AsyncHTTP<'a> {
 // Preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-struct Preconnect {
-    _href: Vec<u8>,
+type Href = std::borrow::Cow<'static, [u8]>;
+
+fn on_preconnect_result(href: *mut Href, finished: Finished, _: HTTPClientResult<'_>) {
+    drop(finished);
+    // SAFETY: the box that `preconnect()` leaked; this is its only result.
+    unsafe { bun_core::heap::destroy(href) };
 }
 
-impl Preconnect {
-    fn on_result(this: *mut Preconnect, finished: Finished, _: HTTPClientResult<'_>) {
-        drop(finished);
-        // SAFETY: the box from `preconnect()`, and this is its request's only result.
-        unsafe { bun_core::heap::destroy(this) };
-    }
-
-    /// SAFETY: `this` is the box from `preconnect()`, and its request will have no result.
-    unsafe fn release_at_shutdown(this: *mut ()) {
-        // SAFETY: fn contract.
-        unsafe { bun_core::heap::destroy(this.cast::<Preconnect>()) };
-    }
+/// SAFETY: `href` is the box that `preconnect()` leaked, and its request will have no result.
+unsafe fn release_preconnect_at_shutdown(href: *mut ()) {
+    // SAFETY: fn contract.
+    unsafe { bun_core::heap::destroy(href.cast::<Href>()) };
 }
 
-/// `href` is what `url` points into, unless that is static.
 /// `tls_props` is what the request this is for will pass: a pooled socket is only taken by a request with the same one.
-pub fn preconnect(url: URL<'static>, href: Vec<u8>, tls_props: Option<SSLConfigSharedPtr>) {
+pub fn preconnect(href: Href, tls_props: Option<SSLConfigSharedPtr>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         return;
     }
 
     crate::http_thread::init(&Default::default());
 
-    let this = bun_core::heap::into_raw(Box::new(Preconnect { _href: href }));
+    let href = bun_core::heap::into_raw(Box::new(href));
+    // SAFETY: freed after the request that borrows it.
+    let url = URL::parse(unsafe { &*href });
     let mut async_http = AsyncHTTP::init(
         Method::GET,
         url,
         headers::EntryList::default(),
         b"",
         b"",
-        HTTPClientResultCallback::new_with_release::<Preconnect>(
-            this,
-            Preconnect::on_result,
-            Preconnect::release_at_shutdown,
+        HTTPClientResultCallback::new_with_release(
+            href,
+            on_preconnect_result,
+            release_preconnect_at_shutdown,
         ),
         FetchRedirect::Manual,
         Options {

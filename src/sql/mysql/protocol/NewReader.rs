@@ -1,24 +1,30 @@
+use core::cell::Cell;
+
 use super::any_mysql_error::Error as AnyMySQLError;
 use super::encode_int::decode_length_int;
-use super::stack_reader::PacketReader;
-use crate::shared::data::Data;
+use crate::shared::stack_reader::{ShortRead, StackReader};
 
-/// Structural interface a reader context must provide for packet framing.
-pub trait ReaderContext: Copy {
-    fn mark_message_start(self);
-    // `&self` (not `self`) so the returned borrow can be tied to the context's
-    // buffer lifetime; `Self: Copy` keeps the by-value call sites working.
-    fn peek(&self) -> &[u8];
-    fn ensure_capacity(self, count: usize) -> bool;
-    fn set_offset_from_start(self, offset: usize);
+/// The reader holds a whole packet: more bytes from the socket cannot complete a field.
+impl ShortRead for AnyMySQLError {
+    const SHORT_READ: Self = AnyMySQLError::MalformedPacket;
 }
 
 #[derive(Clone, Copy)]
-pub struct NewReader<C: ReaderContext> {
-    pub wrapped: C,
+pub struct PacketReader<'a> {
+    wrapped: StackReader<'a>,
 }
 
-impl<C: ReaderContext> NewReader<C> {
+impl<'a> PacketReader<'a> {
+    pub fn new(buffer: &'a [u8], offset: &'a Cell<usize>, message_start: &'a Cell<usize>) -> Self {
+        Self {
+            wrapped: StackReader {
+                buffer,
+                offset,
+                message_start,
+            },
+        }
+    }
+
     pub fn mark_message_start(self) {
         self.wrapped.mark_message_start();
     }
@@ -27,7 +33,7 @@ impl<C: ReaderContext> NewReader<C> {
         self.wrapped.set_offset_from_start(offset);
     }
 
-    pub fn peek(&self) -> &[u8] {
+    pub fn peek(&self) -> &'a [u8] {
         self.wrapped.peek()
     }
 
@@ -37,10 +43,8 @@ impl<C: ReaderContext> NewReader<C> {
         }
         Ok(())
     }
-}
 
-impl PacketReader<'_> {
-    pub fn read(self, count: usize) -> Result<Data, AnyMySQLError> {
+    pub fn read(self, count: usize) -> Result<&'a [u8], AnyMySQLError> {
         self.wrapped.read(count)
     }
 
@@ -49,23 +53,18 @@ impl PacketReader<'_> {
             .skip(count.try_into().ok().expect("skip count fits in isize"));
     }
 
-    pub(crate) fn read_z(self) -> Result<Data, AnyMySQLError> {
+    pub(crate) fn read_z(self) -> Result<&'a [u8], AnyMySQLError> {
         self.wrapped.read_z()
     }
 
     pub fn byte(self) -> Result<u8, AnyMySQLError> {
         let data = self.read(1)?;
-        Ok(data.slice()[0])
+        Ok(data[0])
     }
 
     pub fn int<I: ReadableInt>(self) -> Result<I, AnyMySQLError> {
         let data = self.read(I::SIZE)?;
-        // `defer data.deinit()` → Drop on scope exit
-        if I::SIZE == 1 {
-            return Ok(I::from_ne_slice(&data.slice()[..1]));
-        }
-        // Native-endian byte reinterpretation.
-        Ok(I::from_ne_slice(&data.slice()[..I::SIZE]))
+        Ok(I::from_ne_slice(data))
     }
 
     /// MySQL's binary result-row protocol transmits `MYSQL_TYPE_INT24` as a
@@ -73,22 +72,20 @@ impl PacketReader<'_> {
     /// Consuming only 3 leaves the cursor 1 byte behind and corrupts every
     /// subsequent column.
     pub fn int_u24(self) -> Result<u32, AnyMySQLError> {
-        let data = self.read(4)?;
-        let s = data.slice();
+        let s = self.read(4)?;
         Ok(u32::from_le_bytes([s[0], s[1], s[2], 0]))
     }
 
     /// Consume 4 bytes (see [`Self::int_u24`]), decode the low 3
     /// little-endian bytes and sign-extend to i32.
     pub fn int_i24(self) -> Result<i32, AnyMySQLError> {
-        let data = self.read(4)?;
-        let s = data.slice();
+        let s = self.read(4)?;
         let u = u32::from_le_bytes([s[0], s[1], s[2], 0]);
         // sign-extend 24 -> 32
         Ok(((u as i32) << 8) >> 8)
     }
 
-    pub fn encode_len_string(self) -> Result<Data, AnyMySQLError> {
+    pub fn encode_len_string(self) -> Result<&'a [u8], AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
             return self.read(usize::try_from(result.value).expect("int cast"));

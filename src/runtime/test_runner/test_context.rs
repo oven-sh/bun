@@ -115,11 +115,15 @@ impl TestContext {
         execution.groups().get(self.group_index)?.sequences(execution).get(self.sequence_index)
     }
 
+    fn running<'a>(&self, buntest: &'a BunTest, this_value: JSValue) -> Option<&'a ExecutionSequence> {
+        let sequence = self.sequence(buntest)?;
+        (buntest.phase.get() == Phase::Execution && sequence.context.get() == Some(this_value)).then_some(sequence)
+    }
+
     /// `None` if the test has finished.
     fn with_running<R>(&self, this_value: JSValue, f: impl FnOnce(&BunTest, &ExecutionSequence) -> R) -> Option<R> {
         let buntest = self.buntest.upgrade()?;
-        let sequence = self.sequence(&buntest)?;
-        (buntest.phase.get() == Phase::Execution && sequence.context.get() == Some(this_value)).then(|| f(&buntest, sequence))
+        Some(f(&buntest, self.running(&buntest, this_value)?))
     }
 
     fn throw_finished(global: &JSGlobalObject, name: &str) -> jsc::JsError {

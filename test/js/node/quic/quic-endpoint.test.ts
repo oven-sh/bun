@@ -13,6 +13,11 @@ import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOption
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
+const lsanEnv = {
+  BUN_DESTRUCT_VM_ON_EXIT: "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+  LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+};
 
 describe("QuicEndpoint client-engine mode", () => {
   test("an explicit endpoint rejects a connect() in the other mode", async () => {
@@ -380,13 +385,7 @@ describe("endpoint.close() with an unsent stateless reset", () => {
 
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", fixture],
-        env: {
-          ...bunEnv,
-          NODE_NO_WARNINGS: "1",
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
-        },
+        env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...lsanEnv },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -404,7 +403,86 @@ describe("endpoint.close() with an unsent stateless reset", () => {
   );
 });
 
-describe.concurrent("native handles", () => {
+const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+// uSockets closes a UDP socket on a poll error. On Linux it only does so if neither the error queue nor recvmmsg()
+// reports the error, so the shim hides the ICMP error of a closed port from both.
+test.skipIf(!isLinux || !cc)("an endpoint closes with a receive failure if uSockets closes its socket", async () => {
+  using dir = tempDir("quic-receive-failure", {
+    "shim.c": `
+      #define _GNU_SOURCE
+      #include <dlfcn.h>
+      #include <errno.h>
+      #include <sys/types.h>
+
+      #define MSG_ERRQUEUE 0x2000
+
+      static int failed_fd = -1;
+
+      ssize_t recvmsg(int fd, void *msg, int flags) {
+        if (flags & MSG_ERRQUEUE) {
+          failed_fd = fd;
+          errno = EAGAIN;
+          return -1;
+        }
+        return ((ssize_t (*)(int, void *, int)) dlsym(RTLD_NEXT, "recvmsg"))(fd, msg, flags);
+      }
+
+      int recvmmsg(int fd, void *msgs, unsigned len, int flags, void *timeout) {
+        if (fd == failed_fd) {
+          failed_fd = -1;
+          return 0;
+        }
+        return ((int (*)(int, void *, unsigned, int, void *)) dlsym(RTLD_NEXT, "recvmmsg"))(fd, msgs, len, flags, timeout);
+      }
+    `,
+    "fixture.mjs": `
+      import { connect, QuicEndpoint } from "node:quic";
+
+      const gone = await Bun.udpSocket({ hostname: "127.0.0.1" });
+      const address = { address: "127.0.0.1", port: gone.port };
+      gone.close();
+      const endpoint = new QuicEndpoint();
+      const session = await connect(address, { endpoint, alpn: "x" });
+      for (const { status, reason } of await Promise.allSettled([session.opened, session.closed, endpoint.closed])) {
+        console.log(status, reason?.message);
+      }
+    `,
+  });
+  await using compiler = Bun.spawn({
+    cmd: [cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  expect(await compiler.exited).toBe(0);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.mjs"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      NODE_NO_WARNINGS: "1",
+      LD_PRELOAD: [join(String(dir), "shim.so"), bunEnv.LD_PRELOAD].filter(Boolean).join(":"),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.split("\n"), stderr, exitCode }).toEqual({
+    stdout: [
+      "rejected Invalid state: Session was destroyed before it opened",
+      "fulfilled undefined",
+      "rejected QUIC endpoint closed: Receive failure (0)",
+      "",
+    ],
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+describe.concurrent("transferred state and stats, and getters on options", () => {
   async function run(body: string, env = {}) {
     const fixture = `
       import { createPrivateKey } from "node:crypto";
@@ -437,20 +515,7 @@ describe.concurrent("native handles", () => {
         let reads = 0;
         return Object.defineProperty([], 0, { enumerable: true, get: () => (++reads === 2 && callback(), value) });
       }
-      async function createEndpointAndHandle() {
-        let session, handle;
-        Object.defineProperty(Object.prototype, "_pendingQlog", { configurable: true, get() { session ??= this; } });
-        await ignoreErrors(await connect(server.address, client)).opened;
-        delete Object.prototype._pendingQlog;
-        const kOwner = findSymbol(session, "kOwner");
-        Object.defineProperty(Object.prototype, kOwner, {
-          configurable: true,
-          set(value) { handle = Object.defineProperty(this, kOwner, { value, writable: true }); },
-        });
-        const endpoint = new QuicEndpoint();
-        delete Object.prototype[kOwner];
-        return [endpoint, handle];
-      }
+      const binding = require("internal/test/binding").internalBinding("quic");
       const server = await listen(ignoreErrors, { sni: { "*": identity }, alpn: "x", transportParams });
       ${body}
     `;
@@ -496,29 +561,26 @@ describe.concurrent("native handles", () => {
       `,
       mallocEnv,
     );
-    expect(result).toEqual({ stdout: "24,40,56 0\n", stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: "144,24,336 0\n", stderr: "", exitCode: 0 });
   });
 
   test("stats aren't written to freed memory after their ArrayBuffer is transferred", async () => {
     const result = await run(
       `
         ${detachAndCopy}
-        const session = ignoreErrors(await connect(server.address, client));
-        await session.opened;
-        const stream = await session.createBidirectionalStream();
-        stream.stats;
-        BigUint64Array.prototype.constructor = {
-          [Symbol.species]: function (buffer) {
-            return new BigUint64Array(detachAndCopy(buffer));
-          },
-        };
+        const handle = new binding.Endpoint();
+        const session = handle.connect(server.address, { tls: { alpn: nativeAlpn } });
+        const stream = session.openStream(binding.STREAM_DIRECTION_BIDIRECTIONAL);
+        for (const { stats } of [handle, session, stream]) detachAndCopy(stats);
         stream.destroy();
+        session.destroy();
+        handle.releaseSocket();
         console.log(sizes(), written());
         process.exit(0);
       `,
       mallocEnv,
     );
-    expect(result).toEqual({ stdout: "104 0\n", stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: "144,152,336 0\n", stderr: "", exitCode: 0 });
   });
 
   test("connect() rejects if a getter on ca closes the endpoint", async () => {
@@ -536,7 +598,7 @@ describe.concurrent("native handles", () => {
 
   test.each(["transportParams", "qlog"])("connect() throws if the %s getter releases the socket", async name => {
     const result = await run(`
-      const [, handle] = await createEndpointAndHandle();
+      const handle = new binding.Endpoint();
       handle.connect(server.address, { tls: { alpn: nativeAlpn } });
       try {
         handle.connect(server.address, { tls: { alpn: nativeAlpn }, get ${name}() { handle.releaseSocket(); } });
@@ -578,11 +640,7 @@ describe.concurrent("native handles", () => {
           await listen(ignoreErrors, options(onNativeRead(cert, () => console.log(typeof listen(ignoreErrors, options([cert]))))));
           await Promise.all([endpoint.close(), server.close()]);
         `,
-        {
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
-        },
+        lsanEnv,
       );
       expect(result).toEqual({ stdout: "object\n", stderr: "", exitCode: 0 });
     },
@@ -592,20 +650,30 @@ describe.concurrent("native handles", () => {
 
   test("listen() reads its options once, not once per session", async () => {
     const result = await run(`
-      const [endpoint, handle] = await createEndpointAndHandle();
+      const handle = new binding.Endpoint();
+      const stats = new BigUint64Array(handle.stats);
+      // onSessionNew throws: the handle has no QuicEndpoint.
       process.on("uncaughtException", () => {});
-      let reads = 0;
-      handle.listen({ tls: { ...nativeTls, alpn: nativeAlpn }, get qlog() { if (reads++) handle.releaseSocket(); } });
-      reads = 1;
+      let listening = false, reads = 0;
+      handle.listen({
+        tls: { ...nativeTls, alpn: nativeAlpn },
+        get qlog() {
+          if (listening) {
+            reads++;
+            handle.releaseSocket();
+          }
+        },
+      });
+      listening = true;
       // A busy endpoint creates no provisional session, so the session is created in on_new_conn.
-      endpoint.busy = true;
+      handle.markBusy(true);
       ignoreErrors(await connect(handle.address(), client));
-      await until(() => endpoint.stats.packetsReceived > 0n);
-      endpoint.busy = false;
-      await until(() => endpoint.stats.serverSessions > 0n);
+      await until(() => stats[binding.IDX_STATS_ENDPOINT_PACKETS_RECEIVED] > 0n);
+      handle.markBusy(false);
+      await until(() => stats[binding.IDX_STATS_ENDPOINT_SERVER_SESSIONS] > 0n);
       console.log(reads);
       process.exit(0);
     `);
-    expect(result).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: "0\n", stderr: "", exitCode: 0 });
   });
 });

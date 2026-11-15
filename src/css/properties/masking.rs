@@ -112,9 +112,9 @@ pub enum MaskType {
 // `BackgroundSize`/`BackgroundRepeat` gaining those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
-pub struct Mask {
+pub struct Mask<'bump> {
     /// The mask image.
-    pub(crate) image: Image,
+    pub(crate) image: Image<'bump>,
     /// The position of the mask.
     pub(crate) position: Position,
     /// The size of the mask image.
@@ -131,8 +131,8 @@ pub struct Mask {
     pub(crate) mode: MaskMode,
 }
 
-impl Mask {
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+impl<'bump> Mask<'bump> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut image: Option<Image> = None;
         let mut position: Option<Position> = None;
         let mut size: Option<BackgroundSize> = None;
@@ -283,9 +283,9 @@ pub enum MaskBorderMode {
 // those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
-pub struct MaskBorder {
+pub struct MaskBorder<'bump> {
     /// The mask image.
-    pub(crate) source: Image,
+    pub(crate) source: Image<'bump>,
     /// The offsets that define where the image is sliced.
     pub(crate) slice: BorderImageSlice,
     /// The width of the mask image.
@@ -298,10 +298,10 @@ pub struct MaskBorder {
     pub(crate) mode: MaskBorderMode,
 }
 
-impl MaskBorder {
+impl<'bump> MaskBorder<'bump> {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
-    pub fn parse(input: &mut css::Parser) -> css::Result<Self> {
+    pub fn parse(input: &mut css::Parser<'_, 'bump>) -> css::Result<'bump, Self> {
         let mut mode: Option<MaskBorderMode> = None;
         let border_image = BorderImage::parse_with_callback(input, |p: &mut css::Parser| -> bool {
             if mode.is_none() {
@@ -408,7 +408,9 @@ pub enum WebKitMaskSourceType {
     Alpha,
 }
 
-pub(crate) fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
+pub(crate) fn get_webkit_mask_property<'bump>(
+    property_id: &PropertyId,
+) -> Option<PropertyId<'bump>> {
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),

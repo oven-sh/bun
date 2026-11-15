@@ -1,18 +1,14 @@
 //! Per-graph bundler settings (client, server, SSR) and the shared plugin.
 
-use crate::api::js_bundler::Plugin;
+use crate::api::js_bundler::OwnedPlugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
-use crate::bake::jsc;
 use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
-use core::ptr::NonNull;
 
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
 pub(crate) struct SplitBundlerOptions {
-    /// FFI: `jsc.API.JSBundler.Plugin` (`JSBundlerPlugin__create`); deinit
-    /// goes through the C++ side. See LIFETIMES.tsv.
-    pub(crate) plugin: Option<NonNull<jsc::Plugin>>,
+    pub(crate) plugin: Option<OwnedPlugin>,
     pub(crate) client: BuildConfigSubset,
     pub(crate) server: BuildConfigSubset,
     pub(crate) ssr: BuildConfigSubset,
@@ -46,14 +42,6 @@ impl Default for BuildConfigSubset {
 }
 
 impl SplitBundlerOptions {
-    /// `PluginJscExt::destroy` is the paired destructor of `Plugin::create`
-    /// in `parse_plugin_array`: it unprotects the JSCell.
-    pub(crate) fn destroy_plugin(&mut self) {
-        if let Some(p) = self.plugin.take() {
-            Plugin::destroy(p.as_ptr());
-        }
-    }
-
     pub(super) fn parse_plugin_array(
         &mut self,
         plugin_array: JSValue,
@@ -61,16 +49,9 @@ impl SplitBundlerOptions {
     ) -> JsResult<()> {
         // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
         // so `plugins: []` still leaves `self.plugin = Some(_)`.
-        let plugin: NonNull<Plugin> = match self.plugin {
-            Some(p) => p,
-            None => {
-                let p = Plugin::create(global, crate::api::js_bundler::BunPluginTarget::Bun);
-                let p = NonNull::new(p)
-                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
-                self.plugin = Some(p);
-                p
-            }
-        };
+        let plugin = self.plugin.get_or_insert_with(|| {
+            OwnedPlugin::new(global, crate::api::js_bundler::BunPluginTarget::Bun)
+        });
         let empty_object = JSValue::create_empty_object(global, 0);
 
         let mut iter = plugin_array.array_iterator(global)?;
@@ -102,25 +83,15 @@ impl SplitBundlerOptions {
                 }
             };
 
-            // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-            // deref. Handle held live in `self.plugin` (protected JSCell).
-            let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
-                function,
-                empty_object,
-                JSValue::NULL,
-                false,
-                true,
-            )?;
+            let plugin_result =
+                plugin.add_plugin(function, empty_object, JSValue::NULL, false, true)?;
 
             if let Some(promise) = plugin_result.as_any_promise() {
                 promise.set_handled(global.vm());
                 // TODO: remove this call, replace with a promise list that must
                 // be resolved before the first bundle task can begin.
-                // SAFETY: `bun_vm()` returns a non-null `*mut VirtualMachineRef`
-                // live for the lifetime of the global object.
                 global
                     .bun_vm()
-                    .as_mut()
                     .wait_for_promise(promise)
                     .map_err(|stopped| stopped.throw(global))?;
                 match promise.unwrap(global.vm(), bun_jsc::PromiseUnwrapMode::MarkHandled) {

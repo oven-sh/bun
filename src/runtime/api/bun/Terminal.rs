@@ -19,7 +19,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::node::StringOrBuffer;
 use bun_core::EncodedSlice;
 use bun_core::SignalCode;
-use bun_io::Loop as AsyncLoop;
+use bun_io::LoopRef;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
@@ -30,12 +30,14 @@ use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc,
 };
-use bun_sys::{self as sys, Fd, FdExt};
+use bun_sys::{self as sys, Fd, File};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
+#[cfg(windows)]
+use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, IntoRawHandle as _, OwnedHandle};
 
 bun_output::declare_scope!(Terminal, hidden);
 
@@ -56,17 +58,12 @@ pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
 
     /// The master side of the PTY (original fd, used for ioctl operations)
-    /// On Windows this is always invalid_fd; ConPTY uses hpcon for control.
-    master_fd: Cell<Fd>,
+    #[cfg(unix)]
+    master: JsCell<Option<File>>,
 
-    /// Duplicated master fd for reading (POSIX) / overlapped read pipe end (Windows)
-    read_fd: Cell<Fd>,
-
-    /// Duplicated master fd for writing (POSIX) / overlapped write pipe end (Windows)
-    write_fd: Cell<Fd>,
-
-    /// The slave side of the PTY (used by child processes). Unused on Windows.
-    slave_fd: Cell<Fd>,
+    /// The slave side of the PTY (used by child processes).
+    #[cfg(unix)]
+    slave: JsCell<Option<File>>,
 
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
@@ -88,6 +85,12 @@ pub(crate) struct Terminal {
 
     /// Reader for receiving data from the terminal
     reader: JsCell<IOReader>,
+
+    /// Held until the writer closes.
+    writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+
+    /// Held until the reader is done.
+    reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// The JS wrapper, which roots the callbacks in its cached slots. Strong
     /// until no callback can fire, then weak (`maybe_downgrade_after_eof`).
@@ -122,8 +125,6 @@ bitflags::bitflags! {
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
         const READER_STARTED = 1 << 3;
-        const READER_DONE    = 1 << 4;
-        const WRITER_DONE    = 1 << 5;
         /// Set once an inline-created terminal is attached to a spawn; blocks
         /// reuse. Windows: the ConDrv `\Reference` handle is released at spawn.
         /// POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
@@ -332,12 +333,12 @@ impl Terminal {
 
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn ref_(&self) {
-        // SAFETY: `self` derived from a heap-allocated allocation; intrusive
-        // refcount mixin only reads/writes the `ref_count` field via shared
-        // access (Cell), so the &T→*mut cast is sound for `ref_` (no &mut
-        // materialized).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(self.as_ctx_ptr()) };
+    fn is_reader_done(&self) -> bool {
+        self.reader_ref.get().is_none()
+    }
+
+    fn is_writer_done(&self) -> bool {
+        self.writer_ref.get().is_none()
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
@@ -345,14 +346,6 @@ impl Terminal {
     fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
         // SAFETY: `self` is the live heap allocation.
         unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
-    }
-
-    fn deref_(&self) {
-        // SAFETY: `self` derived from a heap-allocated allocation; the RefCount
-        // mixin's `deref` reads/writes `ref_count` via Cell and drops the Box
-        // iff the count hits zero. Callers must treat `self` as
-        // potentially-freed on return (always tail-position in this file).
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(self.as_ctx_ptr()) };
     }
 
     /// Opens the PTY and starts reading. The caller gives the returned ref to the JS wrapper, then calls [`attach`](Self::attach).
@@ -366,10 +359,10 @@ impl Terminal {
         // The intrusive ref_count starts at 1: the JS wrapper's ref.
         let terminal = bun_ptr::RefPtr::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
-            master_fd: Cell::new(pty_result.master),
-            read_fd: Cell::new(pty_result.read_fd),
-            write_fd: Cell::new(pty_result.write_fd),
-            slave_fd: Cell::new(pty_result.slave),
+            #[cfg(unix)]
+            master: JsCell::new(Some(pty_result.master)),
+            #[cfg(unix)]
+            slave: JsCell::new(Some(pty_result.slave)),
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -382,12 +375,12 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            event_loop_handle: EventLoopHandle::init(
-                global_object.bun_vm().as_mut().event_loop().cast(),
-            ),
+            event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop_ptr()),
             global_this: bun_ptr::BackRef::new(global_object),
             writer: JsCell::new(IOWriter::default()),
             reader: JsCell::new(IOReader::init::<Terminal>()),
+            writer_ref: JsCell::new(None),
+            reader_ref: JsCell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
@@ -405,19 +398,16 @@ impl Terminal {
         // Set writer parent
         terminal.writer.with_mut(|w| w.parent = parent_ptr);
 
-        // Start writer with the write fd - adds a ref
+        // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
         match terminal
             .writer
-            .with_mut(|w| w.start(pty_result.write_fd, true))
+            .with_mut(|w| w.start(pty_result.write.fd(), true))
+            .map(|()| pty_result.write.into_raw())
         {
-            sys::Result::Ok(()) => terminal.ref_(),
+            sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
             sys::Result::Err(_) => {
-                // The writer took neither its ref nor write_fd, and the reader never started.
-                terminal.update_flags(|f| f.insert(Flags::WRITER_DONE));
-                terminal.read_fd.get().close();
-                terminal.read_fd.set(Fd::INVALID);
-                terminal.write_fd.get().close();
-                terminal.write_fd.set(Fd::INVALID);
+                // The writer took neither its ref nor the fd, and the reader never started.
+                drop(pty_result.read);
                 terminal.close_internal();
                 return Err(InitError::WriterStartFailed);
             }
@@ -426,22 +416,21 @@ impl Terminal {
         // Start reader with the read fd. The reader's ref is taken first: when
         // the poll registration fails, POSIX `start()` calls `on_reader_error`,
         // which releases that ref, and still returns Ok.
-        terminal.ref_();
+        terminal.reader_ref.set(Some(terminal.clone()));
         match terminal
             .reader
-            .with_mut(|r| r.start(pty_result.read_fd, true))
+            .with_mut(|r| r.start(pty_result.read.fd(), true))
+            .map(|()| pty_result.read.into_raw())
         {
             sys::Result::Err(_) => {
-                // No callback ran: the reader took neither read_fd nor its ref.
-                terminal.read_fd.get().close();
-                terminal.read_fd.set(Fd::INVALID);
-                terminal.deref_();
+                // No callback ran: the reader took neither the fd nor its ref.
+                terminal.reader_ref.set(None);
                 return Err(terminal.fail_reader_start());
             }
-            sys::Result::Ok(()) if terminal.flags.get().contains(Flags::READER_DONE) => {
+            sys::Result::Ok(_) if terminal.is_reader_done() => {
                 return Err(terminal.fail_reader_start());
             }
-            sys::Result::Ok(()) => {
+            sys::Result::Ok(_) => {
                 #[cfg(unix)]
                 {
                     terminal.reader.with_mut(|r| {
@@ -462,7 +451,7 @@ impl Terminal {
         // is the raw re-entrancy-safe entry (its dispatch runs user JS).
         unsafe { IOReader::read(terminal.reader.as_ptr()) };
         // The first read can end the reader too: EOF, a read error, or a failed re-arm.
-        if terminal.flags.get().contains(Flags::READER_DONE) {
+        if terminal.is_reader_done() {
             return Err(terminal.fail_reader_start());
         }
 
@@ -568,7 +557,12 @@ impl Terminal {
     /// Get the slave fd for subprocess to use
     #[cfg(unix)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
-        self.slave_fd.get()
+        self.slave.get().as_ref().map_or(Fd::INVALID, File::fd)
+    }
+
+    #[cfg(unix)]
+    fn master_fd(&self) -> Fd {
+        self.master.get().as_ref().map_or(Fd::INVALID, File::fd)
     }
 
     /// `flags.closed` — read by `Bun.spawn` arg validation.
@@ -615,11 +609,8 @@ impl Terminal {
     /// slave fd is gone the master reader observes EOF.
     pub(crate) fn close_slave_fd(&self) {
         self.mark_inline_spawned();
-        let fd = self.slave_fd.get();
-        if fd != Fd::INVALID {
-            fd.close();
-            self.slave_fd.set(Fd::INVALID);
-        }
+        #[cfg(unix)]
+        self.slave.set(None);
     }
 
     /// Drain buffered pty output, close our slave_fd, then drive the reader to
@@ -635,7 +626,7 @@ impl Terminal {
         // Both reader callbacks below re-enter user JS and may deref; hold a
         // +1 so `self` stays live for the trailing field accesses.
         let guard = self.ref_guard();
-        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+        if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled by `read`'s raw dispatch.
             unsafe { IOReader::read(self.reader.as_ptr()) };
@@ -648,7 +639,7 @@ impl Terminal {
         // Linux) instead of on the next tick when nothing may wake the loop.
         // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
-        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+        if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
             // SAFETY: same as the `read()` call above.
             unsafe { IOReader::read(self.reader.as_ptr()) };
         }
@@ -729,7 +720,7 @@ impl Terminal {
                 // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
                 // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
-                if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+                if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                     self.reader.with_mut(|r| r.close());
                 }
             }
@@ -738,10 +729,14 @@ impl Terminal {
 }
 
 pub(crate) struct PtyResult {
-    pub(crate) master: Fd,
-    pub(crate) read_fd: Fd,
-    pub(crate) write_fd: Fd,
-    pub(crate) slave: Fd,
+    #[cfg(unix)]
+    pub(crate) master: File,
+    /// Duplicated master fd (POSIX) / overlapped read pipe end (Windows)
+    pub(crate) read: File,
+    /// Duplicated master fd (POSIX) / overlapped write pipe end (Windows)
+    pub(crate) write: File,
+    #[cfg(unix)]
+    pub(crate) slave: File,
     #[cfg(windows)]
     pub(crate) hpcon: windows::HPCON,
 }
@@ -907,8 +902,8 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         return Err(CreatePtyError::OpenPtyFailed);
     }
 
-    let master_fd_desc = Fd::from_native(master_fd);
-    let slave_fd_desc = Fd::from_native(slave_fd);
+    let master = File::from_fd(Fd::from_native(master_fd));
+    let slave = File::from_fd(Fd::from_native(slave_fd));
 
     // Configure sensible terminal defaults matching node-pty behavior.
     // These are "cooked mode" defaults that most terminal applications expect.
@@ -983,49 +978,39 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     // Duplicate the master fd for reading and writing separately
     // This allows independent epoll registration and closing
-    let read_fd = match sys::dup(master_fd_desc) {
-        sys::Result::Ok(fd) => fd,
-        sys::Result::Err(_) => {
-            master_fd_desc.close();
-            slave_fd_desc.close();
-            return Err(CreatePtyError::DupFailed);
-        }
+    let dup_master = || {
+        sys::dup(master.fd())
+            .map(File::from_fd)
+            .map_err(|_| CreatePtyError::DupFailed)
     };
-
-    let write_fd = match sys::dup(master_fd_desc) {
-        sys::Result::Ok(fd) => fd,
-        sys::Result::Err(_) => {
-            master_fd_desc.close();
-            slave_fd_desc.close();
-            read_fd.close();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
+    let read = dup_master()?;
+    let write = dup_master()?;
 
     // Set non-blocking on master side fds (for async I/O in the event loop)
-    let _ = sys::update_nonblocking(master_fd_desc, true);
-    let _ = sys::update_nonblocking(read_fd, true);
-    let _ = sys::update_nonblocking(write_fd, true);
+    let _ = sys::update_nonblocking(master.fd(), true);
+    let _ = sys::update_nonblocking(read.fd(), true);
+    let _ = sys::update_nonblocking(write.fd(), true);
     // Note: slave_fd stays blocking - child processes expect blocking I/O
 
     // Set close-on-exec on master side fds only
     // slave_fd should NOT have close-on-exec since child needs to inherit it
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master_fd_desc);
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
-    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write_fd);
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(master.fd());
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read.fd());
+    let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(write.fd());
 
     Ok(PtyResult {
-        master: master_fd_desc,
-        read_fd,
-        write_fd,
-        slave: slave_fd_desc,
+        master,
+        read,
+        write,
+        slave,
     })
 }
 
 #[cfg(windows)]
 struct PipePair {
-    pub server: windows::HANDLE,
-    pub client: windows::HANDLE,
+    /// Has a libuv fd, for `uv_pipe_open`.
+    pub server: File,
+    pub client: OwnedHandle,
 }
 
 /// Inbox kernel32's HPCON layout. Stable ABI since build 17763: documented as
@@ -1040,8 +1025,7 @@ struct PseudoConsole {
 }
 
 /// Create one end of a pipe pair as an overlapped named pipe (server) and the
-/// other as a synchronous client. Returns both raw HANDLEs. Caller closes
-/// both on error. The "server" end is suitable for libuv (uv_pipe_open) and
+/// other as a synchronous client. The "server" end is suitable for libuv (uv_pipe_open) and
 /// the "client" end is suitable for ConPTY (which uses synchronous I/O).
 #[cfg(windows)]
 fn create_overlapped_pipe_pair(
@@ -1049,6 +1033,7 @@ fn create_overlapped_pipe_pair(
     // PIPE_ACCESS_OUTBOUND: server writes, client reads.
     server_access: u32,
 ) -> Result<PipePair, CreatePtyError> {
+    use sys::FdExt as _;
     use windows::kernel32 as k32;
     const FILE_FLAG_FIRST_PIPE_INSTANCE: u32 = 0x00080000;
 
@@ -1080,7 +1065,7 @@ fn create_overlapped_pipe_pair(
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let server = unsafe {
-        k32::CreateNamedPipeW(
+        HandleOrInvalid::from_raw_handle(k32::CreateNamedPipeW(
             name_w.as_ptr(),
             server_access | windows::FILE_FLAG_OVERLAPPED | FILE_FLAG_FIRST_PIPE_INSTANCE,
             windows::PIPE_TYPE_BYTE | windows::PIPE_READMODE_BYTE | windows::PIPE_WAIT,
@@ -1089,15 +1074,9 @@ fn create_overlapped_pipe_pair(
             65536,
             0,
             core::ptr::null_mut(),
-        )
+        ))
     };
-    if server == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
-    let server_guard = scopeguard::guard(server, |h| unsafe {
-        // SAFETY: h is a valid open HANDLE on the error path.
-        let _ = windows::CloseHandle(h);
-    });
+    let server = OwnedHandle::try_from(server).map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
     let client_access: u32 = if server_access == windows::PIPE_ACCESS_INBOUND {
         windows::GENERIC_WRITE
@@ -1107,7 +1086,7 @@ fn create_overlapped_pipe_pair(
 
     // SAFETY: name_w is NUL-terminated; all other params are valid per Win32.
     let client = unsafe {
-        k32::CreateFileW(
+        HandleOrInvalid::from_raw_handle(k32::CreateFileW(
             name_w.as_ptr(),
             client_access,
             0,
@@ -1115,13 +1094,14 @@ fn create_overlapped_pipe_pair(
             windows::OPEN_EXISTING,
             0,
             core::ptr::null_mut(),
-        )
+        ))
     };
-    if client == windows::INVALID_HANDLE_VALUE {
-        return Err(CreatePtyError::OpenPtyFailed);
-    }
+    let client = OwnedHandle::try_from(client).map_err(|_| CreatePtyError::OpenPtyFailed)?;
 
-    let server = scopeguard::ScopeGuard::into_inner(server_guard);
+    let server = Fd::from_system(server.into_raw_handle())
+        .make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::CloseOnFail)
+        .map(File::from_fd)
+        .map_err(|_| CreatePtyError::DupFailed)?;
     Ok(PipePair { server, client })
 }
 
@@ -1130,128 +1110,26 @@ static PIPE_SERIAL: AtomicU32 = AtomicU32::new(0);
 
 #[cfg(windows)]
 fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
-    // Track ownership explicitly: handles are nulled out as they are closed or
-    // transferred so the errdefer cleanup never double-closes.
-    let mut out_server: Option<windows::HANDLE> = None;
-    let mut out_client: Option<windows::HANDLE> = None;
-    let mut in_server: Option<windows::HANDLE> = None;
-    let mut in_client: Option<windows::HANDLE> = None;
-    let mut hpcon: Option<windows::HPCON> = None;
-
-    // errdefer block: scopeguard captures &mut to all of the above.
-    // Cleanup is inlined at each early-return point (a single drop-time
-    // closure reading the Option cells would require interior mutability);
-    // it must run on every `return Err`.
-    macro_rules! cleanup {
-        () => {
-            // SAFETY: every Some(h) is a valid open Win32 handle still owned by
-            // this fn (not yet transferred); ClosePseudoConsole/CloseHandle are
-            // safe on those values.
-            unsafe {
-                if let Some(h) = hpcon {
-                    windows::ClosePseudoConsole(h);
-                }
-                if let Some(h) = out_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = out_client {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_server {
-                    let _ = windows::CloseHandle(h);
-                }
-                if let Some(h) = in_client {
-                    let _ = windows::CloseHandle(h);
-                }
-            }
-        };
-    }
-
     // Output pipe: ConPTY writes (client), we read (overlapped server).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        out_server = Some(pair.server);
-        out_client = Some(pair.client);
-    }
-
+    let output = create_overlapped_pipe_pair(windows::PIPE_ACCESS_INBOUND)?;
     // Input pipe: we write (overlapped server), ConPTY reads (client).
-    {
-        let pair = match create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND) {
-            Ok(p) => p,
-            Err(e) => {
-                cleanup!();
-                return Err(e);
-            }
-        };
-        in_server = Some(pair.server);
-        in_client = Some(pair.client);
-    }
+    let input = create_overlapped_pipe_pair(windows::PIPE_ACCESS_OUTBOUND)?;
 
     let size = windows::COORD {
         X: clamp_to_coord(cols),
         Y: clamp_to_coord(rows),
     };
-    {
-        let mut pc: windows::HPCON = core::ptr::null_mut();
-        // SAFETY: in_client/out_client are valid open HANDLEs; pc is a valid out-ptr.
-        if unsafe {
-            windows::CreatePseudoConsole(size, in_client.unwrap(), out_client.unwrap(), 0, &mut pc)
-        } < 0
-        {
-            cleanup!();
-            return Err(CreatePtyError::OpenPtyFailed);
-        }
-        hpcon = Some(pc);
+    let (read_from, write_to) = (input.client.as_raw_handle(), output.client.as_raw_handle());
+    let mut hpcon: windows::HPCON = core::ptr::null_mut();
+    // SAFETY: both are open HANDLEs, which ConPTY duplicates; `hpcon` is a valid out-ptr.
+    if unsafe { windows::CreatePseudoConsole(size, read_from, write_to, 0, &raw mut hpcon) } < 0 {
+        return Err(CreatePtyError::OpenPtyFailed);
     }
-
-    // ConPTY duplicated the client handles internally; close our copies.
-    // SAFETY: in_client/out_client are valid open HANDLEs.
-    unsafe {
-        let _ = windows::CloseHandle(in_client.take().unwrap());
-        let _ = windows::CloseHandle(out_client.take().unwrap());
-    }
-
-    // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
-    // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
-    // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
-    // fallible call succeeds.
-    let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => {
-            out_server = None;
-            fd
-        }
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
-    // errdefer read_fd.close()
-    let read_fd_guard = scopeguard::guard(read_fd, |fd| fd.close());
-
-    let write_fd = match Fd::from_system(in_server.unwrap()).make_libuv_owned() {
-        Ok(fd) => fd,
-        Err(_) => {
-            cleanup!();
-            return Err(CreatePtyError::DupFailed);
-        }
-    };
-
-    let result_hpcon = hpcon.take().unwrap();
-    let read_fd = scopeguard::ScopeGuard::into_inner(read_fd_guard);
 
     Ok(PtyResult {
-        master: Fd::INVALID,
-        read_fd,
-        write_fd,
-        slave: Fd::INVALID,
-        hpcon: result_hpcon,
+        read: output.server,
+        write: input.server,
+        hpcon,
     })
 }
 
@@ -1285,10 +1163,10 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
                 return bindgen::to_js::f64(heap, 0.0);
             }
-            let Some(termios_data) = get_termios(self.master_fd.get()) else {
+            let Some(termios_data) = get_termios(self.master_fd()) else {
                 return bindgen::to_js::f64(heap, 0.0);
             };
             let raw: u64 = match FIELD {
@@ -1313,11 +1191,11 @@ impl Terminal {
         }
         #[cfg(unix)]
         {
-            if self.flags.get().contains(Flags::CLOSED) || self.master_fd.get() == Fd::INVALID {
+            if self.flags.get().contains(Flags::CLOSED) || self.master.get().is_none() {
                 return Ok(());
             }
             let num = value.to_js().coerce_f64(cx.global())?;
-            let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
+            let Some(mut termios_data) = get_termios(self.master_fd()) else {
                 return Ok(());
             };
             let max_val: f64 = libc::tcflag_t::MAX as f64;
@@ -1331,7 +1209,7 @@ impl Terminal {
                 TermiosField::Lflag => termios_data.c_lflag = bits,
                 TermiosField::Cflag => termios_data.c_cflag = bits,
             }
-            let _ = set_termios(self.master_fd.get(), &termios_data);
+            let _ = set_termios(self.master_fd(), &termios_data);
             Ok(())
         }
     }
@@ -1410,7 +1288,7 @@ impl Terminal {
 
         // The write side is gone, so queuing these bytes would only re-root the
         // wrapper below for a drain that cannot come.
-        if self.flags.get().contains(Flags::WRITER_DONE) {
+        if self.is_writer_done() {
             return Ok(input_len);
         }
 
@@ -1423,7 +1301,7 @@ impl Terminal {
             (r, w.has_pending_data())
         });
         // The writer can close inside `write()` and keep the bytes; no drain follows them.
-        let writer_done = self.flags.get().contains(Flags::WRITER_DONE);
+        let writer_done = self.is_writer_done();
         let has_pending = has_pending && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
@@ -1497,7 +1375,7 @@ impl Terminal {
             // takes a *const winsize.
             let ioctl_result = unsafe {
                 libc::ioctl(
-                    self.master_fd.get().native(),
+                    self.master_fd().native(),
                     libc::TIOCSWINSZ as _,
                     &raw const winsize,
                 )
@@ -1559,7 +1437,7 @@ impl Terminal {
             // Use the existing TTY mode function
             let mut state = self.tty_state.get();
             let tty_result = state.set_mode(
-                self.master_fd.get().native(),
+                self.master_fd().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
                 } else {
@@ -1635,11 +1513,10 @@ impl Terminal {
         self.update_flags(|f| f.insert(Flags::CLOSED));
         self.abort_handle.leave();
 
-        // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
+        // Close writer (closes its fd). R-2: `with_mut` borrow is held across
         // the synchronous `on_writer_close` parent callback, but that callback
         // touches only sibling `Cell`/`JsCell` fields, never `writer`.
         self.writer.with_mut(|w| w.close());
-        self.write_fd.set(Fd::INVALID);
 
         #[cfg(windows)]
         {
@@ -1652,41 +1529,28 @@ impl Terminal {
             }
             // Leave the reader open; onReaderDone closes it on EOF.
             let flags = self.flags.get();
-            if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                 return;
             }
         }
 
-        // Close reader (closes read_fd)
+        // Close reader (closes its fd)
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.reader.with_mut(|r| r.close());
         }
-        self.read_fd.set(Fd::INVALID);
 
-        // Close master fd
-        let master = self.master_fd.get();
-        if master != Fd::INVALID {
-            master.close();
-            self.master_fd.set(Fd::INVALID);
-        }
-
-        // Close slave fd
-        let slave = self.slave_fd.get();
-        if slave != Fd::INVALID {
-            slave.close();
-            self.slave_fd.set(Fd::INVALID);
+        #[cfg(unix)]
+        {
+            self.master.set(None);
+            self.slave.set(None);
         }
     }
 
     // IOWriter callbacks
     fn on_writer_close(&self) {
         bun_output::scoped_log!(Terminal, "onWriterClose");
-        if !self.flags.get().contains(Flags::WRITER_DONE) {
-            self.update_flags(|f| f.insert(Flags::WRITER_DONE));
-            // Must run before the deref below, which may free `self`.
+        if let Some(_writer_ref) = self.writer_ref.replace(None) {
             self.maybe_downgrade_after_eof();
-            // Release writer's ref
-            self.deref_();
         }
     }
 
@@ -1696,7 +1560,7 @@ impl Terminal {
         if let Some(this_jsvalue) = self.this_value.get().try_get() {
             if let Some(callback) = js::drain_get_cached(this_jsvalue) {
                 let global_this = self.global();
-                global_this.bun_vm().event_loop_mut().run_callback(
+                global_this.bun_vm().event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     callback,
                     global_this,
@@ -1754,14 +1618,13 @@ impl Terminal {
         self.on_reader_finished(1);
     }
 
-    /// Shared tail of `on_reader_done`/`on_reader_error`: claim `READER_DONE`
+    /// Shared tail of `on_reader_done`/`on_reader_error`: take `reader_ref`
     /// before the exit callback so re-entry (`terminal.close()` from the
-    /// callback) sees the flag and no-ops, then release the reader's +1.
+    /// callback) finds it gone and no-ops.
     fn on_reader_finished(&self, exit_code: i32) {
-        if self.flags.get().contains(Flags::READER_DONE) {
+        let Some(_reader_ref) = self.reader_ref.replace(None) else {
             return;
-        }
-        self.update_flags(|f| f.insert(Flags::READER_DONE));
+        };
         #[cfg(unix)]
         self.finish_io_after_eof();
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
@@ -1772,7 +1635,6 @@ impl Terminal {
         // it from here on.
         self.update_flags(|f| f.insert(Flags::EXIT_DISPATCHED));
         self.maybe_downgrade_after_eof();
-        self.deref_();
     }
 
     /// Finish both ends of the PTY once the reader is done, so `exit` is the
@@ -1785,12 +1647,10 @@ impl Terminal {
         // EOF closes the reader itself, a read error does not.
         if !self.reader.get().is_done() {
             self.reader.with_mut(|r| r.close());
-            self.read_fd.set(Fd::INVALID);
         }
-        // `end()` dispatches `on_writer_close`, which sets `WRITER_DONE`.
-        if !self.flags.get().contains(Flags::WRITER_DONE) {
+        // `end()` dispatches `on_writer_close`.
+        if !self.is_writer_done() {
             self.writer.with_mut(|w| w.end());
-            self.write_fd.set(Fd::INVALID);
         }
     }
 
@@ -1806,7 +1666,7 @@ impl Terminal {
         if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
             return;
         }
-        if !flags.contains(Flags::WRITER_DONE) && self.writer_has_buffered.get() {
+        if !self.is_writer_done() && self.writer_has_buffered.get() {
             return;
         }
         self.this_value.with_mut(|v| v.downgrade());
@@ -1832,7 +1692,7 @@ impl Terminal {
             JSValue::NULL
         };
 
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,
@@ -1891,7 +1751,7 @@ impl Terminal {
 
         // Each chunk's `data` callback is its own top-level call: reported and
         // reading continues, as a stream 'data' listener that throws does.
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             global_this,
@@ -1902,15 +1762,8 @@ impl Terminal {
         true // Continue reading
     }
 
-    fn loop_(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop_handle.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop_handle.r#loop().cast()
-        }
+    fn loop_(&self) -> LoopRef {
+        self.event_loop_handle.native_loop()
     }
 
     pub(crate) fn finalize(&self) {
@@ -1925,8 +1778,6 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         bun_output::scoped_log!(Terminal, "deinit");
-        // Set reader/writer done flags to prevent extra deref calls in closeInternal
-        self.update_flags(|f| f.insert(Flags::READER_DONE | Flags::WRITER_DONE));
         // Close all FDs if not already closed (handles constructor error paths)
         // closeInternal() checks flags.closed and returns early on subsequent calls,
         // so this is safe even if finalize() already called it
@@ -1961,11 +1812,8 @@ impl BufferedReaderParent for Terminal {
             Self::from_parent_ptr(this).on_reader_error(&err);
         })
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
-        // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
-        // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
-        Self::from_parent_ptr(this).loop_().cast()
+    unsafe fn loop_(this: *mut Self) -> LoopRef {
+        Self::from_parent_ptr(this).loop_()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
         Self::from_parent_ptr(this)
@@ -1994,7 +1842,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
             .event_loop_handle
             .as_event_loop_ctx()
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_uws_sys::Loop {
+    unsafe fn loop_(this: *mut Self) -> LoopRef {
         Self::from_parent_ptr(this).event_loop_handle.r#loop()
     }
 }

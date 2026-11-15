@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bstr::BStr;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
@@ -12,6 +10,7 @@ use bun_install::package_manager::workspace_selection::{
 use bun_parsers::json;
 use bun_paths::path_buffer_pool;
 use bun_paths::{PathBuffer, platform, resolve_path};
+use bun_ptr::AliasableBox;
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
 use crate::cli::Command;
@@ -43,7 +42,7 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
 // `DirEntryAccessor` lives in `bun_resolver` (it depends on the resolver's
 // DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
-// Borrows the `OwnedWalker` stored next to it in `ActiveWalk`, with the lifetime erased.
+// Borrows the walker stored next to it in `ActiveWalk`, with the lifetime erased.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 fn get_candidate_package_patterns<'a>(
@@ -320,23 +319,10 @@ impl SelectedPackages {
     }
 }
 
-// Heap-allocated so the walker keeps its address while the `PackageFilterIterator` moves. Held as
-// a `NonNull` rather than a `Box` because moving a `Box` asserts unique access, which the
-// `GlobWalkerIterator` borrowing the walker would violate.
-struct OwnedWalker(NonNull<GlobWalker>);
-
-impl Drop for OwnedWalker {
-    fn drop(&mut self) {
-        // SAFETY: allocated by `heap::alloc_nn` in `start_walk` and freed only here; the
-        // `GlobWalkerIterator` borrowing it is always dropped first (see `ActiveWalk`).
-        unsafe { bun_core::heap::destroy(self.0.as_ptr()) };
-    }
-}
-
 // Field order is drop order: `iter` borrows `_walker`, so it must go first.
 struct ActiveWalk {
     iter: GlobWalkerIterator,
-    _walker: OwnedWalker,
+    _walker: AliasableBox<GlobWalker>,
 }
 
 struct PackageFilterIterator<'a> {
@@ -368,7 +354,7 @@ impl<'a> PackageFilterIterator<'a> {
         let pattern: &[u8] = &self.patterns[self.pattern_idx];
         // bun_glob copies `pattern`/`cwd` internally.
         // outer `?` propagates the error, inner converts `Maybe(Self)` to a Result.
-        let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
+        let walker = AliasableBox::new(GlobWalker::init_with_cwd(
             pattern,
             self.root_dir,
             true,
@@ -377,12 +363,12 @@ impl<'a> PackageFilterIterator<'a> {
             true,
             true,
             Some(glob_ignore_fn),
-        )??));
+        )??);
         // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped
         // before that on every path (as the later local here, as the earlier field of `ActiveWalk`
         // afterwards), so this is the only access to the walker while the erased borrow is live.
         let mut iter: GlobWalkerIterator =
-            glob::walk::Iterator::new(unsafe { &mut *walker.0.as_ptr() });
+            glob::walk::Iterator::new(unsafe { &mut *walker.as_ptr() });
         iter.init()??;
         Ok(ActiveWalk {
             iter,

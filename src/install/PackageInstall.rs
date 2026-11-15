@@ -7,7 +7,7 @@ use bun_paths::{self as path, OSPathChar, OSPathSlice};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
-use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
+use bun_sys::{self as sys, Dir, EntryKind, Fd, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
@@ -323,7 +323,8 @@ impl PackageInstall<'_> {
 /// cache directory it walks.
 struct InstallDirState {
     walker: Walker,
-    /// Not opened on Windows; the copy loops there work from `buf`/`buf2`.
+    /// The copy loops on Windows work from `buf`/`buf2`.
+    #[cfg(not(windows))]
     subdir: Dir,
     // A by-value `WPathBuffer` here would
     // memset+move ~128 KB through `Default::default()` per package. Use the
@@ -492,9 +493,7 @@ fn is_hardlinked_copy(root: &mut FolderRoot<'_>, rel: &mut Vec<u8>, src: &Dir, d
             let name = entry.name.slice_u8();
             let ino: u64 = match crate::prune::entry_kind(dir, name, entry.kind) {
                 EntryKind::File if cfg!(windows) => {
-                    sys::fstatat(dir, &bun_core::ZBox::from_bytes(name))
-                        .ok()?
-                        .st_ino
+                    sys::fstatat(dir, entry.name.as_zstr()).ok()?.st_ino
                 }
                 EntryKind::File => entry.ino,
                 EntryKind::Directory if name == b"node_modules" => continue,
@@ -1192,9 +1191,11 @@ impl<'a> PackageInstall<'a> {
         }
         #[cfg(not(unix))]
         {
-            match sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0) {
-                Err(_) => return false,
-                Ok(fd) => fd.close(),
+            if sys::openat(&destination_dir, patch_tag_path, sys::O::RDONLY, 0)
+                .map(sys::File::from_fd)
+                .is_err()
+            {
+                return false;
             }
         }
 
@@ -1308,9 +1309,7 @@ impl<'a> PackageInstall<'a> {
         mutable: &'m mut MutableString,
         until_eof: bool,
     ) -> Option<&'m [u8]> {
-        let mut total: usize = 0;
         mutable.reset();
-        mutable.expand_to_capacity();
 
         let mut spill = Vec::new();
         let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
@@ -1325,19 +1324,19 @@ impl<'a> PackageInstall<'a> {
 
         // Heuristic: most package.jsons will be less than 2048 bytes.
         loop {
-            if mutable.list.len() - total < 1024 {
+            if mutable.list.capacity() - mutable.list.len() < 1024 {
                 mutable.grow_by(4096).ok()?;
-                mutable.expand_to_capacity();
             }
-            let remain = &mut mutable.list[total..];
-            let read = package_json_file.read(remain).ok()?;
-            total += read;
-            if read == 0 || (!until_eof && read < remain.len()) {
+            let read = bun_core::vec::append_with(&mut mutable.list, usize::MAX, |spare| {
+                bun_sys::read_buf(package_json_file.handle(), spare)
+            })
+            .ok()?;
+            if read == 0 || (!until_eof && mutable.list.len() < mutable.list.capacity()) {
                 break;
             }
         }
 
-        Some(&mutable.list[0..total])
+        Some(&mutable.list)
     }
 
     fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
@@ -1689,7 +1688,6 @@ impl PackageFiles<'_> {
             };
             Ok(InstallDirState {
                 walker,
-                subdir: Dir::from_fd(Fd::INVALID),
                 buf,
                 buf2,
                 to_copy_buf_off,
@@ -1852,7 +1850,7 @@ impl PackageFiles<'_> {
         // `&mut [u16]`, which is UB — pass head buffer + tail offset and
         // reslice inside.
         fn copy(
-            destination_dir: &Dir,
+            #[cfg(not(windows))] destination_dir: &Dir,
             walker: &mut Walker,
             to_copy_into1_offset: WinOffset,
             head1: WinSlice<'_>,
@@ -1861,8 +1859,6 @@ impl PackageFiles<'_> {
         ) -> crate::Result<()> {
             #[cfg(not(windows))]
             let _ = (to_copy_into1_offset, head1, to_copy_into2_offset, head2);
-            #[cfg(windows)]
-            let _ = destination_dir;
             #[cfg(windows)]
             let queue = HardLinkWindowsInstallTask::init_queue();
             // Workers are already running the tasks that were pushed, so remember any loop error
@@ -1979,7 +1975,6 @@ impl PackageFiles<'_> {
 
         #[cfg(windows)]
         let result = copy(
-            &state.subdir,
             &mut state.walker,
             state.to_copy_buf_off,
             &mut state.buf[..],
@@ -2176,7 +2171,7 @@ impl<'a> PackageInstall<'a> {
         let opened = sys::sys_uv::open(path, 0, 0);
         #[cfg(not(windows))]
         let opened = sys::open(path, sys::O::PATH, 0);
-        opened.map(|fd| fd.close()).is_err()
+        opened.map(sys::File::from_fd).is_err()
     }
 
     pub(crate) fn install_from_link(
@@ -2225,20 +2220,18 @@ impl<'a> PackageInstall<'a> {
             // `symlinked_path` is always a package *directory*; `O::DIRECTORY`
             // routes to `open_dir_at_windows_nt_path`, then `get_fd_path`
             // resolves via `GetFinalPathNameByHandleW`.
-            let fd = match sys::openat(
+            let dir = match sys::openat(
                 self.cache_dir,
                 symlinked_path,
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
             ) {
-                Ok(fd) => fd,
+                Ok(fd) => sys::File::from_fd(fd),
                 Err(err) => {
                     return InstallResult::fail(realpath_err(err), Step::LinkingDependency);
                 }
             };
-            let res = sys::get_fd_path(fd, &mut to_buf);
-            fd.close();
-            match res {
+            match sys::get_fd_path(dir.fd(), &mut to_buf) {
                 Ok(s) => &*s,
                 Err(err) => {
                     return InstallResult::fail(realpath_err(err), Step::LinkingDependency);

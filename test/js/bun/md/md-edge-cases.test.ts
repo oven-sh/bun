@@ -1744,9 +1744,8 @@ describe("inputs the parser cannot address", () => {
 });
 
 describe("documents whose block metadata the parser cannot address", () => {
-  // Block offsets are u32s too, so `block_bytes` (the flat buffer of block
-  // headers and verbatim-line records) is capped independently of the input
-  // length. Filling the real ~4 GiB cap needs ~256M blocks, so the child
+  // Block headers and verbatim-line records are capped independently of the
+  // input length. Filling the real ~4 GiB cap needs ~256M blocks, so the child
   // shrinks it through `setMaxMarkdownBlockBytesForTesting`
   // (bun:internal-for-testing) and proves the exact boundary: a document
   // whose metadata lands exactly on the cap renders, and one more block (or
@@ -1756,7 +1755,7 @@ describe("documents whose block metadata the parser cannot address", () => {
     const script = `
       import { setMaxMarkdownBlockBytesForTesting } from "bun:internal-for-testing";
       // One single-line paragraph costs exactly one 16-byte BlockHeader plus
-      // one 12-byte VerbatimLine in block_bytes, with no alignment padding.
+      // one 12-byte VerbatimLine.
       const PARAGRAPH_BYTES = 16 + 12;
       const AT_LIMIT = 40;
       const paragraphs = n => Array.from({ length: n }, (_, i) => "p" + i).join("\\n\\n");

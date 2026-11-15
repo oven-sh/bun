@@ -29,9 +29,7 @@ pub struct PatchTask {
     /// is held via raw pointer through the intrusive thread-pool queue while
     /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
+    /// `Mut` because `PackageManager::wake_raw` takes `*mut Self`.
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
@@ -301,9 +299,7 @@ impl PatchTask {
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
         }
-        let _ = apply
-            .logger
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = apply.logger.print(Output::error_writer());
     }
 
     fn run_from_main_thread_calc_hash(
@@ -336,9 +332,7 @@ impl PatchTask {
             None => {
                 if log_level != LogLevel::Silent {
                     if calc_hash.logger.has_errors() {
-                        let _ = calc_hash
-                            .logger
-                            .print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = calc_hash.logger.print(Output::error_writer());
                     } else {
                         Output::err_generic(
                             "Failed to calculate hash for patch <b>{}<r>",

@@ -612,12 +612,17 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
-async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
+async function expectFixturesToPass(
+  files: Record<string, string>,
+  pass: number,
+  args: string[] = [],
+  env: Record<string, string> = {},
+) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -1495,9 +1500,9 @@ describe.concurrent("a module mocked without a factory", () => {
           const write = (object, value) => { object.added = value; };
 
           test("in a hot loop", () => {
-            for (let i = 0; i < 10_000; i++) remove(namespace);
+            for (let i = 0; i < 1_000; i++) remove(namespace);
             let wrong = 0;
-            for (let i = 0; i < 10_000; i++) {
+            for (let i = 0; i < 1_000; i++) {
               write(namespace, i);
               if (namespace.added !== i) wrong++;
               remove(namespace);
@@ -1508,6 +1513,9 @@ describe.concurrent("a module mocked without a factory", () => {
         `,
       },
       1,
+      [],
+      // With a concurrent JIT, the loops can end before the functions are compiled.
+      { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_thresholdForFTLOptimizeAfterWarmUp: "1000" },
     );
   });
 

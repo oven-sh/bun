@@ -532,10 +532,12 @@ describe("net.Socket write", () => {
 
     async function run() {
       return new Promise((resolve, reject) => {
+        // end() calls back before the socket is closed, and only a closed one connects again.
+        socket.once("close", resolve);
         socket.once("connect", (...args) => {
           socket.write("script\n", err => {
             if (err) return reject(err);
-            socket.end(() => setTimeout(resolve, 3));
+            socket.end();
           });
         });
         socket.connect(port, "127.0.0.1");

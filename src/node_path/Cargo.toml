@@ -13,4 +13,6 @@ workspace = true
 bun_core.workspace = true
 bun_highway.workspace = true
 bun_paths.workspace = true
+
+[target.'cfg(windows)'.dependencies]
 bun_sys.workspace = true

@@ -290,16 +290,15 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 
         // INSTANCE is a 'static ZST singleton; `RacyCell::get()` yields a stable `*mut`.
         let instance_ptr: *mut ParentDeathWatchdog = INSTANCE.get();
-        let poll = FilePoll::init(
+        let mut poll = FilePoll::init(
             handle,
             Fd::from_native(original_ppid),
-            Default::default(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(
-            handle.platform_event_loop(),
+        match unsafe { poll.as_mut() }.register(
+            handle.loop_(),
             crate::file_poll::Flags::Process,
             true,
         ) {
@@ -637,10 +636,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // `Fd` is Copy and does not impl Drop, so close explicitly via a guard.
-    let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
+    let _close = bun_sys::CloseOnDrop::new(task_fd);
 
     let mut written: usize = 0;
     // Sized so a single read can saturate the 4096-pid `out` buffer
@@ -692,9 +688,7 @@ fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    let _guard = scopeguard::guard(fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
+    let _close = bun_sys::CloseOnDrop::new(fd);
     // Fixed-buffer read-until-EOF-or-full. `File::read_all` grows a `Vec`,
     // which would allocate; do the loop here.
     let mut written = 0usize;

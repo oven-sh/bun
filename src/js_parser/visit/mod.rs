@@ -223,9 +223,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
-        let mut duplicate_args_check: Option<
-            bun_collections::pool::PoolGuard<'static, StringVoidMap>,
-        > = None;
+        let mut duplicate_args_check: Option<bun_collections::pool::PoolGuard<StringVoidMap>> =
+            None;
 
         // Section 15.2.1 Static Semantics: Early Errors: "It is a Syntax Error if
         // FunctionBodyContainsUseStrict of FunctionBody is true and
@@ -254,9 +253,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         for arg in args.iter_mut() {
-            if arg.ts_decorators.len_u32() > 0 {
-                self.visit_ts_decorators(&mut arg.ts_decorators);
-            }
+            self.visit_ts_decorators(arg.ts_decorators);
 
             // reborrow per-iter.
             let dup: Option<&mut StringVoidMap> = duplicate_args_check.as_deref_mut();
@@ -267,8 +264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // `Vec<Expr>` is not `Copy`; mutate in place.
-    pub(crate) fn visit_ts_decorators(&mut self, decs: &mut ExprNodeList) {
+    pub(crate) fn visit_ts_decorators(&mut self, decs: js_ast::StoreSlice<Expr>) {
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
@@ -993,7 +989,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             "only_scan_imports_and_do_not_visit must not run this."
         );
 
-        self.visit_ts_decorators(&mut class.ts_decorators);
+        self.visit_ts_decorators(class.ts_decorators);
 
         if let Some(name) = class.class_name {
             self.record_declared_symbol_in(name.ref_, is_expr);
@@ -1023,7 +1019,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .original_name
                 .slice();
             let body_ref = if class.should_lower_standard_decorators
-                && class.ts_decorators.len_u32() > 0
+                && !class.ts_decorators.is_empty()
             {
                 let inner_ref = self.generate_temp_var(self.bump_name3(b"_", original_name, b""));
                 class.inner_class_ref = inner_ref;
@@ -1100,7 +1096,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     continue;
                 }
-                self.visit_ts_decorators(&mut property.ts_decorators);
+                self.visit_ts_decorators(property.ts_decorators);
                 let is_private = if let Some(key) = property.key {
                     matches!(key.data, ExprData::EPrivateIdentifier(_))
                 } else {
@@ -1373,7 +1369,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             injected.push(Stmt::assign(target, init));
                         }
                         // Keep `#x;` for brand; keep decorated props for `lower_class`.
-                        if is_private || prop.ts_decorators.len_u32() > 0 {
+                        if is_private || !prop.ts_decorators.is_empty() {
                             class_body.push(G::Property {
                                 initializer: None,
                                 ..prop
@@ -1686,12 +1682,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // The last function statement for a given symbol wins
                             data.func.name = None;
-                            // SAFETY: `G::Fn` is not `Copy` (`return_ts_metadata` can own a `Vec`),
-                            // so this is a move. The statement is not kept (`before.clear()` below),
-                            // and the AST store never drops its nodes: the `Vec` is not freed twice.
-                            let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
-                                Some(p.new_expr(E::Function { func }, stmt.loc));
+                                Some(p.new_expr(E::Function { func: data.func }, stmt.loc));
                         }
                         _ => {
                             non_fn_stmts.push(stmt);

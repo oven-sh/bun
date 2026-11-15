@@ -37,7 +37,7 @@ impl DirectoryWatchStore {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// Expects dependency list to be already freed.
     pub(crate) fn free_directory_watch(&mut self, entry_index: usize) {
         let store = &mut self.directory_watchers;
@@ -87,7 +87,7 @@ impl Default for Dep {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// Registers a directory watch so that a failed import resolution is
     /// retried when the containing directory changes.
     pub(crate) fn track_resolution_failure(
@@ -137,7 +137,6 @@ impl DevServer {
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
         // great place to share memory.
-        let _g = self.graph_safety_lock.guard();
         let owned_file_path: bun_ptr::RawSlice<u8> = match renderer {
             Graph::Client => {
                 self.graphs
@@ -258,7 +257,7 @@ impl DirectoryWatchStore {
     }
 }
 
-impl DevServer {
+impl DevServerState {
     /// Removes all dependencies whose `source_file_path` is the exact slice
     /// of `file`'s key, compared by *pointer identity* since the slice is shared
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph

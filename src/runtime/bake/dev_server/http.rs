@@ -21,11 +21,8 @@ pub(super) enum DevHandlerId {
 /// (`attacker.com` → 127.0.0.1) presents `Host: attacker.com`; rejecting
 /// non-loopback / non-IP / non-configured hostnames prevents the attacker's
 /// page from reading bundled source via same-origin fetch.
-pub(crate) fn is_allowed_dev_host(dev: &DevServer, req: &Request) -> bool {
-    is_allowed_host_header(
-        req,
-        dev.server.as_ref().map(|server| &server.config().address),
-    )
+pub(crate) fn is_allowed_dev_host(dev_server: &DevServer, req: &Request) -> bool {
+    is_allowed_host_header(req, Some(&dev_server.server.config().address))
 }
 
 pub(crate) fn is_allowed_host_header(
@@ -144,7 +141,7 @@ pub(super) fn origin_forbidden(resp: AnyResponse) {
     });
 }
 
-/// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
+/// `extern "C"` trampoline: recovers `&DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
 pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
@@ -153,15 +150,16 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
 ) {
     // SAFETY: `ud` is the `DevServer` that `set_routes` registered; the server clears
     // the routes before it drops it. uWS passes a non-null `Request*` that is valid
-    // for the callback and that nothing else uses meanwhile. Every handler below takes
-    // `&mut DevServer`, so this asks for no more exclusivity than they do.
-    let (dev, req) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req) };
+    // for the callback and that nothing else uses meanwhile.
+    let (dev_server, req) = unsafe { (&*ud.cast::<DevServer>(), &mut *req) };
+    // A response can end the last connection of a stopped server, which then frees `dev_server`.
+    let pending = PendingRequest::new(dev_server.server);
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    if !is_allowed_dev_host(dev, req) {
+    if !is_allowed_dev_host(dev_server, req) {
         return host_forbidden(resp);
     }
     if matches!(ID, DevHandlerId::ReportError | DevHandlerId::UnrefSourceMap)
@@ -170,42 +168,59 @@ pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId
         return origin_forbidden(resp);
     }
     match ID {
-        DevHandlerId::JsRequest => on_js_request(dev, req, resp),
-        DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
-        DevHandlerId::SrcRequest => on_src_request(dev, req, resp),
-        DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
-        DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
-        DevHandlerId::NotFound => on_not_found(dev, req, resp),
+        DevHandlerId::JsRequest => on_js_request(dev_server, req, resp),
+        DevHandlerId::AssetRequest => on_asset_request(dev_server, req, resp),
+        DevHandlerId::SrcRequest => on_src_request(dev_server, req, resp),
+        DevHandlerId::ReportError => on_report_error_request(dev_server, req, resp),
+        DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev_server, req, resp),
+        DevHandlerId::NotFound => on_not_found(dev_server, req, resp),
         DevHandlerId::Request => {
-            // The catch-all route can reach a framework request handler; this
-            // trampoline folds what bundling for it left pending.
-            crate::dispatch::fold(on_request(dev, req, resp));
+            let (server, handler) = (dev_server.server, on_request(dev_server, req, resp));
+            // Handlers read `server.pendingRequests`.
+            drop(pending);
+            match handler {
+                Ok(None) => {}
+                Ok(Some(RequestHandler::Fetch)) => server.on_request(req, resp),
+                Ok(Some(RequestHandler::Framework(FrameworkRequest { callback, args }))) => {
+                    server.on_saved_request(SavedRequestUnion::Stack(req), resp, callback, args)
+                }
+                // This trampoline folds what bundling left pending.
+                Err(err) => crate::dispatch::fold(Err(err)),
+            }
         }
     }
 }
 
-fn on_report_error_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_report_error_request(dev_server: &DevServer, req: &mut Request, resp: AnyResponse) {
     use bun_uws_sys::thunk::OpaqueHandle as _;
     match resp {
-        AnyResponse::SSL(r) => {
-            ErrorReportRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
-        }
-        AnyResponse::TCP(r) => {
-            ErrorReportRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
-        }
+        AnyResponse::SSL(r) => ErrorReportRequest::run(
+            dev_server,
+            req,
+            bun_uws_sys::response::TLSResponse::as_handle(r),
+        ),
+        AnyResponse::TCP(r) => ErrorReportRequest::run(
+            dev_server,
+            req,
+            bun_uws_sys::response::TCPResponse::as_handle(r),
+        ),
         AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
 
-fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_unref_source_map_request(dev_server: &DevServer, req: &mut Request, resp: AnyResponse) {
     use bun_uws_sys::thunk::OpaqueHandle as _;
     match resp {
-        AnyResponse::SSL(r) => {
-            UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TLSResponse::as_handle(r))
-        }
-        AnyResponse::TCP(r) => {
-            UnrefSourceMapRequest::run(dev, req, bun_uws_sys::response::TCPResponse::as_handle(r))
-        }
+        AnyResponse::SSL(r) => UnrefSourceMapRequest::run(
+            dev_server,
+            req,
+            bun_uws_sys::response::TLSResponse::as_handle(r),
+        ),
+        AnyResponse::TCP(r) => UnrefSourceMapRequest::run(
+            dev_server,
+            req,
+            bun_uws_sys::response::TCPResponse::as_handle(r),
+        ),
         AnyResponse::H3(_) | AnyResponse::H2(_) => not_found(resp),
     }
 }
@@ -227,7 +242,7 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     }
 }
 
-fn on_not_found(_: &mut DevServer, _: &mut Request, resp: AnyResponse) {
+fn on_not_found(_: &DevServer, _: &mut Request, resp: AnyResponse) {
     not_found(resp);
 }
 
@@ -253,7 +268,8 @@ pub(super) fn on_outdated_js_corked(resp: AnyResponse) {
     );
 }
 
-fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_js_request(dev_server: &DevServer, req: &mut Request, resp: AnyResponse) {
+    let dev = &mut *dev_server.state_mut();
     let route_id = req.parameter(0);
     let is_map = strings::has_suffix_comptime(route_id, b".js.map");
     if !is_map && !strings::has_suffix_comptime(route_id, b".js") {
@@ -282,7 +298,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         let response = StaticRoute::init_from_any_blob(
             crate::webcore::blob::Any::from_array_list(json_bytes),
             crate::server::static_route::InitFromBytesOptions {
-                server: dev.server,
+                server: Some(dev.server),
                 mime_type: Some(&MimeType::JSON),
                 ..Default::default()
             },
@@ -308,7 +324,8 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     );
 }
 
-fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_asset_request(dev_server: &DevServer, req: &mut Request, resp: AnyResponse) {
+    let dev = dev_server.state_mut();
     let param = req.parameter(0);
     if param.len() < ::core::mem::size_of::<u64>() * 2 {
         return not_found(resp);
@@ -327,7 +344,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
 
 pub(super) use bun_core::fmt::parse_hex_to_u64;
 
-fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
+fn on_src_request(_dev: &DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {
         resp.write_status(b"501 Not Implemented");
         resp.end(
@@ -342,7 +359,18 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     resp.end(b"TODO", false);
 }
 
-fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
+enum RequestHandler {
+    Fetch,
+    Framework(FrameworkRequest),
+}
+
+/// Returns the handler to call: it can stop the server, which frees `dev_server`.
+fn on_request(
+    dev_server: &DevServer,
+    req: &mut Request,
+    mut resp: AnyResponse,
+) -> JsResult<Option<RequestHandler>> {
+    let mut dev = dev_server.state_mut();
     let mut params: router::MatchedParams = Default::default();
     let pathname = extract_pathname_from_url(req.url());
     if let Some(route_index) = dev.router.match_slow(pathname, &mut params) {
@@ -358,27 +386,20 @@ fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> 
         let rbi = ctx.route_bundle_index;
         return match ensure_route_is_bundled(dev, rbi, &mut ctx) {
             Err(jsc::JsError::OutOfMemory) => bun_core::out_of_memory(),
-            bundled => bundled,
+            // A getter that ran for the route's params can have closed the connection.
+            request => Ok(request?
+                .filter(|_| !resp.is_closed())
+                .map(RequestHandler::Framework)),
         };
     }
 
-    if !dev
-        .server
-        .as_ref()
-        .expect("infallible: server bound")
-        .config()
-        .on_request
-        .is_empty()
-    {
-        dev.server
-            .as_mut()
-            .expect("infallible: server bound")
-            .on_request(req, resp);
-        return Ok(());
+    drop(dev);
+    if !dev_server.server.config().on_request.is_empty() {
+        return Ok(Some(RequestHandler::Fetch));
     }
 
     send_built_in_not_found(&mut resp);
-    Ok(())
+    Ok(None)
 }
 
 fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
@@ -390,7 +411,7 @@ fn send_built_in_not_found<R: ResponseLike>(resp: &mut R) {
 /// Problem statement documented on `SCRIPT_UNREF_PAYLOAD`
 /// Takes 8 bytes: The generation ID in hex.
 struct UnrefSourceMapRequest {
-    dev: PendingRequest<bun_ptr::BackRef<DevServer, bun_ptr::Mut>>,
+    server: PendingRequest,
 }
 
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
@@ -400,12 +421,12 @@ impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest
 }
 
 impl UnrefSourceMapRequest {
-    fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
+    fn run<R>(dev_server: &DevServer, _: &mut Request, resp: &mut R)
     where
         R: bun_uws_sys::body_reader_mixin::BodyResponse,
     {
-        let dev = PendingRequest::new(bun_ptr::BackRef::new_mut(dev));
-        uws::BodyReaderMixin::read_body(UnrefSourceMapRequest { dev }, resp);
+        let server = PendingRequest::new(dev_server.server);
+        uws::BodyReaderMixin::read_body(UnrefSourceMapRequest { server }, resp);
     }
 
     fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {
@@ -417,12 +438,15 @@ impl UnrefSourceMapRequest {
             .map_err(|_| crate::Error::InvalidRequest)?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
-        // SAFETY: dev outlives the request; the exclusive reborrow is narrowed to
-        // `source_maps` for this statement.
-        let _ = unsafe { &mut (*self.dev.as_ptr()).source_maps }.remove_or_upgrade_weak_ref(
-            source_map_key,
-            source_map_store::RemoveOrUpgradeMode::Remove,
-        );
+        self.server.with_dev_server(|dev_server| {
+            dev_server
+                .state_mut()
+                .source_maps
+                .remove_or_upgrade_weak_ref(
+                    source_map_key,
+                    source_map_store::RemoveOrUpgradeMode::Remove,
+                )
+        });
         r.write_status(b"204 No Content");
         r.end(b"", false);
         Ok(())

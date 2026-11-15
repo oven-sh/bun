@@ -332,7 +332,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
             graph,
             options: LinkerOptions::new(bundle),
             unique_key_prefix: b"",
-            has_dev_server: bundle.dev_server.is_some(),
+            has_dev_server: bundle.transpiler.options.has_dev_server(),
             framework: bundle.framework.as_deref(),
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),

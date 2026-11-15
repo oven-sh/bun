@@ -1642,7 +1642,6 @@ dependencies = [
  "bun_resolver",
  "bun_router",
  "bun_s3_signing",
- "bun_safety",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",

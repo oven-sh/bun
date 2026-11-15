@@ -1862,7 +1862,7 @@ impl<T: Default> Default for RacyCell<T> {
 }
 
 // ─── ThreadLock (from bun_safety) ─────────────────────────────────────────
-// Debug-only re-entrancy guard. Release builds compile to a ZST.
+// Debug-only owner-thread check. Release builds compile to a ZST.
 //
 // `locked_at` is `Cell` so `lock()`/`lock_or_assert()` can take `&self`
 // (callers like `RefCount::has_one_ref` only have `&self`). The
@@ -1892,16 +1892,6 @@ impl ThreadLock {
         s.lock();
         s
     }
-    /// RAII spelling of `lock()` + `defer unlock()`. Returns a guard that
-    /// `unlock()`s on `Drop`. The guard stores a raw pointer (not a borrow)
-    /// so the caller's surrounding `&mut self` on the owning struct stays
-    /// usable for the rest of the scope — `ThreadLock` is a debug-only
-    /// ownership assertion, not a real mutex.
-    #[inline]
-    pub fn guard(&self) -> ThreadLockGuard {
-        self.lock();
-        ThreadLockGuard(core::ptr::from_ref::<Self>(self))
-    }
     /// Acquire if unlocked, else assert this thread holds it.
     #[inline]
     pub fn lock_or_assert(&self) {
@@ -1918,7 +1908,7 @@ impl ThreadLock {
         }
     }
     #[inline]
-    pub fn lock(&self) {
+    fn lock(&self) {
         #[cfg(debug_assertions)]
         {
             let cur = thread_id();
@@ -1945,17 +1935,6 @@ impl ThreadLock {
         }
     }
     #[inline]
-    pub fn unlock(&self) {
-        #[cfg(debug_assertions)]
-        {
-            self.assert_locked(); // assert current thread holds it before reset.
-            self.owning_thread
-                .store(INVALID_THREAD_ID, core::sync::atomic::Ordering::Release);
-            // assert_locked above proved we are the unique holder.
-            self.locked_at.set(crate::StoredTrace::EMPTY);
-        }
-    }
-    #[inline]
     pub fn assert_locked(&self) {
         #[cfg(debug_assertions)]
         {
@@ -1972,25 +1951,6 @@ impl ThreadLock {
                 "`ThreadLock` is locked by thread {held}, not thread {current}",
             );
         }
-    }
-}
-
-/// RAII guard returned by [`ThreadLock::guard`]. Calls `unlock()` on drop.
-///
-/// Stores a raw `*const ThreadLock` (not a borrow) so holding the guard does
-/// not freeze the borrow of the struct that owns the lock — every call site is
-/// `self.field.guard()` inside a `&mut self` method that needs the rest of
-/// `self` mutably for the scope.
-#[must_use = "dropping immediately unlocks the ThreadLock"]
-pub struct ThreadLockGuard(*const ThreadLock);
-
-impl Drop for ThreadLockGuard {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `self.0` was `&ThreadLock` at `ThreadLock::guard()` and the
-        // lock is a field of a struct the caller holds for the entire guard
-        // scope; the pointee outlives the guard. `unlock` takes `&self`.
-        unsafe { (*self.0).unlock() }
     }
 }
 

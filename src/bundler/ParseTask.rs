@@ -126,7 +126,10 @@ pub struct Result<'a> {
 impl BoxedTask for Result<'static> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
     /// The VM that runs the bundle is going: the result goes to nobody.
-    fn release_unrun(self: Box<Self>) {}
+    fn release_unrun(self: Box<Self>) {
+        // SAFETY: as when the task is run, see `on_complete`.
+        unsafe { self.ctx.assume_mut() }.decrement_parse_task_counter();
+    }
     /// A step of the bundle.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -2557,8 +2560,9 @@ pub mod parse_worker {
                     .as_ref()
                     .expect("JS-owned bundle has a poster");
                 if let Posted::Refused(ct) = poster.post(ct) {
+                    // Not `release_unrun`: this is a pool thread.
                     // SAFETY: the task made above.
-                    unsafe { ct.task.into_boxed::<Result>() }.release_unrun();
+                    drop(unsafe { ct.task.into_boxed::<Result>() });
                 }
             }
             bun_event_loop::AnyEventLoop::Mini(mini) => {
@@ -2586,7 +2590,10 @@ pub mod parse_worker {
         let ctx = result.ctx;
         // SAFETY: `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`) and outlives
         // the pass. Exclusive by the fn contract.
-        BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() });
+        let bundle = unsafe { ctx.assume_mut() };
+        BundleV2::on_parse_task_complete(result, bundle);
+        // After: the tasks that the result leads to are counted by now.
+        bundle.decrement_parse_task_counter();
     }
 } // end mod parse_worker
 

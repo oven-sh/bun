@@ -8,37 +8,30 @@ use super::*;
 
 bun_bundler::link_impl_DevServerHandle! {
     Bake for DevServer => |this| {
-        barrel_needed_exports() => &raw mut (*this).barrel_needed_exports,
         insert_stale_owner(abs_path, graph) => {
-            bun_core::handle_oom((*this).insert_stale_owner(abs_path, graph))
-        },
-        finalize_bundle(bv2, result) => {
-            // `bv2` borrows the `Transpiler`s stored inline in `DevServer`
-            // (stable heap address); the `'static` is a stand-in for the
-            // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
-            super::finalize::finalize_bundle(&mut *this, &mut *bv2.cast(), result)
-                .map_err(|e| bun_bundler::Error::from(crate::Error::from(e)))
+            bun_core::handle_oom((*this).state_mut().insert_stale_owner(abs_path, graph))
         },
         handle_parse_task_failure(err, graph, abs_path, log, bv2) => {
             (*this)
-                .handle_parse_task_failure(&err.into(), graph, abs_path, log, &mut *bv2)
+                .state_mut()
+                .handle_parse_task_failure(&err.into(), graph, abs_path, log, bv2)
                 .map_err(Into::into)
         },
         put_or_overwrite_asset(path, contents, content_hash) => {
-            // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
-            // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap
-            // bytes as an owned blob (ownership is transferred).
-            let path = &*path.cast::<bun_resolver::fs::Path<'_>>();
             let blob = crate::webcore::blob::Any::from_owned_slice(contents.to_vec());
-            (*this).put_or_overwrite_asset(path, blob, content_hash).map_err(Into::into)
+            (*this)
+                .state_mut()
+                .put_or_overwrite_asset(path, blob, content_hash)
+                .map_err(Into::into)
         },
         track_resolution_failure(import_source, specifier, renderer, loader) => {
             (*this)
+                .state_mut()
                 .track_resolution_failure(import_source, specifier, renderer, loader)
                 .map_err(Into::into)
         },
         is_file_cached(abs_path, side) => {
-            (*this).is_file_cached(abs_path, side).map(|e| {
+            (*this).state_mut().is_file_cached(abs_path, side).map(|e| {
                 use bun_bundler::bake_types::CacheKind;
                 bun_bundler::bake_types::CacheEntry {
                     kind: match e.kind {
@@ -50,28 +43,18 @@ bun_bundler::link_impl_DevServerHandle! {
                 }
             })
         },
-        asset_hash(abs_path) => (*this).graphs.assets.get_hash(abs_path),
-        current_bundle_start_data() => {
-            (*this)
-                .current_bundle
-                .as_mut()
-                .map(|c| (&raw mut c.start_data).cast::<()>())
-                .unwrap_or(core::ptr::null_mut())
+        asset_hash(abs_path) => (*this).state_mut().graphs.assets.get_hash(abs_path),
+        increment_parse_task_counter() => {
+            if (*this).pending_parse_tasks.replace((*this).pending_parse_tasks.get() + 1) == 0 {
+                (*this).parse_tasks_ticket.set(Some((*this).server.vm().ticket()));
+            }
         },
-        register_barrel_with_deferrals(path) => {
-            let _ = (*this)
-                .barrel_files_with_deferrals
-                .get_or_put(path)
-                .map_err(|_| bun_alloc::out_of_memory());
-            Ok(())
+        decrement_parse_task_counter() => {
+            if (*this).pending_parse_tasks.replace((*this).pending_parse_tasks.get() - 1) == 1 {
+                (*this).parse_tasks_ticket.set(None);
+            }
         },
-        register_barrel_export(barrel_path, alias) => {
-            // Silently drop on alloc failure.
-            let Ok(gop) = (*this).barrel_needed_exports.get_or_put(barrel_path) else {
-                return;
-            };
-            let _ = gop.value_ptr.get_or_put(alias);
-        },
+        on_scan_complete() => (*this).server.vm().enqueue_task(jsc::Task::init(this)),
     }
 }
 
@@ -79,15 +62,15 @@ impl DevServer {
     /// Length of `configuration_hash_key`.
     pub(crate) const CONFIGURATION_HASH_KEY_LEN: usize = 16;
 
-    /// Construct the erased handle the bundler stores in
-    /// `Transpiler.options.dev_server` / `BundleV2.dev_server`.
+    /// Construct the erased handle the bundler stores in `BundleV2.dev_server`.
     #[inline]
-    pub(crate) fn bundler_handle(&mut self) -> bun_bundler::dispatch::DevServerHandle {
-        // SAFETY: `self` is the single per-process DevServer; outlives all dispatch.
+    pub(super) fn bundler_handle(&self) -> bun_bundler::dispatch::DevServerHandle {
+        // SAFETY: the bundle's `pending_request` keeps `self`, which the arms above borrow shared.
+        // The bundle runs on this thread, and its tasks cannot read the handle.
         unsafe {
             bun_bundler::dispatch::DevServerHandle::new(
                 bun_bundler::dispatch::DevServerHandleKind::Bake,
-                self,
+                ::core::ptr::from_ref(self).cast_mut(),
             )
         }
     }

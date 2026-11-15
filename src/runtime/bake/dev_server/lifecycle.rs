@@ -1,11 +1,51 @@
 //! Creating and destroying the dev server, and loading the framework's server runtime.
 
 use super::*;
+use bun_ptr::AliasableBox;
 use std::sync::Arc;
 
-/// DevServer is stored on the heap, storing its allocator.
+/// Each logical graph gets its own bundler configuration. `'static` stands for `Options::arena`.
+pub(super) struct Transpilers {
+    pub(super) server: Transpiler<'static>,
+    pub(super) client: Transpiler<'static>,
+    /// `Some` with a separate SSR graph.
+    pub(super) ssr: Option<Transpiler<'static>>,
+}
+
+impl Transpilers {
+    fn iter_mut(&mut self) -> impl Iterator<Item = &mut Transpiler<'static>> {
+        [&mut self.server, &mut self.client]
+            .into_iter()
+            .chain(&mut self.ssr)
+    }
+}
+
+pub(crate) struct OwnedDevServer(AliasableBox<DevServer>);
+
+impl ::core::ops::Deref for OwnedDevServer {
+    type Target = DevServer;
+    fn deref(&self) -> &DevServer {
+        &self.0
+    }
+}
+
+/// Not `Drop for DevServer`: closing a socket calls `on_close`, which borrows it.
+impl Drop for OwnedDevServer {
+    fn drop(&mut self) {
+        let sockets: Vec<uws::AnyWebSocket> = (self.state_mut().active_websocket_connections)
+            .iter()
+            .map(|socket| socket.underlying)
+            .collect();
+        for socket in sockets {
+            socket.close();
+        }
+        // Before the pool that the requests are in.
+        drop(self.state.take());
+    }
+}
+
 #[inline(never)]
-pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
+pub(crate) fn init(options: Options) -> JsResult<OwnedDevServer> {
     bun_removable_features::removable_definition!(Bundler, init);
     // Note: `Features.dev_server +|= 1` (saturating add). AtomicUsize has
     // no `saturating_inc`; on a 64-bit counter overflow is unreachable, so a
@@ -58,9 +98,14 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .then(|| init_transpiler(bake::Graph::Ssr, &options.bundler_options.ssr))
         .transpose()?;
 
-    let mut slot = Box::<DevServer>::new_uninit();
-    let p: *mut DevServer = slot.as_mut_ptr();
-    let pending_reload_event = PendingReloadEvent::new(p);
+    let dev_server = AliasableBox::new(DevServer {
+        server: options.server,
+        state: RefCell::new(None),
+        pending_parse_tasks: Cell::new(0),
+        parse_tasks_ticket: Cell::new(None),
+        deferred_request_pool: HiveArrayFallback::init(),
+    });
+    let pending_reload_event = PendingReloadEvent::new(dev_server.as_ptr());
     let watch_context = Box::new(watch::WatchContext {
         pending_reload_event: Arc::clone(&pending_reload_event),
         vm_handle: options.vm.handle(),
@@ -75,82 +120,76 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
     };
 
-    let mut dev = Box::write(
-        slot,
-        DevServer {
-            magic: Magic::Valid,
-            inspector_server_id: DebuggerId::init(0), // TODO paper clover:
-            configuration_hash_key: [0; 16],
-            vm: bun_ptr::BackRef::new(options.vm),
-            server: None,
-            // Placeholder: the router is built once the framework is resolved.
-            router: FrameworkRouter {
-                root: Box::from(root),
-                types: Box::new([]),
-                routes: Vec::new(),
-                static_routes: Default::default(),
-                dynamic_routes: Default::default(),
-                pattern_string_arena: Arena::new(),
-            },
-            route_bundles: Vec::new(),
-            graph_safety_lock: ThreadLock::init_unlocked(),
-            graphs: Graphs {
-                root: Box::from(root),
-                client: IncrementalGraph::default(),
-                server: IncrementalGraph::default(),
-                incremental_result: IncrementalResult::EMPTY,
-                route_lookup: Default::default(),
-                assets: Assets::default(),
-                bundling_failures: Default::default(),
-            },
-            barrel_files_with_deferrals: Default::default(),
-            barrel_needed_exports: Default::default(),
-            html_router: HTMLRouter::empty(),
-            source_maps: SourceMapStore::empty(),
-            frontend_only: options.framework.file_system_router_types.is_empty(),
-            has_tailwind_plugin_hack: None,
-            server_fetch_function_callback: jsc::StrongOptional::empty(),
-            server_register_update_callback: jsc::StrongOptional::empty(),
-            bun_watcher,
-            directory_watchers: DirectoryWatchStore::default(),
-            pending_reload_event,
-            spare_reload_event: HotReloadEvent::default(),
-            testing_batch_events: TestingBatchEvents::Disabled,
-            generation: 0,
-            bundles_since_last_error: 0,
-            framework: options.framework,
-            plugins: options.bundler_options.plugin.map(Plugins::Owned),
-            server_transpiler,
-            client_transpiler,
-            ssr_transpiler,
-            log: scopeguard::ScopeGuard::into_inner(free_log),
-            plugin_state: PluginState::Unknown,
-            current_bundle: None,
-            next_bundle: NextBundle {
-                route_queue: Default::default(),
-                has_reload_event: false,
-                requests: deferred_request::List::default(),
-            },
-            deferred_request_pool: HiveArrayFallback::init(),
-            active_websocket_connections: Default::default(),
-            emit_incremental_visualizer_events: 0,
-            emit_memory_visualizer_events: 0,
-            timers: bun_ptr::AliasableBox::new(DevServerTimers {
-                dev: p,
-                memory_visualizer_timer: OwnedTimer::init_paused(),
-                weak_ref_sweep_timer: OwnedTimer::init_paused(),
-            }),
-            assume_perfect_incremental_bundling:
-                bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
-                    .get()
-                    .unwrap_or(bun_core::env::IS_DEBUG),
-            broadcast_console_log_from_browser_to_server: options
-                .broadcast_console_log_from_browser_to_server,
+    let mut state = DevServerState {
+        magic: Magic::Valid,
+        inspector_server_id: DebuggerId::init(0), // TODO paper clover:
+        configuration_hash_key: [0; 16],
+        vm: bun_ptr::BackRef::new(options.vm),
+        server: options.server,
+        // Placeholder: the router is built once the framework is resolved.
+        router: FrameworkRouter {
+            root: Box::from(root),
+            types: Box::new([]),
+            routes: Vec::new(),
+            static_routes: Default::default(),
+            dynamic_routes: Default::default(),
+            pattern_string_arena: Arena::new(),
         },
-    );
-    let dev_ptr: *mut DevServer = &raw mut *dev;
-
-    let _unlock = dev.graph_safety_lock.guard();
+        route_bundles: Vec::new(),
+        graphs: Graphs {
+            root: Box::from(root),
+            client: IncrementalGraph::default(),
+            server: IncrementalGraph::default(),
+            incremental_result: IncrementalResult::EMPTY,
+            route_lookup: Default::default(),
+            assets: Assets::default(),
+            bundling_failures: Default::default(),
+        },
+        barrels: Default::default(),
+        html_router: HTMLRouter::empty(),
+        source_maps: SourceMapStore::empty(),
+        frontend_only: options.framework.file_system_router_types.is_empty(),
+        has_tailwind_plugin_hack: None,
+        server_fetch_function_callback: jsc::StrongOptional::empty(),
+        server_register_update_callback: jsc::StrongOptional::empty(),
+        bun_watcher,
+        directory_watchers: DirectoryWatchStore::default(),
+        pending_reload_event,
+        spare_reload_event: HotReloadEvent::default(),
+        testing_batch_events: TestingBatchEvents::Disabled,
+        generation: 0,
+        bundles_since_last_error: 0,
+        framework: options.framework,
+        plugins: options.bundler_options.plugin.map(Plugins::Owned),
+        transpilers: Some(AliasableBox::new(Transpilers {
+            server: server_transpiler,
+            client: client_transpiler,
+            ssr: ssr_transpiler,
+        })),
+        log: scopeguard::ScopeGuard::into_inner(free_log),
+        plugin_state: PluginState::Unknown,
+        current_bundle: None,
+        next_bundle: NextBundle {
+            route_queue: Default::default(),
+            has_reload_event: false,
+            requests: deferred_request::List::default(),
+        },
+        active_websocket_connections: Vec::new(),
+        emit_incremental_visualizer_events: 0,
+        emit_memory_visualizer_events: 0,
+        timers: AliasableBox::new(DevServerTimers {
+            dev: dev_server.as_ptr(),
+            memory_visualizer_timer: OwnedTimer::init_paused(),
+            weak_ref_sweep_timer: OwnedTimer::init_paused(),
+        }),
+        assume_perfect_incremental_bundling:
+            bun_core::env_var::feature_flag::BUN_ASSUME_PERFECT_INCREMENTAL
+                .get()
+                .unwrap_or(bun_core::env::IS_DEBUG),
+        broadcast_console_log_from_browser_to_server: options
+            .broadcast_console_log_from_browser_to_server,
+    };
+    let dev = &mut state;
 
     if let Err(err) = dev.bun_watcher.start() {
         return Err(global.throw_error(
@@ -159,20 +198,20 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    let watcher = Some(Arc::clone(&dev.bun_watcher));
-    for transpiler in dev.transpilers_mut() {
-        transpiler.options.dev_server = dev_ptr as *const ();
-        transpiler.resolver.watcher.clone_from(&watcher);
+    let transpilers = dev.transpilers.as_deref_mut().expect("set above");
+    for transpiler in transpilers.iter_mut() {
+        transpiler.options.dev_server = dev_server.as_ptr().cast_const().cast();
+        transpiler.resolver.watcher = Some(Arc::clone(&dev.bun_watcher));
     }
 
-    debug_assert!(dev.server_transpiler.resolver.opts.target != bun_ast::Target::Browser);
-    debug_assert!(dev.client_transpiler.resolver.opts.target == bun_ast::Target::Browser);
+    debug_assert!(transpilers.server.resolver.opts.target != bun_ast::Target::Browser);
+    debug_assert!(transpilers.client.resolver.opts.target == bun_ast::Target::Browser);
 
     if dev
         .framework
         .resolve(
-            &mut dev.server_transpiler.resolver,
-            &mut dev.client_transpiler.resolver,
+            &mut transpilers.server.resolver,
+            &mut transpilers.client.resolver,
         )
         .is_err()
     {
@@ -192,7 +231,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     let resolved_view = dev.framework.as_bundler_view();
-    for transpiler in dev.transpilers_mut() {
+    for transpiler in transpilers.iter_mut() {
         transpiler.options.framework = Some(Arc::clone(&resolved_view));
     }
 
@@ -308,6 +347,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     // Initialize FrameworkRouter
+    let resolver = &mut dev.transpilers.as_mut().expect("set above").server.resolver;
     dev.router = 'router: {
         let mut types: Vec<router::Type> =
             Vec::with_capacity(dev.framework.file_system_router_types.len());
@@ -319,11 +359,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut buf[..],
                 &[&fsr.root],
             );
-            let Some(entry) = dev
-                .server_transpiler
-                .resolver
-                .read_dir_info_ignore_error(joined_root)
-            else {
+            let Some(entry) = resolver.read_dir_info_ignore_error(joined_root) else {
                 continue;
             };
 
@@ -377,12 +413,11 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     // after that line.
     dev.scan_initial_routes()?;
 
-    debug_assert!(dev.magic == Magic::Valid);
-
-    Ok(dev)
+    *dev_server.state.borrow_mut() = Some(state);
+    Ok(OwnedDevServer(dev_server))
 }
 
-impl Drop for DevServer {
+impl Drop for DevServerState {
     fn drop(&mut self) {
         debug_log!("deinit");
         // For a usize test counter, wrapping at usize::MAX is unreachable in
@@ -394,7 +429,7 @@ impl Drop for DevServer {
         // are `_` so nothing is moved; cleanup not done explicitly below
         // happens via the implicit field drops after this body returns.
         {
-            let DevServer {
+            let DevServerState {
                 magic: _,
                 inspector_server_id: _,
                 configuration_hash_key: _,
@@ -402,7 +437,6 @@ impl Drop for DevServer {
                 server: _,
                 router: _,
                 route_bundles: _,
-                graph_safety_lock: _,
                 graphs:
                     Graphs {
                         root: _,
@@ -413,8 +447,7 @@ impl Drop for DevServer {
                         assets: _,
                         bundling_failures: _,
                     },
-                barrel_files_with_deferrals: _,
-                barrel_needed_exports: _,
+                barrels: _,
                 html_router: _,
                 source_maps: _,
                 frontend_only: _,
@@ -429,15 +462,12 @@ impl Drop for DevServer {
                 generation: _,
                 bundles_since_last_error: _,
                 framework: _,
-                server_transpiler: _,
-                client_transpiler: _,
-                ssr_transpiler: _,
+                transpilers: _,
                 log: _,
                 plugin_state: _,
                 plugins: _,
                 current_bundle: _,
                 next_bundle: _,
-                deferred_request_pool: _,
                 active_websocket_connections: _,
                 emit_incremental_visualizer_events: _,
                 emit_memory_visualizer_events: _,
@@ -447,25 +477,14 @@ impl Drop for DevServer {
             } = &*self;
         }
 
-        // WebSockets should be deinitialized before other parts.
-        for &s in ::core::mem::take(&mut self.active_websocket_connections).keys() {
-            // SAFETY: a socket is live until it is closed. The borrow ends before that.
-            let socket = unsafe { &mut *s };
-            socket.release(self);
-            socket.dev = ::core::ptr::null_mut();
-            if let Some(websocket) = socket.underlying {
-                websocket.close();
-            }
-        }
-
-        self.graph_safety_lock.lock();
         self.bun_watcher.shutdown();
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
         if let Some(current_bundle) = &mut self.current_bundle {
             debug_assert!(false); // impossible to de-initialize this state correctly.
-            super::finalize::drain_current_bundle_requests(current_bundle);
+            let requests = ::core::mem::take(&mut current_bundle.requests);
+            super::finalize::drain_current_bundle_requests(requests);
         }
 
         {
@@ -501,13 +520,7 @@ impl Drop for DevServer {
 
 // re-exports from memory_cost module already declared at top
 
-impl DevServer {
-    fn transpilers_mut(&mut self) -> impl Iterator<Item = &mut Transpiler<'static>> {
-        [&mut self.server_transpiler, &mut self.client_transpiler]
-            .into_iter()
-            .chain(&mut self.ssr_transpiler)
-    }
-
+impl DevServerState {
     fn init_server_runtime(&mut self) -> JsResult<()> {
         let runtime = BunString::create_static_external(
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)
@@ -573,7 +586,12 @@ impl DevServer {
     /// Deferred one tick so that the server can be up faster
     fn scan_initial_routes(&mut self) -> crate::Result<()> {
         self.router.scan_all(
-            &mut self.server_transpiler.resolver,
+            &mut self
+                .transpilers
+                .as_mut()
+                .expect("set by `init`")
+                .server
+                .resolver,
             router::InsertionContext::wrap(&mut self.graphs),
         )?;
 
@@ -581,25 +599,23 @@ impl DevServer {
         self.graphs.client.ensure_stale_bit_capacity(true)?;
         Ok(())
     }
+}
 
+impl DevServer {
     /// Returns true if a catch-all handler was attached.
     ///
     /// # Safety
-    /// `this` is not borrowed, and is live until the routes of `server` are gone: uWS keeps it.
+    /// `self` is live until the routes of `server` are gone: uWS keeps it.
     pub(crate) unsafe fn set_routes<const SSL: bool, const DEBUG: bool>(
-        this: *mut Self,
+        &self,
         server: &crate::server::NewServer<SSL, DEBUG>,
-    ) -> crate::Result<bool> {
+    ) -> bool {
         // TODO: all paths here must be prefixed with publicPath if set.
-        // SAFETY: fn contract.
-        let self_ = unsafe {
-            (*this).server = Some(AnyServer::from(server));
-            &*this
-        };
+        let state = self.state_mut();
         // The server has its routes now; the scan of the pages ran before it had them.
-        self_.report_pages_hidden_by_server_routes();
+        state.report_pages_hidden_by_server_routes();
         let app = server.app().unwrap();
-        let dev = this.cast::<c_void>();
+        let dev = ::core::ptr::from_ref(self).cast_mut().cast::<c_void>();
 
         // Each `dev_route_tramp::<SSL, ID>` is a distinct C function with its handler baked in.
         macro_rules! route {
@@ -648,11 +664,11 @@ impl DevServer {
 
         // Only attach a catch-all handler if the framework has filesystem
         // router types. Otherwise, this can just be Bun.serve's default handler.
-        if !self_.framework.file_system_router_types.is_empty() {
+        if !state.framework.file_system_router_types.is_empty() {
             route!(any, b"/*", DevHandlerId::Request);
-            Ok(true)
+            true
         } else {
-            Ok(false)
+            false
         }
     }
 }

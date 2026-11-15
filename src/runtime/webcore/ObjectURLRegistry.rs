@@ -1,15 +1,18 @@
+use core::cell::Cell;
 use std::sync::OnceLock;
 
 use bun_collections::HashMap;
 use bun_core::strings;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue, UUID};
+use bun_jsc::{JSGlobalObject, JSValue, JsCell, UUID};
+use bun_ptr::{RefCount, RefPtr};
 use bun_threading::Guarded;
 
 use crate::generated_bindgen::blob::BlobOrBuildArtifact;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::blob::{BlobContentType, SizeType, Store};
 
 // The map is wrapped in a `Guarded` (mutex + value).
 //
@@ -21,24 +24,68 @@ pub(crate) struct ObjectURLRegistry {
     map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
 }
 
-/// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is a
-/// shared impl (pre-hashed, never atomized in place), so dupes may clone it
-/// into any VM.
+/// The fields of a [`Blob`] that do not belong to a VM.
 pub(crate) struct Entry {
-    blob: Blob,
+    reported_estimated_size: usize,
+    size: SizeType,
+    offset: SizeType,
+    store: Option<RefPtr<Store>>,
+    content_type: BlobContentType,
+    content_type_was_set: bool,
+    charset: strings::AsciiStatus,
+    is_jsdom_file: bool,
+    last_modified: f64,
+    /// A shared impl (pre-hashed, never atomized in place), so any VM may clone it.
+    name: bun_core::String,
 }
-
-const _: fn() = || {
-    fn assert_send<T: Send>() {}
-    assert_send::<Entry>();
-};
 
 impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
-        let blob = blob.dupe_with_content_type(true);
-        blob.global_this.set(core::ptr::null());
-        blob.name.with_mut(|name| name.make_thread_shareable());
-        Box::new(Entry { blob })
+        let Blob {
+            reported_estimated_size,
+            size,
+            offset,
+            store,
+            content_type,
+            content_type_was_set,
+            charset,
+            is_jsdom_file,
+            ref_count: _,
+            global_this: _,
+            last_modified,
+            name,
+        } = blob;
+        let mut name = name.get().clone();
+        name.make_thread_shareable();
+        Box::new(Entry {
+            reported_estimated_size: reported_estimated_size.get(),
+            size: size.get(),
+            offset: offset.get(),
+            store: store.clone(),
+            content_type: content_type.get().clone(),
+            content_type_was_set: content_type_was_set.get(),
+            charset: charset.get(),
+            is_jsdom_file: is_jsdom_file.get(),
+            last_modified: last_modified.get(),
+            name,
+        })
+    }
+
+    fn to_blob(&self, global_object: &JSGlobalObject) -> Blob {
+        Blob {
+            reported_estimated_size: Cell::new(self.reported_estimated_size),
+            size: Cell::new(self.size),
+            offset: Cell::new(self.offset),
+            store: self.store.clone(),
+            content_type: JsCell::new(self.content_type.clone()),
+            content_type_was_set: Cell::new(self.content_type_was_set),
+            charset: Cell::new(self.charset),
+            is_jsdom_file: Cell::new(self.is_jsdom_file),
+            ref_count: RefCount::init(),
+            global_this: Cell::new(global_object),
+            last_modified: Cell::new(self.last_modified),
+            name: JsCell::new(self.name.clone()),
+        }
     }
 }
 
@@ -63,10 +110,7 @@ impl ObjectURLRegistry {
     ) -> Option<Blob> {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
-        let entry = map.get(&uuid.bytes)?;
-        let blob = entry.blob.dupe_with_content_type(true);
-        blob.global_this.set(global_object);
-        Some(blob)
+        Some(map.get(&uuid.bytes)?.to_blob(global_object))
     }
 
     pub(crate) fn resolve_and_dupe_to_js(

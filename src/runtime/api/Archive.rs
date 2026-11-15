@@ -132,7 +132,7 @@ impl Archive {
 
         // For Blob/Archive, ref the existing store (zero-copy)
         if let Some(blob) = blob_from_js(data) {
-            if let Some(store) = blob.store.get().as_ref() {
+            if let Some(store) = blob.store() {
                 return Ok(Self {
                     store: store.clone(),
                     compress,
@@ -344,7 +344,7 @@ impl Archive {
 
         // For Blobs, use store reference with options compression
         if let Some(blob) = blob_from_js(data_arg) {
-            if let Some(store) = blob.store.get().as_ref() {
+            if let Some(store) = blob.store() {
                 return start_write_task(
                     &cx,
                     WriteData::Store(store.clone()),

@@ -15,13 +15,13 @@
 
 use core::cell::Cell;
 use core::ffi::c_void;
+use core::ops::Range;
 
 use bun_core::strings::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
 use bun_ptr::RefPtr;
 
 use crate::JsCell;
-use crate::node_path::{PathLike, PathOrFileDescriptor};
 use crate::{JSGlobalObject, JSValue, JsClass};
 
 /// Blob size type. Values are masked to 52 bits at the boundary.
@@ -148,7 +148,7 @@ impl From<MimeType> for BlobContentType {
 /// Every JS-facing host-fn takes `&Blob` (not `&mut Blob`)
 /// so re-entrant JS calls cannot stack two `&mut` to the same instance. Fields
 /// mutated by host-fns are therefore wrapped in `Cell` (Copy scalars) or
-/// `JsCell` (the non-Copy `store`). `Cell<T>` and `JsCell<T>` are both
+/// `JsCell` (`content_type`, `name`). `Cell<T>` and `JsCell<T>` are both
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
@@ -156,7 +156,7 @@ pub struct Blob {
     pub reported_estimated_size: Cell<usize>,
     pub size: Cell<SizeType>,
     pub offset: Cell<SizeType>,
-    pub store: JsCell<Option<RefPtr<Store>>>,
+    pub store: Option<RefPtr<Store>>,
     pub content_type: JsCell<BlobContentType>,
     pub content_type_was_set: Cell<bool>,
     /// Cached encoding probe of `shared_view()`.
@@ -174,23 +174,13 @@ pub struct Blob {
     pub name: bun_ptr::JsCell<bun_core::String>,
 }
 
-// SAFETY: `global_this` is dereferenced only on its owning JS thread; blobs
-// in the object-URL registry carry a null global and a `make_thread_shareable()`d `name`;
-// `store` (`RefPtr<Store>`) / `content_type` are atomically refcounted and
-// `Store::is_all_ascii` is atomic.
-unsafe impl Send for Blob {}
-// SAFETY: concurrent `&Blob` access only occurs under `ObjectURLRegistry`'s
-// mutex or on the single owning JS thread;
-// the `Cell` fields are never raced with a writer.
-unsafe impl Sync for Blob {}
-
 impl Default for Blob {
     fn default() -> Self {
         Self {
             reported_estimated_size: Cell::new(0),
             size: Cell::new(0),
             offset: Cell::new(0),
-            store: JsCell::new(None),
+            store: None,
             content_type: JsCell::new(BlobContentType::default()),
             content_type_was_set: Cell::new(false),
             charset: Cell::new(AsciiStatus::Unknown),
@@ -261,17 +251,15 @@ impl Blob {
         self.content_type.get().as_slice()
     }
 
-    /// Borrowed accessor for the `JsCell`-wrapped store.
     #[inline]
     pub fn store(&self) -> Option<&RefPtr<Store>> {
-        self.store.get().as_ref()
+        self.store.as_ref()
     }
 
-    /// Move the store ref out without releasing it —
-    /// the caller adopts the existing +1. `None` if already detached.
+    /// `None` also if the store is shared, see [`Store::get_mut`].
     #[inline]
-    pub fn take_store(&self) -> Option<RefPtr<Store>> {
-        self.store.replace(None)
+    pub fn store_mut(&mut self) -> Option<&mut Store> {
+        Store::get_mut(self.store.as_mut()?)
     }
 
     /// Safe accessor for `global_this`. `None` only for default-constructed
@@ -294,9 +282,11 @@ impl Blob {
         } else {
             BlobContentType::default()
         };
-        let blob = Blob::default();
+        let blob = Blob {
+            store: Some(store),
+            ..Blob::default()
+        };
         blob.size.set(size);
-        blob.store.set(Some(store));
         blob.content_type.set(content_type);
         blob.global_this.set(global_this);
         blob
@@ -310,9 +300,11 @@ impl Blob {
         } else {
             None
         };
-        let blob = Blob::default();
+        let blob = Blob {
+            store,
+            ..Blob::default()
+        };
         blob.size.set(size);
-        blob.store.set(store);
         blob.global_this.set(global_this);
         blob
     }
@@ -345,11 +337,13 @@ impl Blob {
         &slice[..slice.len().min(self.size.get() as usize)]
     }
 
-    /// Release the store ref without
-    /// dropping `self`.
-    #[inline]
-    pub fn detach(&self) {
-        self.store.set(None);
+    /// Where [`Self::shared_view`] lies in the bytes of the store.
+    pub fn window(&self) -> Range<usize> {
+        let start = self.offset.get() as usize;
+        match self.shared_view().len() {
+            0 => 0..0,
+            len => start..start + len,
+        }
     }
 
     /// New view onto the same store, +1 ref.
@@ -374,7 +368,7 @@ impl Blob {
             reported_estimated_size: Cell::new(self.reported_estimated_size.get()),
             size: Cell::new(self.size.get()),
             offset: Cell::new(self.offset.get()),
-            store: JsCell::new(self.store.get().clone()),
+            store: self.store.clone(),
             content_type: JsCell::new(self.content_type.get().clone()),
             content_type_was_set: Cell::new(self.content_type_was_set.get()),
             charset: Cell::new(self.charset.get()),
@@ -419,10 +413,18 @@ impl Blob {
         }
     }
 
+    #[inline]
+    pub fn file(&self) -> Option<&store::File> {
+        match &self.store()?.data {
+            store::Data::File(file) => Some(file),
+            store::Data::Bytes(_) | store::Data::S3(_) => None,
+        }
+    }
+
     /// `Blob.isS3()` — backed by an S3 `Store::S3`.
     #[inline]
     pub fn is_s3(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
+        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::S3(_)))
     }
 
     /// `Blob.needsToReadFile()` — backed by a filesystem `Store::File` (a
@@ -430,7 +432,7 @@ impl Blob {
     /// in-memory consumer can see them.
     #[inline]
     pub fn needs_to_read_file(&self) -> bool {
-        matches!(self.store.get().as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
+        matches!(self.store.as_deref(), Some(s) if matches!(s.data, store::Data::File(_)))
     }
 
     /// A usable filename: a non-empty `name`, else [`store_path`]. (`file.name`
@@ -448,16 +450,13 @@ impl Blob {
     /// `Bytes.stored_name`, the file path, or the S3 key, ignoring `name`.
     /// `None` for fd-backed or unnamed stores.
     pub fn store_path(&self) -> Option<&[u8]> {
-        match &self.store.get().as_deref()?.data {
+        match &self.store.as_deref()?.data {
             store::Data::Bytes(bytes) => {
                 let n = &bytes.stored_name[..];
                 if n.is_empty() { None } else { Some(n) }
             }
-            store::Data::File(file) => match &file.pathlike {
-                PathOrFileDescriptor::Path(path) => Some(path.slice()),
-                PathOrFileDescriptor::Fd(_) => None,
-            },
-            // Use `s3.path()` (URL-normalized), NOT `s3.pathlike.slice()`.
+            store::Data::File(file) => file.path(),
+            // Use `s3.path()` (URL-normalized), NOT `s3.path_as_written`.
             store::Data::S3(s3) => Some(s3.path()),
         }
     }
@@ -508,9 +507,15 @@ unsafe extern "C" fn Blob__deref(this: *mut Blob) {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod store {
+    use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+    use std::borrow::Cow;
     use std::sync::Arc;
 
+    use bun_sys::{Fd, Mode};
+
     use super::*;
+    use crate::JSTimeType;
+    use crate::node_path::{JoinedPath, PathLike, PathOrFileDescriptor};
 
     /// Intrusively-refcounted; always
     /// heap-allocated.
@@ -562,8 +567,8 @@ pub mod store {
     }
 
     impl Data {
-        bun_core::enum_unwrap!(pub Data, File  => fn as_file  / as_file_mut  -> File);
-        bun_core::enum_unwrap!(pub Data, S3    => fn as_s3    / as_s3_mut    -> S3);
+        bun_core::enum_unwrap!(pub Data, File  => fn as_file -> File);
+        bun_core::enum_unwrap!(pub Data, S3    => fn as_s3 -> S3);
         bun_core::enum_unwrap!(pub Data, Bytes => fn as_bytes / as_bytes_mut -> Bytes);
     }
 
@@ -595,6 +600,8 @@ pub mod store {
         /// What `Storage::Mapped` maps, if it can be mapped again for a copy-on-write clone.
         #[cfg(any(target_os = "linux", target_os = "android"))]
         memfd: Option<bun_sys::File>,
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        memfd_was_cloned: AtomicBool,
         /// Used by standalone module graph and the `File` constructor.
         pub stored_name: Box<[u8]>,
     }
@@ -612,6 +619,8 @@ pub mod store {
                 storage,
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 memfd: None,
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                memfd_was_cloned: AtomicBool::new(false),
                 stored_name: Box::default(),
             }
         }
@@ -641,9 +650,13 @@ pub mod store {
             }
         }
 
+        /// Marks the memfd as cloned, see [`Self::slice_mut`].
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub(crate) fn memfd(&self) -> Option<bun_sys::Fd> {
-            self.memfd.as_ref().map(|file| file.handle)
+        pub(crate) fn memfd_for_clone(&self) -> Option<Fd> {
+            let memfd = self.memfd.as_ref()?;
+            // Relaxed: read behind the last ref.
+            self.memfd_was_cloned.store(true, Ordering::Relaxed);
+            Some(memfd.handle)
         }
 
         #[inline]
@@ -666,17 +679,18 @@ pub mod store {
             !matches!(self.storage, Storage::Heap(_) | Storage::Static(_))
         }
 
-        /// The bytes of [`Self::init_static`] must not be written to.
-        pub fn slice_raw(&mut self) -> *mut [u8] {
+        /// `None` for static bytes, and for a memfd that was cloned: a write to it shows in the clone.
+        pub fn slice_mut(&mut self) -> Option<&mut [u8]> {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if *self.memfd_was_cloned.get_mut() {
+                return None;
+            }
             match &mut self.storage {
-                Storage::Heap(bytes) => {
-                    core::ptr::slice_from_raw_parts_mut(bytes.as_mut_ptr(), bytes.len())
-                }
-                Storage::Static(bytes) => core::ptr::from_ref(*bytes).cast_mut(),
+                Storage::Heap(bytes) => Some(bytes),
+                Storage::Static(_) => None,
+                // SAFETY: the contract of `from_mapping`; see `can_change_under_borrow` for writers.
                 #[cfg(unix)]
-                Storage::Mapped(mapping) => {
-                    core::ptr::slice_from_raw_parts_mut(mapping.as_ptr(), mapping.size())
-                }
+                Storage::Mapped(mapping) => Some(unsafe { mapping.as_mut_slice() }),
             }
         }
 
@@ -694,43 +708,143 @@ pub mod store {
     // ────────────────────────────────────────────────────────────────────
 
     /// A blob store referencing a file on disk.
-    #[derive(Clone)]
     pub struct File {
-        pub pathlike: PathOrFileDescriptor<'static>,
+        pathlike: StoredPathOrFileDescriptor,
         pub mime_type: MimeType,
-        pub is_atty: Option<bool>,
-        pub mode: bun_sys::Mode,
-        pub seekable: Option<bool>,
-        pub max_size: SizeType,
-        /// Milliseconds since ECMAScript epoch.
-        pub last_modified: crate::JSTimeType,
+        is_atty: AtomicBool,
+        mode: AtomicU32,
+        /// Publishes `mode` and `max_size`. The other atomics publish nothing, so they are relaxed.
+        has_stat: AtomicBool,
+        max_size: AtomicU64,
+        last_modified: AtomicU64,
         /// `st_mode` as a body's `clone()` saw it, kept apart from what the `Bun.file()` sharing this store answers from.
-        pub mode_seen_by_clone: Option<bun_sys::Mode>,
+        mode_seen_by_clone: AtomicU32,
     }
 
-    impl Default for File {
-        fn default() -> Self {
-            Self {
-                pathlike: PathOrFileDescriptor::Fd(bun_sys::Fd::INVALID),
-                mime_type: bun_http_types::MimeType::OTHER,
-                is_atty: None,
-                mode: 0,
-                seekable: None,
-                max_size: MAX_SIZE,
-                last_modified: crate::INIT_TIMESTAMP,
-                mode_seen_by_clone: None,
-            }
-        }
+    /// A [`PathOrFileDescriptor`] that holds no JS string or buffer.
+    enum StoredPathOrFileDescriptor {
+        Fd(Fd),
+        Path(Vec<u8>),
+        Joined(JoinedPath),
     }
 
     impl File {
-        #[inline]
-        pub fn init(pathlike: PathOrFileDescriptor<'static>, mime_type: Option<MimeType>) -> File {
+        pub fn init(pathlike: PathOrFileDescriptor<'_>, mime_type: Option<MimeType>) -> File {
             File {
-                pathlike,
+                pathlike: match pathlike {
+                    PathOrFileDescriptor::Fd(fd) => StoredPathOrFileDescriptor::Fd(fd),
+                    PathOrFileDescriptor::Path(PathLike::Joined(path)) => {
+                        StoredPathOrFileDescriptor::Joined(path.into_owned())
+                    }
+                    PathOrFileDescriptor::Path(path) => {
+                        StoredPathOrFileDescriptor::Path(path.into_vec())
+                    }
+                },
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                ..Default::default()
+                is_atty: AtomicBool::new(false),
+                mode: AtomicU32::new(0),
+                has_stat: AtomicBool::new(false),
+                max_size: AtomicU64::new(MAX_SIZE),
+                last_modified: AtomicU64::new(crate::INIT_TIMESTAMP),
+                mode_seen_by_clone: AtomicU32::new(0),
             }
+        }
+
+        pub fn init_stdio(fd: Fd, is_atty: bool, mode: Mode) -> File {
+            File {
+                is_atty: AtomicBool::new(is_atty),
+                mode: AtomicU32::new(mode),
+                ..File::init(PathOrFileDescriptor::Fd(fd), None)
+            }
+        }
+
+        #[inline]
+        pub fn pathlike(&self) -> PathOrFileDescriptor<'_> {
+            match &self.pathlike {
+                StoredPathOrFileDescriptor::Fd(fd) => PathOrFileDescriptor::Fd(*fd),
+                StoredPathOrFileDescriptor::Path(path) => {
+                    PathOrFileDescriptor::Path(PathLike::borrowed(path))
+                }
+                StoredPathOrFileDescriptor::Joined(path) => {
+                    PathOrFileDescriptor::Path(PathLike::Joined(Cow::Borrowed(path)))
+                }
+            }
+        }
+
+        /// As [`PathLike::slice`]. `None` for a file descriptor.
+        #[inline]
+        pub fn path(&self) -> Option<&[u8]> {
+            match &self.pathlike {
+                StoredPathOrFileDescriptor::Fd(_) => None,
+                StoredPathOrFileDescriptor::Path(path) => Some(path),
+                StoredPathOrFileDescriptor::Joined(path) => Some(&path.joined),
+            }
+        }
+
+        /// `None` for a path.
+        #[inline]
+        pub fn fd(&self) -> Option<Fd> {
+            match self.pathlike {
+                StoredPathOrFileDescriptor::Fd(fd) => Some(fd),
+                StoredPathOrFileDescriptor::Path(_) | StoredPathOrFileDescriptor::Joined(_) => None,
+            }
+        }
+
+        #[inline]
+        pub fn is_atty(&self) -> bool {
+            self.is_atty.load(Ordering::Relaxed)
+        }
+
+        #[inline]
+        pub fn set_is_atty(&self, is_atty: bool) {
+            self.is_atty.store(is_atty, Ordering::Relaxed);
+        }
+
+        /// 0: unknown.
+        #[inline]
+        pub fn mode(&self) -> Mode {
+            self.mode.load(Ordering::Relaxed)
+        }
+
+        /// `None` until [`Self::set_stat`].
+        #[inline]
+        pub fn seekable(&self) -> Option<bool> {
+            self.has_stat
+                .load(Ordering::Acquire)
+                .then(|| bun_sys::S::ISREG(self.mode()))
+        }
+
+        #[inline]
+        pub fn max_size(&self) -> SizeType {
+            self.max_size.load(Ordering::Relaxed)
+        }
+
+        /// Milliseconds since ECMAScript epoch.
+        #[inline]
+        pub fn last_modified(&self) -> JSTimeType {
+            self.last_modified.load(Ordering::Relaxed)
+        }
+
+        #[inline]
+        pub fn set_last_modified(&self, last_modified: JSTimeType) {
+            self.last_modified.store(last_modified, Ordering::Relaxed);
+        }
+
+        #[inline]
+        pub fn mode_seen_by_clone(&self) -> Option<Mode> {
+            Some(self.mode_seen_by_clone.load(Ordering::Relaxed)).filter(|&mode| mode != 0)
+        }
+
+        #[inline]
+        pub fn set_mode_seen_by_clone(&self, mode: Mode) {
+            self.mode_seen_by_clone.store(mode, Ordering::Relaxed);
+        }
+
+        pub fn set_stat(&self, mode: Mode, max_size: SizeType, last_modified: JSTimeType) {
+            self.max_size.store(max_size, Ordering::Relaxed);
+            self.mode.store(mode, Ordering::Relaxed);
+            self.set_last_modified(last_modified);
+            self.has_stat.store(true, Ordering::Release);
         }
     }
 
@@ -742,7 +856,7 @@ pub mod store {
     /// I/O methods (`unlink`/`stat`/`listObjects`/`getCredentialsWithOptions`)
     /// live in `bun_runtime` because they reach the HTTP client / event loop.
     pub struct S3 {
-        pub pathlike: PathLike<'static>,
+        pub path_as_written: Vec<u8>,
         pub(crate) mime_type: MimeType,
         pub credentials: Arc<bun_s3_signing::S3Credentials>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
@@ -753,11 +867,11 @@ pub mod store {
 
     impl S3 {
         pub fn estimated_size(&self) -> usize {
-            self.pathlike.estimated_size() + self.credentials.estimated_size()
+            self.path_as_written.len() + self.credentials.estimated_size()
         }
 
         pub fn path(&self) -> &[u8] {
-            let mut path_name = bun_url::URL::parse(self.pathlike.slice()).s3_path();
+            let mut path_name = bun_url::URL::parse(&self.path_as_written).s3_path();
             // normalize start and ending
             if bun_core::strings::ends_with(path_name, b"/") {
                 path_name = &path_name[0..path_name.len()];
@@ -773,13 +887,13 @@ pub mod store {
         }
 
         pub fn init(
-            pathlike: PathLike<'static>,
+            path_as_written: Vec<u8>,
             mime_type: Option<MimeType>,
             aws_options: bun_s3_signing::S3CredentialsWithOptions,
         ) -> S3 {
             S3 {
                 credentials: Arc::new(aws_options.credentials),
-                pathlike,
+                path_as_written,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
                 options: aws_options.options,
                 acl: aws_options.acl,
@@ -819,19 +933,13 @@ pub mod store {
                     let n = &bytes.stored_name[..];
                     if n.is_empty() { None } else { Some(n) }
                 }
-                Data::File(file) => {
-                    if let PathOrFileDescriptor::Path(path) = &file.pathlike {
-                        Some(path.slice())
-                    } else {
-                        None
-                    }
-                }
-                Data::S3(s3) => Some(s3.pathlike.slice()),
+                Data::File(file) => file.path(),
+                Data::S3(s3) => Some(&s3.path_as_written),
             }
         }
 
         pub fn memory_cost(&self) -> usize {
-            if self.has_one_ref() {
+            if self.ref_count.has_one_ref() {
                 core::mem::size_of::<Self>()
                     + match &self.data {
                         Data::Bytes(bytes) => bytes.len() as usize,
@@ -859,11 +967,6 @@ pub mod store {
             &[]
         }
 
-        #[inline]
-        pub fn has_one_ref(&self) -> bool {
-            self.ref_count.has_one_ref()
-        }
-
         /// `JSCArrayBuffer` deallocator hook. Only ever passed as a
         /// callback fn pointer, so no `#[unsafe(no_mangle)]` here.
         ///
@@ -878,23 +981,12 @@ pub mod store {
             unsafe { RefPtr::decrement_strong_count(ptr.cast::<Store>()) };
         }
 
-        /// Mutable access to `data` through a shared handle. The caller must
-        /// ensure no other `&mut` to the same `Store` is live (single-threaded
-        /// JS event-loop discipline).
+        /// `None` unless `this` is the last ref.
         #[inline]
-        #[allow(clippy::mut_from_ref)]
-        pub fn data_mut(this: &RefPtr<Store>) -> &mut Data {
-            // SAFETY: caller guarantees no other `&mut` to this `Store` is
-            // live; `as_ptr` carries the allocation's provenance.
-            unsafe { &mut (*this.as_ptr()).data }
+        pub fn get_mut(this: &mut RefPtr<Store>) -> Option<&mut Store> {
+            // SAFETY: nothing keeps a `ThisPtr` or `BackRef` to a `Store`, so every pointer to it is a counted ref. `this` is the last one, and it stays borrowed.
+            RefPtr::has_one_ref(this).then(|| unsafe { &mut *this.as_ptr() })
         }
     }
-
-    // SAFETY: `Store`'s refcount is atomic and its payload is either
-    // immutable-after-init or guarded by callers.
-    unsafe impl Send for Store {}
-    // SAFETY: `Store::ref_count` is atomic; `&Store` gives no unguarded
-    // interior mutation.
-    unsafe impl Sync for Store {}
 }
 pub use store::Store;

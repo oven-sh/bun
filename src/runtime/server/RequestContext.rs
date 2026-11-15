@@ -408,16 +408,12 @@ mod shim {
     /// (E0034); inline the body here.
     #[inline]
     pub(super) fn blob_is_s3(b: &Blob) -> bool {
-        b.store
-            .get()
-            .as_ref()
+        b.store()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::S3(_)))
     }
     #[inline]
     pub(super) fn blob_needs_to_read_file(b: &Blob) -> bool {
-        b.store
-            .get()
-            .as_ref()
+        b.store()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
     /// The response is done with its natively piped body. A body still mid-stream is
@@ -1719,8 +1715,9 @@ where
         let crate::webcore::blob::store::Data::File(file) = &blob_ref.store().unwrap().data else {
             unreachable!("do_sendfile called with non-file blob");
         };
+        let pathlike = file.pathlike();
         let mut file_buf = bun_paths::path_buffer_pool::get();
-        let opened = match &file.pathlike {
+        let opened = match &pathlike {
             crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => None,
             crate::webcore::node_types::PathOrFileDescriptor::Path(path) => {
                 match bun_sys::File::open(
@@ -1738,14 +1735,14 @@ where
         };
         let fd = opened
             .as_ref()
-            .map_or_else(|| file.pathlike.fd(), bun_sys::File::fd);
+            .map_or_else(|| pathlike.fd(), bun_sys::File::fd);
 
         let stat: bun_sys::Stat = match bun_sys::fstat(fd) {
             bun_sys::Result::Ok(s) => s,
             bun_sys::Result::Err(err) => {
                 drop(opened);
                 // Attach the path for the Path arm and the fd for the Fd arm.
-                let js_err = match &file.pathlike {
+                let js_err = match &pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         err.with_path(p.slice()).to_js(global_this)
                     }
@@ -1774,7 +1771,7 @@ where
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
                 };
-                let err = match &file.pathlike {
+                let err = match &pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         base_err.with_path(p.slice())
                     }

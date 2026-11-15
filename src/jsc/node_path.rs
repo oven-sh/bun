@@ -7,12 +7,14 @@
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
+use std::borrow::Cow;
+
 use bun_core::{Utf8Bytes, Utf8WithString};
 use bun_sys::Fd;
 
 use crate::array_buffer::PinnedArrayBuffer;
 
-/// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` may
+/// `node.PathLike`. Parsed from JS it is `PathLike<'static>`; `Utf8` and `Joined` may
 /// instead borrow Rust-side bytes for a synchronous call ([`PathLike::borrowed`]).
 pub enum PathLike<'a> {
     /// Pinned for the call; also GC-rooted when parsed for an async call.
@@ -22,7 +24,7 @@ pub enum PathLike<'a> {
     String(Utf8WithString),
     ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
-    Joined(Box<JoinedPath>),
+    Joined(Cow<'a, JoinedPath>),
 }
 
 /// A relative path that starts at the working directory in the executable, which the system does not know.
@@ -69,7 +71,7 @@ impl<'a> PathLike<'a> {
     pub fn into_vec(self) -> Vec<u8> {
         match self {
             Self::Utf8(utf8) => utf8.into_vec(),
-            Self::Joined(path) => path.joined,
+            Self::Joined(path) => path.into_owned().joined,
             path => path.slice().to_vec(),
         }
     }
@@ -96,7 +98,7 @@ impl<'a> PathLike<'a> {
     /// A copy that owns its bytes, for another thread.
     pub fn owned_copy(&self) -> PathLike<'static> {
         match self {
-            Self::Joined(path) => PathLike::Joined(path.clone()),
+            Self::Joined(path) => PathLike::Joined(Cow::Owned(JoinedPath::clone(path))),
             path => PathLike::owned(path.slice().to_vec()),
         }
     }
@@ -111,22 +113,6 @@ impl<'a> PathLike<'a> {
     }
 }
 
-impl PathLike<'static> {
-    /// For a path a `Blob` store keeps (dropped on any thread): a JS-backed
-    /// string becomes a private copy never handed to JS, and a buffer's bytes
-    /// are copied and its pin is released here, on the JS thread.
-    pub fn thread_isolated_copy(self) -> Self {
-        match self {
-            Self::String(s) | Self::ThreadIsolatedString(s) => {
-                Self::ThreadIsolatedString(s.thread_isolated_copy())
-            }
-            Self::Buffer(b) => Self::owned(b.slice().to_vec()),
-            Self::Utf8(s) => Self::Utf8(s),
-            Self::Joined(path) => Self::Joined(path),
-        }
-    }
-}
-
 /// `node.PathOrFileDescriptor`.
 pub enum PathOrFileDescriptor<'a> {
     Fd(Fd),
@@ -137,15 +123,6 @@ impl Default for PathOrFileDescriptor<'_> {
     #[inline]
     fn default() -> Self {
         Self::Fd(Fd::INVALID)
-    }
-}
-
-impl Clone for PathOrFileDescriptor<'_> {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Fd(fd) => Self::Fd(*fd),
-            Self::Path(p) => Self::Path(p.clone()),
-        }
     }
 }
 
@@ -164,16 +141,6 @@ impl PathOrFileDescriptorSerializeTag {
             0 => Some(Self::Fd),
             1 => Some(Self::Path),
             _ => None,
-        }
-    }
-}
-
-impl PathOrFileDescriptor<'static> {
-    #[inline]
-    pub fn thread_isolated_copy(self) -> Self {
-        match self {
-            Self::Path(p) => Self::Path(p.thread_isolated_copy()),
-            Self::Fd(fd) => Self::Fd(fd),
         }
     }
 }

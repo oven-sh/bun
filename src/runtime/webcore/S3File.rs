@@ -118,12 +118,7 @@ pub(crate) fn parse_s3_path_or_blob(
         bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), core::slice::from_ref(&path));
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
-        {
+        if !blob.is_s3() {
             return Err(global.throw_invalid_arguments(format_args!("{error_message}")));
         }
     }
@@ -233,8 +228,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
     )
 }
 
-#[derive(Clone, Copy, strum::IntoStaticStr)]
-#[strum(serialize_all = "lowercase")]
+#[derive(Clone, Copy)]
 enum StatQuery {
     Exists,
     Size,
@@ -285,16 +279,7 @@ impl S3BlobStatTask {
 
     /// Sends the HEAD request behind `exists()`, `size()` and `stat()`.
     fn start(cx: &bun_jsc::JsThread<'_>, blob: &Blob, query: StatQuery) -> JsResult<JSValue> {
-        let store = match s3_store(blob, cx.global(), query.into()) {
-            Ok(store) => store,
-            Err(err) => {
-                return Ok(bun_jsc::JSPromise::rejected_promise_with_caught_exception(
-                    cx.global(),
-                    err,
-                )?
-                .to_js());
-            }
-        };
+        let store = blob.store().expect("infallible: store present");
         let this = S3BlobStatTask {
             query,
             promise: bun_jsc::JSPromiseStrong::init(cx.global()),
@@ -325,26 +310,9 @@ impl S3BlobStatTask {
     }
 
     #[inline(never)]
-    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &mut Blob) -> JsResult<JSValue> {
+    pub(crate) fn size(cx: &bun_jsc::JsThread<'_>, blob: &Blob) -> JsResult<JSValue> {
         bun_removable_features::removable_definition!(S3Client, Self::size);
         Self::start(cx, blob, StatQuery::Size)
-    }
-}
-
-/// Running script can detach the store from `blob`: clone it first.
-fn s3_store<'a>(
-    blob: &'a Blob,
-    global: &JSGlobalObject,
-    verb: &str,
-) -> JsResult<&'a RefPtr<Store>> {
-    match blob.store() {
-        Some(store) if matches!(store.data, blob::store::Data::S3(_)) => Ok(store),
-        _ => Err(global
-            .err(
-                bun_jsc::ErrorCode::INVALID_THIS,
-                format_args!("{verb} is only possible for s3:// files"),
-            )
-            .throw()),
     }
 }
 
@@ -363,9 +331,11 @@ pub(crate) fn get_presign_url_from(
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
 
-    // Our own ref: the option getters below can detach it from `this`.
-    let store = s3_store(this, global, "presign")?.clone();
-    let s3 = store.data.as_s3();
+    let s3 = this
+        .store()
+        .expect("infallible: store present")
+        .data
+        .as_s3();
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).
@@ -427,7 +397,7 @@ pub(crate) fn get_presign_url_from(
 }
 
 fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
-    let store = this.store.get().as_ref()?;
+    let store = this.store()?;
     if !matches!(store.data, blob::store::Data::S3(_)) {
         return None;
     }

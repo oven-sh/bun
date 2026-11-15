@@ -110,7 +110,7 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
-test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {
+test("Bun.file().json() and text() with UTF-8 BOM do not free an interior pointer", async () => {
   // When a file starts with EF BB BF, the BOM is stripped before parsing and
   // the temporary read buffer is freed. Previously the *post-strip* slice was
   // passed to the allocator, handing mimalloc `raw.ptr + 3` instead of `raw.ptr`.
@@ -135,7 +135,8 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
       } catch (e) {
         emptyErr = e.message;
       }
-      console.log(JSON.stringify({ ascii, utf8, emptyErr }));
+      const texts = [await Bun.file(join(dir, "ascii.json")).text(), await Bun.file(join(dir, "empty.json")).text()];
+      console.log(JSON.stringify({ ascii, utf8, emptyErr, texts }));
     `,
   });
 
@@ -152,6 +153,7 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
     ascii: { a: 1, b: "two" },
     utf8: { s: "wörld" },
     emptyErr: "Unexpected end of JSON input",
+    texts: ['{"a":1,"b":"two"}', ""],
   });
   expect(exitCode).toBe(0);
 });

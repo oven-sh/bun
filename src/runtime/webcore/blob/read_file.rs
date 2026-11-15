@@ -9,10 +9,12 @@ use scopeguard::ScopeGuard;
 use crate::Error;
 #[cfg(windows)]
 use crate::node::types::PathLikeExt as _;
-use crate::webcore::blob::store::{Data, File as FileStore};
+#[cfg(not(windows))]
+use crate::webcore::blob::store::File as FileStore;
 use crate::webcore::blob::{Blob, MAX_SIZE, SizeType, Store};
 #[cfg(not(windows))]
 use crate::webcore::blob::{ClosingState, FileCloser, FileOpener};
+#[cfg(not(windows))]
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
@@ -57,9 +59,7 @@ macro_rules! log {
 /// `F` provides the callback that converts the read bytes to a JSValue.
 /// Modelled as a trait so each instantiation monomorphizes.
 pub(crate) trait ReadFileToJs {
-    fn from_owned(b: &Blob, g: &JSGlobalObject, by: Box<[u8]>) -> JsResult<JSValue>;
-    /// SAFETY: `by` is a view of the store backing `b`.
-    unsafe fn from_store(b: &Blob, g: &JSGlobalObject, by: *mut [u8]) -> JsResult<JSValue>;
+    fn from_owned(b: &Blob, g: &JSGlobalObject, by: Vec<u8>) -> JsResult<JSValue>;
 }
 
 pub(crate) struct NewReadFileHandler<F: ReadFileToJs> {
@@ -107,8 +107,9 @@ impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
                 }
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
-                AnyPromise::Normal(promise)
-                    .wrap(global_this, move |g| F::from_owned(&blob, g, bytes))?;
+                AnyPromise::Normal(promise).wrap(global_this, move |g| {
+                    F::from_owned(&blob, g, bytes.into_vec())
+                })?;
             }
             ReadFileResultType::Err(err) => {
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
@@ -158,15 +159,15 @@ pub(crate) enum ReadFileResultType {
     Err(SystemError),
 }
 
+fn path_for_error(store: &Store) -> BunString {
+    store
+        .get_path()
+        .map_or(BunString::EMPTY, BunString::clone_utf8)
+}
+
 /// The completion token a `ReadFile` keeps across its async I/O.
 #[cfg(not(windows))]
 pub(crate) type ReadFileTask = bun_jsc::Completion<ReadFile>;
-
-// SAFETY: file store / byte store / blob store ref (atomic), the read buffer and io-loop
-// registration state — nothing thread-affine. What the bytes are delivered to lives in the job's
-// JS side (`PendingReadFileCompletion`), never here.
-#[cfg(not(windows))]
-unsafe impl Send for ReadFile {}
 
 #[cfg(not(windows))]
 impl bun_jsc::JobContext for ReadFile {
@@ -220,8 +221,9 @@ impl ReadFile {
 
 #[cfg(not(windows))]
 pub(crate) struct ReadFile {
-    pub(crate) file_store: FileStore,
-    pub(crate) store: Option<RefPtr<Store>>,
+    pub(crate) store: RefPtr<Store>,
+    /// What the store had cached when the read was asked for.
+    cached_mode: bun_sys::Mode,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
     pub(crate) total_size: SizeType,
@@ -261,8 +263,8 @@ impl FileOpener for ReadFile {
     fn set_system_error(&mut self, e: jsc::SystemError) {
         self.system_error = Some(e);
     }
-    fn pathlike(&self) -> &PathOrFileDescriptor<'static> {
-        &self.file_store.pathlike
+    fn pathlike(&self) -> PathOrFileDescriptor<'_> {
+        self.file().pathlike()
     }
 }
 
@@ -281,10 +283,9 @@ impl ReadFile {
 
     pub(crate) fn create(blob: &Blob) -> ReadFile {
         let store = blob.store().expect("infallible: store present").clone();
-        let file_store = store.data.as_file().clone();
         ReadFile {
-            file_store,
-            store: Some(store),
+            cached_mode: store.data.as_file().mode(),
+            store,
             offset: blob.offset.get(),
             max_length: blob.size.get(),
             total_size: MAX_SIZE,
@@ -310,6 +311,10 @@ impl ReadFile {
             close_after_io: false,
             state: AtomicU8::new(ClosingState::Running as u8),
         }
+    }
+
+    fn file(&self) -> &FileStore {
+        self.store.data.as_file()
     }
 
     pub(crate) const IO_TAG: io::Tag = io::Tag::ReadFile;
@@ -432,7 +437,7 @@ impl ReadFile {
     /// Never touches `self.buffer`; the caller moves it out for the duration.
     fn do_read(&mut self, buf: BorrowedCursor<'_, u8>, retry: &mut bool) -> bool {
         let result: bun_sys::Result<usize> = 'brk: {
-            if bun_sys::S::ISSOCK(self.file_store.mode) {
+            if bun_sys::S::ISSOCK(self.cached_mode) {
                 break 'brk bun_sys::recv_non_block_buf(self.opened_fd, buf);
             }
             break 'brk crate::node::fs::read_descriptor(self.opened_fd, buf);
@@ -460,13 +465,7 @@ impl ReadFile {
                             self.system_error = Some(err.to_system_error().into());
                             if self.system_error.as_ref().unwrap().path.is_empty() {
                                 self.system_error.as_mut().unwrap().path =
-                                    if self.file_store.pathlike.is_path() {
-                                        BunString::clone_utf8(
-                                            self.file_store.pathlike.path().slice(),
-                                        )
-                                    } else {
-                                        BunString::EMPTY
-                                    };
+                                    path_for_error(&self.store);
                             }
                             return false;
                         }
@@ -486,28 +485,8 @@ impl ReadFile {
     ) -> JsResult<()> {
         let mut this = this;
 
-        if this.store.is_none() && this.system_error.is_some() {
-            let system_error = this.system_error.take().unwrap();
-            drop(this);
-            return completion.complete(ReadFileResultType::Err(system_error));
-        } else if this.store.is_none() {
-            drop(this);
-            if cfg!(debug_assertions) {
-                panic!("assertion failure - store should not be null");
-            }
-            return completion.complete(ReadFileResultType::Err(SystemError {
-                code: BunString::static_("INTERNAL_ERROR"),
-                message: BunString::static_("assertion failure - store should not be null"),
-                syscall: BunString::static_("read"),
-                ..Default::default()
-            }));
-        }
-
-        let _store = this.store.take().unwrap();
         // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
-
-        // `_store` is dropped at end of scope (= store.deref()).
         let system_error = this.system_error.take();
         drop(this);
 
@@ -527,15 +506,11 @@ impl ReadFile {
     fn run_async(&mut self, task: ReadFileTask) {
         self.io_task = Some(task);
 
-        if self.file_store.pathlike.is_fd() {
-            self.opened_fd = self.file_store.pathlike.fd();
-        }
-
         self.get_fd(Self::run_async_with_fd);
     }
 
     pub(crate) fn is_allowed_to_close(&self) -> bool {
-        self.file_store.pathlike.is_path()
+        self.file().path().is_some()
     }
 
     fn on_finish(&mut self) {
@@ -567,22 +542,14 @@ impl ReadFile {
             }
         };
 
-        if let Some(store) = &self.store {
-            if let Data::File(file) = Store::data_mut(store) {
-                let mtime = bun_sys::PosixStat::init(&stat).mtime();
-                file.last_modified = jsc::to_js_time(mtime.sec as isize, mtime.nsec as isize);
-            }
-        }
+        self.file()
+            .set_last_modified(super::stat_to_js_mtime(&stat));
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
             self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
-                path: if self.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(self.file_store.pathlike.path().slice())
-                } else {
-                    BunString::EMPTY
-                },
+                path: path_for_error(&self.store),
                 message: BunString::static_("Directories cannot be read like files"),
                 syscall: BunString::static_("read"),
                 ..Default::default()
@@ -622,7 +589,7 @@ impl ReadFile {
 
         // Special files might report a size of > 0, and be wrong.
         // so we should check specifically that its a regular file before trusting the size.
-        if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
+        if self.size == 0 && bun_sys::is_regular_file(self.cached_mode) {
             self.buffer = Vec::new();
 
             self.on_finish();
@@ -785,7 +752,6 @@ impl ReadFile {
 pub(crate) struct ReadFileUV {
     pub(crate) loop_: *mut libuv::uv_loop_t,
     _keep_alive: bun_io::JsKeepAlive,
-    pub(crate) file_store: FileStore,
     pub(crate) store: RefPtr<Store>,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
@@ -814,11 +780,9 @@ impl ReadFileUV {
     ) {
         log!("ReadFileUV.start");
         let store = blob.store().expect("infallible: store present").clone();
-        let file_store = store.data.as_file().clone();
         let mut this = Box::new(ReadFileUV {
             loop_: cx.global().bun_vm().event_loop().uv_loop().cast(),
             _keep_alive: bun_io::JsKeepAlive::active(),
-            file_store,
             store, // store.ref() — Arc clone owned here
             offset: blob.offset.get(),
             max_length: blob.size.get(),
@@ -834,7 +798,7 @@ impl ReadFileUV {
         // A request that libuv refuses completes inside this call: the checkpoint is the caller's.
         let _caller =
             jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
-        if let PathOrFileDescriptor::Fd(fd) = this.file_store.pathlike {
+        if let Some(fd) = this.store.data.as_file().fd() {
             this.opened_fd = fd;
             this.queue_stat();
         } else {
@@ -844,7 +808,8 @@ impl ReadFileUV {
 
     fn open(self: Box<Self>) {
         let mut buf = bun_paths::path_buffer_pool::get();
-        let path = self.file_store.pathlike.path().slice_z(&mut buf).as_ptr();
+        let file = self.store.data.as_file();
+        let path = file.pathlike().path().slice_z(&mut buf).as_ptr();
 
         let loop_ = self.loop_;
         let this = bun_core::heap::into_raw(self);
@@ -881,7 +846,8 @@ impl ReadFileUV {
     }
 
     fn on_open_error(mut self: Box<Self>, errno: bun_sys::E) {
-        let path = self.file_store.pathlike.path();
+        let pathlike = self.store.data.as_file().pathlike();
+        let path = pathlike.path();
         let err = crate::node::fs::error_for_caller(
             [Some(path), None],
             bun_sys::Error::from_code(errno, bun_sys::Tag::open).with_path(path.slice()),
@@ -917,7 +883,10 @@ impl ReadFileUV {
     fn on_finish(self: Box<Self>) {
         log!("ReadFileUV.onFinish");
         let fd = self.opened_fd;
-        if self.file_store.pathlike.is_path() && fd != Fd::INVALID && fd.stdio_tag().is_none() {
+        if self.store.data.as_file().path().is_some()
+            && fd != Fd::INVALID
+            && fd.stdio_tag().is_none()
+        {
             bun_io::Closer::close(fd, self.loop_);
         }
 
@@ -965,22 +934,13 @@ impl ReadFileUV {
         let stat = this.req.statbuf;
 
         // keep in sync with resolveSizeAndLastModified
-        if let Data::File(file) = Store::data_mut(&this.store) {
-            // `uv_timespec_t` fields are `c_long` (i32 on Windows); widen to the
-            // platform-width `isize` `to_js_time` expects.
-            file.last_modified =
-                jsc::to_js_time(stat.mtime().sec as isize, stat.mtime().nsec as isize);
-        }
+        let file = this.store.data.as_file();
+        file.set_last_modified(super::stat_to_js_mtime(&stat));
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR").into(),
-                path: if this.file_store.pathlike.is_path() {
-                    BunString::clone_utf8(this.file_store.pathlike.path().slice())
-                } else {
-                    BunString::EMPTY
-                }
-                .into(),
+                path: path_for_error(&this.store).into(),
                 message: BunString::static_("Directories cannot be read like files").into(),
                 syscall: BunString::static_("read").into(),
                 ..Default::default()

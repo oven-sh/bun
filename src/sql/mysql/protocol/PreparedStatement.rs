@@ -1,6 +1,6 @@
 use super::any_mysql_error;
 use super::command_type::CommandType;
-use super::new_writer::{NewWriter, WriterContext};
+use super::new_writer::NewWriter;
 use crate::mysql::mysql_types::FieldType;
 
 bun_core::declare_scope!(PreparedStatement, hidden);
@@ -11,7 +11,7 @@ pub trait ExecuteParam {
     fn field_type(&self) -> FieldType;
     fn is_unsigned(&self) -> bool;
     /// The value in the binary protocol's form for `field_type()`; nothing for `MYSQL_TYPE_NULL`.
-    fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), any_mysql_error::Error>;
+    fn write(&self, writer: &mut NewWriter<'_>) -> Result<(), any_mysql_error::Error>;
 }
 
 pub struct Execute<'a, P: ExecuteParam> {
@@ -21,10 +21,7 @@ pub struct Execute<'a, P: ExecuteParam> {
 }
 
 impl<P: ExecuteParam> Execute<'_, P> {
-    fn write_null_bitmap<C: WriterContext>(
-        &self,
-        writer: NewWriter<C>,
-    ) -> Result<(), any_mysql_error::Error> {
+    fn write_null_bitmap(&self, writer: &mut NewWriter<'_>) -> Result<(), any_mysql_error::Error> {
         const MYSQL_MAX_PARAMS: usize = (u16::MAX as usize / 8) + 1;
 
         let mut null_bitmap_buf = [0u8; MYSQL_MAX_PARAMS];
@@ -43,10 +40,7 @@ impl<P: ExecuteParam> Execute<'_, P> {
         Ok(())
     }
 
-    pub fn write<C: WriterContext>(
-        &self,
-        writer: NewWriter<C>,
-    ) -> Result<(), any_mysql_error::Error> {
+    pub fn write(&self, writer: &mut NewWriter<'_>) -> Result<(), any_mysql_error::Error> {
         writer.int1(CommandType::COM_STMT_EXECUTE as u8)?;
         writer.int4(self.statement_id)?;
         writer.int1(0)?; // flags: no cursor

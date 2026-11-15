@@ -43,6 +43,7 @@ fn map() -> *mut u8 {
 }
 
 impl Room {
+    #[inline(never)]
     pub(crate) fn new() -> Self {
         // SAFETY: `SIZE` bytes that nothing else refers to, and that are never unmapped.
         Self(unsafe { &mut *map().cast() })

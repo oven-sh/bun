@@ -9,7 +9,11 @@ pub(crate) trait Pairs<T> {
 }
 
 pub(crate) fn name_of(kernel: &impl Sized) -> &'static str {
-    let path = core::any::type_name_of_val(kernel);
+    last_segment(core::any::type_name_of_val(kernel))
+}
+
+#[inline(never)]
+fn last_segment(path: &str) -> &str {
     &path[h::last_index_of_char(path.as_bytes(), b':').map_or(0, |at| at + 1)..]
 }
 

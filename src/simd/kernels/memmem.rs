@@ -5,8 +5,8 @@ use core::hint::cold_path;
 trait Unit = Source<Lane: Ord + Into<u32>>;
 
 #[inline(always)]
-fn next<const FORWARD: bool>(matches: &mut Matches) -> Option<usize> {
-    match FORWARD {
+fn next(matches: &mut Matches, is_forward: bool) -> Option<usize> {
+    match is_forward {
         true => matches.next(),
         false => matches.next_back(),
     }
@@ -59,21 +59,22 @@ pub(crate) mod simd {
 
     /// The result, once it is known. `budget` keeps the time linear.
     #[inline(never)]
-    fn verify_long<S: Unit<Lane: Int<N>>, const N: usize, const FORWARD: bool>(
+    fn verify_long<S: Unit<Lane: Int<N>>, const N: usize>(
         mut matches: Matches,
+        is_forward: bool,
         haystack: &[S],
         needle: &[S],
         budget: &mut usize,
     ) -> Option<Option<usize>> {
         loop {
-            let at = next::<FORWARD>(&mut matches)?;
+            let at = next(&mut matches, is_forward)?;
             let differ = |a: Vector<_, N>, b: Vector<_, N>| a.simd_ne(b);
             if Vector::zip_find_map_near(&haystack[at..], needle, differ, Some).is_none() {
                 return Some(Some(at));
             }
             if *budget <= needle.len() {
                 cold_path();
-                return Some(if FORWARD {
+                return Some(if is_forward {
                     two_way::<S, true>(&haystack[at..], needle).map(|found| at + found)
                 } else {
                     let until = at + needle.len();
@@ -95,19 +96,20 @@ pub(crate) mod simd {
             false => rarest_two(needle),
         };
         search::<S, N, FORWARD, _>(haystack, needle, places, |matches| {
-            verify_long::<S, N, FORWARD>(matches, haystack, needle, &mut budget)
+            verify_long::<S, N>(matches, FORWARD, haystack, needle, &mut budget)
         })?
     }
 
     /// Would take registers from the search.
     #[inline(never)]
-    fn verify_short<S: Unit, const FORWARD: bool>(
+    fn verify_short<S: Unit>(
         mut matches: Matches,
+        is_forward: bool,
         haystack: &[S],
         needle: &[S],
     ) -> Option<usize> {
         loop {
-            let at = next::<FORWARD>(&mut matches)?;
+            let at = next(&mut matches, is_forward)?;
             if are_equal(&haystack[at..][..needle.len()], needle) {
                 return Some(at);
             }
@@ -124,7 +126,7 @@ pub(crate) mod simd {
             len if len > haystack.len() => None,
             17.. => find_long::<S, N, FORWARD>(haystack, needle),
             len => search::<S, N, FORWARD, _>(haystack, needle, [0, len - 1], |matches| {
-                verify_short::<S, FORWARD>(matches, haystack, needle)
+                verify_short(matches, FORWARD, haystack, needle)
             }),
         }
     }

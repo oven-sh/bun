@@ -9,7 +9,7 @@ use core::hint::black_box as opaque;
 use core::mem::MaybeUninit;
 use core::sync::atomic::AtomicU8;
 use std::sync::OnceLock;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 /// Part of the name of each line to run.
 pub(crate) static ONLY: OnceLock<Vec<u8>> = OnceLock::new();
@@ -905,6 +905,35 @@ pub(crate) fn at_the_end_of_a_page() {
             rust::encode_hex_lower(text, t.as_chunks_mut().0.into());
         });
         both("png_unfilter", texts, |t| rust::png_unfilter(2, 1, t, text));
+    }
+}
+
+/// Highway, then Rust. The CPU or the system may have to turn wide registers on again.
+#[optimize(size)]
+pub(crate) fn after_a_pause() {
+    let pauses: [(_, fn()); 3] = [
+        ("nothing", || {}),
+        ("a system call", std::thread::yield_now),
+        ("a sleep", || std::thread::sleep(Duration::from_millis(1))),
+    ];
+    for (name, pause) in pauses {
+        for n in [10, 1000] {
+            let text = &vec![b'a'; n][..];
+            let [first, second] = [highway::index_of_char, rust::index_of_char].map(|search| {
+                let time = |_| {
+                    pause();
+                    let start = Instant::now();
+                    opaque(search(opaque(text), b'x'));
+                    start.elapsed().as_secs_f64() * 1e9
+                };
+                // A tick of the clock can be longer than a search. The mean does not depend on it.
+                let uninterrupted: Vec<_> = (0..1000).map(time).filter(|&it| it < 5e3).collect();
+                uninterrupted.iter().sum::<f64>() / uninterrupted.len() as f64
+            });
+            write_line(format_args!(
+                "index_of_char {n} after {name}\t{first:.2}\t{second:.2}"
+            ));
+        }
     }
 }
 

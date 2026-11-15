@@ -40,6 +40,7 @@ mod simd {
 struct Random(u64);
 
 impl Random {
+    #[inline(never)]
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
@@ -47,6 +48,7 @@ impl Random {
         self.0
     }
 
+    #[inline(never)]
     fn below(&mut self, n: usize) -> usize {
         (self.next() % n.max(1) as u64) as usize
     }
@@ -56,6 +58,7 @@ impl Random {
     }
 
     /// Any bytes if `alphabet` is empty.
+    #[inline(never)]
     fn bytes(&mut self, len: usize, alphabet: &[u8]) -> Vec<u8> {
         let byte = |_| match alphabet {
             [] => self.next() as u8,
@@ -113,6 +116,7 @@ fn run(arguments: &[&[u8]]) -> Option<bool> {
             bench::against_highway(&read(js)?, &read(json)?, &read(map)?)
         }
         (b"edges", []) => bench::at_the_end_of_a_page(),
+        (b"pauses", []) => bench::after_a_pause(),
         (b"clock", []) => bench::of_scalar_code_between_searches(),
         _ => return None,
     }

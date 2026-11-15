@@ -107,6 +107,12 @@ describe.skipIf(!hasRunner || !process.env.BUN_SIMD_BENCHMARK)("benchmark", () =
     60_000,
   );
 
+  test.each(targets.filter(target => target !== "avx512_skx"))(
+    "first search after a pause on %s",
+    async target => print(`${target}, ns with the clock`, ["Highway", "Rust"], await times("pauses", target)),
+    60_000,
+  );
+
   test.each(targets)(
     "scalar code next to %s",
     async target => {

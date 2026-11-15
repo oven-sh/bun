@@ -49,8 +49,7 @@ pub(crate) mod open {
 }
 
 // ─── non-JSC subcommand bodies ───────────────────────────────────────────────
-// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +
-// `bun_ast::initialize_store`; `package_manager_command.rs` needs
+// `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler; `package_manager_command.rs` needs
 // bun_install::PackageManager + a real `Command::Context` (blocked on
 // `create_context_data`), so its help/print-only paths are handled inline in
 // `Command::start()` below. `install_completions_command.rs` is fully wired
@@ -254,36 +253,16 @@ pub(crate) static Bun__Node__RedirectWarnings: std::sync::OnceLock<Box<[u8]>> =
 pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>>> =
     std::sync::OnceLock::new();
 
-/// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
-/// during single-threaded process startup (before `Command::start`, hence
-/// before any `cli_arena()` / `cli_dupe` caller), then read freely — same
-/// "init once in `start()`" shape as `cli::LOG_`.
-///
-/// `RacyCell<MaybeUninit<…>>`, **not** `std::sync::LazyLock`: `LazyLock`'s init
-/// thunk and the `std::sync::Once` poison/slow path it forces are `#[cold]`, and
-/// fat-LTO parks them tens of MB away from the startup symbol cluster.
-/// `cli_arena()` is on the hot `bun <file>` / `bun run <script>` path (via
-/// `cli_dupe` / `cli_dupe_z`), so a `LazyLock` there faults a
-/// fresh cold page on every `bun` invocation; a plain cell is the correct shape.
-static CLI_ARENA: bun_core::RacyCell<core::mem::MaybeUninit<bun_alloc::Arena>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+/// Set by [`Cli::start`], so `None` on every thread but the main one.
+#[thread_local]
+static CLI_ARENA: core::cell::Cell<Option<&'static bun_ast::AstArena>> =
+    core::cell::Cell::new(None);
 
 /// Process-lifetime arena for one-shot CLI commands; allocations live until
-/// exit.
-///
-/// **Main-thread only.** `MimallocArena`'s `Sync` impl is *contract-only*:
-/// `mi_heap_*` allocation calls are thread-local, and
-/// `MimallocArena::assert_owning_thread()` debug-panics on cross-thread alloc.
-/// The heap is pinned to the thread that ran [`Cli::start`] (the CLI dispatch /
-/// main thread, which is where the arena is constructed). Do not call from
-/// worker/watcher threads.
+/// exit. **Main-thread only.**
 #[inline]
-fn cli_arena() -> &'static bun_alloc::Arena {
-    // SAFETY: `CLI_ARENA` is written exactly once in `Cli::start` during
-    // single-threaded startup, before `Command::start` runs and therefore
-    // before any caller of `cli_arena()` / `cli_dupe` / `cli_dupe_z` exists.
-    // Read-only for the rest of the process lifetime.
-    unsafe { (*CLI_ARENA.get()).assume_init_ref() }
+fn cli_arena() -> &'static bun_ast::AstArena {
+    CLI_ARENA.get().expect("cli_arena() is main-thread only")
 }
 
 /// Dupe `s` into the process-lifetime CLI arena. Replaces ad-hoc
@@ -373,12 +352,7 @@ pub(crate) mod cli {
         // SAFETY: `main` calls this once, and nothing else names the two statics.
         let (log, ctx) = unsafe { (&mut *LOG_.get(), &mut *CONTEXT_DATA.get()) };
         let log: &'static bun_ast::Log = log.write(bun_ast::Log::init());
-        // Init the process-lifetime CLI arena here (not via `LazyLock` on first
-        // use) — see `super::CLI_ARENA`. The write happens before any worker
-        // thread is spawned and before `Command::start` (the first
-        // `cli_arena()` caller), so a plain `RacyCell` is sound.
-        // SAFETY: single-threaded process startup; `mimalloc` is already init.
-        unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
+        super::CLI_ARENA.set(Some(Box::leak(Box::default())));
 
         // (The panic hook is installed by `bun_crash_handler::init()` in `bin_entry::main`.)
         if let Err(err) = Command::start(Command::ContextSlot { log, ctx }) {

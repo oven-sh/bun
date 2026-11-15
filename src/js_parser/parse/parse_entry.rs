@@ -3,7 +3,6 @@ use bun_collections::VecExt;
 
 use crate::Error;
 use crate::Macro::{MacroContext, MacroRemap};
-use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_core;
 use bun_core::strings;
 use bun_wyhash::Wyhash;
@@ -93,7 +92,7 @@ pub fn parse_only_text<R>(
     jsc_builtin_syntax: bool,
     f: impl FnOnce(&ParsedOnly<'_, '_>) -> R,
 ) -> Option<R> {
-    let arena = bun_alloc::Arena::new();
+    let arena = bun_ast::AstArena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(&b"chunk.js"[..], text);
@@ -113,7 +112,7 @@ pub struct Parser<'a, 'log> {
     pub(crate) lexer: js_lexer::Lexer<'a, 'log>,
     pub(crate) source: &'a bun_ast::Source<'a>,
     pub(crate) define: &'a Define,
-    pub(crate) bump: &'a Arena,
+    pub(crate) bump: &'a bun_ast::AstArena,
     /// `log.errors` before the priming `lexer.next()` in `init`.
     pub(crate) orig_error_count: u32,
 }
@@ -388,7 +387,7 @@ impl<'a, 'log> Parser<'a, 'log> {
         log: &'log bun_ast::Log,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
-        bump: &'a Arena,
+        bump: &'a bun_ast::AstArena,
     ) -> Result<Parser<'a, 'log>, Error> {
         source.check_parseable_len(log, "File")?;
         let orig_error_count = log.errors.get();

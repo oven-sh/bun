@@ -19,8 +19,6 @@ use super::package_manager_options::{Do, Enable};
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult};
 use super::{CatalogUpdateInfo, PackageManager, PackageUpdateInfo, Subcommand, UpdateRequest};
 
-type ExprDisabler = bun_ast::expr::Disabler;
-
 const DEPENDENCY_GROUPS: [DependencyGroup; 4] = [
     DependencyGroup::OPTIONAL,
     DependencyGroup::DEV,
@@ -210,7 +208,8 @@ pub(crate) fn edit_patched_dependencies(
         }
     }
 
-    let patchfile_expr = Expr::init(
+    let patchfile_expr = Expr::allocate(
+        arena,
         E::EString::init(arena_dup(arena, patchfile_path)),
         bun_ast::Loc::EMPTY,
     );
@@ -220,12 +219,13 @@ pub(crate) fn edit_patched_dependencies(
     package_json.data.e_object_mut().unwrap().put(
         arena,
         b"patchedDependencies",
-        Expr::init(patched_dependencies, bun_ast::Loc::EMPTY),
+        Expr::allocate(arena, patched_dependencies, bun_ast::Loc::EMPTY),
     )?;
     Ok(())
 }
 
 pub fn edit_trusted_dependencies(
+    arena: &bun_ast::AstArena,
     package_json: &mut Expr,
     names_to_add: &mut [Box<[u8]>],
 ) -> Result<(), bun_alloc::AllocError> {
@@ -256,7 +256,7 @@ pub fn edit_trusted_dependencies(
     let new_trusted_deps = bun_alloc::AstAlloc::vec_from_iter(
         trusted_dependencies.iter().copied().chain(
             (names_to_add[..len].iter().rev())
-                .map(|name| Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY)),
+                .map(|name| Expr::allocate(arena, E::EString::init(name), bun_ast::Loc::EMPTY)),
         ),
     );
 
@@ -269,7 +269,8 @@ pub fn edit_trusted_dependencies(
             }
         }
 
-        Expr::init(
+        Expr::allocate(
+            arena,
             E::Array {
                 items: js_ast::ExprNodeList::from_slice(new_trusted_deps.slice()),
                 ..Default::default()
@@ -293,14 +294,16 @@ pub fn edit_trusted_dependencies(
             None => Vec::new(),
         };
         root_properties.push(G::Property {
-            key: Some(Expr::init(
+            key: Some(Expr::allocate(
+                arena,
                 E::EString::init(TRUSTED_DEPENDENCIES_STRING),
                 bun_ast::Loc::EMPTY,
             )),
             value: Some(trusted_dependencies_array),
             ..Default::default()
         });
-        *package_json = Expr::init(
+        *package_json = Expr::allocate(
+            arena,
             E::Object {
                 properties: bun_alloc::AstAlloc::vec_from_iter(root_properties),
                 ..Default::default()
@@ -376,7 +379,7 @@ pub(crate) fn string_pair(property: &G::Property) -> Option<(&[u8], &[u8])> {
 /// Split borrows, for callers holding a `&mut` to another `PackageManager` field.
 pub(crate) fn edit_update_entries(
     lockfile: &crate::Lockfile,
-    arena: &bun_alloc::Arena,
+    arena: &bun_ast::AstArena,
     updating_packages: &mut StringArrayHashMap<PackageUpdateInfo>,
     workspace_name_hash: Option<PackageNameHash>,
     update_to_latest: bool,
@@ -384,10 +387,6 @@ pub(crate) fn edit_update_entries(
     options: EditOptions,
     selected: &dyn Fn(&[u8], &[u8]) -> bool,
 ) -> Result<bool, bun_alloc::AllocError> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    let _guard = ExprDisabler::scope();
     let mut changed = false;
 
     for group in DEPENDENCY_GROUPS {
@@ -582,9 +581,6 @@ pub(crate) fn record_catalog_entries(
     manager: &mut PackageManager,
     root_package_json: &Expr,
 ) -> Result<(), bun_alloc::AllocError> {
-    // see note in `edit_update_no_args` — always avoid the store
-    let _guard = ExprDisabler::scope();
-
     debug_assert!(manager.updating_catalogs.is_empty());
 
     let update_to_latest = manager.options.do_.contains(Do::UPDATE_TO_LATEST);
@@ -629,8 +625,6 @@ pub(crate) fn steer_used_catalogs_to_latest(
     manager: &mut PackageManager,
     parsed: Option<&mut Lockfile>,
 ) -> Result<(), bun_alloc::AllocError> {
-    // see note in `edit_update_no_args` — always avoid the store
-    let _guard = ExprDisabler::scope();
     let log = manager.log();
     let package_json_cache = &mut manager.workspace_package_json_cache;
     let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
@@ -649,10 +643,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
             &mut path_buf.0,
             &[workspace_path, b"package.json"],
         );
-        let options = GetJSONOptions {
-            init_reset_store: false,
-            ..Default::default()
-        };
+        let options = GetJSONOptions::default();
         let GetResult::Entry(entry) =
             package_json_cache.get_with_path(log, package_json_path, options)
         else {
@@ -738,9 +729,6 @@ pub(crate) fn edit_catalogs_after_update(
     manager: &mut PackageManager,
     root_package_json: &Expr,
 ) -> Result<bool, bun_alloc::AllocError> {
-    // see note in `edit_update_no_args` — always avoid the store
-    let _guard = ExprDisabler::scope();
-
     let mut infos = core::mem::take(&mut manager.updating_catalogs);
     if infos.is_empty() {
         return Ok(false);
@@ -978,13 +966,6 @@ pub(crate) fn edit(
     dependency_list: &[u8],
     options: EditOptions,
 ) -> Result<bool, bun_alloc::AllocError> {
-    // using data store is going to result in undefined memory issues as
-    // the store is cleared in some workspace situations. the solution
-    // is to always avoid the store
-    let _guard = ExprDisabler::scope();
-
-    // Process-lifetime arena for AST
-    // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
     let update_to_latest = manager.subcommand == Subcommand::Update
         && manager.options.do_.contains(Do::UPDATE_TO_LATEST);
     if update_to_latest && options.before_install {

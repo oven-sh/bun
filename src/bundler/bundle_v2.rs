@@ -156,7 +156,7 @@ impl<'a> TargetTranspilers<'a> {
     fn ensure_client(
         &mut self,
         main: &mut Transpiler<'a>,
-        arena: &'a bun_alloc::Arena,
+        arena: &'a bun_ast::AstArena,
     ) -> &mut Transpiler<'a> {
         let client = self.client.get_or_insert_with(|| {
             match BundleV2::create_client_transpiler(main, arena) {
@@ -174,7 +174,7 @@ impl<'a> TargetTranspilers<'a> {
     fn for_target<'t>(
         &'t mut self,
         main: &'t mut Transpiler<'a>,
-        arena: &'a bun_alloc::Arena,
+        arena: &'a bun_ast::AstArena,
         target: options::Target,
     ) -> &'t mut Transpiler<'a> {
         match target {
@@ -255,7 +255,7 @@ impl<'a> BundleV2<'a> {
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
         self.target_transpilers
-            .for_target(self.transpiler, self.graph.heap, target)
+            .for_target(self.transpiler, self.graph.ast_arena(), target)
     }
 }
 // ══════════════════════════════════════════════════════════════════════════
@@ -322,7 +322,7 @@ pub mod bv2_impl {
     use crate::transpiler::Transpiler;
 
     use crate::import_record;
-    use bun_alloc::{AllocError, Arena as ThreadLocalArena};
+    use bun_alloc::AllocError;
 
     use self::bake_types as bake;
     use crate::Error;
@@ -1766,13 +1766,13 @@ pub mod bv2_impl {
 
         fn ensure_client_transpiler(&mut self) {
             self.target_transpilers
-                .ensure_client(self.transpiler, self.graph.heap);
+                .ensure_client(self.transpiler, self.graph.ast_arena());
         }
 
         #[cold]
         pub(super) fn create_client_transpiler(
             this_transpiler: &mut Transpiler<'a>,
-            arena: &'a bun_alloc::Arena,
+            arena: &'a bun_ast::AstArena,
         ) -> Result<Box<Transpiler<'a>>, Error> {
             // Builds a fresh owned `Transpiler` via `Transpiler::for_worker`
             // (per-field deep clone), mutates the browser-specific options with
@@ -2420,9 +2420,10 @@ pub mod bv2_impl {
             target: options::Target,
         ) {
             let heap = self.graph.heap;
+            let ast_arena = self.graph.ast_arena();
             let transpiler = self
                 .target_transpilers
-                .for_target(self.transpiler, heap, target);
+                .for_target(self.transpiler, ast_arena, target);
             let source_dir =
                 Fs::PathName::init(import_record.source_file).dir_with_trailing_slash();
 
@@ -2921,7 +2922,7 @@ pub mod bv2_impl {
             alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
             thread_pool: Option<NonNull<ThreadPoolLib>>,
-            heap: &'a ThreadLocalArena,
+            heap: &'a bun_ast::AstArena,
         ) -> Box<BundleV2<'a>> {
             let this = Self::init_without_starting_threads(
                 transpiler,
@@ -2942,7 +2943,7 @@ pub mod bv2_impl {
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
             thread_pool: Option<NonNull<ThreadPoolLib>>,
-            heap: &'a ThreadLocalArena,
+            heap: &'a bun_ast::AstArena,
         ) -> Box<BundleV2<'a>> {
             // The Box is heap-owned and dropped by the caller.
             transpiler.options.mark_builtins_as_external =
@@ -3372,7 +3373,7 @@ pub mod bv2_impl {
 
         pub(crate) fn create_linker_graph(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
-            let mut linker_graph = LinkerGraph::new(self.graph.heap);
+            let mut linker_graph = LinkerGraph::new(self.graph.ast_arena());
             linker_graph.ast = self.graph.ast.clone()?;
 
             for module_scope in linker_graph.ast.items_module_scope_mut() {
@@ -3894,7 +3895,7 @@ pub mod bv2_impl {
 
         pub fn generate_from_cli(
             transpiler: &'a mut Transpiler<'a>,
-            alloc: &'a bun_alloc::Arena,
+            alloc: &'a bun_ast::AstArena,
             event_loop: EventLoop,
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
@@ -4002,7 +4003,7 @@ pub mod bv2_impl {
         /// it down does not touch the runtime VM's parse threads.
         pub fn scan_module_graph_from_cli(
             transpiler: &'a mut Transpiler<'a>,
-            alloc: &'a bun_alloc::Arena,
+            alloc: &'a bun_ast::AstArena,
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
@@ -4033,7 +4034,7 @@ pub mod bv2_impl {
             entry_points: &bake_types::production::EntryPointMap,
             server_transpiler: &'a mut Transpiler<'a>,
             bake_options: BakeOptions<'a>,
-            alloc: &'a bun_alloc::Arena,
+            alloc: &'a bun_ast::AstArena,
             event_loop: EventLoop,
         ) -> Result<Vec<options::OutputFile>, Error> {
             let mut this = BundleV2::init(
@@ -4123,6 +4124,7 @@ pub mod bv2_impl {
         ) -> Result<Vec<options::OutputFile>, Error> {
             let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
             if self.graph.estimated_file_loader_count > 0 {
+                let ast_arena = self.graph.ast_arena();
                 let input_files = self.graph.input_files.split_mut();
                 let unique_key_for_additional_files = &*input_files.unique_key_for_additional_file;
                 let content_hashes_for_additional_files =
@@ -4159,7 +4161,7 @@ pub mod bv2_impl {
 
                             let asset_naming = &self
                                 .target_transpilers
-                                .for_target(self.transpiler, self.graph.heap, target)
+                                .for_target(self.transpiler, ast_arena, target)
                                 .options
                                 .asset_naming;
                             if !asset_naming.is_empty() {
@@ -5756,6 +5758,7 @@ pub mod bv2_impl {
             ctx: &mut ResolveImportRecordCtx<'_, 'a>,
         ) -> ResolveImportRecordResult<'a> {
             let heap = self.graph.heap;
+            let ast_arena = self.graph.ast_arena();
             let source = ctx.source;
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
@@ -5974,7 +5977,7 @@ pub mod bv2_impl {
                         let mut path_primary = file_map_result.path_pair.primary;
                         let transpiler =
                             self.target_transpilers
-                                .for_target(self.transpiler, heap, target);
+                                .for_target(self.transpiler, ast_arena, target);
                         let import_record_loader = import_record.loader.unwrap_or_else(|| {
                             Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
@@ -6324,9 +6327,9 @@ pub mod bv2_impl {
                     }
                 }
 
-                let transpiler = self
-                    .target_transpilers
-                    .for_target(self.transpiler, heap, target);
+                let transpiler =
+                    self.target_transpilers
+                        .for_target(self.transpiler, ast_arena, target);
                 let import_record_loader = 'brk: {
                     let resolved_loader = import_record.loader.unwrap_or_else(|| {
                         path.loader(&transpiler.options.loaders)
@@ -6626,6 +6629,7 @@ pub mod bv2_impl {
             // Re-borrow `self.graph`
             // at each use so the `self.*` method calls below don't conflict.
             let heap = self.graph.heap;
+            let ast_arena = self.graph.ast_arena();
             let empty_html_file_source: &mut bun_ast::Source = heap.alloc(bun_ast::Source {
                 path: *path,
                 index: bun_ast::Index(self.graph.input_files.len() as u32),
@@ -6659,7 +6663,7 @@ pub mod bv2_impl {
 
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
-                    heap,
+                    ast_arena,
                     // SAFETY: `define` lives for `'a` (owned by the Transpiler).
                     unsafe { &mut *define_ptr },
                     js_parser_options,

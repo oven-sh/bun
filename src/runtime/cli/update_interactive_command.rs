@@ -284,7 +284,6 @@ impl UpdateInteractiveCommand {
             package_json_path,
             GetJsonOptions {
                 guess_indentation: true,
-                ..Default::default()
             },
         ) {
             GetJsonResult::ParseErr(err) => {
@@ -359,7 +358,6 @@ impl UpdateInteractiveCommand {
                     continue;
                 };
 
-                // Not `Expr::init`: a cached tree must not depend on the Store.
                 let new_expr = Expr::allocate(
                     bump,
                     E::EString::init(cli_dupe(&version_with_prefix)),

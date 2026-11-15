@@ -26,7 +26,7 @@
 use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
-use bun_ast::{self, E, Expr, Loc, Log, Source, StoreRef};
+use bun_ast::{self, AstArena, E, Expr, Loc, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::{self, StackCheck};
 
@@ -223,7 +223,7 @@ impl TOML {
     pub fn parse<'a>(
         source: &'a Source<'a>,
         log: &Log,
-        bump: &'a Bump,
+        bump: &'a AstArena,
         redact_logs: bool,
     ) -> crate::Result<Expr> {
         source.check_parseable_len(log, "TOML document")?;
@@ -1694,7 +1694,7 @@ impl<'a> Tokenizer<'a, '_> {
 /// access to source bytes; every decision is made on a typed token.
 struct Parser<'a, 'log> {
     scanner: Scanner<'a, 'log>,
-    bump: &'a Bump,
+    bump: &'a AstArena,
     stack_check: StackCheck,
     /// Keyed by `E::Object::as_ptr()` / `E::Array::as_ptr()` addresses.
     meta: HashMap<usize, Meta>,
@@ -1717,7 +1717,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     fn parse_root(&mut self) -> PResult<Expr> {
         let start = self.scanner.init_document()?;
 
-        let root = Expr::init(E::Object::default(), loc_of(start));
+        let root = Expr::allocate(self.bump, E::Object::default(), loc_of(start));
         let root_ptr = root.data.e_object().expect("infallible: just constructed");
 
         let mut current: StoreRef<E::Object> = root_ptr;
@@ -1952,7 +1952,11 @@ impl<'a, 'log> Parser<'a, 'log> {
             ValueData::Number(n) => Ok(Expr::init(E::Number::new(n), loc)),
             ValueData::DateTime { text, kind } => {
                 let text = truncate_fractional_seconds(text, self.bump);
-                Ok(Expr::init(E::String::init_toml_datetime(text, kind), loc))
+                Ok(Expr::allocate(
+                    self.bump,
+                    E::String::init_toml_datetime(text, kind),
+                    loc,
+                ))
             }
             ValueData::Boolean(b) => Ok(Expr::init(E::Boolean { value: b }, loc)),
             ValueData::ArrayOpen => self.parse_array(token.pos),
@@ -1962,9 +1966,13 @@ impl<'a, 'log> Parser<'a, 'log> {
 
     fn string_expr(&self, text: &'a [u8], is_ascii: bool, loc: Loc) -> Expr {
         if is_ascii {
-            Expr::init(E::String::init(text), loc)
+            Expr::allocate(self.bump, E::String::init(text), loc)
         } else {
-            Expr::init(E::String::init_re_encode_utf8(text, self.bump), loc)
+            Expr::allocate(
+                self.bump,
+                E::String::init_re_encode_utf8(text, self.bump),
+                loc,
+            )
         }
     }
 
@@ -2041,7 +2049,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     // ── table bookkeeping ──────────────────────────────────────────────────
 
     fn new_table(&mut self, pos: usize, kind: Kind) -> (Expr, StoreRef<E::Object>) {
-        let expr = Expr::init(E::Object::default(), loc_of(pos));
+        let expr = Expr::allocate(self.bump, E::Object::default(), loc_of(pos));
         let ptr = expr.data.e_object().expect("infallible: just constructed");
         self.meta.insert(
             ptr.as_ptr() as usize,
@@ -2054,7 +2062,7 @@ impl<'a, 'log> Parser<'a, 'log> {
     }
 
     fn new_array(&mut self, pos: usize, kind: Kind) -> (Expr, StoreRef<E::Array>) {
-        let expr = Expr::init(E::Array::default(), loc_of(pos));
+        let expr = Expr::allocate(self.bump, E::Array::default(), loc_of(pos));
         let ptr = expr.data.e_array().expect("infallible: just constructed");
         self.meta.insert(
             ptr.as_ptr() as usize,
@@ -2091,9 +2099,13 @@ impl<'a, 'log> Parser<'a, 'log> {
         }
         let key_loc = loc_of(seg.pos);
         let key_expr = if seg.text.is_ascii() {
-            Expr::init(E::String::init(seg.text), key_loc)
+            Expr::allocate(self.bump, E::String::init(seg.text), key_loc)
         } else {
-            Expr::init(E::String::init_re_encode_utf8(seg.text, self.bump), key_loc)
+            Expr::allocate(
+                self.bump,
+                E::String::init_re_encode_utf8(seg.text, self.bump),
+                key_loc,
+            )
         };
         obj.append_property(key_expr, value);
         Ok(())

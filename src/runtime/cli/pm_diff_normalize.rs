@@ -1,7 +1,7 @@
 //! Canonical re-printing for `bun pm diff`: parse a JS/CSS/JSON file and print it back in one fixed style so that
 //! formatting-only releases collapse to nothing and minified bundles become line-diffable.
 
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 
 /// One source-map point: printed (line, col) came from original (line, col); all 0-based.
 #[derive(Clone, Copy)]
@@ -83,7 +83,7 @@ pub(crate) fn normalize(path: &[u8], bytes: &[u8], options: Options) -> Option<N
     let mut out = match kind_for(path)? {
         Kind::Js(loader) => {
             let _store = StoreScope::enter();
-            let arena = Arena::new();
+            let arena = AstArena::new();
             let source = bun_ast::Source::init_path_string(path, bytes);
             let ast = parse_js(&arena, &source, loader, options)?;
             print_js(&arena, ast, &source, options)
@@ -109,7 +109,7 @@ pub(crate) fn normalize_minified_pair(
         return None;
     }
     let _store = StoreScope::enter();
-    let (arena_o, arena_n) = (Arena::new(), Arena::new());
+    let (arena_o, arena_n) = (AstArena::new(), AstArena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
     let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
@@ -165,7 +165,7 @@ fn key_pair(
         return None;
     }
     let _store = StoreScope::enter();
-    let (arena_o, arena_n) = (Arena::new(), Arena::new());
+    let (arena_o, arena_n) = (AstArena::new(), AstArena::new());
     let source_o = bun_ast::Source::init_path_string(path, old);
     let source_n = bun_ast::Source::init_path_string(path, new);
     let mut ast_o = parse_js(&arena_o, &source_o, loader, options)?;
@@ -298,7 +298,7 @@ impl StoreScope {
 }
 
 fn parse_js<'a>(
-    arena: &'a Arena,
+    arena: &'a AstArena,
     source: &'a bun_ast::Source<'a>,
     loader: bun_ast::Loader,
     options: Options,
@@ -358,7 +358,7 @@ fn newline_lines(text: &[u8]) -> Option<Vec<(u32, u32)>> {
 }
 
 fn print_js<'a>(
-    arena: &'a Arena,
+    arena: &'a AstArena,
     mut ast: Box<bun_ast::Ast<'a>>,
     source: &'a bun_ast::Source<'a>,
     options: Options,
@@ -472,7 +472,7 @@ fn print_js<'a>(
 /// outer and sibling scopes are independent. Within a scope the two sides are aligned (LCS on symbol kind + use
 /// count) and matched symbols share an index, so inserting a function does not renumber everything after it.
 struct Namer<'s> {
-    arenas: [&'s Arena; 2],
+    arenas: [&'s AstArena; 2],
     symbols: [&'s mut [bun_ast::Symbol]; 2],
     renamed: [Vec<bool>; 2],
     /// Every name that is not renamed, such as a global or a long local, sorted. A renamed local is
@@ -512,8 +512,8 @@ fn count_bucket(n: u32) -> u64 {
 
 impl<'s> Namer<'s> {
     fn new(
-        arena_o: &'s Arena,
-        arena_n: &'s Arena,
+        arena_o: &'s AstArena,
+        arena_n: &'s AstArena,
         old: &'s mut [bun_ast::Symbol],
         new: &'s mut [bun_ast::Symbol],
     ) -> Namer<'s> {
@@ -899,7 +899,7 @@ fn align_by<A, B>(
 }
 
 fn normalize_css(bytes: &[u8]) -> Option<Normalized> {
-    let alloc = &Arena::new();
+    let alloc = &bun_alloc::Arena::new();
     let mut import_records = Vec::<bun_ast::ImportRecord>::default();
     let (sheet, _extra) = bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(
         alloc,
@@ -937,8 +937,7 @@ fn normalize_css(bytes: &[u8]) -> Option<Normalized> {
 }
 
 fn normalize_json(path: &[u8], bytes: &[u8]) -> Option<Normalized> {
-    let _store = StoreScope::enter();
-    let arena = Arena::new();
+    let arena = AstArena::new();
     let source = bun_ast::Source::init_path_string(path, bytes);
     let expr = bun_parsers::json::parse_utf8(&source, &bun_ast::Log::init(), &arena).ok()?;
     let mut writer = bun_js_printer::BufferWriter::init();

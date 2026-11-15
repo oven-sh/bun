@@ -390,7 +390,7 @@ fn parse_without_bundler(
     define: Option<&Define>,
     glob_host: Option<ImportMetaGlobHost>,
 ) -> bool {
-    let arena = Arena::new();
+    let arena = bun_ast::AstArena::new();
     let mut store = ASTMemoryAllocator::borrowing(&arena);
     let _scope = store.enter();
     let source = Source::init_path_string(file.module.path, file.contents);

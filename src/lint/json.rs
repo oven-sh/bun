@@ -6,7 +6,7 @@ use crate::options::Json;
 use crate::utils::text::{number_to_string, string_from_code_points};
 use bun_ast::E::JsonValue;
 use bun_ast::expr::Data;
-use bun_ast::{ASTMemoryAllocator, Expr, Log, Source};
+use bun_ast::{ASTMemoryAllocator, AstArena, Expr, Log, Source};
 use bun_core::strings;
 use bun_parsers::json::ParsedJson;
 use bun_parsers::json5::JSON5Parser;
@@ -38,22 +38,13 @@ pub fn parse(text: &[u8]) -> Option<Json> {
     if text.is_empty() {
         return None;
     }
-    let mut allocator = ASTMemoryAllocator::default();
-    let _scope = allocator.enter();
+    let arena = AstArena::new();
     let source = Source::init_path_string(b"".as_slice(), text);
     let log = Log::init();
-    let parsed = ParsedJson::parse_jsonc_document(&source, &log).ok()?;
-    let root = match parsed.root.data {
-        Data::ENull(_) => JsonValue::Null,
-        Data::EBoolean(it) => JsonValue::Boolean(it.value),
-        Data::ENumber(it) => JsonValue::Number(it),
-        Data::EString(it) => JsonValue::String(it.get().data),
-        Data::EArrayJSON(it) => JsonValue::Array(it),
-        Data::EObjectJSON(it) => JsonValue::Object(it),
-        _ => return None,
-    };
+    let parsed = ParsedJson::parse_jsonc_document(&source, &log, &arena).ok()?;
+    let root = parsed.root().as_json_value()?;
     // The parser warns about a duplicate key.
-    convert(&root, NestingLimit::new(), log.warnings.get() > 0)
+    convert(root, NestingLimit::new(), log.warnings.get() > 0)
 }
 
 /// Returns `None` if the value is nested too deeply.
@@ -197,7 +188,7 @@ pub fn with_parsed<T>(
     text: &[u8],
     read: impl FnOnce(&Expr) -> T,
 ) -> Result<T, SyntaxError> {
-    let arena = bun_alloc::Arena::new();
+    let arena = AstArena::new();
     let mut allocator = ASTMemoryAllocator::borrowing(&arena);
     let _scope = allocator.enter();
     let text = bun_core::strings::without_utf8_bom(text);

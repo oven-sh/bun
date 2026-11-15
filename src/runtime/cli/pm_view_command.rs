@@ -1,5 +1,6 @@
 use bstr::BStr;
 use bun_alloc::Arena as Bump;
+use bun_ast::AstArena;
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
@@ -60,7 +61,7 @@ pub(crate) fn view(
     fields: &[&[u8]],
     json_output: bool,
 ) -> Result<(), crate::Error> {
-    let bump = Bump::new();
+    let bump = AstArena::new();
     let (name, mut version) = dependency::split_name_and_version_or_latest('brk: {
         // Extremely best effort.
         if spec_ == b"." || spec_ == b"" {
@@ -312,7 +313,8 @@ pub(crate) fn view(
             }
         }
         bun_collections::index_sort::sort_slice_by(&mut keys, |a, b| a.0.order(b.0, a.1, b.1));
-        let versions_array = ast::Expr::init(
+        let versions_array = ast::Expr::allocate(
+            &bump,
             ast::E::Array {
                 items: bun_alloc::AstAlloc::vec_from_iter(keys.into_iter().map(|(_, _, key)| key)),
                 ..Default::default()
@@ -395,7 +397,8 @@ pub(crate) fn view(
                 }
             }
             (labels, values) if json_output => {
-                let mut object = ast::Expr::init(ast::E::Object::default(), bun_ast::Loc::EMPTY);
+                let mut object =
+                    ast::Expr::allocate(&bump, ast::E::Object::default(), bun_ast::Loc::EMPTY);
                 for (label, value) in labels.iter().zip(values) {
                     object.set(&bump, label, *value)?;
                 }

@@ -14,7 +14,7 @@ use bun_bundler::mal_prelude::*;
 
 use bstr::BStr;
 
-use bun_alloc::Arena;
+use bun_ast::AstArena;
 use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
@@ -123,7 +123,7 @@ pub(crate) fn filter<'a>(
     // transpiler because BundleV2.init takes ownership of the allocator and
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
-    let arena: &'static Arena = crate::cli::cli_arena();
+    let arena: &'static AstArena = crate::cli::cli_arena();
     let log: &'static bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let mut scan_transpiler =

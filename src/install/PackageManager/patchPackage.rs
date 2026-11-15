@@ -28,7 +28,7 @@ use crate::package_manager_real::package_manager_directories::{
 };
 use crate::package_manager_real::populate_package_cache::download_pinned_packages;
 use crate::resolution::append_without_url_credentials;
-use crate::{DependencyID, PackageID, PatchTask, Resolution, ResolutionTag, initialize_store};
+use crate::{DependencyID, PackageID, PatchTask, Resolution, ResolutionTag};
 
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
@@ -348,8 +348,8 @@ fn read_name_and_version(log: &bun_ast::Log, folder: &[u8]) -> (Vec<u8>, Vec<u8>
             }
         };
 
-    initialize_store();
-    let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
+    let arena = bun_ast::AstArena::new();
+    let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log, &arena) {
         Ok(p) => p,
         Err(err) => {
             let _ = log.print(Output::error_writer());
@@ -363,9 +363,9 @@ fn read_name_and_version(log: &bun_ast::Log, folder: &[u8]) -> (Vec<u8>, Vec<u8>
     };
 
     let string_property = |property: &'static str| -> Vec<u8> {
-        if let Some(v) = parsed.root.get(property.as_bytes()) {
-            if let bun_ast::ExprData::EString(s) = &v.data {
-                return s.data.slice().to_vec();
+        if let Some(v) = parsed.root().get(property.as_bytes()) {
+            if let Some(s) = v.as_utf8_string_literal() {
+                return s.to_vec();
             }
         }
         bun_core::pretty_error!(

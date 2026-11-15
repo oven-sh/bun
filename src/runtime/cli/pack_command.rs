@@ -792,12 +792,10 @@ fn add_bundled_dep(
             Global::crash();
         }
     };
-    let parse = || {
-        (source.as_ref())
-            .and_then(|source| JSON::parse_package_json_utf8(source, log, cli_arena()).ok())
-            .inspect(|json| drop_shadowed_properties(*json))
-    };
-    let mut json = parse();
+    let arena = bun_ast::AstArena::new();
+    let json = (source.as_ref())
+        .and_then(|source| JSON::parse_package_json_utf8(source, log, &arena).ok())
+        .inspect(|json| drop_shadowed_properties(*json));
 
     // A folder whose real path below the project has no `node_modules` component is a workspace
     // or a linked folder, not an installed copy. The walk for installed copies reads no ignore
@@ -805,9 +803,7 @@ fn add_bundled_dep(
     let below_project = (real_path.strip_prefix(&*bundle.project_path)).unwrap_or(&real_path);
     let is_own_package = !strings::contains(below_project, path::NODE_MODULES_NEEDLE);
     if is_own_package && manifests.is_none() && json.is_some_and(needs_workspace_manifests) {
-        // Loading the workspace manifests resets the `Store` that holds `json`, so parse it again.
         *manifests = Some(WorkspaceManifests::load(manager));
-        json = parse();
     }
 
     if let Some(json) = &json {
@@ -932,7 +928,7 @@ fn add_own_package(
                 if kind == bun_sys::FileKind::File {
                     add_file(b"package.json", None)?;
                 }
-                Expr::init(E::Object::default(), Default::default())
+                Expr::allocate(cli_arena(), E::Object::default(), Default::default())
             }
         },
     };
@@ -1531,7 +1527,6 @@ pub(crate) fn package_json_entry<'a>(
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions {
             guess_indentation: true,
-            ..Default::default()
         },
     ) {
         WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
@@ -1774,11 +1769,9 @@ pub(crate) fn pack(
         log_level,
     )?;
 
-    // Bundling a workspace can load the manifests too, which resets the `Store`, so fetch the entry
-    // again before copying it.
+    // Bundling a workspace can grow the cache, which moves its entries.
     json = package_json_entry(ctx.manager, abs_package_json_path);
-    // Edit a copy. The edits add `Store` nodes, and the next workspace of `bun publish -r` still
-    // reads the cached tree.
+    // Edit a copy: the next workspace of `bun publish -r` still reads the cached tree.
     let root = json.root.deep_clone(bump);
     let mut root = root.map_err(|_| PackError::OutOfMemory)?;
     let edited_package_json = edit_root_package_json(
@@ -2685,7 +2678,8 @@ fn edit_root_package_json(
                 Global::crash();
             }
         };
-        dependency.value = Some(Expr::init(
+        dependency.value = Some(Expr::allocate(
+            bump,
             E::EString::init(replacement),
             Default::default(),
         ));

@@ -1292,38 +1292,32 @@ fn unmarshal_fields(object: &ObjectJSON, has_duplicates: bool) -> Option<Json> {
 
 /// `packagejson.Parse`. Bun's JSON parser, which builds the values, also accepts input that isn't JSON, so the text is
 /// validated first.
-fn parse_package_json(arena: &Arena, text: &[u8]) -> Option<Json> {
+fn parse_package_json(text: &[u8]) -> Option<Json> {
     use bun_parsers::json::ParsedJson;
     if !is_valid(text) {
         return None;
     }
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-    let _ast_scope = ast_memory_allocator.enter();
+    let arena = bun_ast::AstArena::new();
     let source = bun_ast::Source::init_path_string(b"package.json".as_slice(), text);
     let log = bun_ast::Log::init();
-    let parsed = ParsedJson::parse_json(&source, &log).ok()?;
-    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
-        return None;
-    };
+    let parsed = ParsedJson::parse_json(&source, &log, &arena).ok()?;
+    let root = parsed.root().as_e_object_json()?;
     // The only warning is about a duplicate key.
-    unmarshal_fields(root.get(), log.warnings.get() > 0)
+    unmarshal_fields(root, log.warnings.get() > 0)
 }
 
 /// Every member of a JSON object, such as a source map.
-pub(crate) fn parse_json_object(arena: &Arena, text: &[u8]) -> Option<Json> {
+pub(crate) fn parse_json_object(text: &[u8]) -> Option<Json> {
     use bun_parsers::json::ParsedJson;
     if !is_valid(text) {
         return None;
     }
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-    let _ast_scope = ast_memory_allocator.enter();
+    let arena = bun_ast::AstArena::new();
     let source = bun_ast::Source::init_path_string(b"object.json".as_slice(), text);
     let log = bun_ast::Log::init();
-    let parsed = ParsedJson::parse_json(&source, &log).ok()?;
-    let bun_ast::expr::Data::EObjectJSON(root) = parsed.root.data else {
-        return None;
-    };
-    let members = root.get().properties().iter().map(|property| {
+    let parsed = ParsedJson::parse_json(&source, &log, &arena).ok()?;
+    let root = parsed.root().as_e_object_json()?;
+    let members = root.properties().iter().map(|property| {
         let value = unmarshal_json_value(&property.value, log.warnings.get() > 0)?;
         Some((property.key.slice().to_vec(), value))
     });
@@ -1419,8 +1413,8 @@ impl Host for UncachedDisk<'_> {
             options.reads_as_bun_run,
         )
     }
-    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        parse_package_json(arena, text)
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+        parse_package_json(text)
     }
     fn parallel(&self, count: usize, work: &(dyn Fn(usize) + Sync)) {
         (0..count).for_each(work);
@@ -1620,8 +1614,8 @@ impl Host for Disk {
             options.reads_as_bun_run,
         )
     }
-    fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        parse_package_json(arena, text)
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+        parse_package_json(text)
     }
     fn loaded(&self) {
         // With shares, the threads continue with the next program's files, so they keep the parser's caches.

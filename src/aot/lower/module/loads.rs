@@ -2507,13 +2507,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         candidates: AnswersOfResolver<'_>,
     ) -> ValueId {
         let is_url = candidates.form != ResolvedForm::Path;
-        let text = match candidates.form {
-            ResolvedForm::UrlObject if !candidates.spelled_modules.is_empty() => {
+        let result = self.builder.create_variable(None);
+        let done = self.create_block();
+        let is_object =
+            candidates.form == ResolvedForm::UrlObject && !candidates.spelled_modules.is_empty();
+        let (text, specifier) = match load {
+            ComputedLoad::Import if is_object => {
+                let text = self.emit_text_of_imported_object(answer, result, done);
+                (text, text)
+            }
+            _ if is_object => {
                 let name = self.file.intern_bytes(b"href");
                 let name = PropertyName::Constant(self.file.text_key(name));
-                self.emit_get(answer, name)
+                (self.emit_get(answer, name), answer)
             }
-            _ => answer,
+            _ => (answer, answer),
         };
         let mut stands_for: FxHashMap<Vec<u8>, Option<ModuleRef>> = FxHashMap::default();
         for spelled in candidates.spelled_modules {
@@ -2525,8 +2533,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
             }
         }
-        let result = self.builder.create_variable(None);
-        let done = self.create_block();
         for spelled in candidates.spelled_modules {
             let answer_for_candidate =
                 self.emit_resolve_of_name(spelled.spelling, None, spelled.module, is_url);
@@ -2572,12 +2578,34 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 
             self.continue_in(other);
         }
-        let loaded = self.emit_load_by_name(load, referrer, answer, candidates.known_of_name);
+        let loaded = self.emit_load_by_name(load, referrer, specifier, candidates.known_of_name);
         self.builder.write_variable(result, loaded);
         self.jump(done);
 
         self.continue_in(done);
         self.builder.read_variable(result)
+    }
+
+    fn emit_text_of_imported_object(
+        &mut self,
+        object: ValueId,
+        result: LocalVariable,
+        done: BlockId,
+    ) -> ValueId {
+        let converted = self.create_block();
+        let handler = self.begin_handler(BlockRole::CatchHandler, None);
+        let text = self.builder.to_string(object);
+        self.end_handler(handler);
+        self.jump(converted);
+
+        self.continue_in(handler.block());
+        let error = self.builder.catch_value();
+        let rejected = self.emit_settled_promise(BuiltinId::PromiseReject, error);
+        self.builder.write_variable(result, rejected);
+        self.jump(done);
+
+        self.continue_in(converted);
+        text
     }
 
     fn emit_load_by_name(

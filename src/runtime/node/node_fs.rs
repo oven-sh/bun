@@ -14,7 +14,6 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::webcore;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_core::{String as BunString, Utf8WithString, ZBox, ZStr};
-use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::JsKeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -26,8 +25,8 @@ use bun_jsc::{
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
-use bun_threading::UnboundedQueue;
-use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_threading::OwnedQueue;
+use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask, WorkPool};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
@@ -217,17 +216,6 @@ fn read_large_file(fd: FD, buf: &mut Vec<u8>, len: usize, position: u64) -> Mayb
     // SAFETY: `total` counts the bytes read, up to and including the first short part.
     unsafe { bun_core::vec::commit_spare(buf, total) };
     Ok(total)
-}
-
-/// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
-/// `Default` (its `callback` field has no sensible default). Build one with
-/// the intrusive `node` zeroed and the supplied callback.
-#[inline]
-fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
-    WorkPoolTask {
-        node: bun_threading::thread_pool::Node::default(),
-        callback,
-    }
 }
 
 pub(crate) use super::node_fs_constant as constants;
@@ -1240,11 +1228,11 @@ mod _async_tasks {
         const _: () = assert!(ReadFile::HAVE_ABORT_SIGNAL);
         const _: () = assert!(WriteFile::HAVE_ABORT_SIGNAL);
 
+        /// # Safety
+        /// The methods are sound to call on a pool thread while the VM is alive.
         #[cfg(windows)]
-        pub(crate) trait AsyncMkdirpTarget: bun_event_loop::BoxedTask {
-            /// Pool thread.
+        pub(crate) unsafe trait AsyncMkdirpTarget: bun_event_loop::BoxedTask {
             fn directory(&self) -> &[u8];
-            /// Pool thread.
             fn set_error(&mut self, err: sys::Error);
         }
 
@@ -1257,8 +1245,12 @@ mod _async_tasks {
             task: WorkPoolTask,
         }
 
+        // SAFETY: the pool thread only calls the methods of `AsyncMkdirpTarget`, and `ticket` keeps the VM alive.
         #[cfg(windows)]
-        bun_threading::owned_task!([T: AsyncMkdirpTarget] AsyncMkdirp<T>, task);
+        unsafe impl<T: AsyncMkdirpTarget> Send for AsyncMkdirp<T> {}
+
+        #[cfg(windows)]
+        bun_threading::intrusive_work_task!([T: AsyncMkdirpTarget] AsyncMkdirp<T>, task);
 
         #[cfg(windows)]
         impl<T: AsyncMkdirpTarget> AsyncMkdirp<T> {
@@ -1269,9 +1261,11 @@ mod _async_tasks {
                     task: Default::default(),
                 });
             }
+        }
 
-            #[allow(clippy::boxed_local)]
-            fn run_owned(mut self: Box<Self>) {
+        #[cfg(windows)]
+        impl<T: AsyncMkdirpTarget> OwnedTask for AsyncMkdirp<T> {
+            fn run(mut self: Box<Self>) {
                 if let Err(err) = mkdirp(self.target.directory()) {
                     self.target.set_error(err);
                 }
@@ -2215,7 +2209,17 @@ mod _async_tasks {
         pub(crate) shelltask: Option<Box<ShellCpTask>>,
     }
 
+    // SAFETY: pool threads do not use `promise`, `evtloop`, `_keep_alive` or `tracker`, call only
+    // `cp_on_copy` on `shelltask`, and post the task to its loop, whose thread drops it.
+    unsafe impl<const IS_SHELL: bool> Send for NewAsyncCpTask<IS_SHELL> {}
+
     bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
+
+    impl<const IS_SHELL: bool> OwnedTask for NewAsyncCpTask<IS_SHELL> {
+        fn run(self: Box<Self>) {
+            Self::cp_async(&mut NodeFS::default(), bun_core::heap::into_raw(self));
+        }
+    }
 
     /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
     /// When clonefile cannot be used, this task is started once per file.
@@ -2226,13 +2230,17 @@ mod _async_tasks {
         /// so shared reads are safe-projected and `as_mut_ptr()` round-trips the
         /// original write provenance for the `Box` that `on_subtask_done` reclaims.
         pub(crate) cp_task: bun_ptr::ParentRef<NewAsyncCpTask<IS_SHELL>, bun_ptr::Mut>,
-        /// `src` and `dest`, each followed by one unit for the NUL that `run_owned` writes.
+        /// `src` and `dest`, each followed by one unit for the NUL that `run` writes.
         path_buf: Box<[OSPathChar]>,
         src_len: usize,
         pub task: WorkPoolTask,
     }
 
-    bun_threading::owned_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
+    // SAFETY: `subtask_count` keeps `cp_task` alive. `run` reads its `args`, and otherwise
+    // only calls methods that synchronize their writes.
+    unsafe impl<const IS_SHELL: bool> Send for CpSingleTask<IS_SHELL> {}
+
+    bun_threading::intrusive_work_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
 
     impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         pub(crate) fn create(
@@ -2251,8 +2259,10 @@ mod _async_tasks {
                 task: WorkPoolTask::default(),
             });
         }
+    }
 
-        fn run_owned(mut self: Box<Self>) {
+    impl<const IS_SHELL: bool> OwnedTask for CpSingleTask<IS_SHELL> {
+        fn run(mut self: Box<Self>) {
             // `ParentRef` preserves the `Box::leak` mutable provenance so
             // `on_subtask_done` can reclaim the `Box` from `as_mut_ptr()`
             // once the refcount reaches zero.
@@ -2411,7 +2421,7 @@ mod _async_tasks {
             context: bun_event_loop::ContextId,
             shelltask: Option<Box<ShellCpTask>>,
         ) {
-            let task = Box::new(Self {
+            WorkPool::schedule_new(Self {
                 promise,
                 context,
                 args: cp_args,
@@ -2422,7 +2432,7 @@ mod _async_tasks {
                 result: core::cell::Cell::new(Ok(())),
                 evtloop,
                 poster: core::cell::Cell::new(Some(poster)),
-                task: work_pool_task(Self::work_pool_callback),
+                task: WorkPoolTask::default(),
                 _keep_alive: if IS_SHELL {
                     JsKeepAlive::default()
                 } else {
@@ -2432,18 +2442,6 @@ mod _async_tasks {
                 subtask_count: AtomicUsize::new(1),
                 shelltask,
             });
-
-            let raw = bun_core::heap::release(task);
-            WorkPool::schedule(&raw mut raw.task);
-        }
-
-        fn work_pool_callback(task: *mut WorkPoolTask) {
-            // SAFETY: task points to Self.task. Kept as a raw pointer — `cp_async`
-            // may spawn subtasks that hold `&Self` to the same allocation while
-            // this call is still on the stack, so we must not form `&mut Self` here.
-            let this = unsafe { Self::from_task_ptr(task) };
-            let mut node_fs = NodeFS::default();
-            Self::cp_async(&mut node_fs, this);
         }
 
         /// May be called from any thread (the subtasks).
@@ -2471,7 +2469,7 @@ mod _async_tasks {
         /// drops to zero) enqueues `runFromJSThread`, which resolves the promise
         /// and destroys `this`.
         ///
-        /// Takes the pointer that `schedule_new` leaked, because the last caller reclaims the `Box`.
+        /// Takes the pointer that `run` leaked, because the last caller reclaims the `Box`.
         fn on_subtask_done(this: *mut Self) {
             // SAFETY: `this` is a live Box-leaked task; shared access only here —
             // other workpool threads may concurrently hold `&Self` until the
@@ -2483,7 +2481,7 @@ mod _async_tasks {
                 return;
             }
 
-            // SAFETY: the count reached zero, so nothing else uses the box that `schedule_new` leaked.
+            // SAFETY: the count reached zero, so nothing else uses the box that `run` leaked.
             let this = unsafe { bun_core::heap::take(this) };
 
             // All subtasks have finished. If none reported an error, the copy succeeded.
@@ -2496,14 +2494,15 @@ mod _async_tasks {
                 .poster
                 .take()
                 .expect("fs.cp in flight holds its poster");
-            if poster.is_js() {
-                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
-            } else {
-                let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
-                    let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
-                });
-                // `from_callback_auto_deinit` heap-allocates; never null.
-                poster.post_mini(core::ptr::NonNull::new(at).expect("heap task"));
+            match poster {
+                bun_jsc::ConcurrentPoster::Js(ticket) => {
+                    ticket.post(ConcurrentTask::ConcurrentTask::create_boxed(this));
+                }
+                bun_jsc::ConcurrentPoster::Mini(mini) => {
+                    mini.post(this, |task, _| {
+                        let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards
+                    });
+                }
             }
         }
 
@@ -2901,7 +2900,7 @@ mod _async_tasks {
         /// A lockless queue of result lists.
         ///
         /// Using a lockless queue instead of mutex + joining the lists as we go was a meaningful performance improvement
-        pub(crate) result_list_queue: UnboundedQueue<ResultListEntry>,
+        pub(crate) result_list_queue: OwnedQueue<Box<ResultListEntry>>,
 
         /// `ReaddirState::root_dir`, for the subtasks to open files with.
         pub(crate) root_fd: FD,
@@ -2920,11 +2919,6 @@ mod _async_tasks {
         pending_err: Option<sys::Error>,
         result_list: ResultListEntryValue,
     }
-
-    // SAFETY: shared by the pool subtasks through atomics / the lock-free
-    // queue / the mutex; results are owned buffers and WTF strings built
-    // off-thread for hand-off.
-    unsafe impl Send for AsyncReaddirRecursiveTask {}
 
     impl bun_jsc::JobContext for AsyncReaddirRecursiveTask {
         type OffThread = Self;
@@ -2987,8 +2981,11 @@ mod _async_tasks {
         Files(Vec<BunString>),
     }
 
+    // SAFETY: a `Buffer` in the list owns its bytes and has no JS value.
+    unsafe impl Send for ResultListEntryValue {}
+
     pub(crate) struct ResultListEntry {
-        pub(crate) next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
+        pub(crate) next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: OwnedQueue link
         pub value: ResultListEntryValue,
     }
 
@@ -3010,13 +3007,10 @@ mod _async_tasks {
         pub task: WorkPoolTask,
     }
 
-    bun_threading::owned_task!(ReaddirSubtask, task);
+    bun_threading::intrusive_work_task!(ReaddirSubtask, task);
 
-    impl ReaddirSubtask {
-        // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
-        // is a false positive on this macro contract.
-        #[allow(clippy::boxed_local)]
-        fn run_owned(self: Box<Self>) {
+    impl OwnedTask for ReaddirSubtask {
+        fn run(self: Box<Self>) {
             let mut buf = bun_paths::path_buffer_pool::get();
             let scan = self.readdir_task;
             scan.perform_work(&self.basename, &mut buf, false);
@@ -3072,7 +3066,7 @@ mod _async_tasks {
                     has_error: AtomicBool::new(false),
                     root_path,
                     result_list_count: AtomicUsize::new(0),
-                    result_list_queue: UnboundedQueue::default(),
+                    result_list_queue: OwnedQueue::new(),
                     root_fd: FD::INVALID,
                     state: bun_threading::Guarded::new(ReaddirState {
                         done: None,
@@ -3153,8 +3147,7 @@ mod _async_tasks {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
-                self.result_list_queue
-                    .push(bun_core::heap::into_raw_nn(list));
+                self.result_list_queue.push(list);
             }
         }
 
@@ -3167,14 +3160,7 @@ mod _async_tasks {
                 let count = self.result_list_count.load(Ordering::Relaxed);
                 state.result_list.reserve_exact(count);
             }
-            let mut iter = self.result_list_queue.pop_batch().iterator();
-            loop {
-                let val = iter.next();
-                if val.is_null() {
-                    break;
-                }
-                // SAFETY: boxed in `write_results`; `next` read its link before returning it.
-                let mut entry = unsafe { bun_core::heap::take(val) };
+            for mut entry in self.result_list_queue.pop_batch() {
                 if success {
                     state.result_list.append_from(&mut entry.value);
                 }

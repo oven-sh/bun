@@ -443,11 +443,6 @@ pub mod windows_stdio {
         #[cfg(debug_assertions)]
         fd_internals::WINDOWS_CACHED_FD_SET.store(true, Ordering::Relaxed);
 
-        // SAFETY: BUFFERED_STDIN is a static initialized at startup before use.
-        unsafe {
-            (*BUFFERED_STDIN.get()).fd = Fd::stdin();
-        }
-
         // https://learn.microsoft.com/en-us/windows/console/setconsoleoutputcp
         const CP_UTF8: u32 = 65001;
         CONSOLE_OUTPUT_CODEPAGE.store(c::GetConsoleOutputCP(), Ordering::Relaxed);
@@ -2411,31 +2406,17 @@ pub fn err_fmt(formatter: impl fmt::Display) {
 // `prompt`/`init`/`publish` callers can read stdin without naming bun_sys.
 // ──────────────────────────────────────────────────────────────────────────
 
-static BUFFERED_STDIN: crate::RacyCell<BufferedStdin> = crate::RacyCell::new(BufferedStdin {
-    fd: {
-        #[cfg(windows)]
-        {
-            Fd::INVALID // set in WindowsStdio.init
-        }
-        #[cfg(not(windows))]
-        {
-            Fd::stdin()
-        }
-    },
+static BUFFERED_STDIN: crate::Mutex<BufferedStdin> = crate::Mutex::new(BufferedStdin {
     buf: [0; 4096],
     start: 0,
     end: 0,
 });
 
 /// `bun.deprecated.BufferedReader(4096, File.Reader)` over the process stdin.
-/// Layout is local to bun_core; bun_sys never casts into this (it only fills
-/// `.fd` during Windows startup).
-#[repr(C)]
 pub struct BufferedStdin {
-    pub(crate) fd: Fd,
-    pub(crate) buf: [u8; 4096],
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    buf: [u8; 4096],
+    start: usize,
+    end: usize,
 }
 
 impl BufferedStdin {
@@ -2460,7 +2441,7 @@ impl BufferedStdin {
             let remaining = dest.len() - written;
             if remaining >= self.buf.len() {
                 // Large dest tail: bypass the buffer.
-                let n = output_sink().read(self.fd, &mut dest[written..])?;
+                let n = output_sink().read(Fd::stdin(), &mut dest[written..])?;
                 if n == 0 {
                     return Ok(written);
                 }
@@ -2470,7 +2451,7 @@ impl BufferedStdin {
                 }
                 continue;
             }
-            self.end = output_sink().read(self.fd, &mut self.buf)?;
+            self.end = output_sink().read(Fd::stdin(), &mut self.buf)?;
             self.start = 0;
             if self.end == 0 {
                 return Ok(written);
@@ -2540,24 +2521,10 @@ pub fn stdin_reader() -> StdinReader {
     StdinReader { fd: Fd::stdin() }
 }
 
-/// `bun.Output.buffered_stdin` — raw pointer to the process-global 4 KiB
-/// buffered stdin. Used by `prompt()`/`bun init`/`bun publish` line reads.
-///
-/// Returns `*mut` (not `&'static mut`) to avoid handing out two live aliasing
-/// `&mut` to the same static (PORTING.md §Forbidden); callers materialise the
-/// `&mut` at the use site.
-///
-/// SAFETY: the static is single-threaded by construction (only ever touched
-/// from the main JS/CLI thread while blocked on user input).
+/// The process-global 4 KiB buffered stdin. Hold the guard for a whole line.
 #[inline]
-pub fn buffered_stdin() -> *mut BufferedStdin {
-    BUFFERED_STDIN.get()
-}
-
-/// `bun.Output.buffered_stdin.reader()` — same accessor as [`buffered_stdin`].
-#[inline]
-pub fn buffered_stdin_reader() -> *mut BufferedStdin {
-    buffered_stdin()
+pub fn lock_buffered_stdin() -> crate::MutexGuard<'static, BufferedStdin> {
+    BUFFERED_STDIN.lock()
 }
 
 /// Convenience for `bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList`.
@@ -2567,8 +2534,7 @@ pub fn buffered_stdin_read_until_delimiter(
     delimiter: u8,
     max_size: usize,
 ) -> crate::CrateResult<()> {
-    // SAFETY: single-threaded static; only live `&mut` for this call's duration.
-    unsafe { (*buffered_stdin()).read_until_delimiter_array_list(out, delimiter, max_size) }
+    lock_buffered_stdin().read_until_delimiter_array_list(out, delimiter, max_size)
 }
 
 /// https://gist.github.com/christianparpart/d8a62cc1ab659194337d73e399004036

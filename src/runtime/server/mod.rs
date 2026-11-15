@@ -2545,10 +2545,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 // Stay registered while streams are still queued.
                 bun_opaque::opaque_deref_mut(app.cast::<uws_sys::h2::App>()).drain()
             }
-            jsc::VirtualMachine::get()
-                .event_loop()
-                .deferred_tasks
-                .post_task(core::ptr::NonNull::new(app), drain);
+            let tasks = &jsc::VirtualMachine::get().event_loop().deferred_tasks;
+            // SAFETY: dropping the server unregisters `app` before it frees it.
+            unsafe { tasks.post_task(core::ptr::NonNull::new(app), drain) };
         }
         bun_opaque::opaque_deref_mut(h2.as_ptr())
             .on_schedule_drain(schedule_h2_drain, h2.as_ptr().cast::<c_void>());

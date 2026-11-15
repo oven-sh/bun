@@ -266,7 +266,8 @@ impl TimedConnection for PostgresSQLConnection {
     }
 }
 
-impl AutoFlush for PostgresSQLConnection {
+// SAFETY: refcounted on the heap, and `drop` unregisters through `disconnect`.
+unsafe impl AutoFlush for PostgresSQLConnection {
     fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }

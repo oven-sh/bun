@@ -1444,7 +1444,8 @@ impl JSValkeyClient {
 // Auto-pipelining
 use crate::webcore::{AutoFlusher, HasAutoFlusher};
 
-impl HasAutoFlusher for JSValkeyClient {
+// SAFETY: refcounted, so it does not move, and its `drop` unregisters.
+unsafe impl HasAutoFlusher for JSValkeyClient {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher

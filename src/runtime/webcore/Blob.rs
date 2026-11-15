@@ -5683,8 +5683,10 @@ pub(crate) trait FileOpener: Sized {
 pub(crate) use io_parking::IoParking;
 
 // TODO: move to bun_sys?
+/// # Safety
+/// `Self` is in a `Job`, which is not finished before `on_close_io_request` if `close_after_io` is true.
 #[cfg(not(windows))]
-pub(crate) trait FileCloser: Sized {
+pub(crate) unsafe trait FileCloser: bun_threading::IntrusiveWorkTask {
     const IO_TAG: bun_io::Tag;
 
     fn opened_fd(&self) -> Fd;
@@ -5693,22 +5695,25 @@ pub(crate) trait FileCloser: Sized {
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> &mut bun_io::Request;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
 
     /// Intrusive backref: Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own
     /// container_of recovery (no default body).
     fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
 
-    fn on_io_request_closed(this: &mut Self) {
-        this.io_poll()
-            .flags
-            .remove(bun_io::Flags::WasEverRegistered);
-        *this.task() = bun_jsc::WorkPoolTask {
-            node: Default::default(),
-            callback: Self::on_close_io_request,
-        };
-        bun_jsc::WorkPool::schedule(this.task());
+    /// # Safety
+    /// `this` is the `ctx` of the action that `schedule_close` returned to the io thread.
+    unsafe fn on_io_request_closed(this: *mut Self) {
+        // SAFETY: fn and trait contract.
+        unsafe {
+            let flags = &mut (*this).io_poll().flags;
+            flags.remove(bun_io::Flags::WasEverRegistered);
+            *(*this).task_mut() = bun_jsc::WorkPoolTask {
+                node: Default::default(),
+                callback: Self::on_close_io_request,
+            };
+            bun_jsc::WorkPool::schedule(Self::field_of(this));
+        }
     }
 
     /// Intrusive backref: concrete impl supplies its own
@@ -5729,7 +5734,8 @@ pub(crate) trait FileCloser: Sized {
             // The io thread reads `callback` after popping the request: a plain store would race.
             io_request.store_callback_seq_cst(Self::schedule_close);
             if !io_request.scheduled {
-                bun_io::IoRequestLoop::schedule(io_request);
+                // SAFETY: trait contract. Not upheld: `self` is still borrowed when the io thread gets the request.
+                unsafe { bun_io::IoRequestLoop::schedule(io_request) };
             }
             return true;
         }
@@ -5756,7 +5762,8 @@ pub(crate) trait FileCloser: Sized {
 #[cfg(not(windows))]
 macro_rules! impl_file_closer {
     ($T:ident) => {
-        impl crate::webcore::blob::FileCloser for $T {
+        // SAFETY: `on_finish` finishes the job only if `close_after_io` is false.
+        unsafe impl crate::webcore::blob::FileCloser for $T {
             const IO_TAG: ::bun_io::Tag = ::bun_io::Tag::$T;
             fn opened_fd(&self) -> ::bun_sys::Fd {
                 self.opened_fd
@@ -5776,9 +5783,6 @@ macro_rules! impl_file_closer {
             fn io_poll(&mut self) -> &mut ::bun_io::Poll {
                 &mut self.io_poll
             }
-            fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
-                &mut self.task
-            }
 
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
                 use ::bun_io::IntrusiveIoRequest as _;
@@ -5786,8 +5790,9 @@ macro_rules! impl_file_closer {
                 let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
                 fn on_done(ctx: *mut ()) {
                     // SAFETY: ctx is `self as *mut Self` set below.
-                    let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };
-                    <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(this);
+                    unsafe {
+                        <$T as crate::webcore::blob::FileCloser>::on_io_request_closed(ctx.cast())
+                    };
                 }
                 // SAFETY: `request` is `&mut self.io_request` (intrusive), so `this` is the
                 // live parent; the `fd` copy and the `io_poll` field borrow are the only

@@ -16,16 +16,9 @@ use crate::webcore::BlobExt as _;
 // Key is `[u8; 16]` (the UUID bytes) rather than `UUID` directly because
 // upstream `bun_jsc::UUID` does not yet derive `Hash + Eq`; using the raw
 // byte array avoids touching the upstream crate.
+#[derive(Default)]
 pub(crate) struct ObjectURLRegistry {
     map: Guarded<HashMap<[u8; 16], Box<Entry>>>,
-}
-
-impl Default for ObjectURLRegistry {
-    fn default() -> Self {
-        Self {
-            map: Guarded::init(HashMap::default()),
-        }
-    }
 }
 
 /// Holds no VM-affine state: `blob.global_this` is null and `blob.name` is a

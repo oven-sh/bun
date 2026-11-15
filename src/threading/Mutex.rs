@@ -5,15 +5,14 @@
 //! Mutex is a synchronization primitive which enforces atomic access to a shared region of code known as the "critical section".
 //! It does this by blocking ensuring only one thread is in the critical section at any given point in time by blocking the others.
 //! Mutex can be statically initialized and is at most `size_of::<u64>()` large.
-//! Use `lock()` to enter the critical section and `unlock()` to leave it.
+//! Use `lock_guard()` to enter the critical section, and drop the guard to leave it.
 //!
 //! Example:
 //! ```ignore
 //! let m = Mutex::default();
 //!
-//! m.lock();
+//! let _guard = m.lock_guard();
 //! // ... critical section code
-//! m.unlock();
 //! ```
 
 #[cfg(not(any(windows, target_vendor = "apple")))]
@@ -40,21 +39,13 @@ impl Mutex {
     }
 
     /// Acquires the mutex, blocking the caller's thread until it can.
-    /// It is undefined behavior if the mutex is already held by the caller's thread.
-    /// Once acquired, call `unlock()` on the Mutex to release it.
-    pub fn lock(&self) {
+    /// It deadlocks or aborts if the mutex is already held by the caller's thread.
+    /// Once acquired, call `unlock_raw()` to release it.
+    pub(crate) fn lock(&self) {
         self.impl_.lock()
     }
 
-    /// Releases the mutex which was previously acquired with `lock()`.
-    /// It is undefined behavior if the mutex is unlocked from a different thread that it was locked from.
-    pub fn unlock(&self) {
-        // SAFETY: held by this thread (fn contract) and live for the whole call.
-        unsafe { Self::unlock_raw(self) }
-    }
-
-    /// [`unlock`](Self::unlock) for a release that lets another thread free the mutex
-    /// (`WaitGroup::finish_raw`): the releasing store is the last access to `*this`.
+    /// Releases the mutex. The releasing store is the last access to `*this`, so another thread may then free the mutex.
     ///
     /// # Safety
     /// `this` must be held by this thread and stay live until the lock is released.
@@ -81,46 +72,36 @@ impl Mutex {
     }
 
     /// Acquires the mutex and returns an RAII guard that releases it on `Drop`.
-    ///
-    /// Prefer this over a bare [`lock`]/[`unlock`] pair so the critical section
-    /// is released on every return path (including `?`).
-    ///
-    /// The returned [`MutexGuard`] holds the mutex by raw pointer rather than a
-    /// borrowed `&'a Mutex`, so holding the guard does **not** keep a borrow of
-    /// the owning struct alive: the rest of `self` remains freely accessible
-    /// while locked. Caller must ensure the `Mutex` outlives the guard (trivially
-    /// true for `'static`/singleton mutexes and for guards that drop before the
-    /// owning `self` does).
     #[inline]
     #[must_use = "the mutex unlocks immediately if the guard is dropped"]
-    pub fn lock_guard(&self) -> MutexGuard {
+    pub fn lock_guard(&self) -> MutexGuard<'_> {
         self.lock();
         MutexGuard {
-            mutex: bun_ptr::BackRef::new(self),
+            mutex: self,
             _not_send: core::marker::PhantomData,
         }
     }
 }
 
 /// RAII guard returned by [`Mutex::lock_guard`]. Unlocks on `Drop`.
-///
-/// Stores a [`BackRef<Mutex>`] (lifetime-erased `&Mutex`) so it does not hold
-/// a borrow of the mutex's owner — see [`Mutex::lock_guard`] for the rationale.
-/// The `BackRef` invariant (pointee outlives holder) is the caller contract on
-/// `lock_guard()`: the mutex outlives this guard (always true when the guard
-/// is a local that drops before the owning struct).
-pub struct MutexGuard {
-    mutex: bun_ptr::BackRef<Mutex>,
-    // Preserve the previous `!Send`/`!Sync` auto-trait surface (the field was
-    // `*const Mutex`): the Darwin `os_unfair_lock` / Windows `SRWLOCK` backends
-    // require unlock on the locking thread.
+pub struct MutexGuard<'a> {
+    mutex: &'a Mutex,
+    // The Darwin `os_unfair_lock` / Windows `SRWLOCK` backends require unlock on the locking thread.
     _not_send: core::marker::PhantomData<*const Mutex>,
 }
 
-impl Drop for MutexGuard {
+impl MutexGuard<'_> {
+    #[inline]
+    pub(crate) fn mutex(&self) -> &Mutex {
+        self.mutex
+    }
+}
+
+impl Drop for MutexGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        self.mutex.unlock()
+        // SAFETY: `lock_guard` locked it on this thread, and the guard is `!Send`.
+        unsafe { Mutex::unlock_raw(self.mutex) }
     }
 }
 

@@ -15,7 +15,7 @@ use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, CellExt as _, RefPtr, ThisPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
-use bun_threading::{Guarded, UnboundedQueue};
+use bun_threading::{Guarded, OwnedTask, UnboundedQueue};
 
 use crate::generated_bindgen::node_fs_stat_watcher::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
@@ -81,7 +81,9 @@ struct WatcherQueue(UnboundedQueue<StatWatcher>);
 
 impl WatcherQueue {
     fn push(&self, watcher: RefPtr<StatWatcher>) {
-        self.0.push(watcher.into_non_null());
+        // SAFETY: the ref keeps `watcher` alive until `pop_all` returns it. `append` pushes a
+        // watcher once, and `work_pool_callback` only pushes watchers that it popped.
+        unsafe { self.0.push(watcher.into_non_null()) };
     }
 
     fn pop_all(&self) -> impl Iterator<Item = RefPtr<StatWatcher>> {
@@ -229,8 +231,8 @@ impl StatWatcherScheduler {
             scheduler: RefPtr::from_this(this),
             ticket: this.vm().ticket(),
         }));
-        // SAFETY: a field projection of the live scheduler.
-        WorkPool::schedule(unsafe { &raw mut (*this.as_ptr()).task });
+        // SAFETY: `pass` keeps the scheduler alive, and `work_pool_in_flight` says the task is not queued.
+        unsafe { WorkPool::schedule(&raw mut (*this.as_ptr()).task) };
     }
 
     /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`
@@ -644,7 +646,7 @@ impl StatWatcher {
             poll_ref: JsKeepAlive::default(),
             // InitStatTask is responsible for setting this
             // SAFETY: all-zero is a valid PosixStat (POD #[repr(C)])
-            last_stat: Guarded::init(bun_core::ffi::zeroed::<PosixStat>()),
+            last_stat: Guarded::new(bun_core::ffi::zeroed::<PosixStat>()),
             scheduler: Self::lazy_scheduler(vm),
             abort_handle: bun_jsc::AbortHandle::for_owner::<StatWatcher>(),
         });
@@ -793,13 +795,14 @@ pub(crate) struct InitialStatTask {
     task: WorkPoolTask,
 }
 
-bun_threading::owned_task!(InitialStatTask, task);
+// SAFETY: in `watcher`, `ref_count` and `closed` are atomic, `path` never changes, `last_stat` is
+// `Guarded`, and the JS thread reads `pending_hop` only in the task posted after it is set.
+unsafe impl Send for InitialStatTask {}
 
-impl InitialStatTask {
-    // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
-    // is a false positive on this macro contract.
-    #[allow(clippy::boxed_local)]
-    fn run_owned(self: Box<Self>) {
+bun_threading::intrusive_work_task!(InitialStatTask, task);
+
+impl OwnedTask for InitialStatTask {
+    fn run(self: Box<Self>) {
         if self.watcher.closed.load(Ordering::Relaxed) {
             return;
         }

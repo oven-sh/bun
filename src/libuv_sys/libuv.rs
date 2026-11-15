@@ -1474,14 +1474,6 @@ impl Tty {
     }
 }
 
-impl uv_tty_t {
-    #[inline]
-    pub fn set_mode(&mut self, mode: TtyMode) -> ReturnCode {
-        // SAFETY: tty was `init`ed.
-        unsafe { uv_tty_set_mode(self, mode as uv_tty_mode_t) }
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // `uv_poll_t`.
 // ──────────────────────────────────────────────────────────────────────────

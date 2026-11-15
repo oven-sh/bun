@@ -17,7 +17,7 @@ use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_install::lifecycle_script_runner::ScriptArgv;
-use bun_io::BufferedReader;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 
 // The string fields below are owned boxes, except `combined` which is interned
 // in the process-lifetime CLI arena.
@@ -74,8 +74,8 @@ fn write_to_stdout(bytes: &[u8]) {
     let _ = bun_sys::File::borrow(&bun_sys::Fd::stdout()).write_all(bytes);
 }
 
-/// Parent of both readers of a script.
-pub(crate) struct ScriptOutput<'a> {
+/// Where both readers of a script deliver.
+struct ScriptOutput<'a> {
     shared: &'a Shared,
     config: &'a ScriptConfig,
     buffer: Vec<u8>,
@@ -110,17 +110,6 @@ impl ScriptOutput<'_> {
         self.shared.print(buf);
         Ok(())
     }
-}
-
-bun_io::impl_buffered_reader_parent! {
-    FilterRunHandle for ScriptOutput<'a>;
-    feature = Tools;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, _has_more| { let _ = (*this).read_chunk(&chunk); true };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
-    loop_           = |this| bun_io::uws_to_native((*this).shared.event_loop.loop_);
-    event_loop      = |this| (*this).shared.event_loop.as_event_loop_ctx();
 }
 
 pub(crate) struct ProcessHandle<'a> {
@@ -194,9 +183,12 @@ impl<'a> ProcessHandle<'a> {
         let process =
             spawned.to_process_handle(EventLoopHandle::init_mini(handle.output.shared.event_loop));
 
-        let output = (&raw mut handle.output).cast();
-        handle.stdout.set_parent(output);
-        handle.stderr.set_parent(output);
+        let owner = std::ptr::from_mut(handle).cast();
+        // SAFETY: fields of their owner, whose slot in `State.handles` does not move.
+        unsafe {
+            (handle.stdout).set_owner(Owner::with_key(PollTag::FilterRun, 0, owner));
+            (handle.stderr).set_owner(Owner::with_key(PollTag::FilterRun, 1, owner));
+        }
 
         #[cfg(windows)]
         {
@@ -209,14 +201,11 @@ impl<'a> ProcessHandle<'a> {
         }
 
         #[cfg(unix)]
-        {
-            if let Some(stdout) = stdout_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stdout);
-                handle.stdout.start(stdout, true)?;
-            }
-            if let Some(stderr) = stderr_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stderr);
-                handle.stderr.start(stderr, true)?;
+        for (reader, pipe) in [(&handle.stdout, stdout_pipe), (&handle.stderr, stderr_pipe)] {
+            if let Some(fd) = pipe.map(bun_sys::File::into_raw) {
+                let _ = bun_sys::set_nonblocking(fd);
+                let event_loop = handle.output.shared.event_loop.as_event_loop_ctx();
+                let _ = reader.start(event_loop, fd, true)?;
             }
         }
         #[cfg(not(unix))]
@@ -253,18 +242,30 @@ impl<'a> ProcessHandle<'a> {
         Ok(())
     }
 
+    fn reader(&self, key: u32) -> &BufferedReader {
+        if key == 0 { &self.stdout } else { &self.stderr }
+    }
+
+    /// The exit of the process ends the script, not the end of a reader.
+    pub(crate) fn read(&mut self, key: u32, event: Option<IoEvent>) {
+        let reader = if key == 0 { &self.stdout } else { &self.stderr };
+        let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        let _ = reader.read_chunks(event_loop, event, |chunk, _| {
+            let _ = self.output.read_chunk(&chunk);
+            true
+        });
+    }
+
     /// After the exit: a leftover child may hold the pipes open, so their EOF may never come.
     fn drain_and_close_pipes(&mut self) {
-        for reader in [&mut self.stdout, &mut self.stderr] {
+        for key in [0, 1] {
             // Windows has no synchronous drain.
             #[cfg(unix)]
-            if !reader.is_done() && reader.get_fd() != bun_sys::Fd::INVALID {
-                reader.set_parent((&raw mut self.output).cast());
-                // SAFETY: the callbacks reach only `self.output`, which `&mut self` covers.
-                unsafe { BufferedReader::read(reader) };
+            if !self.reader(key).is_done() && self.reader(key).get_fd() != bun_sys::Fd::INVALID {
+                self.read(key, None);
             }
-            if !reader.is_done() {
-                reader.deinit();
+            if !self.reader(key).is_done() {
+                self.reader(key).deinit();
             }
         }
     }
@@ -916,8 +917,8 @@ pub(crate) fn run_scripts_with_filter(
     let mut map: StringHashMap<Vec<usize>> = StringHashMap::default();
     for script in scripts.iter() {
         handles.push(ProcessHandle {
-            stdout: BufferedReader::init::<ScriptOutput>(),
-            stderr: BufferedReader::init::<ScriptOutput>(),
+            stdout: BufferedReader::init(),
+            stderr: BufferedReader::init(),
             output: ScriptOutput {
                 shared: &shared,
                 config: script,

@@ -1,4 +1,3 @@
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::PackageManager;
@@ -8,10 +7,10 @@ use crate::lockfile_real::Scripts as LockfileScripts;
 use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
 use bun_core::{Global, Output};
-use bun_io::BufferedReader;
 #[cfg(unix)]
 use bun_io::PosixFlags;
 use bun_io::heap as io_heap;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus};
 
 use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
@@ -490,15 +489,45 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         LockfileScripts::NAMES[self.current_script_index as usize].as_bytes()
     }
 
-    fn print_reader_error(script_index: u8, package_name: &[u8], err: &bun_sys::Error) {
-        bun_core::pretty_errorln!(
-            "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
-            LockfileScripts::NAMES[script_index as usize],
-            bstr::BStr::new(package_name),
-            err.errno,
-            bstr::BStr::new(err.name()),
-        );
-        Output::flush();
+    fn event_loop(&self) -> bun_event_loop::EventLoopHandle {
+        bun_event_loop::EventLoopHandle::from_any(&self.manager().event_loop)
+    }
+
+    /// `true` if the reader has ended.
+    fn note_read_status(&mut self, status: ReadStatus) -> bool {
+        match status {
+            ReadStatus::Pending => return false,
+            ReadStatus::Done => {}
+            ReadStatus::Failed(err) => {
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
+                    bstr::BStr::new(self.script_name()),
+                    bstr::BStr::new(&self.package_name),
+                    err.errno,
+                    bstr::BStr::new(err.name()),
+                );
+                Output::flush();
+            }
+        }
+        debug_assert!(self.remaining_fds > 0);
+        self.remaining_fds -= 1;
+        true
+    }
+
+    fn output(&self, key: u32) -> &OutputReader {
+        if key == 0 { &self.stdout } else { &self.stderr }
+    }
+
+    /// SAFETY: `this` is what [`Self::watch`] handed out. It may be freed.
+    pub unsafe fn on_io(this: *mut Self, key: u32, event: IoEvent) {
+        // SAFETY: fn contract. Nothing else runs until `maybe_finished`.
+        let script = unsafe { &mut *this };
+        let event_loop = script.event_loop().as_event_loop_ctx();
+        let status = script.output(key).read(event_loop, Some(event));
+        if script.note_read_status(status) {
+            // SAFETY: fn contract.
+            unsafe { Self::maybe_finished(this) };
+        }
     }
 
     /// # Safety
@@ -526,12 +555,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// Only called from the `#[cfg(unix)]` branch of [`Self::watch`]; on Windows
     /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
     #[cfg(unix)]
-    fn reset_output_flags(output: &mut OutputReader, fd: Fd) {
-        output
-            .flags
-            .insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
-        output.flags.remove(
+    fn reset_output_flags(output: &OutputReader, fd: Fd) {
+        output.set_flags(PosixFlags::NONBLOCKING | PosixFlags::SOCKET, true);
+        output.set_flags(
             PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
+            false,
         );
 
         #[cfg(debug_assertions)]
@@ -623,7 +651,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
             #[cfg(windows)]
             windows: bun_spawn::WindowsOptions {
-                loop_: bun_event_loop::EventLoopHandle::from_any(&self.manager().event_loop),
+                loop_: self.event_loop(),
                 ..Default::default()
             },
 
@@ -659,67 +687,50 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         )??)
     }
 
+    fn start_readers(&mut self, spawned: &mut SpawnProcessResult) {
+        for (key, stdio) in [(0, spawned.stdout.take()), (1, spawned.stderr.take())] {
+            #[cfg(unix)]
+            if let Some(fd) = stdio.map(bun_sys::File::into_raw) {
+                if spawned.memfds[key as usize + 1] {
+                    self.output(key).start_memfd(fd);
+                    continue;
+                }
+                let _ = bun_sys::set_nonblocking(fd);
+                self.remaining_fds += 1;
+
+                Self::reset_output_flags(self.output(key), fd);
+                let event_loop = self.event_loop().as_event_loop_ctx();
+                match self.output(key).start(event_loop, fd, true) {
+                    Ok(status) => _ = self.note_read_status(status),
+                    Err(err) => self.exit_with_error(err.into()),
+                }
+            }
+            #[cfg(windows)]
+            if let bun_spawn::SpawnedStdio::Buffer(pipe) = stdio {
+                self.remaining_fds += 1;
+                if let Err(err) = self.output(key).start_with_pipe(pipe) {
+                    self.exit_with_error(err.into());
+                }
+            }
+        }
+    }
+
     /// Leaves `self` to the process and the readers until [`Self::maybe_finished`].
     fn watch(self: Box<Self>, mut spawned: SpawnProcessResult) {
         debug_assert!(self.process.is_none(), "forgot to call `reset_polls`");
         let this = bun_core::heap::into_raw(self);
         // SAFETY: `this` is live until the process has reported, which only the last statement can
-        // cause: `process` is `None` while the readers start. Only fields are borrowed across what
-        // may call back through it.
+        // cause. Only fields are borrowed across it. The readers are fields of `this`.
         unsafe {
-            let manager = (*this).manager.get();
-            (*this).stdout.set_parent(this.cast::<c_void>());
-            (*this).stderr.set_parent(this.cast::<c_void>());
-            manager.active_lifecycle_scripts.insert(this.cast());
-
-            #[cfg(unix)]
-            {
-                if let Some(stdout) = spawned.stdout.take().map(bun_sys::File::into_raw) {
-                    if !spawned.memfds[1] {
-                        let _ = bun_sys::set_nonblocking(stdout);
-                        (*this).remaining_fds += 1;
-
-                        Self::reset_output_flags(&mut (*this).stdout, stdout);
-                        if let Err(err) = (*this).stdout.start(stdout, true) {
-                            (*this).exit_with_error(err.into());
-                        }
-                    } else {
-                        (*this).stdout.start_memfd(stdout);
-                    }
-                }
-                if let Some(stderr) = spawned.stderr.take().map(bun_sys::File::into_raw) {
-                    if !spawned.memfds[2] {
-                        let _ = bun_sys::set_nonblocking(stderr);
-                        (*this).remaining_fds += 1;
-
-                        Self::reset_output_flags(&mut (*this).stderr, stderr);
-                        if let Err(err) = (*this).stderr.start(stderr, true) {
-                            (*this).exit_with_error(err.into());
-                        }
-                    } else {
-                        (*this).stderr.start_memfd(stderr);
-                    }
-                }
+            for key in [0, 1] {
+                let owner = Owner::with_key(PollTag::LifecycleScript, key, this.cast());
+                (*this).output(key).set_owner(owner);
             }
-            #[cfg(windows)]
-            {
-                if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stdout.take() {
-                    (*this).stdout.set_source(bun_io::Source::Pipe(pipe));
-                    (*this).remaining_fds += 1;
-                    if let Err(err) = (*this).stdout.start_with_current_pipe() {
-                        (*this).exit_with_error(err.into());
-                    }
-                }
-                if let bun_spawn::SpawnedStdio::Buffer(pipe) = spawned.stderr.take() {
-                    (*this).stderr.set_source(bun_io::Source::Pipe(pipe));
-                    (*this).remaining_fds += 1;
-                    if let Err(err) = (*this).stderr.start_with_current_pipe() {
-                        (*this).exit_with_error(err.into());
-                    }
-                }
-            }
+            let active = &(*this).manager.get().active_lifecycle_scripts;
+            active.insert(this.cast());
+            (*this).start_readers(&mut spawned);
 
-            let event_loop = bun_event_loop::EventLoopHandle::from_any(&manager.event_loop);
+            let event_loop = (*this).event_loop();
             let process = (*this)
                 .process
                 .insert(spawned.to_process_handle(event_loop))
@@ -934,8 +945,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         debug_assert!(self.remaining_fds == 0);
 
         self.process = None;
-        self.stdout = OutputReader::init::<Self>();
-        self.stderr = OutputReader::init::<Self>();
+        self.stdout = OutputReader::init();
+        self.stderr = OutputReader::init();
     }
 
     fn forget_unfinished_scripts(&self) {
@@ -1018,8 +1029,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             current_script_index: 0,
             remaining_fds: 0,
             process: None,
-            stdout: OutputReader::init::<Self>(),
-            stderr: OutputReader::init::<Self>(),
+            stdout: OutputReader::init(),
+            stderr: OutputReader::init(),
             started_at: 0,
             heap: io_heap::IntrusiveField::default(),
         });
@@ -1063,30 +1074,4 @@ bun_spawn::link_impl_ProcessExit! {
     LifecycleScript for LifecycleScriptSubprocess<'static> => |this| {
         on_process_exit(_status, _rusage) => LifecycleScriptSubprocess::maybe_finished(this),
     }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// BufferedReaderParent — what the stdout/stderr OutputReaders report to.
-// ──────────────────────────────────────────────────────────────────────────
-
-// No `on_read_chunk` — output is consumed only in `final_buffer`.
-// `manager.event_loop` is an `AnyEventLoop`; convert through
-// `EventLoopHandle::from_any` so the by-value `EventLoopCtx` carries the right
-// `kind`.
-bun_io::impl_buffered_reader_parent! {
-    LifecycleScript for LifecycleScriptSubprocess<'a>;
-    has_on_read_chunk = false;
-    on_reader_done  = |this| {
-        debug_assert!((*this).remaining_fds > 0);
-        (*this).remaining_fds -= 1;
-        Self::maybe_finished(this)
-    };
-    on_reader_error = |this, err| {
-        Self::print_reader_error((*this).current_script_index, &(*this).package_name, &err);
-        Self::on_reader_done(this)
-    };
-    loop_           = |this| (*this).manager.get().event_loop.native_loop();
-    event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
-        &(*this).manager.get().event_loop,
-    ).as_event_loop_ctx();
 }

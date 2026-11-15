@@ -4,7 +4,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_sys::windows::libuv as uv;
-// `is_closed`/`is_active`/`fd` are default trait methods on `UvHandle`;
+// `is_closed`/`fd` are default trait methods on `UvHandle`;
 // the trait must be in scope for method resolution on `Pipe`/`Tty`.
 use bun_sys::windows::libuv::UvHandle as _;
 // `to_error` on `ReturnCode`/`ReturnCodeI64` lives in `bun_sys` (layering).
@@ -29,6 +29,21 @@ pub struct OpenTty(bun_ptr::BackRef<Tty, bun_ptr::Mut>);
 impl OpenTty {
     pub fn as_ptr(&self) -> *mut Tty {
         self.0.as_ptr()
+    }
+
+    /// For a handle that may outlive the reader at `data`.
+    pub(crate) fn stop_reading_for(&self, data: *const c_void) {
+        if core::ptr::eq(self.uv.data, data) {
+            // SAFETY: a live stream.
+            unsafe { uv::uv_read_stop(self.as_ptr().cast()) };
+        }
+    }
+
+    /// Restarts a read, whose alloc callback borrows `read_scratch`.
+    fn set_mode(&self, mode: uv::TtyMode) -> bun_sys::Result<()> {
+        // SAFETY: a live tty.
+        unsafe { uv::uv_tty_set_mode(self.as_ptr().cast(), mode as _) }
+            .to_result(bun_sys::Tag::uv_tty_set_mode)
     }
 
     /// Closes the one for stdin too.
@@ -108,7 +123,7 @@ impl Drop for OpenFile {
 /// Typical usage pattern:
 /// 1. Check `can_start()` - returns true if ready for a new operation
 /// 2. Call `prepare()` - marks fs as in-use
-/// 3. Set up buffer and call `uv_fs_read()` or `uv_fs_write()`
+/// 3. Set up buffer and call `uv_fs_write()` (`submit_read()` does both steps for a read)
 /// 4. In callback, call `on_complete()` first to clean up
 /// 5. Process the result
 ///
@@ -122,8 +137,7 @@ pub struct File {
     /// State machine ensures this is only used for one operation at a time.
     pub(crate) fs: uv::fs_t,
 
-    /// Buffer descriptor for the current read operation (unused by writers).
-    pub(crate) iov: uv::uv_buf_t,
+    pub(crate) loop_: *mut uv::Loop,
 
     /// The file descriptor.
     pub(crate) file: uv::uv_file,
@@ -134,35 +148,19 @@ pub struct File {
     /// Whether dropping the [`OpenFile`] closes `file`.
     pub(crate) close_on_drop: bool,
 
-    /// Keeps the buffer of a detached in-flight read (`iov`) or write alive. Freed with the Box.
-    pub(crate) orphaned_buf: Vec<u8>,
+    /// The buffer of a read in flight, or of a detached write.
+    pub(crate) buffer: Vec<u8>,
 }
 
 #[repr(u8)]
-#[derive(Copy, Clone, PartialEq, Eq, Default)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum FileState {
     /// fs.deinit() called, ready for next operation
-    #[default]
     Deinitialized,
     /// read or write operation in progress
     Operating,
     /// cancel requested, waiting for callback
     Canceling,
-}
-
-impl Default for File {
-    fn default() -> Self {
-        // Hand-written equivalent of zero-initialization because `state` is an enum field
-        // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
-        Self {
-            fs: bun_core::ffi::zeroed(),
-            iov: bun_core::ffi::zeroed(),
-            file: 0,
-            state: FileState::Deinitialized,
-            close_on_drop: false,
-            orphaned_buf: Vec::new(),
-        }
-    }
 }
 
 impl File {
@@ -183,6 +181,52 @@ impl File {
                 return None;
             }
             Some((result, parent))
+        }
+    }
+
+    /// Reads at most `max_len` bytes into the spare capacity of `buffer`, which is moved out on `Ok`.
+    pub(crate) fn submit_read(
+        &mut self,
+        buffer: &mut Vec<u8>,
+        max_len: usize,
+        offset: i64,
+        callback: unsafe extern "C" fn(*mut uv::fs_t),
+    ) -> bun_sys::Result<()> {
+        assert!(self.can_start());
+        self.prepare();
+        self.buffer = core::mem::take(buffer);
+        let spare = self.buffer.spare_capacity_mut();
+        let iov = uv::uv_buf_t {
+            len: spare.len().min(max_len) as _,
+            base: spare.as_mut_ptr().cast(),
+        };
+        let (loop_, file) = (self.loop_, self.file);
+        let fs = core::ptr::from_mut(self).cast::<uv::fs_t>();
+        // SAFETY: `fs` is the first field. A busy file and its buffer stay until `on_complete`, and
+        // libuv copies `iov`.
+        let rc =
+            unsafe { uv::uv_fs_read(loop_, fs, file, &raw const iov, 1, offset, Some(callback)) };
+        // Tagged `.write` even though the syscall is `uv_fs_read`, so
+        // user-visible `error.syscall` stays bit-identical with
+        // previous releases.
+        rc.to_result(bun_sys::Tag::write).inspect_err(|_| {
+            self.complete(false);
+            *buffer = core::mem::take(&mut self.buffer);
+        })
+    }
+
+    /// `on_complete`, and the buffer with what was read in its spare capacity.
+    ///
+    /// # Safety
+    /// `fs` is what libuv passed to the callback of `submit_read`.
+    pub(crate) unsafe fn on_read_complete(
+        fs: *mut uv::fs_t,
+    ) -> Option<(uv::ReturnCodeI64, Vec<u8>, *mut c_void)> {
+        // SAFETY: fn contract, and the parent holds the box.
+        unsafe {
+            let (result, parent) = Self::on_complete(fs)?;
+            let buffer = core::mem::take(&mut (*fs.cast::<File>()).buffer);
+            Some((result, buffer, parent))
         }
     }
 
@@ -245,16 +289,11 @@ impl File {
 }
 
 impl Source {
-    /// For a tty source, hand libuv the handle-owned read buffer with at
-    /// least `size` spare bytes (`uv::Tty::read_scratch`); `None` otherwise.
-    pub(crate) fn tty_read_scratch(&mut self, size: usize) -> Option<&mut [u8]> {
-        let Source::Tty(tty) = self else { return None };
-        let scratch = &mut tty.read_scratch;
-        scratch.clear();
-        scratch.reserve(size);
-        // SAFETY: spare capacity handed to libuv to write into; the read
-        // callback copies out the written prefix.
-        Some(unsafe { bun_core::vec::spare_bytes_mut(scratch) })
+    pub(crate) fn file(&mut self) -> Option<&mut File> {
+        match self {
+            Source::SyncFile(file) | Source::File(file) => Some(file),
+            Source::Pipe(_) | Source::Tty(_) => None,
+        }
     }
 
     pub fn is_closed(&self) -> bool {
@@ -262,14 +301,6 @@ impl Source {
             Source::Pipe(pipe) => pipe.is_closed(),
             Source::Tty(tty) => tty.uv.is_closed(),
             Source::SyncFile(file) | Source::File(file) => file.file == -1,
-        }
-    }
-
-    pub(crate) fn is_active(&self) -> bool {
-        match self {
-            Source::Pipe(pipe) => pipe.is_active(),
-            Source::Tty(tty) => tty.uv.is_active(),
-            Source::SyncFile(_) | Source::File(_) => true,
         }
     }
 
@@ -379,12 +410,17 @@ impl Source {
         }))
     }
 
-    pub fn open_file(fd: Fd) -> OpenFile {
+    pub fn open_file(loop_: *mut uv::Loop, fd: Fd) -> OpenFile {
         debug_assert!(fd.is_valid() && fd.uv() != -1);
         bun_core::scoped_log!(PipeSource, "openFile (fd = {})", fd);
-        let mut file: Box<File> = Box::new(File::default());
-        file.file = fd.uv();
-        OpenFile(Box::into_non_null(file))
+        OpenFile(Box::into_non_null(Box::new(File {
+            fs: bun_core::ffi::zeroed(),
+            loop_,
+            file: fd.uv(),
+            state: FileState::Deinitialized,
+            close_on_drop: false,
+            buffer: Vec::new(),
+        })))
     }
 
     pub(crate) fn open(loop_: *mut uv::Loop, fd: Fd) -> bun_sys::Result<Source> {
@@ -405,11 +441,11 @@ impl Source {
                 bun_sys::Result::Ok(tty) => bun_sys::Result::Ok(Source::Tty(tty)),
                 bun_sys::Result::Err(err) => bun_sys::Result::Err(err),
             },
-            uv::HandleType::File => bun_sys::Result::Ok(Source::File(Self::open_file(fd))),
+            uv::HandleType::File => bun_sys::Result::Ok(Source::File(Self::open_file(loop_, fd))),
             _ => {
                 let err = bun_sys::windows::Win32Error::get();
                 if err == bun_sys::windows::Win32Error::SUCCESS {
-                    return bun_sys::Result::Ok(Source::File(Self::open_file(fd)));
+                    return bun_sys::Result::Ok(Source::File(Self::open_file(loop_, fd)));
                 }
                 bun_sys::Result::Err(bun_sys::Error::from_win32(err, bun_sys::Tag::open))
             }
@@ -418,21 +454,11 @@ impl Source {
 
     pub(crate) fn set_raw_mode(&mut self, value: bool) -> bun_sys::Result<()> {
         match self {
-            Source::Tty(tty) => {
-                if let Some(err) = tty
-                    .uv
-                    .set_mode(if value {
-                        uv::TtyMode::Raw
-                    } else {
-                        uv::TtyMode::Normal
-                    })
-                    .to_error(bun_sys::Tag::uv_tty_set_mode)
-                {
-                    bun_sys::Result::Err(err)
-                } else {
-                    bun_sys::Result::Ok(())
-                }
-            }
+            Source::Tty(tty) => tty.set_mode(if value {
+                uv::TtyMode::Raw
+            } else {
+                uv::TtyMode::Normal
+            }),
             _ => bun_sys::Result::Err(bun_sys::Error {
                 errno: bun_sys::E::NOTSUP as _,
                 syscall: bun_sys::Tag::uv_tty_set_mode,
@@ -496,7 +522,7 @@ mod stdin_tty {
 /// (`ProcessBindingTTYWrap.cpp`) supplies `defaultGlobalObject()->uvLoop()`.
 #[unsafe(no_mangle)]
 extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_int {
-    let mut tty = match Source::open_tty(uv_loop, Fd::stdin()) {
+    let tty = match Source::open_tty(uv_loop, Fd::stdin()) {
         bun_sys::Result::Ok(tty) => tty,
         bun_sys::Result::Err(e) => return e.errno as c_int,
     };
@@ -506,16 +532,11 @@ extern "C" fn Source__setRawModeStdin(uv_loop: *mut uv::Loop, raw: bool) -> c_in
     // closely with POSIX platforms. This is also required to support some
     // control sequences at all on Windows, such as bracketed paste mode. The
     // Node.js readline implementation handles differences between these modes.
-    if let Some(err) = tty
-        .uv
-        .set_mode(if raw {
-            uv::TtyMode::Vt
-        } else {
-            uv::TtyMode::Normal
-        })
-        .to_error(bun_sys::Tag::uv_tty_set_mode)
-    {
-        return err.errno as c_int;
-    }
-    0
+    let mode = if raw {
+        uv::TtyMode::Vt
+    } else {
+        uv::TtyMode::Normal
+    };
+    tty.set_mode(mode)
+        .map_or_else(|err| err.errno as c_int, |()| 0)
 }

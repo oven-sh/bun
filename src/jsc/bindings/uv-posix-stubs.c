@@ -142,18 +142,6 @@ UV_EXTERN int uv_dlsym(uv_lib_t* lib, const char* name, void** ptr)
     __builtin_unreachable();
 }
 
-UV_EXTERN const char* uv_err_name(int err)
-{
-    __bun_throw_not_implemented("uv_err_name");
-    __builtin_unreachable();
-}
-
-UV_EXTERN char* uv_err_name_r(int err, char* buf, size_t buflen)
-{
-    __bun_throw_not_implemented("uv_err_name_r");
-    __builtin_unreachable();
-}
-
 UV_EXTERN int uv_exepath(char* buffer, size_t* size)
 {
     __bun_throw_not_implemented("uv_exepath");
@@ -1100,32 +1088,6 @@ UV_EXTERN uv_handle_type uv_pipe_pending_type(uv_pipe_t* handle)
     __builtin_unreachable();
 }
 
-UV_EXTERN int uv_poll_init(uv_loop_t* loop, uv_poll_t* handle, int fd)
-{
-    __bun_throw_not_implemented("uv_poll_init");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_poll_init_socket(uv_loop_t* loop,
-    uv_poll_t* handle,
-    uv_os_sock_t socket)
-{
-    __bun_throw_not_implemented("uv_poll_init_socket");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_poll_start(uv_poll_t* handle, int events, uv_poll_cb cb)
-{
-    __bun_throw_not_implemented("uv_poll_start");
-    __builtin_unreachable();
-}
-
-UV_EXTERN int uv_poll_stop(uv_poll_t* handle)
-{
-    __bun_throw_not_implemented("uv_poll_stop");
-    __builtin_unreachable();
-}
-
 UV_EXTERN void uv_print_active_handles(uv_loop_t* loop, FILE* stream)
 {
     __bun_throw_not_implemented("uv_print_active_handles");
@@ -1373,18 +1335,6 @@ UV_EXTERN size_t uv_stream_get_write_queue_size(const uv_stream_t* stream)
 UV_EXTERN int uv_stream_set_blocking(uv_stream_t* handle, int blocking)
 {
     __bun_throw_not_implemented("uv_stream_set_blocking");
-    __builtin_unreachable();
-}
-
-UV_EXTERN const char* uv_strerror(int err)
-{
-    __bun_throw_not_implemented("uv_strerror");
-    __builtin_unreachable();
-}
-
-UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
-{
-    __bun_throw_not_implemented("uv_strerror_r");
     __builtin_unreachable();
 }
 

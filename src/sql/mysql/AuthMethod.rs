@@ -1,5 +1,5 @@
 use crate::mysql::protocol::auth::{self, Nonce};
-use crate::mysql::protocol::new_writer::{NewWriter, WriterContext};
+use crate::mysql::protocol::new_writer::NewWriter;
 
 // MySQL authentication methods
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,7 +32,7 @@ impl AuthResponse<'_> {
         }
     }
 
-    pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> crate::Result<()> {
+    pub fn write(&self, writer: &mut NewWriter<'_>) -> crate::Result<()> {
         match *self {
             AuthResponse::Scramble(scramble) => writer.write(scramble)?,
             AuthResponse::Password(password) => {

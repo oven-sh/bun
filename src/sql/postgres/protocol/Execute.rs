@@ -18,10 +18,7 @@ impl<'a> Default for Execute<'a> {
 }
 
 impl<'a> Execute<'a> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
+    pub fn write_internal(&self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
         writer.write(b"E")?;
         let length = writer.length()?;
         if let PortalOrPreparedStatement::Portal(portal) = &self.p {
@@ -30,7 +27,7 @@ impl<'a> Execute<'a> {
             writer.write(&[0u8])?;
         }
         writer.int4(self.max_rows)?;
-        length.write()?;
+        length.write(writer)?;
         Ok(())
     }
 }

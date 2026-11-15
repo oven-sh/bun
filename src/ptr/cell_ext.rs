@@ -2,6 +2,8 @@ use core::cell::Cell;
 use core::mem::ManuallyDrop;
 use std::collections::VecDeque;
 
+use crate::{RefCounted, RefPtr};
+
 pub trait CellExt<T> {
     /// The cell holds `T::default()` while `f` runs, and what is stored in it meanwhile is dropped.
     fn with_taken<R>(&self, f: impl FnOnce(&mut T) -> R) -> R;
@@ -147,6 +149,20 @@ fn reserve_vec_deque<T>(cell: &Cell<VecDeque<T>>, additional: usize) {
     cell.with_taken(|deque| deque.reserve(additional));
 }
 
+pub trait RefPtrDequeCellExt<T: RefCounted> {
+    /// As `get(index).cloned()`.
+    fn get_cloned(&self, index: usize) -> Option<RefPtr<T>>;
+}
+
+impl<T: RefCounted> RefPtrDequeCellExt<T> for Cell<VecDeque<RefPtr<T>>> {
+    fn get_cloned(&self, index: usize) -> Option<RefPtr<T>> {
+        // SAFETY: a shared `Cell` lends no reference to its value, and this one ends before `T::did_ref` runs.
+        let ptr = unsafe { &*self.as_ptr() }.get(index)?.as_ptr();
+        // SAFETY: the deque still holds its ref.
+        Some(unsafe { RefPtr::init_ref(ptr) })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -184,6 +200,30 @@ mod tests {
         assert_eq!(cell.len(), 2);
         assert_eq!(cell.pop_front(), Some(Box::new(1)));
         assert_eq!(cell.take(), [Box::new(2)]);
+    }
+
+    #[test]
+    fn did_ref_can_change_the_deque_under_get_cloned() {
+        #[derive(crate::RefCounted)]
+        #[ref_count(did_ref = Self::leave)]
+        struct Item {
+            ref_count: crate::RefCount,
+            queue: Rc<Cell<VecDeque<RefPtr<Item>>>>,
+        }
+        impl Item {
+            fn leave(this: &RefPtr<Self>) {
+                drop(this.queue.take());
+            }
+        }
+        let queue = Rc::new(Cell::new(VecDeque::new()));
+        queue.push_back(RefPtr::new(Item {
+            ref_count: crate::RefCount::init(),
+            queue: Rc::clone(&queue),
+        }));
+        assert!(queue.get_cloned(1).is_none());
+        let item = queue.get_cloned(0).unwrap();
+        assert!(RefPtr::has_one_ref(&item));
+        assert!(queue.is_empty());
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::js::utils::string::{
 use crate::options::{QuoteProperties, QuoteStyle};
 use crate::syntax_error::{Message, SyntaxError as Reason};
 use crate::text::{is_next_line_empty, make_string};
-use bun_highway::index_of_interesting_character_in_string_literal;
+use bun_simd_kernels::index_of_interesting_character_in_string_literal;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Kind {

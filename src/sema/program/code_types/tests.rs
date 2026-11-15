@@ -94,7 +94,7 @@ impl Host for LinkedDirectory {
         unreachable!("`is_same_file` parses no file")
     }
 
-    fn parse_package_json(&self, _arena: &Arena, _text: &[u8]) -> Option<Json> {
+    fn parse_package_json(&self, _text: &[u8]) -> Option<Json> {
         None
     }
 

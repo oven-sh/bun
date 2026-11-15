@@ -3,7 +3,7 @@
 use bun_alloc::Arena as Bump;
 use bun_ast::LexerLog;
 use bun_ast::expr::Data;
-use bun_ast::{E, Expr, Loc, Log, Range, Source, usize2loc};
+use bun_ast::{AstArena, E, Expr, Loc, Log, Range, Source, usize2loc};
 use bun_core::StackCheck;
 use bun_core::strings;
 use bun_core::strings::CodePoint;
@@ -19,6 +19,7 @@ pub(crate) struct Parser<'a, 's, 'i> {
     contents: &'s [u8],
     source: &'s Source<'s>,
     log: &'a Log,
+    arena: &'a AstArena,
     idx: &'i mut StructuralIndex<'s>,
     pub cursor: usize,
     opts: JSONOptions,
@@ -70,6 +71,18 @@ impl Drop for Parser<'_, '_, '_> {
     }
 }
 
+pub(crate) fn to_json_value(data: Data) -> E::JsonValue {
+    match data {
+        Data::ENumber(n) => E::JsonValue::Number(n),
+        Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
+        Data::ENull(_) => E::JsonValue::Null,
+        Data::EString(r) => E::JsonValue::String(r.get().data),
+        Data::EObjectJSON(r) => E::JsonValue::Object(r),
+        Data::EArrayJSON(r) => E::JsonValue::Array(r),
+        _ => unreachable!("not a JSON leaf"),
+    }
+}
+
 #[inline]
 fn is_identifier_start(c: u8) -> bool {
     matches!(c, b'$' | b'_' | b'a'..=b'z' | b'A'..=b'Z')
@@ -89,6 +102,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
         source: &'s Source<'s>,
         log: &'a Log,
+        arena: &'a AstArena,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
         tape_alloc: E::TapeAlloc,
@@ -111,6 +125,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             contents: &source.contents,
             source,
             log,
+            arena,
             idx,
             cursor: 0,
             opts,
@@ -377,7 +392,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             b'[' => self.parse_array(loc),
             b'"' | b'\'' => {
                 let s = self.parse_string()?;
-                Ok(Expr::init(s, loc))
+                Ok(Expr::allocate(self.arena, s, loc))
             }
             _ => self.parse_scalar(loc),
         }
@@ -458,19 +473,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             b'"' | b'\'' => Ok((E::JsonValue::String(self.parse_string_utf8_at(start)?), loc)),
             _ => {
                 let e = self.parse_scalar(loc)?;
-                let value_loc = e.loc;
-                Ok((
-                    match e.data {
-                        Data::ENumber(n) => E::JsonValue::Number(n),
-                        Data::EBoolean(b) => E::JsonValue::Boolean(b.value),
-                        Data::ENull(_) => E::JsonValue::Null,
-                        Data::EString(r) => E::JsonValue::String(r.get().data),
-                        Data::EObjectJSON(r) => E::JsonValue::Object(r),
-                        Data::EArrayJSON(r) => E::JsonValue::Array(r),
-                        _ => unreachable!("not a JSON leaf"),
-                    },
-                    value_loc,
-                ))
+                Ok((to_json_value(e.data), e.loc))
             }
         }
     }
@@ -698,7 +701,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
             return Err(e);
         }
         let (first, count) = self.push_items_block(mark);
-        Ok(Expr::init(
+        Ok(Expr::allocate(
+            self.arena,
             // SAFETY: `tape_ptr` is the tape allocation's own pointer, and the
             // tape outlives the AST (`take_tape` hands it to the caller).
             unsafe { E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
@@ -828,7 +832,8 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
 
         let (first, count) = self.push_props_block(mark);
-        Ok(Expr::init(
+        Ok(Expr::allocate(
+            self.arena,
             // SAFETY: see `parse_array`.
             unsafe { E::ObjectJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
             loc,

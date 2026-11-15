@@ -1475,8 +1475,8 @@ impl Host for WithoutListings<'_> {
     ) -> bun_sema::hir::File<'s> {
         self.0.parse(arena, path, text, atoms, options)
     }
-    fn parse_package_json(&self, arena: &bun_sema::session::Arena, text: &[u8]) -> Option<Json> {
-        self.0.parse_package_json(arena, text)
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+        self.0.parse_package_json(text)
     }
     /// Runs on the current thread. It may belong to a pool, and then all of the pool's threads could end up waiting for
     /// each other.

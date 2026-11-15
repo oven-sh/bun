@@ -62,7 +62,7 @@ impl Host for Bare {
         file
     }
 
-    fn parse_package_json(&self, _arena: &Arena, text: &[u8]) -> Option<Json> {
+    fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
         (!text.is_empty()).then(|| Json::String(text.to_vec()))
     }
 
@@ -131,13 +131,11 @@ fn default_host_reads_source_at_once() {
 
 #[test]
 fn default_host_reads_manifest_like_types_question_and_no_tsconfig() {
-    let session = Session::new();
-    let arena = session.arena();
-    assert_eq!(Bare.parse_runtime_tsconfig(arena, b"{}"), None);
-    let strict = Bare.parse_package_json(arena, b"{}");
+    assert_eq!(Bare.parse_runtime_tsconfig(b"{}"), None);
+    let strict = Bare.parse_package_json(b"{}");
     assert!(strict.is_some());
-    assert_eq!(Bare.parse_runtime_package_json(arena, b"{}"), strict);
-    assert_eq!(Bare.parse_runtime_package_json(arena, b""), None);
+    assert_eq!(Bare.parse_runtime_package_json(b"{}"), strict);
+    assert_eq!(Bare.parse_runtime_package_json(b""), None);
 }
 
 #[test]

@@ -755,10 +755,7 @@ fn root_patched_dependencies<'a>(
             &[b"package.json"],
         );
     }
-    let opts = GetJsonOptions {
-        init_reset_store: false,
-        ..Default::default()
-    };
+    let opts = GetJsonOptions::default();
     let GetJsonResult::Entry(entry) = cache.get_with_path(log, path, opts) else {
         return None;
     };

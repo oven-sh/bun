@@ -1,8 +1,7 @@
 use core::fmt;
 
 use bstr::BStr;
-use bun_alloc::Arena;
-use bun_ast::{E, Expr, Loc, Log};
+use bun_ast::{AstArena, E, Expr, Loc, Log};
 use bun_bundler::options::{OutputFile, OutputKind};
 use bun_core::{Global, Output, UnwrapOrOom};
 use bun_options_types::Format;
@@ -174,13 +173,13 @@ fn find_exported_files(
 
 #[derive(Copy, Clone)]
 struct JsonBuilder<'a> {
-    arena: &'a Arena,
+    arena: &'a AstArena,
 }
 
 impl JsonBuilder<'_> {
     fn string(self, value: &[u8]) -> Expr {
         let value = E::String::init(self.arena.alloc_slice_copy(value));
-        Expr::init(value, Loc::EMPTY)
+        Expr::allocate(self.arena, value, Loc::EMPTY)
     }
 
     fn relative_path(self, path: &[u8]) -> Expr {
@@ -188,7 +187,7 @@ impl JsonBuilder<'_> {
     }
 
     fn object(self, object: E::Object) -> Expr {
-        Expr::init(object, Loc::EMPTY)
+        Expr::allocate(self.arena, object, Loc::EMPTY)
     }
 
     fn compiler_option(self, value: &Json) -> Expr {
@@ -200,7 +199,7 @@ impl JsonBuilder<'_> {
                     let item = self.compiler_option(item);
                     array.push(self.arena, item).unwrap_or_oom();
                 }
-                Expr::init(array, Loc::EMPTY)
+                Expr::allocate(self.arena, array, Loc::EMPTY)
             }
             _ => self.string(value.as_str().unwrap_or_default()),
         }
@@ -508,8 +507,7 @@ pub(super) fn write_package_json(
     output_files: &[OutputFile],
     log: &Log,
 ) -> Result<Vec<u8>, bun_js_printer::Error> {
-    bun_ast::initialize_store();
-    let arena = Arena::new();
+    let arena = AstArena::new();
     let json = JsonBuilder { arena: &arena };
     let existing = request.project.parse_package_json(&arena).ok().flatten();
     let exported = find_exported_files(request, output_files);
@@ -577,7 +575,11 @@ pub(super) fn write_package_json(
     for path in &paths {
         files.push(&arena, json.string(path)).unwrap_or_oom();
     }
-    json.put(&mut package, b"files", Expr::init(files, Loc::EMPTY));
+    json.put(
+        &mut package,
+        b"files",
+        Expr::allocate(&arena, files, Loc::EMPTY),
+    );
     let side_effects = existing.as_ref().and_then(|it| it.get(b"sideEffects"));
     if let Some(side_effects) = side_effects.filter(|value| value.as_bool().is_some()) {
         json.put(&mut package, b"sideEffects", side_effects);

@@ -2558,6 +2558,7 @@ pub fn to_source(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Resul
 // all consume these.
 // ───────────────────────────────────────────────────────────────────────────
 
+pub mod arena;
 pub mod ast_memory_allocator;
 pub mod b;
 pub mod base;
@@ -2569,6 +2570,7 @@ pub use error::{Error, Result};
 pub mod expr;
 pub mod fold_string_addition;
 pub mod g;
+pub mod json;
 pub mod known_global;
 pub mod new_store;
 pub mod op;
@@ -2599,6 +2601,7 @@ pub use import_record::{Flags as ImportRecordFlags, ImportRecord, Tag as ImportR
 pub use loader::{Loader, LoaderHashTable, SideEffects};
 pub use target::Target;
 
+pub use arena::AstArena;
 pub use ast_memory_allocator::ASTMemoryAllocator;
 pub use b as B;
 pub use base::{Index, IndexInt};
@@ -2609,6 +2612,7 @@ pub use e::CallUnwrap as CanBeUnwrapped;
 pub use expr::{Data as ExprData, Expr, PrimitiveType as KnownPrimitive, Tag as ExprTag};
 pub use g as G;
 pub use g::NamespaceAlias;
+pub use json::JsonView;
 pub use nodes::*;
 pub use op as Op;
 pub use op::Code as OpCode;
@@ -2941,16 +2945,6 @@ impl Drop for StoreResetGuard {
 pub fn initialize_store() {
     expr::data::Store::create();
     stmt::data::Store::create();
-}
-
-/// Create both AST node stores on first call, **reset** them on every
-/// subsequent call. Maps to `Store::begin()` (create-or-reset) on each
-/// slab, so callers that re-enter — e.g. the install pipeline parsing many
-/// `package.json`s — get a fresh arena each time without re-allocating.
-#[inline]
-pub fn initialize_store_or_reset() {
-    expr::data::Store::begin();
-    stmt::data::Store::begin();
 }
 
 /// RAII guard that pins the thread-local `disable_reset` flag on both AST

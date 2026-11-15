@@ -37,8 +37,8 @@ use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, dependency::DependencyExt as _, initialize_store,
-    invalid_dependency_id, invalid_package_id, npm as Npm,
+    dependency::Dependency, dependency::DependencyExt as _, invalid_dependency_id,
+    invalid_package_id, npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -650,15 +650,15 @@ impl Lockfile {
 
         if lockfile_format == LockfileFormat::Text {
             let source = bun_ast::Source::init_path_string(b"bun.lock", buf.as_slice());
-            initialize_store();
-            let parsed = match JSON::ParsedJson::parse_package_json(&source, log) {
+            let arena = bun_ast::AstArena::new();
+            let parsed = match JSON::ParsedJson::parse_package_json(&source, log, &arena) {
                 Ok(j) => j,
                 Err(e) => return LoadResultErr::of(LoadStep::ParseFile, e.into(), lockfile_format),
             };
 
             if let Err(e) = TextLockfile::parse_into_binary_lockfile(
                 self,
-                parsed.root,
+                parsed.root(),
                 &source,
                 log,
                 manager.as_deref(),
@@ -3695,7 +3695,7 @@ impl Lockfile {
                 &mut trusted,
                 log,
                 &entry.source,
-                entry.root,
+                bun_ast::JsonView::from(&entry.root),
                 &bump,
             )?;
         }

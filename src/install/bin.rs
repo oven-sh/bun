@@ -18,7 +18,7 @@ use bun_sys::Mode;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::PackageID;
-use crate::bun_json::{Expr, ExprData};
+use crate::bun_json::{Expr, JsonView};
 use crate::dependency::{Behavior, Dependency, DependencyExt as _};
 use crate::install::{DependencyID, ExternalStringList};
 use crate::lockfile::Lockfile;
@@ -193,34 +193,31 @@ impl Bin {
 
     /// Used for packages read from text lockfile / pnpm migration.
     pub(crate) fn parse_append(
-        bin_expr: &Expr,
+        bin_expr: JsonView<'_>,
         buf: &mut bun_semver::string::Buf,
         extern_strings: &mut Vec<ExternalString>,
     ) -> Result<Bin, AllocError> {
-        match &bin_expr.data {
-            ExprData::EObject(o) => {
-                let props = o.properties.slice();
-                return Self::parse_append_object(
-                    props.iter().map(|prop| {
-                        (
-                            prop.key.as_ref().and_then(Expr::as_utf8_string_literal),
-                            prop.value.as_ref().and_then(Expr::as_utf8_string_literal),
-                        )
-                    }),
-                    buf,
-                    extern_strings,
-                );
-            }
-            ExprData::EObjectJSON(o) => {
-                let rows = o.get().properties();
-                return Self::parse_append_object(
-                    rows.iter()
-                        .map(|row| (Some(row.key.slice()), row.value.as_str())),
-                    buf,
-                    extern_strings,
-                );
-            }
-            _ => {}
+        if let Some(o) = bin_expr.as_e_object() {
+            let props = o.properties.slice();
+            return Self::parse_append_object(
+                props.iter().map(|prop| {
+                    (
+                        prop.key.as_ref().and_then(Expr::as_utf8_string_literal),
+                        prop.value.as_ref().and_then(Expr::as_utf8_string_literal),
+                    )
+                }),
+                buf,
+                extern_strings,
+            );
+        }
+        if let Some(o) = bin_expr.as_e_object_json() {
+            let rows = o.properties();
+            return Self::parse_append_object(
+                rows.iter()
+                    .map(|row| (Some(row.key.slice()), row.value.as_str())),
+                buf,
+                extern_strings,
+            );
         }
         if let Some(str_) = bin_expr.as_utf8_string_literal() {
             if !str_.is_empty() {
@@ -269,7 +266,7 @@ impl Bin {
     }
 
     pub(crate) fn parse_append_from_directories(
-        bin_expr: &Expr,
+        bin_expr: JsonView<'_>,
         buf: &mut bun_semver::string::Buf,
     ) -> Result<Bin, AllocError> {
         if let Some(bin_str) = bin_expr.as_utf8_string_literal() {

@@ -4,7 +4,7 @@
 use std::io::Write as _;
 
 use bun_alloc::AllocError;
-use bun_ast::Expr;
+use bun_ast::JsonView;
 use bun_collections::index_sort;
 use bun_core::fmt::format_json_string_utf8;
 use bun_semver::string::Builder;
@@ -82,7 +82,11 @@ impl Edge {
 }
 
 impl Rule {
-    fn parse(key: &[u8], value: &Expr, arena: &bun_alloc::Arena) -> Result<Rule, &'static str> {
+    fn parse(
+        key: &[u8],
+        value: JsonView<'_>,
+        arena: &bun_alloc::Arena,
+    ) -> Result<Rule, &'static str> {
         let Ok(selector) = parse_package_segment(key) else {
             return Err("expected \"name\" or \"name@range\"");
         };
@@ -173,7 +177,7 @@ pub(crate) fn key_matches(
 }
 
 /// Why an install would ignore this rule, if it would.
-pub(crate) fn rule_problem(key: &[u8], value: &Expr) -> Option<&'static str> {
+pub(crate) fn rule_problem(key: &[u8], value: JsonView<'_>) -> Option<&'static str> {
     Rule::parse(key, value, &bun_alloc::Arena::new()).err()
 }
 
@@ -274,17 +278,17 @@ impl PackageExtensions {
         &mut self,
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        root_package_json: &Expr,
+        root_package_json: JsonView<'_>,
     ) {
         self.rules.clear();
         if let Some(extensions) = root_package_json.get(b"packageExtensions") {
-            self.parse_rules(log, source, &extensions);
+            self.parse_rules(log, source, extensions);
         }
     }
 
     #[cold]
     #[inline(never)]
-    fn parse_rules(&mut self, log: &bun_ast::Log, source: &bun_ast::Source, rules: &Expr) {
+    fn parse_rules(&mut self, log: &bun_ast::Log, source: &bun_ast::Source, rules: JsonView<'_>) {
         if !rules.is_object() {
             log.add_warning(
                 Some(source),
@@ -295,7 +299,7 @@ impl PackageExtensions {
         }
         let arena = bun_alloc::Arena::new();
         rules.for_each_property(
-            |key, key_loc, value| match Rule::parse(key, &value, &arena) {
+            |key, key_loc, value| match Rule::parse(key, value, &arena) {
                 Ok(rule) => self.rules.push(rule),
                 Err(problem) => log.add_warning_fmt(
                     Some(source),
@@ -333,14 +337,13 @@ impl PackageExtensions {
     /// dependency counts as declared by the package.
     #[cold]
     #[inline(never)]
-    pub(crate) fn parse_applied(&mut self, section: &Expr) {
+    pub(crate) fn parse_applied(&mut self, section: JsonView<'_>) {
         section.for_each_property(|label, _, lists| {
             for (kind, key) in KINDS {
-                let Some(mut names) = lists.get(key.as_bytes()).and_then(|list| list.as_array())
-                else {
+                let Some(names) = lists.get(key.as_bytes()).and_then(|list| list.as_array()) else {
                     continue;
                 };
-                while let Some(name) = names.next() {
+                for name in names {
                     if let Some(name) = name.as_utf8_string_literal() {
                         self.record(Applied(
                             Builder::string_hash(label),

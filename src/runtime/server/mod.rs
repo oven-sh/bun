@@ -891,19 +891,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             );
         }
 
-        let ctx_slot = self.request_pool.claim();
-        let ctx = ctx_slot.addr().as_ptr();
-        // SAFETY: just claimed, and fully initialized by `create()`.
-        let ctx_ref = request_context::Dispatch::new(unsafe {
+        // SAFETY: a context that is not `MUX` is released to `request_pool`.
+        let ctx_ref = unsafe {
             ServerRequestContext::<SSL, DEBUG>::create(
-                ctx,
+                &self.request_pool,
                 self,
                 std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
                 any_response_from::<SSL>(resp),
                 method,
-            );
-            ctx_slot.assume_init().as_ref()
-        });
+            )
+        };
+        let ctx = ServerRequestContext::<SSL, DEBUG>::as_ctx_ptr(&ctx_ref);
 
         self.vm()
             .jsc_vm()

@@ -271,7 +271,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
 pub mod EntryPoint {
     pub(crate) use crate::entry_point::Kind;
 }
-use crate::bundled_ast::Flags as AstFlags;
+use crate::bundled_ast::{BundledAstRow, Flags as AstFlags};
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 impl<'l, 'a> LinkerContext<'l, 'a> {
@@ -1541,7 +1541,7 @@ impl<'a> LinkerContext<'_, 'a> {
         namespace_ref: Ref,
         import_record_index: u32,
         alloc: &AstArena,
-        ast: &JSAst<'_>,
+        ast: &BundledAstRow<'_>,
     ) -> Result<bool, BunError> {
         let record = &ast.import_records[import_record_index as usize];
         // Barrel optimization: deferred import records should be dropped
@@ -1685,7 +1685,7 @@ impl<'a> LinkerContext<'_, 'a> {
         alloc: &AstArena,
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
-        ast: &JSAst<'_>,
+        ast: &BundledAstRow<'_>,
         flags: crate::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
@@ -1703,7 +1703,7 @@ impl<'a> LinkerContext<'_, 'a> {
             bundling: true,
             // TODO: IIFE
             indent: Default::default(),
-            commonjs_named_exports: Some(&ast.commonjs_named_exports),
+            commonjs_named_exports: Some(ast.commonjs_named_exports),
             commonjs_named_exports_ref: ast.exports_ref,
             commonjs_module_ref: if ast.flags.contains(AstFlags::USES_MODULE_REF) {
                 ast.module_ref
@@ -1771,8 +1771,6 @@ impl<'a> LinkerContext<'_, 'a> {
             js_printer::BufferWriter::init(),
         ));
 
-        let printer_ast = ast.as_printer_view();
-
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
         let result = if enable_source_maps {
@@ -1780,10 +1778,10 @@ impl<'a> LinkerContext<'_, 'a> {
                 &mut printer,
                 alloc,
                 ast.target,
-                &printer_ast,
+                &ast.printer_view,
                 source,
                 print_options,
-                ast.import_records.as_slice(),
+                ast.import_records,
                 parts_to_print,
                 r,
             )
@@ -1792,10 +1790,10 @@ impl<'a> LinkerContext<'_, 'a> {
                 &mut printer,
                 alloc,
                 ast.target,
-                &printer_ast,
+                &ast.printer_view,
                 source,
                 print_options,
-                ast.import_records.as_slice(),
+                ast.import_records,
                 parts_to_print,
                 r,
             )
@@ -2276,10 +2274,7 @@ impl LinkerContext<'_, '_> {
                 "markFileLiveForTreeShaking({}, {} {}) = {}",
                 source_index,
                 bstr::BStr::new(
-                    &parse_graph
-                        .input_files
-                        .get(source_index as usize)
-                        .source
+                    &parse_graph.input_files.items_source()[source_index as usize]
                         .path
                         .pretty
                 ),
@@ -2459,10 +2454,7 @@ impl LinkerContext<'_, '_> {
                 "markPartLiveForTreeShaking({}): {}:{} = {}, {}",
                 source_index,
                 bstr::BStr::new(
-                    &parse_graph
-                        .input_files
-                        .get(source_index as usize)
-                        .source
+                    &parse_graph.input_files.items_source()[source_index as usize]
                         .path
                         .pretty
                 ),

@@ -1538,7 +1538,7 @@ impl<'a> Cloner<'a> {
                 continue;
             }
 
-            let old_package = *self.old.packages.get(to_clone.old_resolution as usize);
+            let old_package = self.old.packages.get(to_clone.old_resolution as usize);
 
             let new_id = old_package.clone(self)?;
             self.lockfile.buffers.resolutions[to_clone.resolve_id as usize] = new_id;
@@ -2074,7 +2074,7 @@ impl Lockfile {
             return None;
         }
 
-        Some(*self.packages.get(0))
+        Some(self.packages.get(0))
     }
 
     /// The integrity hash that the lockfile records for the registry package `name@version`.
@@ -3423,7 +3423,8 @@ impl Lockfile {
         const HASH_PREFIX: &[u8] =
             b"\n-- BEGIN SHA512/256(`${alphabetize(name)}@${order(version)}`) --\n";
         const HASH_SUFFIX: &[u8] = b"-- END HASH--\n";
-        string_builder.cap += HASH_PREFIX.len() + HASH_SUFFIX.len();
+        string_builder.count(HASH_PREFIX);
+        string_builder.count(HASH_SUFFIX);
         for i in 1..packages_len {
             alphabetized_names[i - 1] = i as PackageID;
             // posix path separators because we only use posix in the lockfile
@@ -3467,7 +3468,7 @@ impl Lockfile {
             });
         }
 
-        string_builder.allocate().expect("unreachable");
+        let mut string_builder = string_builder.allocate();
         let _ = string_builder.append(HASH_PREFIX);
 
         for &i in alphabetized_names.iter() {
@@ -3496,8 +3497,7 @@ impl Lockfile {
 
         let _ = string_builder.append(HASH_SUFFIX);
 
-        let len = string_builder.len;
-        let alphabetized_name_version_string = &string_builder.allocated_slice()[..len];
+        let alphabetized_name_version_string = string_builder.written_slice();
         if print_name_version_string {
             Output::flush();
             let _unbuffered = Output::disable_buffering_scope();

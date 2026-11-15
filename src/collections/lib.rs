@@ -6,7 +6,8 @@
     unsized_const_params,
     const_cmp,
     const_trait_impl,
-    allocator_api
+    allocator_api,
+    core_io_borrowed_buf
 )]
 #![allow(incomplete_features)]
 #![warn(unused_must_use)]
@@ -33,7 +34,7 @@ pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
-pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveRefHandle, HiveSlot};
+pub use hive_array::{Fallback as HiveArrayFallback, HiveArray, HiveRef, HiveRefHandle};
 pub use hive_box::{AtomicHiveArray, HasStaticHive, HiveBox};
 pub use linear_fifo::LinearFifo;
 pub use multi_array_list::MultiArrayList;

@@ -190,6 +190,7 @@ static CodecStepResult runStepHere(JSGlobalObject* globalObject, JSTransformStre
     auto scope = DECLARE_THROW_SCOPE(vm);
     CodecStepResult step;
     if (auto* sinkController = stream->m_nativeSinkController.get()) {
+        JSC::EnsureStillAliveScope keepSinkController(sinkController);
         JSValue wrote = JSValue::decode(CompressionStreamCoder__transformInto(coder, globalObject, input, inputLen, finish, sinkController->payload(), &step.more));
         RETURN_IF_EXCEPTION(scope, step);
         step.sinkBackpressure = nativeSinkWriteIsBackpressure(vm, wrote);

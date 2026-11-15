@@ -154,7 +154,7 @@ pub(super) fn find_files_that_run_again(
     if input.runs_tests && may_ask_for_any_file {
         possible_loads.push(PossibleLoad {
             earliest_time: 0,
-            target: None,
+            target: LoadTarget::AnyFile,
             may_be_caught: true,
         });
     }
@@ -173,7 +173,7 @@ pub(super) fn find_files_that_run_again(
         if !is_started {
             possible_loads.push(PossibleLoad {
                 earliest_time: 0,
-                target: Some(entry_point.file),
+                target: LoadTarget::File(entry_point.file),
                 may_be_caught: input.entry_points_run_again || loads_out_of_sight,
             });
         }
@@ -232,8 +232,24 @@ enum LoadTiming {
 }
 
 #[derive(Copy, Clone)]
+enum LoadTarget {
+    File(FileId),
+    FileFoundByName,
+    AnyFile,
+}
+
+impl LoadTarget {
+    fn file(self) -> Option<FileId> {
+        match self {
+            LoadTarget::File(file) => Some(file),
+            LoadTarget::FileFoundByName | LoadTarget::AnyFile => None,
+        }
+    }
+}
+
+#[derive(Copy, Clone)]
 struct Load {
-    target: Option<FileId>,
+    target: LoadTarget,
     timing: LoadTiming,
     is_hoisted: bool,
     is_asked_by_job: bool,
@@ -252,9 +268,18 @@ struct Loads {
     by_file: Vec<FileLoads>,
     some_body_awaits: bool,
     texts_that_spell_files: Option<Vec<TextThatSpellsFile>>,
+    files_found_by_name: Vec<FileId>,
 }
 
 impl Loads {
+    fn files_behind<'a>(&'a self, target: &'a LoadTarget, all_files: &'a [FileId]) -> &'a [FileId] {
+        match target {
+            LoadTarget::File(file) => core::slice::from_ref(file),
+            LoadTarget::FileFoundByName => &self.files_found_by_name,
+            LoadTarget::AnyFile => all_files,
+        }
+    }
+
     fn of(&self, file: FileId) -> &[Load] {
         let range = self.by_file[file.idx()];
         &self.all[range.first as usize..range.end as usize]
@@ -296,9 +321,18 @@ fn collect_loads(
         by_file: vec![FileLoads::default(); files.modules.len()],
         some_body_awaits: false,
         texts_that_spell_files: None,
+        files_found_by_name: Vec::new(),
     };
     let listed = list_texts_that_spell_files(input);
     let texts_that_spell_files = listed.as_deref().unwrap_or_default();
+    let finds_by_name_alone = listed.is_some()
+        && !input.runs_tests
+        && !input.runs_in_place
+        && !input.files_are_named_out_of_sight;
+    if finds_by_name_alone {
+        loads.files_found_by_name =
+            find_files_found_by_name(texts_that_spell_files, scans, modules);
+    }
     let compiled_files = modules.compiled_files.clone();
     let of_files = map_each(compiled_files, input.in_parallel, &|file| {
         let (analysis, scan) = (files.analysis(file), scans.of(file));
@@ -307,7 +341,15 @@ fn collect_loads(
         let text_count = texts_of_file.partition_point(|text| text.written_in == file);
         let texts_of_file = &texts_of_file[..text_count];
         let is_closed_bundle = closed_bundles.contains(&file);
-        if (analysis.import_sites.is_empty() || is_closed_bundle) && texts_of_file.is_empty() {
+        let loads_by_unseen_name = finds_by_name_alone
+            && !is_closed_bundle
+            && input.sources.kind(file) == SourceKind::Program
+            && parsed_source(files, file)
+                .is_none_or(|source| source.builtins.loads_unknown_modules());
+        if (analysis.import_sites.is_empty() || is_closed_bundle)
+            && texts_of_file.is_empty()
+            && !loads_by_unseen_name
+        {
             return None;
         }
         let text = BodyText {
@@ -375,10 +417,10 @@ fn collect_loads(
                 timing = LoadTiming::Conditional;
             }
             let is_linked_with_importer = is_hoisted && scan.interop.kind != ModuleKind::CommonJs;
-            let load_of = |target: Option<FileId>| Load {
+            let load_of = |target: LoadTarget| Load {
                 target,
                 timing: match target {
-                    Some(target)
+                    LoadTarget::File(target)
                         if is_linked_with_importer && files.is_imported_as_es_module(target) =>
                     {
                         timing.max(LoadTiming::Conditional)
@@ -391,21 +433,33 @@ fn collect_loads(
             };
             match answer {
                 &ScannedSite::Module(ModuleRef::File(target)) => {
-                    of_file.push(load_of(Some(target)));
+                    of_file.push(load_of(LoadTarget::File(target)));
                 }
                 ScannedSite::Candidates(range) => {
                     for module in scan.modules_spelled_in(range) {
                         if let ModuleRef::File(target) = module {
-                            of_file.push(load_of(Some(target)));
+                            of_file.push(load_of(LoadTarget::File(target)));
                         }
                     }
                 }
-                ScannedSite::AllModules => of_file.push(load_of(None)),
+                ScannedSite::AllModules => of_file.push(load_of(match finds_by_name_alone {
+                    true => LoadTarget::FileFoundByName,
+                    false => LoadTarget::AnyFile,
+                })),
                 ScannedSite::Module(_) | ScannedSite::Unresolved | ScannedSite::Erased => {}
             }
         }
+        if loads_by_unseen_name {
+            of_file.push(Load {
+                target: LoadTarget::FileFoundByName,
+                timing: LoadTiming::Deferred,
+                is_hoisted: false,
+                is_asked_by_job: false,
+                position: 0,
+            });
+        }
         of_file.extend(texts_of_file.iter().map(|spelling| Load {
-            target: Some(spelling.spelled),
+            target: LoadTarget::File(spelling.spelled),
             timing: (text.find_timing_of_call(spelling.text)).max(LoadTiming::Guarded),
             is_hoisted: false,
             is_asked_by_job: true,
@@ -437,6 +491,34 @@ fn collect_loads(
     }
     loads.texts_that_spell_files = listed;
     loads
+}
+
+fn find_files_found_by_name(
+    texts_that_spell_files: &[TextThatSpellsFile],
+    scans: &Scans,
+    modules: &ModuleSet,
+) -> Vec<FileId> {
+    let mut found: Vec<FileId> = texts_that_spell_files
+        .iter()
+        .map(|text| text.spelled)
+        .collect();
+    for &file in &modules.compiled_files {
+        let scan = scans.of(file);
+        for site in &scan.sites {
+            if let ScannedSite::Candidates(range) = site {
+                found.extend(
+                    scan.modules_spelled_in(range)
+                        .filter_map(|module| match module {
+                            ModuleRef::File(file) => Some(file),
+                            _ => None,
+                        }),
+                );
+            }
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
 }
 
 struct BodyText<'a, 's> {
@@ -693,7 +775,7 @@ fn always_evaluates_operand(hir: &hir::File<'_>, statement: StmtId, operand: Exp
 #[derive(Copy, Clone)]
 struct PossibleLoad {
     earliest_time: u32,
-    target: Option<FileId>,
+    target: LoadTarget,
     may_be_caught: bool,
 }
 
@@ -761,7 +843,7 @@ fn add_cyclic_import_loads(
     for &file in all_files {
         let of_file = loads.of(file).iter();
         let during_load = of_file.filter(|load| load.timing != LoadTiming::Deferred);
-        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.target?.0)));
+        edges[file.idx()].extend(during_load.filter_map(|load| Some(load.target.file()?.0)));
     }
     let component_of = strongly_connected_components(&edges).0;
     let mut is_added = vec![false; loads.by_file.len()];
@@ -770,7 +852,7 @@ fn add_cyclic_import_loads(
             continue;
         }
         let imports = loads.of(importer).iter().take_while(|load| load.is_hoisted);
-        for target in imports.filter_map(|load| load.target) {
+        for target in imports.filter_map(|load| load.target.file()) {
             if !is_commonjs(target)
                 || component_of[target.idx()] != component_of[importer.idx()]
                 || core::mem::replace(&mut is_added[target.idx()], true)
@@ -834,7 +916,7 @@ impl StartupWalk<'_> {
             next += 1;
             let hoisted = loads.of(importer).iter().take_while(|load| load.is_hoisted);
             for load in hoisted {
-                let Some(target) = load.target else {
+                let Some(target) = load.target.file() else {
                     continue;
                 };
                 match load.timing {
@@ -842,7 +924,7 @@ impl StartupWalk<'_> {
                     LoadTiming::Conditional => {
                         self.possible_loads.push(PossibleLoad {
                             earliest_time: self.time,
-                            target: Some(target),
+                            target: LoadTarget::File(target),
                             may_be_caught: false,
                         });
                         continue;
@@ -939,18 +1021,18 @@ impl StartupWalk<'_> {
                     || !loads.some_body_awaits
                     || is_importer_commonjs);
             match load.target {
-                Some(target) if self.depth_of_starting_file[target.idx()] != NEVER => {
+                LoadTarget::File(target) if self.depth_of_starting_file[target.idx()] != NEVER => {
                     cycle_depth = cycle_depth.min(self.depth_of_starting_file[target.idx()]);
                     cycle_time = cycle_time.min(self.time);
                     if load.is_asked_by_job {
                         self.possible_loads.push(PossibleLoad {
                             earliest_time: self.time,
-                            target: Some(target),
+                            target: LoadTarget::File(target),
                             may_be_caught: true,
                         });
                     }
                 }
-                Some(target) if is_in_order => {
+                LoadTarget::File(target) if is_in_order => {
                     if self.start_times[target.idx()] == NEVER {
                         let is_linked_with_importer = load.is_hoisted && !is_importer_commonjs;
                         let is_commonjs = (self.is_commonjs)(target);
@@ -996,10 +1078,7 @@ fn find_files_that_several_started_files_reach(
             }
             *first = number;
             for load in loads.of(file) {
-                match load.target {
-                    Some(target) => to_follow.push(target),
-                    None => to_follow.extend_from_slice(all_files),
-                }
+                to_follow.extend_from_slice(loads.files_behind(&load.target, all_files));
             }
         }
         while let Some(file) = reached_again.pop() {
@@ -1007,10 +1086,7 @@ fn find_files_that_several_started_files_reach(
                 continue;
             }
             for load in loads.of(file) {
-                match load.target {
-                    Some(target) => reached_again.push(target),
-                    None => reached_again.extend_from_slice(all_files),
-                }
+                reached_again.extend_from_slice(loads.files_behind(&load.target, all_files));
             }
         }
     }
@@ -1026,25 +1102,32 @@ fn find_files_that_may_be_loaded_behind_throw(
     possible_loads.sort_by_key(|load| load.earliest_time);
     let mut is_followed = vec![[false; 2]; settled_times.len()];
     let mut is_any_file_followed = [false; 2];
-    let mut to_follow: Vec<(Option<FileId>, bool)> = Vec::new();
+    let mut is_file_found_by_name_followed = [false; 2];
+    let mut to_follow: Vec<(LoadTarget, bool)> = Vec::new();
     for possible in possible_loads {
         to_follow.push((possible.target, possible.may_be_caught));
         while let Some((target, may_be_caught)) = to_follow.pop() {
             let seen = match target {
-                Some(target) if settled_times[target.idx()] <= possible.earliest_time => continue,
-                Some(target) => &mut is_followed[target.idx()],
-                None => &mut is_any_file_followed,
+                LoadTarget::File(target)
+                    if settled_times[target.idx()] <= possible.earliest_time =>
+                {
+                    continue;
+                }
+                LoadTarget::File(target) => &mut is_followed[target.idx()],
+                LoadTarget::FileFoundByName => &mut is_file_found_by_name_followed,
+                LoadTarget::AnyFile => &mut is_any_file_followed,
             };
             if seen[1] || core::mem::replace(&mut seen[may_be_caught as usize], true) {
                 continue;
             }
             match target {
-                Some(target) => to_follow.extend(loads.of(target).iter().map(|load| {
+                LoadTarget::File(target) => to_follow.extend(loads.of(target).iter().map(|load| {
                     let catches = matches!(load.timing, LoadTiming::Guarded | LoadTiming::Deferred);
                     (load.target, may_be_caught || catches)
                 })),
-                None => {
-                    to_follow.extend(all_files.iter().map(|&file| (Some(file), may_be_caught)));
+                LoadTarget::FileFoundByName | LoadTarget::AnyFile => {
+                    let files = loads.files_behind(&target, all_files).iter();
+                    to_follow.extend(files.map(|&file| (LoadTarget::File(file), may_be_caught)));
                 }
             }
         }

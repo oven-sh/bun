@@ -10,7 +10,7 @@ const nativeTests = require("./build/Debug/napitests.node");
 nativeTests.queue_threadsafe_function_items(
   () => {
     writeSync(1, "worker: js callback ran\n");
-    queueMicrotask(() => process.exit(0));
+    if (workerData.how === "microtask") queueMicrotask(() => process.exit(0));
   },
   3,
   /* print_finalize */ true,

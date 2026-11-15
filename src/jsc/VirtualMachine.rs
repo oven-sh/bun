@@ -1838,7 +1838,7 @@ impl VirtualMachine {
             result: MaybeUninit<R>,
         }
 
-        extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
+        unsafe extern "C" fn call<F: FnOnce() -> R, R>(ctx: *mut c_void) {
             // SAFETY: `ctx` is `&mut Trampoline<F, R>` on the caller's stack;
             // `JSC__VM__holdAPILock` invokes us exactly once with that pointer.
             let t = unsafe { bun_ptr::callback_ctx::<Trampoline<F, R>>(ctx) };
@@ -1851,9 +1851,9 @@ impl VirtualMachine {
             f: ManuallyDrop::new(f),
             result: MaybeUninit::uninit(),
         };
-        // `t` lives on this stack frame for the duration of the FFI call, which
+        // SAFETY: `t` lives on this stack frame for the duration of the FFI call, which
         // invokes `call` exactly once before returning.
-        JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>);
+        unsafe { JSC__VM__holdAPILock(self.jsc_vm(), (&raw mut t).cast(), call::<F, R>) };
         // SAFETY: `call` wrote `t.result` exactly once above.
         unsafe { t.result.assume_init() }
     }
@@ -2834,7 +2834,7 @@ pub struct RuntimeHooks {
     /// `TestReporterAgent::next_test_id` through by value; no-op returns it
     /// unchanged.
     pub retroactively_report_discovered_tests:
-        fn(agent: &mut crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
+        fn(agent: &crate::debugger::TestReporterHandle, next_test_id: i32) -> i32,
     /// Cancel every `TimeoutObject` / `ImmediateObject` still in the calling
     /// thread's `timer::All` heap so their JS pins and in-heap `+1` refs drop
     /// before the GC sweep. `timer::All` lives in `bun_runtime` (forward-dep);
@@ -2989,12 +2989,10 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
-    // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
-    // (never dereferenced as Rust data).
-    safe fn JSC__VM__holdAPILock(
+    fn JSC__VM__holdAPILock(
         vm: &VM,
         ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void),
+        callback: unsafe extern "C" fn(ctx: *mut c_void),
     );
     safe fn NodeModuleModule__callOverriddenRunMain(
         global: &JSGlobalObject,
@@ -5837,7 +5835,7 @@ impl VirtualMachine {
                 );
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
-            // pointer + erased ctx, so thread the captures through a struct.
+            // pointer + ctx, so thread the captures through a struct.
             struct AggCtx<'c, 'a> {
                 formatter: &'c mut crate::console_object::Formatter<'a>,
                 writer: &'c mut dyn bun_io::Write,
@@ -5847,13 +5845,11 @@ impl VirtualMachine {
                 printed_member: bool,
             }
             extern "C" fn agg_iter(
-                _vm: *mut crate::VM,
+                _vm: &crate::VM,
                 _global: &JSGlobalObject,
-                ctx: *mut c_void,
+                ctx: &mut AggCtx<'_, '_>,
                 next_value: JSValue,
             ) {
-                // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get();
                 let formatter = &mut *ctx.formatter;
                 let writer = &mut *ctx.writer;
@@ -5905,10 +5901,7 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
-            {
+            if errors.for_each(global_ref, &mut ctx, agg_iter).is_err() {
                 global_ref.clear_exception();
             }
             if ctx.printed_member || members_past_cap {

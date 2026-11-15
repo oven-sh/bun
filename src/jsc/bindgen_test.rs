@@ -999,20 +999,22 @@ pub(crate) fn read_promise_ptr(context: *mut AtomicI32) -> i32 {
 
 pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     unsafe extern "C" {
-        safe fn Bun__NativePromiseContext__create(
+        fn Bun__NativePromiseContext__create(
             global: &JSGlobalObject,
             ctx: *mut core::ffi::c_void,
             tag: u8,
             held: JSValue,
         ) -> JSValue;
     }
-    // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
-    Bun__NativePromiseContext__create(
-        cx.global(),
-        TestRefCounted::constructor(42).cast(),
-        0,
-        JSValue::ZERO,
-    )
+    // SAFETY: only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
+    unsafe {
+        Bun__NativePromiseContext__create(
+            cx.global(),
+            TestRefCounted::constructor(42).cast(),
+            0,
+            JSValue::ZERO,
+        )
+    }
 }
 
 pub(crate) fn read_native_promise_context(context: Option<RefPtr<TestRefCounted>>) -> Option<i32> {

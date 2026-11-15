@@ -616,7 +616,7 @@ pub(crate) fn run_task(
         // ── JSC scheduler / module loader ────────────────────────────────
         task_tag::JSCDeferredWorkTask => {
             bun_jsc::mark_binding();
-            cast!(JSCDeferredWorkTask).run(global)?;
+            boxed!(task, JSCDeferredWorkTask).run(global)?;
         }
         task_tag::RuntimeTranspilerStore => in_features!(
             [RuntimeTranspiler],
@@ -1595,7 +1595,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FSWatchTask => release_boxed_in!([NodeFs], FSWatchTask),
         task_tag::HotReloadTask => release_boxed_in!([HotReload], hot_reloader::HotReloadTask),
         task_tag::JSBundleCompletionTask => release_boxed_in!([Bundler], JSBundleCompletionTask),
-        task_tag::JSCDeferredWorkTask => release!(JSCDeferredWorkTask),
+        task_tag::JSCDeferredWorkTask => boxed!(task, JSCDeferredWorkTask).release_unrun(),
         task_tag::BundleV2PluginResolveAnswered => {
             release_in!(
                 [Bundler],

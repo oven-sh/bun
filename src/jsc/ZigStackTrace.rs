@@ -34,7 +34,8 @@ pub struct ZigStackTrace<'a> {
 impl Drop for ZigStackTrace<'_> {
     fn drop(&mut self) {
         if let Some(source) = self.referenced_source_provider.take() {
-            SourceProvider::opaque_mut(source.as_ptr()).deref();
+            // SAFETY: the ref that C++ took when it set the field.
+            unsafe { crate::cpp::JSC__SourceProvider__deref(source.as_ptr()) };
         }
     }
 }

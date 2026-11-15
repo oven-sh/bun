@@ -301,12 +301,8 @@ impl Headers {
 
 pub mod wtf {
     unsafe extern "C" {
-        // Implemented in C++ (bindings). The only precondition is "buffer points to
-        // ≥`length` writable bytes"; encoding that as `&mut [u8; 32]` (thin pointer,
-        // ABI-identical to `*mut u8`) plus a fixed `length = 32` discharges it at the
-        // type level, so the declaration is `safe fn`.
-        safe fn Bun__writeHTTPDate(
-            buffer: &mut [u8; 32],
+        fn Bun__writeHTTPDate(
+            buffer: *mut u8,
             length: usize,
             timestamp_ms: u64,
         ) -> core::ffi::c_int;
@@ -319,7 +315,8 @@ pub mod wtf {
             return &buffer[..0];
         }
 
-        let res = Bun__writeHTTPDate(buffer, 32, timestamp_ms);
+        // SAFETY: `buffer` and its length.
+        let res = unsafe { Bun__writeHTTPDate(buffer.as_mut_ptr(), buffer.len(), timestamp_ms) };
         if res < 1 {
             return &buffer[..0];
         }

@@ -874,7 +874,7 @@ pub(crate) enum Received {
 
 unsafe extern "C" {
     safe fn Bun__holdRejectedPromises(global: &JSGlobalObject) -> usize;
-    safe fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
+    fn Bun__releaseRejectedPromises(global: &JSGlobalObject, mark: usize);
 }
 
 /// `toThrow()` takes a rejection that nothing handles during the call for what the function threw. What was rejected
@@ -892,7 +892,8 @@ impl<'a> EarlierRejections<'a> {
 
 impl Drop for EarlierRejections<'_> {
     fn drop(&mut self) {
-        Bun__releaseRejectedPromises(self.global, self.mark);
+        // SAFETY: this type is only used as a local, so `mark` is that of the innermost `hold`.
+        unsafe { Bun__releaseRejectedPromises(self.global, self.mark) };
     }
 }
 

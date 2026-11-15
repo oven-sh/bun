@@ -588,7 +588,7 @@ impl ScopeFunctions {
             Mode::Test => {
                 // check for filter match
                 let mut matches_filter = true;
-                if let Some(filter_regex) = bun_test.reporter.jest.filter_regex {
+                if let Some(filter_regex) = &bun_test.reporter.jest.filter_regex {
                     group_log::log(format_args!("matches_filter begin"));
                     let mut filter_buffer = bun_test.collection.filter_buffer.take();
                     debug_assert!(filter_buffer.is_empty());

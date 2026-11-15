@@ -149,7 +149,7 @@ impl FileRoute {
         argument: JSValue,
     ) -> JsResult<Option<RefPtr<FileRoute>>> {
         // `as_class_ref` is the safe shared-borrow downcast (one audited
-        // unsafe in `JSValue`); `get_body_value`/`get_init_headers`/
+        // unsafe in `JSValue`); `get_body_value`/`with_init_headers`/
         // `status_code` all take `&self`.
         if let Some(response) = argument.as_class_ref::<Response>() {
             let body_value = response.get_body_value();
@@ -176,7 +176,8 @@ impl FileRoute {
 
                 blob.global_this.set(std::ptr::from_ref(global));
                 *body_value = BodyValue::Blob(blob.dupe());
-                let headers = headers_from(global, response.get_init_headers(), &blob)?;
+                let headers =
+                    response.with_init_headers(|headers| headers_from(global, headers, &blob))?;
                 let status_code = response.status_code();
 
                 return Ok(Some(RefPtr::new(FileRoute::new(

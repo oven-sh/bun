@@ -139,7 +139,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             }
 
             debug!(" START {} compiling part ranges", total_count);
-            c.worker_pool().each_owned(
+            c.worker_pool().each_iter(
                 (&*c, &*chunks),
                 |&(c, chunks), (chunk, i, result)| {
                     **result = generate_compile_result(c, chunks, chunk, *i);

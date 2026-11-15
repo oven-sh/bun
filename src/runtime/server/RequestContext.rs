@@ -10,7 +10,7 @@ use bun_ptr::{AliasableBox, AnyRefCounted, RefPtr};
 use bun_uws::{self as uws, WebSocketUpgradeContext};
 
 use crate::server::jsc::{self, JSGlobalObject, JSValue, JsResult};
-use crate::server::{RangeRequest, ServerLike};
+use crate::server::{PendingRequest, RangeRequest, ServerLike};
 use crate::webcore::{
     self as WebCore, AnyBlob, ByteStream, CookieMap, CookieMapRef, FetchHeaders, Request, Response,
     blob::SizeType as BlobSizeType, body, readable_stream, request, response,
@@ -33,12 +33,6 @@ use crate::webcore::{
 // no `Transfer-Encoding`, no upgrade), and the response handle stays valid
 // after `end()` until its `onAborted` fires to say the stream is gone.
 pub(crate) type Req<const SSL_ENABLED: bool, const MUX: bool> = c_void;
-
-/// Back-reference to a stack-local "should this RequestContext defer its
-/// deinit until the JS callback returns" flag. The dispatching frame owns the
-/// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
-/// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
-pub(crate) type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
 
 pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED>;
@@ -114,7 +108,7 @@ pub(crate) struct RequestContext<
     ThisServer: ServerLike + 'static,
 {
     /// BACKREF to the `Server`, which outlives its requests. `None` once detached.
-    pub(crate) server: Cell<Option<bun_ptr::BackRef<ThisServer>>>,
+    server: JsCell<Option<PendingRequest<bun_ptr::BackRef<ThisServer>>>>,
     pub(crate) resp: AttachedResponse<Self>,
     pub(crate) req: Cell<Option<*mut Req<SSL_ENABLED, MUX>>>,
     pub(crate) request_weakref: JsCell<request::WeakRef>,
@@ -134,6 +128,8 @@ pub(crate) struct RequestContext<
     root: Cell<*mut Self>,
     pub(crate) ref_count: Cell<u8>,
     pub(crate) pin_count: Cell<u8>,
+    /// The [`Dispatch`]es on the stack.
+    dispatch_count: Cell<u8>,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
     /// not protected (hot path), so GC may finalize it while we're parked
@@ -173,14 +169,6 @@ pub(crate) struct RequestContext<
     /// When the response body is a temporary value
     pub(crate) response_buf_owned: JsCell<Vec<u8>>,
 
-    /// Defer finalization until after the request handler task is completed?
-    ///
-    /// BORROW_PARAM: points at a `Cell<bool>` on the dispatching frame's
-    /// stack. `BackRef` encodes the outlives-holder invariant (the field is
-    /// always cleared before that frame returns) so reads/writes are safe
-    /// `Cell::get`/`set` instead of raw `*mut bool` deref.
-    pub(crate) defer_deinit_until_callback_completes: Cell<Option<DeferDeinitFlag>>,
-
     /// The dev server's record of this request. The response has room for one abort handler only.
     pub(crate) deferred_request: Cell<Option<crate::bake::dev_server::deferred_request::Handle>>,
 
@@ -218,7 +206,7 @@ where
 
     #[inline]
     pub(crate) fn is_async(&self) -> bool {
-        self.defer_deinit_until_callback_completes.get().is_none()
+        self.dispatch_count.get() == 0
     }
 
     /// The context of the script that made the server, for what answering the request starts.
@@ -286,6 +274,49 @@ where
     #[inline]
     fn drop(&mut self) {
         self.ctx.pin_count.set(self.ctx.pin_count.get() - 1);
+    }
+}
+
+/// A handler's frame. A context that completes under it keeps its pool slot until this drops.
+pub(crate) struct Dispatch<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
+    bun_ptr::BackRef<RequestContext<ThisServer, SSL, DBG, MUX>>,
+)
+where
+    ThisServer: ServerLike + 'static;
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>
+    Dispatch<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: ServerLike + 'static,
+{
+    pub(crate) fn new(ctx: &RequestContext<ThisServer, SSL, DBG, MUX>) -> Self {
+        ctx.dispatch_count.update(|count| count + 1);
+        Self(bun_ptr::BackRef::new(ctx))
+    }
+}
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> core::ops::Deref
+    for Dispatch<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: ServerLike + 'static,
+{
+    type Target = RequestContext<ThisServer, SSL, DBG, MUX>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> Drop
+    for Dispatch<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: ServerLike + 'static,
+{
+    fn drop(&mut self) {
+        self.dispatch_count.update(|count| count - 1);
+        if self.flags.has_marked_complete() {
+            self.deinit();
+        }
     }
 }
 
@@ -458,11 +489,14 @@ where
         // `*self`; it lives independently and outlives every context.
         unsafe {
             &*self
-                .server
-                .get()
+                .try_server()
                 .expect("infallible: server bound")
                 .as_const_ptr()
         }
+    }
+
+    pub(crate) fn try_server(&self) -> Option<bun_ptr::BackRef<ThisServer>> {
+        self.server.get().as_deref().copied()
     }
 
     /// Mutably borrow the pooled request-body slot, if attached.
@@ -529,7 +563,7 @@ where
 
     pub(crate) fn set_signal_aborted(&self, reason: jsc::CommonAbortReason) {
         if let Some(signal) = self.signal.get() {
-            if let Some(server) = self.server.get() {
+            if let Some(server) = self.try_server() {
                 // server is a BACKREF — valid while this RequestContext is alive
                 let global = server.global_this();
                 signal.signal(global, reason);
@@ -540,7 +574,7 @@ where
     /// The microtask checkpoint after a synchronously dispatched handler. `Err`: the VM has stopped; the
     /// caller leaves the request where it is and the stop closes the server's connections.
     fn drain_microtasks(&self) -> Result<(), bun_jsc::Stopped> {
-        let Some(server) = self.server.get() else {
+        let Some(server) = self.try_server() else {
             return Ok(());
         };
         if self.is_async() {
@@ -672,7 +706,7 @@ where
         // Inspecting `value` can run user code (`[inspect.custom]`, `toString`), which can throw.
         let mut inspect_error: Option<JSValue> = None;
 
-        if let Some(server) = self.server.get() {
+        if let Some(server) = self.try_server() {
             // server is a BACKREF — valid while this RequestContext is alive
             let global_this: &JSGlobalObject = server.global_this();
 
@@ -767,7 +801,7 @@ where
         self.ref_count.get() - self.pin_count.get()
     }
 
-    pub(crate) fn should_render_missing(&self) -> bool {
+    fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
         // 1 - still has a response (not detached, socket still open)
@@ -840,16 +874,14 @@ where
         true
     }
 
-    /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
-    pub(crate) fn deinit(&self) {
+    fn deinit(&self) {
         ctx_log!("deinit");
         debug_assert!(self.resp.get().is_none());
+        debug_assert_eq!(self.ref_count.get(), 0);
         self.end_request_streaming_and_drain();
-        // TODO: has_marked_complete is doing something?
         self.flags.set_has_marked_complete(true);
 
-        if let Some(defer_deinit) = self.defer_deinit_until_callback_completes.get() {
-            defer_deinit.set(true);
+        if !self.is_async() {
             ctx_log!("deferred deinit <d> ({:p})<r>", self);
             return;
         }
@@ -869,9 +901,9 @@ where
             sink.source.detach(&sink.global_this);
         }
 
+        // Taken out to drop last: it can free the dev server, which `deferred_request` points into.
         if let Some(server) = self.server.take() {
             server.release_request_context(self.as_ctx_ptr().cast::<c_void>(), MUX);
-            server.on_request_complete();
         }
     }
 
@@ -1022,7 +1054,7 @@ where
         // synchronously after the headers were written): report and close.
         if !has_responded && self.flags.has_written_status() {
             if !value.is_empty_or_undefined_or_null()
-                && let Some(server) = self.server.get()
+                && let Some(server) = self.try_server()
             {
                 server.vm().run_error_handler(value, None);
             }
@@ -1031,20 +1063,9 @@ where
         }
 
         if !has_responded {
-            let original_state = self.defer_deinit_until_callback_completes.get();
-            let should_deinit_context = core::cell::Cell::new(match original_state {
-                // BackRef::get() → &Cell<bool>; second .get() reads the bool.
-                Some(defer_deinit) => defer_deinit.get().get(),
-                None => false,
-            });
-            self.defer_deinit_until_callback_completes
-                .set(Some(bun_ptr::BackRef::new(&should_deinit_context)));
+            let _dispatch = Dispatch::new(self);
             self.run_error_handler(value);
-            self.defer_deinit_until_callback_completes
-                .set(original_state);
-            // we try to deinit inside runErrorHandler so we just return here and let it deinit
-            if should_deinit_context.get() {
-                self.deinit();
+            if self.flags.has_marked_complete() {
                 return;
             }
         }
@@ -1068,7 +1089,7 @@ where
         }
     }
 
-    pub(crate) fn render_missing(&self) {
+    fn render_missing(&self) {
         if let Some(resp) = self.resp.get() {
             resp.run_corked_with_type(Self::render_missing_corked, self);
         }
@@ -1366,7 +1387,6 @@ where
         server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<Method>,
     ) {
         let resolved_method = method
@@ -1383,8 +1403,7 @@ where
                 resp: AttachedResponse(JsCell::new(Some((resp, RefPtr::from_raw(slot))))),
                 req: Cell::new(Some(req)),
                 method: resolved_method,
-                server: Cell::new(Some(bun_ptr::BackRef::new(server))),
-                defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
+                server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
                 range,
                 if_range,
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
@@ -1395,6 +1414,7 @@ where
                 response_root: ResponseRoot::default(),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
+                dispatch_count: Cell::new(0),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
                 blob: JsCell::new(AnyBlob::Blob(Blob::default())),
                 sendfile: Cell::new(SendfileContext::default()),
@@ -2069,7 +2089,7 @@ where
         // wire, so the throw must not end the response again. `handle_reject()`
         // does nothing once the response has responded, which leaves the
         // request looking unanswered: the handler tail
-        // (`should_render_missing()` in `mod.rs`) then ends it a second time,
+        // (`should_render_missing()` in `respond`) then ends it a second time,
         // writing a second chunked last-chunk.
         if resp.has_responded() {
             stream_log!("done");
@@ -2164,7 +2184,7 @@ where
                         // the unhandledRejection reporter, so surface it here.
                         // DEBUG_MODE already reports it in handle_reject_stream.
                         if !DEBUG_MODE
-                            && let Some(server) = this.server.get()
+                            && let Some(server) = this.try_server()
                             && !err.is_empty_or_undefined_or_null()
                         {
                             server.vm().run_error_handler(err, None);
@@ -2388,7 +2408,7 @@ where
             return;
         }
 
-        let Some(server) = this.server.get() else {
+        let Some(server) = this.try_server() else {
             // server detached?
             this.render_metadata();
             // SAFETY: FFI handle
@@ -2512,6 +2532,26 @@ where
         self.set_abort_handler();
     }
 
+    /// Ends `dispatch` with what the handler returned. `Some`: the request goes on asynchronously.
+    pub(crate) fn respond(
+        dispatch: Dispatch<ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
+        server: &ThisServer,
+        request_value: JSValue,
+        response_value: JSValue,
+    ) -> Option<bun_ptr::BackRef<Self>> {
+        dispatch.on_response(server, request_value, response_value);
+        if dispatch.flags.has_marked_complete() {
+            return None;
+        }
+        let ctx = dispatch.0;
+        drop(dispatch);
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return None;
+        }
+        Some(ctx)
+    }
+
     // Each HTTP request or TCP socket connection is effectively a "task".
     //
     // However, unlike the regular task queue, we don't drain the microtask
@@ -2528,12 +2568,7 @@ where
     // callback the handler dispatches synchronously through `enter()`/`exit()`
     // (`server.upgrade()` -> `open()`, `ws.close()` -> `close()`) does not
     // drain in the middle of the handler.
-    pub(crate) fn on_response(
-        &self,
-        this: &ThisServer,
-        request_value: JSValue,
-        response_value: JSValue,
-    ) {
+    fn on_response(&self, this: &ThisServer, request_value: JSValue, response_value: JSValue) {
         let ctx = self;
         request_value.ensure_still_alive();
         // For a promise, this also roots what it settled with.
@@ -3332,7 +3367,7 @@ where
         this.render_metadata();
 
         // A null-body status never transmits the body.
-        if let Some(server) = this.server.get()
+        if let Some(server) = this.try_server()
             && let Some(response) = this.response_mut()
             && matches!(response.get_body_value(), Body::Value::Locked(_))
         {
@@ -3413,7 +3448,7 @@ where
         if HTTPStatusText::is_sendable(status) {
             return false;
         }
-        let Some(server) = self.server.get() else {
+        let Some(server) = self.try_server() else {
             self.render_production_error(500);
             return true;
         };
@@ -3440,7 +3475,7 @@ where
 
     fn finish_running_error_handler(&self, value: JSValue, status: u16) {
         self.forbid_upgrade();
-        let Some(server) = self.server.get() else {
+        let Some(server) = self.try_server() else {
             return self.render_production_error(status);
         };
         let server = &*server;
@@ -3479,7 +3514,7 @@ where
         status: u16,
     ) {
         jsc::mark_binding!();
-        if let Some(server) = self.server.get() {
+        if let Some(server) = self.try_server() {
             let server = &*server;
             let on_error = server.config().on_error;
             if !on_error.is_empty() && !self.flags.has_called_error_handler() {
@@ -3593,7 +3628,7 @@ where
         }
         // The VM has stopped (the handler "threw" its termination): no error handler, no error page;
         // the stop closes the server's connections.
-        if let Some(server) = self.server.get()
+        if let Some(server) = self.try_server()
             && !server.vm().script_allowed()
         {
             return;
@@ -4137,7 +4172,7 @@ where
         this.flags.set_request_body_paused(false);
         if this.resp.get().is_none()
             || this.flags.aborted()
-            || this.server.get().is_none_or(|s| s.terminated())
+            || this.try_server().is_none_or(|s| s.terminated())
         {
             return;
         }
@@ -4182,7 +4217,7 @@ where
     }
 
     pub(crate) fn on_start_buffering(&self) {
-        if let Some(server) = self.server.get() {
+        if let Some(server) = self.try_server() {
             ctx_log!("onStartBuffering");
             // `.text()`/`.json()` want the whole body; disable pre-stream backpressure.
             self.flags.set_request_body_buffer_all(true);

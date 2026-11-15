@@ -67,12 +67,16 @@ impl<'a> HotUpdateContext<'a> {
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
-    let script_requests = match &mut dev.current_bundle {
+    // Held to the end: a stopped server frees `dev` with its last request.
+    let (script_requests, _pending_request) = match &mut dev.current_bundle {
         Some(current_bundle) => {
             drain_current_bundle_requests(current_bundle);
-            ::core::mem::take(&mut current_bundle.script_requests)
+            (
+                ::core::mem::take(&mut current_bundle.script_requests),
+                current_bundle.pending_request.take(),
+            )
         }
-        None => Vec::new(),
+        None => (Vec::new(), None),
     };
     // Drops the bundle, then the arena it borrows.
     dev.current_bundle = None;
@@ -128,11 +132,6 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
             unreachable!()
         };
         dev.release_testing_batch(batch);
-    }
-
-    // Unref the ref added in `start_async_bundle`
-    if let Some(server) = dev.server.as_mut() {
-        server.on_static_request_complete();
     }
 }
 

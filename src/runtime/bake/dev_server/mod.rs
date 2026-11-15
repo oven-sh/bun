@@ -35,6 +35,7 @@ use crate::api::{AnyServer, SavedRequest};
 use crate::bake;
 use crate::bake::router::{self, FrameworkRouter, OpaqueFileId};
 use crate::server::html_bundle::HTMLBundleRoute;
+use crate::server::{PendingRequest, Served};
 use crate::timer::{EventLoopTimerState, EventLoopTimerTag};
 use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
@@ -376,6 +377,13 @@ pub(crate) enum TestingBatchEvents {
     ReleaseAfterBundle(TestingBatch),
 }
 
+impl<P> Served for bun_ptr::BackRef<DevServer, P> {
+    fn served_by(&self) -> Option<AnyServer> {
+        // SAFETY: live (`BackRef`). Only this field: others can be borrowed up the stack.
+        unsafe { (*self.as_const_ptr()).server }
+    }
+}
+
 /// There is only ever one bundle executing at the same time, since all bundles
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
@@ -411,6 +419,7 @@ pub(crate) struct CurrentBundle {
     /// Unlike parse failures (`handleParseTaskFailure`), the resolution
     /// failures can be created asynchronously, and out of order.
     pub(crate) resolution_failure_entries: ArrayHashMap<serialized_failure::OwnerPacked, Log>,
+    pub(crate) pending_request: Option<PendingRequest>,
 }
 
 pub(crate) struct NextBundle {

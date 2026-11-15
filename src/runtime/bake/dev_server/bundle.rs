@@ -279,10 +279,7 @@ impl DevServer {
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
         self.plugin_state = PluginState::Err;
         // Completing the last request on a stopped server frees `self`, so count as a pending request until the end.
-        let mut server = self.server;
-        if let Some(server) = server.as_mut() {
-            server.on_pending_request();
-        }
+        let _pending = self.server.map(PendingRequest::new);
         while let Some(item) = self.next_bundle.requests.pop_first() {
             item.take_handler().fail();
         }
@@ -292,9 +289,6 @@ impl DevServer {
                 route_bundle::State::Unqueued;
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
-        if let Some(server) = server.as_mut() {
-            server.on_static_request_complete();
-        }
         // TODO: allow recovery from this state
         Ok(())
     }
@@ -351,10 +345,7 @@ impl DevServer {
 
         self.graphs.incremental_result.reset();
 
-        // Ref server to keep it from closing.
-        if let Some(server) = self.server.as_mut() {
-            server.on_pending_request();
-        }
+        let pending_request = self.server.map(PendingRequest::new);
 
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
@@ -447,6 +438,7 @@ impl DevServer {
             requests: ::core::mem::take(&mut self.next_bundle.requests),
             script_requests: Vec::new(),
             resolution_failure_entries: Default::default(),
+            pending_request,
         });
 
         self.next_bundle.route_queue.clear_retaining_capacity();

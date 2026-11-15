@@ -1332,7 +1332,7 @@ impl<'a> Transpiler<'a> {
                                     let mut path_buf2 = bun_paths::path_buffer_pool::get();
                                     let n = path.text.len();
                                     let total = n + BYTECODE_EXT.len();
-                                    // `ZStr::from_buf` needs `buf[total] == 0`
+                                    // The NUL at `path_buf2[total]` has to be
                                     // in-bounds; fall back to re-parsing the
                                     // source instead of panicking on an
                                     // over-long path.
@@ -1342,8 +1342,8 @@ impl<'a> Transpiler<'a> {
                                     path_buf2[..n].copy_from_slice(path.text);
                                     path_buf2[n..][..BYTECODE_EXT.len()]
                                         .copy_from_slice(BYTECODE_EXT);
-                                    path_buf2[total] = 0;
-                                    let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
+                                    let zpath =
+                                        bun_core::ZStr::nul_terminate(&mut path_buf2, total);
                                     // `bun.sys.File.toSourceAt(...)` is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call

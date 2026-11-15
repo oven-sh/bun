@@ -459,10 +459,7 @@ impl<'a> Interpreter<'a> {
         // on Windows `MAX_PATH_BYTES` is ~96 KiB and `init` runs from
         // JS-triggered paths that may already be deep on the stack.
         let mut pathbuf = bun_paths::path_buffer_pool::get();
-        let cwd_len = bun_sys::getcwd(&mut pathbuf[..])?;
-        // NUL-terminate for `open()`.
-        pathbuf[cwd_len] = 0;
-        let cwd_z = bun_core::ZStr::from_buf(pathbuf.as_slice(), cwd_len);
+        let cwd_z = bun_sys::getcwd_z(&mut pathbuf)?;
 
         let cwd_fd = OwnedFd(bun_sys::open(
             cwd_z,
@@ -477,15 +474,11 @@ impl<'a> Interpreter<'a> {
         let stdin_fd = if bun_core::output::stdio::is_stdin_null() {
             #[cfg(unix)]
             {
-                bun_sys::open(
-                    bun_core::ZStr::from_static(b"/dev/null\0"),
-                    bun_sys::O::RDONLY,
-                    0,
-                )
+                bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDONLY, 0)
             }
             #[cfg(windows)]
             {
-                bun_sys::open(bun_core::ZStr::from_static(b"NUL\0"), bun_sys::O::RDONLY, 0)
+                bun_sys::open(bun_core::zstr!("NUL"), bun_sys::O::RDONLY, 0)
             }
         } else {
             shell_dup(Fd::stdin())
@@ -1737,7 +1730,6 @@ impl<'a> ShellExecEnv<'a> {
         // Build NUL-terminated `new_cwd` in `buf`.
         let new_cwd_len: usize = if is_abs {
             buf[..new_cwd_.len()].copy_from_slice(new_cwd_);
-            buf[new_cwd_.len()] = 0;
             new_cwd_.len()
         } else {
             // `join_z_buf` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD`
@@ -1765,10 +1757,9 @@ impl<'a> ShellExecEnv<'a> {
             if n > 1 && buf[n - 1] == b'/' {
                 n -= 1;
             }
-            buf[n] = 0;
             n
         };
-        let new_cwd_z = bun_core::ZStr::from_buf(&buf[..], new_cwd_len);
+        let new_cwd_z = bun_core::ZStr::nul_terminate(&mut buf, new_cwd_len);
 
         self.cwd_fd = OwnedFd(shell_openat(
             self.cwd_fd.fd(),
@@ -1778,7 +1769,7 @@ impl<'a> ShellExecEnv<'a> {
         )?);
 
         self.__prev_cwd = self.__cwd;
-        self.__cwd = arena.alloc_slice_copy(&buf[..new_cwd_len]);
+        self.__cwd = arena.alloc_slice_copy(new_cwd_z.as_bytes());
 
         // Only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
@@ -1876,16 +1867,12 @@ pub(crate) use crate::shell::states::assigns::AssignCtx;
 fn open_null_device() -> bun_sys::Result<Fd> {
     #[cfg(unix)]
     {
-        bun_sys::open(
-            bun_core::ZStr::from_static(b"/dev/null\0"),
-            bun_sys::O::RDWR,
-            0,
-        )
+        bun_sys::open(bun_core::zstr!("/dev/null"), bun_sys::O::RDWR, 0)
     }
     #[cfg(windows)]
     {
         // Windows NUL is bidirectional regardless of the open flags.
-        bun_sys::open(bun_core::ZStr::from_static(b"nul\0"), bun_sys::O::RDWR, 0)
+        bun_sys::open(bun_core::zstr!("nul"), bun_sys::O::RDWR, 0)
     }
 }
 
@@ -2034,8 +2021,7 @@ fn shell_get_path<'a>(
             return Err(name_too_long());
         }
         buf[source_root_len..end].copy_from_slice(to_tail);
-        buf[end] = 0;
-        return Ok(bun_core::ZStr::from_buf(buf.as_slice(), end));
+        return Ok(bun_core::ZStr::nul_terminate(buf, end));
     }
     if bun_paths::Platform::Windows.is_absolute(to.as_bytes()) {
         return Ok(to);
@@ -2050,13 +2036,7 @@ fn shell_get_path<'a>(
             &[dirpath, to.as_bytes()],
         )
     };
-    let len = joined.len();
-    if len >= buf.len() {
-        return Err(name_too_long());
-    }
-    buf[..len].copy_from_slice(joined);
-    buf[len] = 0;
-    Ok(bun_core::ZStr::from_buf(buf.as_slice(), len))
+    bun_core::strings::copy_z(buf, joined).ok_or_else(name_too_long)
 }
 
 /// Windows: rewrite the path via `shell_get_path` then `bun_sys::stat`, tagging

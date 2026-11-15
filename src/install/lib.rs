@@ -463,10 +463,7 @@ impl RunCommand {
     ) -> Option<&'a ZStr> {
         for shell in Self::SHELLS_TO_SEARCH {
             if let Some(found) = bun_which::which(buf, path, cwd, shell) {
-                // `which()` writes a NUL-terminated path into `buf` and
-                // returns a borrow of it; reborrow as `&ZStr`.
-                let len = found.len();
-                return Some(ZStr::from_buf(buf, len));
+                return Some(found);
             }
         }
 
@@ -484,8 +481,7 @@ impl RunCommand {
             if bun_sys::is_executable_file_path(shell) {
                 let body = shell.as_bytes();
                 buf[..body.len()].copy_from_slice(body);
-                buf[body.len()] = 0;
-                return Some(ZStr::from_buf(buf, body.len()));
+                return Some(ZStr::nul_terminate(buf, body.len()));
             }
         }
 
@@ -707,11 +703,10 @@ impl RunCommand {
                             replaced = true;
                         }
                         _ if !made_dir => {
-                            target_path_buffer[dir_slice_len] = 0;
-                            // SAFETY: `dir_slice_len` is in-bounds; the byte at
-                            // `dir_slice_len` was just set to NUL.
-                            let dir_w =
-                                bun_core::WStr::from_buf(&target_path_buffer[..], dir_slice_len);
+                            let dir_w = bun_core::WStr::nul_terminate(
+                                &mut target_path_buffer,
+                                dir_slice_len,
+                            );
                             let _ = bun_sys::mkdir_w(dir_w);
                             target_path_buffer[dir_slice_len] = b'\\' as u16;
                             made_dir = true;

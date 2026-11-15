@@ -212,10 +212,9 @@ fn normalize_package_json_path<'a>(
         FileSystem::get().top_level_dir(),
         &joined[..abs_len - PACKAGE_JSON_LEN],
     );
-    joined[abs_len] = 0;
 
     Some(Paths {
-        abs: ZStr::from_buf(joined, abs_len),
+        abs: ZStr::nul_terminate(joined, abs_len),
         rel,
     })
 }

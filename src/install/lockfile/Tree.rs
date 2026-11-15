@@ -345,8 +345,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
 
         while parent_id > 0 && (parent_id as usize) < trees.len() {
             if ids.len() == ids.capacity() {
-                path_buf[path_written] = 0;
-                return (ZStr::from_buf(path_buf, path_written), 0);
+                return (ZStr::nul_terminate(path_buf, path_written), 0);
             }
             ids.unfilled().append(&[parent_id]);
             parent_id = trees[parent_id as usize].parent;
@@ -414,8 +413,7 @@ pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
             }
         }
     }
-    path_buf[path_written] = 0;
-    let rel = ZStr::from_buf(path_buf, path_written);
+    let rel = ZStr::nul_terminate(path_buf, path_written);
 
     (rel, depth)
 }

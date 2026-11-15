@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{DOMWrapped, JSValue};
+use crate::{JSValue, WrapperGuard};
 use bun_core::EncodedSlice;
 
 bun_opaque::sealed_handle! {
@@ -21,10 +21,9 @@ unsafe extern "C" {
 }
 
 impl URLSearchParams {
-    /// `None` if `value` is not a `URLSearchParams`.
-    pub fn with_wrapped<R>(value: JSValue, f: impl FnOnce(&Self) -> R) -> Option<R> {
+    pub fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
         // SAFETY: a `JSURLSearchParams` holds a ref on what it wraps.
-        unsafe { DOMWrapped::new(value, URLSearchParams__fromJS(value)) }.map(|params| f(&params))
+        unsafe { WrapperGuard::new(value, URLSearchParams__fromJS(*value)) }
     }
 
     pub fn to_string<Ctx>(&self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: EncodedSlice)) {

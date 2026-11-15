@@ -231,7 +231,6 @@ impl JSMySQLConnection {
         let _guard = self.ref_guard();
         {
             let _loop_guard = self.event_loop().enter_scope();
-            self.ensure_js_value_is_alive();
             if let Err(my_sql_connection::FlushQueueError::AuthenticationFailed) =
                 self.flush_queue()
             {
@@ -243,12 +242,6 @@ impl JSMySQLConnection {
             self.retire_if_idle();
         }
         self.on_queue_changed();
-    }
-
-    fn ensure_js_value_is_alive(&self) {
-        if let Some(value) = self.js_value.try_get() {
-            value.ensure_still_alive();
-        }
     }
 
     pub fn finalize(&self) {
@@ -523,7 +516,6 @@ impl JSMySQLConnection {
 
         if let Some(on_close) = self.consume_on_close_callback(&self.global_object) {
             on_close.ensure_still_alive();
-            self.ensure_js_value_is_alive();
             let mut js_error = value.to_error().unwrap_or(value);
             if js_error.is_empty() {
                 js_error = mysql_error_to_js(
@@ -818,7 +810,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_guard();
         {
             let _loop_guard = this.event_loop().enter_scope();
-            this.ensure_js_value_is_alive();
 
             if let Err(e) = this.read_and_process_data(data) {
                 this.on_error(None, e);

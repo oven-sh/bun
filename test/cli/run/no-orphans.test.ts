@@ -1,7 +1,7 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isGlibc, isLinux, isMusl, isRoot, isWindows, tempDir, type DirectoryTree } from "harness";
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isLinux, isMusl, isRoot, isWindows, tempDir, type DirectoryTree } from "harness";
+import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
 // Every test here owns its own process tree (its own tempDir / sh supervisor /
@@ -795,251 +795,122 @@ test.concurrent.skipIf(!isLinux)(
 //      itself stopped.
 //   3. After perl `fg`s it (tcsetpgrp + SIGCONT), the script's SIGCONT
 //      handler fires — `onChildStopped` SIGCONT'd the whole script pgroup.
-// perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
-// proves `onChildStopped` delivered SIGCONT to the script pgroup on resume.
-const readyThenSleep =
-  `perl -MPOSIX -e '` +
-  `$|=1; ` +
-  `$SIG{CONT}=sub{ print "RESUMED\\n" }; ` +
-  `printf "READY %d\\n", getpgrp(); ` +
-  `sleep 1 while 1'`;
-
-type Job = {
-  terminal: Bun.Terminal;
-  bunPgid: number;
-  scriptPgid: number;
-  output: () => string;
-  waitFor: (needle: string) => Promise<void>;
-};
-
-async function withJobUnderShell(
-  {
-    devScript = readyThenSleep,
-    // `fg`: foreground back to the job, then SIGCONT its pgroup.
-    onStopped = `tcsetpgrp(0, $bun); kill "CONT", -$bun; `,
-    extraEnv = {},
-  }: { devScript?: string; onStopped?: string; extraEnv?: Record<string, string> },
-  body: (job: Job) => Promise<void>,
-) {
-  // Minimal interactive-shell stand-in. SIGTTOU ignored so `tcsetpgrp` from
-  // the background succeeds instead of EIO (session-leader pgroup is
-  // orphaned). BUN_PGID is printed *before* handing off the foreground so
-  // ordering vs. READY is deterministic. `${^CHILD_ERROR_NATIVE}` — not
-  // `$?` — carries the raw WIFSTOPPED bits on a WUNTRACED return.
-  const shellSim =
-    `use POSIX qw(:sys_wait_h setpgid tcsetpgrp tcgetpgrp WIFSTOPPED);` +
-    `$|=1; $SIG{TTOU}="IGNORE"; my $stops = 0; ` +
-    `my $bun = fork(); ` +
-    // Child sets its own pgroup AND makes itself foreground *before* exec
-    // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied
-    // regardless of whether the parent's tcsetpgrp won the fork race.
-    `if ($bun == 0) { setpgid(0,0); tcsetpgrp(0,$$); ` +
-    `  $ENV{LD_PRELOAD} = $ENV{BUN_PRELOAD} if $ENV{BUN_PRELOAD}; ` +
-    `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
-    `setpgid($bun, $bun); ` +
-    `tcsetpgrp(0, $bun); ` +
-    `print "BUN_PGID $bun\\n"; ` +
-    `while (1) { ` +
-    `  my $w = waitpid($bun, WUNTRACED); last if $w <= 0; ` +
-    `  if (WIFSTOPPED(\${^CHILD_ERROR_NATIVE})) { ` +
-    `    $stops++; print "BUN_STOPPED\\n"; ` +
-    `    ${onStopped}` +
-    `  } else { last; } ` +
-    `}`;
-
-  using dir = tempDir("no-orphans-tty-shell", {
-    "package.json": JSON.stringify({ name: "p", scripts: { dev: devScript } }),
-  });
-  const env: Record<string, string> = { ...bunEnv, ...extraEnv, BUN_EXE: bunExe() };
-  delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
-
-  let out = "";
-  const decoder = new TextDecoder();
-  let wake = Promise.withResolvers<void>();
-  const eof = Promise.withResolvers<void>();
-  const proc = Bun.spawn({
-    cmd: ["perl", "-e", shellSim],
-    env,
-    cwd: String(dir),
-    terminal: {
-      data(_t, chunk) {
-        out += decoder.decode(chunk, { stream: true });
-        wake.resolve();
-      },
-      exit() {
-        eof.resolve();
-      },
-    },
-  });
-
-  // Deadline is a hang guard, not a timing assertion: a future regression
-  // that drops WUNTRACED/EVFILT_SIGNAL would leave the whole tree stopped
-  // with no forward progress and no EOF, so the test body never reaches
-  // `finally` and the stopped processes leak into CI.
-  let timedOut = false;
-  const deadline = sleep(10000).then(() => (timedOut = true));
-  const waitFor = async (needle: string) => {
-    while (!out.includes(needle) && !timedOut) {
-      wake = Promise.withResolvers();
-      await Promise.race([wake.promise, eof.promise, deadline]);
-      if (proc.terminal!.closed) break;
-    }
-    expect(out).toContain(needle);
-  };
-
-  let bunPgid = 0;
-  let scriptPgid = 0;
-  try {
-    await waitFor("BUN_PGID ");
-    await waitFor("READY ");
-    bunPgid = Number(out.match(/BUN_PGID (\d+)/)![1]);
-    scriptPgid = Number(out.match(/READY (\d+)/)![1]);
-    expect(bunPgid).toBeGreaterThan(0);
-    expect(scriptPgid).toBeGreaterThan(0);
-    // (1) Separate pgroup even on a TTY.
-    expect(scriptPgid).not.toBe(bunPgid);
-    await body({ terminal: proc.terminal!, bunPgid, scriptPgid, output: () => out, waitFor });
-  } finally {
-    // `bun run` watches ppid and cleans its own tree when perl dies, but
-    // belt-and-braces so a regressing build can't leak stopped processes
-    // into CI.
-    proc.kill("SIGKILL");
-    for (const p of [bunPgid, scriptPgid]) {
-      if (p > 0) {
-        try {
-          process.kill(-p, "SIGKILL");
-        } catch {}
-      }
-    }
-    await proc.exited;
-    proc.terminal?.close();
-  }
-}
-
 test.concurrent.skipIf(!isPosix || !hasPerl)(
   "bun run --no-orphans on a TTY: Ctrl-Z stop observed by outer shell's waitpid(WUNTRACED), fg resumes script",
   async () => {
-    await withJobUnderShell({}, async ({ terminal, waitFor }) => {
+    // perl in the dev script so `getpgrp()` is trivially available; `$SIG{CONT}`
+    // proves `onChildStopped` delivered SIGCONT to the script pgroup on resume.
+    const devScript =
+      `perl -MPOSIX -e '` +
+      `$|=1; ` +
+      `$SIG{CONT}=sub{ print "RESUMED\\n" }; ` +
+      `printf "READY %d\\n", getpgrp(); ` +
+      `sleep 1 while 1'`;
+
+    // Minimal interactive-shell stand-in. SIGTTOU ignored so `tcsetpgrp` from
+    // the background succeeds instead of EIO (session-leader pgroup is
+    // orphaned). BUN_PGID is printed *before* handing off the foreground so
+    // ordering vs. READY is deterministic. `${^CHILD_ERROR_NATIVE}` — not
+    // `$?` — carries the raw WIFSTOPPED bits on a WUNTRACED return.
+    const shellSim =
+      `use POSIX qw(:sys_wait_h setpgid tcsetpgrp WIFSTOPPED);` +
+      `$|=1; $SIG{TTOU}="IGNORE"; ` +
+      `my $bun = fork(); ` +
+      // Child sets its own pgroup AND makes itself foreground *before* exec
+      // so `JobControl.give()`'s `tcgetpgrp(0)==getpgrp()` gate is satisfied
+      // regardless of whether the parent's tcsetpgrp won the fork race.
+      `if ($bun == 0) { setpgid(0,0); tcsetpgrp(0,$$); ` +
+      `  exec($ENV{BUN_EXE}, "run", "--no-orphans", "--silent", "dev") or die $!; } ` +
+      `setpgid($bun, $bun); ` +
+      `tcsetpgrp(0, $bun); ` +
+      `print "BUN_PGID $bun\\n"; ` +
+      `while (1) { ` +
+      `  my $w = waitpid($bun, WUNTRACED); last if $w <= 0; ` +
+      `  if (WIFSTOPPED(\${^CHILD_ERROR_NATIVE})) { ` +
+      `    print "BUN_STOPPED\\n"; ` +
+      // `fg`: foreground back to the job, then SIGCONT its pgroup.
+      `    tcsetpgrp(0, $bun); kill "CONT", -$bun; ` +
+      `  } else { last; } ` +
+      `}`;
+
+    using dir = tempDir("no-orphans-tty-shell", {
+      "package.json": JSON.stringify({ name: "p", scripts: { dev: devScript } }),
+    });
+    const env: Record<string, string> = { ...bunEnv, BUN_EXE: bunExe() };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    let out = "";
+    const decoder = new TextDecoder();
+    let wake = Promise.withResolvers<void>();
+    const eof = Promise.withResolvers<void>();
+    const proc = Bun.spawn({
+      cmd: ["perl", "-e", shellSim],
+      env,
+      cwd: String(dir),
+      terminal: {
+        data(_t, chunk) {
+          out += decoder.decode(chunk, { stream: true });
+          wake.resolve();
+        },
+        exit() {
+          eof.resolve();
+        },
+      },
+    });
+
+    // Deadline is a hang guard, not a timing assertion: a future regression
+    // that drops WUNTRACED/EVFILT_SIGNAL would leave the whole tree stopped
+    // with no forward progress and no EOF, so the test body never reaches
+    // `finally` and the stopped processes leak into CI.
+    let timedOut = false;
+    const deadline = sleep(10000).then(() => (timedOut = true));
+    const waitFor = async (needle: string) => {
+      while (!out.includes(needle) && !timedOut) {
+        wake = Promise.withResolvers();
+        await Promise.race([wake.promise, eof.promise, deadline]);
+        if (proc.terminal!.closed) break;
+      }
+      expect(out).toContain(needle);
+    };
+
+    let bunPgid = 0;
+    let scriptPgid = 0;
+    try {
+      await waitFor("BUN_PGID ");
+      await waitFor("READY ");
+      bunPgid = Number(out.match(/BUN_PGID (\d+)/)![1]);
+      scriptPgid = Number(out.match(/READY (\d+)/)![1]);
+      expect(bunPgid).toBeGreaterThan(0);
+      expect(scriptPgid).toBeGreaterThan(0);
+      // (1) Separate pgroup even on a TTY.
+      expect(scriptPgid).not.toBe(bunPgid);
+
       // (2) ^Z → line discipline delivers SIGTSTP to the foreground pgroup
       // (the script). `bun run` must observe the stop and stop itself; the
       // perl shell's `waitpid(WUNTRACED)` then reports it.
-      terminal.write("\x1a");
+      proc.terminal!.write("\x1a");
       await waitFor("BUN_STOPPED");
 
       // (3) perl already `fg`'d it; `onChildStopped` SIGCONTs the script
       // pgroup on resume.
       await waitFor("RESUMED");
-    });
-  },
-);
-
-// The shell knows only `bun run`'s pgroup, and it may make that the foreground
-// again after `give()`: both sides of a shell's fork call tcsetpgrp.
-test.concurrent.skipIf(!isPosix || !hasPerl)(
-  "bun run --no-orphans on a TTY: a SIGTSTP that reaches bun run stops the script too",
-  async () => {
-    await withJobUnderShell({}, async ({ bunPgid, waitFor }) => {
-      process.kill(-bunPgid, "SIGTSTP");
-      await waitFor("BUN_STOPPED");
-      await waitFor("RESUMED");
-    });
-  },
-);
-
-test.concurrent.skipIf(!isPosix || !hasPerl)(
-  "bun run --no-orphans on a TTY: a script that reads the terminal after `bg` leaves it to the shell",
-  async () => {
-    await withJobUnderShell(
-      {
-        devScript:
-          `perl -MPOSIX -e '` +
-          `$|=1; ` +
-          `$SIG{CONT}=sub{ $go=1 }; ` +
-          `printf "READY %d\\n", getpgrp(); ` +
-          `sleep 1 until $go; ` +
-          `$line = <STDIN>; print "READ $line"; ` +
-          `sleep 1 while 1'`,
-        // The first stop is answered by `bg`, the second by `fg`.
-        onStopped:
-          `if ($stops == 1) { tcsetpgrp(0, $$); } ` +
-          `else { print "TERMINAL ", (tcgetpgrp(0) == $$ ? "OF THE SHELL" : "TAKEN"), "\\n"; tcsetpgrp(0, $bun); } ` +
-          `kill "CONT", -$bun; `,
-      },
-      async ({ terminal, waitFor }) => {
-        terminal.write("\x1a");
-        await waitFor("BUN_STOPPED");
-        await waitFor("TERMINAL OF THE SHELL");
-        terminal.write("line\n");
-        await waitFor("READ line");
-      },
-    );
-  },
-);
-
-// `bun run` can be slow to hand the terminal to a script that already runs.
-const cc = Bun.which("cc") || Bun.which("clang") || Bun.which("gcc");
-describe.concurrent.skipIf(!isGlibc || !cc || !hasPerl)("bun run --no-orphans on a TTY, before give()", () => {
-  function lateGive() {
-    const dir = tempDir("no-orphans-late-give", {
-      "give.c": `
-        #include <stdlib.h>
-        #include <sys/ioctl.h>
-        #include <termios.h>
-        #include <unistd.h>
-        int tcsetpgrp(int fd, pid_t pgrp)
-        {
-            while (access(getenv("GIVE"), F_OK))
-                usleep(1000);
-            return ioctl(fd, TIOCSPGRP, &pgrp);
+    } finally {
+      // `bun run` watches ppid and cleans its own tree when perl dies, but
+      // belt-and-braces so a regressing build can't leak stopped processes
+      // into CI.
+      proc.kill("SIGKILL");
+      for (const p of [bunPgid, scriptPgid]) {
+        if (p > 0) {
+          try {
+            process.kill(-p, "SIGKILL");
+          } catch {}
         }
-      `,
-    });
-    const preload = `${dir}/libgive.so`;
-    const { exitCode } = Bun.spawnSync({ cmd: [cc!, "-shared", "-fPIC", "-o", preload, "give.c"], cwd: String(dir) });
-    expect(exitCode).toBe(0);
-    return {
-      extraEnv: { BUN_PRELOAD: preload, GIVE: `${dir}/give` },
-      give: () => writeFileSync(`${dir}/give`, ""),
-      [Symbol.dispose]: () => dir[Symbol.dispose](),
-    };
-  }
-
-  test("Ctrl-Z stops the script too", async () => {
-    using late = lateGive();
-    await withJobUnderShell({ extraEnv: late.extraEnv }, async ({ terminal, waitFor }) => {
-      terminal.write("\x1a");
-      // The line discipline sends the signal before it echoes.
-      await waitFor("^Z");
-      late.give();
-      await waitFor("BUN_STOPPED");
-      await waitFor("RESUMED");
-    });
-  });
-
-  test("a script that reads the terminal gets it", async () => {
-    using late = lateGive();
-    const devScript =
-      `perl -MPOSIX -e '` +
-      `$|=1; ` +
-      `printf "READY %d\\n", getpgrp(); ` +
-      `$line = <STDIN>; print "READ $line"; ` +
-      `sleep 1 while 1'`;
-    await withJobUnderShell(
-      { devScript, extraEnv: late.extraEnv },
-      async ({ terminal, scriptPgid, output, waitFor }) => {
-        // SIGTTIN
-        const deadline = Date.now() + 10_000;
-        const isStopped = () => /\) T /.test(readFileSync(`/proc/${scriptPgid}/stat`, "utf8"));
-        while (!isStopped() && Date.now() < deadline) await sleep(5);
-        expect(isStopped()).toBe(true);
-        late.give();
-        terminal.write("line\n");
-        await waitFor("READ line");
-        expect(output()).not.toContain("BUN_STOPPED");
-      },
-    );
-  });
-});
+      }
+      await proc.exited;
+      proc.terminal?.close();
+    }
+  },
+);
 
 // `bun run --no-orphans dev &` — backgrounded on a TTY — must NOT steal the
 // foreground. bash/zsh leave stdin as the controlling TTY for a backgrounded

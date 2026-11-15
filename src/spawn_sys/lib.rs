@@ -107,8 +107,6 @@ pub mod ffi {
         /// Call after a `SeqCst` store of the PID.
         pub safe fn Bun__sendPendingSignalIfNecessary();
 
-        pub safe fn Bun__forwardSignal(sig: c_int);
-
         /// `kill(2)`. safe: by-value integers only; a bad pid or signal is an errno, never UB. Async-signal-safe.
         #[cfg(unix)]
         pub safe fn kill(pid: pid_t, sig: c_int) -> c_int;

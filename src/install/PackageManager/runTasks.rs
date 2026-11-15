@@ -871,7 +871,6 @@ pub(crate) fn run_tasks(
         let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
             && task.status == Task::Status::Fail;
         if !task.log.msgs.is_empty() && !holds_log {
-            // Propagate the write error (WriteFailed) out of `run_tasks`.
             task.log.print(Output::error_writer())?;
             if task.log.errors > 0 {
                 manager.any_failed_to_install = true;

@@ -227,12 +227,12 @@ describe.concurrent("zlib native handle driven outside the zlib.ts lifecycle", (
        catch (e) { console.log("threw " + e.code + ": " + e.message); }`,
       CLOSED,
     ],
-    // writeSync() before init(): brotli/zstd were handed a null state
-    // pointer, which their C APIs dereference unconditionally.
+    // writeSync() before init(): there is no state to work on yet.
     [
-      "brotli: writeSync() before init() does not dereference a null encoder",
+      "brotli: writeSync() before init() does without a decoder or an encoder",
       `const C = zlib.createBrotliCompress()._handle.constructor;
-       new C(8).writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64); console.log("handled");`,
+       for (const mode of [8, 9]) new C(mode).writeSync(0, null, 0, 0, new Uint8Array(64), 0, 64);
+       console.log("handled");`,
       "handled",
     ],
     [

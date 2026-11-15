@@ -721,6 +721,78 @@ describe("zlib.brotli known answers", () => {
     `);
   });
 
+  it("has the constants", () => {
+    const constants = Object.entries(zlib.constants).filter(([name]) => name.startsWith("BROTLI_"));
+    expect(Object.fromEntries(constants)).toMatchInlineSnapshot(`
+      {
+        "BROTLI_DECODE": 8,
+        "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES": -30,
+        "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP": -25,
+        "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES": -21,
+        "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1": -26,
+        "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2": -27,
+        "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS": -22,
+        "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET": -19,
+        "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1": -9,
+        "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2": -10,
+        "BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH": -17,
+        "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE": -6,
+        "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT": -8,
+        "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY": -12,
+        "BROTLI_DECODER_ERROR_FORMAT_DISTANCE": -16,
+        "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE": -3,
+        "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE": -1,
+        "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE": -7,
+        "BROTLI_DECODER_ERROR_FORMAT_PADDING_1": -14,
+        "BROTLI_DECODER_ERROR_FORMAT_PADDING_2": -15,
+        "BROTLI_DECODER_ERROR_FORMAT_RESERVED": -2,
+        "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET": -4,
+        "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME": -5,
+        "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM": -11,
+        "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS": -13,
+        "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS": -20,
+        "BROTLI_DECODER_ERROR_UNREACHABLE": -31,
+        "BROTLI_DECODER_NEEDS_MORE_INPUT": 2,
+        "BROTLI_DECODER_NEEDS_MORE_OUTPUT": 3,
+        "BROTLI_DECODER_NO_ERROR": 0,
+        "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION": 0,
+        "BROTLI_DECODER_PARAM_LARGE_WINDOW": 1,
+        "BROTLI_DECODER_RESULT_ERROR": 0,
+        "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT": 2,
+        "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT": 3,
+        "BROTLI_DECODER_RESULT_SUCCESS": 1,
+        "BROTLI_DECODER_SUCCESS": 1,
+        "BROTLI_DEFAULT_MODE": 0,
+        "BROTLI_DEFAULT_QUALITY": 11,
+        "BROTLI_DEFAULT_WINDOW": 22,
+        "BROTLI_ENCODE": 9,
+        "BROTLI_LARGE_MAX_WINDOW_BITS": 30,
+        "BROTLI_MAX_INPUT_BLOCK_BITS": 24,
+        "BROTLI_MAX_QUALITY": 11,
+        "BROTLI_MAX_WINDOW_BITS": 24,
+        "BROTLI_MIN_INPUT_BLOCK_BITS": 16,
+        "BROTLI_MIN_QUALITY": 0,
+        "BROTLI_MIN_WINDOW_BITS": 10,
+        "BROTLI_MODE_FONT": 2,
+        "BROTLI_MODE_GENERIC": 0,
+        "BROTLI_MODE_TEXT": 1,
+        "BROTLI_OPERATION_EMIT_METADATA": 3,
+        "BROTLI_OPERATION_FINISH": 2,
+        "BROTLI_OPERATION_FLUSH": 1,
+        "BROTLI_OPERATION_PROCESS": 0,
+        "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING": 4,
+        "BROTLI_PARAM_LARGE_WINDOW": 6,
+        "BROTLI_PARAM_LGBLOCK": 3,
+        "BROTLI_PARAM_LGWIN": 2,
+        "BROTLI_PARAM_MODE": 0,
+        "BROTLI_PARAM_NDIRECT": 8,
+        "BROTLI_PARAM_NPOSTFIX": 7,
+        "BROTLI_PARAM_QUALITY": 1,
+        "BROTLI_PARAM_SIZE_HINT": 5,
+      }
+    `);
+  });
+
   it("compresses short inputs", () => {
     const lengths = [0, 1, 2, 3, 4, 15, 16, 17, 64, 200, 1000, 3000];
     const row = quality => lengths.map(length => roundTrip(text.subarray(0, length), { [QUALITY]: quality }));
@@ -931,6 +1003,13 @@ describe("zlib.brotli known answers", () => {
     expect(drive(zlib.createBrotliDecompress(), [[PROCESS, flushed]], 5)).toEqual(input);
   });
 
+  it.each([0, 1, 5, 11])("fills a chunk to the last byte at quality %d", quality => {
+    const [input, params] = [text.subarray(0, 700), { [QUALITY]: quality }];
+    const compressed = zlib.brotliCompressSync(input, { params });
+    expect(zlib.brotliCompressSync(input, { params, chunkSize: compressed.length })).toEqual(compressed);
+    expect(zlib.brotliDecompressSync(compressed, { chunkSize: input.length })).toEqual(input);
+  });
+
   it("continues another stream", () => {
     const [head, tail] = [text.subarray(0, 5000), text.subarray(5000, 9000)];
     const first = drive(zlib.createBrotliCompress({ params: { [QUALITY]: 5 } }), [[FLUSH, head]], 8192);
@@ -969,6 +1048,42 @@ describe("zlib.brotli known answers", () => {
     expect(() => zlib[create]({ params: { [key]: value } })).toThrow(
       expect.objectContaining({ code: "ERR_ZLIB_INITIALIZATION_FAILED" }),
     );
+  });
+
+  describe("reset()", () => {
+    const input = text.subarray(0, 700);
+    const compressed = zlib.brotliCompressSync(input);
+
+    function resetAfter(engine, written) {
+      engine._handle.onerror = () => {};
+      engine._handle.writeSync(PROCESS, written, 0, written.length, Buffer.alloc(8), 0, 8);
+      engine.reset();
+      return engine;
+    }
+
+    it("makes the encoder forget its input, parameters and dictionary", () => {
+      const engine = zlib.createBrotliCompress({ params: { [QUALITY]: 5, [LGWIN]: 10 }, dictionary: input });
+      expect(drive(resetAfter(engine, samples), [[FINISH, input]], 1024)).toEqual(compressed);
+    });
+
+    it("makes the decoder forget its input", () => {
+      const engine = resetAfter(zlib.createBrotliDecompress(), compressed.subarray(0, 200));
+      expect(drive(engine, [[FINISH, compressed]], 1024)).toEqual(input);
+    });
+
+    it.each([
+      ["parameters", "WINDOW_BITS", { params: { [LARGE_WINDOW]: 1 } }, { params: { [DECODER_LARGE_WINDOW]: 1 } }],
+      ["dictionary", "DICTIONARY", { dictionary: input }, { dictionary: input }],
+    ])("makes the decoder forget its %s", (_, error, forEncoder, forDecoder) => {
+      const engine = resetAfter(zlib.createBrotliDecompress(forDecoder), Buffer.alloc(0));
+      const steps = [[FINISH, zlib.brotliCompressSync(input, forEncoder)]];
+      expect(drive(engine, steps, 1024).code).toBe(`ERR__ERROR_FORMAT_${error}`);
+    });
+
+    it("keeps the error of the decoder", () => {
+      const engine = resetAfter(zlib.createBrotliDecompress(), Buffer.from([0x11]));
+      expect(drive(engine, [[FINISH, compressed]], 1024).code).toBe("ERR__ERROR_FORMAT_WINDOW_BITS");
+    });
   });
 
   it.each([1, 2, 5, 11])("decodes a stream of quality %d in pieces of any size", quality => {

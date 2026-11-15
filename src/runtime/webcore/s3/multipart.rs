@@ -235,24 +235,24 @@ impl MultiPartUpload {
 
     fn notify_writable(&self, flushed: u64) {
         let sink = match self.callback.get() {
-            Some(UploadCallback::Writer(sink)) => sink.as_ptr(),
+            Some(UploadCallback::Writer(sink)) => sink.clone(),
             // After `end()` the stream has nothing left to write.
             Some(UploadCallback::Stream(wrapper))
                 if !self.ended.get()
-                    && let Some(sink) = &wrapper.sink =>
+                    && let Some(sink) = wrapper.sink() =>
             {
-                sink.as_ptr()
+                sink
             }
             _ => return,
         };
-        NetworkSink::on_writable(self, sink, flushed);
+        sink.on_writable(self, flushed);
     }
 
     fn notify_finished(&self, result: S3UploadResult) -> bun_jsc::JsResult<()> {
         bun_removable_features::removable_body_behind_value!(S3Client, {
             match self.callback.take().expect("an upload finishes once") {
-                UploadCallback::Writer(sink) => NetworkSink::on_finished(&sink, self, result),
-                UploadCallback::Stream(wrapper) => S3UploadStreamWrapper::resolve(&wrapper, result),
+                UploadCallback::Writer(sink) => sink.on_finished(self, result),
+                UploadCallback::Stream(wrapper) => wrapper.resolve(result),
             }
         })
     }

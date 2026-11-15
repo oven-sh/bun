@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::strong::{Optional as StrongOptional, StrongCell};
 use bun_jsc::{self as jsc, JSValue, JsCell};
-use bun_ptr::{OptionCellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
 use bun_sys::Error as SysError;
 
 use crate::webcore::streams::{self, BufferAction, IntoArray};
@@ -27,7 +27,7 @@ pub struct ByteStream {
     pub(crate) pending_value: StrongCell,
     pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
-    pub(crate) sink: JsCell<SinkHandle>,
+    pub(crate) sink: Cell<Option<SinkHandle>>,
     /// Set on `Writable::Backpressure` (buffer instead of write); cleared by [`Self::resume`].
     pub(crate) sink_paused: Cell<bool>,
     pub(crate) size_hint: Cell<blob::SizeType>,
@@ -44,7 +44,7 @@ impl Default for ByteStream {
             done: Cell::new(false),
             pending_value: StrongCell::default(),
             high_water_mark: 0,
-            sink: JsCell::new(SinkHandle::None),
+            sink: Cell::new(None),
             sink_paused: Cell::new(false),
             size_hint: Cell::new(0),
             buffer_action: JsCell::new(None),
@@ -181,7 +181,7 @@ impl ProducerHold {
 
     fn sync_root(source: &Source) {
         let bytes = &source.context;
-        if bytes.sink.get().is_some() || bytes.buffer_action.get().is_some() {
+        if bytes.sink.is_some() || bytes.buffer_action.get().is_some() {
             source.root_wrapper();
         } else {
             source.unroot_wrapper();
@@ -219,7 +219,7 @@ impl ProducerHold {
             || bytes.buffer_action.get().is_some()
         {
             AfterDelivery::Resume
-        } else if bytes.sink.get().is_some() {
+        } else if bytes.sink.is_some() {
             AfterDelivery::Pause
         } else {
             AfterDelivery::Park
@@ -410,23 +410,23 @@ impl ByteStream {
         result
     }
 
-    /// Drop the native sink and end the stream locked to it: errored with the producer's `err`, else closed.
-    pub(crate) fn detach_sink(&self, err: Option<&streams::StreamError>) {
-        self.sink_paused.set(false);
-        if self.sink.replace(SinkHandle::None).is_some() {
-            self.parent_const().end_locked_stream(err);
-        }
+    fn sink(&self) -> Option<SinkHandle> {
+        self.sink.with_taken(|sink| sink.clone())
     }
 
-    pub(crate) fn unpipe_without_deref(&self) {
-        self.detach_sink(None);
+    /// Take the native sink and end the stream locked to it: errored with the producer's `err`, else closed.
+    pub(crate) fn detach_sink(&self, err: Option<&streams::StreamError>) -> Option<SinkHandle> {
+        self.sink_paused.set(false);
+        let sink = self.sink.take()?;
+        self.parent_const().end_locked_stream(err);
+        Some(sink)
     }
 
     /// The sink is gone before the stream ended (its peer went away). The stream stays
     /// locked to it, so nobody else can read the rest: close the producer too.
     pub(crate) fn detach_finished_sink(&self) {
         if self.has_received_last_chunk.get() {
-            self.unpipe_without_deref();
+            self.detach_sink(None);
         } else {
             self.cancel_from_sink(None);
         }
@@ -445,12 +445,13 @@ impl ByteStream {
         }
         self.sink_paused.set(false);
 
-        let sink = *self.sink.get();
-        if sink.is_none() {
+        if self.sink.is_none() {
             return;
         }
 
-        if !self.buffered.is_empty() {
+        if !self.buffered.is_empty()
+            && let Some(sink) = self.sink()
+        {
             let buffered = self.buffered.take();
             let result = if self.has_received_last_chunk.get() {
                 streams::Result::OwnedAndDone(buffered)
@@ -487,8 +488,9 @@ impl ByteStream {
             return;
         }
 
-        if self.has_received_last_chunk.get() && self.sink.get().is_some() {
-            self.detach_sink(None);
+        if self.has_received_last_chunk.get()
+            && let Some(sink) = self.detach_sink(None)
+        {
             sink.end(None);
         }
     }
@@ -502,8 +504,7 @@ impl ByteStream {
         self.has_received_last_chunk.set(true);
         self.on_cancel();
         let source = self.parent_const();
-        let mut p = source.producer.replace(streams::SourceHandle::None);
-        p.close(None);
+        source.producer.take().close(None);
     }
 
     #[inline]
@@ -539,13 +540,12 @@ impl ByteStream {
         );
         self.has_received_last_chunk.set(stream.is_done());
 
-        // Snapshot `sink` (Copy): write/end may re-enter ByteStream; no JsCell borrow across that.
-        let sink = *self.sink.get();
-        if sink.is_some() {
+        if self.sink.is_some() {
             // Upstream error must reach the sink even while back-pressured.
             if let streams::Result::Err(err) = stream {
-                self.detach_sink(Some(&err));
-                sink.end(Some(err));
+                if let Some(sink) = self.detach_sink(Some(&err)) {
+                    sink.end(Some(err));
+                }
                 return;
             }
 
@@ -555,7 +555,9 @@ impl ByteStream {
                     .unwrap_or_else(|_| panic!("Out of memory while copying request body"));
                 return;
             }
+        }
 
+        if let Some(sink) = self.sink() {
             let is_done = stream.is_done();
             match sink.write(&stream) {
                 streams::Writable::Backpressure(_) => {
@@ -576,7 +578,7 @@ impl ByteStream {
                 }
             }
 
-            if is_done && !self.sink_paused.get() && self.sink.get().is_some() {
+            if is_done && !self.sink_paused.get() && self.sink.is_some() {
                 self.detach_sink(None);
                 sink.end(None);
             }
@@ -778,9 +780,8 @@ impl ByteStream {
 
     /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
     pub(crate) fn error_native_consumer(&self, reason: JSValue) {
-        let waiting = self.sink.get().is_some()
-            || self.buffer_action.get().is_some()
-            || self.pending.is_pending();
+        let waiting =
+            self.sink.is_some() || self.buffer_action.get().is_some() || self.pending.is_pending();
         self.on_data(streams::Result::Err(if waiting {
             let global = self.parent_const().global_this();
             streams::StreamError::JSValue(StrongOptional::create(reason, global))
@@ -798,9 +799,7 @@ impl ByteStream {
         self.pending_value.clear();
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
-        let sink = *self.sink.get();
-        if sink.is_some() {
-            self.detach_sink(None);
+        if let Some(sink) = self.detach_sink(None) {
             sink.end(Some(streams::StreamError::AbortReason(
                 jsc::CommonAbortReason::UserAbort,
             )));
@@ -844,13 +843,13 @@ impl ByteStream {
 
     /// End the attached sink with the stored producer error. Returns false if none is stored.
     pub(crate) fn end_sink_with_pending_error(&self) -> bool {
-        let sink = *self.sink.get();
-        debug_assert!(sink.is_some());
+        debug_assert!(self.sink.is_some());
         let Some(err) = self.take_pending_error() else {
             return false;
         };
-        self.detach_sink(Some(&err));
-        sink.end(Some(err));
+        if let Some(sink) = self.detach_sink(Some(&err)) {
+            sink.end(Some(err));
+        }
         true
     }
 

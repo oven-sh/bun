@@ -126,6 +126,14 @@ impl From<Option<Strong>> for StrongCell {
     }
 }
 
+impl From<StrongCell> for Optional {
+    fn from(value: StrongCell) -> Optional {
+        Optional {
+            handle: value.0.take().map(OwnedImpl),
+        }
+    }
+}
+
 impl StrongCell {
     /// Still owned by the cell, and no method of `OwnedImpl` runs code that can clear it.
     fn handle(&self) -> Option<ManuallyDrop<OwnedImpl>> {

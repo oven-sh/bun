@@ -1,4 +1,5 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, getMaxFD, isLinux, isMacOS, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
@@ -552,8 +553,6 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// close() takes the sink from the JS object, whose destructor then has none to
-// finalize, so close() itself has to release the object's +1 on the native FileSink.
 it("close() does not leak the native FileSink", async () => {
   const dir = tmpdirSync();
   const baseline = fileSinkInternals.liveCount();
@@ -571,9 +570,43 @@ it("close() does not leak the native FileSink", async () => {
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// close() drops the wrapper's ref, which must not tear down state an
-// in-flight write still needs: clearing `pending` here would drop the
-// backpressure promise's Strong before on_write can settle it.
+it.skipIf(!descriptorsOfProcess).each([
+  ["with no write() pending", 0, "fulfilled"],
+  ["before a write() that failed is settled", 4 * 1024 * 1024, "rejected"],
+])("close() closes the file that start() opened after end(), %s", async (_, size, status) => {
+  using dir = tempDir("filesink-close-after-restart", {});
+  const path = join(String(dir), "restarted.txt");
+  const [readFd, writeFd] = createSocketPair();
+  const sink = Bun.file(writeFd).writer();
+  const written = sink.write(Buffer.alloc(size, 0x61));
+  fs.closeSync(readFd);
+  const settled = Promise.allSettled([written, sink.end()]);
+  fs.closeSync(writeFd);
+  sink.start({ path } as any);
+  expect(openDescriptors(path)).toBe(1);
+  {
+    await using closed = fileDescriptorLeakChecker(path);
+    (sink as any).close();
+  }
+  expect(await settled).toMatchObject([{ status }, { status }]);
+  // Used here, so that it was not a collection that closed the file.
+  expect(() => sink.write("late")).toThrow("already been closed");
+});
+
+it.skipIf(isWindows)("close() frees what was buffered for a child that has exited", async () => {
+  await using child = Bun.spawn({ cmd: ["sleep", "1000"], stdin: "pipe", stdout: "ignore", stderr: "ignore" });
+  const writer = child.stdin;
+  const written = Promise.allSettled([writer.write(Buffer.alloc(4 * 1024 * 1024, 0x61))]);
+  expect(estimateShallowMemoryUsageOf(writer)).toBeGreaterThan(1024 * 1024);
+  child.kill();
+  await child.exited;
+  expect(await written).toMatchObject([{ status: "rejected", reason: { code: "EPIPE" } }]);
+  (writer as any).close();
+  expect(estimateShallowMemoryUsageOf(writer)).toBeLessThan(2048);
+});
+
+// close() must not tear down state an in-flight write still needs: clearing `pending` here would
+// drop the backpressure promise's Strong before on_write can settle it.
 it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
   await using child = Bun.spawn({
     cmd: [bunExe(), "-e", "for await (const _ of process.stdin) {}"],

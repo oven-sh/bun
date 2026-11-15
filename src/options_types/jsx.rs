@@ -290,7 +290,9 @@ impl Pragma {
             pragma.classic_import_source = pragma.package_name.clone();
         }
 
-        pragma.development = jsx.development;
+        if let Some(development) = jsx.development {
+            pragma.development = development;
+        }
         pragma.parse = true;
         pragma
     }

@@ -1547,6 +1547,13 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    /// `transform_options.jsx` is there, and neither it nor `NODE_ENV` says development or production.
+    pub(crate) fn leaves_jsx_development_to_tsconfig(&self) -> bool {
+        self.force_node_env == ForceNodeEnv::Unspecified
+            && !self.production
+            && (self.transform_options.jsx.as_ref()).is_some_and(|jsx| jsx.development.is_none())
+    }
+
     /// Per-worker deep clone — replaces the prior bitwise
     /// `ptr::copy_nonoverlapping` of the parent `Transpiler` (which aliased
     /// every `Box`/`Vec` in here between parent and worker; reassigning any of

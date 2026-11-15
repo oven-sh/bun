@@ -1,6 +1,6 @@
 // @ts-nocheck
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot } from "harness";
 import { join } from "node:path";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
@@ -1101,8 +1101,7 @@ test("removes decorated declare and abstract fields from a class expression", as
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
   // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
   // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
-  // Seven turns take 53 s on one machine and 64 s on another on a debug build, and the child has 60 s.
-  const turns = isDebug ? 2 : 7;
+  const limit = 60_000;
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1130,9 +1129,11 @@ test("lowering many decorated instance fields into a large constructor body stay
           return (user + system) / 1000;
         }
         // The least of several runs, in turns and in time of the processor: what else the machine does can only add.
+        // No new turn once half of the child's time is gone: the child then ends in time wherever one turn does.
+        // Seven turns take about a minute on a debug build.
         const [small, large] = [gen(100), gen(50000)];
         let [tSmall, tLarge] = [Infinity, Infinity];
-        for (let i = 0; i < ${turns}; i++) {
+        for (let i = 0; i < 7 && (i === 0 || performance.now() < ${limit / 2}); i++) {
           tSmall = Math.min(tSmall, time(100, small));
           tLarge = Math.min(tLarge, time(50000, large));
         }
@@ -1142,7 +1143,7 @@ test("lowering many decorated instance fields into a large constructor body stay
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 60_000,
+    timeout: limit,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

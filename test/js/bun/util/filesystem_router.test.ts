@@ -163,6 +163,11 @@ it(".params works on dynamic routes", () => {
   } = router.match("/posts/hello-world")!;
 
   expect(id).toBe("hello-world");
+});
+
+it(".params ignores extra slashes, an encoded slash and a trailing /index", () => {
+  const { dir } = make(["index.tsx", "posts/[id].tsx", "posts.tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
 
   for (const input of ["//posts/1", "///posts/1?a=b", "/%2Fposts/1", "/posts/1/index", "/posts/1//"]) {
     expect({ input, params: router.match(input)!.params }).toEqual({ input, params: { id: "1" } });

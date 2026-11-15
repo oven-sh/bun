@@ -1,9 +1,10 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
+import { totalmem } from "node:os";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
@@ -107,6 +108,32 @@ describe("zlib", () => {
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
 
+  // zlib takes a 32-bit length.
+  describe.skipIf(Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+    "an input of 2**32 bytes",
+    () => {
+      it("gunzipSync reads it", async () => {
+        const script = `const input = new Uint8Array(2 ** 32);
+          input.set(Bun.gzipSync("hello"));
+          // ISIZE, from which gunzipSync sizes its output.
+          input[2 ** 32 - 4] = 5;
+          console.log(Buffer.from(Bun.gunzipSync(input)).toString());`;
+        expect(await bunRun(["-e", script])).toSpawn("hello");
+      });
+
+      // Too slow for debug and ASAN builds.
+      it.skipIf(isDebug || isASAN)(
+        "gzipSync compresses all of it",
+        async () => {
+          const script = `const crc32AndSize = Bun.gzipSync(new Uint8Array(2 ** 32), { level: 3 }).subarray(-8);
+            console.log(crc32AndSize.toHex());`;
+          expect(await bunRun(["-e", script])).toSpawn("8def02d200000000");
+        },
+        90_000,
+      );
+    },
+  );
+
   it("flush() takes a numeric string or a BigInt, and any kind after end()", async () => {
     for (const kind of ["2", 2n]) {
       const gzip = zlib.createGzip();
@@ -124,7 +151,7 @@ describe("zlib", () => {
 
   describe("libdeflate level validation", () => {
     const data = Buffer.alloc(64, "a");
-    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
+    // libdeflate_alloc_compressor_ex returns NULL for level outside [0, 12]; that NULL must
     // surface as an invalid-argument error, not "Out of memory".
     for (const fn of [gzipSync, deflateSync]) {
       it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
@@ -1012,6 +1039,39 @@ describe("async write buffer lifetime", () => {
       deflate.close();
     }
   });
+});
+
+it.each([
+  ["createGzip", "Z_FINISH", "gunzipSync"],
+  ["createBrotliCompress", "BROTLI_OPERATION_FINISH", "brotliDecompressSync"],
+  ["createZstdCompress", "ZSTD_e_end", "zstdDecompressSync"],
+])("%s treats a chunk that was detached while it was queued as empty", async (create, finish, inverse) => {
+  const chunks = [];
+  const compressor = zlib[create]().on("data", chunk => chunks.push(chunk));
+  const queued = Buffer.from(new ArrayBuffer(16));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  compressor.on("error", reject);
+  compressor.write("first");
+  compressor.write(queued);
+  queued.buffer.transfer();
+  compressor.flush(zlib.constants[finish], resolve);
+  await promise;
+  compressor.close();
+  expect(zlib[inverse](Buffer.concat(chunks)).toString()).toBe("first");
+});
+
+it("a stream of a ShadowRealm keeps its async context across a write", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  new ShadowRealm().evaluate(
+    `(report, reject) => {
+       const fail = error => reject(String(error));
+       Promise.all([import("node:zlib"), import("node:async_hooks")]).then(([zlib, hooks]) => {
+         const storage = new hooks.AsyncLocalStorage();
+         storage.run("kept", () => zlib.createGzip().on("error", fail).once("data", () => report(storage.getStore())).end("x"));
+       }).catch(fail);
+     }`,
+  )(resolve, reject);
+  expect(await promise).toBe("kept");
 });
 
 describe("async write pins are released", () => {

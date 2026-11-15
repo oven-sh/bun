@@ -29,17 +29,7 @@ pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
-/// Shared state-machine tag for the streaming (de)compressors in
-/// `bun_brotli` / `bun_zlib` / `bun_zstd`.
-pub mod compress {
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    pub enum State {
-        Uninitialized,
-        Inflating,
-        End,
-        Error,
-    }
-}
+pub mod compress;
 pub mod heap;
 
 pub mod current_work;
@@ -413,7 +403,7 @@ pub mod vec {
     // Consolidates 11 hand-rolled `spare_capacity_mut().as_mut_ptr().cast::<u8>()`
     // + `set_len(len+n)` copies: `spare_capacity_mut` returns
     // `MaybeUninit<u8>` and every C-ABI fill site (simdutf,
-    // zlib, zstd, libdeflate, base64) needs `*mut u8` / `&mut [u8]`.
+    // base64) needs `*mut u8` / `&mut [u8]`.
 
     /// View `v[len..capacity]` as a write-only `&mut [u8]` for an FFI /
     /// syscall producer to fill. Pair with [`commit_spare`] (or use

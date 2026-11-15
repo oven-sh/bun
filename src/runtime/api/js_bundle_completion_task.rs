@@ -1067,7 +1067,7 @@ impl JSBundleCompletionTask {
             transpiler.options.emit_dce_annotations = false;
         }
 
-        transpiler.configure_linker();
+        transpiler.configure_from_tsconfig();
         transpiler.configure_defines()?;
 
         // After configure_defines(): downloading the target reads proxy/TLS settings from the loaded env.

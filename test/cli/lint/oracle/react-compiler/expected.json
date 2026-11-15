@@ -4024,8 +4024,46 @@
   },
   "lowering": {
    "exit": 1,
-   "files": 2,
+   "files": 3,
    "diagnostics": {
+    "callee-in-parentheses.jsx": [
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Cannot access ref value during render",
+        "span": {
+         "column": 4,
+         "length": 11,
+         "line": 10,
+         "offset": 224
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     },
+     {
+      "code": "react(refs)",
+      "help": "React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected",
+      "labels": [
+       {
+        "label": "Passing a ref to a function may read its value during render",
+        "span": {
+         "column": 4,
+         "length": 18,
+         "line": 10,
+         "offset": 224
+        }
+       }
+      ],
+      "message": "Cannot access refs during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/refs",
+      "severity": "error"
+     }
+    ],
     "defaults.tsx": [
      {
       "code": "react(hooks)",

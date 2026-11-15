@@ -4,6 +4,7 @@
 use bun_simd_trusted::{Out, extend_vec, spare_capacity};
 use core::simd::Simd;
 use core::sync::atomic::{AtomicPtr, Ordering::Relaxed};
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 
 fn filled<T: Copy>(len: usize, fill: impl for<'a> FnOnce(Out<'a, T>) -> &'a mut [T]) -> Vec<T> {
     let mut vec = Vec::with_capacity(len);
@@ -86,6 +87,43 @@ fn writer() {
 }
 
 #[test]
+fn extend_with_more_than_one_item() {
+    for (items, room, want) in [(3, 7, 6), (4, 7, 6), (2, 7, 4), (3, 1, 0), (0, 7, 0)] {
+        let got = filled(room, |out| {
+            let mut out = out.into_writer();
+            out.extend_with(0..items, |it| Some([2 * it, 2 * it + 1]));
+            out.finish()
+        });
+        assert_eq!(got, counting(want));
+    }
+}
+
+#[test]
+fn a_panic_adds_nothing() {
+    let mut vec = vec![1];
+    let fill = AssertUnwindSafe(|| {
+        extend_vec(&mut vec, 4, |out| {
+            out.into_writer().push([2, 3]);
+            resume_unwind(Box::new(()))
+        })
+    });
+    assert!(catch_unwind(fill).is_err());
+    assert_eq!(vec, [1]);
+
+    let got = filled(4, |out| {
+        let mut out = out.into_writer();
+        let item = |it| {
+            (it < 2)
+                .then_some([it])
+                .or_else(|| resume_unwind(Box::new(())))
+        };
+        assert!(catch_unwind(AssertUnwindSafe(|| out.extend_with(0.., item))).is_err());
+        out.finish()
+    });
+    assert_eq!(got, [0; 0]);
+}
+
+#[test]
 fn initialized_memory_keeps_the_rest() {
     let mut memory = [7; 4];
     let mut out = Out::from(&mut memory[..]).into_writer();
@@ -154,6 +192,21 @@ fn push_without_room() {
 fn extend_from_slice_without_room() {
     filled(1, |out| {
         out.into_writer().extend_from_slice(&[1, 2]);
+        &mut []
+    });
+}
+
+#[test]
+#[should_panic = "chunk size must be non-zero"]
+fn fill_chunks_of_nothing() {
+    filled(1, |out| out.fill_chunks(&[1], |_, _: &[_; 0]| Some([0; 0])));
+}
+
+#[test]
+#[should_panic = "chunk size must be non-zero"]
+fn extend_with_nothing() {
+    filled(1, |out| {
+        out.into_writer().extend_with([1], |_| Some([0; 0]));
         &mut []
     });
 }

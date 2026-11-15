@@ -1,6 +1,6 @@
 //! Which copy runs, and which items the macros accept.
 #![forbid(unsafe_code)]
-use bun_simd::{Target, limit_to};
+use bun_simd::{Isa, Target, limit_to};
 
 struct Kernel(u8);
 struct AtomicFn(u8);
@@ -35,6 +35,16 @@ mod simd {
     #[export(baseline)]
     pub fn baseline() -> &'static str {
         name()
+    }
+
+    #[export]
+    pub fn properties() -> (usize, [bool; 3]) {
+        let has = [
+            isa::Isa::HAS_MASK_REGISTERS,
+            isa::Isa::HAS_UNSIGNED_COMPARE,
+            isa::Isa::HAS_INTERLEAVED_MEMORY,
+        ];
+        (U8::LEN, has)
     }
 
     struct Table<const N: usize>(isa::Vector<u8, N>);
@@ -120,5 +130,28 @@ fn best_copy_within_the_limit_runs() {
         assert_eq!(got, want, "{limit:?}");
         assert_eq!(simd::all_kinds_of_items(0, |byte| byte * 2), Some(18));
         assert_eq!(simd::names_of_the_macro(Kernel(1), AtomicFn(2)), 3);
+    }
+}
+
+#[test]
+fn best_copy_runs_without_a_limit() {
+    use Target::*;
+    let got = std::thread::spawn(simd::long_running).join().unwrap();
+    let all = [Avx512Icl, Avx512Skx, Avx2, Sse4, Neon, Portable];
+    assert_eq!(got, best(&all, Avx512Icl));
+}
+
+#[test]
+fn portable_copies_take_the_paths_of_the_others() {
+    use Target::*;
+    for target in Target::ALL.into_iter().filter(|it| it.is_supported()) {
+        limit_to(target);
+        let want = match target {
+            Avx512Icl | Avx512Skx | Portable64 => (64, [true, true, false]),
+            Avx2 | Portable32 => (32, [false, false, false]),
+            Sse4 => (16, [false, false, false]),
+            Neon | Portable => (16, [false, true, true]),
+        };
+        assert_eq!(simd::properties(), want, "{target:?}");
     }
 }

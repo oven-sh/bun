@@ -676,13 +676,13 @@ class WASI {
         path: v,
       });
     }
-    // The buffer of the guest's memory when the running hostcall called MEMORY_SIZE().
-    let memoryBuffer: ArrayBuffer;
+    // The buffer that this.view is a view of.
+    let viewBuffer: ArrayBuffer;
     const MEMORY_SIZE = () => {
       const { buffer } = this.memory;
-      if (buffer !== memoryBuffer || !this.view) {
+      if (buffer !== viewBuffer || !this.view) {
         this.refreshMemory();
-        memoryBuffer = buffer;
+        viewBuffer = buffer;
       }
       return buffer.byteLength;
     };
@@ -697,13 +697,14 @@ class WASI {
     const getiovs = (size: number, iovs: number, iovsLen: number) => {
       iovsLen = toU32(iovsLen);
       iovs = CHECK_BOUNDS(size, iovs, iovsLen * SIZE_IOVEC);
-      const { view } = this;
+      const { view, memory } = this;
+      const { buffer } = memory;
 
       if (iovsLen === 1) {
         const buf = view.getUint32(iovs, true);
         const bufLen = view.getUint32(iovs + 4, true);
         CHECK_BOUNDS(size, buf, bufLen);
-        return [new Uint8Array(memoryBuffer, buf, bufLen)];
+        return [new Uint8Array(buffer, buf, bufLen)];
       }
 
       // Avoid referencing Array because materializing the Array constructor can show up in profiling
@@ -714,7 +715,7 @@ class WASI {
         const buf = view.getUint32(ptr, true);
         const bufLen = view.getUint32(ptr + 4, true);
         CHECK_BOUNDS(size, buf, bufLen);
-        buffers[i] = new Uint8Array(memoryBuffer, buf, bufLen);
+        buffers[i] = new Uint8Array(buffer, buf, bufLen);
       }
       return buffers;
     };
@@ -728,7 +729,7 @@ class WASI {
       if (errno) return errno;
       bufPtr >>>= 0;
       tablePtr >>>= 0;
-      const bytes = Buffer.from(memoryBuffer);
+      const bytes = Buffer.from(this.memory.buffer);
       for (const string of strings) {
         this.view.setUint32(tablePtr, bufPtr, true);
         tablePtr += SIZE_U32;
@@ -940,6 +941,8 @@ class WASI {
         bufPtr = CHECK_BOUNDS(MEMORY_SIZE(), bufPtr, SIZE_FILESTAT);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_FILESTAT_GET);
         const rstats = this.fstatSync(stats.real);
+        // fstatSync is a binding of the host, and it may have grown the memory.
+        this.refreshMemory();
         this.view.setBigUint64(bufPtr, BigInt(rstats.dev), true);
         bufPtr += 8;
         this.view.setBigUint64(bufPtr, BigInt(rstats.ino), true);
@@ -1003,7 +1006,7 @@ class WASI {
         pathLen = toU32(pathLen);
         pathPtr = CHECK_BOUNDS(MEMORY_SIZE(), pathPtr, pathLen);
         const stats = CHECK_FD(fd, BigInt(0));
-        Buffer.from(memoryBuffer).write(stats.fakePath ?? stats.path ?? "", pathPtr, pathLen, "utf8");
+        Buffer.from(this.memory.buffer).write(stats.fakePath ?? stats.path ?? "", pathPtr, pathLen, "utf8");
         return WASI_ESUCCESS;
       }),
       fd_pwrite: wrap((fd: number, iovs: number, iovsLen: number, offset: bigint, nwritten: number) => {
@@ -1145,7 +1148,7 @@ class WASI {
         bufusedPtr = CHECK_BOUNDS(size, bufusedPtr, SIZE_U32);
         const stats = CHECK_FD(fd, WASI_RIGHT_FD_READDIR);
         const entries = fs.readdirSync(stats.path, { withFileTypes: true });
-        const bytes = Buffer.from(memoryBuffer);
+        const bytes = Buffer.from(this.memory.buffer);
         const startPtr = bufPtr;
         const endPtr = bufPtr + bufLen;
         for (let i = Number(cookie); i < entries.length; i += 1) {
@@ -1249,7 +1252,7 @@ class WASI {
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.mkdirSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
@@ -1262,7 +1265,7 @@ class WASI {
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         const resolved = RESOLVE_PATH(stats, p);
         let rstats: $Node.Stats;
         if (flags) {
@@ -1325,7 +1328,7 @@ class WASI {
           } else if ((fstflags & WASI_FILESTAT_SET_MTIM_NOW) === WASI_FILESTAT_SET_MTIM_NOW) {
             mtim = n;
           }
-          const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+          const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
           fs.utimesSync(RESOLVE_PATH(stats, p), new Date(atim), new Date(mtim));
           return WASI_ESUCCESS;
         },
@@ -1350,8 +1353,8 @@ class WASI {
           if (!ostats.path || !nstats.path) {
             return WASI_EINVAL;
           }
-          const op: string = Buffer.from(memoryBuffer, oldPath, oldPathLen).toString();
-          const np: string = Buffer.from(memoryBuffer, newPath, newPathLen).toString();
+          const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+          const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
           fs.linkSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
           return WASI_ESUCCESS;
         },
@@ -1431,7 +1434,7 @@ class WASI {
             if (write && (noflags & (nodeFsConstants.O_APPEND | nodeFsConstants.O_TRUNC)) === 0) {
               neededInheriting |= WASI_RIGHT_FD_SEEK;
             }
-            const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+            const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
             if (p == "dev/tty") {
               this.view.setUint32(fdPtr, WASI_STDIN_FILENO, true);
               return WASI_ESUCCESS;
@@ -1539,10 +1542,10 @@ class WASI {
           if (!stats.path) {
             return WASI_EINVAL;
           }
-          const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+          const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
           const full = RESOLVE_PATH(stats, p);
           const r = fs.readlinkSync(full);
-          const used = Buffer.from(memoryBuffer).write(r, buf, bufLen);
+          const used = Buffer.from(this.memory.buffer).write(r, buf, bufLen);
           this.view.setUint32(bufused, used, true);
           return WASI_ESUCCESS;
         },
@@ -1554,7 +1557,7 @@ class WASI {
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.rmdirSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
@@ -1570,8 +1573,8 @@ class WASI {
           if (!ostats.path || !nstats.path) {
             return WASI_EINVAL;
           }
-          const op: string = Buffer.from(memoryBuffer, oldPath, oldPathLen).toString();
-          const np: string = Buffer.from(memoryBuffer, newPath, newPathLen).toString();
+          const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+          const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
           fs.renameSync(RESOLVE_PATH(ostats, op), RESOLVE_PATH(nstats, np));
           return WASI_ESUCCESS;
         },
@@ -1586,8 +1589,8 @@ class WASI {
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        const op: string = Buffer.from(memoryBuffer, oldPath, oldPathLen).toString();
-        const np: string = Buffer.from(memoryBuffer, newPath, newPathLen).toString();
+        const op: string = Buffer.from(this.memory.buffer, oldPath, oldPathLen).toString();
+        const np: string = Buffer.from(this.memory.buffer, newPath, newPathLen).toString();
         fs.symlinkSync(op, RESOLVE_PATH(stats, np));
         return WASI_ESUCCESS;
       }),
@@ -1598,7 +1601,7 @@ class WASI {
         if (!stats.path) {
           return WASI_EINVAL;
         }
-        const p: string = Buffer.from(memoryBuffer, pathPtr, pathLen).toString();
+        const p: string = Buffer.from(this.memory.buffer, pathPtr, pathLen).toString();
         fs.unlinkSync(RESOLVE_PATH(stats, p));
         return WASI_ESUCCESS;
       }),
@@ -1732,7 +1735,7 @@ class WASI {
         // getRandomValues takes one integer-typed view and ignores any further
         // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
         // memory rather than the requested window.
-        crypto.getRandomValues(new Uint8Array(memoryBuffer, bufPtr, bufLen));
+        crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
         return WASI_ESUCCESS;
       },
       sched_yield() {

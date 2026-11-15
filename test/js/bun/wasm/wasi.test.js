@@ -337,6 +337,47 @@ it("a hostcall sees the memory the guest has now: after it grows, and after anot
   expect(inSecondPage(other)).toEqual(inBounds);
 });
 
+it("a hostcall follows a memory that the fstatSync of the host's fs grows while it runs", () => {
+  using dir = tempDir("wasi-binding-grows", { "file.txt": "0123456789" });
+  const memory = new WebAssembly.Memory({ initial: 1, maximum: 3 });
+  const { bindings } = new WASI({});
+  let grow = false;
+  const fstatSync = (...args) => {
+    if (grow) memory.grow(1);
+    grow = false;
+    return bindings.fs.fstatSync(...args);
+  };
+  const wasi = new WASI({
+    preopens: { "/sandbox": String(dir) },
+    bindings: { ...bindings, fs: { ...bindings.fs, fstatSync } },
+  });
+  wasi.setMemory(memory);
+  Buffer.from(memory.buffer).write("file.txt", BUF);
+
+  // The two hostcalls that reach guest memory after they call fstatSync.
+  const answers = [];
+  for (const hostcall of [
+    () => wasi.wasiImport.fd_filestat_get(DIR, OUT),
+    () => wasi.wasiImport.path_filestat_set_times(DIR, 0, BUF, "file.txt".length, ZERO, ZERO, 0),
+  ]) {
+    grow = true;
+    answers.push([hostcall(), grow]);
+  }
+  const WASI_FILETYPE_DIRECTORY = 3;
+  expect({
+    answers,
+    pages: memory.buffer.byteLength / END,
+    filetype: new DataView(memory.buffer).getUint8(OUT + 16),
+  }).toEqual({
+    answers: [
+      [0, false],
+      [0, false],
+    ],
+    pages: 3,
+    filetype: WASI_FILETYPE_DIRECTORY,
+  });
+});
+
 it("a pointer or a count of 2 GiB or more names the same memory, as a negative number or not", () => {
   using dir = tempDir("wasi-above-2gib", {});
   const pages = 32768 + 1;

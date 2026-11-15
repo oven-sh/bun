@@ -129,7 +129,7 @@ impl JavaScript {
         // scopeguard cannot capture &mut temp_log while it's used below;
         // explicit `append_to` calls at each exit.
 
-        let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
+        let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
             Ok(p) => p,
             Err(_) => {
                 temp_log.append_to(log);
@@ -138,7 +138,6 @@ impl JavaScript {
         };
 
         let res = parser.scan_imports(scan_pass_result);
-        drop(parser);
         temp_log.append_to(log);
         res.map_err(Into::into)
     }

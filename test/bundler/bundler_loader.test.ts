@@ -750,4 +750,93 @@ describe("bundler", async () => {
       },
     });
   });
+
+  // In the dev server's module format each file is a closure. A browser runs a
+  // hot update as a classic script, so the closure of a client file with ES
+  // module semantics must carry its own "use strict".
+  describe("internal_bake_dev strict closures", () => {
+    const files = {
+      "/entry.ts": /* js */ `
+        import { x } from "./esm";
+        import "./no-module-syntax.js";
+        import topLevelAwait from "./top-level-await";
+        import "./import-meta-only";
+        import "./hot-and-require.js";
+        import viaModuleExports from "./import-and-module-exports.js";
+        import a from "./directive.cjs";
+        import b from "./no-directive.cjs";
+        import { helper } from "./tsc-output.cjs";
+        import data from "./data.json";
+        console.log(x, topLevelAwait, viaModuleExports, a, b, helper, data);
+      `,
+      "/esm.ts": `export const x = 1;`,
+      "/no-module-syntax.js": `console.log("no module syntax");`,
+      "/top-level-await.ts": `export default await Promise.resolve(1);`,
+      "/import-meta-only.ts": `if (import.meta.hot) import.meta.hot.accept();`,
+      "/hot-and-require.js": `import.meta.hot.accept(); console.log(require("./no-directive.cjs"));`,
+      "/import-and-module-exports.js": `import { x } from "./esm"; module.exports = x;`,
+      "/directive.cjs": `"use strict"; module.exports = 1;`,
+      "/no-directive.cjs": `module.exports = 2;`,
+      "/tsc-output.cjs": `"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.helper = void 0;
+var helper_1 = require("./no-directive.cjs");
+Object.defineProperty(exports, "helper", { enumerable: true, get: function () { return helper_1; } });
+`,
+      "/data.json": `{"a": 1}`,
+    };
+
+    /** Which printed form each module has, and the first statement of its closure. */
+    function closures(output: string) {
+      const result: Record<string, [form: "ES module" | "CommonJS", firstStatement: string]> = {};
+      for (const match of output.matchAll(/^  "([^"\n]+)"(\(|: \[)/gm)) {
+        const open = output.indexOf("{\n", match.index);
+        const firstStatement = output.slice(open + 2, output.indexOf("\n", open + 2)).trim();
+        result[match[1]] = [match[2] === "(" ? "CommonJS" : "ES module", firstStatement];
+      }
+      return result;
+    }
+
+    itBundled("bake-dev/strict-closures-browser", {
+      format: "internal_bake_dev",
+      target: "browser",
+      files,
+      onAfterBundle(api) {
+        const directive = `"use strict";`;
+        expect(closures(api.readFile("/out.js"))).toEqual({
+          "entry.ts": ["ES module", directive],
+          "esm.ts": ["ES module", directive],
+          "no-module-syntax.js": ["ES module", directive],
+          "top-level-await.ts": ["ES module", directive],
+          "import-meta-only.ts": ["ES module", directive],
+          // ES module syntax in a file that is printed as CommonJS.
+          "hot-and-require.js": ["CommonJS", directive],
+          "import-and-module-exports.js": ["CommonJS", directive],
+          // A CommonJS file stays as it is, with or without its own directive.
+          "directive.cjs": ["CommonJS", "module.exports = 1;"],
+          "no-directive.cjs": ["CommonJS", "module.exports = 2;"],
+          "tsc-output.cjs": ["CommonJS", `Object.defineProperty(exports, "__esModule", { value: true });`],
+          "data.json": ["CommonJS", "module.exports = { a: 1 };"],
+        });
+      },
+    });
+
+    // A server chunk that fails to parse ends the dev server process.
+    for (const target of ["bun", "node"] as const) {
+      itBundled(`bake-dev/strict-closures-${target}`, {
+        format: "internal_bake_dev",
+        target,
+        files,
+        onAfterBundle(api) {
+          const output = api.readFile("/out.js");
+          expect(Object.keys(closures(output)).sort()).toEqual(
+            Object.keys(files)
+              .map(file => file.slice(1))
+              .sort(),
+          );
+          expect(output).not.toContain(`"use strict"`);
+        },
+      });
+    }
+  });
 });

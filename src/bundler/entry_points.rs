@@ -7,7 +7,6 @@ use bun_core::strings;
 use bun_paths::MAX_PATH_BYTES;
 use bun_wyhash::{self, Wyhash11};
 
-use crate::Transpiler;
 use bun_js_parser as js_ast;
 
 // `Path`/`PathName` come from the lower-tier `bun_paths::fs` shim
@@ -38,7 +37,7 @@ pub struct ServerEntryPoint {
 
 impl ServerEntryPoint {
     pub fn generate(
-        entry: &mut ServerEntryPoint,
+        &mut self,
         is_hot_reload_enabled: bool,
         path_to_use: &[u8],
     ) -> crate::Result<()> {
@@ -116,8 +115,8 @@ impl ServerEntryPoint {
         // Free the previous buffer on regenerate (hot reload) instead of
         // leaking it. `contents` is either "" or a previously generated buffer.
         // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
-        entry.contents = code.into_boxed_slice();
-        entry.generated = true;
+        self.contents = code.into_boxed_slice();
+        self.generated = true;
         Ok(())
     }
 }
@@ -193,7 +192,6 @@ impl MacroEntryPoint {
 
     pub fn generate(
         entry: &mut MacroEntryPoint,
-        _: &mut Transpiler,
         import_path: &Fs::PathName,
         function_name: &[u8],
         macro_id: i32,

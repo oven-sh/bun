@@ -32,9 +32,7 @@ impl Cd {
         }
 
         if args.is_empty() {
-            let home_str = Builtin::shell(interp, cmd).get_homedir();
-            let home = home_str.slice().to_vec();
-            home_str.deref();
+            let home = Builtin::shell(interp, cmd).get_homedir().to_vec();
             if home.is_empty() {
                 return Self::write_stderr_non_blocking(
                     interp,
@@ -42,7 +40,7 @@ impl Cd {
                     format_args!("HOME not set\n"),
                 );
             }
-            if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&home) {
+            if let Err(err) = interp.as_cmd_mut(cmd).shell.change_cwd(&home) {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &home);
             }
             return Builtin::done(interp, cmd, 0);
@@ -51,12 +49,12 @@ impl Cd {
         let first_arg = Builtin::of(interp, cmd).arg_bytes(0);
         if first_arg == b"-" {
             let prev = Builtin::shell(interp, cmd).prev_cwd().to_vec();
-            if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_prev_cwd() {
+            if let Err(err) = interp.as_cmd_mut(cmd).shell.change_prev_cwd() {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &prev);
             }
         } else {
             let target = first_arg.to_vec();
-            if let Err(err) = interp.as_cmd_mut(cmd).base.shell_mut().change_cwd(&target) {
+            if let Err(err) = interp.as_cmd_mut(cmd).shell.change_cwd(&target) {
                 return Self::handle_change_cwd_err(interp, cmd, &err, &target);
             }
         }

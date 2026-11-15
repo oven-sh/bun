@@ -257,8 +257,8 @@ test("fetch() compress option does not leak bodies or compressor state", async (
   //  - the custom-level path (allocates a temporary libdeflate compressor that
   //    must be freed each call)
   //  - a small body (HTTP-thread LibdeflateState shared_buffer fast path)
-  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed in
-  //    on_async_http_callback_raw)
+  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed
+  //    with the request)
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,
@@ -540,16 +540,19 @@ test.concurrent(
       // and the lazy Blob body is never read, so no fs I/O happens.
       await fetch(prefix + i + pad);
     }
-    for (let i = 0; i < 200; i++) { try { await hit(-i); } catch {} }
-    Bun.gc(true);
+    async function hits(from, to) {
+      for (let i = from; i < to; i++) {
+        try { await hit(i); } catch {}
+        if ((i & 1023) === 0) Bun.gc(true);
+      }
+      Bun.gc(true);
+    }
+    // The memory of the process grows by up to 25 MiB (ASAN) until it can hold what two collections have between them.
+    await hits(-10000, 0);
     const baseline = rss();
 
     const ITERS = 20000;
-    for (let i = 0; i < ITERS; i++) {
-      try { await hit(i); } catch {}
-      if ((i & 1023) === 0) Bun.gc(true);
-    }
-    Bun.gc(true);
+    await hits(0, ITERS);
     const final = rss();
 
     const deltaMB = (final - baseline) / 1024 / 1024;
@@ -559,8 +562,8 @@ test.concurrent(
       deltaMB: Math.round(deltaMB * 10) / 10,
     }));
     // ~0.9 KiB × 20000 ≈ 18 MiB raw leak (measured ~32 MiB on debug+ASAN)
-    // when the extra ref is dropped on the floor; ~12 MiB noise with the fix.
-    if (deltaMB > 20) {
+    // when the extra ref is dropped on the floor; at most 4 MiB noise with the fix.
+    if (deltaMB > 10) {
       throw new Error("fetch(file://) leaked " + deltaMB.toFixed(1) + " MB over " + ITERS + " iterations");
     }
   `;
@@ -825,8 +828,41 @@ test(
   isASAN ? 30_000 : 5_000,
 );
 
-// The Response's abort listener takes a +1 on the AbortSignal; Response::destroy
-// must release it. Run in a subprocess so heapStats is not polluted by the
+test.concurrent("a body taken from under a pending text() unroots its promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { heapStats } = require("bun:jsc");
+      const server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({ start: c => c.enqueue(new Uint8Array(1)) })),
+      });
+      const rooted = () => heapStats().protectedObjectTypeCounts.Promise ?? 0;
+      async function once() {
+        const response = await fetch(server.url);
+        response.text();
+        await Bun.$\`\${process.execPath} --version < \${response}\`.quiet();
+      }
+      await once();
+      const before = rooted();
+      for (let i = 0; i < 4; i++) await once();
+      console.log(rooted() - before);
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("0\n");
+  expect(exitCode).toBe(0);
+});
+
+// The Response's abort listener takes a +1 on the AbortSignal; dropping the
+// Response must release it. Run in a subprocess so heapStats is not polluted by the
 // suite's other concurrent tests, and so the destruct-on-exit teardown of a
 // timeout signal with the listener still attached is exercised.
 // https://github.com/oven-sh/bun/issues/32659
@@ -1100,3 +1136,42 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
     server.close();
   }
 }, 60000);
+
+test.concurrent("a read that replaces a pending read unroots its promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { heapStats } = require("bun:jsc");
+      const { Readable } = require("node:stream");
+      const server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(new ReadableStream({ start: c => c.enqueue(new Uint8Array(1)) })),
+      });
+      const rooted = () => heapStats().protectedObjectTypeCounts.Promise ?? 0;
+      async function once() {
+        const { body } = await fetch(server.url);
+        const reader = body.getReader();
+        await reader.read();
+        reader.read().catch(() => {});
+        reader.releaseLock();
+        const readable = Readable.fromWeb(body).on("error", () => {}).resume();
+        await new Promise(setImmediate);
+        await new Promise(resolve => readable.on("close", resolve).destroy());
+      }
+      await once();
+      const before = rooted();
+      for (let i = 0; i < 4; i++) await once();
+      console.log(rooted() - before);
+      process.exit(0);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("0\n");
+  expect(exitCode).toBe(0);
+});

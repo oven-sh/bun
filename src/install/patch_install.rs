@@ -29,9 +29,7 @@ pub struct PatchTask {
     /// is held via raw pointer through the intrusive thread-pool queue while
     /// the manager is concurrently borrowed `&mut` on the main thread; a `&`
     /// reference here would alias that exclusive borrow under Stacked Borrows.
-    /// Constructed via `BackRef::new_mut` so the underlying pointer carries
-    /// write provenance for `PackageManager::wake_raw(*mut Self)`, which
-    /// writes the event-loop wake flag.
+    /// `Mut` because `PackageManager::wake_raw` takes `*mut Self`.
     pub(crate) manager: bun_ptr::BackRef<PackageManager, bun_ptr::Mut>,
     /// Borrowed view of the manager's temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
@@ -301,9 +299,7 @@ impl PatchTask {
                 format_args!("{}", BStr::new(&apply.patchfilepath)),
             );
         }
-        let _ = apply
-            .logger
-            .print(std::ptr::from_mut(Output::error_writer()));
+        let _ = apply.logger.print(Output::error_writer());
     }
 
     fn run_from_main_thread_calc_hash(
@@ -336,9 +332,7 @@ impl PatchTask {
             None => {
                 if log_level != LogLevel::Silent {
                     if calc_hash.logger.has_errors() {
-                        let _ = calc_hash
-                            .logger
-                            .print(std::ptr::from_mut(Output::error_writer()));
+                        let _ = calc_hash.logger.print(Output::error_writer());
                     } else {
                         Output::err_generic(
                             "Failed to calculate hash for patch <b>{}<r>",
@@ -559,7 +553,7 @@ impl PatchTask {
                 sys::O::RDONLY | sys::O::DIRECTORY,
                 0,
             ) {
-                sys::Result::Ok(fd) => fd,
+                sys::Result::Ok(fd) => sys::Dir::from_fd(fd),
                 sys::Result::Err(e) => {
                     log.add_sys_error(
                         &e,
@@ -571,10 +565,9 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-            let _close_guard = sys::CloseOnDrop::new(patch_pkg_dir);
 
             // 4. apply patch
-            if let Err(e) = patchfile.apply(patch_pkg_dir) {
+            if let Err(e) = patchfile.apply(patch_pkg_dir.fd()) {
                 log.add_error_fmt_opts(
                     format_args!("failed applying patch file: {}", e),
                     Default::default(),
@@ -586,7 +579,7 @@ impl PatchTask {
             let mut buntagbuf = crate::BuntagHashBuf::default();
             let len = crate::buntaghashbuf_make(&mut buntagbuf, patch.patch_hash).len();
             let buntag_zstr = ZStr::from_buf(&buntagbuf, len);
-            if let Err(e) = sys::File::write_file(patch_pkg_dir, buntag_zstr, b"") {
+            if let Err(e) = sys::File::write_file(&patch_pkg_dir, buntag_zstr, b"") {
                 log.add_error_fmt_opts(
                     format_args!(
                         "failed adding bun tag: {}",
@@ -775,8 +768,6 @@ impl PatchTask {
         let patch_hash_idx = strings::index_of(cache_dir_subpath_bytes, b"_patch_hash=")
             .unwrap_or_else(|| panic!("This is a bug in Bun."));
 
-        // need to dupe this as it's calculated using
-        // `PackageManager.cached_package_folder_name_buf` which may be modified
         let cache_dir_subpath = ZBox::from_bytes(cache_dir_subpath_bytes);
         let cache_dir_subpath_without_patch_hash =
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);

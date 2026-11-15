@@ -109,9 +109,6 @@ pub trait CompletionStruct: Node + Send + 'static {
         &mut self,
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
-        // Raw `*mut` (not `&'static`) because `BundleV2::init` ultimately
-        // stores it as `worker_pool: *mut ThreadPool` and `WorkPool::get()`
-        // hands out `&'static`; materializing `&mut` from that would be UB.
         thread_pool: *mut bun_threading::ThreadPool,
     ) -> Result<(), crate::Error>;
 }
@@ -290,16 +287,13 @@ impl<C: CompletionStruct> BundleThread<C> {
             // SAFETY: `transpiler` lives in `bump` for the duration of `heap`.
             unsafe { &mut *transpiler_ptr },
             bump,
-            // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
-            // the impl can hand it to `BundleV2::init` (which stores `*mut`).
             std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
         );
 
         // Straight-line teardown: log copy
         // runs on both paths; `completeOnBundleThread` only on success (the error
         // path's `set_result(Err)` + complete happens in `thread_main`). The
-        // `deinit_without_freeing_arena` call lives inside `init_and_run`
-        // (it owns `this`).
+        // bundle itself drops inside `init_and_run`.
         let mut out_log = bun_ast::Log::init();
         // SAFETY: `transpiler.log` is the arena-allocated `*mut Log` set up by
         // `configure_bundler`; valid for the lifetime of `heap`. Raw deref so the
@@ -326,8 +320,8 @@ impl<C: CompletionStruct> BundleThread<C> {
         //
         // SAFETY: both pointers are the unique `&'a mut` slots returned by
         // `bump.alloc(...)` above; nothing else holds a reference to either
-        // past `init_and_run` (`set_transpiler` was cleared by
-        // `deinit_without_freeing_arena`, `pop()` restored the AST-allocator
+        // past `init_and_run` (the bundle has dropped,
+        // `pop()` restored the AST-allocator
         // thread-local). The arena bytes themselves are bulk-freed afterwards
         // by `heap`'s `Drop` — `drop_in_place` only releases the *embedded
         // global-heap* state, so there is no double free.

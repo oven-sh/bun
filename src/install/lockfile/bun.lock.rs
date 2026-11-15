@@ -206,7 +206,7 @@ impl Stringifier {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_metas: &[Meta] = pkgs.items_meta();
 
@@ -276,7 +276,7 @@ impl Stringifier {
         let extern_strings = lockfile.buffers.extern_strings.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_dep_lists: &[DependencySlice] = pkgs.items_dependencies();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
         let pkg_names: &[String] = pkgs.items_name();
@@ -2457,9 +2457,7 @@ pub(crate) fn parse_into_binary_lockfile(
                 if registry_str.is_empty() {
                     let url = ExtractTarball::build_url(
                         configured_registry,
-                        &strings::StringOrTinyString::init(
-                            name.slice(lockfile.buffers.string_bytes.as_slice()),
-                        ),
+                        name.slice(lockfile.buffers.string_bytes.as_slice()),
                         res.npm().version,
                         lockfile.buffers.string_bytes.as_slice(),
                     )?;
@@ -2485,7 +2483,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         continue;
                     }
 
-                    let pkgs = lockfile.packages.slice();
+                    let pkgs = &lockfile.packages;
                     let pkg_resolutions = pkgs.items_resolution();
                     let string_buf = lockfile.buffers.string_bytes.as_slice();
 
@@ -2765,7 +2763,7 @@ pub(crate) fn parse_into_binary_lockfile(
         lockfile.buffers.resolutions =
             vec![invalid_package_id; lockfile.buffers.dependencies.len()];
 
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_deps = pkgs.items_dependencies();
         let pkg_names = pkgs.items_name();
         let pkg_name_hashes = pkgs.items_name_hash();

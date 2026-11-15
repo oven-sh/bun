@@ -100,7 +100,7 @@ use core::ptr;
 
 use crate::Ordinal;
 use bun_collections::VecExt as _;
-use bun_core::MutableString;
+use bun_core::{MutableString, Unaligned};
 
 use crate::vlq::decode as vlq_decode;
 use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer};
@@ -108,28 +108,42 @@ use crate::{LineColumnOffset, Mapping, SourceMapState, append_mapping_to_buffer}
 /// A sync entry is emitted every `SYNC_INTERVAL` mappings.
 pub(crate) const SYNC_INTERVAL: usize = 64;
 
-pub const HEADER_SIZE: usize = 32;
+const HEADER_SIZE: usize = size_of::<Header>();
 
 /// Trailing zero byte in the blob layout. The reader is bounds-checked and doesn't need it.
 const STREAM_TAIL_PAD: usize = 1;
 
-/// The blob is stored in the SavedSourceMap table as a tagged pointer to its
-/// first byte. This struct is a thin view over that pointer; it owns no
-/// separate allocation.
+/// A view of a blob.
 #[derive(Copy, Clone)]
-pub struct InternalSourceMap {
-    pub data: *const u8,
+pub struct InternalSourceMap<'a> {
+    mapping_count: u64,
+    object_brace_count: u32,
+    sync_entries: &'a [Unaligned<SyncEntry>],
+    stream: &'a [u8],
 }
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct SyncEntry {
-    pub(crate) generated_line: i32,
-    pub(crate) generated_column: i32,
-    pub(crate) byte_offset: u32,
-    pub(crate) original_line: i32,
-    pub(crate) original_column: i32,
-    pub(crate) source_index: i32,
+struct Header {
+    total_len: u64,
+    mapping_count: u64,
+    unused: u32,
+    object_brace_count: u32,
+    sync_count: u32,
+    stream_offset: u32,
+}
+
+const _: () = assert!(HEADER_SIZE == 32);
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+struct SyncEntry {
+    generated_line: i32,
+    generated_column: i32,
+    byte_offset: u32,
+    original_line: i32,
+    original_column: i32,
+    source_index: i32,
 }
 
 const _: () = assert!(size_of::<SyncEntry>() == 24);
@@ -144,6 +158,7 @@ pub struct ObjectBrace {
 
 const _: () = assert!(size_of::<ObjectBrace>() == 16);
 
+bun_core::impl_any_bit_pattern!(Header);
 bun_core::impl_pod!(SyncEntry, ObjectBrace);
 
 impl SyncEntry {
@@ -164,139 +179,40 @@ impl SyncEntry {
     }
 }
 
-impl InternalSourceMap {
-    #[inline]
-    pub(crate) fn total_len(self) -> usize {
-        // SAFETY: blob is at least HEADER_SIZE bytes (validated by is_valid_blob / producer).
-        unsafe { u64::from_ne_bytes(*self.data.cast::<[u8; 8]>()) as usize }
+impl<'a> InternalSourceMap<'a> {
+    /// `None` if the header disagrees with the length. `WindowReader` bounds-checks the rest.
+    pub fn new(blob: &'a [u8]) -> Option<Self> {
+        let header: Header = bun_core::read_prefix(blob)?;
+        let sync_end = HEADER_SIZE + header.sync_count as usize * size_of::<SyncEntry>();
+        let stream_offset = header.stream_offset as usize;
+        if header.total_len != blob.len() as u64
+            || stream_offset < sync_end
+            || blob.len() < stream_offset + STREAM_TAIL_PAD
+        {
+            return None;
+        }
+        Some(InternalSourceMap {
+            mapping_count: header.mapping_count,
+            object_brace_count: header.object_brace_count,
+            sync_entries: Unaligned::slice_of(&blob[HEADER_SIZE..sync_end]),
+            stream: &blob[stream_offset..],
+        })
     }
 
-    #[inline]
     pub fn mapping_count(self) -> usize {
-        // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u64::from_ne_bytes(*self.data.add(8).cast::<[u8; 8]>()) as usize }
+        self.mapping_count as usize
     }
 
-    #[inline]
-    pub(crate) fn sync_count(self) -> u32 {
-        // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(24).cast::<[u8; 4]>()) }
-    }
-
-    #[inline]
-    pub(crate) fn stream_offset(self) -> u32 {
-        // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(28).cast::<[u8; 4]>()) }
-    }
-
-    pub(crate) fn sync_entry(self, index: usize) -> SyncEntry {
-        let off = HEADER_SIZE + index * size_of::<SyncEntry>();
-        // SAFETY: index < sync_count, sync entries are laid out contiguously
-        // starting at HEADER_SIZE; blob layout is byte-addressed (no alignment
-        // assumed) so we read unaligned.
-        unsafe { ptr::read_unaligned(self.data.add(off).cast::<SyncEntry>()) }
-    }
-
-    #[inline]
-    fn object_brace_count(self) -> u32 {
-        // SAFETY: blob is at least HEADER_SIZE bytes.
-        unsafe { u32::from_ne_bytes(*self.data.add(20).cast::<[u8; 4]>()) }
-    }
-
-    fn object_braces(&self) -> &[[u8; size_of::<ObjectBrace>()]] {
-        let stream = self.stream();
-        let len = self.object_brace_count() as usize * size_of::<ObjectBrace>();
-        match stream.len().checked_sub(len + STREAM_TAIL_PAD) {
-            Some(start) => stream[start..][..len].as_chunks().0,
+    fn object_braces(self) -> &'a [Unaligned<ObjectBrace>] {
+        let len = self.object_brace_count as usize * size_of::<ObjectBrace>();
+        match self.stream.len().checked_sub(len + STREAM_TAIL_PAD) {
+            Some(start) => Unaligned::slice_of(&self.stream[start..][..len]),
             None => &[],
         }
     }
-
-    #[inline]
-    pub(crate) fn stream(&self) -> &[u8] {
-        // The slice borrows `self` (a Copy view over the blob); the blob
-        // outlives every view by construction, so tying the slice to the view
-        // borrow is conservative.
-        // SAFETY: stream_offset..total_len is within the blob (validated by
-        // is_valid_blob / producer).
-        unsafe {
-            core::slice::from_raw_parts(
-                self.data.add(self.stream_offset() as usize),
-                self.total_len() - self.stream_offset() as usize,
-            )
-        }
-    }
-
-    /// Only call this when the blob was heap-allocated by `Builder`/`from_vlq` (e.g.
-    /// entries in `SavedSourceMap`). Do NOT call on views over the standalone
-    /// module graph section or any other borrowed memory.
-    // Intentionally NOT `impl Drop`: `InternalSourceMap` is a Copy view and
-    // may borrow non-owned memory (e.g. the standalone module graph section),
-    // so ownership is the caller's responsibility here.
-    pub fn free_owned(self) {
-        // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
-        // the global allocator with this exact length.
-        unsafe {
-            drop(Box::<[u8]>::from_raw(std::ptr::slice_from_raw_parts_mut(
-                self.data.cast_mut(),
-                self.total_len(),
-            )));
-        }
-    }
-
-    pub(crate) fn memory_cost(self) -> usize {
-        self.total_len()
-    }
-
-    /// Sanity-check a blob's outer header against its actual length. See the
-    /// module-level [`is_valid_blob`] for details.
-    ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::is_valid_blob(..)`.
-    #[inline]
-    pub fn is_valid_blob(blob: &[u8]) -> bool {
-        is_valid_blob(blob)
-    }
-
-    /// Decode a standard VLQ "mappings" string and re-encode it as an
-    /// `InternalSourceMap` blob. See the module-level [`from_vlq`] for details.
-    ///
-    /// Associated-fn alias so callers can write `InternalSourceMap::from_vlq(..)`.
-    #[inline]
-    pub fn from_vlq(vlq: &[u8]) -> Result<Box<[u8]>, FromVlqError> {
-        from_vlq(vlq)
-    }
 }
 
-/// Sanity-check the blob's outer header (total_len, sync_count, stream_offset)
-/// against its actual length so a *truncated* embedded section in a `--compile`
-/// binary degrades to "no sourcemap". `WindowReader` bounds-checks the rest.
-pub fn is_valid_blob(blob: &[u8]) -> bool {
-    if blob.len() < HEADER_SIZE {
-        return false;
-    }
-    let this = InternalSourceMap {
-        data: blob.as_ptr(),
-    };
-    let total = this.total_len();
-    if total != blob.len() {
-        return false;
-    }
-    let sync_n = this.sync_count();
-    let stream_off = this.stream_offset() as usize;
-    let sync_end = HEADER_SIZE + (sync_n as usize) * size_of::<SyncEntry>();
-    if stream_off < sync_end {
-        return false;
-    }
-    if stream_off > total {
-        return false;
-    }
-    if total < stream_off + STREAM_TAIL_PAD {
-        return false;
-    }
-    true
-}
-
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 struct State {
     generated_line: i32,
     generated_column: i32,
@@ -587,51 +503,20 @@ impl<'a> WindowReader<'a> {
     }
 }
 
-impl InternalSourceMap {
-    fn locate_window(self, target_line: i32, target_col: i32) -> Option<u32> {
-        let n_sync = self.sync_count();
-        if n_sync == 0 {
-            return None;
-        }
-        let mut lo: usize = 0;
-        let mut hi: usize = n_sync as usize;
-        while lo < hi {
-            let mid = lo + (hi - lo) / 2;
-            if self.sync_entry(mid).less_or_equal(target_line, target_col) {
-                lo = mid + 1;
-            } else {
-                hi = mid;
-            }
-        }
-        if lo == 0 {
-            return None;
-        }
-        Some(u32::try_from(lo - 1).expect("int cast"))
-    }
-
-    /// Returns `None` if the window extends past the end of the stream.
-    fn seed_window(
-        self,
-        sync_idx: u32,
-        state: &mut State,
-        reader: &mut WindowReader<'_>,
-    ) -> Option<()> {
-        let se = self.sync_entry(sync_idx as usize);
-        *state = se.to_state();
-        reader.parse(se.byte_offset as usize)
-    }
-
+impl InternalSourceMap<'_> {
     /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
     /// generated position `<= (line, column)` whose generated line equals `line`.
     pub fn find(self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         let target_line = line.zero_based();
         let target_col = column.zero_based();
 
-        let sync_idx = self.locate_window(target_line, target_col)?;
+        let after = (self.sync_entries)
+            .partition_point(|entry| entry.get().less_or_equal(target_line, target_col));
+        let entry = self.sync_entries[..after].last()?.get();
 
-        let mut state = State::default();
-        let mut reader = WindowReader::new(self.stream());
-        self.seed_window(sync_idx, &mut state, &mut reader)?;
+        let mut state = entry.to_state();
+        let mut reader = WindowReader::new(self.stream);
+        reader.parse(entry.byte_offset as usize)?;
 
         let mut best = state;
         while !reader.done() {
@@ -652,64 +537,48 @@ impl InternalSourceMap {
     }
 }
 
-impl InternalSourceMap {
+impl InternalSourceMap<'_> {
     /// Every mapping, in generated order.
     pub(crate) fn for_each(self, mut each: impl FnMut(Mapping)) {
-        let stream = self.stream();
-        for idx in 0..self.sync_count() {
-            let mut state = State::default();
-            let mut reader = WindowReader::new(stream);
-            if self.seed_window(idx, &mut state, &mut reader).is_none() {
+        self.for_each_state(|state| each(state.to_mapping()));
+    }
+
+    fn for_each_state(self, mut each: impl FnMut(&State)) {
+        for entry in self.sync_entries {
+            let mut state = entry.get().to_state();
+            let mut reader = WindowReader::new(self.stream);
+            if reader.parse(entry.get().byte_offset as usize).is_none() {
                 return;
             }
-            each(state.to_mapping());
+            each(&state);
             while !reader.done() {
                 reader.next(&mut state);
                 if reader.count == 0 {
                     return;
                 }
-                each(state.to_mapping());
+                each(&state);
             }
         }
     }
 
     pub fn for_each_object_brace(self, mut each: impl FnMut(ObjectBrace)) {
-        for bytes in self.object_braces() {
-            each(bun_core::read_prefix::<ObjectBrace>(bytes).unwrap());
+        for brace in self.object_braces() {
+            each(brace.get());
         }
     }
 
     /// Re-encode the full mapping stream as a standard VLQ "mappings" string. Only
     /// the inspector's inline-sourcemap path needs this.
     pub fn append_vlq_to(self, out: &mut MutableString) {
-        let n_sync = self.sync_count();
         // A 4-field VLQ segment averages ~5 bytes plus a separator. Cap by the
         // structural bound so a crafted header can't force an unbounded reserve.
         let count = self
             .mapping_count()
-            .min((n_sync as usize).saturating_mul(SYNC_INTERVAL));
+            .min(self.sync_entries.len().saturating_mul(SYNC_INTERVAL));
         let _ = out.grow_if_needed(count.saturating_mul(6));
         let mut prev = SourceMapState::default();
         let mut generated_line: i32 = 0;
-
-        let stream = self.stream();
-        let mut idx: u32 = 0;
-        while idx < n_sync {
-            let mut state = State::default();
-            let mut reader = WindowReader::new(stream);
-            if self.seed_window(idx, &mut state, &mut reader).is_none() {
-                return;
-            }
-            emit_vlq(&state, &mut prev, &mut generated_line, out);
-            while !reader.done() {
-                reader.next(&mut state);
-                if reader.count == 0 {
-                    return;
-                }
-                emit_vlq(&state, &mut prev, &mut generated_line, out);
-            }
-            idx += 1;
-        }
+        self.for_each_state(|state| emit_vlq(state, &mut prev, &mut generated_line, out));
     }
 }
 
@@ -1073,35 +942,17 @@ impl Builder {
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..20] zero-filled,
-            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
-            // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
-            // [object_braces_offset..total-STREAM_TAIL_PAD] object braces memcpy,
-            // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
-            // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
-            // no uninit bytes are exposed by set_len.
-            // SAFETY: every byte in [0..total) is written below (see comment above).
-            let blob = unsafe { out.list.writable_slice_exact(total) };
-
-            blob[0..20].fill(0);
-            blob[20..24].copy_from_slice(
-                &u32::try_from(self.object_braces.len())
-                    .expect("int cast")
-                    .to_ne_bytes(),
-            );
-            blob[24..28].copy_from_slice(
-                &u32::try_from(self.sync_entries.len())
-                    .expect("int cast")
-                    .to_ne_bytes(),
-            );
-            blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
-            if sync_bytes > 0 {
-                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(sync_entries);
-            }
-            blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
-                .copy_from_slice(&self.win_stream);
-            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(object_braces);
-            blob[total - STREAM_TAIL_PAD..total].fill(0);
+            out.list.reserve_exact(total);
+            let count = |len: usize| u32::try_from(len).expect("int cast").to_ne_bytes();
+            out.list.extend_from_slice(&[0; 20]);
+            out.list.extend_from_slice(&count(self.object_braces.len()));
+            out.list.extend_from_slice(&count(self.sync_entries.len()));
+            out.list.extend_from_slice(&stream_offset.to_ne_bytes());
+            out.list.extend_from_slice(sync_entries);
+            out.list.extend_from_slice(&self.win_stream);
+            out.list.extend_from_slice(object_braces);
+            out.list.extend_from_slice(&[0; STREAM_TAIL_PAD]);
+            debug_assert_eq!(out.list.len(), total);
 
             self.win_stream = Vec::new();
             self.sync_entries = Vec::new();

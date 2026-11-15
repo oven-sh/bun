@@ -80,6 +80,7 @@ fn find_link_under_key_followed_by_transpiler<'a>(
         .expr_flags(link)
         .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
     let is_followed = !is_optional
+        && !hir.is_in_known_evaluation(hir[link].pos)
         && (!hir.is_written_in_brackets(link)
             || hir.is_name_resolved_by_transpiler(link, bytes_of(name)));
     is_followed.then_some((object, name))

@@ -1558,7 +1558,7 @@ process.exit(0);
 }, 30_000);
 
 // On Windows, FileResponseStream closes its fd via Closer::close in Drop AND
-// WindowsBufferedReader::Drop closed the same CRT fd via File::start_close
+// WindowsBufferedReader::Drop closed the same CRT fd via File::finish
 // (CLOSE_HANDLE was cleared on the reader but never honored). Between the two
 // async uv_fs_close calls, an unrelated open could be handed the recycled
 // slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,

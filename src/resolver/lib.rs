@@ -2,6 +2,7 @@
 #![allow(non_upper_case_globals)]
 #![warn(unused_must_use)]
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // ──────────────────────────────────────────────────────────────────────────
 // Resolver body. Higher-tier deps are reached via lower-tier crates:
 // bun_install -> bun_install_types::AutoInstaller trait; bun_standalone_graph ->
@@ -701,16 +702,6 @@ pub mod fs {
     use bun_sys::Fd;
     use bun_threading::Mutex;
 
-    // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
-    // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
-    impl strings::Appender for &FilenameStore {
-        fn append(&mut self, s: &[u8]) -> core::result::Result<&[u8], bun_alloc::AllocError> {
-            // Route through the inherent method (which already handles the
-            // singleton deref + `'static` widening) instead of open-coding it.
-            FilenameStore::append(self, s)
-        }
-    }
-
     // Port of `threadlocal var temp_entries_option: EntriesOption = undefined` —
     // `read_directory*` returns a pointer into this when the entry-cache is
     // disabled or the path is `mark_not_found`. `RefCell` (not `UnsafeCell`) so
@@ -985,29 +976,21 @@ pub mod fs {
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
         fn readdir<I: DirEntryIterator>(
             &self,
-            store_fd: bool,
             mut prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
             generation: Generation,
-            handle: Fd,
+            handle: &bun_sys::Dir,
             iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
-            let mut iter = bun_sys::iterate_dir(handle);
+            let mut iter = bun_sys::iterate_dir(handle.fd());
             let mut dir = DirEntry::init(dir_, generation);
-
-            if store_fd {
-                FileSystem::set_max_fd(bun_sys::Fd::native(handle));
-                dir.fd = handle;
-            }
-
-            let fd = dir.fd;
             let mut filename_store = FilenameStoreAppender::new();
             while let Some(entry_) = iter.next()? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
                 if let Some(entry) =
                     dir.add_entry_with_store(prev_map.as_deref_mut(), &entry_, &mut filename_store)?
                 {
-                    iterator.next(self, entry, fd);
+                    iterator.next(self, entry);
                 }
             }
 
@@ -1106,22 +1089,14 @@ pub mod fs {
             }
 
             let had_handle = maybe_handle.is_some();
-            let handle: Fd = match maybe_handle {
-                Some(h) => h,
+            let mut opened = None;
+            let handle: &bun_sys::Dir = match &maybe_handle {
+                Some(lent) => bun_sys::Dir::borrow(lent),
                 None => match self.open_dir(dir) {
-                    Ok(h) => h,
+                    Ok(fd) => opened.insert(bun_sys::Dir::from_fd(fd)),
                     Err(err) => return self.read_directory_error(dir, err),
                 },
             };
-
-            // Close the handle on every exit path. Use
-            // scopeguard so close happens even if `readdir`/`put` early-return with `?`.
-            let should_close_handle = !had_handle && (!store_fd || self.need_to_close_files());
-            let _close_guard = scopeguard::guard(handle, move |h| {
-                if should_close_handle {
-                    let _ = bun_sys::close(h);
-                }
-            });
 
             // if we get this far, it's a real directory, so we can just store the dir name.
             // An in-place refresh always keeps the slot's existing interned name: callers
@@ -1144,8 +1119,7 @@ pub mod fs {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
                 unsafe { &mut (*p).data }
             });
-            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
-            {
+            let mut entries = match self.readdir(prev, dir, generation, handle, iterator) {
                 Ok(e) => e,
                 Err(err) => {
                     if let Some(existing) = in_place {
@@ -1167,8 +1141,9 @@ pub mod fs {
                 // SAFETY: BSSMap-owned; entries_mutex held.
                 unsafe { (*original).data.clear() };
             }
-            if store_fd && !entries.fd.is_valid() {
-                entries.fd = handle;
+            if let Some(opened) = opened.filter(|_| store_fd && !self.need_to_close_files()) {
+                entries.fd = opened.into_raw();
+                FileSystem::set_max_fd(entries.fd.native());
             }
 
             // SAFETY: `entries_ptr` is either a live BSSMap slot (`in_place`) or a fresh
@@ -1237,6 +1212,7 @@ pub mod fs {
             #[cfg(windows)]
             {
                 use bun_sys::windows as w;
+                use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
                 let _ = (existing_fd, store_fd);
                 let file = bun_sys::get_file_attributes(absolute_path_c)
                     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
@@ -1276,7 +1252,7 @@ pub mod fs {
                 );
                 // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
                 let handle = unsafe {
-                    w::CreateFileW(
+                    HandleOrInvalid::from_raw_handle(w::CreateFileW(
                         wpath.as_ptr(),
                         0,
                         w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
@@ -1287,19 +1263,16 @@ pub mod fs {
                         // follow the full reparse chain to the final target.
                         w::FILE_FLAG_BACKUP_SEMANTICS,
                         core::ptr::null_mut(),
-                    )
+                    ))
                 };
-                if handle == w::INVALID_HANDLE_VALUE {
+                let Ok(owned) = OwnedHandle::try_from(handle) else {
                     if is_dangling_link_error(w::last_system_errno().to_e()) {
                         cache.kind = EntryKind::Dangling;
                     }
                     // anything else keeps the kind from the link's own directory bit
                     return Ok(cache);
-                }
-                scopeguard::defer! {
-                    // SAFETY: `handle` is a valid HANDLE from CreateFileW above.
-                    unsafe { let _ = w::CloseHandle(handle); }
-                }
+                };
+                let handle = owned.as_raw_handle();
 
                 let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
                 // SAFETY: `handle` is valid; `info` is a valid out-param.
@@ -1329,49 +1302,39 @@ pub mod fs {
                 let mut symlink: &[u8] = b"";
 
                 if is_symlink {
-                    let opened: bun_sys::Maybe<Fd> = if let Some(valid) = existing_fd.unwrap_valid()
-                    {
-                        Ok(valid)
-                    } else if store_fd {
-                        bun_sys::open_file_absolute_z(
-                            absolute_path_c,
-                            bun_sys::OpenFlags::READ_ONLY,
-                        )
-                        .map(bun_sys::File::into_raw)
+                    let mut opened = None;
+                    let file: &bun_sys::File = if existing_fd.is_valid() {
+                        bun_sys::File::borrow(&existing_fd)
                     } else {
-                        // O_PATH is
-                        // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                        #[cfg(any(target_os = "linux", target_os = "android"))]
-                        let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                        #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                        let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                        bun_sys::open(absolute_path_c, flags, 0)
-                    };
-                    let file: Fd = match opened {
-                        Ok(file) => file,
-                        Err(err) if is_dangling_link_error(err.get_errno()) => {
-                            cache.kind = EntryKind::Dangling;
-                            return Ok(cache);
+                        let result = if store_fd {
+                            bun_sys::open_file_absolute_z(
+                                absolute_path_c,
+                                bun_sys::OpenFlags::READ_ONLY,
+                            )
+                            .map(bun_sys::File::into_raw)
+                        } else {
+                            #[cfg(any(target_os = "linux", target_os = "android"))]
+                            let access = bun_sys::O::PATH;
+                            #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                            let access = bun_sys::O::RDONLY;
+                            bun_sys::open(absolute_path_c, access | bun_sys::O::NOCTTY, 0)
+                        };
+                        match result {
+                            Ok(fd) => opened.insert(bun_sys::CloseOnDrop::new(fd)),
+                            Err(err) if is_dangling_link_error(err.get_errno()) => {
+                                cache.kind = EntryKind::Dangling;
+                                return Ok(cache);
+                            }
+                            Err(err) => return Err(err.into()),
                         }
-                        Err(err) => return Err(err.into()),
                     };
-                    FileSystem::set_max_fd(file.native());
+                    FileSystem::set_max_fd(file.fd().native());
 
-                    // The close-or-store cleanup runs on
-                    // BOTH success and error paths — use scopeguard so close-or-store happens even if
-                    // fstat()/get_fd_path() return early with `?`.
-                    let need_to_close_files = self.need_to_close_files();
-                    let cache_fd = &mut cache.fd;
-                    let _guard = scopeguard::guard(file, move |file| {
-                        if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                            let _ = bun_sys::close(file);
-                        } else if bun_core::feature_flags::STORE_FILE_DESCRIPTORS {
-                            *cache_fd = file;
-                        }
-                    });
-
-                    let file_stat = bun_sys::fstat(*_guard)?;
-                    symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
+                    let file_stat = file.stat()?;
+                    symlink = bun_sys::get_fd_path(file.fd(), &mut outpath)?;
+                    cache.fd = opened
+                        .filter(|_| store_fd && !self.need_to_close_files())
+                        .map_or(existing_fd, bun_sys::CloseOnDrop::into_raw);
                     file_kind = kind_from_mode(file_stat.st_mode as bun_sys::Mode);
                 }
 
@@ -1465,22 +1428,17 @@ pub mod fs {
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
-                    // `open_dir_for_iteration`, NOT `RealFS.openDir`. On POSIX
-                    // the two diverge: `O_DIRECTORY` only vs `O_RDONLY|O_DIRECTORY`.
-                    let handle = match bun_sys::open_dir_for_iteration(Fd::cwd(), dir) {
-                        Ok(h) => h,
+                    let handle = match bun_sys::Dir::open(dir) {
+                        Ok(handle) => handle,
                         Err(err) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
                             return self.read_directory_error(dir, err.into()).ok();
                         }
                     };
-                    let _close_guard = scopeguard::guard(handle, |h| {
-                        let _ = bun_sys::close(h);
-                    });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, &mut ()) {
+                    match self.readdir(prev, dir, generation, &handle, &mut ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
@@ -1666,7 +1624,7 @@ pub mod fs {
 pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS};
     use bun_core::ZStr;
-    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
+    use bun_glob::walk::{self, Accessor, AccessorDirIter, AccessorHandle};
     use bun_paths::{Platform, resolve_path};
     use bun_sys::{self as Syscall, Error as SysError, Result as Maybe, Stat};
 
@@ -1708,55 +1666,11 @@ pub mod dir_entry_accessor {
         value: Option<EntryMapIter>,
     }
 
-    pub struct DirEntryIterResult {
-        pub(crate) name: DirEntryNameWrapper,
-        pub(crate) kind: bun_sys::FileKind,
-        /// Resolver-cached real path of a symlink entry's target
-        /// (`Interned::EMPTY` for non-symlinks).
-        pub(crate) symlink_target: bun_ptr::Interned,
-    }
-
-    pub(crate) struct DirEntryNameWrapper {
-        // BACKREF: borrowed slice into a `Box<[u8]>` key owned by
-        // `DirEntry.data: HashMap`. Valid only while the parent `DirEntry`
-        // is live and not regenerated by `read_directory`. Stored as
-        // [`bun_ptr::RawSlice`] (not `&'static [u8]`) per PORTING.md
-        // §Forbidden — the key is individually heap-allocated by the HashMap,
-        // not a BSS-arena slice, so minting a `'static` borrow via
-        // `from_raw_parts` would be a lifetime lie. `RawSlice` encapsulates
-        // the outlives-holder invariant so `slice()` is safe.
-        pub value: bun_ptr::RawSlice<u8>,
-    }
-
-    impl DirEntryNameWrapper {
-        #[inline]
-        fn slice(&self) -> &[u8] {
-            // BACKREF — see field comment. The GlobWalker consumes
-            // `name_slice()` before advancing the iterator or reopening the
-            // directory, so the pointee `Box<[u8]>` is still alive here.
-            self.value.slice()
-        }
-    }
-
-    impl AccessorDirEntry for DirEntryIterResult {
-        fn name_slice(&self) -> &[u8] {
-            self.name.slice()
-        }
-        fn kind(&self) -> bun_sys::FileKind {
-            self.kind
-        }
-        fn symlink_target(&self) -> Option<&[u8]> {
-            let target = self.symlink_target.as_bytes();
-            (!target.is_empty()).then_some(target)
-        }
-    }
-
     impl AccessorDirIter for DirEntryDirIter {
         type Handle = DirEntryHandle;
-        type Entry = DirEntryIterResult;
 
         #[inline]
-        fn next(&mut self) -> Maybe<Option<DirEntryIterResult>> {
+        fn next(&mut self) -> Maybe<Option<walk::DirEntry<'_>>> {
             if let Some(value) = &mut self.value {
                 let Some((key, val)) = value.next() else {
                     return Ok(None);
@@ -1779,18 +1693,11 @@ pub mod dir_entry_accessor {
                 };
                 // `Entry::kind` resolved through symlinks above; a non-empty
                 // cached realpath is what records the entry as a symlink.
-                let symlink_target = entry.cache().symlink;
-                // BACKREF: wrap the HashMap key's bytes in a `RawSlice`
-                // instead of fabricating `&'static [u8]` (PORTING.md §Forbidden).
-                // The key is a `Box<[u8]>` owned by `DirEntry.data` and valid
-                // until the next `read_directory` regeneration; `name_slice()`
-                // re-narrows the lifetime so it never escapes the iter result.
-                Ok(Some(DirEntryIterResult {
-                    name: DirEntryNameWrapper {
-                        value: bun_ptr::RawSlice::new(&**key),
-                    },
+                let symlink_target = entry.cache().symlink.as_bytes();
+                Ok(Some(walk::DirEntry {
+                    name: key,
                     kind: fskind,
-                    symlink_target,
+                    symlink_target: (!symlink_target.is_empty()).then_some(symlink_target),
                 }))
             } else {
                 Ok(None)
@@ -1950,12 +1857,12 @@ pub mod cache {
         pub(crate) stream: bool,
     }
 
-    /// Optional external destructor (`function(ctx)`) for foreign-owned
+    /// Runs the external destructor (`function(ctx)`) on drop, for foreign-owned
     /// source bytes; `NONE` when there is nothing external to free.
     #[repr(C)]
     pub struct ExternalFreeFunction {
         pub ctx: *mut c_void,
-        pub function: Option<unsafe extern "C" fn(*mut c_void)>,
+        pub function: Option<extern "C" fn(*mut c_void)>,
     }
 
     impl ExternalFreeFunction {
@@ -1963,11 +1870,12 @@ pub mod cache {
             ctx: core::ptr::null_mut(),
             function: None,
         };
+    }
 
-        pub fn call(&self) {
-            if let Some(func) = self.function {
-                // SAFETY: ctx was provided by the same native plugin that provided `function`.
-                unsafe { func(self.ctx) };
+    impl Drop for ExternalFreeFunction {
+        fn drop(&mut self) {
+            if let Some(function) = self.function {
+                function(self.ctx);
             }
         }
     }
@@ -2192,6 +2100,20 @@ pub mod cache {
             )
         }
 
+        /// For a caller with no use for the descriptor.
+        pub(crate) fn read_file_and_close(
+            &mut self,
+            path: &[u8],
+            dirname_fd: Fd,
+        ) -> crate::CrateResult<Vec<u8>> {
+            let entry = self.read_file_with_allocator(path, dirname_fd, false, None, None)?;
+            drop(entry.fd.unwrap_valid().map(bun_sys::File::from_fd));
+            Ok(match entry.contents {
+                Contents::Owned(contents) => contents,
+                other => other.as_slice().to_vec(),
+            })
+        }
+
         /// The bytes as they are on disk: a byte order mark stays, and UTF-16 is not turned into UTF-8.
         pub fn read_bytes_into_arena(
             &mut self,
@@ -2216,11 +2138,10 @@ pub mod cache {
             let will_close =
                 fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
-            // A single let-expression avoids `mem::zeroed()` on a
-            // type that may have niche (NonZero) fields.
-            let file_handle: bun_sys::File = if let Some(f) = _file_handle {
+            let mut owned: Option<bun_sys::File> = None;
+            let fd: Fd = if let Some(f) = _file_handle {
                 bun_sys::lseek(f, 0, libc::SEEK_SET).map_err(crate::Error::from)?;
-                bun_sys::File::from_fd(f)
+                f
             } else if feature_flags::STORE_FILE_DESCRIPTORS && dirname_fd.is_valid() {
                 match bun_sys::openat_a(
                     dirname_fd,
@@ -2228,7 +2149,7 @@ pub mod cache {
                     bun_sys::O::RDONLY,
                     0,
                 ) {
-                    Ok(fd) => bun_sys::File::from_fd(fd),
+                    Ok(fd) => owned.insert(bun_sys::File::from_fd(fd)).fd(),
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(crate::Error::from)?;
@@ -2237,22 +2158,14 @@ pub mod cache {
                             bstr::BStr::new(path),
                             dirname_fd,
                         );
-                        handle
+                        owned.insert(handle).fd()
                     }
                     Err(err) => return Err(err.into()),
                 }
             } else {
-                bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(crate::Error::from)?
-            };
-
-            let mut owned: Option<bun_sys::File> = None;
-            let fd: Fd = if _file_handle.is_some() {
-                file_handle.into_raw()
-            } else {
-                let raw = file_handle.handle();
-                owned = Some(file_handle);
-                raw
+                let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
+                    .map_err(crate::Error::from)?;
+                owned.insert(handle).fd()
             };
             let file_handle = bun_sys::File::borrow(&fd);
 

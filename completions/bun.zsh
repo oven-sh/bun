@@ -833,7 +833,8 @@ _bun_check_completion() {
         '--no-pretty[One line per error]' \
         '--all[Show every error]' \
         '--threads[Number of threads]:threads' \
-        '--timing[Print load and check times]' \
+        '--no-follow-imports[Report only the errors of the files you name]' \
+        '--timing[Print load and check times, and the slowest files]' \
         '--cwd[Set the working directory]:cwd:_files -/' \
         '--no-script[Run the type checker even if the project has a check script]' \
         '--aot[Also report the errors bun compile would report for these entry points]' \

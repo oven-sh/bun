@@ -1004,10 +1004,8 @@ impl<'a> Repl<'a> {
             stdin_buf_end: 0,
             vm: None,
             global: None,
-            // `adopt(UNDEFINED)`: no protect taken; drop's unprotect() is a
-            // C++-side no-op for non-cell values.
-            last_result: ProtectedJSValue::adopt(JSValue::UNDEFINED),
-            last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
+            last_result: JSValue::UNDEFINED.protected(),
+            last_error: JSValue::UNDEFINED.protected(),
             #[cfg(windows)]
             original_windows_mode: None,
             #[cfg(unix)]
@@ -1170,10 +1168,7 @@ impl<'a> Repl<'a> {
             self.stdin_buf_start += 1;
             return Some(b);
         }
-        // Refill buffer (stdio fd: `File::Drop` is a no-op, so this is safe to
-        // re-create on every call).
-        let stdin = sys::File::stdin();
-        let n = match stdin.read(&mut self.stdin_buf) {
+        let n = match sys::read(Fd::stdin(), &mut self.stdin_buf) {
             sys::Result::Ok(n) => n,
             sys::Result::Err(_) => return None,
         };
@@ -1708,7 +1703,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        vm.tick();
                         return;
                     }
                 };
@@ -1738,7 +1733,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.as_mut().tick();
+        vm.tick();
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1853,10 +1848,10 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm.as_mut().tick();
+        vm.tick();
         while vm.is_event_loop_alive() {
-            vm.as_mut().tick();
-            vm.as_mut().auto_tick_active();
+            vm.tick();
+            vm.auto_tick_active();
         }
 
         if print_result {
@@ -1912,7 +1907,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.as_mut().tick();
+            vm.tick();
         }
     }
 
@@ -1991,7 +1986,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        vm.tick();
                         return;
                     }
                 };
@@ -2011,7 +2006,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.as_mut().tick();
+        vm.tick();
     }
 
     /// Format a JS value as a string suitable for clipboard.
@@ -2141,7 +2136,7 @@ impl<'a> Repl<'a> {
 
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
+            vm.transpiler.get().options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
@@ -2156,12 +2151,15 @@ impl<'a> Repl<'a> {
         // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing).
-        if vm.transpiler.macro_context.is_none() {
-            vm.as_mut().transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
-                &mut vm.as_mut().transpiler,
-            ));
-        }
-        opts.macro_context = vm.as_mut().transpiler.macro_context.as_mut();
+        vm.transpiler.with_mut(|t| {
+            if t.macro_context.is_none() {
+                t.macro_context = Some(bun_js_parser::Macro::MacroContext::init(t));
+            }
+        });
+        let define = &vm.transpiler.get().options.define;
+        // SAFETY: JS thread, and `define` is another field. Does not hold for a macro: loading it
+        // borrows the transpiler again while the parse holds this.
+        opts.macro_context = unsafe { (*vm.transpiler.as_ptr()).macro_context.as_mut() };
 
         // Create log for errors
         let mut log = bun_ast::Log::init();
@@ -2170,13 +2168,7 @@ impl<'a> Repl<'a> {
         let source = bun_ast::Source::init_path_string(b"[repl]", processed_code);
 
         // Parse with REPL transforms
-        let parser = match bun_js_parser::Parser::init(
-            opts,
-            &mut log,
-            &source,
-            &vm.transpiler.options.define,
-            &arena,
-        ) {
+        let parser = match bun_js_parser::Parser::init(opts, &mut log, &source, define, &arena) {
             Ok(p) => p,
             Err(_) => return None,
         };
@@ -2241,12 +2233,10 @@ impl<'a> Repl<'a> {
     fn print_js_error_to(
         &self,
         error_value: JSValue,
-        writer: &mut bun_core::io::Writer,
+        writer: &bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // Note: the `bun_core::io::Writer` vtable doesn't implement
-        // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
-        // flush in one shot — REPL error output is tiny.
+        // Buffered: none of the value is printed if formatting throws.
         let Some(global) = self.global else {
             return;
         };
@@ -2283,8 +2273,7 @@ impl<'a> Repl<'a> {
             return;
         };
         let writer = Output::writer();
-        // Note: see `print_js_error_to` — buffer because
-        // `bun_core::io::Writer` doesn't implement `bun_io::Write`.
+        // Buffered: none of the value is printed if formatting throws.
         let mut buf: Vec<u8> = Vec::new();
         if let Err(err) = jsc::ConsoleObject::format2(
             jsc::ConsoleObject::MessageLevel::Log,

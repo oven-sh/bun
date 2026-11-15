@@ -97,7 +97,7 @@ test.skipIf(!isASAN || isWindows)(
 );
 
 // Graceful stop() leaves the keep-alive socket in the uws app's socket group.
-// A NewApp::destroy at lastChanceToFinalize would unlink that group from the
+// Destroying the app at lastChanceToFinalize would unlink that group from the
 // loop and orphan the socket, so the synchronous deinit path above is gated
 // on TERMINATED (set only by an abrupt stop or an app.close() that already
 // drained the group).

@@ -248,8 +248,14 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let Some(function) = vm.sql_state().postgresql_context.on_query_reject_fn.get() else {
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
+            .sql_state()
+            .postgresql_context
+            .get()
+            .on_query_reject_fn
+            .get()
+        else {
             return;
         };
         let event_loop = vm.event_loop();
@@ -329,8 +335,14 @@ impl PostgresSQLQuery {
             return;
         };
 
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
-        let Some(function) = vm.sql_state().postgresql_context.on_query_resolve_fn.get() else {
+        let vm = crate::jsc::VirtualMachine::get();
+        let Some(function) = vm
+            .sql_state()
+            .postgresql_context
+            .get()
+            .on_query_resolve_fn
+            .get()
+        else {
             return;
         };
         let event_loop = vm.event_loop();
@@ -516,11 +528,7 @@ impl PostgresSQLQuery {
         connection.count(self, RequestCounter::Pending);
         self.connection.set(Some(connection.ref_guard()));
         // Request is enqueued: keep the event loop alive until the server responds.
-        connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        connection.poll_ref.ref_(bun_io::js_vm_ctx());
         self.this_value.with_mut(|r| r.upgrade(global_object));
         js::target_set_cached(this_value, global_object, query);
 

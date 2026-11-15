@@ -356,43 +356,19 @@ impl FilePoll {
         readable
     }
 
-    // Note: not `impl Drop` — FilePoll is pool-allocated (HiveArray) and explicitly
-    // put back via `Store::put`; Drop would be wrong here.
-    pub fn deinit(&mut self) {
-        let ctx = get_vm_ctx(self.allocator_type);
-        self.deinit_possibly_defer(ctx, false);
-    }
-
-    pub(crate) fn deinit_force_unregister(&mut self) {
-        let ctx = get_vm_ctx(self.allocator_type);
-        self.deinit_possibly_defer(ctx, true);
-    }
-
-    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        let _ = self.unregister(vm.platform_event_loop(), force_unregister);
+    /// Returns the rest of what `Store::put` takes.
+    pub(crate) fn reset(&mut self, force_unregister: bool) -> (EventLoopCtx, bool) {
+        let vm = get_vm_ctx(self.allocator_type);
+        let _ = self.unregister(vm.loop_(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
         self.flags = FlagsSet::empty();
         self.fd = INVALID_FD;
-        // `self` may live inside the `Store.hive` inline array, so a
-        // `&mut Store` taken while `&mut self` is live would assert unique
-        // access over the slot and invalidate `self`'s tag (Stacked Borrows).
-        // Decay `self` to a raw slot pointer first, *then* materialise the
-        // `&mut Store` via the crate-private backref-deref accessor.
-        let this = ptr::NonNull::from(self);
-        // `file_polls_mut()` is the per-thread set-once `Store` back-pointer
-        // (`BackRef`-shaped); `&mut self` has been retired to `this` above so
-        // the `&mut Store` it produces is the sole unique borrow into the hive.
-        // `Store::put` touches `this` only via raw-pointer ops (see its doc).
-        vm.file_polls_mut().put(this, vm, was_ever_registered);
+        (vm, was_ever_registered)
     }
 
-    pub fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        self.deinit_possibly_defer(vm, false);
-    }
-
-    pub fn is_registered(&self) -> bool {
+    pub(crate) fn is_registered(&self) -> bool {
         self.flags.contains(Flags::PollWritable)
             || self.flags.contains(Flags::PollReadable)
             || self.flags.contains(Flags::PollProcess)
@@ -486,10 +462,10 @@ impl FilePoll {
     /// non-macOS-debug builds and then read it in the `syslog!` below. Building
     /// the whole struct by value fixes both.
     #[inline]
-    fn new_value(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> FilePoll {
+    fn new_value(vm: EventLoopCtx, fd: Fd, owner: Owner) -> FilePoll {
         FilePoll {
             fd,
-            flags,
+            flags: FlagsSet::empty(),
             owner,
             next_to_free: ptr::null_mut(),
             allocator_type: vm.allocator_type(),
@@ -504,13 +480,13 @@ impl FilePoll {
     }
 
     // Note: callers normalize to EventLoopCtx before calling.
-    pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
-        let value = Self::new_value(vm, fd, flags, owner);
+    pub(crate) fn init(vm: EventLoopCtx, fd: Fd, owner: Owner) -> ptr::NonNull<FilePoll> {
+        let value = Self::new_value(vm, fd, owner);
         let generation_number = value.generation_number;
-        let poll = vm.alloc_file_poll(value).as_ptr();
+        let poll = vm.alloc_file_poll(value);
         syslog!(
             "FilePoll.init(0x{:x}, generation_number={}, fd={})",
-            poll as usize,
+            poll.addr(),
             generation_number,
             fd
         );
@@ -627,7 +603,7 @@ impl FilePoll {
             };
 
             // SAFETY: `watcher_fd` is the epoll instance of `loop_`, whose dispatch decodes a
-            // `Pollable`. `deinit` removes the entry, or leaves one that `EPOLLONESHOT` disarmed
+            // `Pollable`. `reset` removes the entry, or leaves one that `EPOLLONESHOT` disarmed
             // when it fired, which is not reported again. `Store::put` then holds the slot back,
             // marked `IgnoreUpdates`, until a tick returns, when no event fetched for it is left.
             let ctl = unsafe { linux::epoll_ctl(watcher_fd, op, fd.native(), Some(&event)) };
@@ -1347,7 +1323,12 @@ impl Store {
     /// storage under Stacked Borrows (UB). Take it as a raw pointer and
     /// touch fields only through raw pointer ops — same
     /// rationale as `process_deferred_frees` above.
-    pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
+    pub(crate) fn put(
+        &mut self,
+        poll: ptr::NonNull<FilePoll>,
+        vm: EventLoopCtx,
+        ever_registered: bool,
+    ) {
         let poll = poll.as_ptr();
         if !ever_registered {
             // SAFETY: `poll` is a fully-initialized hive slot; FilePoll has no

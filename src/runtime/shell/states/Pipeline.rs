@@ -1,12 +1,12 @@
+use bun_sys::File;
+
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, StateKind, closefd, log,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env, InheritedEnv};
 use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
 use crate::shell::states::r#if::If;
@@ -15,6 +15,7 @@ use crate::shell::yield_::Yield;
 
 pub(crate) struct Pipeline {
     pub(crate) base: Base,
+    shell: InheritedEnv,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
     pub(crate) io: IO,
     pub(crate) exited_count: u32,
@@ -55,7 +56,8 @@ impl Pipeline {
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Pipeline(Pipeline {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell: InheritedEnv(shell),
             node: bun_ptr::BackRef::new(node),
             io,
             exited_count: 0,
@@ -134,10 +136,7 @@ impl Pipeline {
     /// failed pipe or dup finishes the pipeline (`Some(yield)`) while no child
     /// runs a subtree that `deinit` cannot reach.
     fn setup_commands(interp: &Interpreter, this: NodeId) -> Option<Yield> {
-        let (node, parent_shell, evtloop) = {
-            let me = interp.as_pipeline(this);
-            (me.node, me.base.shell, interp.event_loop)
-        };
+        let (node, evtloop) = (interp.as_pipeline(this).node, interp.event_loop);
         let items: &[ast::PipelineItem] = node.items;
         let cmd_count = items
             .iter()
@@ -149,7 +148,7 @@ impl Pipeline {
             return Some(Self::finish(interp, this, 0));
         }
 
-        let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
+        let mut pipes: Vec<[File; 2]> = Vec::with_capacity(cmd_count - 1);
         for _ in 0..cmd_count - 1 {
             // On POSIX use a
             // UNIX stream socketpair via `socketpairForShell` — on macOS
@@ -162,12 +161,9 @@ impl Pipeline {
             #[cfg(unix)]
             let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
             match r {
-                Ok(p) => pipes.push(p),
+                Ok(p) => pipes.push(p.map(File::from_fd)),
                 Err(e) => {
-                    for p in &pipes {
-                        closefd(p[0]);
-                        closefd(p[1]);
-                    }
+                    drop(pipes);
                     let sys_err = e.to_shell_system_error();
                     return Some(Self::write_failing_error(
                         interp,
@@ -178,30 +174,28 @@ impl Pipeline {
             }
         }
 
+        let mut pipes = pipes.into_iter();
+        let mut read_end: Option<File> = None;
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
                 continue;
             }
-            // Position among runnable children (indexes `pipes[]`/`cmds[]`).
-            let cmd_idx = cmds.len();
-
             let child_io = {
                 let me = interp.as_pipeline(this);
-                let stdin = if cmd_idx == 0 {
-                    me.io.stdin.clone()
-                } else {
-                    let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
+                let stdin = if let Some(read_end) = read_end.take() {
+                    let r = IOReader::init(read_end.into_raw(), evtloop);
                     r.set_interp(interp);
                     InKind::Fd(r)
-                };
-                let stdout = if cmd_idx == cmd_count - 1 {
-                    me.io.stdout.clone()
                 } else {
+                    me.io.stdin.clone()
+                };
+                let stdout = if let Some([read, write]) = pipes.next() {
+                    read_end = Some(read);
                     // `is_socket` is set on POSIX — the POSIX
                     // pipe is actually a socketpair end (see above).
                     let w = IOWriter::init(
-                        pipes[cmd_idx][1],
+                        write.into_raw(),
                         io_writer::Flags {
                             pollable: true,
                             is_socket: cfg!(unix),
@@ -214,6 +208,8 @@ impl Pipeline {
                         writer: w,
                         captured: None,
                     })
+                } else {
+                    me.io.stdout.clone()
                 };
                 IO {
                     stdin,
@@ -224,21 +220,12 @@ impl Pipeline {
 
             // Each pipeline child gets its own duped env (var assignments
             // inside a pipeline must not leak to siblings or the parent).
-            // SAFETY: `parent_shell` is a live env owned by this pipeline's
-            // parent state.
-            let duped = match unsafe {
-                (*parent_shell).dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
-            } {
+            let env = match (interp.as_pipeline_mut(this).shell)
+                .dupe_for_subshell(&child_io, ShellExecEnvKind::Pipeline)
+            {
                 Ok(d) => d,
                 Err(e) => {
-                    // Close the pipe ends that neither `child_io` nor an inited child owns.
-                    drop(child_io);
-                    for p in &pipes[cmd_idx..] {
-                        closefd(p[0]);
-                    }
-                    for p in &pipes[core::cmp::min(cmd_idx + 1, pipes.len())..] {
-                        closefd(p[1]);
-                    }
+                    drop((child_io, read_end, pipes));
                     interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
                     let sys_err = e.to_shell_system_error();
                     return Some(Self::write_failing_error(
@@ -249,14 +236,16 @@ impl Pipeline {
                 }
             };
 
-            let child = match *item {
-                ast::PipelineItem::Cmd(c) => Cmd::init(interp, duped, c, this, child_io),
-                ast::PipelineItem::Subshell(s) => Subshell::init(interp, duped, s, this, child_io),
-                ast::PipelineItem::If(f) => If::init(interp, duped, f, this, child_io),
-                ast::PipelineItem::CondExpr(c) => CondExpr::init(interp, duped, c, this, child_io),
+            let id = match *item {
+                ast::PipelineItem::Cmd(c) => Cmd::init(interp, Env::Owned(env), c, this, child_io),
+                ast::PipelineItem::Subshell(s) => Subshell::init(interp, env, s, this, child_io),
+                ast::PipelineItem::If(f) => If::init(interp, Env::Owned(env), f, this, child_io),
+                ast::PipelineItem::CondExpr(c) => {
+                    CondExpr::init(interp, Env::Owned(env), c, this, child_io)
+                }
                 ast::PipelineItem::Assigns(_) => unreachable!("skipped above"),
             };
-            cmds.push(CmdOrResult::Cmd(child));
+            cmds.push(CmdOrResult::Cmd(id));
         }
         interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
         None
@@ -296,13 +285,7 @@ impl Pipeline {
         if let OutKind::Pipe = &interp.as_pipeline(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_pipeline_mut(this)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
+            let stderr = unsafe { interp.as_pipeline_mut(this).shell.buffered_stderr_mut() };
             stderr.extend_from_slice(&buf);
         }
         Self::finish(interp, this, 1)
@@ -337,13 +320,9 @@ impl Pipeline {
             child,
             exit_code
         );
+        interp.deinit_node(child);
         // Find the child in `cmds` and replace with its result.
         Self::record_result(interp, this, child, exit_code);
-        // We duped a ShellExecEnv per child in `next_starting`. Cmd/If/CondExpr
-        // do NOT free `base.shell` in their own `deinit`, so free it here.
-        // Subshell frees its own; Assigns is skipped.
-        Self::deinit_child_duped_env(interp, child);
-        interp.deinit_node(child);
         if interp.failed() {
             Self::release_unstarted(interp, this);
         }
@@ -408,30 +387,10 @@ impl Pipeline {
             .unwrap_or_default();
         for child in unstarted {
             log!("Pipeline {} release unstarted child {}", this, child);
-            Self::record_result(interp, this, child, 1);
-            Self::deinit_child_duped_env(interp, child);
             interp.deinit_node(child);
+            Self::record_result(interp, this, child, 1);
         }
         interp.as_pipeline_mut(this).state = PipelineState::Pending;
-    }
-
-    /// Free the per-child env duped in `next_starting` for child kinds that
-    /// don't free `base.shell` themselves.
-    fn deinit_child_duped_env(interp: &Interpreter, child: NodeId) {
-        let kind = interp.node(child).kind();
-        if matches!(
-            kind,
-            StateKind::Cmd | StateKind::IfClause | StateKind::Condexpr
-        ) {
-            if let Some(base) = interp.node_mut(child).base_mut() {
-                let shell = core::mem::replace(&mut base.shell, core::ptr::null_mut());
-                if !shell.is_null() {
-                    // SAFETY: `shell` is the duped env this pipeline child owned;
-                    // null-checked above and exclusively held here.
-                    ShellExecEnv::deinit_impl(shell);
-                }
-            }
-        }
     }
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
@@ -441,7 +400,6 @@ impl Pipeline {
         if let Some(cmds) = cmds {
             for c in cmds.into_vec() {
                 if let CmdOrResult::Cmd(id) = c {
-                    Self::deinit_child_duped_env(interp, id);
                     interp.deinit_node(id);
                 }
             }

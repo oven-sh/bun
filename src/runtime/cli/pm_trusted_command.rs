@@ -1,4 +1,3 @@
-use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_alloc::Arena as Bump;
@@ -37,7 +36,7 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     {
         Ok(recorded) => recorded,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Output::err(err, "failed to read trustedDependencies", ());
             Global::crash();
         }
@@ -81,7 +80,7 @@ impl Blocked {
         folder: &mut AutoAbsPath,
     ) -> crate::Result<Option<ScriptsList>> {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let package_id = package_id as usize;
         // called alias because a dependency name is not always the package name
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
@@ -524,17 +523,15 @@ impl TrustCommand {
             }
         };
 
-        let mut scripts_node: Progress::Node;
+        let scripts_node = Progress::NodeId::Scripts;
         let show_progress = log_level.show_progress();
 
         if show_progress {
             pm.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-            // `Node::start` returns an owned `Node` with raw backrefs into `pm.progress`.
-            scripts_node = pm
-                .progress
-                .start(b"", 0)
-                .start(ProgressStrings::script(), scripts_count);
-            pm.scripts_node = Some(NonNull::from(&mut scripts_node));
+            pm.progress.start(b"", 0);
+            pm.progress
+                .start_child(scripts_node, ProgressStrings::script(), scripts_count);
+            pm.scripts_node = Some(scripts_node);
         }
 
         for same_depth in blocked.chunk_by(|a, b| a.depth == b.depth) {
@@ -561,7 +558,6 @@ impl TrustCommand {
                 let output_in_foreground = false;
                 let optional = false;
                 pm.spawn_package_lifecycle_scripts(
-                    &mut *ctx,
                     info.scripts_list.clone(),
                     optional,
                     output_in_foreground,
@@ -569,10 +565,7 @@ impl TrustCommand {
                 )?;
 
                 if show_progress {
-                    if let Some(sn) = pm.scripts_node {
-                        // SAFETY: points at our stack-local `scripts_node`.
-                        unsafe { sn.as_ptr().as_mut().unwrap().activate() };
-                    }
+                    pm.progress.activate(scripts_node);
                     pm.progress.refresh();
                 }
             }
@@ -583,7 +576,7 @@ impl TrustCommand {
         }
 
         if show_progress {
-            pm.progress.root.end();
+            pm.progress.end();
             pm.progress = Progress::Progress::default();
             pm.scripts_node = None;
         }
@@ -607,9 +600,7 @@ impl TrustCommand {
         ) {
             Ok(v) => v,
             Err(err) => {
-                let _ = ctx
-                    .log_ref()
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = ctx.log_ref().print(Output::error_writer());
 
                 Output::err_generic("failed to parse package.json: {s}", (err.name(),));
                 Global::crash();
@@ -689,7 +680,7 @@ impl TrustCommand {
             .pwrite_all(new_package_json_contents, 0)
             .map_err(crate::Error::from)?;
         let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        let _ = root_file.close();
+        drop(root_file);
 
         if total_scripts_ran > 0 {
             bun_core::pretty!(

@@ -1663,8 +1663,7 @@ impl Example {
         let http_proxy = env_loader.get_http_proxy_for(&api_url);
         let mut mutable = MutableString::default();
 
-        // ensure very stable memory address
-        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             api_url,
             header_entries,
@@ -1673,12 +1672,11 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
-        ));
+        );
         async_http.client.progress = Some(refresher);
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         let response = async_http.send_sync(&mut mutable)?;
-        drop(async_http);
 
         match response.status_code() {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
@@ -1763,7 +1761,6 @@ impl Example {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         let mut response = async_http.send_sync(&mut mutable)?;
-        drop(async_http);
 
         match response.status_code() {
             404 => return Err(crate::Error::ExampleNotFound),
@@ -1847,7 +1844,6 @@ impl Example {
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         response = async_http.send_sync(&mut mutable)?;
-        drop(async_http);
 
         refresher.maybe_refresh();
 
@@ -1882,7 +1878,7 @@ impl Example {
             core::mem::size_of::<MutableString>(),
         );
 
-        let mut async_http = Box::new(HTTP::AsyncHTTP::init_sync(
+        let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
             url,
             Default::default(),
@@ -1891,7 +1887,7 @@ impl Example {
             http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
-        ));
+        );
         async_http.client.flags.reject_unauthorized = env_loader.get_tls_reject_unauthorized();
 
         if Output::enable_ansi_colors_stdout() {

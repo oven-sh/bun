@@ -936,6 +936,42 @@ static napi_value unref_and_ref_threadsafe_function_from_addon_thread(
   return info.Env().Undefined();
 }
 
+// Fills a queue of two, then makes 16 threads wait for room in it.
+static napi_value
+test_threadsafe_function_blocked_producers(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  constexpr int producers = 16;
+  static int calls = 0;
+  static std::atomic<int> about_to_call{0};
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, nullptr, nullptr, Napi::String::New(env, "blocked"),
+               /* max_queue_size */ 2, /* initial_thread_count */ producers,
+               nullptr,
+               [](napi_env, void *, void *) {
+                 printf("calls: %d\n", calls);
+                 fflush(stdout);
+               },
+               nullptr, [](napi_env, napi_value, void *, void *) { calls++; },
+               &tsfn));
+  for (int i = 0; i < 2; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(tsfn, nullptr,
+                                                     napi_tsfn_nonblocking));
+  }
+  for (int i = 0; i < producers; i++) {
+    std::thread([tsfn] {
+      about_to_call++;
+      napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+      napi_release_threadsafe_function(tsfn, napi_tsfn_release);
+    }).detach();
+  }
+  while (about_to_call < producers) {
+    std::this_thread::yield();
+  }
+  return info.Env().Undefined();
+}
+
 static napi_async_work held_work = nullptr;
 static std::atomic<bool> held_work_released{false};
 static int held_work_delete_status = -1;
@@ -969,6 +1005,7 @@ void register_async_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, unref_threadsafe_function_with_queued_items);
   REGISTER_FUNCTION(env, exports,
                     unref_and_ref_threadsafe_function_from_addon_thread);
+  REGISTER_FUNCTION(env, exports, test_threadsafe_function_blocked_producers);
   REGISTER_FUNCTION(env, exports, queue_held_async_work);
   REGISTER_FUNCTION(env, exports, release_held_async_work);
   REGISTER_FUNCTION(env, exports, async_work_with_external_buffer);

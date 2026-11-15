@@ -573,6 +573,28 @@ describe("bundler files option", () => {
     expect(output).toContain("from actual-data");
   });
 
+  test("onResolve plugin that declines an in-memory file does not change the build", async () => {
+    const build = async (plugins: Bun.BunPlugin[]) => {
+      const { outputs, metafile } = await Bun.build({
+        entrypoints: ["/entry.js"],
+        files: {
+          "/entry.js": `import { value } from "./lib.js"; console.log(value);`,
+          "/lib.js": `export const value = Math.random();`,
+        },
+        naming: "[name]-[hash].js",
+        metafile: true,
+        plugins,
+      });
+      return { inputs: Object.keys(metafile!.inputs).sort(), path: outputs[0].path, text: await outputs[0].text() };
+    };
+
+    const declined = await build([
+      { name: "decline", setup: build => void build.onResolve({ filter: /lib\.js$/ }, () => undefined) },
+    ]);
+    expect(declined.inputs).toContain("/lib.js");
+    expect(declined).toEqual(await build([]));
+  });
+
   test("plugin can provide content for in-memory file via onLoad", async () => {
     const result = await Bun.build({
       entrypoints: ["/entry.js"],

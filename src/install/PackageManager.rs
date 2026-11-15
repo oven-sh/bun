@@ -18,7 +18,6 @@ use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
@@ -2562,16 +2561,6 @@ pub fn init(
         // normalized.deinit() → Drop (stack buffer)
     }
 
-    // Set the thread-local global to point at the embedded mini loop
-    // (`bun_event_loop::mini_event_loop::GLOBAL`).
-    {
-        // SAFETY: singleton fully initialized and never freed; main thread, no workers yet.
-        let evl = unsafe { &mut (*manager_ptr).event_loop };
-        if let AnyEventLoop::Mini(mini) = evl {
-            // This loop has no `env`, so a later `init_global` makes its own.
-            mini_event_loop::GLOBAL.with(|g| g.set(Some(mini)));
-        }
-    }
     {
         // SAFETY: as above; scoped reborrow for the options/manifest-cache block.
         let manager = unsafe { &mut *manager_ptr };

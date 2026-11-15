@@ -408,7 +408,6 @@ pub(crate) struct SharedConnection {
     file_poll: bun_io::OwnedFilePoll,
     /// After `file_poll`, whose fd it closes.
     main_ref: OwnedServiceRef,
-    ctx: bun_io::EventLoopCtx,
     inflight: Vec<Inflight>,
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
@@ -455,32 +454,23 @@ impl SharedConnection {
             return None;
         }
         let fd = sys::Fd::from_native(raw_fd);
-        let mut this = Box::new(Self {
-            file_poll: bun_io::OwnedFilePoll::new(
-                ctx,
-                fd,
-                bun_io::Owner::new(
-                    bun_io::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
-                    ptr::null_mut(),
-                ),
-            ),
+        let owner =
+            |this: *mut Self| bun_io::Owner::new(bun_io::PollTag::GetAddrInfoRequest, this.cast());
+        let this = bun_ptr::AliasableBox::new(Self {
+            // SAFETY: not registered before it has its owner.
+            file_poll: unsafe { bun_io::OwnedFilePoll::new(ctx, fd, owner(ptr::null_mut())) },
             main_ref,
-            ctx,
             inflight: Vec::new(),
             last_ctx: ptr::null_mut(),
             early_out_timer: OwnedTimer::init_paused(EventLoopTimerTag::DnsSdConnection),
             early_out_armed_for: Cell::new(0),
         });
-        this.file_poll.owner.ptr = (&raw mut *this).cast();
-        this.file_poll
-            .register_with_fd(
-                ctx.loop_(),
-                bun_io::PollKind::Readable,
-                bun_io::posix_event_loop::OneShotFlag::None,
-                fd,
-            )
+        // SAFETY: the poll is a field of its owner.
+        unsafe { this.file_poll.set_owner(owner(this.as_ptr())) };
+        (this.file_poll)
+            .register(bun_io::PollKind::Readable, false)
             .ok()?;
-        SHARED.set(bun_core::heap::into_raw(this));
+        SHARED.set(this.into_raw());
         Self::current()
     }
 
@@ -496,7 +486,7 @@ impl SharedConnection {
             return false;
         };
         if self.inflight.is_empty() {
-            self.file_poll.enable_keeping_process_alive(self.ctx);
+            self.file_poll.enable_keeping_process_alive();
         }
         // SAFETY: `owner` is the caller's live request, tracked here until `finish()`.
         let q = unsafe { owner.query() };
@@ -627,7 +617,7 @@ impl SharedConnection {
             }
         }
         if self.inflight.is_empty() {
-            self.file_poll.disable_keeping_process_alive(self.ctx);
+            self.file_poll.disable_keeping_process_alive();
         }
         ready
     }
@@ -723,7 +713,7 @@ impl SharedConnection {
         );
         q.sd_refs = sd_refs;
         if this.inflight.is_empty() {
-            this.file_poll.enable_keeping_process_alive(this.ctx);
+            this.file_poll.enable_keeping_process_alive();
         }
         this.inflight.push(inf);
         true

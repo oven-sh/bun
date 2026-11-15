@@ -85,13 +85,10 @@ fn slot(vm: &VirtualMachine) -> &WatcherSlot {
 
 #[cfg(not(windows))]
 mod posix {
-    #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use core::ptr::NonNull;
-
     use bun_io::OwnedFilePoll;
     use bun_io::posix_event_loop::FlagsSet;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use bun_io::posix_event_loop::{Flags, Owner, poll_tag};
+    use bun_io::posix_event_loop::{Flags, Owner, PollTag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -223,14 +220,10 @@ mod posix {
         }
         #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
         {
-            let ctx = global.bun_vm().loop_ctx();
-            let owner = Owner::new(
-                poll_tag::MEMORY_PRESSURE,
-                NonNull::<()>::dangling().as_ptr(),
-            );
-            let mut poll = OwnedFilePoll::new(ctx, fd, owner);
-            poll.register(ctx.loop_(), Flags::MemoryPressure, false)
-                .ok()?;
+            let owner = Owner::new(PollTag::MemoryPressure, core::ptr::null_mut());
+            // SAFETY: this tag has no pointee.
+            let poll = unsafe { OwnedFilePoll::new(global.bun_vm().loop_ctx(), fd, owner) };
+            poll.register(Flags::MemoryPressure, false).ok()?;
             Some(MemoryPressureWatcher {
                 poll: Some(poll),
                 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -261,7 +254,7 @@ mod posix {
         slot(global.bun_vm()).set(None);
     }
 
-    /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
+    /// `__bun_run_io` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
     pub(crate) fn on_poll(flags: FlagsSet, fflags: i64) {
         let vm = VirtualMachine::get();

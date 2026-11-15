@@ -366,13 +366,10 @@ impl MySQLConnection {
                         // match the intended host. Absence of a configured server name is
                         // not a license to skip the check — fail closed.
                         let identity_ok = self.native_identity_hostname().is_none_or(|hostname| {
-                            // SAFETY: the caller is the handshake handler of `socket`, and `ssl` is used at once.
+                            // SAFETY: `socket` is live or detached, and `ssl` is used at once.
                             !hostname.is_empty()
-                                && unsafe {
-                                    self.socket.ssl().is_some_and(|ssl| {
-                                        uws::check_server_identity(ssl, hostname)
-                                    })
-                                }
+                                && unsafe { self.socket.ssl() }
+                                    .is_some_and(|ssl| uws::check_server_identity(ssl, hostname))
                         });
                         if !identity_ok {
                             self.tls_status = TLSStatus::None;

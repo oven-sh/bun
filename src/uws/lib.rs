@@ -1400,11 +1400,9 @@ pub mod ssl_wrapper {
     }
 
     /// The name check after the handshake. The verify step's verdict stands when it gave one.
-    ///
-    /// # Safety
-    /// The handshake handler of `ssl` is running. At other times the `ssl_socket` of the loop can be a freed socket.
-    pub unsafe fn check_server_identity(ssl: &boring_sys::SSL, host: &[u8]) -> bool {
-        // SAFETY: the call reads the wrapper of `ssl`, which outlives `ssl`, or that `ssl_socket`.
+    pub fn check_server_identity(ssl: &boring_sys::SSL, host: &[u8]) -> bool {
+        // SAFETY: the call reads the wrapper of `ssl`, which outlives `ssl`, or the `ssl_socket` of
+        // the loop, which is null or a socket that has not been freed.
         if unsafe { us_ssl_identity_checked(ssl) } != 0 {
             return ssl.verify_result() == boring_sys::X509_V_OK;
         }

@@ -2446,11 +2446,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         .name
                         .slice()
                 });
-                let start_error_count = p.log().msgs.len();
+                let start_error_count = p.log().msgs_len();
                 p.macro_call_count += 1;
                 let Ok(macro_result) = p.call_macro(macro_ref_data.import_record_id, expr, name)
                 else {
-                    if p.log().msgs.len() == start_error_count {
+                    if p.log().msgs_len() == start_error_count {
                         p.log()
                             .add_error(Some(p.source), expr.loc, b"macro threw exception");
                     }

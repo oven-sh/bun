@@ -110,7 +110,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     bun_ast::initialize_store();
 
     let vm = VirtualMachine::init_bake(jsc::virtual_machine::Options {
-        log: NonNull::new(ctx.log),
+        log: NonNull::new(ctx.log.cast_mut()),
         args: ctx.args.clone(),
         argv: ctx.passthrough.clone().leak(),
         smol: ctx.runtime_options.smol,
@@ -178,9 +178,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
     if vm.transpiler.with_mut(|t| t.configure_defines()).is_err() {
         fail_with_build_error(vm);
     }
-    // `vm.log` was set from `ctx.log` above (non-null, process-lifetime);
-    // `log_mut()` is the safe accessor encapsulating the NonNull deref.
-    bun_http::async_http::load_env(vm.log_mut().unwrap(), vm.env_loader());
+    bun_http::async_http::load_env(vm.log().unwrap(), vm.env_loader());
     vm.load_extra_env();
     vm.is_main_thread.set(true);
     jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -222,9 +220,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
 #[cold]
 #[inline(never)]
 fn fail_with_build_error(vm: &VirtualMachine) -> ! {
-    // `vm.log` is the process-lifetime ctx.log set in build_command;
-    // `log_ref()` is the safe accessor encapsulating the NonNull deref.
-    if let Some(log) = vm.log_ref() {
+    if let Some(log) = vm.log() {
         let _ = log.print(Output::error_writer());
     }
     Global::exit(1);
@@ -402,9 +398,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
-    // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
-    // `log_mut()` is the safe accessor encapsulating the NonNull deref.
-    let vm_log = vm.log_mut().unwrap();
+    let vm_log = vm.log().unwrap();
     let (server_transpiler, _) = framework.init_transpiler(
         &options.arena,
         vm_log,
@@ -468,8 +462,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         .is_err()
     {
         if framework.is_built_in_react {
-            // SAFETY: `server_transpiler.log` is the process-lifetime ctx.log.
-            bake::Framework::add_react_install_command_note(unsafe { &mut *server_transpiler.log });
+            bake::Framework::add_react_install_command_note(server_transpiler.log());
         }
         bun_core::err_generic!("Failed to resolve all imports required by the framework");
         Output::flush();

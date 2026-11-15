@@ -38,14 +38,14 @@ fn parse_runtime_json(
     arena: &Arena,
     name: &'static [u8],
     text: &[u8],
-    parse: fn(&bun_ast::Source, &mut bun_ast::Log) -> bun_parsers::Result<ParsedJson>,
+    parse: fn(&bun_ast::Source, &bun_ast::Log) -> bun_parsers::Result<ParsedJson>,
     in_place_of_another_value: Option<Json>,
 ) -> Option<Json> {
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
     let _ast_scope = ast_memory_allocator.enter();
     let source = bun_ast::Source::init_path_string(name, text);
-    let mut log = bun_ast::Log::init();
-    let parsed = parse(&source, &mut log).ok()?;
+    let log = bun_ast::Log::init();
+    let parsed = parse(&source, &log).ok()?;
     match parsed.root.data {
         bun_ast::expr::Data::EObjectJSON(root) => runtime_json_object(root.get()),
         _ => in_place_of_another_value,

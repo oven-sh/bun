@@ -245,7 +245,7 @@ pub(crate) fn run_tasks(
         INBOX.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
-            if apply.logger.errors == 0 {
+            if apply.logger.errors.get() == 0 {
                 if let Caller::HoistedLinker(installer) = &mut caller {
                     if apply.task_id.is_none() {
                         if let Some(ctx) = apply.install_context.as_mut() {
@@ -418,7 +418,7 @@ pub(crate) fn run_tasks(
 
                         if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
-                                manager.log_mut(),
+                                manager.log(),
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 "{} downloading package manifest <b>{}<r>. Retry {}/{} in {}ms...",
@@ -449,9 +449,9 @@ pub(crate) fn run_tasks(
                     // The dependency that reports it decides between error and warning.
                     let is_required = manager.is_network_task_required(task.task_id)
                         || manager.task_queue.contains_key(&task.task_id);
-                    let log_mark = manager.log_mut().msgs.len();
+                    let log_mark = manager.log().msgs_len();
                     add_error_or_warning_pretty!(
-                        manager.log_mut(),
+                        manager.log(),
                         is_required,
                         "{} downloading package manifest <b>{}<r>",
                         DownloadFailure(err.name(), &task.response),
@@ -503,10 +503,10 @@ pub(crate) fn run_tasks(
                     // The dependency that reports it decides between error and warning.
                     let is_required = manager.is_network_task_required(task.task_id)
                         || manager.task_queue.contains_key(&task.task_id);
-                    let log_mark = manager.log_mut().msgs.len();
+                    let log_mark = manager.log().msgs_len();
                     if is_required {
                         bun_ast::add_error_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
@@ -517,7 +517,7 @@ pub(crate) fn run_tasks(
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
@@ -652,7 +652,7 @@ pub(crate) fn run_tasks(
                         if manager.options.log_level.is_verbose() {
                             let extract = task.tarball();
                             bun_ast::add_warning_pretty!(
-                                manager.log_mut(),
+                                manager.log(),
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 "{} downloading tarball <b>{}@{}<r>. Retrying {}/{} in {}ms...",
@@ -696,7 +696,7 @@ pub(crate) fn run_tasks(
                     };
 
                     add_error_or_warning_pretty!(
-                        manager.log_mut(),
+                        manager.log(),
                         is_required,
                         "{} downloading tarball <b>{}@{}<r>",
                         DownloadFailure(err.name(), &task.response),
@@ -745,7 +745,7 @@ pub(crate) fn run_tasks(
 
                     if is_required {
                         bun_ast::add_error_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
@@ -756,7 +756,7 @@ pub(crate) fn run_tasks(
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
@@ -824,9 +824,9 @@ pub(crate) fn run_tasks(
         // An error in a manifest is reported by the dependency that needs it, if there is one.
         let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
             && task.status == Task::Status::Fail;
-        if !task.log.msgs.is_empty() && !holds_log {
+        if task.log.msgs_len() > 0 && !holds_log {
             task.log.print(Output::error_writer())?;
-            if task.log.errors > 0 {
+            if task.log.errors.get() > 0 {
                 manager.any_failed_to_install = true;
             }
             task.log.reset();
@@ -845,15 +845,15 @@ pub(crate) fn run_tasks(
                 };
                 let manager = &mut *network_task_guard.manager;
                 let Some(manifest) = manifest.take() else {
-                    let log_mark = manager.log_mut().msgs.len();
+                    let log_mark = manager.log().msgs_len();
                     if holds_log {
-                        task.log.append_to(manager.log_mut());
+                        task.log.append_to(manager.log());
                     }
                     let name = name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
                     bun_ast::add_error_pretty!(
-                        manager.log_mut(),
+                        manager.log(),
                         None,
                         bun_ast::Loc::EMPTY,
                         "{} parsing package manifest for <b>{}<r>",
@@ -942,7 +942,7 @@ pub(crate) fn run_tasks(
                     };
 
                     add_error_or_warning_pretty!(
-                        manager.log_mut(),
+                        manager.log(),
                         is_required,
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
@@ -1048,7 +1048,7 @@ pub(crate) fn run_tasks(
                     // logged as warnings, so report the error here.
                     if !is_required || !matches!(caller, Caller::IsolatedLinker(_)) {
                         add_error_or_warning_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             is_required,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
@@ -1142,7 +1142,7 @@ pub(crate) fn run_tasks(
                         }
                     }
                     add_error_or_warning(
-                        manager.log_mut(),
+                        manager.log(),
                         is_required,
                         format_args!(
                             "no commit matching \"{}\" found for \"{}\" (but repository exists)",
@@ -1187,7 +1187,7 @@ pub(crate) fn run_tasks(
                         );
                     } else {
                         bun_ast::add_error_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "{} checking out repository for <b>{}<r>",
@@ -1584,7 +1584,7 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
         AsyncHTTP::max_simultaneous_requests().store(lowered, Ordering::Relaxed);
         if manager.options.log_level.is_verbose() {
             bun_ast::add_warning_pretty!(
-                manager.log_mut(),
+                manager.log(),
                 None,
                 bun_ast::Loc::EMPTY,
                 "request failed twice, limiting to {} concurrent requests",

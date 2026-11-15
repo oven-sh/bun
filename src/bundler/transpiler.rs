@@ -37,9 +37,8 @@ pub const fn default_macro_js_value() -> MacroJSCtx {
 /// on every VM so that the options can be used for transpilation.
 pub struct Transpiler<'a> {
     pub options: options::BundleOptions<'a>,
-    // Raw ptr — the same `*Log` is aliased into `linker.log` and
-    // `resolver.log` (see `set_log`). `&'a mut` would forbid that aliasing.
-    pub log: *mut bun_ast::Log,
+    // Raw ptr — `set_log` aims it at logs that `'a` outlives.
+    pub log: *const bun_ast::Log,
     // Bundler is an AST crate per PORTING.md, so an arena is threaded even
     // though callers usually pass `bun.default_allocator`.
     pub arena: &'a Arena,
@@ -59,15 +58,13 @@ pub struct Transpiler<'a> {
 }
 
 impl<'a> Transpiler<'a> {
-    /// Takes `*mut Log` (not `&'a mut`) because the same
-    /// `*Log` is aliased into `linker.log` / `resolver.log`; the struct
-    /// field is a raw pointer for that reason.
-    pub fn set_log(&mut self, log: *mut bun_ast::Log) {
+    pub fn set_log(&mut self, log: *const bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
         // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
         // arena-allocated `Log`, which outlives this `Transpiler<'a>`.
-        self.resolver.log = core::ptr::NonNull::new(log).expect("set_log: log is non-null");
+        self.resolver.log =
+            core::ptr::NonNull::new(log.cast_mut()).expect("set_log: log is non-null");
     }
 
     // TODO: remove this method. it does not make sense
@@ -103,32 +100,11 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
-    /// `.errors` / `.warnings` checks; prefer [`Self::log_mut`] for writes.
     #[inline]
-    pub fn log(&self) -> &bun_ast::Log {
-        // SAFETY: `self.log` is non-null after `init` (set to the
-        // caller-provided arena `Log`) and outlives `self`. Read-only access
-        // here cannot conflict with the aliased raw copies in
-        // `self.{resolver,linker,options}.log` (those are also reads or
-        // serialized writes on the bundle thread).
+    pub fn log<'r>(&self) -> &'r bun_ast::Log {
+        // SAFETY: `self.log` is non-null after `init`. FIXME: nothing ties `'r`
+        // to the log that `set_log` was last given.
         unsafe { &*self.log }
-    }
-
-    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
-    /// other `self.*` fields as arguments without a borrow-checker conflict;
-    /// callers must not hold two results live at once, nor hold a result
-    /// across a `self.{resolver,linker}` call that itself writes to the
-    /// aliased `*mut Log` (see field comment — same allocation is threaded
-    /// into `linker.log` / `resolver.log`).
-    #[inline]
-    pub fn log_mut<'r>(&self) -> &'r mut bun_ast::Log {
-        // SAFETY: `self.log` is non-null after `init` (set to the
-        // caller-provided arena `Log`) and outlives `self`. The unbounded `'r`
-        // mirrors the prior open-coded `unsafe { &mut *self.log }`; the
-        // aliased raw copies in `self.{resolver,linker,options}.log` are never
-        // dereferenced while a `log_mut()` result is live (caller contract).
-        unsafe { &mut *self.log }
     }
 
     /// Shared read-only borrow of the `DotEnv::Loader`. Prefer this over
@@ -176,12 +152,13 @@ impl<'a> Transpiler<'a> {
     pub(crate) fn for_worker(
         from: &Transpiler<'a>,
         arena: &'a Arena,
-        log: *mut bun_ast::Log,
+        log: *const bun_ast::Log,
     ) -> Transpiler<'a> {
         let mut options = from.options.for_worker();
         options.log = log;
         let resolver_opts = resolver_bundle_options_subset(&options);
-        let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
+        let log_nn = core::ptr::NonNull::new(log.cast_mut())
+            .expect("Transpiler::for_worker: log is non-null");
         let resolver = Resolver::for_worker(&from.resolver, log_nn, resolver_opts);
 
         Transpiler {
@@ -360,7 +337,7 @@ impl<'a> Transpiler<'a> {
                     // ignore this error, we will print the original error
                 }
 
-                self.log_mut().add_error_fmt(
+                self.log().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
@@ -391,7 +368,7 @@ impl<'a> Transpiler<'a> {
         };
 
         if is_builtin {
-            self.log_mut().add_error_fmt(
+            self.log().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -400,7 +377,7 @@ impl<'a> Transpiler<'a> {
                 ),
             );
         } else {
-            self.log_mut().add_error_fmt(
+            self.log().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
@@ -965,14 +942,15 @@ impl<'a> Transpiler<'a> {
     /// `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
         arena: &'a Arena,
-        log: *mut bun_ast::Log,
+        log: *const bun_ast::Log,
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
         // Caller contract: `log` is the freshly-boxed per-VM `Log` from
         // `VirtualMachine::init` and is never null. Validate up front so the
         // deref sites below go through `NonNull` rather than the raw argument.
-        let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::init: log is non-null");
+        let log_nn =
+            core::ptr::NonNull::new(log.cast_mut()).expect("Transpiler::init: log is non-null");
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
         // These two `create()`s are eager (not deferred to the first `parse()`)
@@ -1031,7 +1009,7 @@ impl<'a> Transpiler<'a> {
         // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
         unsafe {
-            (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
+            (*env_loader).quiet = !log_nn.as_ref().level.get().at_least(bun_ast::Level::Info);
         }
 
         // var pool = try arena.create(ThreadPool);
@@ -1135,11 +1113,7 @@ impl<'a> Transpiler<'a> {
         let file_descriptor = this_parse.file_descriptor;
         let path = this_parse.path;
         let loader = this_parse.loader;
-        // Every `Log` access in this function body goes through the `log`
-        // binding below (the resolver fs/js caches reached via
-        // `self.resolver.caches.*` do not touch `resolver.log`), so this is
-        // the unique live `&mut Log` for the duration of the parse.
-        let log: &mut bun_ast::Log = self.log_mut();
+        let log: &bun_ast::Log = self.log();
 
         // Owns the heap allocation backing `source.contents` for the
         // non-shared-buffer file-read and `data:` URL paths. Threaded into the
@@ -1620,7 +1594,7 @@ fn parse_data_loader<'a>(
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     keep_json_and_toml_as_one_statement: bool,
 ) -> Option<ParseResult<'a>> {
     // `bun_parsers::*` parse into the T2 value AST
@@ -1921,7 +1895,7 @@ fn parse_md_loader<'a>(
     loader: options::Loader,
     source_backing: resolver::cache::Contents,
     arena: &'a Arena,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
     let html: &[u8] = match bun_md::root::render_to_html(&source.contents) {
         // The rendered HTML is allocated via
@@ -1974,7 +1948,7 @@ fn parse_wasm_loader<'a>(
     arena: &'a Arena,
     path: &bun_paths::fs::Path<'_>,
     target: options::Target,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
     if target.is_bun() {
         if !source.is_web_assembly() {
@@ -2457,15 +2431,15 @@ impl<'a> Transpiler<'a> {
 
     pub fn transform(
         &mut self,
-        log: *mut bun_ast::Log,
+        log: *const bun_ast::Log,
         _opts: api::TransformOptions,
     ) -> crate::Result<options::TransformResult> {
         let _ = self.enqueue_entry_points();
 
-        // `log` is the same `*mut Log` stored on `self.log`; caller
+        // `log` is the same pointer stored on `self.log`; caller
         // (`BuildCommand::exec`) holds it for the process lifetime.
         let _ = log;
-        if self.log().level.at_least(bun_ast::Level::Debug) {
+        if self.log().level.get().at_least(bun_ast::Level::Debug) {
             self.resolver.debug_logs = Some(resolver::DebugLogs::init()?);
         }
         self.options.transform_only = true;
@@ -2484,7 +2458,12 @@ impl<'a> Transpiler<'a> {
         self.process_resolve_queue(self.options.import_path_format, outstream)?;
 
         if bun_core::FeatureFlags::TRACING
-            && self.options.log().level.at_least(bun_ast::Level::Info)
+            && self
+                .options
+                .log()
+                .level
+                .get()
+                .at_least(bun_ast::Level::Info)
         {
             bun_core::pretty_errorln!(
                 "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",
@@ -2498,9 +2477,7 @@ impl<'a> Transpiler<'a> {
         let outbase: Box<[u8]> = self.result.outbase.clone();
         let output_files: Box<[options::OutputFile]> =
             std::mem::take(&mut self.output_files).into_boxed_slice();
-        // SAFETY: see above (`self.log` is the same pointer as `log`).
-        let final_result =
-            options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
+        let final_result = options::TransformResult::init(outbase, output_files, self.log())?;
         Ok(final_result)
     }
 
@@ -2517,7 +2494,7 @@ impl<'a> Transpiler<'a> {
             bun_ast::Stmt::data_store_reset();
             bun_ast::store_ast_alloc_heap::reset();
 
-            let errors_before = self.log().errors;
+            let errors_before = self.log().errors.get();
             let output_file = match self.build_with_resolve_result_eager(
                 &item,
                 import_path_format,
@@ -2529,7 +2506,7 @@ impl<'a> Transpiler<'a> {
                 Err(err) => {
                     // Print errors (unlike parse errors) add nothing to the
                     // log, and an unlogged failure exits 0 with no output.
-                    if self.log().errors == errors_before {
+                    if self.log().errors.get() == errors_before {
                         let path: &[u8] = item.path_const().map(|p| p.text).unwrap_or(b"");
                         let message: &str = match err {
                             crate::Error::JsPrinter(js_printer::Error::StackOverflow) => {
@@ -2537,7 +2514,7 @@ impl<'a> Transpiler<'a> {
                             }
                             _ => "Failed to generate code for",
                         };
-                        self.log_mut().add_error_fmt(
+                        self.log().add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!("{} \"{}\"", message, bstr::BStr::new(path)),
@@ -2591,7 +2568,7 @@ impl<'a> Transpiler<'a> {
             "entry naming is '{}', consider adding '[hash]' to make filenames unique",
             bstr::BStr::new(&self.entry_naming_template().data),
         )?;
-        self.log_mut().add_range_error_with_notes(
+        self.log().add_range_error_with_notes(
             None,
             Default::default(),
             msg,
@@ -2751,7 +2728,7 @@ impl<'a> Transpiler<'a> {
                 };
             }
             options::Loader::Dataurl | options::Loader::Base64 => {
-                self.log_mut().add_error_fmt(
+                self.log().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
@@ -2866,7 +2843,7 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(e) => e,
             Err(err) => {
-                let _ = self.log_mut().add_error_fmt(
+                let _ = self.log().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
@@ -2879,7 +2856,7 @@ impl<'a> Transpiler<'a> {
             }
         };
 
-        let mut opts = bun_css::ParserOptions::default(Some(self.log_mut()));
+        let mut opts = bun_css::ParserOptions::default(Some(self.log()));
         const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
         let enable_css_modules = file_path_text.len() > CSS_MODULE_SUFFIX.len()
             && strings::eql_comptime(
@@ -2902,7 +2879,7 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                let _ = self.log_mut().add_error_fmt(
+                let _ = self.log().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("{} parsing", e),
@@ -2911,7 +2888,7 @@ impl<'a> Transpiler<'a> {
             }
         };
         if let Err(e) = sheet.minify(alloc, &bun_css::MinifyOptions::default(), &extra) {
-            self.log_mut().add_error_fmt(
+            self.log().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!("{} while minifying", e.kind),
@@ -2932,7 +2909,7 @@ impl<'a> Transpiler<'a> {
         ) {
             Ok(v) => v,
             Err(e) => {
-                self.log_mut().add_error_fmt(
+                self.log().add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("{} while printing", e),

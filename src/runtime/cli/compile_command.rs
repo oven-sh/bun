@@ -109,7 +109,7 @@ pub(crate) struct CompileRequest<'r, 'a> {
     pub(crate) executable: ExecutableSettings<'r>,
     /// The transpiler holds the same pointer, and its resolver and bundler write through it while
     /// the build runs. Whoever writes here makes a reference for that write alone.
-    pub(crate) log: *mut bun_ast::Log,
+    pub(crate) log: *const bun_ast::Log,
 }
 
 pub(crate) struct CompileOutcome {

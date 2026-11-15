@@ -431,10 +431,10 @@ mod draft {
                     // `bun_ast::expr`) so the rest of this body works
                     // against a single `ExprData`.
                     let src = Source::init_path_string(source_path, val);
-                    let mut log = Log::init();
+                    let log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
                     let json_val: Expr =
-                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &mut log, bump) {
+                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &log, bump) {
                             Ok(v) => v,
                             Err(_) => {
                                 // JSON parse failed (e.g., single-quoted string like '${VAR}')
@@ -1090,10 +1090,7 @@ mod draft {
                 bun_ast::ToSourceOptions { convert_bom: true },
             ) {
                 Ok(source) => {
-                    if source
-                        .check_parseable_len(&mut log, "INI document")
-                        .is_err()
-                    {
+                    if source.check_parseable_len(&log, "INI document").is_err() {
                         report_log(&mut log, diagnostics);
                         continue;
                     }
@@ -1106,7 +1103,7 @@ mod draft {
             bun_core::handle_oom(parse_npmrc_into(
                 install,
                 env,
-                &mut log,
+                &log,
                 &sources[source_idx],
                 source_idx as u32,
                 &mut configs,
@@ -1114,7 +1111,7 @@ mod draft {
             report_log(&mut log, diagnostics);
         }
 
-        resolve_url_auth(install, bunfig, &configs, &sources, &mut log);
+        resolve_url_auth(install, bunfig, &configs, &sources, &log);
         report_log(&mut log, diagnostics);
     }
 
@@ -1125,19 +1122,17 @@ mod draft {
             return;
         }
         if log.has_errors() {
+            let errors = log.errors.get();
             let path: &[u8] = log
                 .msgs
+                .get_mut()
                 .iter()
                 .find(|msg| msg.kind == bun_ast::Kind::Err)
                 .and_then(|msg| msg.data.location.as_ref())
                 .map_or(b"", |loc| &loc.file);
             bun_core::warn!(
                 "Encountered {} while reading <b>{}<r>:\n\n",
-                if log.errors == 1 {
-                    "an error"
-                } else {
-                    "errors"
-                },
+                if errors == 1 { "an error" } else { "errors" },
                 bstr::BStr::new(path),
             );
         }
@@ -1284,7 +1279,7 @@ mod draft {
         bunfig: &BunInstall,
         configs: &[ConfigItem],
         sources: &[Source],
-        log: &mut Log,
+        log: &Log,
     ) {
         install.url_auth.clear();
         for ConfigItem {
@@ -1354,7 +1349,7 @@ mod draft {
     pub fn load_npmrc(
         install: &mut BunInstall,
         env: &DotEnvLoader,
-        log: &mut Log,
+        log: &Log,
         source: &Source,
     ) -> OOM<()> {
         let mut configs: Vec<ConfigItem> = Vec::new();
@@ -1368,7 +1363,7 @@ mod draft {
     fn parse_npmrc_into(
         install: &mut BunInstall,
         env: &DotEnvLoader,
-        log: &mut Log,
+        log: &Log,
         source: &Source,
         source_idx: u32,
         configs: &mut Vec<ConfigItem>,
@@ -1611,7 +1606,7 @@ mod draft {
     /// to the shared `create_matcher` helper in `bun_install_types::NodeLinker`.
     fn pnpm_matcher_from_expr(
         expr: &Expr,
-        log: &mut Log,
+        log: &Log,
         source: &Source,
         bump: &Arena,
     ) -> Result<PnpmMatcher, FromExprError> {

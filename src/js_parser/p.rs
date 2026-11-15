@@ -745,18 +745,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.jsx_transform.is_enabled()
     }
 
-    /// Reborrow the shared `Log`. The `&self` receiver lets call sites pass
-    /// other `self.*` fields as arguments (`self.log().add_error(Some(self.source), …)`)
-    /// without a borrow-checker conflict; callers must not hold two results of
-    /// `log()` live at once.
     #[inline]
-    #[allow(clippy::mut_from_ref)]
-    pub(crate) fn log(&self) -> &mut bun_ast::Log {
-        // SAFETY: `self.log` was created from an `&'a mut Log` that outlives
-        // `'a` (and therefore `self`). `self.lexer.log` aliases the same
-        // allocation as a `NonNull` (not `&mut`), so no long-lived Unique tag
-        // exists to be invalidated by this transient reborrow.
-        unsafe { &mut *self.log.as_ptr() }
+    pub(crate) fn log(&self) -> &bun_ast::Log {
+        // SAFETY: alias of `self.lexer.log`.
+        unsafe { self.log.as_ref() }
     }
 
     pub(crate) fn report_stack_overflow(&self, loc: bun_ast::Loc) {
@@ -3736,7 +3728,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // check is debug-only. Preserve that grouping here.
         let order_scope = order.scope_ref();
         if (cfg!(debug_assertions) && order.loc.start != loc.start) || order_scope.kind != kind {
-            self.log().level = bun_ast::Level::Verbose;
+            self.log().level.set(bun_ast::Level::Verbose);
             let _ = self.log().add_debug_fmt(
                 Some(self.source),
                 loc,
@@ -3820,7 +3812,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Enforce strictly increasing scope locations to catch parse/visit pass
             // mismatches. Skip once a parse error is logged: error recovery can push
             // two scopes at one loc and the visit pass won't run anyway.
-            if self.log().errors == 0 && !self.scopes_in_order.is_empty() {
+            if self.log().errors.get() == 0 && !self.scopes_in_order.is_empty() {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;
@@ -3829,7 +3821,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // reshaped for borrowck — copy out loc before borrowing self mutably.
                 if let Some(prev_loc) = self.scopes_in_order[last_i].as_ref().map(|s| s.loc) {
                     if prev_loc.start >= loc.start {
-                        self.log().level = bun_ast::Level::Verbose;
+                        self.log().level.set(bun_ast::Level::Verbose);
                         let _ = self.log().add_debug_fmt(
                             Some(self.source),
                             prev_loc,
@@ -5378,7 +5370,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        self.log().level = bun_ast::Level::Verbose;
+        self.log().level.set(bun_ast::Level::Verbose);
         let _ = self.log().print(Output::error_writer());
 
         Output::panic(format_args!("{}\n{}", fmt, args));
@@ -8241,9 +8233,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ParserSnapshot {
             lexer: self.lexer.snapshot(),
             comments_to_preserve_before,
-            log_msgs_len: log.msgs.len(),
-            log_errors: log.errors,
-            log_warnings: log.warnings,
+            log_msgs_len: log.msgs_len(),
+            log_errors: log.errors.get(),
+            log_warnings: log.warnings.get(),
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
@@ -8274,9 +8266,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
 
         let log = self.log();
-        log.msgs.truncate(snapshot.log_msgs_len);
-        log.errors = snapshot.log_errors;
-        log.warnings = snapshot.log_warnings;
+        log.with_msgs(|msgs| msgs.truncate(snapshot.log_msgs_len));
+        log.errors.set(snapshot.log_errors);
+        log.warnings.set(snapshot.log_warnings);
 
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;

@@ -124,14 +124,14 @@ fn maybe_loop() {
         match imp {
             "bun_compact" | "bun_tree" => {
                 let _store_scope = js_ast::StoreResetGuard::new();
-                let mut log = js_ast::Log::init();
+                let log = js_ast::Log::init();
                 bump.reset();
                 let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
                 let opts = xml::Options {
                     compact: imp == "bun_compact",
                     encoding: xml::InputEncoding::Bytes,
                 };
-                let e = xml::XML::parse(&source, &mut log, &bump, opts).expect("parse");
+                let e = xml::XML::parse(&source, &log, &bump, opts).expect("parse");
                 std::hint::black_box(&e);
             }
             #[cfg(pugixml)]
@@ -172,17 +172,18 @@ fn bench_xml(c: &mut Criterion) {
                 let mut bump = Bump::new();
                 b.iter(|| {
                     let _store_scope = js_ast::StoreResetGuard::new();
-                    let mut log = js_ast::Log::init();
+                    let log = js_ast::Log::init();
                     bump.reset();
                     let source = js_ast::Source::init_path_string("fixture.xml", &contents[..]);
                     let opts = xml::Options {
                         compact,
                         encoding: xml::InputEncoding::Bytes,
                     };
-                    let e = xml::XML::parse(&source, &mut log, &bump, opts).unwrap_or_else(|_| {
+                    let e = xml::XML::parse(&source, &log, &bump, opts).unwrap_or_else(|_| {
                         panic!(
                             "{name}: {}",
                             log.msgs
+                                .take()
                                 .first()
                                 .map(|m| String::from_utf8_lossy(&m.data.text).into_owned())
                                 .unwrap_or_default()

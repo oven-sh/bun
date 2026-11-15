@@ -282,7 +282,7 @@ impl<'b, 's> LoadedBuild<'b, 's> {
 pub fn link_program(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<LinkedProgram, BuildFailed> {
     let caches = ThreadCaches::default();
     let mut build = Build::new(options, provider, &caches, LimitValues::for_host());
@@ -379,7 +379,7 @@ fn names_one_of<'f>(
 pub fn compile(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Compilation, BuildFailed> {
     bun_threading::thread_pool::exit_without_any_thread();
     let request = EngineRequest {
@@ -457,12 +457,7 @@ pub fn compile(
     }
 }
 
-fn fail(
-    stage: Stage,
-    diagnostics: Diagnostics,
-    statistics: Statistics,
-    log: &mut Log,
-) -> BuildFailed {
+fn fail(stage: Stage, diagnostics: Diagnostics, statistics: Statistics, log: &Log) -> BuildFailed {
     let is_internal_error = diagnostics.has_internal_errors();
     diagnostics.write_to(log);
     BuildFailed {
@@ -838,7 +833,7 @@ impl<'a> Build<'a> {
     pub(crate) fn finish<T>(
         mut self,
         result: Result<T, Stage>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<(T, Statistics), BuildFailed> {
         self.clock.add_to(&mut self.statistics);
         match result {

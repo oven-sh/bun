@@ -29,8 +29,8 @@ pub(crate) fn exec(
     let start_time = ctx.start_time;
     let summary = populate_package_cache::fetch(pm, ctx, original_cwd)?;
 
-    let _ = pm.log_mut().print(Output::error_writer());
-    if pm.log_mut().has_errors() || pm.any_failed_to_install {
+    let _ = pm.log().print(Output::error_writer());
+    if pm.log().has_errors() || pm.any_failed_to_install {
         Global::exit(1);
     }
 

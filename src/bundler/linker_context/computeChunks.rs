@@ -36,7 +36,7 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 /// Returns `order`. If the `@import` chain is too deep, logs an error and returns
 /// an empty order. The logged error fails the build after `compute_chunks` returns.
 fn css_order_or_log<'a>(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     sources: &[bun_ast::Source],
     order: Result<Vec<chunk::CssImportOrder<'a>>, CssImportChainTooDeep>,
 ) -> Vec<chunk::CssImportOrder<'a>> {
@@ -66,7 +66,7 @@ fn css_chunk_key<'a>(
 #[inline(never)]
 pub(crate) fn compute_chunks<'a>(
     this: &mut LinkerContext<'_, 'a>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> crate::Result<Box<[Chunk<'a>]>> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 

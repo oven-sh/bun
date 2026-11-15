@@ -775,7 +775,7 @@ fn add_bundled_dep(
     let dir = (Dir::cwd().open_dir(&real_path, ITERABLE))
         .unwrap_or_else(|err| fail_open_dir(err.into(), &real_path));
 
-    let log = manager.log_mut();
+    let log = manager.log();
 
     let source = match File::read_from(dir.fd, b"package.json") {
         Ok(bytes) => Some(bun_ast::Source::init_path_string_owned(
@@ -792,9 +792,9 @@ fn add_bundled_dep(
             Global::crash();
         }
     };
-    let mut parse = || {
+    let parse = || {
         (source.as_ref())
-            .and_then(|source| JSON::parse_package_json_utf8(source, &mut *log, cli_arena()).ok())
+            .and_then(|source| JSON::parse_package_json_utf8(source, log, cli_arena()).ok())
             .inspect(|json| drop_shadowed_properties(*json))
     };
     let mut json = parse();
@@ -1525,7 +1525,7 @@ pub(crate) fn package_json_entry<'a>(
     manager: &mut PackageManager,
     abs_package_json_path: &ZStr,
 ) -> &'a mut WorkspacePackageJSONCache::MapEntry {
-    let log = manager.log_mut();
+    let log = manager.log();
     match pm_workspace_cache(manager).get_with_path(
         log,
         abs_package_json_path.as_bytes(),

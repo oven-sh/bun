@@ -232,8 +232,7 @@ impl PmVersionCommand {
                 ..JSON::PACKAGE_JSON_OPTS
             },
             &package_json_source,
-            // SAFETY: no other borrow of the process-static `Log` is live during this call.
-            unsafe { ctx.log_mut() },
+            ctx.log(),
             &json_bump,
         ) {
             Ok(r) => r,
@@ -441,13 +440,8 @@ impl PmVersionCommand {
             &*package_json_contents,
         );
         let json_bump = Arena::new();
-        let json = JSON::parse_package_json_utf8(
-            &package_json_source,
-            // SAFETY: no other borrow of the process-static `Log` is live during this call.
-            unsafe { ctx.log_mut() },
-            &json_bump,
-        )
-        .ok()?;
+        let json =
+            JSON::parse_package_json_utf8(&package_json_source, ctx.log(), &json_bump).ok()?;
 
         match json.get(b"version")?.data {
             ExprData::EString(s) => Some(s.data.to_vec()),

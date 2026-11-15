@@ -658,7 +658,7 @@ pub mod parse_worker {
     // exclusive access to the whole struct and invalidate that sibling pointer.
     // We only touch the disjoint `options.define` field.
     fn get_empty_css_ast(
-        log: &mut Log,
+        log: &Log,
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
@@ -679,7 +679,7 @@ pub mod parse_worker {
     }
 
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
-        log: &mut Log,
+        log: &Log,
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
         bump: &'static Bump,
@@ -808,7 +808,7 @@ pub mod parse_worker {
     // disjoint `(*transpiler).options` field, never the whole struct.
     #[allow(clippy::too_many_arguments)]
     fn get_ast(
-        log: &mut Log,
+        log: &Log,
         transpiler: *mut Transpiler,
         mut opts: ParserOptions<'static>,
         bump: &'static Bump,
@@ -888,20 +888,20 @@ pub mod parse_worker {
             }
             Loader::Toml => {
                 let _trace = perf::trace("Bundler.ParseTOML");
-                let mut temp_log = Log::init();
+                let temp_log = Log::init();
                 // `temp_log` must flush into `log` on the error path too.
                 // scopeguard would alias `log`/`temp_log` (both borrowed mutably
                 // below); reshape as a closure so every `?` exits through one
                 // post-amble that flushes `temp_log`.
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::toml::TOML::parse(source, &mut temp_log, bump, false)?;
+                        bun_parsers::toml::TOML::parse(source, &temp_log, bump, false)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
                             &mut topts.define,
                             opts,
-                            &mut temp_log,
+                            &temp_log,
                             root,
                             source,
                             b"",
@@ -914,11 +914,11 @@ pub mod parse_worker {
             }
             Loader::Yaml => {
                 let _trace = perf::trace("Bundler.ParseYAML");
-                let mut temp_log = Log::init();
+                let temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr = bun_parsers::yaml::YAML::parse(
                         source,
-                        &mut temp_log,
+                        &temp_log,
                         bump,
                         bun_parsers::yaml::CyclicAliases::Reject,
                     )?;
@@ -927,7 +927,7 @@ pub mod parse_worker {
                             bump,
                             &mut topts.define,
                             opts,
-                            &mut temp_log,
+                            &temp_log,
                             root,
                             source,
                             b"",
@@ -940,16 +940,16 @@ pub mod parse_worker {
             }
             Loader::Json5 => {
                 let _trace = perf::trace("Bundler.ParseJSON5");
-                let mut temp_log = Log::init();
+                let temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     let root: Expr =
-                        bun_parsers::json5::JSON5Parser::parse(source, &mut temp_log, bump)?;
+                        bun_parsers::json5::JSON5Parser::parse(source, &temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
                             &mut topts.define,
                             opts,
-                            &mut temp_log,
+                            &temp_log,
                             root,
                             source,
                             b"",
@@ -962,25 +962,25 @@ pub mod parse_worker {
             }
             Loader::Xml => {
                 let _trace = perf::trace("Bundler.ParseXML");
-                let mut temp_log = Log::init();
+                let temp_log = Log::init();
                 let result = (|| -> core::result::Result<JSAst<'static>, AnyError> {
                     bun_core::analytics::Features::xml_parse_inc();
                     let rows: Expr = bun_parsers::xml::XML::parse(
                         source,
-                        &mut temp_log,
+                        &temp_log,
                         bump,
                         bun_parsers::xml::Options {
                             compact: true,
                             encoding: bun_parsers::xml::InputEncoding::File,
                         },
                     )?;
-                    let root = bun_parsers::json::materialize(&rows, source, &mut temp_log, bump)?;
+                    let root = bun_parsers::json::materialize(&rows, source, &temp_log, bump)?;
                     Ok(JSAst::init(
                         js_parser::new_lazy_export_ast(
                             bump,
                             &mut topts.define,
                             opts,
-                            &mut temp_log,
+                            &temp_log,
                             root,
                             source,
                             b"",
@@ -1272,7 +1272,7 @@ pub mod parse_worker {
                 // make css ast
                 let mut import_records = Vec::<ImportRecord>::default();
                 let source_code = &source.contents;
-                let mut temp_log = Log::init();
+                let temp_log = Log::init();
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
 
@@ -1281,7 +1281,7 @@ pub mod parse_worker {
                     && &source.path.pretty[source.path.pretty.len() - CSS_MODULE_SUFFIX.len()..]
                         == CSS_MODULE_SUFFIX;
                 let parser_options = {
-                    let mut parseropts = bun_css::ParserOptions::default(Some(&mut temp_log));
+                    let mut parseropts = bun_css::ParserOptions::default(Some(&temp_log));
                     if enable_css_modules {
                         parseropts.filename = source.path.pretty;
                         parseropts.css_modules = Some(bun_css::CssModuleConfig::default());
@@ -1299,7 +1299,7 @@ pub mod parse_worker {
                     Ok(v) => v,
                     Err(e) => {
                         // Surface the actual CSS parse diagnostic.
-                        let _ = e.add_to_logger(&mut temp_log, source);
+                        let _ = e.add_to_logger(&temp_log, source);
                         temp_log.append_to(log);
                         return Err(crate::Error::SyntaxError);
                     }
@@ -1320,7 +1320,7 @@ pub mod parse_worker {
                     &extra,
                 ) {
                     // Surface the actual minify diagnostic.
-                    let _ = e.add_to_logger(&mut temp_log, source);
+                    let _ = e.add_to_logger(&temp_log, source);
                     temp_log.append_to(log);
                     return Err(crate::Error::MinifyError);
                 }
@@ -1341,7 +1341,7 @@ pub mod parse_worker {
                     bump,
                     &mut topts.define,
                     opts,
-                    &mut temp_log,
+                    &temp_log,
                     root,
                     source,
                     b"",
@@ -1437,7 +1437,7 @@ pub mod parse_worker {
 
     fn get_code_for_parse_task_without_plugins(
         task: &mut ParseTask<'static>,
-        log: &mut Log,
+        log: &Log,
         fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
@@ -1603,7 +1603,7 @@ pub mod parse_worker {
 
     pub(crate) fn get_code_for_parse_task(
         task: &mut ParseTask<'static>,
-        log: &mut Log,
+        log: &Log,
         fs_cache: &mut bun_resolver::cache::Fs,
         bump: &Bump,
         file_path: &mut Fs::Path,
@@ -1661,7 +1661,7 @@ pub mod parse_worker {
 
     pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
         task: &'a mut ParseTask<'static>,
-        log: &'a mut Log,
+        log: &'a Log,
         fs_cache: &'a mut bun_resolver::cache::Fs,
         bump: &'a Bump,
         file_path: &'a mut Fs::Path<'b>,
@@ -1795,7 +1795,7 @@ pub mod parse_worker {
             b""
         }
 
-        fn append(&self, log: &mut Log, namespace: &[u8]) {
+        fn append(&self, log: &Log, namespace: &[u8]) {
             let source_line_text = self.source_line_text();
             let length = (self.column_end - self.column).max(0) as usize;
             let location = Location {
@@ -1823,9 +1823,9 @@ pub mod parse_worker {
                 _ => {}
             }
             if msg.kind == bun_ast::Kind::Err {
-                log.errors += 1;
+                log.errors.update(|n| n + 1);
             } else if msg.kind == bun_ast::Kind::Warn {
-                log.warnings += 1;
+                log.warnings.update(|n| n + 1);
             }
             let _ = log.add_msg(msg);
         }
@@ -1916,7 +1916,7 @@ pub mod parse_worker {
         // SAFETY: `args.context` points to the `OnBeforeParsePlugin` that owns
         // this callback invocation; disjoint from `*args` (see above).
         let this = unsafe { &mut *args.context };
-        if this.log.errors > 0
+        if this.log.errors.get() > 0
             || this.deferred_error.is_some()
             || this.should_continue_running.get() != 1
         {
@@ -2145,12 +2145,12 @@ pub mod parse_worker {
                     // `args.context == self` — use `self` directly; materializing
                     // a second `&mut` via `&mut *args.context` while `&mut self`
                     // is live would be aliased-`&mut` UB.
-                    self.log.errors += 1;
+                    self.log.errors.update(|n| n + 1);
                     let _ = self.log.add_msg(msg); // logger OOM-only
                     return Err(crate::Error::InvalidNativePlugin);
                 }
 
-                if self.log.errors > 0 {
+                if self.log.errors.get() > 0 {
                     return Err(crate::Error::SyntaxError);
                 }
 
@@ -2203,7 +2203,7 @@ pub mod parse_worker {
     fn get_source_code(
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
-        log: &mut Log,
+        log: &Log,
     ) -> core::result::Result<CacheEntry, AnyError> {
         // `Worker.arena` is a `BackRef` to `Worker.heap` once `has_created` (see
         // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
@@ -2748,7 +2748,7 @@ pub mod parse_worker {
 
         let value: ResultValue = 'value: {
             if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
-                match get_source_code(this, &mut worker, &mut log) {
+                match get_source_code(this, &mut worker, &log) {
                     Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),
                     Err(e) => {
                         break 'value ResultValue::Err(ResultError {

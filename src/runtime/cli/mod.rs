@@ -934,7 +934,7 @@ pub(crate) mod command {
     /// Initialize the process-global `CONTEXT_DATA` and publish it via
     /// `Context::set_global`. Shared by `create_context_data` and the
     /// standalone-graph fast path in `start()`.
-    fn write_context_no_parse(log: &mut bun_ast::Log) -> &'static mut ContextData {
+    fn write_context_no_parse(log: &bun_ast::Log) -> &'static mut ContextData {
         // SAFETY: single-threaded CLI startup; first and only write to
         // `CONTEXT_DATA` for the process lifetime. `log` is the `&'static mut`
         // borrow of `Cli::LOG_` taken in `Cli::start()`, so storing its raw
@@ -946,7 +946,7 @@ pub(crate) mod command {
         // `..Default::default()` struct-update form would build on the stack.
         unsafe {
             let ctx = (*CONTEXT_DATA.get()).write(ContextData::default());
-            ctx.log = std::ptr::from_mut::<bun_ast::Log>(log);
+            ctx.log = std::ptr::from_ref::<bun_ast::Log>(log);
             ctx.start_time = bun_core::start_time();
             bun_options_types::context::set_global(ctx);
             ctx
@@ -971,7 +971,7 @@ pub(crate) mod command {
     #[inline(never)]
     pub(crate) fn create_context_data(
         cmd: Tag,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> crate::Result<&'static mut ContextData> {
         bun_crash_handler::cli_state::set_cmd_char(cmd.char());
 
@@ -1003,7 +1003,7 @@ pub(crate) mod command {
     /// / `exec_auto_or_run` adjacent), instead of fat-LTO inlining it into
     /// `Cli::start` and re-scattering the per-tag tail calls.
     #[inline(never)]
-    pub(crate) fn start(log: &mut bun_ast::Log) -> crate::Result<()> {
+    pub(crate) fn start(log: &bun_ast::Log) -> crate::Result<()> {
         use bun_removable_features::call_removable;
 
         crate::cli::startup_options::refuse_code_without_interpreter();
@@ -1202,10 +1202,7 @@ pub(crate) mod command {
     /// code is not decoded on the `bun --version` path.
     #[cold]
     #[inline(never)]
-    fn boot_standalone(
-        graph: *mut bun_standalone_graph::Graph,
-        log: &mut bun_ast::Log,
-    ) -> CmdResult {
+    fn boot_standalone(graph: *mut bun_standalone_graph::Graph, log: &bun_ast::Log) -> CmdResult {
         // SAFETY: `from_executable` returns a non-null `*mut Graph` whose
         // backing storage is process-static (owned by the executable image).
         let graph: &'static bun_standalone_graph::Graph = unsafe { &*graph };
@@ -1290,7 +1287,7 @@ pub(crate) mod command {
     /// `bun [run] <script>` / `bun --version` / bare `bun`. The dominant tag
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
-    fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_auto_or_run(tag: Tag, log: &bun_ast::Log) -> CmdResult {
         // Bare `bun` help is served by the empty-positionals fallthrough.
         let ctx = init(tag, log)?;
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
@@ -1406,14 +1403,14 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_run_as_node(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_run_as_node(log: &bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::RunAsNodeCommand, log)?;
         run_command::RunCommand::exec_as_if_node(ctx)
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_bunx(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_bunx(log: &bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BunxCommand, log)?;
         let start_idx = if IS_BUNX_EXE.load(core::sync::atomic::Ordering::Relaxed) {
             0
@@ -1426,7 +1423,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_repl(log: &bun_ast::Log) -> CmdResult {
         // Inits with RunCommand (repl reuses run params).
         let ctx = init(Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
@@ -1434,7 +1431,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_build(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_build(log: &bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::BuildCommand, log)?;
         super::build_command::BuildCommand::exec(ctx, None)?;
         Ok(())
@@ -1442,7 +1439,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_compile(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_compile(log: &bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::CompileCommand, log)?;
         super::compile_command::CompileCommand::exec_command(ctx)?;
         Ok(())
@@ -1450,7 +1447,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_check(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_check(log: &bun_ast::Log) -> CmdResult {
         // CheckCommand parses its own argv.
         init(Tag::CheckCommand, log)?;
         let argv = argv_zslice();
@@ -1500,7 +1497,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_lint(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_lint(log: &bun_ast::Log) -> CmdResult {
         // LintCommand parses its own argv.
         let ctx = init(Tag::LintCommand, log)?;
         let argv = argv_zslice();
@@ -1511,7 +1508,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_format(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_format(log: &bun_ast::Log) -> CmdResult {
         // FormatCommand parses its own argv.
         let ctx = init(Tag::FormatCommand, log)?;
         let argv = argv_zslice();
@@ -1525,14 +1522,14 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_audit(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_audit(log: &bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::AuditCommand, log)?;
         match super::audit_command::AuditCommand::exec(ctx)? {}
     }
 
     #[cold]
     #[inline(never)]
-    fn exec_exec(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_exec(log: &bun_ast::Log) -> CmdResult {
         let ctx = init(Tag::ExecCommand, log)?;
         if ctx.positionals.len() > 1 {
             super::exec_command::ExecCommand::exec(ctx)?;
@@ -1544,7 +1541,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn exec_fuzzilli(log: &mut bun_ast::Log) -> CmdResult {
+    fn exec_fuzzilli(log: &bun_ast::Log) -> CmdResult {
         if bun_core::Environment::ENABLE_FUZZILLI {
             let ctx = init(Tag::FuzzilliCommand, log)?;
             return super::fuzzilli_command::FuzzilliCommand::exec(ctx);
@@ -1559,7 +1556,7 @@ pub(crate) mod command {
             $(
                 #[cold]
                 #[inline(never)]
-                fn $name(log: &mut bun_ast::Log) -> CmdResult {
+                fn $name(log: &bun_ast::Log) -> CmdResult {
                     let ctx = init(Tag::$tag, log)?;
                     $($path)+(ctx)
                 }
@@ -1621,7 +1618,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_getcompletes(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_getcompletes(log: &bun_ast::Log) -> crate::Result<()> {
         use super::add_completions;
         use super::run_command::{Filter, RunCommand};
         use super::shell_completions::ShellCompletions;
@@ -1734,7 +1731,7 @@ pub(crate) mod command {
 
     #[cold]
     #[inline(never)]
-    fn bun_create(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_create(log: &bun_ast::Log) -> crate::Result<()> {
         use super::bunx_command::BunxCommand;
         use super::create_command::{CreateCommand, ExampleTag};
         use bun_core::ZStr;
@@ -1870,10 +1867,7 @@ To create a project with the official Next.js scaffolding tool, run
     fn bun_lockb(ctx: &mut ContextData) -> crate::Result<()> {
         use bun_install::lockfile::Printer;
 
-        // SAFETY: single-threaded CLI dispatch; `ctx.log` was populated by
-        // `create_context_data` and no other `&mut Log` borrow is live for the
-        // rest of this function.
-        let log = unsafe { ctx.log_mut() };
+        let log = ctx.log();
         let entry = &ctx.args.entry_points[0];
 
         for arg in bun::argv() {
@@ -1901,7 +1895,7 @@ To create a project with the official Next.js scaffolding tool, run
 
     #[cold]
     #[inline(never)]
-    fn bun_info(log: &mut bun_ast::Log) -> crate::Result<()> {
+    fn bun_info(log: &bun_ast::Log) -> crate::Result<()> {
         use bun_install::package_manager_real::{CommandLineArguments, Subcommand as PmSubcommand};
         use bun_install::{PackageManager, Subcommand};
 

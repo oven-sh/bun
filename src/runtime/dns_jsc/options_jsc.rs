@@ -107,11 +107,7 @@ fn backend_from_js(label: &[u8]) -> Result<Backend, FromJSError> {
 }
 
 pub(crate) fn results_to_js(list: &[GaiResult], global: &JSGlobalObject) -> JsResult<JSValue> {
-    let array = JSValue::create_empty_array(global, list.len())?;
-    for (i, item) in (0_u32..).zip(list) {
-        array.put_index(global, i, result_to_js(item, global)?)?;
-    }
-    Ok(array)
+    JSValue::create_array_from_iter(global, list.iter(), |item| result_to_js(item, global))
 }
 
 pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResult<JSValue> {

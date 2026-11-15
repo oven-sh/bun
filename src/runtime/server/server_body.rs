@@ -894,18 +894,24 @@ pub(crate) struct ServerInitContext<'a> {
 pub(crate) struct ServePlugins {
     names: Box<[Box<[u8]>]>,
     state: Cell<ServePluginsState>,
+    /// Set when `state` becomes `Loaded`.
     plugin: OnceCell<JSBundler::OwnedPlugin>,
-    promise: Cell<Option<jsc::Strong>>,
+    pending: Cell<Option<PendingLoad>>,
     html_bundle_routes: Cell<Vec<html_bundle::PendingBuild>>,
     /// Server whose DevServer is waiting for the plugins to load.
     dev_server: Cell<Option<super::AnyServer>>,
     ref_count: Cell<u32>,
 }
 
+struct PendingLoad {
+    plugin: JSBundler::OwnedPlugin,
+    _promise: jsc::Strong,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ServePluginsState {
     Unqueued,
-    /// The task that starts the load holds a ref, then the promise reaction.
+    /// A ref is held by `ServePluginsLoad`, then by the promise reaction.
     Pending,
     Loaded,
     /// Error information is not stored as it is already reported.
@@ -932,14 +938,14 @@ impl ServePlugins {
             names: plugins,
             state: Cell::new(ServePluginsState::Unqueued),
             plugin: OnceCell::new(),
-            promise: Cell::new(None),
+            pending: Cell::new(None),
             html_bundle_routes: Cell::new(Vec::new()),
             dev_server: Cell::new(None),
             ref_count: Cell::new(1),
         })
     }
 
-    /// Runs no script: the caller has yet to park its response, which script can close.
+    /// Runs no JS: `server.stop(true)` would free the response that the caller has not deferred yet.
     pub(crate) fn get_or_start_load<'a>(
         this: &'a RefPtr<Self>,
         cb: ServePluginsCallback,
@@ -948,7 +954,10 @@ impl ServePlugins {
         match this.state.get() {
             ServePluginsState::Unqueued => {
                 this.state.set(ServePluginsState::Pending);
-                let task = jsc::Task::from_boxed(Box::new(ServePluginsLoad(this.clone())));
+                let task = jsc::Task::from_boxed(Box::new(ServePluginsLoad {
+                    plugins: this.clone(),
+                    server: super::PendingRequest::new(server),
+                }));
                 server.vm().event_loop().enqueue_task(task);
             }
             ServePluginsState::Pending => {}
@@ -982,9 +991,7 @@ impl ServePlugins {
             bun_paths::resolve_path::dirname::<bun_paths::resolve_path::platform::Auto>(bunfig_path)
         };
 
-        let plugin = this.plugin.get_or_init(|| {
-            JSBundler::OwnedPlugin::new(global, JSBundler::BunPluginTarget::Browser)
-        });
+        let plugin = JSBundler::OwnedPlugin::new(global, JSBundler::BunPluginTarget::Browser);
         let mut bunstring_array: Vec<StringView<'_>> = Vec::with_capacity(this.names.len());
         for raw_plugin in &this.names {
             bunstring_array.push(StringView::from_bytes(raw_plugin));
@@ -1005,7 +1012,10 @@ impl ServePlugins {
             plugin.load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
         debug_assert!(promise.as_any_promise().is_some());
-        this.promise.set(Some(jsc::Strong::create(promise, global)));
+        this.pending.set(Some(PendingLoad {
+            plugin,
+            _promise: jsc::Strong::create(promise, global),
+        }));
         // The reaction's ref, adopted by `on_resolve_plugins`/`on_reject_plugins`.
         promise.then(
             global,
@@ -1021,8 +1031,8 @@ impl ServePlugins {
         bun_removable_features::removable_definition!(Bundler, Self::handle_on_resolve);
         debug_assert!(self.state.get() == ServePluginsState::Pending);
         self.state.set(ServePluginsState::Loaded);
-        self.promise.set(None);
-        let loaded = self.plugin.get().expect("set by load").as_non_null();
+        let pending = self.pending.take().expect("set before `then`");
+        let loaded = self.plugin.get_or_init(|| pending.plugin).as_non_null();
 
         for route in self.html_bundle_routes.take() {
             bun_core::handle_oom(html_bundle::Route::on_plugins_resolved(route, Some(loaded)));
@@ -1035,16 +1045,16 @@ impl ServePlugins {
     #[inline(never)]
     pub(crate) fn handle_on_reject(&self, global: &JSGlobalObject, err: JSValue) {
         bun_removable_features::removable_definition!(Bundler, Self::handle_on_reject);
-        self.reject_waiting();
+        self.reject_pending();
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
         global.bun_vm().run_error_handler(err, None);
     }
 
-    fn reject_waiting(&self) {
+    fn reject_pending(&self) {
         debug_assert!(self.state.get() == ServePluginsState::Pending);
         self.state.set(ServePluginsState::Err);
-        self.promise.set(None);
+        self.pending.set(None);
 
         for route in self.html_bundle_routes.take() {
             bun_core::handle_oom(route.on_plugins_rejected());
@@ -1064,18 +1074,27 @@ impl ServePlugins {
     }
 }
 
-pub(crate) struct ServePluginsLoad(RefPtr<ServePlugins>);
+pub(crate) struct ServePluginsLoad {
+    plugins: RefPtr<ServePlugins>,
+    server: super::PendingRequest,
+}
 
 impl ServePluginsLoad {
-    pub(crate) fn run(&self, global: &JSGlobalObject) -> JsResult<()> {
-        match ServePlugins::load_and_resolve_plugins(&self.0, global) {
+    pub(crate) fn run(&self) -> JsResult<()> {
+        if self.server.terminated() {
+            self.plugins.reject_pending();
+            return Ok(());
+        }
+        let global = self.server.global_this();
+        match ServePlugins::load_and_resolve_plugins(&self.plugins, global) {
             Ok(()) => Ok(()),
             Err(JsError::Terminated) => {
-                self.0.reject_waiting();
+                self.plugins.reject_pending();
                 Err(JsError::Terminated)
             }
             Err(err) => {
-                self.0.handle_on_reject(global, global.take_exception(err));
+                self.plugins
+                    .handle_on_reject(global, global.take_exception(err));
                 Ok(())
             }
         }
@@ -1085,9 +1104,9 @@ impl ServePluginsLoad {
 impl bun_event_loop::BoxedTask for ServePluginsLoad {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServePluginsLoad;
     fn release_unrun(self: Box<Self>) {
-        self.0.reject_waiting();
+        self.plugins.reject_pending();
     }
-    /// The plugins are those of the project, whichever script made the server.
+    /// The server stops with the context that started it (`abort_handle`); `run` checks for that.
     fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }

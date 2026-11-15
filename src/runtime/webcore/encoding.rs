@@ -103,6 +103,26 @@ pub(crate) use dispatch_encoding;
 /// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
 /// reading / writing respectively for the duration of the call.
 #[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__encoding__fillUTF16FromUTF8(
+    input: *const u8,
+    len: usize,
+    to: *mut MaybeUninit<u16>,
+    to_len: usize,
+) -> bool {
+    // SAFETY: forwarded from this fn's contract.
+    let (input, to) = unsafe {
+        (
+            bun_core::ffi::slice(input, len),
+            bun_core::ffi::slice_mut(to, to_len),
+        )
+    };
+    strings::fill_utf16_from_utf8(to.into(), input)
+}
+
+/// # Safety
+/// Caller (C++) must guarantee `input[..len]` and `to[..to_len]` are valid for
+/// reading / writing respectively for the duration of the call.
+#[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__encoding__writeLatin1(
     input: *const u8,
     len: usize,
@@ -485,19 +505,10 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     if to.try_reserve_exact(to_len).is_err() {
         return BunString::OUT_OF_MEMORY;
     }
-    // SAFETY: the spare bytes are write-only; the encoder reports how many it
-    // initialized and only those are committed.
-    let wrote = unsafe {
-        bun_core::vec::fill_spare(&mut to, 0, |spare| {
-            let wrote = if url_safe {
-                bun_base64::encode_url_safe(&mut spare[..to_len], input)
-            } else {
-                bun_base64::encode(&mut spare[..to_len], input)
-            };
-            (wrote, wrote)
-        })
-    };
-    debug_assert_eq!(wrote, to_len);
+    bun_core::vec::append_with(&mut to, |spare| {
+        bun_simdutf::base64::encode(input, spare, url_safe)
+    });
+    debug_assert_eq!(to.len(), to_len);
     create_external_globally_allocated_latin1(to)
 }
 

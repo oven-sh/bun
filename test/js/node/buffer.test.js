@@ -5803,3 +5803,113 @@ it("UTF-8 decoders don't write out of bounds while another thread writes to the 
   expect({ stdout, stderr }).toEqual({ stdout: "ok true\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+// One pass over the input sizes the output and another fills it. In between, fs.read() replaces the input with text that
+// needs more or less room. AddressSanitizer reports a write past the output, and fills what is never written with 0xbe.
+describe.concurrent("decoding a Buffer while fs.read() writes to it", () => {
+  const text = (before, fill, after = "", encoding = "utf8") =>
+    Buffer.concat([Buffer.from(before, encoding), Buffer.alloc(60_000, fill, encoding), Buffer.from(after, encoding)]);
+  const utf8 = [text("é", "€"), text("é", "a")];
+  const xml = `<?xml version="1.0" encoding="ISO-8859-1"?><a>é`;
+
+  it.each([
+    [`buffer.toString()`, ...utf8],
+    [`new TextDecoder().decode(buffer)`, ...utf8],
+    [`new TextDecoder().decode(buffer, { stream: true })`, ...utf8],
+    [`new TextDecoder("utf-8", { fatal: true }).decode(buffer)`, ...utf8],
+    [`new StringDecoder().write(buffer)`, ...utf8],
+    [`transcode(buffer, "utf8", "ucs2").toString("ucs2")`, ...utf8],
+    [`transcode(buffer, "utf8", "latin1").toString("latin1")`, ...utf8],
+    [`Bun.JSONL.parse(buffer)[0]`, text(`"é`, "€", `"\n`), text(`"é`, "a", `"\n`)],
+    [`Bun.XML.parse(buffer).a`, text(xml, "a", "</a>", "latin1"), text(xml, "é", "</a>", "latin1")],
+    [
+      `Bun.unsafe.arrayBufferToString(new Uint16Array(buffer.buffer))`,
+      text("a", "a", "", "utf16le"),
+      text("€", "a", "", "utf16le"),
+    ],
+  ])("%s", async (decode, a, b) => {
+    using dir = tempDir("buffer-read-decode-race", {
+      a,
+      b,
+      "fixture.mjs": `
+        import { transcode } from "node:buffer";
+        import { openSync, read, readFileSync } from "node:fs";
+        import { StringDecoder } from "node:string_decoder";
+        const rounds = [["a", "b"], ["b", "a"]].map(([before, after]) => [readFileSync(before), openSync(after)]);
+        const buffer = Buffer.from(new ArrayBuffer(${a.length}));
+        const deadline = performance.now() + 500;
+        let unwritten = 0;
+        while (performance.now() < deadline) {
+          for (const [before, fd] of rounds) {
+            buffer.set(before);
+            const { promise, resolve } = Promise.withResolvers();
+            read(fd, buffer, 0, buffer.length, 0, resolve);
+            try {
+              if (/\\ubebe|\\xbe\\xbe/.test(${decode})) unwritten++;
+            } catch (e) {
+              if (e.code !== "U_INVALID_CHAR_FOUND" && e.code !== "ERR_ENCODING_INVALID_ENCODED_DATA") throw e;
+            }
+            await promise;
+          }
+        }
+        console.log({ unwritten });
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.mjs"],
+      env: {
+        ...bunEnv,
+        ...(isASAN && {
+          Malloc: "1",
+          ASAN_OPTIONS: bunEnv.ASAN_OPTIONS + ":detect_leaks=0:symbolize=0:max_malloc_fill_size=1048576",
+        }),
+      },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "{\n  unwritten: 0,\n}\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("UTF-8 decoders at the lengths where they change how they convert", () => {
+  const byteAtATime = bytes => {
+    const decoder = new TextDecoder();
+    let text = "";
+    for (let i = 0; i < bytes.length; i++) text += decoder.decode(bytes.subarray(i, i + 1), { stream: true });
+    return text + decoder.decode();
+  };
+
+  it.each(["a", "aaaaaaaaaaaaaaaaaaaé", "é", "€", "😀", "a€😀é"])("%s", fill => {
+    const width = Buffer.byteLength(fill);
+    const repeat = count => Buffer.alloc(count * width, fill);
+    const text = count => Buffer.alloc(count * fill.length * 2, fill, "ucs2").toString("ucs2");
+    for (const length of [250, 260, 760, 780, 4090, 4100, 65_530, 65_540, 140_000]) {
+      const count = Math.ceil(length / width);
+      const valid = Buffer.concat([Buffer.from("é"), repeat(count)]);
+      const expected = "é" + text(count);
+      expect(valid.toString() === expected).toBe(true);
+      expect(new TextDecoder("utf-8", { fatal: true }).decode(valid) === expected).toBe(true);
+      expect(BufferModule.transcode(valid, "utf8", "ucs2").toString("ucs2") === expected).toBe(true);
+
+      const streaming = new TextDecoder();
+      const cut = Buffer.concat([valid, Buffer.from([0xf0, 0x9f, 0x98])]);
+      expect(streaming.decode(cut, { stream: true }) === expected).toBe(true);
+      expect(streaming.decode(Uint8Array.of(0x80))).toBe("😀");
+
+      for (const before of [count >> 1, count - 2]) {
+        const damage = repeat(2);
+        damage[width - 1] = 0xf0;
+        const after = count - before - 2;
+        const damaged = Buffer.concat([Buffer.from("é"), repeat(before), damage, repeat(after)]);
+        const replaced = "é" + text(before) + byteAtATime(damage) + text(after);
+        expect(damaged.toString() === replaced).toBe(true);
+        expect(new TextDecoder().decode(damaged) === replaced).toBe(true);
+        expect(() => new TextDecoder("utf-8", { fatal: true }).decode(damaged)).toThrow(TypeError);
+        expect(() => BufferModule.transcode(damaged, "utf8", "ucs2")).toThrow("U_INVALID_CHAR_FOUND");
+      }
+    }
+  });
+});

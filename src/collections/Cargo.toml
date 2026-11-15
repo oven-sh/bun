@@ -30,4 +30,3 @@ rustc-hash = "2"
 scopeguard.workspace = true
 
 
-bun_simdutf_sys.workspace = true

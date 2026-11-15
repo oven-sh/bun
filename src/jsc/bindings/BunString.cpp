@@ -104,12 +104,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
         return JSValue::encode(jsString(vm, WTF::String(impl.releaseNonNull())));
     }
 
-    std::span bytes { reinterpret_cast<const unsigned char*>(ptr), length };
-    // convertUTF8ToString crashes if the allocation fails, so only use it for small or invalid input.
-    constexpr size_t minFallibleLength = 64 * 1024;
-    auto str = length >= minFallibleLength && simdutf::validate_utf8(ptr, length)
-        ? Zig::tryConvertValidUTF8ToString(bytes)
-        : Zig::convertUTF8ToString(bytes);
+    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(ptr), length });
     if (str.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return {};
@@ -461,18 +456,20 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(si
 extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
-    if (simdutf::validate_utf8(bytes, length)) {
-        size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
+    std::span utf8 { reinterpret_cast<const unsigned char*>(bytes), length };
+    // Valid UTF-8 that is not ASCII, which the caller has ruled out, has fewer units than bytes.
+    if (size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length); u16Length < length) {
         std::span<char16_t> ptr;
         auto impl = WTF::StringImpl::tryCreateUninitialized(u16Length, ptr);
         if (!impl) [[unlikely]] {
             return uninitializedStringFailure<char16_t>(u16Length);
         }
-        RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr.data()) == u16Length);
-        return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
+        if (Bun__encoding__fillUTF16FromUTF8(utf8.data(), utf8.size(), ptr.data(), ptr.size())) [[likely]] {
+            return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
+        }
     }
 
-    auto str = Zig::convertUTF8ToString(std::span { reinterpret_cast<const unsigned char*>(bytes), length });
+    auto str = Zig::convertInvalidUTF8ToString(utf8);
     if (str.isNull()) [[unlikely]] {
         return { .tag = BunStringTag::Dead };
     }
@@ -493,22 +490,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1(const char* b
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
-extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
-{
-    ASSERT(length > 0);
-    ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
-    size_t outLength = simdutf::latin1_length_from_utf16(length);
-    std::span<Latin1Character> ptr;
-    auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
-    if (!impl) [[unlikely]] {
-        return uninitializedStringFailure<Latin1Character>(outLength);
-    }
-
-    size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr.data()));
-    ASSERT_WITH_MESSAGE(latin1_length == outLength, "Failed to convert UTF16 to Latin1");
-    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
-}
-
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
@@ -518,6 +499,22 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16(const char16_t
         return uninitializedStringFailure<char16_t>(length);
     }
     memcpy(ptr.data(), bytes, length * sizeof(char16_t));
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
+{
+    ASSERT(length > 0);
+    std::span<Latin1Character> ptr;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
+    if (!impl) [[unlikely]] {
+        return uninitializedStringFailure<Latin1Character>(length);
+    }
+
+    // simdutf stops early if the units stopped being Latin-1 after the caller looked at them.
+    if (simdutf::convert_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr.data())) != length) [[unlikely]] {
+        return BunString__fromUTF16(bytes, length);
+    }
     return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 

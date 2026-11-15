@@ -234,28 +234,17 @@ pub mod analyze_transpiled_module {
         let mut blob: Vec<u8> = Vec::new();
         for wtf8 in strings {
             offsets.push(blob.len() as u32);
-            match bun_core::strings::first_non_ascii(wtf8) {
-                None => {
-                    blob.push(1);
-                    blob.extend_from_slice(wtf8);
-                }
-                Some(first_non_ascii) => {
-                    blob.push(0);
-                    if !blob.len().is_multiple_of(2) {
-                        blob.push(0);
-                    }
-                    blob.reserve(2 * wtf8.len());
-                    // SAFETY: `2 * wtf8.len()` spare bytes reserved, the bound `write_wtf8_as_utf16le` requires.
-                    unsafe {
-                        let n = bun_core::strings::write_wtf8_as_utf16le(
-                            wtf8,
-                            first_non_ascii as usize,
-                            blob.as_mut_ptr().add(blob.len()),
-                        );
-                        blob.set_len(blob.len() + n);
-                    }
-                }
+            if bun_core::strings::is_all_ascii(wtf8) {
+                blob.push(1);
+                blob.extend_from_slice(wtf8);
+                continue;
             }
+            blob.push(0);
+            let start = blob.len().next_multiple_of(2);
+            blob.resize(start + 2 * wtf8.len(), 0);
+            let units = bun_core::cast_slice_mut(&mut blob[start..]);
+            let len = bun_core::strings::convert_utf8_to_utf16_in_buffer(units, wtf8).len();
+            blob.truncate(start + 2 * len);
         }
         offsets.push(blob.len() as u32);
         let width = int_width(blob.len() as u32);

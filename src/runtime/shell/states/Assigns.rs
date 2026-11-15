@@ -2,7 +2,7 @@
 //! no effect on the environment of the shell, so we can skip them.
 
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv};
 use crate::shell::states::base::Base;
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
@@ -135,9 +135,5 @@ impl Assigns {
         );
 
         Yield::Next(this)
-    }
-
-    pub(crate) fn deinit(_interp: &Interpreter, this: NodeId) {
-        log!("Assigns {} deinit", this);
     }
 }

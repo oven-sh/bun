@@ -2,7 +2,7 @@
 
 use core::ptr::NonNull;
 
-use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{
@@ -29,7 +29,7 @@ pub(crate) struct Collection {
 }
 
 pub(crate) struct QueuedDescribe {
-    callback: DeprecatedStrong, // jsc.Strong.Deprecated
+    callback: ProtectedJSValue,
     /// Raw cursor into `Collection.root_scope`'s tree. Stored as `NonNull` (not `&DescribeScope`)
     /// because `Collection::active_scope_mut()` hands out `&mut` to the same node while these
     /// queue entries are live; a `&` here would be invalidated by that `&mut` (Stacked Borrows).
@@ -41,7 +41,6 @@ pub(crate) struct QueuedDescribe {
     /// `Collection.active_scope` and mutated through).
     new_scope: NonNull<DescribeScope>,
 }
-// `Strong: Drop` covers cleanup — no explicit Drop needed.
 
 impl Collection {
     /// `hook_scope` (`BunTestRoot::hook_scope`) becomes the parent of the file's root scope.
@@ -131,7 +130,7 @@ impl Collection {
             // `self.active_scope` in `step()` and mutated through).
             self.current_scope_callback_queue.push(QueuedDescribe {
                 active_scope: self.active_scope,
-                callback: DeprecatedStrong::init(cb),
+                callback: cb.protected(),
                 new_scope: NonNull::from(new_scope),
             });
         }
@@ -186,7 +185,7 @@ impl Collection {
             // every queued item; short-lived read, no aliasing `&mut` is live here.
             if unsafe { item.new_scope.as_ref() }.failed {
                 // if there was an error in the describe callback, don't run any describe callbacks in this scope
-                drop(item); // Strong released here
+                drop(item);
             } else {
                 this.describe_callback_queue.push(item);
             }
@@ -223,7 +222,7 @@ impl Collection {
             if let Some(cfg_data) = BunTest::run_test_callback(
                 buntest_strong,
                 global_this,
-                callback.get(),
+                callback.value(),
                 &[],
                 false,
                 RefDataValue::Collection { active_scope: previous_scope },

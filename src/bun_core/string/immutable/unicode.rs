@@ -105,7 +105,7 @@ pub fn decode_wtf8_rune_t<T: CodePointZero>(p: [u8; 4], len: U3Fast, zero: T) ->
 
 // ───────────────────────────── UTF16 → UTF8 ─────────────────────────────
 //
-// The transcoding suite (`convert_utf16_to_utf8{,_append}`, `to_utf8_alloc{,_z}`,
+// The transcoding suite (`convert_utf16_to_utf8_append`, `to_utf8_alloc{,_z}`,
 // `to_utf8_alloc_with_type`, `to_utf8_list_with_type`, `to_utf8_append_to_list`,
 // `to_utf8_from_latin1{,_z}`, `allocate_latin1_into_utf8_with_list`) lives
 // canonically in `crate::strings_impl` (T0) and is re-exported by

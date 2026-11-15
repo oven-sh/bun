@@ -1,10 +1,12 @@
+use bun_jsc::ThreadIsolated;
 use bun_paths::resolve_path;
 
 use crate::node::PathLike;
+use crate::node::fs::{ShellAsyncCpTask, args};
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, shell_join_path, shell_resolve_operand,
+    ParseFlagResult, ShellTask, ShellTaskCtx, parse_flags, shell_join_path, shell_resolve_operand,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -390,20 +392,23 @@ pub(crate) struct ShellCpTask {
     pub task: ShellTask,
 }
 
-/// Whether there is anything to copy for a source operand.
-enum Check {
-    Copy,
+/// Why nothing is copied for a source operand.
+enum Stop {
     /// The destination stays as it is, and that is not an error.
     Skip,
     Fail(Box<ShellErr>),
 }
 
-impl Check {
-    fn fail(msg: String) -> Check {
-        Check::Fail(Box::new(ShellErr::Custom(
-            msg.into_bytes().into_boxed_slice(),
-        )))
+impl From<bun_sys::Error> for Stop {
+    fn from(e: bun_sys::Error) -> Stop {
+        Stop::Fail(Box::new(ShellErr::new_sys(&e)))
     }
+}
+
+fn fail<T>(msg: String) -> Result<T, Stop> {
+    Err(Stop::Fail(Box::new(ShellErr::Custom(
+        msg.into_bytes().into_boxed_slice(),
+    ))))
 }
 
 impl ShellCpTask {
@@ -471,33 +476,20 @@ impl ShellCpTask {
         }
     }
 
-    /// Called when the node:fs
-    /// async cp completes (success or first error). Records the error (if any)
-    /// and re-queues this `ShellCpTask` onto the JS thread so the interpreter
-    /// can drain `verbose_output` / surface the error.
-    ///
-    /// # Safety
-    /// `this` is the live `heap::alloc`'d task originally passed to
-    /// [`schedule`](Self::schedule); not touched again on this thread after
-    /// return.
-    pub(crate) unsafe fn cp_on_finish(
-        this: *mut ShellCpTask,
+    /// The `ShellAsyncCpTask`'s completion, on the thread that runs the script.
+    pub(crate) fn cp_on_finish(
+        mut self: Box<Self>,
         src: PathLike<'static>,
         dest: PathLike<'static>,
         result: bun_sys::Maybe<()>,
     ) {
-        // SAFETY: caller contract — JS thread, from the `ShellAsyncCpTask`'s
-        // completion; `this` is live and ours. The pool side finished (and
-        // dropped its poster) when it handed the copy to that task, so continue
-        // in place rather than bouncing through the concurrent queue again.
-        unsafe {
-            (*this).src_absolute = Some(src.into_vec());
-            (*this).tgt_absolute = Some(dest.into_vec());
-            if let Err(e) = result {
-                (*this).err = Some(ShellErr::new_sys(&e));
-            }
-            ShellTask::run_from_main_thread::<ShellCpTask>(this);
+        self.src_absolute = Some(src.into_vec());
+        self.tgt_absolute = Some(dest.into_vec());
+        if let Err(e) = result {
+            self.err = Some(ShellErr::new_sys(&e));
         }
+        // SAFETY: the box `create` made, which `run_from_main_thread` takes back.
+        unsafe { ShellTask::run_from_main_thread(bun_core::heap::into_raw(self)) };
     }
 
     /// Unlike most shell builtins this does NOT use the generic
@@ -525,51 +517,22 @@ impl ShellCpTask {
     }
 
     /// Recover `*ShellCpTask` from the
-    /// intrusive `*WorkPoolTask`, run the impl, and post back immediately
+    /// intrusive `*WorkPoolTask`, resolve the operands, and post back immediately
     /// unless a copy was started (which defers the post to `cp_on_finish`).
     unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
-        // SAFETY: `task` is the first `#[repr(C)]` field of `ShellTask`, which
-        // is embedded in `ShellCpTask` at `TASK_OFFSET`. `this` is a live
-        // heap-allocated task; the worker thread has exclusive access until
-        // the bounce-back is posted.
-        unsafe {
-            let this = bun_ptr::container_of::<ShellCpTask, _>(
-                task,
-                <Self as crate::shell::interpreter::ShellTaskCtx>::TASK_OFFSET,
-            );
-            // Moved out first: on success the copy is handed to a
-            // `ShellAsyncCpTask` whose completion may free `*this` at once.
-            let poster = (*this)
-                .task
-                .poster
-                .take()
-                .expect("shell cp task on the pool is armed");
-            match (*this).run_from_thread_pool_impl(&poster) {
-                // The copy now belongs to a `ShellAsyncCpTask` (holding its
-                // own poster, completing on the JS thread via `cp_on_finish`);
-                // this task's pool part is over.
-                Check::Copy => drop(poster),
-                check => {
-                    if let Check::Fail(err) = check {
-                        (*this).err = Some(*err);
-                    }
-                    (*this).task.poster = Some(poster);
-                    Self::enqueue_to_event_loop(this);
-                }
+        // SAFETY: `task` is embedded in the box that `schedule` gave to the pool.
+        let mut this = unsafe { bun_core::heap::take(Self::from_work_task(task)) };
+        match this.resolve() {
+            Ok(args) => {
+                let poster = this.task.poster.take();
+                let poster = poster.expect("shell cp task on the pool is armed");
+                return ShellAsyncCpTask::create_for_shell(args, poster, this);
             }
+            Err(Stop::Fail(err)) => this.err = Some(*err),
+            Err(Stop::Skip) => {}
         }
-    }
-
-    /// Post this task to the main-thread
-    /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
-    ///
-    /// # Safety
-    /// `this` is the live `heap::alloc`'d task; not touched again on this
-    /// thread after return.
-    unsafe fn enqueue_to_event_loop(this: *mut ShellCpTask) {
-        // Reuse the generic `ShellTask` post-back.
-        // SAFETY: caller contract.
-        unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
+        // SAFETY: the queued task owns the box again.
+        unsafe { ShellTask::on_finish(bun_core::heap::into_raw(this)) };
     }
 
     fn has_trailing_sep(path: &[u8]) -> bool {
@@ -609,7 +572,7 @@ impl ShellCpTask {
         src: &bun_core::ZStr,
         tgt: &bun_core::ZStr,
         appended: Option<&[u8]>,
-    ) -> Check {
+    ) -> Result<(), Stop> {
         use bun_sys::S;
         use resolve_path::Platform;
 
@@ -627,34 +590,34 @@ impl ShellCpTask {
 
         // If lstat fails, let the copy report the error.
         let Ok(src_stat) = bun_sys::lstat(src) else {
-            return Check::Copy;
+            return Ok(());
         };
         // A symlink to a directory is copied as a link, so don't treat it as a directory.
         let src_is_dir = S::ISDIR(src_stat.st_mode as _);
         if let Ok(tgt_stat) = bun_sys::lstat(tgt) {
             // A directory is still merged into an existing one, without replacing its files.
             if self.opts.no_clobber && !src_is_dir {
-                return Check::Skip;
+                return Err(Stop::Skip);
             }
             if Self::same_inode(&src_stat, &tgt_stat) || src.as_bytes() == tgt.as_bytes() {
                 // Only the same operand twice is an error. Scripts rely on `cp file .` exiting 0.
                 if self.opts.no_clobber || appended.is_some() || src.as_bytes() != tgt.as_bytes() {
-                    return Check::Skip;
+                    return Err(Stop::Skip);
                 }
-                return Check::fail(format!(
+                return fail(format!(
                     "{src_shown} and {} are identical (not copied)",
                     bstr::BStr::new(&tgt_shown()),
                 ));
             }
             let tgt_is_dir = S::ISDIR(tgt_stat.st_mode as _);
             if src_is_dir && !tgt_is_dir {
-                return Check::fail(format!(
+                return fail(format!(
                     "cannot overwrite non-directory {} with directory {src_shown}",
                     bstr::BStr::new(&tgt_shown()),
                 ));
             }
             if !src_is_dir && tgt_is_dir {
-                return Check::fail(format!(
+                return fail(format!(
                     "cannot overwrite directory {} with non-directory {src_shown}",
                     bstr::BStr::new(&tgt_shown()),
                 ));
@@ -662,10 +625,10 @@ impl ShellCpTask {
         }
 
         if !src_is_dir {
-            return Check::Copy;
+            return Ok(());
         }
         let into_itself = || {
-            Check::fail(format!(
+            fail(format!(
                 "cannot copy a directory, '{src_shown}', into itself, '{}'",
                 bstr::BStr::new(&tgt_shown()),
             ))
@@ -691,25 +654,17 @@ impl ShellCpTask {
             }
             ancestor = parent;
         }
-        Check::Copy
+        Ok(())
     }
 
     /// Resolves src/tgt to absolute paths, classifies them per the three
     /// POSIX `cp` synopses
-    /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
-    /// the node:fs async cp implementation.
-    fn run_from_thread_pool_impl(&mut self, poster: &bun_jsc::ConcurrentPoster) -> Check {
+    /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), and says what to copy.
+    fn resolve(&self) -> Result<ThreadIsolated<args::Cp<'static>>, Stop> {
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
-        let src = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src) {
-            Ok(path) => path,
-            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
-        };
-        let mut tgt = match shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)
-        {
-            Ok(path) => path,
-            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
-        };
+        let src = shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.src)?;
+        let mut tgt = shell_resolve_operand(bun_sys::Tag::copyfile, &self.cwd_path, &self.tgt)?;
 
         // Cases:
         //   SRC       DEST
@@ -719,14 +674,11 @@ impl ShellCpTask {
         //   folder -> folder
         // We need to check dest to see what it is; if it doesn't exist we
         // need to create it.
-        let src_is_dir = match Self::is_dir(&src) {
-            Ok(x) => x,
-            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
-        };
+        let src_is_dir = Self::is_dir(&src)?;
 
         // Any source directory without -R is an error.
         if src_is_dir && !self.opts.recursive {
-            return Check::fail(format!(
+            return fail(format!(
                 "{} is a directory (not copied)",
                 bstr::BStr::new(&self.src)
             ));
@@ -738,7 +690,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
+            Err(e) => return Err(e.into()),
         };
 
         let mut _copying_many = false;
@@ -752,15 +704,12 @@ impl ShellCpTask {
             // 2nd synopsis: -R source_files... -> target.
             if tgt_exists {
                 let basename = resolve_path::basename(src.as_bytes());
-                tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
-                    Ok(path) => path,
-                    Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
-                };
+                tgt = shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename])?;
                 appended = Some(basename);
             } else if self.operands == 2 {
                 // source_dir -> new_target_dir.
             } else {
-                return Check::fail(format!(
+                return fail(format!(
                     "directory {} does not exist",
                     bstr::BStr::new(&self.tgt)
                 ));
@@ -769,48 +718,31 @@ impl ShellCpTask {
         } else {
             // 3rd synopsis: source_files... -> target.
             if src_is_dir {
-                return Check::fail(format!(
+                return fail(format!(
                     "{} is a directory (not copied)",
                     bstr::BStr::new(&self.src)
                 ));
             }
             if !tgt_exists || !tgt_is_dir {
-                return Check::fail(format!("{} is not a directory", bstr::BStr::new(&self.tgt)));
+                return fail(format!("{} is not a directory", bstr::BStr::new(&self.tgt)));
             }
             let basename = resolve_path::basename(src.as_bytes());
-            tgt = match shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename]) {
-                Ok(path) => path,
-                Err(e) => return Check::Fail(Box::new(ShellErr::new_sys(&e))),
-            };
+            tgt = shell_join_path(bun_sys::Tag::copyfile, &[tgt.as_bytes(), basename])?;
             appended = Some(basename);
             _copying_many = true;
         }
 
-        match self.check_paths(&src, &tgt, appended) {
-            Check::Copy => {}
-            stop => return stop,
-        }
+        self.check_paths(&src, &tgt, appended)?;
 
-        let args = crate::node::fs::args::Cp::owned(
+        Ok(args::Cp::owned(
             src.as_bytes().to_vec(),
             tgt.as_bytes().to_vec(),
-            crate::node::fs::args::CpFlags {
+            args::CpFlags {
                 recursive: self.opts.recursive,
                 force: !self.opts.no_clobber,
                 error_on_exist: false,
             },
-        );
-
-        // Pool thread: hand the copy to an fs.cp task bound to the loop and
-        // poster this shell task captured on its own thread.
-        crate::node::fs::ShellAsyncCpTask::create_for_shell(
-            args,
-            self.task.event_loop,
-            poster.clone(),
-            bun_ptr::ParentRef::from_ref_mut(self),
-        );
-
-        Check::Copy
+        ))
     }
 
     /// # Safety
@@ -840,7 +772,7 @@ impl bun_event_loop::Taskable for ShellCpTask {
     }
 }
 
-impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
+impl ShellTaskCtx for ShellCpTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(_this: &mut Self) {
         // Not reached: `ShellCpTask::schedule` installs `work_pool_callback`

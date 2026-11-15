@@ -1648,6 +1648,9 @@ impl Build<'_> {
         steps.end_with(|| format!("{project_name}: bind modules"));
         self.diagnostics.add_module_failures(view, &graph);
         let runs_tests = self.options.load.runs_tests;
+        if runs_tests {
+            known_helpers.leave_replaceable_variables(&graph);
+        }
         let files = view.files();
         let compiled = files.compiled_files().iter().copied();
         for file in compiled.filter(|&file| !files.analysis(file).errors.is_empty()) {

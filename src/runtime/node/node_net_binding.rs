@@ -51,7 +51,7 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
     // Only `socket`, `ref_count`, `protos`, `handlers` are
     // specified; the rest take their struct defaults.
     fn make<const SSL: bool>(global: &JSGlobalObject) -> JSValue {
-        let socket = NewSocket::<SSL>::new(NewSocket::<SSL> {
+        let socket = bun_ptr::RefPtr::new(NewSocket::<SSL> {
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             ref_count: bun_ptr::RefCount::init(),
             protos: JsCell::new(None),
@@ -72,11 +72,12 @@ pub(crate) fn new_detached_socket(cx: &mut JsScope<'_>, is_ssl: bool) -> JSValue
             native_callback: JsCell::new(NativeCallbacks::None),
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
-            latest_session: core::cell::Cell::new(None),
+            latest_session: JsCell::new(None),
         });
         // Weak while idle: `_handle` owns it, and `this_value_for_connect` pins each attempt.
-        let value = socket.to_js(global);
-        socket.this_value.set(jsc::JsRef::init_weak(value));
+        let this = socket.this_ptr();
+        let value = NewSocket::to_js(socket, global);
+        this.this_value.set(jsc::JsRef::init_weak(value));
         value
     }
 
@@ -93,8 +94,8 @@ pub(crate) fn do_connect<'a>(
     options: JsLocal<'a>,
 ) -> JsResult<JSValue> {
     let (maybe_tcp, maybe_tls) = match socket {
-        SocketHandle::Tcp(socket) => (Some(socket.as_ctx_ptr()), None),
-        SocketHandle::Tls(socket) => (None, Some(socket.as_ctx_ptr())),
+        SocketHandle::Tcp(socket) => (Some(socket), None),
+        SocketHandle::Tls(socket) => (None, Some(socket)),
         SocketHandle::Ignored(_) => (None, None),
     };
     Listener::connect_inner(&cx.js_thread(), maybe_tcp, maybe_tls, options.to_js())

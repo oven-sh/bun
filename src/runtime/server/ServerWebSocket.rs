@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
 use bun_core::Utf8Bytes;
 use bun_jsc::JsCell;
@@ -12,8 +11,8 @@ use bun_uws_sys::{Opcode, SendStatus};
 use crate::generated_bindgen::server::js_ServerWebSocket as js;
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
-    self, AbortSignal, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError,
-    JsRef, JsResult,
+    self, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError, JsRef,
+    JsResult, PendingAbortSignal,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
 use crate::webcore::{Blob, BlobExt};
@@ -29,17 +28,14 @@ use crate::generated_bindgen::server::BinaryType;
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` of the SAME socket. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
-// mutability (`Cell` for `Copy` flags/signal, `JsCell` for the non-`Copy`
+// mutability (`Cell` for flags/signal, `JsCell` for the non-`Copy`
 // `JsRef`) carries the writes.
 pub(crate) struct ServerWebSocket {
     // Lives in `ServerConfig.websocket` for the server's lifetime.
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    // `AbortSignal` is an opaque C++ type
-    // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
-    // caller transfers a +1 ref; `drop`/`on_close` unref it.
-    signal: Cell<Option<NonNull<AbortSignal>>>,
+    signal: Cell<Option<PendingAbortSignal>>,
 }
 
 // We pack the per-socket data into this struct below:
@@ -303,23 +299,12 @@ fn compress_from_js(
     Ok(value.to_boolean())
 }
 
-/// Releases the ref and the pending-activity count that `init`'s caller transferred.
-fn release_signal(signal: Option<NonNull<AbortSignal>>) {
-    if let Some(signal) = signal {
-        super::request_context::signal_release(signal);
-    }
-}
-
 /// Runs when `on_close` returns.
-struct OnCloseCleanup<'a> {
-    signal: Option<NonNull<AbortSignal>>,
-    downgrade: Option<&'a JsCell<JsRef>>,
-}
+struct DowngradeOnClose<'a>(Option<&'a JsCell<JsRef>>);
 
-impl Drop for OnCloseCleanup<'_> {
+impl Drop for DowngradeOnClose<'_> {
     fn drop(&mut self) {
-        release_signal(self.signal);
-        if let Some(this_value) = self.downgrade {
+        if let Some(this_value) = self.0 {
             // The `server` traced edge set in `init` must outlive this
             // wrapper: `self.handler` points into the server's allocation
             // and publish()/send() still work on closed sockets (#36788).
@@ -516,11 +501,10 @@ impl ServerWebSocket {
     }
 
     /// Initialize a ServerWebSocket with the given handler, data value, signal, and flags.
-    /// The signal will not be ref'd inside the ServerWebSocket init function, but will unref itself when the ServerWebSocket is destroyed.
     pub(crate) fn init(
         handler: &WebSocketServerHandler,
         data_value: JSValue,
-        signal: Option<NonNull<AbortSignal>>,
+        signal: Option<PendingAbortSignal>,
         flags: Flags,
     ) -> *mut ServerWebSocket {
         let global_object = handler.global_object();
@@ -571,7 +555,7 @@ impl ServerWebSocket {
     /// such a socket.
     pub(crate) fn discard_unopened(&self) {
         self.update_flags(|f| f.set_closed(true));
-        release_signal(self.signal.take());
+        self.signal.set(None);
         self.this_value.with_mut(|v| v.downgrade());
     }
 
@@ -643,7 +627,6 @@ impl ServerWebSocket {
                 // accounting because the closed flag is already set.)
                 self.websocket().close();
                 closed_here = true;
-                this_value.unprotect();
             }
 
             let handled =
@@ -861,17 +844,11 @@ impl ServerWebSocket {
                 }
             }
         }
-        let signal = self.signal.take();
 
-        // Downgrade + signal
-        // cleanup runs at fn exit. `this_value` is not mutated between here and
-        // the deferred `downgrade()`, so hoisting these reads is sound.
         let was_not_empty = self.this_value.get().is_not_empty();
         let cached_this = self.js_value().unwrap_or(JSValue::UNDEFINED);
-        let _cleanup = OnCloseCleanup {
-            signal,
-            downgrade: was_not_empty.then_some(&self.this_value),
-        };
+        let _downgrade = DowngradeOnClose(was_not_empty.then_some(&self.this_value));
+        let signal = self.signal.take();
 
         let vm = handler.vm();
 
@@ -891,10 +868,7 @@ impl ServerWebSocket {
 
             let _loop_guard = vm.enter_event_loop_scope();
 
-            if let Some(sig) = signal {
-                // `sig` is held alive by the +1 ref released in `_cleanup`;
-                // BackRef invariant (pointee outlives the temporary) holds.
-                let sig = bun_ptr::BackRef::from(sig);
+            if let Some(sig) = &signal {
                 if !sig.aborted() {
                     sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
                 }
@@ -919,12 +893,9 @@ impl ServerWebSocket {
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
                 return handler.run_error_callback(on_error, global_object, cached_this, err);
             }
-        } else if let Some(sig) = signal {
+        } else if let Some(sig) = &signal {
             let _loop_guard = vm.enter_event_loop_scope();
 
-            // `sig` is held alive by the +1 ref released in `_cleanup`;
-            // BackRef invariant (pointee outlives the temporary) holds.
-            let sig = bun_ptr::BackRef::from(sig);
             if !sig.aborted() {
                 sig.signal(handler.global_object(), CommonAbortReason::ConnectionClosed);
             }
@@ -1266,13 +1237,6 @@ impl ServerWebSocket {
         };
         let text = bun_core::fmt::format_ip(&address, &mut text_buf).expect("unreachable");
         bun_string_jsc::create_utf8_for_js(cx.global(), text)
-    }
-}
-
-impl Drop for ServerWebSocket {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(WebSocketServer, "finalize");
-        release_signal(self.signal.take());
     }
 }
 

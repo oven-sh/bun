@@ -174,23 +174,13 @@ pub mod caching_sha2_password {
             boringssl::load();
             boringssl::c::ERR_clear_error();
             // Decode public key
-            // SAFETY: public_key is non-empty (checked above); BIO_new_mem_buf
-            // borrows the buffer for the lifetime of `bio` and does not take ownership.
-            let bio = unsafe {
-                boringssl::c::BIO_new_mem_buf(
-                    public_key.as_ptr().cast::<core::ffi::c_void>(),
-                    isize::try_from(public_key.len()).expect("int cast"),
-                )
-            };
-            if bio.is_null() {
-                return Err(crate::Error::InvalidPublicKey);
-            }
-            let bio = OwnedBio(bio);
+            let bio =
+                boringssl::c::MemBio::new(public_key).ok_or(crate::Error::InvalidPublicKey)?;
 
-            // SAFETY: bio.0 is a valid BIO*; null callback/userdata are permitted.
+            // SAFETY: `bio` is live; null callback/userdata are permitted.
             let rsa = unsafe {
                 boringssl::c::PEM_read_bio_RSA_PUBKEY(
-                    bio.0,
+                    bio.as_ptr(),
                     core::ptr::null_mut(),
                     None,
                     core::ptr::null_mut(),
@@ -269,17 +259,6 @@ pub mod caching_sha2_password {
         pub fn decode(&mut self, reader: PacketReader<'_>) -> crate::Result<()> {
             self.data = reader.read(reader.peek().len())?;
             Ok(())
-        }
-    }
-
-    struct OwnedBio(*mut boringssl::c::BIO);
-
-    impl Drop for OwnedBio {
-        fn drop(&mut self) {
-            // SAFETY: a non-null BIO* from BIO_new_mem_buf, freed once.
-            unsafe {
-                let _ = boringssl::c::BIO_free(self.0);
-            }
         }
     }
 

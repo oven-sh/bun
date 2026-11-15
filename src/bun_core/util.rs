@@ -536,13 +536,13 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
+// `.lock()` → guard (no `Result`), `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
-/// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
+/// Guard returned by [`Mutex::lock`]. Re-exported so
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
 
@@ -559,15 +559,6 @@ impl<T> Mutex<T> {
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
-        match self.0.try_lock() {
-            Ok(g) => Some(g),
-            Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
-            Err(std::sync::TryLockError::WouldBlock) => None,
-        }
     }
 }
 
@@ -2960,6 +2951,7 @@ pub struct StringPointer {
     pub offset: u32,
     pub length: u32,
 }
+impl_any_bit_pattern!(StringPointer);
 impl StringPointer {
     #[inline]
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
@@ -3018,8 +3010,7 @@ pub use bun_pod::{
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
-// sites stay safe. Four crates hand-rolled the same accessor shape (Resolution, Bin,
-// DependencyVersion, PackageManager Task) — this macro is the single definition.
+// sites stay safe. `Resolution`, `Bin` and `DependencyVersion` share it.
 //
 // Emits, per arm, `pub fn $field(&self) -> &$Ty` and optionally
 // `pub fn $field_mut(&mut self) -> &mut $Ty`, each guarded by
@@ -3028,7 +3019,7 @@ pub use bun_pod::{
 // Projection uses `addr_of!`/`addr_of_mut!` so no intermediate `&Union` is
 // formed (defensive against partially-initialized padding). The trailing
 // `as *const $Ty` cast is identity for plain fields and unwraps
-// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `Task::Request`/`Data`
+// `ManuallyDrop<$Ty>` (`#[repr(transparent)]`) for the `DependencyVersionValue`
 // case without needing a separate macro arm.
 //
 // Syntax:
@@ -3036,8 +3027,6 @@ pub use bun_pod::{
 //       tag: <tag_field> as <TagTy>, value: <union_field>;
 //       Variant => accessor: Ty;                          // ro, accessor==union field
 //       Variant => accessor: Ty, mut accessor_mut;        // ro+rw
-//       Variant => accessor @ union_field: Ty;            // ro, accessor≠union field
-//       Variant => accessor @ union_field: Ty, mut accessor_mut;
 //   }
 #[macro_export]
 macro_rules! extern_union_accessors {
@@ -3048,58 +3037,41 @@ macro_rules! extern_union_accessors {
         $crate::extern_union_accessors!(@arms [$tag_field, $TagTy, $value_field] $($arms)*);
     };
 
-    // arm: accessor name == union-field name, ro only
+    // arm: ro only
     (@arms [$tf:ident, $TT:ident, $vf:ident]
         $Variant:ident => $field:ident: $Ty:ty;
         $($rest:tt)*
     ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $field, $Ty);
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $Ty);
         $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
     };
-    // arm: accessor name == union-field name, ro + rw
+    // arm: ro + rw
     (@arms [$tf:ident, $TT:ident, $vf:ident]
         $Variant:ident => $field:ident: $Ty:ty, mut $field_mut:ident;
         $($rest:tt)*
     ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $field, $Ty);
+        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $field, $Ty);
         $crate::extern_union_accessors!(@emit_rw [$tf, $TT, $vf] $Variant, $field, $field_mut, $Ty);
-        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
-    };
-    // arm: accessor name ≠ union-field name (`accessor @ ufield`), ro only
-    (@arms [$tf:ident, $TT:ident, $vf:ident]
-        $Variant:ident => $accessor:ident @ $ufield:ident: $Ty:ty;
-        $($rest:tt)*
-    ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $ufield, $accessor, $Ty);
-        $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
-    };
-    // arm: accessor name ≠ union-field name, ro + rw
-    (@arms [$tf:ident, $TT:ident, $vf:ident]
-        $Variant:ident => $accessor:ident @ $ufield:ident: $Ty:ty, mut $accessor_mut:ident;
-        $($rest:tt)*
-    ) => {
-        $crate::extern_union_accessors!(@emit_ro [$tf, $TT, $vf] $Variant, $ufield, $accessor, $Ty);
-        $crate::extern_union_accessors!(@emit_rw [$tf, $TT, $vf] $Variant, $ufield, $accessor_mut, $Ty);
         $crate::extern_union_accessors!(@arms [$tf, $TT, $vf] $($rest)*);
     };
     (@arms [$tf:ident, $TT:ident, $vf:ident]) => {};
 
-    (@emit_ro [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor:ident, $Ty:ty) => {
+    (@emit_ro [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $Ty:ty) => {
         #[inline]
-        pub fn $accessor(&self) -> &$Ty {
+        pub fn $field(&self) -> &$Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `addr_of!` projects without forming an
             // intermediate `&Union`. Cast is identity for plain fields and
             // unwraps `ManuallyDrop<$Ty>` (repr(transparent)).
-            unsafe { &*(::core::ptr::addr_of!(self.$vf.$ufield) as *const $Ty) }
+            unsafe { &*(::core::ptr::addr_of!(self.$vf.$field) as *const $Ty) }
         }
     };
-    (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $ufield:ident, $accessor_mut:ident, $Ty:ty) => {
+    (@emit_rw [$tf:ident, $TT:ident, $vf:ident] $Variant:ident, $field:ident, $field_mut:ident, $Ty:ty) => {
         #[inline]
-        pub fn $accessor_mut(&mut self) -> &mut $Ty {
+        pub fn $field_mut(&mut self) -> &mut $Ty {
             debug_assert!(self.$tf == $TT::$Variant);
             // SAFETY: tag-guarded; `&mut self` exclusive over union storage.
-            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$ufield) as *mut $Ty) }
+            unsafe { &mut *(::core::ptr::addr_of_mut!(self.$vf.$field) as *mut $Ty) }
         }
     };
 }
@@ -3494,33 +3466,69 @@ pub mod base64 {
     }
 }
 
-// ── dupe_z / free_sensitive ───────────────────────────────────────────────
-/// `bun.default_allocator.dupeZ(u8, bytes)` → heap-allocated NUL-terminated
-/// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
-/// stores C-strings. Caller frees via [`free_sensitive`].
-///
-/// Allocated via the default allocator (`bun_alloc::default_alloc` —
-/// mimalloc, or `std::alloc::System` under `cfg(bun_asan)`), so the
-/// allocation is visible to ASAN's interceptor and LeakSanitizer like every
-/// other heap allocation. Pairs with [`free_sensitive`], which frees through
-/// the same `default_alloc::free`.
-pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    let p = bun_alloc::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
-    if p.is_null() {
-        crate::out_of_memory();
+/// A C string that is zeroed before it is freed. A slice of them is a `char **`.
+#[repr(transparent)]
+pub struct SensitiveCString(core::ptr::NonNull<core::ffi::c_char>);
+
+// SAFETY: it is the only owner of the allocation.
+unsafe impl Send for SensitiveCString {}
+// SAFETY: `&self` only reads.
+unsafe impl Sync for SensitiveCString {}
+
+impl SensitiveCString {
+    /// The string ends at the first NUL in `bytes`.
+    pub fn new(bytes: &[u8]) -> Self {
+        let bytes = crate::slice_to_nul(bytes);
+        let Some(p) = core::ptr::NonNull::new(bun_alloc::default_alloc::malloc(bytes.len() + 1))
+        else {
+            crate::out_of_memory();
+        };
+        let p = p.cast::<u8>();
+        // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), p.as_ptr(), bytes.len());
+            p.add(bytes.len()).write(0);
+        }
+        Self(p.cast())
     }
-    // SAFETY: `p` is a fresh allocation of `len + 1` writable bytes.
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
-        *p.add(bytes.len()) = 0;
+
+    pub fn as_ptr(&self) -> *const core::ffi::c_char {
+        self.0.as_ptr()
     }
-    p.cast_const().cast::<core::ffi::c_char>()
+
+    pub fn as_cstr(&self) -> &core::ffi::CStr {
+        // SAFETY: `new` has terminated it, and it lives until `drop`.
+        unsafe { core::ffi::CStr::from_ptr(self.as_ptr()) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.as_cstr().to_bytes()
+    }
 }
 
-/// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
-/// case used by http SSLConfig — re-exported from `bun_alloc` so the
-/// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
-pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+impl Clone for SensitiveCString {
+    fn clone(&self) -> Self {
+        Self::new(self.as_bytes())
+    }
+}
+
+impl PartialEq for SensitiveCString {
+    fn eq(&self, other: &Self) -> bool {
+        crate::strings::eql_long(self.as_bytes(), other.as_bytes(), true)
+    }
+}
+
+impl Drop for SensitiveCString {
+    fn drop(&mut self) {
+        let len = self.as_bytes().len();
+        // SAFETY: `new` got the allocation from `default_alloc`, whose `free` needs no size.
+        unsafe {
+            secure_zero(core::slice::from_raw_parts_mut(self.0.as_ptr().cast(), len));
+            bun_alloc::default_alloc::free(self.0.as_ptr().cast());
+        }
+    }
+}
+
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
 pub use bun_alloc::secure_zero;
 

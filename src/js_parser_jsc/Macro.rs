@@ -57,14 +57,13 @@ pub(crate) struct MacroContext {
     pub(crate) javascript_object: JSValue,
     /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
-    /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
+    /// — `MacroContext` belongs to the `Transpiler` or the job and outlives
     /// every `Expr` it produces (the parser splices the result into the AST and
     /// prints it before the context is freed).
     ///
     /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
     /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
-    /// (the worker bytewise-copies `vm.transpiler`, sets `macro_context =
-    /// None`, and `parse_maybe` re-creates it). `call()` is only reached when
+    /// (each job has its own). `call()` is only reached when
     /// a file actually invokes a macro, so deferring the heap until then
     /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
     /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
@@ -259,24 +258,12 @@ impl MacroContext {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[unsafe(no_mangle)]
-fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Macro::MacroContext {
+fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> *mut core::ffi::c_void {
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
-    // runtime so reading it as `'static` is layout-identical. The boxed state
-    // stays with the long-lived `vm.transpiler` instance — but callers that run on a
-    // short-lived bytewise-cloned `Transpiler` (e.g.
-    // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
-    // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
-    // was actually invoked, its lazily-created `bump` arena) leaks per
-    // iteration. `bump` is `None` on init, so this fn itself never calls
-    // `mi_heap_new()`.
+    // runtime so reading it as `'static` is layout-identical.
     let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
-    let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
-    js_parser::Macro::MacroContext {
-        javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
-        data: data.cast::<core::ffi::c_void>(),
-        known_answers: None,
-    }
+    bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler))).cast()
 }
 
 #[unsafe(no_mangle)]
@@ -316,12 +303,12 @@ fn __bun_macro_context_call(
     // ABI: the `extern "Rust"` declaration in bun_js_parser names
     // `bun_js_parser::Error`; keep both sides byte-identical.
     debug_assert!(
-        !ctx.data.is_null(),
+        !ctx.data().is_null(),
         "MacroContext.call reached without init"
     );
     // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
-    let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
+    let inner = unsafe { &mut *ctx.data().cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
     let caller_loc = caller.loc;
     inner
@@ -562,7 +549,7 @@ pub(crate) struct Run<'a> {
     // The AST uses arena-owned slices (`EString::init` lifetime-erases its borrow), so
     // `coerce` needs a bump arena to back property keys / UTF-16 string data /
     // `from_blob` JSON sub-parsing. The arena is *borrowed* from
-    // `MacroContext` (stored long-term in the `Transpiler`) so the slices
+    // `MacroContext` (owned by the `Transpiler` or the job) so the slices
     // outlive `run_async` — the returned `Expr` is spliced into the AST and
     // printed long after this frame returns.
     pub(crate) bump: &'a bun_alloc::Arena,

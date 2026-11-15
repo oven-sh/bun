@@ -33,8 +33,7 @@ use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_s
 pub(crate) mod js_bundler {
     use super::*;
     use bun_core::Utf8Bytes;
-
-    use bun_sys::FdExt;
+    use core::ptr::NonNull;
 
     type OwnedString = MutableString;
 
@@ -870,7 +869,7 @@ pub(crate) mod js_bundler {
         pub(crate) fn from_js(
             global_this: &JSGlobalObject,
             config: JSValue,
-            plugins: &mut Option<*mut Plugin>,
+            plugins: &mut Option<OwnedPlugin>,
         ) -> JsResult<Config> {
             // Config implements Drop, so functional-record-update from Default::default()
             // is rejected by rustc (E0509). Construct default then mutate instead.
@@ -878,12 +877,6 @@ pub(crate) mod js_bundler {
             // `define` defaults to `StringMap::init(false)`; only the flag differs.
             this.define.dupe_keys = true;
             // errdefer this.deinit(allocator) — handled by `impl Drop for Config` on `?` paths.
-            // errdefer if (plugins.*) |plugin| plugin.deinit() — scopeguard below.
-            let mut plugins = scopeguard::guard(plugins, |p| {
-                if let Some(pl) = p.take() {
-                    Plugin::destroy(pl);
-                }
-            });
 
             let mut did_set_target = false;
             if let Some(slice) = config.get_optional_slice(global_this, b"target")? {
@@ -943,33 +936,25 @@ pub(crate) mod js_bundler {
                         )));
                     };
 
-                    let bun_plugins: *mut Plugin = match **plugins {
-                        Some(p) => p,
-                        None => {
-                            let p = Plugin::create(
-                                global_this,
-                                match this.target {
-                                    Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
-                                    Target::Node => BunPluginTarget::Node,
-                                    _ => BunPluginTarget::Browser,
-                                },
-                            );
-                            **plugins = Some(p);
-                            p
-                        }
-                    };
+                    let bun_plugins = plugins.get_or_insert_with(|| {
+                        OwnedPlugin::new(
+                            global_this,
+                            match this.target {
+                                Target::Bun | Target::BunMacro => BunPluginTarget::Bun,
+                                Target::Node => BunPluginTarget::Node,
+                                _ => BunPluginTarget::Browser,
+                            },
+                        )
+                    });
 
                     let is_last = i == (length as usize).saturating_sub(1);
-                    // SAFETY: bun_plugins is a valid pointer created/stored above
-                    let mut plugin_result = unsafe {
-                        (*bun_plugins).add_plugin(
-                            function,
-                            config,
-                            onstart_promise_array,
-                            is_last,
-                            false,
-                        )?
-                    };
+                    let mut plugin_result = bun_plugins.add_plugin(
+                        function,
+                        config,
+                        onstart_promise_array,
+                        is_last,
+                        false,
+                    )?;
 
                     if !plugin_result.is_empty_or_undefined_or_null() {
                         if let Some(promise) = plugin_result.as_any_promise() {
@@ -1404,7 +1389,7 @@ pub(crate) mod js_bundler {
                 };
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
-                    Ok(d) => d,
+                    Ok(d) => bun_sys::File::from_fd(d),
                     Err(err) => {
                         let message = format!(
                             "{}: failed to open root directory: {}",
@@ -1418,10 +1403,9 @@ pub(crate) mod js_bundler {
                         break 'root;
                     }
                 };
-                let _close = scopeguard::guard(dir, |d| d.close());
 
                 let mut rootdir_buf = bun_paths::path_buffer_pool::get();
-                let rootdir = match bun_sys::get_fd_path(*_close, &mut rootdir_buf) {
+                let rootdir = match bun_sys::get_fd_path(dir.fd(), &mut rootdir_buf) {
                     Ok(p) => p,
                     Err(err) => {
                         return Err(global_this.throw(format_args!(
@@ -1853,7 +1837,6 @@ pub(crate) mod js_bundler {
                 }
             }
 
-            scopeguard::ScopeGuard::into_inner(plugins);
             Ok(this)
         }
     }
@@ -1915,7 +1898,7 @@ pub(crate) mod js_bundler {
                  const result = Bun.spawnSync([\"bun\", \"build\", entrypoint, \"--format=esm\"]);")));
         }
 
-        let mut plugins: Option<*mut Plugin> = None;
+        let mut plugins = None;
         let config = Config::from_js(global_this, config, &mut plugins)?;
 
         // `BundleV2.generateFromJavaScript` — the completion-task struct lives in
@@ -1924,10 +1907,11 @@ pub(crate) mod js_bundler {
         // cannot depend on those).
         let mut completion = crate::api::js_bundle_completion_task::JSBundleCompletionTask::new(
             config,
-            plugins.and_then(core::ptr::NonNull::new),
+            plugins.as_ref().map(OwnedPlugin::as_non_null),
             global_this,
             context,
         );
+        completion.owned_plugins = plugins;
         completion.promise = jsc::JSPromiseStrong::init(global_this);
         let promise = completion.promise.value();
         completion.schedule();
@@ -2195,11 +2179,46 @@ pub(crate) mod js_bundler {
         ) -> JSValue;
     }
 
+    /// The GC root on a [`Plugin`]. Dropping it cancels what the plugins have not answered.
+    pub(crate) struct OwnedPlugin(NonNull<Plugin>);
+
+    impl OwnedPlugin {
+        pub(crate) fn new(global: &JSGlobalObject, target: BunPluginTarget) -> Self {
+            jsc::mark_binding();
+            let plugin = JSBundlerPlugin__create(global, target);
+            JSValue::from_cell(plugin).protect();
+            Self(NonNull::new(plugin).expect("JSBundlerPlugin__create returns a cell"))
+        }
+
+        pub(crate) fn as_non_null(&self) -> NonNull<Plugin> {
+            self.0
+        }
+    }
+
+    impl core::ops::Deref for OwnedPlugin {
+        type Target = Plugin;
+
+        fn deref(&self) -> &Plugin {
+            Plugin::opaque_ref(self.0.as_ptr())
+        }
+    }
+
+    impl Drop for OwnedPlugin {
+        fn drop(&mut self) {
+            jsc::mark_binding();
+            // The VM's last sweep can free a server after its plugin object.
+            if jsc::virtual_machine::VirtualMachine::get().is_shutting_down() {
+                return;
+            }
+            self.tombstone();
+            JSValue::from_cell(self.0.as_ptr()).unprotect();
+        }
+    }
+
     /// JSC-aware methods on the C++ `JSBundlerPlugin` opaque. The opaque type
     /// itself is owned by `bun_bundler` (lower tier, no JSC dep), so these are
     /// added as an extension trait rather than an inherent `impl`.
     pub(crate) trait PluginJscExt {
-        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin;
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -2207,9 +2226,6 @@ pub(crate) mod js_bundler {
             build_result: JSValue,
             rejection: JsResult<JSValue>,
         ) -> JsResult<JSValue>;
-        /// `this` must be a live handle previously returned by `Plugin::create`;
-        /// non-null is checked via `Plugin::opaque_ref` (panics on null).
-        fn destroy(this: *mut Plugin);
         /// The plugins' VM is shutting down: every request the plugin object still holds is answered
         /// as cancelled now, and whatever its JS side delivers later is dropped (an answer) or refused
         /// (`.defer()`). JS thread.
@@ -2217,7 +2233,7 @@ pub(crate) mod js_bundler {
         fn global_object(&self) -> &JSGlobalObject;
         fn append_defer_promise(&mut self) -> JSValue;
         fn add_plugin(
-            &mut self,
+            &self,
             object: JSValue,
             config: JSValue,
             onstart_promises_array: JSValue,
@@ -2235,13 +2251,6 @@ pub(crate) mod js_bundler {
     }
 
     impl PluginJscExt for Plugin {
-        fn create(global: &JSGlobalObject, target: BunPluginTarget) -> *mut Plugin {
-            jsc::mark_binding();
-            let plugin = JSBundlerPlugin__create(global, target);
-            JSValue::from_cell(plugin).protect();
-            plugin
-        }
-
         fn run_on_end_callbacks(
             &mut self,
             global_this: &JSGlobalObject,
@@ -2284,12 +2293,6 @@ pub(crate) mod js_bundler {
             JSBundlerPlugin__tombstone(self);
         }
 
-        fn destroy(this: *mut Plugin) {
-            jsc::mark_binding();
-            JSBundlerPlugin__tombstone(Plugin::opaque_ref(this));
-            JSValue::from_cell(this).unprotect();
-        }
-
         fn global_object(&self) -> &JSGlobalObject {
             JSBundlerPlugin__globalObject(self)
         }
@@ -2299,7 +2302,7 @@ pub(crate) mod js_bundler {
         }
 
         fn add_plugin(
-            &mut self,
+            &self,
             object: JSValue,
             config: JSValue,
             onstart_promises_array: JSValue,
@@ -2308,13 +2311,9 @@ pub(crate) mod js_bundler {
         ) -> JsResult<JSValue> {
             jsc::mark_binding();
             let _tracer = bun_core::perf::trace("JSBundler.addPlugin");
-            // `global_object` and `runSetupFunction` both take `&Plugin`, so a
-            // single shared reborrow of `*self` serves both the host-call guard
-            // and the closure body — no raw-pointer escape hatch needed.
-            let this: &Plugin = &*self;
-            jsc::from_js_host_call(this.global_object(), || {
+            jsc::from_js_host_call(self.global_object(), || {
                 JSBundlerPlugin__runSetupFunction(
-                    this,
+                    self,
                     object,
                     config,
                     onstart_promises_array,
@@ -2431,9 +2430,8 @@ pub(crate) fn worker_live_count() -> usize {
 }
 
 pub(crate) use js_bundler::BunPluginTarget;
-/// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
-pub(crate) use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;
+pub(crate) use js_bundler::{OwnedPlugin, Plugin};
 
 /// Wraps a `webcore::Blob` plus
 /// `loader/path/hash/output_kind`. `.sourcemap` lives on the JS wrapper

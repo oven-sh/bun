@@ -63,7 +63,7 @@ impl BuildContext {
         &self,
         work: impl FnOnce(&mut Transpiler<'static>, &Arena) -> R,
     ) -> R {
-        let mut worker = scopeguard::guard(Worker::get(self.bundle()), |worker| worker.unget());
+        let mut worker = Worker::get(self.bundle());
         let data = worker.data.as_mut().expect("Worker::get creates it");
         with_ast_scope(|arena| work(&mut data.transpiler, arena))
     }
@@ -213,17 +213,12 @@ pub(crate) fn with_test_context<R>(
         false,
         None,
         &arena,
-    )
-    .expect("the carrier starts");
+    );
     let context = BuildContext {
         bundle: NonNull::from(&mut *bundle).cast(),
         module_prefix: Box::from(&b"/$bunfs/root/"[..]),
     };
-    let result = then(&context);
-    drop(context);
-    bundle.deinit_without_freeing_arena();
-    drop(bundle);
-    result
+    then(&context)
 }
 
 pub(crate) struct BundlerServices {

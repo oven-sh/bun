@@ -131,26 +131,7 @@ unsafe impl<A: JsAffine, B: JsAffine, C: JsAffine> JsAffine for (A, B, C) {}
 // SAFETY: see the group note above.
 unsafe impl<T: ?Sized> JsAffine for JsPtr<T> {}
 // SAFETY: see the group note above.
-unsafe impl JsAffine for Protected {}
-
-/// A GC-protected value a job's completion needs (Node: a `Global<Value>` on
-/// the req_wrap). Unprotected on drop.
-pub struct Protected(crate::JSValue);
-impl Protected {
-    pub fn new(value: crate::JSValue) -> Self {
-        value.protect();
-        Self(value)
-    }
-    #[inline]
-    pub fn value(&self) -> crate::JSValue {
-        self.0
-    }
-}
-impl Drop for Protected {
-    fn drop(&mut self) {
-        self.0.unprotect();
-    }
-}
+unsafe impl JsAffine for crate::ProtectedJSValue {}
 
 /// A pointer into JS-owned memory (an ArrayBuffer's bytes, a pinned cell, the
 /// creating global) that a job carries off-thread. It can be *passed around*

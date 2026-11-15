@@ -37,7 +37,7 @@ pub struct ServerEntryPoint {
 
 impl ServerEntryPoint {
     pub fn generate(
-        entry: &mut ServerEntryPoint,
+        &mut self,
         is_hot_reload_enabled: bool,
         path_to_use: &[u8],
     ) -> crate::Result<()> {
@@ -115,8 +115,8 @@ impl ServerEntryPoint {
         // Free the previous buffer on regenerate (hot reload) instead of
         // leaking it. `contents` is either "" or a previously generated buffer.
         // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
-        entry.contents = code.into_boxed_slice();
-        entry.generated = true;
+        self.contents = code.into_boxed_slice();
+        self.generated = true;
         Ok(())
     }
 }

@@ -99,7 +99,7 @@ fn run_plugins(
         &mut from_plugin,
     );
 
-    let changed = match entry {
+    match entry {
         Ok(entry) if from_plugin => Ok(Some(Loaded::Source {
             contents: Cow::Owned(entry.contents.as_slice().to_vec()),
             loader,
@@ -117,9 +117,7 @@ fn run_plugins(
             }
             Err(Failed)
         }
-    };
-    task.external_free_function.call();
-    changed
+    }
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ unsafe extern "C" {
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
     safe fn tj3GetScalingFactors(n: &mut c_int) -> *const ScalingFactor;
-    pub(crate) fn tj3Free(ptr: *mut c_void);
+    fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
     // XYB / … explicit when present). tj3GetICCProfile reads the decoded
@@ -310,19 +310,9 @@ pub(crate) fn decode(
         {
             break 'blk None;
         }
-        let _free = scopeguard::guard(icc_ptr, |p| {
-            if !p.is_null() {
-                // SAFETY: `p` was allocated by libjpeg-turbo via tj3GetICCProfile;
-                // tj3Free is its matching deallocator and is called exactly once.
-                unsafe { tj3Free(p.cast()) };
-            }
-        });
-        if icc_ptr.is_null() {
-            break 'blk None;
-        }
-        // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.
-        let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
-        break 'blk Some(src.to_vec());
+        // SAFETY: tj3GetICCProfile allocated `icc_ptr` for the caller and wrote `icc_size` bytes.
+        unsafe { codecs::Encoded::from_raw(icc_ptr, icc_size, encoded_wrap_free!(tj3Free)) }
+            .map(|icc| icc.to_vec())
     };
     Ok(codecs::Decoded {
         rgba: out,
@@ -371,7 +361,7 @@ pub(crate) fn encode(
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]` with the
     // caller-asserted `w*ht*4` layout; out-params are valid `&mut` locals and
     // libjpeg-turbo allocates the output buffer (out_ptr starts null).
-    if unsafe {
+    let rc = unsafe {
         tj3Compress8(
             h,
             rgba.as_ptr(),
@@ -382,24 +372,9 @@ pub(crate) fn encode(
             &raw mut out_ptr,
             &raw mut out_len,
         )
-    } != 0
-    {
-        // tj3Compress8 may have allocated (or grown) `out_ptr` before
-        // failing mid-stream; the docs say the caller owns it on any return.
-        if !out_ptr.is_null() {
-            // SAFETY: `out_ptr` was allocated by tj3Compress8 via libjpeg-turbo's
-            // allocator; tj3Free is its matching deallocator.
-            unsafe { tj3Free(out_ptr.cast()) };
-        }
-        return Err(codecs::Error::EncodeFailed);
-    }
-    // tj3Compress8 allocates via libjpeg-turbo's allocator; hand it to JS
-    // with `tj3Free` as the finalizer instead of duping.
-    Ok(codecs::Encoded {
-        // SAFETY: tj3Compress8 succeeded; out_ptr is non-null and owns `out_len` bytes.
-        bytes: unsafe {
-            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len))
-        },
-        free: encoded_wrap_free!(tj3Free),
-    })
+    };
+    // SAFETY: the caller owns `out_ptr` on any return, and it holds `out_len` bytes on success.
+    unsafe { codecs::Encoded::from_raw(out_ptr, out_len, encoded_wrap_free!(tj3Free)) }
+        .filter(|_| rc == 0)
+        .ok_or(codecs::Error::EncodeFailed)
 }

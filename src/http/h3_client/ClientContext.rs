@@ -4,8 +4,8 @@
 
 use core::ffi::c_uint;
 use core::ptr::NonNull;
-use core::sync::atomic::Ordering;
 
+use bun_ptr::RefPtr;
 use bun_uws::Loop as UwsLoop;
 use bun_uws::quic;
 use bun_uws::quic::context::ConnectResult;
@@ -14,7 +14,6 @@ use super::callbacks;
 use super::client_session::{ClientSession, quic_socket_mut, session_mut};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
-use crate::h3_client as H3;
 use crate::ssl_config::SSLConfig;
 use crate::{Carrier, HTTPClient};
 
@@ -23,7 +22,7 @@ use crate::h3_client::h3_client;
 pub(crate) struct ClientContext {
     // FFI handle owned for process lifetime (never freed).
     qctx: NonNull<quic::Context>,
-    sessions: Vec<*mut ClientSession>,
+    sessions: Vec<RefPtr<ClientSession>>,
 }
 
 /// One instance per HTTP-thread loop. Stored as a process global only
@@ -114,7 +113,7 @@ impl ClientContext {
             .clone()
             .filter(|tls| tls.get().requires_custom_request_ctx);
         let tls_props_ptr = SSLConfig::raw_ptr(tls_props.as_ref());
-        for &s in self.sessions.iter() {
+        for s in self.sessions.iter().map(RefPtr::as_ptr) {
             // sessions vec holds live ClientSession pointers; removed via
             // unregister() before destroy — `session_mut` centralises that
             // backref upgrade.
@@ -150,18 +149,18 @@ impl ClientContext {
             .and_then(|tls| tls.get().server_name_cstr())
             .filter(|name| !name.to_bytes().is_empty())
             .unwrap_or(host_z);
-        let session = ClientSession::new(
+        let registry_ref = ClientSession::new(
             hostname.to_vec(),
             port,
             reject,
             tls_props.clone(),
             client.pool.id,
         );
-        let _ = H3::live_sessions.fetch_add(1, Ordering::Relaxed);
+        let session = registry_ref.as_ptr();
         // `session` was just allocated by ClientSession::new — `session_mut`
         // upgrades the fresh heap pointer (sole owner) for these set-up writes.
         session_mut(session).registry_index = u32::try_from(self.sessions.len()).expect("int cast");
-        self.sessions.push(session);
+        self.sessions.push(registry_ref);
         session_mut(session).enqueue(client);
 
         let result = self
@@ -204,7 +203,7 @@ impl ClientContext {
                 if let Carrier::H3(stream) = client.carrier {
                     session_mut(session).detach(stream.as_ptr());
                 }
-                self.unregister(session_mut(session));
+                let _registry_ref = self.unregister(session_mut(session));
                 PendingConnect::fail_session(session, crate::Error::ConnectionRefused);
                 return Err(crate::Error::ConnectionRefused);
             }
@@ -212,17 +211,24 @@ impl ClientContext {
         Ok(())
     }
 
-    pub(crate) fn unregister(&mut self, session: &mut ClientSession) {
+    /// Returns the registry's ref, which the caller holds while it empties `pending`.
+    #[must_use]
+    pub(crate) fn unregister(
+        &mut self,
+        session: &mut ClientSession,
+    ) -> Option<RefPtr<ClientSession>> {
         let i = session.registry_index as usize;
-        if i >= self.sessions.len() || !core::ptr::eq(self.sessions[i], session) {
-            return;
+        if i >= self.sessions.len() || !core::ptr::eq(self.sessions[i].as_ptr(), session) {
+            return None;
         }
-        let _ = self.sessions.swap_remove(i);
+        let registry_ref = self.sessions.swap_remove(i);
         if i < self.sessions.len() {
             // The swapped-in element is a live registered session.
-            session_mut(self.sessions[i]).registry_index = u32::try_from(i).expect("int cast");
+            session_mut(self.sessions[i].as_ptr()).registry_index =
+                u32::try_from(i).expect("int cast");
         }
         session.registry_index = u32::MAX;
+        Some(registry_ref)
     }
 
     /// Close the connections of fetch session `pool_id` that carry no request.
@@ -232,7 +238,7 @@ impl ClientContext {
         };
         // Leaked Box, process-lifetime, HTTP-thread only. `close_if_idle` doesn't unregister, so `sessions` is stable.
         let ctx = bun_ptr::BackRef::from(this);
-        for &s in ctx.sessions.iter() {
+        for s in ctx.sessions.iter().map(RefPtr::as_ptr) {
             session_mut(s).close_if_idle(pool_id);
         }
     }

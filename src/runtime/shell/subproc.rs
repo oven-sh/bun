@@ -63,7 +63,7 @@ fn rc_as_mut_ptr<T>(a: &Rc<T>) -> *mut T {
 /// Mutably borrow a `RefPtr<StaticPipeWriter>` payload.
 ///
 /// `RefPtr` only exposes `&T` via `Deref`; the shell is single-threaded.
-/// Localises the `(*buffer.as_ptr()).method()` pattern at the five
+/// Localises the `(*buffer.as_ptr()).method()` pattern at the
 /// `Writable::Buffer` callsites.
 ///
 /// # Safety
@@ -185,6 +185,7 @@ pub(crate) type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubpr
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
     const POLL_OWNER_TAG: bun_io::PollTag =
         bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
+    type Source = webcore::AnyBlob;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // `Writable::init` only creates the writer for stdin.
         debug_assert!(matches!(kind, StdioKind::Stdin));
@@ -222,10 +223,7 @@ impl ShellSubprocess {
             let slot = unsafe { &mut (*this).stdin };
             match core::mem::replace(slot, Writable::Ignore) {
                 // Drops `create()`'s ref; `start()`'s ref outlives this call.
-                Writable::Buffer(buffer) => {
-                    // SAFETY: single-threaded; sole borrow of the payload.
-                    unsafe { buffer_mut(&buffer) }.source.detach();
-                }
+                Writable::Buffer(_) => {}
                 other => {
                     *slot = other;
                     return;
@@ -413,28 +411,15 @@ impl ShellSubprocess {
     /// process backref.
     #[cfg(not(windows))]
     pub(crate) unsafe fn deinit_in_flight_io(this: *mut Self) {
-        // Claim `start()`'s +1, `close()` (fires `on_close` → `on_stdin_writer_close`:
-        // slot → `Ignore`, `create()`'s ref released), release the claimed
-        // ref — the JS `Subprocess::close_io` stdin shape.
         // SAFETY: caller contract; the `stdin` borrow ends before `close()`.
-        let pending_start: *mut StaticPipeWriter = match unsafe { &(*this).stdin } {
-            Writable::Buffer(buffer) => {
-                // SAFETY: single-threaded; temporary `&mut` for the flag swap.
-                let writer = unsafe { buffer_mut(buffer) };
-                if core::mem::replace(&mut writer.started, false) {
-                    buffer.as_ptr()
-                } else {
-                    core::ptr::null_mut()
-                }
-            }
-            _ => core::ptr::null_mut(),
+        let pending_start = match unsafe { &(*this).stdin } {
+            // SAFETY: single-threaded; the borrow ends with the `take`.
+            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }.start_ref.take(),
+            _ => None,
         };
-        if !pending_start.is_null() {
-            // SAFETY: live writer holding `create()`'s ref plus the claimed
-            // start ref.
-            unsafe { (*pending_start).close() };
-            // SAFETY: releases the claimed start ref; last use of the pointer.
-            unsafe { bun_ptr::RefCount::deref(pending_start) };
+        if let Some(writer) = pending_start {
+            // SAFETY: single-threaded; `writer` outlives the close, which empties the slot.
+            unsafe { buffer_mut(&writer) }.close();
         }
 
         // SAFETY: disjoint field projections of the live subprocess.
@@ -744,8 +729,11 @@ impl ShellSubprocess {
 
         // SAFETY: borrow of the stdin slot scoped to this match; single-threaded.
         let stdin_start_err = match unsafe { &(*subprocess).stdin } {
-            // SAFETY: single-threaded; the writer is uniquely reachable here.
-            Writable::Buffer(buffer) => unsafe { buffer_mut(buffer) }.start().err(),
+            Writable::Buffer(buffer) => {
+                let start_ref = buffer.clone();
+                // SAFETY: single-threaded; the writer is uniquely reachable here.
+                unsafe { buffer_mut(buffer) }.start(start_ref).err()
+            }
             _ => None,
         };
         if let Some(err) = stdin_start_err {
@@ -898,10 +886,7 @@ impl Writable {
                         _ => unreachable!(),
                     };
                     return Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_blob(blob),
+                        event_loop, subprocess, result, blob,
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -951,10 +936,7 @@ impl Writable {
                         _ => unreachable!(),
                     };
                     Ok(Writable::Buffer(StaticPipeWriter::create(
-                        event_loop,
-                        subprocess,
-                        result,
-                        JscSubprocess::source_from_blob(blob),
+                        event_loop, subprocess, result, blob,
                     )))
                 }
                 #[cfg(any(target_os = "linux", target_os = "android"))]

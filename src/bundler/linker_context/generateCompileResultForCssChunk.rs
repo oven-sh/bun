@@ -41,7 +41,7 @@ pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPool
     // `bytesInOutput` bump goes through `&AtomicUsize`), so form `&` — never
     // `&mut` — to avoid aliased exclusive borrows across peer worker tasks.
     let result = generate_compile_result_for_css_chunk_impl(
-        &mut **worker,
+        &mut worker,
         ctx.c.get(),
         ctx.chunk.get(),
         part_range.i,

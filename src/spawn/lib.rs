@@ -113,15 +113,11 @@ pub mod sync {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.jsc.Subprocess` cross-tier shapes — `Source`, `StdioResult`,
-// `StaticPipeWriter<P>`.
+// `bun.jsc.Subprocess` cross-tier shapes — `StdioResult`, `StaticPipeWriter<P>`.
 //
 // MOVE_DOWN from `bun_runtime::api::bun::subprocess`: `bun_install::
 // security_scanner` constructs a `StaticPipeWriter<SecurityScanSubprocess>` to
-// stream a JSON blob to the scanner's stdin. The `Source` enum here carries a
-// `Box<dyn SourceData>` arm (§Dispatch cold path — vtable travels with the
-// value) so the JSC tier can wrap `Blob`/`ArrayBuffer` payloads without this
-// crate naming `bun_jsc`/`bun_runtime`.
+// stream a JSON blob to the scanner's stdin.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod subprocess {
     pub use crate::process::StdioKind;
@@ -131,61 +127,4 @@ pub mod subprocess {
     pub type StdioResult = Option<bun_sys::File>;
     #[cfg(windows)]
     pub type StdioResult = crate::process::WindowsStdioResult;
-
-    /// The in-memory payload that a
-    /// `StaticPipeWriter` drains into the child's stdin/extra-fd.
-    ///
-    /// `Blob`/`ArrayBuffer` payloads are JSC-owned and unreachable at this
-    /// tier, so the high-tier
-    /// variants are carried via a `Box<dyn SourceData>` (per-object vtable —
-    /// §Dispatch cold path). `bun_install` uses [`Source::from_owned_bytes`].
-    pub enum Source {
-        OwnedBytes(Box<[u8]>),
-        Any(Box<dyn SourceData>),
-        Detached,
-    }
-
-    /// Type-erased payload for [`Source::Any`]. JSC-tier callers implement it
-    /// for `webcore::AnyBlob`. The vtable travels with the value, so no global
-    /// hook registration is needed.
-    pub trait SourceData {
-        fn slice(&self) -> &[u8];
-        fn detach(&mut self);
-        fn memory_cost(&self) -> usize {
-            0
-        }
-    }
-
-    impl Source {
-        #[inline]
-        pub fn from_owned_bytes(bytes: Box<[u8]>) -> Self {
-            Self::OwnedBytes(bytes)
-        }
-
-        pub(crate) fn slice(&self) -> &[u8] {
-            match self {
-                Source::OwnedBytes(b) => b,
-                Source::Any(s) => s.slice(),
-                // slice() after detach() is a bug.
-                Source::Detached => unreachable!("Source::slice on Detached"),
-            }
-        }
-
-        /// Release the payload and flip to
-        /// `Detached`. Calling `slice()` afterwards is invalid (panics).
-        pub fn detach(&mut self) {
-            if let Source::Any(s) = self {
-                s.detach();
-            }
-            *self = Source::Detached;
-        }
-
-        pub(crate) fn memory_cost(&self) -> usize {
-            match self {
-                Source::OwnedBytes(b) => b.len(),
-                Source::Any(s) => s.memory_cost(),
-                Source::Detached => 0,
-            }
-        }
-    }
 }

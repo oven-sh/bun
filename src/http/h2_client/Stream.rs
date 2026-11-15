@@ -15,10 +15,6 @@ use bun_picohttp as picohttp;
 // `live_streams` lives in the parent module of `h2_client/`.
 use crate::HTTPClient;
 
-// See `Stream::new` below, which fills the
-// field defaults and returns a Box. The Box is owned by `ClientSession.streams`;
-// Drop runs when removed from the map.
-
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub(crate) id: u32,
@@ -95,8 +91,6 @@ impl Stream {
 impl Drop for Stream {
     fn drop(&mut self) {
         let _ = super::LIVE_STREAMS.fetch_sub(1, Ordering::Relaxed);
-        // body_buffer / decoded_bytes / decoded_headers: Vec<_> drops automatically.
-        // Freeing the Box is the caller's drop; nothing to do here.
     }
 }
 
@@ -106,8 +100,8 @@ impl Stream {
         session: NonNull<super::ClientSession>,
         client: Option<NonNull<HTTPClient<'static>>>,
         send_window: SendWindow,
-    ) -> Box<Self> {
-        Box::new(Self {
+    ) -> Self {
+        Self {
             id,
             session,
             client,
@@ -126,7 +120,7 @@ impl Stream {
             recv_window: RecvWindow::new(super::LOCAL_INITIAL_WINDOW_SIZE),
             send_window,
             pending_body: bun_ptr::RawSlice::EMPTY,
-        })
+        }
     }
 
     // No `rst()` here: re-entering the session via the `session` backref

@@ -34,7 +34,7 @@ pub(crate) unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolL
     let ctx = part_range.ctx;
 
     let result = generate_compile_result_for_js_chunk_impl(
-        &mut **worker,
+        &mut worker,
         ctx.c.get(),
         ctx.chunk.get(),
         part_range.part_range,

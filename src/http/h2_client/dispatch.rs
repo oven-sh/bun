@@ -12,6 +12,7 @@ use super::client_session::{ClientSession, stream_mut};
 use super::stream::Stream;
 use super::{LOCAL_MAX_CONTINUATIONS, LOCAL_MAX_HEADER_LIST_SIZE, WRITE_BUFFER_CONTROL_LIMIT};
 use bun_picohttp as picohttp;
+use bun_ptr::AliasableBox;
 
 bun_core::declare_scope!(h2_client, hidden);
 
@@ -72,7 +73,11 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
             return;
         }
         Err(err) => {
-            match session.streams.get(&err.stream_id).copied() {
+            match session
+                .streams
+                .get(&err.stream_id)
+                .map(AliasableBox::as_ptr)
+            {
                 Some(stream_ptr) => {
                     let stream = stream_mut(stream_ptr);
                     session.rst_stream(stream, err.code);
@@ -103,7 +108,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
                         let delta =
                             i64::from(value) - i64::from(session.remote_initial_window_size);
                         session.remote_initial_window_size = value;
-                        for &s_ptr in session.streams.values() {
+                        for s_ptr in session.streams.values().iter().map(AliasableBox::as_ptr) {
                             if stream_mut(s_ptr).send_window.shift(delta).is_err() {
                                 session.fatal_error = Some(crate::Error::HTTP2FlowControlError);
                                 return;
@@ -128,7 +133,9 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
                     return;
                 }
                 session.stream_progressed = true;
-            } else if let Some(&stream_ptr) = session.streams.get(&stream_id) {
+            } else if let Some(stream_ptr) =
+                session.streams.get(&stream_id).map(AliasableBox::as_ptr)
+            {
                 let stream = stream_mut(stream_ptr);
                 // §6.9.1: overflow on a stream is a stream error; RST_STREAM and fail just that one.
                 if let Err(code) = stream.send_window.increase(increment) {
@@ -157,7 +164,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
             end_stream,
             end_headers,
         } => {
-            match session.streams.get(&stream_id).copied() {
+            match session.streams.get(&stream_id).map(AliasableBox::as_ptr) {
                 Some(stream_ptr) => {
                     session.stream_progressed = true;
                     session.liveness_ping_spent = false;
@@ -199,7 +206,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
                 session.fatal_error = Some(crate::Error::HTTP2FlowControlError);
                 return;
             }
-            let Some(stream_ptr) = session.streams.get(&stream_id).copied() else {
+            let Some(stream_ptr) = session.streams.get(&stream_id).map(AliasableBox::as_ptr) else {
                 // DATA on a stream we already closed or reset is ignored.
                 if is_idle_stream(session, stream_id) {
                     session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
@@ -244,7 +251,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
                 session.fatal_error = Some(crate::Error::HTTP2ProtocolError);
                 return;
             }
-            let Some(stream_ptr) = session.streams.get(&stream_id).copied() else {
+            let Some(stream_ptr) = session.streams.get(&stream_id).map(AliasableBox::as_ptr) else {
                 return;
             };
             let stream = stream_mut(stream_ptr);
@@ -274,7 +281,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
             session.goaway_received = true;
             let graceful = code == ErrorCode::NO_ERROR;
             let http1_required = code == ErrorCode::HTTP_1_1_REQUIRED;
-            for &s_ptr in session.streams.values() {
+            for s_ptr in session.streams.values().iter().map(AliasableBox::as_ptr) {
                 let s = stream_mut(s_ptr);
                 if s.id > last_stream_id {
                     s.http1_required |= http1_required;
@@ -305,7 +312,7 @@ fn dispatch_frame(session: &mut ClientSession, header: &FrameHeader, payload: &[
 /// END_HEADERS arrived. A block for a stream we no longer track is still decoded, to keep the HPACK table in sync (RFC 9113 §4.3).
 fn on_header_block(session: &mut ClientSession, stream_id: u32) {
     let block = session.header_block.take();
-    match session.streams.get(&stream_id).copied() {
+    match session.streams.get(&stream_id).map(AliasableBox::as_ptr) {
         Some(stream_ptr) => {
             let stream = stream_mut(stream_ptr);
             if stream.headers_end_stream {

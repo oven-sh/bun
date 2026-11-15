@@ -3399,8 +3399,8 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
+    use crate::vec::BorrowedBuf;
     use bun_simdutf_sys::simdutf;
-    use std::io::BorrowedBuf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
     /// padded). Port of `bun.base64.encodeLen`.

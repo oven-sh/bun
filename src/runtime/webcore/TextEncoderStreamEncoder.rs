@@ -179,7 +179,7 @@ impl TextEncoderStreamEncoder {
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
-        let result = bun_core::vec::fill_spare_with_cursor(buf, |spare| {
+        let result = bun_core::vec::append_with(buf, usize::MAX, |spare| {
             simdutf::convert::utf16::to::utf8::with_errors::le(input, spare)
         });
 

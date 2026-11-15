@@ -1,7 +1,7 @@
 #![feature(core_io_borrowed_buf)]
 
+use bun_core::vec::BorrowedBuf;
 use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
-use std::io::BorrowedBuf;
 
 // ASCII control codes used in the ignore set below.
 const VT: u8 = 0x0B; // vertical tab
@@ -128,7 +128,7 @@ pub use bun_core::base64::encode;
 pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
     let len = simdutf::base64::encode_len(source.len(), false);
     out.reserve(len);
-    bun_core::vec::fill_spare_with_cursor(out, |spare| {
+    bun_core::vec::append_with(out, len, |spare| {
         simdutf::base64::encode(source, spare, false)
     });
     len

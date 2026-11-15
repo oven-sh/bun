@@ -244,7 +244,7 @@ pub mod analyze_transpiled_module {
                 blob.push(0);
             }
             blob.reserve(2 * wtf8.len());
-            bun_core::vec::fill_spare_with_cursor(&mut blob, |spare| {
+            bun_core::vec::append_with(&mut blob, usize::MAX, |spare| {
                 bun_core::strings::write_wtf8_as_utf16le(wtf8, spare)
             });
         }

@@ -16,7 +16,7 @@ use bun_boringssl::c::OwnedSslCtx;
 use bun_collections::LinearFifo;
 use bun_collections::linear_fifo::DynamicBuffer;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor};
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, EncodedUnits, String as BunString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader, is_valid_close_code};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -1480,9 +1480,13 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         let kind = FrameKind::from_ffi(op, flags, !this.options.is_server);
 
+        let bytes = match str.encoded_units() {
+            EncodedUnits::Utf16(units) => Copy::Utf16(units),
+            EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => Copy::Latin1(bytes),
+        };
+
         // fast path: small frame, no backpressure, attempt to send without allocating
         if !str.is_16bit() && str.len() < STACK_FRAME_SIZE {
-            let bytes = Copy::Latin1(str.slice());
             let (frame_size, byte_len) = bytes.frame_and_content_len(kind.masked);
             if frame_size < STACK_FRAME_SIZE && this.can_send_inline(kind) {
                 this.send_inline_frame(bytes, byte_len, kind);
@@ -1490,21 +1494,12 @@ impl<const SSL: bool> WebSocket<SSL> {
             }
             // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
         } else if (str.len() * 4) < STACK_FRAME_SIZE && this.can_send_inline(kind) {
-            let bytes = Copy::Utf16(str.utf16_slice());
             let (_, byte_len) = bytes.frame_and_content_len(kind.masked);
             this.send_inline_frame(bytes, byte_len, kind);
             return;
         }
 
-        this.send_data(
-            if str.is_16bit() {
-                Copy::Utf16(str.utf16_slice())
-            } else {
-                Copy::Latin1(str.slice())
-            },
-            !this.has_backpressure(),
-            kind,
-        );
+        this.send_data(bytes, !this.has_backpressure(), kind);
     }
 
     /// `code` 1005 ("no status received") sends a Close frame with an empty payload.

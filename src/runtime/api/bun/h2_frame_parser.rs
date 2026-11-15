@@ -722,7 +722,7 @@ impl H2FrameParser {
 
     /// Sends the first queued frame of `stream`, or as much of it as the send windows allow.
     fn flush_queue(&self, stream: &Stream, written: &mut usize) -> FlushState {
-        if !stream.state().can_send() {
+        if !stream.takes_data() {
             return FlushState::NoAction;
         }
         let Some((is_empty_frame, unsent)) = stream
@@ -795,8 +795,8 @@ impl H2FrameParser {
         }
     }
 
-    /// Queues DATA that can't go out now. Writes are merged into full frames.
-    fn queue_frame(&self, stream: &Stream, bytes: &[u8], callback: JSValue, end_stream: bool) {
+    /// Queues DATA that can't go out now. Writes are merged into full frames. No JS runs until `bytes` is copied.
+    fn queue_data(&self, stream: &Stream, bytes: &[u8], callback: JSValue, end_stream: bool) {
         let global = self.global_this;
         let callback = if callback.is_callable() {
             StrongOptional::create(callback, &global)
@@ -822,7 +822,7 @@ impl H2FrameParser {
             Some(core::mem::replace(&mut last.callback, callback.take()?))
         });
         self.queued_data_size
-            .set(self.queued_data_size.get() + (bytes.len() - rest.len()) as u64);
+            .set(self.queued_data_size.get() + bytes.len() as u64);
         // A frame holds one callback, so the one it had is called now.
         if let Some(superseded) = superseded {
             if let Some(superseded) = superseded.get() {
@@ -831,25 +831,31 @@ impl H2FrameParser {
             return;
         }
 
-        let mut buffer = Vec::new();
-        if !rest.is_empty() {
-            // Room for a full frame, so later writes merge into this one without reallocating.
-            buffer.reserve_exact(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
-            buffer.extend_from_slice(rest);
-            global.vm().deprecated_report_extra_memory(rest.len());
+        global.vm().deprecated_report_extra_memory(rest.len());
+        loop {
+            let (chunk, after) = rest.split_at(rest.len().min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME));
+            rest = after;
+            let mut buffer = Vec::new();
+            if !chunk.is_empty() {
+                // Room for a full frame, so later writes merge into this one without reallocating.
+                buffer.reserve_exact(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                buffer.extend_from_slice(chunk);
+            }
+            let is_last = rest.is_empty();
+            stream.queue.with_mut(|queue| {
+                queue.push_back(PendingFrame {
+                    end_stream: end_stream && is_last,
+                    offset: 0,
+                    buffer,
+                    callback: callback.take_if(|_| is_last).unwrap_or_default(),
+                })
+            });
+            self.outbound_queue_size
+                .set(self.outbound_queue_size.get() + 1);
+            if is_last {
+                return;
+            }
         }
-        stream.queue.with_mut(|queue| {
-            queue.push_back(PendingFrame {
-                end_stream,
-                offset: 0,
-                buffer,
-                callback: callback.take().unwrap_or_default(),
-            })
-        });
-        self.outbound_queue_size
-            .set(self.outbound_queue_size.get() + 1);
-        self.queued_data_size
-            .set(self.queued_data_size.get() + rest.len() as u64);
     }
 
     /// Drops the DATA a closed stream still had queued and calls the write callbacks.
@@ -1536,8 +1542,8 @@ impl H2FrameParser {
 
         let mut written = self.uncork();
         written += match self.native_socket.get() {
-            BunSocket::Tls(socket) => self.generic_flush(socket.get()),
-            BunSocket::Tcp(socket) => self.generic_flush(socket.get()),
+            BunSocket::Tls(socket) => self.generic_flush(&*socket.ref_guard()),
+            BunSocket::Tcp(socket) => self.generic_flush(&*socket.ref_guard()),
             BunSocket::None => {
                 // consider that backpressure is gone and flush data queue
                 self.has_nonnative_backpressure.set(false);
@@ -1603,9 +1609,10 @@ impl H2FrameParser {
 
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
         let _keepalive = self.keepalive();
+        // JS under the write can close the socket.
         match self.native_socket.get() {
-            BunSocket::Tls(socket) => self.generic_write(socket.get(), bytes),
-            BunSocket::Tcp(socket) => self.generic_write(socket.get(), bytes),
+            BunSocket::Tls(socket) => self.generic_write(&*socket.ref_guard(), bytes),
+            BunSocket::Tcp(socket) => self.generic_write(&*socket.ref_guard(), bytes),
             BunSocket::None => {
                 let global = self.global();
                 if self.has_nonnative_backpressure.get() {
@@ -1706,8 +1713,8 @@ impl H2FrameParser {
         }
         self.unregister_auto_flush();
         bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
-        // The slot's ref on `self`, released once the corked bytes are written.
-        let _slot_ref = Self::set_corked(None);
+        let _keepalive = self.keepalive();
+        Self::set_corked(None);
 
         // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
         // so no thread-local borrow may be held across it: move the corked bytes
@@ -1943,7 +1950,9 @@ impl H2FrameParser {
     fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment]) {
         let mut total: usize = 0;
         let total_written = match self.native_socket.get() {
-            BunSocket::Tcp(socket) => BATCH_IOVECS.with_borrow_mut(|iov| {
+            BunSocket::Tcp(socket) => {
+                // A pipe that fails the write closes inside it, which runs JS.
+                let mut iov = BATCH_IOVECS.take();
                 iov.clear();
                 iov.reserve(segments.len());
                 for seg in segments {
@@ -1957,12 +1966,10 @@ impl H2FrameParser {
                         len,
                     });
                 }
-                if total == 0 {
-                    return 0usize;
-                }
-                let w = socket.get().write_vectored_raw(iov);
-                if w < 0 { 0 } else { w as usize }
-            }),
+                let w = socket.ref_guard().write_vectored_raw(&iov);
+                BATCH_IOVECS.set(iov);
+                w.max(0) as usize
+            }
             _ => {
                 // Socket changed under us (detach mid-call): degrade to the copy path
                 // to preserve order.
@@ -3174,13 +3181,14 @@ impl H2FrameParser {
 
     /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
     /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
+    /// `None` if the stream stopped taking data: `callback` has been called.
     fn send_data(
         &self,
         stream: &Stream,
         payload: &[u8],
         callback: JSValue,
         options: SendDataOptions,
-    ) -> (u8, bool) {
+    ) -> Option<(u8, bool)> {
         let SendDataOptions {
             close,
             suppress_half_closed_local_dispatch,
@@ -3205,9 +3213,16 @@ impl H2FrameParser {
 
         let can_close = close && !stream.wait_for_trailers.get();
         if payload.is_empty() {
+            if can_close && !self.must_queue_data(stream) {
+                self.cork();
+            }
+            if !stream.takes_data() {
+                self.dispatch_write_callback(callback);
+                return None;
+            }
             if self.must_queue_data(stream) {
                 enqueued = true;
-                self.queue_frame(stream, b"", callback, close);
+                self.queue_data(stream, b"", callback, close);
             } else if can_close {
                 // Peers count an empty DATA frame without END_STREAM as a flood, so never send one.
                 self.write_frame(FrameType::Data, flags::END_STREAM, stream_id, &[]);
@@ -3216,22 +3231,26 @@ impl H2FrameParser {
             let mut offset: usize = 0;
 
             while offset < payload.len() {
+                if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME && !self.must_queue_data(stream)
+                {
+                    self.cork();
+                }
                 // max frame size will always be at least 16384 (but we need to respect the flow control)
                 let mut max_size = self.sendable_data_size(stream);
                 if max_size == 0 {
                     // A synchronous JS transport handles the peer's answer inside this write.
                     self.flush_batch_buffer();
-                    if !stream.state().can_send() {
-                        self.dispatch_write_callback(callback);
-                        return (0, false);
-                    }
                     max_size = self.sendable_data_size(stream);
                 }
-                let mut is_flow_control_limited = false;
-                if max_size == 0 {
-                    is_flow_control_limited = true;
-                    // this will be handled later if cannot send the entire payload in one frame
-                    max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME;
+                // Only JS changes these, and it runs with the batch flushed.
+                if !stream.takes_data() {
+                    self.dispatch_write_callback(callback);
+                    return None;
+                }
+                if max_size == 0 || self.must_queue_data(stream) {
+                    enqueued = true;
+                    self.queue_data(stream, &payload[offset..], callback, close);
+                    break;
                 }
                 let size = (payload.len() - offset).min(max_size);
 
@@ -3239,119 +3258,100 @@ impl H2FrameParser {
                 offset += size;
                 let end_stream = offset >= payload.len() && can_close;
 
-                if self.must_queue_data(stream) || is_flow_control_limited {
-                    // Preserve wire order: anything already batched goes out before the
-                    // queued remainder is flushed later by the drain path.
-                    self.flush_batch_buffer();
-                    enqueued = true;
-                    // write the full frame in memory and queue the frame
-                    // the callback will only be called after the last frame is sended
-                    self.queue_frame(
-                        stream,
-                        slice,
-                        if offset >= payload.len() {
-                            callback
-                        } else {
-                            JSValue::UNDEFINED
-                        },
-                        offset >= payload.len() && close,
-                    );
-                } else {
-                    let padding = stream.padding_for(size, max_size - 1);
-                    let payload_size = size
-                        + if padding != 0 {
-                            padding as usize + 1
-                        } else {
-                            0
-                        };
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "padding: {} size: {} max_size: {} payload_size: {}",
-                        padding,
-                        size,
-                        max_size,
-                        payload_size
-                    );
-                    self.consume_send_windows(stream, payload_size);
-                    let mut flags: u8 = if end_stream { flags::END_STREAM } else { 0 };
-                    if padding != 0 {
-                        flags |= flags::PADDED;
-                    }
-                    if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
-                        // Single-frame payload: the cork coalesces it with neighbors.
-                        if padding != 0 {
-                            let zeros = &[0u8; 255][..padding as usize];
-                            self.write_frame(
-                                FrameType::Data,
-                                flags,
-                                stream_id,
-                                &[&[padding], slice, zeros],
-                            );
-                        } else {
-                            self.write_frame(FrameType::Data, flags, stream_id, &[slice]);
-                        }
+                let padding = stream.padding_for(size, max_size - 1);
+                let payload_size = size
+                    + if padding != 0 {
+                        padding as usize + 1
                     } else {
-                        // Multi-frame payload: accumulate header + slice in the batch so
-                        // the whole write reaches the socket in one syscall (and, on TLS,
-                        // far fewer SSL_writes) instead of one flush per frame. Plain TCP
-                        // records payload slices by reference and flushes with writev —
-                        // TLS cannot vectorize (SSL_write must consume the bytes to seal
-                        // records), so it keeps the contiguous copy.
-                        let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
-                            && !self.has_backpressure();
-                        BATCH_BUFFER.with_borrow_mut(|batch| {
-                            if batch.is_empty() {
-                                batch.reserve(if vectorize {
-                                    1024
-                                } else {
-                                    payload.len()
-                                        + (payload.len() / MAX_PAYLOAD_SIZE_WITHOUT_FRAME + 2)
-                                            * FRAME_HEADER_SIZE
+                        0
+                    };
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "padding: {} size: {} max_size: {} payload_size: {}",
+                    padding,
+                    size,
+                    max_size,
+                    payload_size
+                );
+                self.consume_send_windows(stream, payload_size);
+                let mut flags: u8 = if end_stream { flags::END_STREAM } else { 0 };
+                if padding != 0 {
+                    flags |= flags::PADDED;
+                }
+                if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
+                    // Single-frame payload: the cork coalesces it with neighbors.
+                    if padding != 0 {
+                        let zeros = &[0u8; 255][..padding as usize];
+                        self.write_frame(
+                            FrameType::Data,
+                            flags,
+                            stream_id,
+                            &[&[padding], slice, zeros],
+                        );
+                    } else {
+                        self.write_frame(FrameType::Data, flags, stream_id, &[slice]);
+                    }
+                } else {
+                    // Multi-frame payload: accumulate header + slice in the batch so
+                    // the whole write reaches the socket in one syscall (and, on TLS,
+                    // far fewer SSL_writes) instead of one flush per frame. Plain TCP
+                    // records payload slices by reference and flushes with writev —
+                    // TLS cannot vectorize (SSL_write must consume the bytes to seal
+                    // records), so it keeps the contiguous copy.
+                    let vectorize = matches!(self.native_socket.get(), BunSocket::Tcp(_))
+                        && !self.has_backpressure();
+                    BATCH_BUFFER.with_borrow_mut(|batch| {
+                        if batch.is_empty() {
+                            batch.reserve(if vectorize {
+                                1024
+                            } else {
+                                payload.len()
+                                    + (payload.len() / MAX_PAYLOAD_SIZE_WITHOUT_FRAME + 2)
+                                        * FRAME_HEADER_SIZE
+                            });
+                            self.drain_cork_into(batch);
+                            if vectorize && !batch.is_empty() {
+                                BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                    segs.push(BatchSegment::Batch {
+                                        off: 0,
+                                        len: batch.len() as u32,
+                                    })
                                 });
-                                self.drain_cork_into(batch);
-                                if vectorize && !batch.is_empty() {
-                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                        segs.push(BatchSegment::Batch {
-                                            off: 0,
-                                            len: batch.len() as u32,
-                                        })
-                                    });
-                                }
                             }
-                            let header_off = batch.len();
-                            self.frames_sent.set(self.frames_sent.get() + 1);
-                            batch.extend_from_slice(
-                                &FrameHeader::new(FrameType::Data, flags, stream_id, payload_size)
-                                    .to_bytes(),
-                            );
-                            if padding != 0 {
-                                batch.push(padding);
-                                batch.extend_from_slice(slice);
-                                batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
-                                if vectorize {
-                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
-                                        segs.push(BatchSegment::Batch {
-                                            off: header_off as u32,
-                                            len: (batch.len() - header_off) as u32,
-                                        })
-                                    });
-                                }
-                            } else if vectorize {
+                        }
+                        let header_off = batch.len();
+                        self.frames_sent.set(self.frames_sent.get() + 1);
+                        batch.extend_from_slice(
+                            &FrameHeader::new(FrameType::Data, flags, stream_id, payload_size)
+                                .to_bytes(),
+                        );
+                        if padding != 0 {
+                            batch.push(padding);
+                            batch.extend_from_slice(slice);
+                            batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
+                            if vectorize {
                                 BATCH_SEGMENTS.with_borrow_mut(|segs| {
                                     segs.push(BatchSegment::Batch {
                                         off: header_off as u32,
                                         len: (batch.len() - header_off) as u32,
-                                    });
-                                    segs.push(BatchSegment::Ext {
-                                        ptr: slice.as_ptr(),
-                                        len: slice.len() as u32,
-                                    });
+                                    })
                                 });
-                            } else {
-                                batch.extend_from_slice(slice);
                             }
-                        });
-                    }
+                        } else if vectorize {
+                            BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                segs.push(BatchSegment::Batch {
+                                    off: header_off as u32,
+                                    len: (batch.len() - header_off) as u32,
+                                });
+                                segs.push(BatchSegment::Ext {
+                                    ptr: slice.as_ptr(),
+                                    len: slice.len() as u32,
+                                });
+                            });
+                        } else {
+                            batch.extend_from_slice(slice);
+                        }
+                    });
                 }
             }
             self.flush_batch_buffer();
@@ -3374,7 +3374,7 @@ impl H2FrameParser {
                 }
             }
         }
-        (settled_state, callback_deferred)
+        Some((settled_state, callback_deferred))
     }
 
     pub(crate) fn no_trailers(&self, _: &mut JsScope<'_>, stream_id: u32) {
@@ -3560,12 +3560,7 @@ impl H2FrameParser {
         let encoding = encoding.to_js();
         let callback = callback.to_js();
 
-        let Some(stream) = self
-            .engine
-            .streams
-            .get(stream_id)
-            .filter(|stream| stream.state().can_send())
-        else {
+        let Some(stream) = self.engine.streams.get(stream_id) else {
             self.dispatch_write_callback(callback);
             return Ok(JSValue::FALSE);
         };
@@ -3605,7 +3600,7 @@ impl H2FrameParser {
         };
 
         let payload = self.stable_payload(buffer.slice());
-        let (settled_state, callback_deferred) = self.send_data(
+        let Some((settled_state, callback_deferred)) = self.send_data(
             &stream,
             &payload,
             callback,
@@ -3614,7 +3609,9 @@ impl H2FrameParser {
                 suppress_half_closed_local_dispatch: true,
                 defer_write_callback,
             },
-        );
+        ) else {
+            return Ok(JSValue::FALSE);
+        };
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
         // the engine re-entering the VM with an onStreamEnd(5) dispatch.

@@ -3423,6 +3423,8 @@ class ServerHttp2Stream extends Http2Stream {
     if (pushedStream) endInboundHalf(pushedStream);
     let pushResult;
     try {
+      // getNextStream() can run another session's transport.
+      if (session.closed || session.remoteSettings?.enablePush === false) throw $ERR_HTTP2_PUSH_DISABLED();
       pushResult = parser.pushPromise(this.id, pushId, wireHeaders, sensitiveNames);
     } catch (err) {
       publishPushedStream(pushedStream, headers);
@@ -3802,6 +3804,11 @@ function emitConnectNT(self, socket) {
 
 function destroyWithInvalidSessionNT(stream) {
   if (!stream.destroyed) stream.destroy($ERR_HTTP2_INVALID_SESSION());
+}
+function destroyUnsentRequestNT(stream: Http2Stream, error: Error, rstCode: number) {
+  if (stream.destroyed) return;
+  stream.rstCode ||= rstCode;
+  stream.destroy(error);
 }
 // A gracefully closed, idle session whose settings() ACK has not arrived yet gets a short,
 // bounded grace instead of an immediate destroy. Node never needs this: it coalesces the
@@ -5085,6 +5092,8 @@ class ClientHttp2Session extends Http2Session {
   #destroying: boolean = false;
   // An error GOAWAY has arrived. destroy() follows once the streams that the peer left out are rejected.
   #failedByGoaway: boolean = false;
+  // What destroy() reset the streams with.
+  #streamRstCode: number = NGHTTP2_CANCEL;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -5967,6 +5976,7 @@ class ClientHttp2Session extends Http2Session {
         const streamRstCode = this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL);
         // The native sweep completes queued writes, so destroy the streams first or they emit 'drain'.
         if (typeof streamRstCode === "number") {
+          this.#streamRstCode = streamRstCode;
           parser.forEachStream(
             FunctionPrototypeBind.$call(cancelStreamForSessionDestroy, undefined, this, streamRstCode),
           );
@@ -6278,33 +6288,43 @@ class ClientHttp2Session extends Http2Session {
       // a "pending" stream (no id) and sends its HEADERS frame once the session connects / a slot
       // frees, keeping stream id allocation in submission order. Deferring until connect is what
       // lets a stream destroyed before connect never reach the wire.
-      // 0 if the limit leaves no slot.
       const parser = this.#parser;
-      const stream_id: number =
-        parser && this.#connected && (this.#pendingRequests === null || this.#pendingRequests.size === 0)
-          ? parser.getNextStream()
-          : 0;
-      // A getter, a toString() or another session's transport has run since the check above.
+      // A getter or a toString() has run since the check above.
       if (!parser || this.destroyed) {
         const req = new ClientHttp2Stream(undefined, this, headers);
         process.nextTick(destroyWithInvalidSessionNT, req);
         return req;
       }
-      if (stream_id === 0) {
+      // 0 if the limit leaves no slot.
+      const stream_id: number =
+        this.#connected && (this.#pendingRequests === null || this.#pendingRequests.size === 0)
+          ? parser.getNextStream()
+          : 0;
+      // getNextStream() can run another session's transport.
+      const refused = this.destroyed || this.closed || this[kReceivedGoaway];
+      if (stream_id === 0 || refused) {
+        if (stream_id > 0) parser.setStreamContext(stream_id, undefined);
         // The encoder only sees the headers when the request is submitted, and request() has to throw now.
         parser.validateRequest(wireHeaders);
         const req = new ClientHttp2Stream(undefined, this, headers);
         req.authority = authority;
         req[kHeadRequest] = method === HTTP2_METHOD_HEAD;
-        // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
-        // object form cannot represent; the object form is what diagnostics channels publish.
-        req[kQueuedRequest] = {
-          headers,
-          wireHeaders,
-          sensitiveNames,
-          options,
-        };
-        (this.#pendingRequests ??= new SafeSet()).add(req);
+        if (!refused) {
+          // Preserve both forms: the on-wire (array) form keeps duplicate-header interleaving the
+          // object form cannot represent; the object form is what diagnostics channels publish.
+          req[kQueuedRequest] = {
+            headers,
+            wireHeaders,
+            sensitiveNames,
+            options,
+          };
+          (this.#pendingRequests ??= new SafeSet()).add(req);
+        } else if (this[kReceivedGoaway] || !this.destroyed) {
+          process.nextTick(streamRejectedByGoawaySession, req);
+        } else {
+          const error = this[kSessionDestroyError] ?? createPendingStreamCancelError();
+          process.nextTick(destroyUnsentRequestNT, req, error, this.#streamRstCode);
+        }
         // Published after queueing, like node, so a subscriber that destroys the request also dequeues it.
         if (onClientStreamCreatedChannel.hasSubscribers) {
           onClientStreamCreatedChannel.publish({ stream: req, headers });

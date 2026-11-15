@@ -4965,6 +4965,55 @@ describe.concurrent(
       },
     );
 
+    // A queued frame holds one callback, so a write that lands in the same frame completes the
+    // write before it. The socket is native and full, and the window is smaller than the payload.
+    it("callback of the write that is queued ahead of it", async () => {
+      const result = await run(/* js */ `
+      const { once } = require("node:events");
+      const windowSize = size => frame(4, 0, 0, Buffer.from([0, 4, size >>> 24, size >>> 16, size >>> 8, size]));
+      const server = require("node:net").createServer({ pauseOnConnect: true });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const accepted = once(server, "connection");
+      const session = http2.connect("http://127.0.0.1:" + server.address().port);
+      session.on("error", die("session error"));
+      const [peer] = await accepted;
+      peer.write(Buffer.concat([windowSize(1 << 30), windowUpdate(0, 1 << 30)]));
+      await once(session, "remoteSettings");
+      await new Promise(r => setImmediate(r));
+      const filler = session.request({ ":method": "POST", ":path": "/filler" });
+      while (session.state.outboundQueueSize === 0) filler._write(Buffer.alloc(1 << 20), "buffer", () => {});
+      peer.write(windowSize(100));
+      await once(session, "remoteSettings");
+
+      const req = session.request({ ":method": "POST", ":path": "/" });
+      const holder = { src: payload(8000, false) };
+      const snap = Buffer.from(holder.src);
+      let fired = false;
+      req._write(Buffer.from("aaa"), "buffer", () => { fired = true; yank(holder, "transfer"); });
+      req._write(holder.src, "buffer", () => {});
+      const firedDuringWrite = fired;
+
+      peer.write(windowSize(1 << 30));
+      let pending = Buffer.alloc(0), skip = 24, got = Buffer.alloc(0);
+      for await (const chunk of peer) {
+        pending = Buffer.concat([pending, chunk]);
+        for (;;) {
+          if (pending.length < skip + 9) break;
+          const end = skip + 9 + pending.readUIntBE(skip, 3);
+          if (pending.length < end) break;
+          if (pending[skip + 3] === 0 && pending.readUInt32BE(skip + 5) === req.id)
+            got = Buffer.concat([got, pending.subarray(skip + 9, end)]);
+          pending = pending.subarray(end);
+          skip = 0;
+        }
+        if (got.length === 8003) break;
+      }
+      console.log(JSON.stringify({ firedDuringWrite, foreign: foreign(got.subarray(3), snap) }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ firedDuringWrite: true, foreign: 0 });
+    });
+
     // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
     // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.
     // Oracle: the request body a real secure server receives.
@@ -8944,6 +8993,91 @@ describe("frames written while another session's transport hands over the cork",
       session.settings({ maxConcurrentStreams: 2 });
       await once(server, "stream");
       expect(names).toEqual(["first", "last"]);
+    }));
+
+  describe.each(["GET", "POST"])("a %s request", method => {
+    const { NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_PROTOCOL_ERROR, NGHTTP2_REFUSED_STREAM } = http2.constants;
+    const mine = () => Object.assign(new Error(), { code: "MINE" });
+    async function outcome(req) {
+      const [err] = await once(req, "error");
+      return { code: err.code, rstCode: req.rstCode, id: req.id, aborted: req.aborted };
+    }
+    const expected = (code, rstCode) => ({ code, rstCode, id: undefined, aborted: method === "POST" });
+
+    it.each([
+      ["close()", client => client.close(), "ERR_HTTP2_GOAWAY_SESSION", NGHTTP2_REFUSED_STREAM],
+      ["destroy()", client => client.destroy(), "ERR_HTTP2_STREAM_CANCEL", NGHTTP2_CANCEL],
+      ["destroy(err)", client => client.destroy(mine()), "MINE", NGHTTP2_INTERNAL_ERROR],
+      ["destroy(err, code)", client => client.destroy(mine(), NGHTTP2_PROTOCOL_ERROR), "MINE", NGHTTP2_PROTOCOL_ERROR],
+    ])("fails when its session gets %s", (_, end, code, rstCode) =>
+      withHandover(async ({ client, arm }) => {
+        client.on("error", () => {});
+        arm(() => end(client));
+        expect(await outcome(client.request({ ":method": method }))).toEqual(expected(code, rstCode));
+      }),
+    );
+
+    it.each([0, 2])("is refused when its session reads GOAWAY(%d)", code =>
+      withHandover(async ({ arm }) => {
+        const [transport, peer] = duplexPair();
+        const client = http2.connect("http://localhost", { createConnection: () => transport });
+        try {
+          client.on("error", () => {});
+          await once(client, "connect");
+          await Promise.all([once(client, "remoteSettings"), peer.resume().write(new http2utils.SettingsFrame().data)]);
+          arm(() => transport.push(new http2utils.GoAwayFrame(code, 0).data));
+          expect(await outcome(client.request({ ":method": method }))).toEqual(
+            expected("ERR_HTTP2_GOAWAY_SESSION", NGHTTP2_REFUSED_STREAM),
+          );
+        } finally {
+          client.destroy();
+        }
+      }),
+    );
+
+    it("of a destroyed session can be closed", () =>
+      withHandover(async ({ client, arm }) => {
+        arm(() => client.destroy());
+        const req = client.request({ ":method": method }).on("error", () => {});
+        await new Promise(resolve => req.close(NGHTTP2_PROTOCOL_ERROR, resolve));
+        expect(req.rstCode).toBe(NGHTTP2_PROTOCOL_ERROR);
+      }));
+  });
+
+  it("invalid headers still throw when the session closes", () =>
+    withHandover(async ({ client, arm }) => {
+      arm(() => client.close());
+      expect(() => client.request({ "content-type": ["a", "b"] })).toThrow(
+        expect.objectContaining({ code: "ERR_HTTP2_HEADER_SINGLE_VALUE" }),
+      );
+    }));
+
+  it.each([undefined, "small"])("a request that is destroyed does not end(%j)", body =>
+    withHandover(async ({ server, client, arm }) => {
+      const req = client.request({ ":method": "POST" }).on("error", () => {});
+      const [stream] = await once(server, "stream");
+      const events = [];
+      for (const name of ["data", "end"]) stream.on(name, () => events.push(name));
+      const onSent = () => events.push("bodyChunkSent");
+      dc.subscribe("http2.client.stream.bodyChunkSent", onSent);
+      try {
+        arm(() => req.destroy(new Error()));
+        req.end(body);
+        await once(stream, "error");
+        expect(events).toEqual([]);
+      } finally {
+        dc.unsubscribe("http2.client.stream.bodyChunkSent", onSent);
+      }
+    }),
+  );
+
+  it("nothing is pushed on a session that closes", () =>
+    withHandover(async ({ server, client, arm }) => {
+      client.request().on("error", () => {});
+      const [stream] = await once(server, "stream");
+      arm(() => stream.session.close());
+      const err = await new Promise(resolve => stream.pushStream({}, resolve));
+      expect(err?.code).toBe("ERR_HTTP2_PUSH_DISABLED");
     }));
 
   it("a stream that responds meanwhile sends one response", () =>

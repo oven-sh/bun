@@ -161,6 +161,12 @@ impl Stream {
         self.state.get() == State::Closed
     }
 
+    /// False once JS destroyed the stream too, whose reset follows a turn later.
+    #[inline]
+    pub(crate) fn takes_data(&self) -> bool {
+        self.state().can_send() && !self.released.get()
+    }
+
     /// Closed, and JS has no `Http2Stream` for it any more.
     fn is_forgettable(&self) -> bool {
         self.is_closed() && (self.released.get() || !self.js_context.get().has())

@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tls } from "harness";
 import path from "node:path";
 
 // The spawned fixtures finish in well under a second in release but take
@@ -243,3 +243,132 @@ test(
   },
   10_000 * ASAN_MULTIPLIER,
 );
+
+describe.concurrent("a transport's write() that", () => {
+  const prelude = /* js */ `
+    const http2 = require("node:http2");
+    const { once } = require("node:events");
+    const { Duplex } = require("node:stream");
+    let inNextWrite;
+    const transport = onWrite =>
+      new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          onWrite?.(chunk);
+          const hook = inNextWrite;
+          inNextWrite = undefined;
+          hook?.();
+          callback();
+        },
+      });
+    async function connect(socket, send) {
+      const session = http2.connect("http://localhost", { createConnection: () => socket });
+      await once(session, "connect");
+      const settingsAndAck = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0]);
+      await Promise.all([once(session, "localSettings"), send(settingsAndAck)]);
+      await new Promise(setImmediate);
+      return session;
+    }
+    const connectDuplex = (duplex = transport()) => connect(duplex, bytes => duplex.push(bytes));
+  `;
+  async function run(body: string, env = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", prelude + body], env, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  test(
+    "destroys the TLS socket on top of it does not UAF",
+    async () => {
+      const result = await run(/* js */ `
+      const tls = require("node:tls");
+      const server = tls.createServer({ ...${JSON.stringify(tls)}, ALPNProtocols: ["h2"] });
+      await once(server.listen(0, "127.0.0.1"), "listening");
+      const raw = require("node:net").connect(server.address().port, "127.0.0.1");
+      const duplex = transport(chunk => raw.write(chunk));
+      raw.on("data", chunk => duplex.push(chunk));
+      const socket = tls.connect({ socket: duplex, ALPNProtocols: ["h2"], rejectUnauthorized: false });
+      const [[peer]] = await Promise.all([once(server, "secureConnection"), once(socket, "secureConnect")]);
+      const session = await connect(socket, bytes => peer.on("error", () => {}).resume().write(bytes));
+      inNextWrite = () => {
+        socket.destroy();
+        Bun.gc(true);
+      };
+      session.ping(() => {});
+      await once(session, "close");
+      console.log("closed");
+      raw.destroy();
+      server.close();
+    `);
+      expect(result).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "destroys the stream leaves the rest of its DATA unqueued",
+    async () => {
+      const result = await run(/* js */ `
+      const session = await connectDuplex();
+      const req = session.request({ ":method": "POST" });
+      await new Promise(setImmediate);
+      inNextWrite = () => req.destroy();
+      req.write(Buffer.alloc(65535 + 40000));
+      await once(req, "close");
+      console.log(session.state.outboundQueueSize);
+      session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "destroys the stream gets no more of its queued DATA",
+    async () => {
+      const result = await run(/* js */ `
+      let written = 0;
+      const duplex = transport(chunk => (written += chunk.length));
+      const session = await connectDuplex(duplex);
+      const req = session.request({ ":method": "POST" });
+      req.end(Buffer.alloc(65535 + 100000));
+      while (session.state.outboundQueueSize === 0) await new Promise(setImmediate);
+      await new Promise(setImmediate);
+      written = 0;
+      inNextWrite = () => req.destroy();
+      const windowUpdate = id => [0, 0, 4, 8, 0, 0, 0, 0, id, 0, 16, 0, 0];
+      duplex.push(Buffer.from([...windowUpdate(0), ...windowUpdate(1)]));
+      await once(req, "close");
+      while (session.state.outboundQueueSize > 0) await new Promise(setImmediate);
+      console.log(written < 50000);
+      session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test.skipIf(!isASAN)(
+    "exits the process does not leak the session",
+    async () => {
+      const result = await run(
+        /* js */ `
+      const session = await connectDuplex();
+      inNextWrite = () => {
+        console.log("exiting");
+        process.exit(0);
+      };
+      session.ping(() => {});
+    `,
+        {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+        },
+      );
+      expect(result).toEqual({ stdout: "exiting", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+});

@@ -10,7 +10,7 @@ use bun_ast::fold_string_addition::{FoldStringAdditionKind, fold_string_addition
 use bun_ast::{self as js_ast, B, E, Expr, G, ImportKind, Loc, S, Stmt};
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_glob::BunGlobWalker;
+use bun_glob::{BunGlobWalker, SegmentBang};
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::{fs, path_buffer_pool};
 
@@ -357,11 +357,15 @@ impl Pattern {
                 Some((segment, after)) => (segment, Some(after)),
                 None => (rest, None),
             };
-            if bun_glob::detect_glob_syntax(segment) {
+            // As in `vite build`. Vitest and `vite dev` negate a segment whose `!` comes first after the directory.
+            if bun_glob::detect_glob_syntax(segment, SegmentBang::Literal) {
                 return Some(Pattern {
                     negated,
                     dir: absolute_from(dir, &names)?,
-                    glob: rest.to_vec(),
+                    glob: match negated {
+                        true => bun_glob::literal_head(rest).into_owned(),
+                        false => rest.to_vec(),
+                    },
                     is_name: false,
                 });
             }
@@ -429,6 +433,7 @@ fn find_files(
 
         let walked = BunGlobWalker::init_with_cwd(
             &pattern.glob,
+            SegmentBang::Literal,
             &pattern.dir,
             exhaustive,
             true,
@@ -625,7 +630,7 @@ impl<'a> Arguments<'a, '_> {
                     Some(Pattern {
                         negated,
                         dir: Vec::new(),
-                        glob: glob.to_vec(),
+                        glob: without_extglobs(glob).into_owned(),
                         is_name: false,
                     })
                 } else {

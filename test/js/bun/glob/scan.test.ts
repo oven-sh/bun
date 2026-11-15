@@ -854,7 +854,7 @@ describe("glob.scan wildcard fast path", async () => {
       ["example.test.tsx", "example.test.tsz"],
     );
 
-    // `!` only applies negation if at the start of the pattern
+    // A `!` inside a path segment is a character.
     runTest(
       "*.test!.*",
       {
@@ -1262,6 +1262,57 @@ describe("extglob and brace sequences", () => {
     expect(scan("**/!(x|page).js", cwd)).toEqual(["a.js", "a.test.js", "b.js", "c.js"]);
     expect(scan("app/(marketing)/*.js", cwd)).toEqual(["app/(marketing)/page.js"]);
     expect(scan("app/(marketing)/**", cwd)).toEqual(["app/(marketing)/page.js"]);
+  });
+});
+
+// What `Bun.Glob.scan` does and `match()` does not. Build scripts use it, and it is not decided whether it stays.
+describe("a `!` that starts a path segment negates that segment", () => {
+  const files = {
+    "d/a.ts": "",
+    "d/b.ts": "",
+    "d/!a.ts": "",
+    "src/a1/x.ts": "",
+    "src/b/x.ts": "",
+    "src/b/y.js": "",
+    "packages/_p/dist/i.js": "",
+    "packages/q/dist/i.js": "",
+  };
+
+  test("with a `cwd`", () => {
+    using dir = tempDir("glob-segment-bang", files);
+    const scan = (pattern: string) =>
+      Array.from(new Glob(pattern).scanSync({ cwd: String(dir) }))
+        .map(p => p.replaceAll("\\", "/"))
+        .sort();
+    expect({
+      "d/!a.ts": scan("d/!a.ts"),
+      "src/!a*/x.ts": scan("src/!a*/x.ts"),
+      "./src/**/!*.js": scan("./src/**/!*.js"),
+      "packages/!_*/dist/*.js": scan("packages/!_*/dist/*.js"),
+    }).toEqual({
+      "d/!a.ts": ["d/!a.ts", "d/b.ts"],
+      "src/!a*/x.ts": ["src/b/x.ts"],
+      "./src/**/!*.js": ["./src/a1/x.ts", "./src/b/x.ts"],
+      "packages/!_*/dist/*.js": ["packages/q/dist/i.js"],
+    });
+  });
+
+  test("without one", async () => {
+    using dir = tempDir("glob-segment-bang", files);
+    const code = `console.log(JSON.stringify([...new Bun.Glob("d/!a.ts").scanSync()].map(p => p.replaceAll("\\\\", "/")).sort()))`;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `["d/!a.ts","d/b.ts"]`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

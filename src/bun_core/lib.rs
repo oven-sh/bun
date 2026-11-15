@@ -931,7 +931,7 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
 ///
 /// Consolidates ~20 identical
 /// `match self { Self::V(x) => x, _ => unreachable!() }` accessors across
-/// `jsc` / `bundler` / `ini` / `resolver` / `ast` / `install` into one
+/// `jsc` / `bundler` / `ini` / `ast` / `install` into one
 /// macro. Invoke it *inside* an `impl Enum { ... }` block:
 ///
 /// ```ignore
@@ -945,7 +945,7 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
 /// ```
 ///
 /// The `&`/`&mut` arm returns `&$Out` / `&mut $Out`, so when the variant
-/// payload is itself a reference (e.g. `Entries(&'static mut DirEntry)`),
+/// payload is itself a reference,
 /// auto-deref/reborrow coerces `&&mut T` → `&T` and `&mut &mut T` → `&mut T`
 /// to satisfy the declared return type.
 #[macro_export]

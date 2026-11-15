@@ -687,6 +687,12 @@ type FdBacking = i32;
 #[cfg(windows)]
 type FdBacking = u64;
 
+/// Holds `Fd::0`.
+#[cfg(not(windows))]
+pub type AtomicFd = core::sync::atomic::AtomicI32;
+#[cfg(windows)]
+pub type AtomicFd = core::sync::atomic::AtomicU64;
+
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Fd(pub FdBacking);
@@ -2213,8 +2219,7 @@ impl Default for Ordinal {
 // shared callee `std::sys::sync::once::futex::Once::call` lives in libstd's
 // own CGU — every hot-path `get_or_init` paid a cross-CGU call + futex-aware
 // state machine even when the value was already initialised. Here post-init
-// reads are one Acquire load + cmp inlined into the caller. Pattern proven at
-// `bun_alloc/lib.rs::bss_heap_init`'s accessor macro.
+// reads are one Acquire load + cmp inlined into the caller.
 //
 // Contention: startup is single-threaded for every current call site; the
 // rare cross-thread race spins on `yield_now()` (no futex). No poisoning —

@@ -4,7 +4,9 @@ use super::module_cache::{is_function_that_loader_calls, is_module_cache, is_tab
 use super::resolver::{ExprState, FunctionsReadingThis, ResolvedValue, Resolver, evaluates_text};
 use super::unnamed_uses::MOST_VARIABLES_FOLLOWED;
 use super::written_members::holder_of;
-use crate::builtins::runtime_uses::{holds_name_of_member_with_code, is_evaluator};
+use crate::builtins::runtime_uses::{
+    RoadsToNamespaces, holds_name_of_member_with_code, is_evaluator,
+};
 use crate::builtins::table::{
     self, BuiltinFlags, BuiltinId, BuiltinKind, BuiltinName, CallsForTexts, Intrinsic, Prototype,
     QuietCall, Scope, WrittenOperand,
@@ -207,6 +209,9 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn expose(&mut self, id: BuiltinId) {
+        if self.input.dialect == SourceDialect::Program {
+            self.output.roads_to_namespaces |= RoadsToNamespaces::HANDS_ON_BUILTIN;
+        }
         self.note_escaped_object(id);
         expose_in(&mut self.output.called, &mut self.output.exposed, id);
     }

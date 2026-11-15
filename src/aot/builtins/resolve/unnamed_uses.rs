@@ -1,9 +1,12 @@
 use super::mention_use::{MentionUse, lookup_passes_holder_linked_anew};
+use super::mentions::mentioned_id;
 use super::resolver::{ExprState, Resolver};
 use super::{SourceDialect, passes_every_assertion, reads_what_wrapper_hands_in};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::runtime_uses::{
-    SyntaxWithHelpers, is_name_of_language_member_with_code, is_name_under_which_evaluator_hangs,
+    RoadsToNamespaces, SyntaxWithHelpers, is_name_of_language_member_with_code,
+    is_name_of_namespace_member_with_code, is_name_of_prototype_property,
+    is_name_under_which_evaluator_hangs,
 };
 use crate::builtins::table::{self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms};
 use bun_core::strings;
@@ -469,6 +472,17 @@ impl Resolver<'_, '_> {
         if let Some(name) = self.input.names.find_name_of_language_member(name) {
             self.output.members_read.push(name);
         }
+        if self.input.dialect != SourceDialect::Program {
+            return;
+        }
+        if let Some(name) = self.input.names.get(name) {
+            if is_name_of_prototype_property(name) {
+                self.output.roads_to_namespaces |= RoadsToNamespaces::CLIMBS_PROTOTYPES;
+            }
+            if is_name_of_namespace_member_with_code(name) {
+                self.output.namespace_names_read.push(name);
+            }
+        }
     }
 
     fn head_of(&self, declaration: VarDeclId) -> Head {
@@ -816,8 +830,12 @@ impl Resolver<'_, '_> {
                     self.output.may_call_evaluator |= !is_only_looked_at(self);
                     self.note_text_read(name);
                 }
-                Some((_, MemberKey::Name(name))) => {
+                Some((object, MemberKey::Name(name))) => {
                     let names = self.input.names;
+                    let object = self.input.hir.skip_type_assertions(object);
+                    if name == known::__proto__ && mentioned_id(self.state(object)).is_some() {
+                        self.output.roads_to_namespaces |= RoadsToNamespaces::HANDS_ON_BUILTIN;
+                    }
                     if names.is_name_of_method_that_hands_out_global_object(name)
                         && self.is_taken_as_value(expr)
                     {

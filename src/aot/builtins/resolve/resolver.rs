@@ -9,8 +9,8 @@ use super::{
     WhereTestsLayNamesAbove,
 };
 use crate::builtins::runtime_uses::{
-    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RuntimeUses, SyntaxWithHelpers, is_evaluator,
-    is_unknown_module_loader, reaches_unknown_module_loader,
+    ENTRIES_LEADING_TO_HOOK_OF_INSTANCEOF, Mentions, RoadsToNamespaces, RuntimeUses,
+    SyntaxWithHelpers, is_evaluator, is_unknown_module_loader, reaches_unknown_module_loader,
 };
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
@@ -315,6 +315,8 @@ pub(super) struct ResolverOutput {
     pub(super) aliases_global_object: bool,
     pub(super) syntax: SyntaxWithHelpers,
     pub(super) may_hand_values_to_natives: bool,
+    pub(super) roads_to_namespaces: RoadsToNamespaces,
+    pub(super) namespace_names_read: Vec<BuiltinName>,
 }
 
 #[derive(Copy, Clone)]
@@ -1017,6 +1019,8 @@ impl<'a, 's> Resolver<'a, 's> {
             aliases_global_object: output.aliases_global_object,
             syntax: output.syntax,
             may_hand_values_to_natives: output.may_hand_values_to_natives,
+            roads_to_namespaces: output.roads_to_namespaces,
+            namespace_names_read: &sorted_unique(output.namespace_names_read),
             called: &output.called,
             is_of_program: input.dialect == SourceDialect::Program,
             holds_language: input.holds_language,

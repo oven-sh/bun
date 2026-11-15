@@ -424,4 +424,28 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
     },
     10_000 * ASAN_MULTIPLIER,
   );
+
+  test.skipIf(!isASAN)(
+    "can exit the process without a leak report",
+    async () => {
+      const result = await run(
+        /* js */ `
+      const { session, duplex } = await connect();
+      duplex.inNextWrite = () => {
+        console.log("exiting");
+        process.exit(0);
+      };
+      session.ping(() => {});
+    `,
+        {
+          ...bunEnv,
+          BUN_DESTRUCT_VM_ON_EXIT: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+        },
+      );
+      expect(result).toEqual({ stdout: "exiting", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
 });

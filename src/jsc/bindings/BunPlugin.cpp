@@ -9465,6 +9465,13 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
     if (Zig::isModuleMockEvaluatorKey(key))
         return key;
 
+    // The path that require() resolves the name of a mock to, where an import resolves it to another file, comes here as it is: callers give it the key of that mock
+    // afterwards, see keyOfModuleMockAtRequirePath(). So below it counts like that key, while the mock under that key answers require() of it.
+    auto isRequirePathOfMockAt = [&](const String& path, const String& mocked) {
+        auto* answering = Zig::moduleMockOfRequirePath(globalObject, path);
+        return answering && answering->specifier->tryGetValue().data == mocked;
+    };
+
     // A fetch in flight for a mock that has since been replaced still waits for the old factory.
     // A new import of that module, or of one that waits for it, ends the wait, and everyone gets what the module is now.
     // Once vi.resetModules() has dropped that fetch, no module waits for the factory. If it never settles, it would otherwise
@@ -9481,7 +9488,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
         Vector<String> unfinished;
         if (!isFetchInFlight)
             unawaited.append(mock);
-        else if (mocked == key || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished))
+        else if (mocked == key || isRequirePathOfMockAt(key, mocked) || Zig::isWaitingForModule(globalObject, running, key, mocked, unfinished))
             replaced.append(mock);
     }
     for (auto* mock : replaced)
@@ -9549,7 +9556,7 @@ __attribute__((minsize)) String keyOfImportWhileModuleMocksRun(Zig::GlobalObject
                 && (JSC::AOT::isESModule(*module) && JSC::AOT::hasActiveMock(globalObject, *module) ? JSC::AOT::wasImportedUnderActiveMock(globalObject, *module) : JSC::AOT::wasLoadedByImport(globalObject, *module)))
                 continue;
 #endif
-            String instead = given == mocked ? Zig::originalModuleKey(given) : given;
+            String instead = given == mocked || isRequirePathOfMockAt(given, mocked) ? Zig::originalModuleKey(given) : given;
             String copy = Zig::redirectedModuleKey(globalObject, running, instead, mocked);
             if (isESM)
                 instead = copy;

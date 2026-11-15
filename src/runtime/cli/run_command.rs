@@ -17,6 +17,7 @@ use bun_jsc::js_promise::Status as PromiseStatus;
 use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, MainEntryPoint, VirtualMachine};
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_md::root as md;
+use bun_options_types::context::SILENT;
 use bun_options_types::schema::api;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
@@ -637,7 +638,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot.
-        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log, args, env)?);
+        let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log(), args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         let env_loader = this_transpiler.env_mut();
         env_loader.quiet = true;
@@ -788,7 +789,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let more = arguments.iter().map(|it| &it[..]).filter(is_page);
         let more = more.filter(|_| is_page(&path)).map(EntryPoint::file);
         let entry_points: Vec<EntryPoint> = std::iter::once(main).chain(more).collect();
-        check_before(&entry_points, before_read)
+        check_before(&ctx.args, &entry_points, before_read)
     }
 
     /// What the module loader loads the main module at `path` with, where `boot` is given `loader`.
@@ -924,7 +925,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut args = ctx.args.clone();
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
-        let mut bundle = Transpiler::init(runner_arena(), ctx.log, args, None)?;
+        let mut bundle = Transpiler::init(runner_arena(), ctx.log(), args, None)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
         let mini = bun_event_loop::MiniEventLoop::init_global(
@@ -976,7 +977,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 crate::cli::run_compiled::NonFileTarget::ShellScript(entry_path),
             );
             // It has no entry point to start from, like a script of a package.json.
-            if ctx.runtime_options.check && !crate::cli::check_command::check_project_before(None) {
+            if ctx.runtime_options.check
+                && !crate::cli::check_command::check_project_before(&ctx.args, None)
+            {
                 Global::exit(1);
             }
             let exit_code = Self::boot_bun_shell(ctx, entry_path)?;
@@ -1031,7 +1034,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let vm = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
-            log: ::core::ptr::NonNull::new(ctx.log.cast_mut()),
+            log: ctx.log.map(::core::ptr::NonNull::from),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -1223,7 +1226,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
-            log: std::ptr::NonNull::new(ctx.log.cast_mut()),
+            log: ctx.log.map(std::ptr::NonNull::from),
             args: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             graph: Some(graph),
@@ -1521,7 +1524,7 @@ impl Run<'_> {
             }
             Some(Unchecked::Project) => {
                 let watching = crate::cli::check_command::watching(vm);
-                !crate::cli::check_command::check_project_before(watching)
+                !crate::cli::check_command::check_project_before(&ctx.args, watching)
             }
         };
         let loaded = (!has_type_errors).then(|| vm.load_entry_point(entry));
@@ -2122,7 +2125,7 @@ impl RunCommand {
             && let Some(arg) =
                 (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
         {
-            if !ctx.debug.silent {
+            if !SILENT.load(Ordering::Relaxed) {
                 pretty_errorln!(
                     "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
                     bstr::BStr::new(Self::basename_or_bun(executable)),
@@ -2138,7 +2141,7 @@ impl RunCommand {
             argv.push(p.clone());
         }
 
-        let silent = ctx.debug.silent;
+        let silent = SILENT.load(Ordering::Relaxed);
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
@@ -2493,7 +2496,7 @@ impl RunCommand {
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                        let silent = ctx.debug.silent;
+                        let silent = SILENT.load(Ordering::Relaxed);
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         crate::cli::run_compiled::reject(
@@ -2502,7 +2505,7 @@ impl RunCommand {
                         );
                         // A script has no entry point to start from: the project is checked, as by `bun check`.
                         if ctx.runtime_options.check
-                            && !crate::cli::check_command::check_project_before(None)
+                            && !crate::cli::check_command::check_project_before(&ctx.args, None)
                         {
                             Global::exit(1);
                         }
@@ -2713,7 +2716,7 @@ impl RunCommand {
                     );
                     // It has no entry point to start from, like a script of a package.json.
                     if ctx.runtime_options.check
-                        && !crate::cli::check_command::check_project_before(None)
+                        && !crate::cli::check_command::check_project_before(&ctx.args, None)
                     {
                         Global::exit(1);
                     }
@@ -3536,7 +3539,8 @@ impl RunCommand {
 
         let args = ctx.args.clone();
 
-        let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log, args, None) else {
+        let Ok(mut this_transpiler) = Transpiler::init(runner_arena(), ctx.log(), args, None)
+        else {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
@@ -3989,8 +3993,7 @@ impl BunXFastPath {
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {
         let utf8 = strings::to_utf8_alloc(wpath).into_boxed_slice();
         if let Err(err) = RunCommand::boot(ctx, utf8, None) {
-            // SAFETY: `ctx.log` was set in `create_context_data`.
-            let _ = unsafe { &*ctx.log }.print(Output::error_writer());
+            let _ = ctx.log().print(Output::error_writer());
             Output::err(
                 err,
                 "Failed to run bin \"<b>{}<r>\"",

@@ -1123,51 +1123,65 @@ describe("diagnostics of a file that calls a macro", () => {
     },
   );
 
-  // After it has reported the error of a handler, the server clears the log of its VM.
-  const failingHandler = `
-    export const one = () => 1;
-    export async function status() {
-      using server = Bun.serve({ port: 0, development: false, fetch() { throw new Error("from the handler"); } });
-      return (await fetch(server.url)).status;
-    }
-  `;
-
-  test.concurrent("bun build keeps them when a server in the macro reports an error", async () => {
+  // Runs `body`, in which macros send `count` requests, and returns the requests that were printed as verbose.
+  async function verboseRequests(files: Record<string, string>, count: number, body: string) {
     const { stdout, stderr, exitCode } = await run(
       {
-        "macro.ts": failingHandler,
-        "entry.ts": `import { status } from "./macro.ts" with { type: "macro" };\nconst y = 1;\ny = 2;\nconsole.log(status());`,
+        ...files,
+        "macro.ts": `
+          import { readFileSync } from "node:fs";
+          export const one = () => 1;
+          export const request = () => void fetch(readFileSync(import.meta.dir + "/url", "utf8") + "from-macro");
+        `,
+        "main.ts": `
+          const { promise, resolve } = Promise.withResolvers();
+          let left = ${count};
+          const server = Bun.serve({ port: 0, fetch: () => (--left === 0 && resolve(), new Response()) });
+          await Bun.write("url", server.url.href);
+          ${body}
+          await promise;
+          // One thread sends all requests, and prints each right after it has sent it.
+          await fetch(server.url, { verbose: false });
+          console.log("done");
+          process.exit(0);
+        `,
       },
-      ["build", "entry.ts"],
+      ["main.ts"],
+      // A Worker does not free its tables of macros.
+      { UV_THREADPOOL_SIZE: "2", ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":") },
     );
-    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual([
-      "error: from the handler",
-      `error: Cannot assign to "y" because it is a constant`,
-    ]);
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
+    return { verbose: stderr.split("\n").filter(line => line.includes("/from-macro")).length, stdout, exitCode };
+  }
+  const calls = (name: string) =>
+    `import { ${name} } from "./macro.ts" with { type: "macro" };\nexport default ${name}();`;
+  const transforms = (name: string) => `
+    const code = ${JSON.stringify(calls(name))}.replace('"./macro.ts"', () => JSON.stringify(import.meta.dir + "/macro.ts"));
+    const transpiler = new Bun.Transpiler({ loader: "ts", logLevel: "debug" });
+    await Promise.all([0, 1, 2, 3].map(() => transpiler.transform(code)));
+  `;
+
+  test.concurrent("a pool thread's macro VM keeps nothing of the log of the first file it served", async () => {
+    const files = Object.fromEntries([0, 1, 2, 3].map(i => [`imported${i}.ts`, calls("request")]));
+    const imports = `await Promise.all([0, 1, 2, 3].map(i => import("./imported" + i + ".ts")));`;
+    expect(await verboseRequests(files, 4, transforms("one") + imports)).toEqual({
+      verbose: 0,
+      stdout: "done\n",
+      exitCode: 0,
+    });
   });
 
-  test.concurrent("a pool thread's macro VM outlives the log of the first file it served", async () => {
-    const files: Record<string, string> = {
-      "macro.ts": failingHandler,
-      "main.ts": `
-        const all = [0, 1, 2, 3];
-        await Bun.build({ entrypoints: all.map(i => "./built" + i + ".ts") });
-        for (const i of all) console.log((await import("./imported" + i + ".ts")).default);
-      `,
-    };
-    for (let i = 0; i < 4; i++) {
-      files[`built${i}.ts`] = `import { one } from "./macro.ts" with { type: "macro" };\nexport default one();`;
-      files[`imported${i}.ts`] =
-        `import { status } from "./macro.ts" with { type: "macro" };\nexport default status();`;
-    }
-    const { stdout, stderr, exitCode } = await run(files, ["main.ts"], { UV_THREADPOOL_SIZE: "2" });
-    expect(stderr.split("\n").filter(line => line.startsWith("error: "))).toEqual(
-      Array(4).fill("error: from the handler"),
-    );
-    expect(stdout).toBe("500\n500\n500\n500\n");
-    expect(exitCode).toBe(0);
+  const debug = {
+    "bunfig.toml": `logLevel = "debug"`,
+    "entry.ts": calls("request"),
+    "worker.ts": `require("./entry.ts");`,
+  };
+  test.concurrent.each([
+    ["not by the logLevel of a Bun.Transpiler", {}, 4, transforms("request"), 0],
+    ["by bunfig.toml on the main thread", debug, 1, `require("./entry.ts");`, 1],
+    ["by bunfig.toml on a pool thread", debug, 1, `await import("./entry.ts");`, 1],
+    ["not by bunfig.toml in a Worker", debug, 1, `new Worker("./worker.ts");`, 0],
+  ])("fetch in the macro is made verbose %s", async (_, files, count, body, verbose) => {
+    expect(await verboseRequests(files, count, body)).toEqual({ verbose, stdout: "done\n", exitCode: 0 });
   });
 
   test.concurrent.skipIf(!isASAN)("Bun.build frees what resolving the macro logged", async () => {

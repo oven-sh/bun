@@ -9,8 +9,10 @@ use core::ptr;
 
 #[cfg(not(windows))]
 use bun_sys::{self as sys, Fd};
+#[cfg(not(windows))]
 use bun_uws_sys::Loop as UwsLoop;
 
+#[cfg(not(windows))]
 pub type Loop = UwsLoop;
 
 #[cfg(not(windows))]
@@ -68,7 +70,9 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-pub use crate::{EventLoopCtx, EventLoopCtxKind, OpaqueCallback};
+#[cfg(not(windows))]
+use crate::OpaqueCallback;
+pub use crate::{EventLoopCtx, EventLoopCtxKind};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
@@ -91,6 +95,7 @@ pub enum FileType {
     Socket,
 }
 
+#[cfg(not(windows))]
 impl FileType {
     pub(crate) fn is_blocking(self) -> bool {
         self == FileType::Pipe
@@ -116,9 +121,6 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
 pub fn js_vm_ctx() -> EventLoopCtx {
     get_vm_ctx(AllocatorType::Js)
 }
-
-// `KeepAlive` (struct + 14-method impl) was duplicated here and in
-// `windows_event_loop.rs`; both copies now live in `crate::keep_alive`.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll
@@ -223,14 +225,15 @@ pub mod poll_tag {
     pub const MEMORY_PRESSURE: PollTag = PollTag::MemoryPressure;
 }
 
+#[cfg(not(windows))]
 #[derive(Copy, Clone)]
 pub struct Owner {
     pub(crate) tag: PollTag,
     pub ptr: *mut (),
 }
 
+#[cfg(not(windows))]
 impl Owner {
-    #[cfg(not(windows))]
     pub(crate) const NULL: Owner = Owner {
         tag: PollTag::Null,
         ptr: core::ptr::null_mut(),
@@ -244,7 +247,6 @@ impl Owner {
         self.ptr.is_null()
     }
     #[inline]
-    #[cfg(not(windows))]
     pub(crate) fn clear(&mut self) {
         *self = Self::NULL;
     }
@@ -254,6 +256,7 @@ impl Owner {
     }
 }
 
+#[cfg(not(windows))]
 unsafe extern "Rust" {
     fn __bun_run_file_poll(poll: *mut crate::FilePoll, size_or_offset: i64);
 }
@@ -268,10 +271,6 @@ pub enum AllocatorType {
     SpawnSync,
 }
 
-// `FilePoll`/`Store` here are POSIX-specific (kqueue/epoll registration,
-// generation_number, allocator_type). On Windows the variants live in
-// `windows_event_loop`; the shared `EventLoopCtxVTable` above names
-// `crate::FilePoll`/`crate::Store` so the right one is picked.
 #[cfg(not(windows))]
 pub struct FilePoll {
     pub fd: Fd,
@@ -1122,6 +1121,7 @@ impl fmt::Display for FilePoll {
 // Flags
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(not(windows))]
 #[derive(enumset::EnumSetType, strum::IntoStaticStr, Debug)]
 #[strum(serialize_all = "snake_case")]
 pub enum Flags {
@@ -1167,8 +1167,10 @@ pub enum Flags {
     Tty,
 }
 
+#[cfg(not(windows))]
 pub type FlagsSet = enumset::EnumSet<Flags>;
 
+#[cfg(not(windows))]
 impl Flags {
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn from_kqueue_event(kqueue_event: &KQueueEvent) -> FlagsSet {
@@ -1480,6 +1482,7 @@ static TIMEOUT: bun_sys::posix::timespec = bun_sys::posix::timespec {
     tv_nsec: 0,
 };
 
+#[cfg(not(windows))]
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum OneShotFlag {

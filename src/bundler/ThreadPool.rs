@@ -464,9 +464,6 @@ impl Drop for WorkerGuard {
 }
 
 pub struct WorkerData {
-    // Kept raw because the pointee's arena
-    // is the sibling field `Worker.heap`, which Rust cannot express as a borrow.
-    pub(crate) log: *const bun_ast::Log,
     // lifetime erased to `'static` — the inner `&'a Arena` borrows
     // `Worker.heap`, which Rust can't express on a sibling field.
     //
@@ -510,6 +507,10 @@ impl Worker {
         // SAFETY: caller contract.
         let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
+            if let Some(data) = &mut worker.data {
+                // It is in `heap`, which drops nothing.
+                data.transpiler.log().clear_and_free();
+            }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.
             worker.data = None;
@@ -566,14 +567,13 @@ impl Worker {
         // caches only the last heap a thread touched.
         self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
-        let log: *const bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
+        let log: &bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
-            log,
             transpiler: Transpiler::for_worker(self.ctx.transpiler(), arena_ref, log),
             other_transpiler: None,
         });
@@ -597,7 +597,8 @@ impl Worker {
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
                     unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
-                let mut boxed = Box::new(Transpiler::for_worker(client, arena_ref, data.log));
+                let log = data.transpiler.log();
+                let mut boxed = Box::new(Transpiler::for_worker(client, arena_ref, log));
                 // Wire self-refs after the value reached its final (heap) address.
                 boxed.wire_after_move();
                 data.other_transpiler = Some(boxed);

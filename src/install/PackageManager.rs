@@ -1,6 +1,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
+use core::sync::SyncView;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
 use std::sync::LazyLock;
@@ -499,10 +500,8 @@ pub struct PackageManager {
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
     // this arena has process lifetime.
     pub(crate) ast_arena: bun_alloc::Arena,
-    // Raw ptr rather than `&'a mut bun_ast::Log`: PackageManager is a leaked singleton
-    // stored in a `static`, which cannot carry a lifetime parameter. Invariant: the
-    // pointed-to Log must outlive every use of the singleton.
-    pub log: *const bun_ast::Log,
+    /// The tasks of an isolated install share `&PackageManager`, which must not lead to it.
+    log: SyncView<&'static bun_ast::Log>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     pub(crate) extracted_count: u32,
     pub(crate) summary: Package::DiffSummary,
@@ -904,12 +903,9 @@ impl PackageManager {
         VERBOSE_INSTALL.store(v, core::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Only the thread that runs the install loop may call this.
     #[inline]
-    pub fn log<'a>(&self) -> &'a bun_ast::Log {
-        // SAFETY: `self.log` is non-null for the manager's lifetime. FIXME:
-        // nothing ties `'a` to the log that the runtime last aimed it at.
-        unsafe { &*self.log }
+    pub fn log(&mut self) -> &'static bun_ast::Log {
+        self.log.as_mut()
     }
 
     /// Associated-fn spelling that forwards to the free [`init`] so callers
@@ -1386,7 +1382,7 @@ fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::Ini
 
 fn allocate_package_manager(
     options: Options,
-    log: *const bun_ast::Log,
+    log: &'static bun_ast::Log,
     root_dir: &'static fs::DirEntry,
     env: &mut dot_env::Loader,
     // NUL-terminated
@@ -1439,7 +1435,7 @@ fn allocate_package_manager(
         wr!(active_lifecycle_scripts, Default::default());
         wr!(network_task_fifo, NetworkQueue::init());
         wr!(retry_queue, Default::default());
-        wr!(log, log);
+        wr!(log, SyncView::new(log));
         wr!(root_dir, root_dir);
         wr!(ast_arena, bun_alloc::Arena::new());
         wr!(env, Some(bun_ptr::BackRef::new_mut(env)));
@@ -2849,7 +2845,8 @@ fn init_with_runtime_once(
             runtime_auto_install: true,
             ..Default::default()
         },
-        std::ptr::from_ref(log),
+        // No importer's log lives as long. `report_to` hands over what this one collects.
+        Box::leak(Box::default()),
         root_dir,
         env,
         original_package_json_path,
@@ -2863,6 +2860,7 @@ fn init_with_runtime_once(
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body.
     let manager = unsafe { &mut *manager_ptr };
+    let _report = manager.report_to(Some(log));
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

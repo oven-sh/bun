@@ -7101,11 +7101,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // so clone the value.
             js_ast::ExprData::EObject(_) | js_ast::ExprData::EArray(_) => {
                 let shared = Expr { data: value, loc };
-                let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) else {
-                    self.report_stack_overflow(loc);
-                    return self.new_expr(E::Missing {}, loc);
-                };
-                return copy;
+                if let Ok(copy) = shared.deep_clone_no_detach(self.arena, self.stack_check) {
+                    return copy;
+                }
             }
             _ => {}
         }
@@ -8392,20 +8390,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if call.args.len_u32() == 0 {
             return;
         }
-        let arg = *call.args.at(0);
         // match `data` by value (it is `Copy`) so the `StoreRef<_>`
-        // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in place.
-        match arg.data {
+        // payloads bind owned + `mut`, letting `to_utf8` mutate the EString in
+        // place and `arr.items.slice_mut()` write through `DerefMut` into the
+        // underlying arena slots.
+        match call.args.at(0).data {
             js_ast::ExprData::EString(mut str_) => {
-                let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut str_, arg.loc) else {
+                let loc = call.args.at(0).loc;
+                let Some(d) = self.rewrite_import_meta_hot_accept_string(&mut str_, loc) else {
                     return;
                 };
                 call.args.mut_(0).data = d;
             }
-            js_ast::ExprData::EArray(arr) => {
-                // Every use of an inlined constant shares its array.
-                let mut items = ExprNodeList::init_capacity(arr.items.len());
-                for item in arr.items.iter() {
+            js_ast::ExprData::EArray(mut arr) => {
+                for item in arr.items.slice_mut() {
                     let js_ast::ExprData::EString(mut s) = item.data else {
                         let _ = self.log().add_error(
                             Some(self.source),
@@ -8418,9 +8416,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     else {
                         return;
                     };
-                    items.push(Expr { data: d, ..*item });
+                    item.data = d;
                 }
-                *call.args.mut_(0) = self.new_expr(E::Array { items, ..*arr }, arg.loc);
             }
             _ => return,
         }

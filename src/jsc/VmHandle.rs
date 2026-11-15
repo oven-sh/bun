@@ -242,7 +242,7 @@ impl Ticket {
         self.post_intrusive(NonNull::from(Box::leak(task)));
     }
 
-    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    /// As [`post`](Self::post), for a node that its container keeps alive until it has left the queue.
     pub fn post_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
         test_gate::before_ticket_post(self);
         debug_assert!(

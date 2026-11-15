@@ -20,7 +20,9 @@ use bun_core::EncodedSlice;
 use bun_core::SignalCode;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteStatus};
+use bun_io::{
+    BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteHandler, WriteStatus,
+};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
@@ -29,8 +31,6 @@ use bun_jsc::{
 };
 use bun_sys::{self as sys, Fd, File};
 
-#[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
 #[cfg(windows)]
@@ -44,12 +44,10 @@ pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 /// Refs are held by:
 /// 1. The JS wrapper (released when it is collected)
 /// 2. Reader (released in `on_read_result`)
-/// 3. Writer (released in onWriterClose)
+/// 3. Writer (released in `on_close`)
 ///
 // Every JS-exposed method takes `&self`; per-field
-// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The
-// StreamingWriter parent-vtable thunks deref `*mut Self` as
-// `&*this` (shared); all field mutation routes through the cells.
+// interior mutability via `Cell` (Copy) / `JsCell` (non-Copy).
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Terminal {
     ref_count: bun_ptr::RefCount<Terminal>,
@@ -78,13 +76,15 @@ pub(crate) struct Terminal {
     global_this: bun_ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
-    writer: JsCell<IOWriter>,
+    writer: StreamingWriter,
 
     /// Reader for receiving data from the terminal
     reader: BufferedReader,
 
     /// Held until the writer closes.
     writer_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
+    #[cfg(windows)]
+    write_in_flight_ref: Cell<Option<bun_ptr::RefPtr<Terminal>>>,
 
     /// Held until the reader is done.
     reader_ref: JsCell<Option<bun_ptr::RefPtr<Terminal>>>,
@@ -131,15 +131,6 @@ bitflags::bitflags! {
         const EXIT_DISPATCHED = 1 << 7;
     }
 }
-
-/// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
-/// — the anon-struct of callback decls is the `PosixStreamingWriterParent` /
-/// `WindowsStreamingWriterParent` trait impls at the bottom of this file.
-pub(crate) type IOWriter = StreamingWriter<Terminal>;
-
-/// Poll type alias for FilePoll Owner registration
-#[cfg(not(windows))]
-pub(crate) type Poll = IOWriter;
 
 /// Options for creating a Terminal
 pub(crate) struct Options {
@@ -302,29 +293,6 @@ impl Terminal {
         std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    /// Recover `&Terminal` from the parent back-pointer stashed via
-    /// [`as_ctx_ptr`](Self::as_ctx_ptr) in `open` (handed to
-    /// `writer.parent`). Centralises the set-once
-    /// `*mut Self → &Self` deref so the I/O-vtable trampolines below stay
-    /// safe at the call site (one `unsafe` here, N safe callers).
-    ///
-    /// Only valid for the
-    /// `{Posix,Windows}StreamingWriterParent` thunks where `this` is the
-    /// registered BACKREF — do NOT call from `WriterParent::ref_` /
-    /// `deref` (those run while a `&mut self.writer` borrow is live and must
-    /// avoid forming `&Terminal`; see Stacked-Borrows note there).
-    #[inline]
-    fn from_parent_ptr<'a>(this: *mut Self) -> &'a Self {
-        // SAFETY: `this` is the BACKREF set via
-        // `writer.parent = …` in `open`. The Terminal is heap-stable
-        // (`RefPtr::new`) and outlives every writer callback (the
-        // intrusive +1 ref held by the I/O machinery is dropped only after the
-        // last callback fires). R-2: shared borrow only — bodies take `&self`;
-        // field writes go through `Cell`/`JsCell`, so re-entrant JS forming a
-        // fresh `&Self` from the wrapper aliases soundly.
-        unsafe { &*this }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
 
     fn is_reader_done(&self) -> bool {
@@ -336,10 +304,9 @@ impl Terminal {
     }
 
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant JS).
-    #[cfg(unix)]
     fn ref_guard(&self) -> bun_ptr::RefPtr<Self> {
-        // SAFETY: `self` is the live heap allocation.
-        unsafe { bun_ptr::RefPtr::init_ref(self.as_ctx_ptr()) }
+        // SAFETY: the writer's owner is the allocation that holds `self`.
+        unsafe { bun_ptr::RefPtr::init_ref(self.writer.owner().ptr().cast()) }
     }
 
     /// Opens the PTY and starts reading. The caller gives the returned ref to the JS wrapper, then calls [`attach`](Self::attach).
@@ -371,9 +338,11 @@ impl Terminal {
             }),
             event_loop_handle: EventLoopHandle::init(global_object.bun_vm().event_loop_ptr()),
             global_this: bun_ptr::BackRef::new(global_object),
-            writer: JsCell::new(IOWriter::default()),
+            writer: StreamingWriter::default(),
             reader: BufferedReader::init(),
             writer_ref: JsCell::new(None),
+            #[cfg(windows)]
+            write_in_flight_ref: Cell::new(None),
             reader_ref: JsCell::new(None),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
@@ -382,19 +351,18 @@ impl Terminal {
             tty_state: Cell::new(bun_core::tty::State::new()),
             abort_handle: jsc::AbortHandle::for_owner::<Terminal>(),
         });
-        let parent_ptr = terminal.as_ptr();
-
-        let owner = Owner::new(PollTag::TerminalReader, parent_ptr.cast());
-        // SAFETY: `owner` points to the heap allocation that holds this reader.
-        unsafe { terminal.reader.set_owner(owner) };
-
-        // Set writer parent
-        terminal.writer.with_mut(|w| w.parent = parent_ptr);
+        let owner = |tag| Owner::new(tag, terminal.as_ptr().cast());
+        // SAFETY: fields of their owner.
+        unsafe {
+            terminal.reader.set_owner(owner(PollTag::TerminalReader));
+            terminal.writer.set_owner(owner(PollTag::TerminalWriter));
+        }
+        let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
 
         // Start writer with the write fd - adds a ref. On `Err` the unused closure drops the file.
         match terminal
             .writer
-            .with_mut(|w| w.start(pty_result.write.fd(), true))
+            .start(&*terminal, event_loop, pty_result.write.fd(), true)
             .map(|()| pty_result.write.into_raw())
         {
             sys::Result::Ok(_) => terminal.writer_ref.set(Some(terminal.clone())),
@@ -407,7 +375,6 @@ impl Terminal {
         }
 
         // Start reader with the read fd - adds a ref.
-        let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
         let Ok(result) = terminal
             .reader
             .start(event_loop, pty_result.read.fd(), true)
@@ -473,7 +440,7 @@ impl Terminal {
     /// `open` error path for a reader that finished before the
     /// terminal reached JS, with the reader's ref already released.
     /// `close_internal` closes what is still open (a writer that is still
-    /// open releases its ref through `on_writer_close`); `open` then drops
+    /// open releases its ref through `on_close`); `open` then drops
     /// the initial ref.
     fn fail_reader_start(&self) -> InitError {
         self.close_internal();
@@ -639,7 +606,7 @@ impl Terminal {
     #[cfg(windows)]
     pub(crate) fn unref_after_inline_child_exit(&self) {
         if !self.flags.get().contains(Flags::CLOSED) {
-            self.writer.with_mut(|w| w.update_ref(false));
+            self.writer.update_ref(false);
         }
     }
 
@@ -1270,17 +1237,12 @@ impl Terminal {
             return Ok(input_len);
         }
 
-        // Suppress drain firing from the synchronous on_write calls that
-        // StreamingWriter::write() makes while we still hold the `with_mut`
-        // borrow; it is restored from `has_pending_data()` immediately after.
+        // No drain fires from inside `write()`: the flag is restored below.
         let had_buffered = self.writer_has_buffered.replace(false);
-        let (write_result, has_pending) = self.writer.with_mut(|w| {
-            let r = w.write(bytes);
-            (r, w.has_pending_data())
-        });
+        let write_result = self.writer.write(self, bytes);
         // The writer can close inside `write()` and keep the bytes; no drain follows them.
         let writer_done = self.is_writer_done();
-        let has_pending = has_pending && !writer_done;
+        let has_pending = self.writer.has_pending_data() && !writer_done;
         self.writer_has_buffered.set(has_pending);
         if has_pending {
             // Keep the wrapper rooted for the pending drain dispatch; a write
@@ -1288,7 +1250,7 @@ impl Terminal {
             self.this_value.with_mut(|v| v.upgrade(global_object));
         }
         // A second write() can drain what an earlier one buffered; on_write saw
-        // the cleared flag, so fire drain here (outside `with_mut`).
+        // the cleared flag, so fire drain here.
         #[cfg(unix)]
         if had_buffered && !has_pending && !writer_done {
             self.on_writer_ready();
@@ -1467,7 +1429,7 @@ impl Terminal {
 
     fn update_ref(&self, add: bool) {
         self.reader.update_ref(add);
-        self.writer.with_mut(|w| w.update_ref(add));
+        self.writer.update_ref(add);
     }
 
     /// Close the terminal
@@ -1488,10 +1450,8 @@ impl Terminal {
         self.update_flags(|f| f.insert(Flags::CLOSED));
         self.abort_handle.leave();
 
-        // Close writer (closes its fd). R-2: `with_mut` borrow is held across
-        // the synchronous `on_writer_close` parent callback, but that callback
-        // touches only sibling `Cell`/`JsCell` fields, never `writer`.
-        self.writer.with_mut(|w| w.close());
+        // Close writer (closes its fd)
+        self.writer.close(self);
 
         #[cfg(windows)]
         {
@@ -1521,12 +1481,8 @@ impl Terminal {
         }
     }
 
-    // IOWriter callbacks
-    fn on_writer_close(&self) {
-        bun_output::scoped_log!(Terminal, "onWriterClose");
-        if let Some(_writer_ref) = self.writer_ref.replace(None) {
-            self.maybe_downgrade_after_eof();
-        }
+    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        self.writer.on_io(self, event);
     }
 
     fn on_writer_ready(&self) {
@@ -1545,39 +1501,6 @@ impl Terminal {
             }
         }
         self.maybe_downgrade_after_eof();
-    }
-
-    fn on_writer_error(&self, err: &sys::Error) {
-        bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
-        // On write error, close the terminal to prevent further operations
-        // This handles cases like broken pipe when the child process exits
-        if !self.flags.get().contains(Flags::CLOSED) {
-            self.close_internal();
-        }
-    }
-
-    fn on_write(&self, amount: usize, status: WriteStatus) {
-        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        match status {
-            WriteStatus::Pending => {}
-            // `PosixStreamingWriter` has no `on_writable`, so POSIX
-            // fires `drain` off this transition. Windows fires it from
-            // `on_writable` and only records the state here.
-            WriteStatus::Drained => {
-                let had_buffered = self.writer_has_buffered.replace(false);
-                #[cfg(unix)]
-                if had_buffered {
-                    self.on_writer_ready();
-                }
-                #[cfg(not(unix))]
-                let _ = had_buffered;
-            }
-            // The writer closed its fd, so no drain can follow.
-            WriteStatus::EndOfFile => {
-                self.writer_has_buffered.set(false);
-                self.maybe_downgrade_after_eof();
-            }
-        }
     }
 
     pub(crate) fn read(&self, event: Option<IoEvent>) {
@@ -1627,9 +1550,9 @@ impl Terminal {
         if !self.reader.is_done() {
             self.on_read_result(self.reader.close());
         }
-        // `end()` dispatches `on_writer_close`.
+        // `end()` dispatches `on_close`.
         if !self.is_writer_done() {
-            self.writer.with_mut(|w| w.end());
+            self.writer.end(self);
         }
     }
 
@@ -1637,9 +1560,6 @@ impl Terminal {
     /// been dispatched and no `drain` is owed. Downgrading earlier would let
     /// GC collect the wrapper, and with it the callbacks it roots, before the
     /// last dispatch goes through it.
-    ///
-    /// Reads only `Cell` fields, never `self.writer`: callers include
-    /// writer-parent callbacks that run while a writer borrow is live.
     fn maybe_downgrade_after_eof(&self) {
         let flags = self.flags.get();
         if !flags.contains(Flags::EXIT_DISPATCHED) || flags.contains(Flags::FINALIZED) {
@@ -1756,63 +1676,51 @@ impl Drop for Terminal {
     }
 }
 
-// `bun.io.StreamingWriter(@This(), struct { onClose, onWritable, onError, onWrite })`
-// → trait impl on `Terminal`. All methods take `*mut Self` because the writer
-// is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
-#[cfg(unix)]
-impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::TerminalPoll;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status);
+impl WriteHandler for Terminal {
+    fn on_close(&self) {
+        bun_output::scoped_log!(Terminal, "onWriterClose");
+        if let Some(_writer_ref) = self.writer_ref.replace(None) {
+            self.maybe_downgrade_after_eof();
+        }
     }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close();
-    }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
-        Self::from_parent_ptr(this)
-            .event_loop_handle
-            .as_event_loop_ctx()
-    }
-}
 
-impl bun_io::pipe_writer::WriterParent for Terminal {
-    unsafe fn ref_(this: *mut Self) {
-        // SAFETY: BACKREF set via writer.parent. Intrusive refcount bump via raw
-        // pointer — do NOT form &Terminal here: this is called from inside writer
-        // methods while a &mut self.writer borrow is live (Stacked-Borrows aliasing).
-        unsafe { bun_ptr::RefCount::<Terminal>::ref_(this) };
+    fn on_error(&self, err: sys::Error) {
+        bun_output::scoped_log!(Terminal, "onWriterError: {:?}", err);
+        // e.g. a broken pipe when the child process exits
+        if !self.flags.get().contains(Flags::CLOSED) {
+            self.close_internal();
+        }
     }
-    unsafe fn deref(this: *mut Self) {
-        // SAFETY: see ref_. Intrusive refcount drop via raw pointer; may free
-        // `this`. See ref_ for aliasing rationale.
-        unsafe { bun_ptr::RefCount::<Terminal>::deref(this) };
-    }
-}
 
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
-    unsafe fn loop_(this: *mut Self) -> &'static bun_uws::Loop {
-        // SAFETY: BACKREF set via writer.parent; shared-only read.
-        unsafe { (*this).event_loop_handle.r#loop() }
+    fn on_write(&self, amount: usize, status: WriteStatus) {
+        bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
+        match status {
+            WriteStatus::Pending => {}
+            // Windows fires `drain` from `on_writable`.
+            WriteStatus::Drained => {
+                let had_buffered = self.writer_has_buffered.replace(false);
+                #[cfg(unix)]
+                if had_buffered {
+                    self.on_writer_ready();
+                }
+                #[cfg(not(unix))]
+                let _ = had_buffered;
+            }
+            // The writer closed its fd, so no drain can follow.
+            WriteStatus::EndOfFile => {
+                self.writer_has_buffered.set(false);
+                self.maybe_downgrade_after_eof();
+            }
+        }
     }
-}
 
-#[cfg(windows)]
-impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
-    const HAS_ON_WRITABLE: bool = true;
-    unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
-        Self::from_parent_ptr(this).on_write(amount, status);
+    #[cfg(windows)]
+    fn on_writable(&self) {
+        self.on_writer_ready();
     }
-    unsafe fn on_error(this: *mut Self, err: sys::Error) {
-        Self::from_parent_ptr(this).on_writer_error(&err);
-    }
-    unsafe fn on_writable(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_ready();
-    }
-    unsafe fn on_close(this: *mut Self) {
-        Self::from_parent_ptr(this).on_writer_close();
+
+    #[cfg(windows)]
+    fn on_write_in_flight(&self, in_flight: bool) {
+        (self.write_in_flight_ref).set(in_flight.then(|| self.ref_guard()));
     }
 }

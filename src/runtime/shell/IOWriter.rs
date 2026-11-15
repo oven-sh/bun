@@ -166,14 +166,13 @@ pub(crate) type Poll = WriterImpl;
 /// can drop the last external ref without freeing `self` while PipeWriter is
 /// still on the stack.
 #[cfg(not(windows))]
-pub(crate) fn on_poll(writer: &mut Poll, size_hint: isize, hup: bool) {
-    use bun_io::pipe_writer::PosixPipeWriter;
+pub(crate) fn on_poll(writer: &mut Poll, event: bun_io::IoEvent) {
     let parent = writer.parent.expect("IOWriter writer.parent unset");
     // `parent` is the backref stashed via `set_parent` in `IOWriter::init`;
     // `writer` is a field of `*parent`, so the pointee is live. Re-enter via
     // `&self` (UnsafeCell aliasing model). `ParentRef::Deref → &IOWriter`.
     let _keepalive = parent.keepalive();
-    writer.on_poll(size_hint, hup);
+    writer.on_poll(event);
 }
 
 /// Mutable state. Wrapped in `UnsafeCell` so `Rc<IOWriter>`-shared callers can
@@ -408,7 +407,7 @@ impl IOWriter {
             // above re-enter `__start()` and mutate `writer.handle`, which
             // invalidates `s` under Stacked Borrows.
             let s = self.state();
-            let handle = &s.writer.handle;
+            let handle = s.writer.handle();
             if s.flags.nonblock {
                 handle.set_poll_flag(FilePollFlag::Nonblocking);
             }
@@ -450,7 +449,7 @@ impl IOWriter {
                 let s = self.state();
                 // no poll means it's a file which does not
                 // support polling for writeability and we should just write to it
-                if !s.writer.handle.has_poll() {
+                if !s.writer.handle().has_poll() {
                     debug_assert!(!s.flags.pollable);
                     return WriteOutcome::IsActuallyFile;
                 }
@@ -475,9 +474,9 @@ impl IOWriter {
 
         #[cfg(not(windows))]
         {
-            debug_assert!(s.writer.handle.has_poll());
+            debug_assert!(s.writer.handle().has_poll());
             // Not `is_registered()`: a one-shot poll that fired is still registered, and has to be re-armed.
-            if s.writer.handle.is_watching() {
+            if s.writer.handle().is_watching() {
                 return WriteOutcome::Suspended;
             }
             if let Err(e) = s.writer.start(s.fd, s.flags.pollable) {
@@ -759,7 +758,7 @@ impl IOWriter {
             }
             #[cfg(not(windows))]
             {
-                debug_assert!(s.writer.handle.has_poll());
+                debug_assert!(s.writer.handle().has_poll());
                 s.writer.register_poll();
             }
         }
@@ -1120,7 +1119,7 @@ impl Drop for IOWriter {
         #[cfg(not(windows))]
         {
             // The poll goes before its fd.
-            s.writer.handle.set_fd(Fd::INVALID);
+            s.writer.handle().set_fd(Fd::INVALID);
         }
         #[cfg(windows)]
         {

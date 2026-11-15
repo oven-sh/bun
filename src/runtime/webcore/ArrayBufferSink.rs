@@ -128,8 +128,8 @@ impl crate::webcore::sink::JsSinkType for ArrayBufferSink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        match Self::end_from_js(self, cx) {
+    fn end_from_js(this: &mut Self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        match Self::end_from_js(this, cx) {
             // Not `to_js`: its `mi_is_in_heap_region` probe would skip the
             // deallocator when the global allocator isn't mimalloc.
             bun_sys::Result::Ok(ab) => bun_sys::Result::Ok(match ab.to_js_unchecked(cx.global()) {

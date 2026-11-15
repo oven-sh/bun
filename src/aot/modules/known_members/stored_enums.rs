@@ -1,9 +1,5 @@
-use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, PatParent, SymbolId};
-use bun_sema::check::aot::function_of_this;
-use bun_sema::hir::{
-    self, BinOp, EnumId, ExprId, ExprKind, FnId, FnKind, MemberKey, PatId, PatKind,
-};
+use bun_sema::bind::{Binding, BindingInitializer, Decl, Parent, SymbolId};
+use bun_sema::hir::{BinOp, EnumId, ExprId, ExprKind, FnId, MemberKey, PatId, PatKind};
 use bun_sema::program::{FileId, Files, Sym};
 use bun_sema::util::{FxHashMap, FxHashSet};
 
@@ -248,124 +244,6 @@ impl Search<'_, '_> {
     }
 }
 
-#[derive(Default)]
-struct AtomSet(Vec<u64>);
-
-impl AtomSet {
-    fn insert(&mut self, name: Atom) {
-        let word = name.0 as usize / 64;
-        if self.0.len() <= word {
-            self.0.resize(word + 1, 0);
-        }
-        self.0[word] |= 1 << (name.0 % 64);
-    }
-
-    fn contains(&self, name: Atom) -> bool {
-        let word = self.0.get(name.0 as usize / 64);
-        word.is_some_and(|word| word >> (name.0 % 64) & 1 != 0)
-    }
-}
-
-fn may_variable_hold_enum(hir: &hir::File<'_>, bound: &Bound<'_>, variable: SymbolId) -> bool {
-    match bound.symbol(variable).decls.first() {
-        Some(Decl::Fn(_) | Decl::Class(_) | Decl::Enum(_) | Decl::Module(_)) => false,
-        Some(&Decl::Param(pattern)) => match bound.pat_parent[pattern.idx()] {
-            PatParent::Param(parameter) => {
-                !bound.is_called_only_where_written(hir, bound.param_fn[parameter.idx()])
-            }
-            _ => true,
-        },
-        Some(Decl::Var(_)) => match bound.binding_initializer(hir, variable) {
-            BindingInitializer::Expression(value) => !matches!(
-                hir[hir.skip_type_assertions(value)].kind,
-                ExprKind::Object(_)
-                    | ExprKind::Array(_)
-                    | ExprKind::Fn(_)
-                    | ExprKind::Class(_)
-                    | ExprKind::New(_)
-            ),
-            _ => true,
-        },
-        _ => true,
-    }
-}
-
-fn may_hold_enum(hir: &hir::File<'_>, bound: &Bound<'_>, object: ExprId) -> bool {
-    let object = hir.skip_type_assertions(object);
-    match hir[object].kind {
-        ExprKind::Ident(_) => match bound.binding(object) {
-            Binding::Symbol(variable) => may_variable_hold_enum(hir, bound, variable),
-            Binding::CommonJs(_) => false,
-            Binding::Arguments(_) | Binding::Free => true,
-        },
-        ExprKind::This => function_of_this(hir, object)
-            .is_some_and(|function| matches!(hir[function].kind, FnKind::Decl | FnKind::Expr)),
-        ExprKind::Super
-        | ExprKind::Object(_)
-        | ExprKind::Array(_)
-        | ExprKind::Fn(_)
-        | ExprKind::Class(_)
-        | ExprKind::New(_) => false,
-        _ => true,
-    }
-}
-
-fn add_enums_stored_by_name(files: &Files<'_>, graph: &ModuleGraph, stored: &mut FxHashSet<Sym>) {
-    let (mut enums, mut members) = (AtomSet::default(), AtomSet::default());
-    for hir in graph.rows.iter().map(|row| files.hir(row.file)) {
-        let declared = hir.enums.iter().map(|it| it.name);
-        declared
-            .filter(|it| it.is_some())
-            .for_each(|it| enums.insert(it));
-        let declared = hir.enum_members.iter().map(|it| it.name);
-        declared
-            .filter(|it| it.is_some())
-            .for_each(|it| members.insert(it));
-    }
-    let (mut objects_stored, mut names_stored) = (AtomSet::default(), AtomSet::default());
-    for row in &graph.rows {
-        let (hir, bound) = (files.hir(row.file), files.bound(row.file));
-        for (index, expression) in hir.exprs.iter().enumerate() {
-            let access = ExprId(index as u32);
-            let (object, key) = match expression.kind {
-                ExprKind::Dot { obj, name, .. } => (obj, Some(name)),
-                ExprKind::Index { obj, .. } => match hir.member_key(access) {
-                    Some((_, MemberKey::Name(name))) => (obj, Some(name)),
-                    _ => (obj, None),
-                },
-                _ => continue,
-            };
-            let (names, set, name) = match key {
-                Some(name) => (&members, &mut names_stored, name),
-                None => match hir[hir.skip_type_assertions(object)].kind {
-                    ExprKind::Ident(name) | ExprKind::Dot { name, .. } => {
-                        (&enums, &mut objects_stored, name)
-                    }
-                    _ => continue,
-                },
-            };
-            if names.contains(name)
-                && !is_read(hir, bound, access)
-                && may_hold_enum(hir, bound, object)
-            {
-                set.insert(name);
-            }
-        }
-    }
-    for row in &graph.rows {
-        let (hir, bound) = (files.hir(row.file), files.bound(row.file));
-        for declaration in (0..hir.enums.len() as u32).map(EnumId) {
-            let mut declared = hir[declaration].members.iter();
-            if objects_stored.contains(hir[declaration].name)
-                || declared.any(|member| names_stored.contains(hir[member].name))
-            {
-                let id = bound.declared_symbol(Decl::Enum(declaration));
-                stored.insert(Sym { file: row.file, id });
-            }
-        }
-    }
-}
-
 fn list_references(files: &Files<'_>, file: FileId) -> Vec<(SymbolId, ExprId)> {
     let (hir, bound) = (files.hir(file), files.bound(file));
     let names = (0..hir.exprs.len() as u32).map(ExprId).filter(|&name| {
@@ -401,6 +279,5 @@ pub(super) fn find_enums_stored_into(files: &Files<'_>, graph: &ModuleGraph) -> 
             search.note_use(holder.file, name, enumeration);
         }
     }
-    add_enums_stored_by_name(files, graph, &mut search.stored_into);
     search.stored_into
 }

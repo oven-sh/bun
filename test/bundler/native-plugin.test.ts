@@ -536,7 +536,7 @@ const many_foo = ["foo","foo","foo","foo","foo","foo","foo"]
       ],
     });
 
-    expect(await result.outputs[0].text()).toContain("ok = 1");
+    expect(await result.outputs[0].text()).toEndWith("untouched.ts\nvar ok = 1;\nexport {\n  ok\n};\n");
     expect(napiModule.getCompilationCtxFreedCount(external)).toBe(1);
   });
 

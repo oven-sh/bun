@@ -1437,7 +1437,7 @@ type StringHashMapInner<V, A = DefaultAlloc> =
 ///
 /// Heap-boxing every key on `put` profiled as the dominant cost of
 /// `DirEntry::add_entry` (the resolver's per-file hot path): the key bytes
-/// there already live in the process-static `FilenameStore`/`EntryStore`, so
+/// there already live in the process-static `FilenameStore`/`ENTRY_STORE`, so
 /// the `Box<[u8]>` was a redundant second copy. The `Static` variant lets such
 /// callers store the existing slice directly — zero-copy without giving up
 /// owned-key safety for everyone else.
@@ -1745,12 +1745,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         }
     }
 
-    /// Insert `value` under `key` **without copying the key bytes**. This is
-    /// the zero-copy path: `key` is stored as `StringHashMapKey::Static`, so the caller
-    /// must guarantee the bytes genuinely live for `'static` — in practice
-    /// that means slices into a process-lifetime arena (`FilenameStore`,
-    /// `EntryStore`, AST heap) where the `'static` was minted via an explicit
-    /// `unsafe` lifetime widen at the call site.
+    /// Insert `value` under `key` **without copying the key bytes**.
     #[inline]
     pub fn put_static_key(&mut self, key: &'static [u8], value: V) -> Result<(), AllocError> {
         self.inner.insert(StringHashMapKey::borrowed(key), value);

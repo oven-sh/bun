@@ -1009,6 +1009,33 @@ describe("errors in a file that calls a macro", () => {
       });
     },
   );
+
+  test.concurrent("an argument that does not convert leaves no earlier argument protected", async () => {
+    const result = await run({
+      "macro.ts": `export const one = () => 1;`,
+      "index.ts": `
+        import { heapStats } from "bun:jsc";
+        const transpiler = new Bun.Transpiler({ loader: "ts" });
+        const macro = JSON.stringify(import.meta.dir + "/macro.ts");
+        function transform() {
+          try {
+            transpiler.transformSync(\`import { one } from \${macro} with { type: "macro" }; one({}, unknown);\`, {});
+          } catch (e) {
+            return e.message;
+          }
+        }
+        console.log(transform());
+        const before = heapStats().protectedObjectCount;
+        for (let i = 0; i < 10; i++) transform();
+        console.log(heapStats().protectedObjectCount - before);
+      `,
+    });
+    expect(result).toEqual({
+      lines: [`"Cannot convert identifier to JS. Try a statically-known value" error in macro`, "0"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe("log level in a macro", () => {

@@ -384,6 +384,20 @@ impl<T: Lane, const N: usize, I: Isa> From<T> for Vector<T, N, I> {
     }
 }
 
+impl<T: Lane, const N: usize, I: Isa> From<Simd<T, N>> for Vector<T, N, I> {
+    #[inline(always)]
+    fn from(lanes: Simd<T, N>) -> Self {
+        Self::new(lanes)
+    }
+}
+
+impl<T: Lane, const N: usize, I: Isa> From<Vector<T, N, I>> for Simd<T, N> {
+    #[inline(always)]
+    fn from(vector: Vector<T, N, I>) -> Self {
+        vector.0
+    }
+}
+
 impl<T: Lane, const N: usize, I: Isa> Index<usize> for Vector<T, N, I> {
     type Output = T;
 

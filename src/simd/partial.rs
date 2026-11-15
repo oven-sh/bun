@@ -3,6 +3,7 @@ use crate::source::Memory;
 use crate::swizzle::Repeat;
 use crate::{Int, Isa, Lane, Mask, Out, Source, Vector, portable};
 use core::array::{from_fn, from_ref};
+use core::hint::unlikely;
 use core::simd::{Simd, Swizzle, ToBytes, u8x16, u8x32, u16x8, u32x4, u32x8};
 use core::sync::atomic::AtomicU8;
 
@@ -84,12 +85,18 @@ pub struct Partial<T: Lane, const N: usize, I> {
 impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
     const IS_MASKED: bool = {
         let has_other_way = matches!(size_of::<Self>(), 16 | 32);
-        assert!(
-            I::HAS_MASKED_MEMORY || has_other_way,
-            "needs 16 or 32 bytes"
-        );
-        I::HAS_MASKED_MEMORY
+        assert!(I::MASKED_BYTES > 0 || has_other_way, "needs 16 or 32 bytes");
+        I::MASKED_BYTES > 0
     };
+
+    /// For an instruction that covers `size` bytes.
+    #[inline(always)]
+    fn is_slow_with_mask<E>(size: usize, start: *const E, len: usize) -> bool {
+        let size = size.next_power_of_two().max(16);
+        let is_at_end_of_page = start.addr().wrapping_add(size) & (4096 - size) == 0;
+        size_of::<Self>() > I::MASKED_BYTES
+            || I::IS_SLOW_TO_SKIP_PAGE && unlikely(is_at_end_of_page || len == 0)
+    }
 
     /// The inverse of `load_partial` for a slice of the same length.
     #[inline(always)]
@@ -116,7 +123,7 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
 
     #[inline(always)]
     fn store_masked(self, to: Out<'_, T>) -> &mut [T] {
-        if !is_slow_with_mask::<T, N>(to.as_ptr(), to.len()) {
+        if !Self::is_slow_with_mask(size_of::<Self>(), to.as_ptr(), to.len()) {
             return to.fill_masked(self.0);
         }
         let to = to.take(N);
@@ -125,7 +132,7 @@ impl<T: Lane, const N: usize, I: Isa> Vector<T, N, I> {
 
     #[inline(always)]
     fn load_masked(from: &[T]) -> Self {
-        if !is_slow_with_mask::<T, N>(from.as_ptr(), from.len()) {
+        if !Self::is_slow_with_mask(size_of::<Self>(), from.as_ptr(), from.len()) {
             return Self::new(Simd::load_or_default(from));
         }
         let (mut lanes, len) = ([T::default(); N], from.len().min(N));
@@ -184,14 +191,6 @@ pub(crate) fn copy_short<'a, T: Copy>(from: &[T], to: Out<'a, T>) -> &'a mut [T]
         .or_else(|to| put::<T, 2>(from, to))
         .or_else(|to| put::<T, 1>(from, to))
         .unwrap_or_default()
-}
-
-/// A masked access takes hundreds of cycles if the lanes that it skips are in an unmapped page.
-#[inline(always)]
-fn is_slow_with_mask<T, const N: usize>(start: *const T, len: usize) -> bool {
-    let size = size_of::<[T; N]>().next_power_of_two().max(16);
-    let is_at_end_of_page = start.addr().wrapping_add(size) & (4096 - size) == 0;
-    core::hint::unlikely(is_at_end_of_page || len == 0)
 }
 
 #[bun_simd_macros::foreach_target]
@@ -286,7 +285,7 @@ mod simd {
                 match S::memory(from) {
                     Memory::Plain(lanes) => Self::load_masked(lanes),
                     Memory::Shared(bytes)
-                        if is_slow_with_mask::<_, 64>(bytes.as_ptr(), bytes.len()) =>
+                        if Self::is_slow_with_mask(64, bytes.as_ptr(), bytes.len()) =>
                     {
                         Self::from_shared(portable::load_shared_masked(bytes))
                     }
@@ -365,7 +364,7 @@ mod simd {
                     || self.store_ends_shared::<4>(to)
                     || self.store_ends_shared::<2>(to)
                     || self.store_ends_shared::<1>(to);
-            } else if is_slow_with_mask::<_, 64>(to.as_ptr(), to.len()) {
+            } else if Self::is_slow_with_mask(64, to.as_ptr(), to.len()) {
                 portable::store_shared_masked(self.0, to);
             } else {
                 shared::store_shared_masked(self.0, to);

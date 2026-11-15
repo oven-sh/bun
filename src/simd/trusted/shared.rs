@@ -127,3 +127,43 @@ pub fn store64_masked(v: u8x64, to: &[AtomicU8]) {
         )
     }
 }
+
+/// Pads with zeros if `from` is too short.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "sve")]
+pub fn load16_masked(from: &[SharedU8]) -> u8x16 {
+    let v;
+    // SAFETY: reads the first `len` bytes of `from`, and touches no others.
+    unsafe {
+        asm!(
+            "whilelo p0.b, xzr, {len}",
+            "ld1b {{z0.b}}, p0/z, [{p}]",
+            len = in(reg) from.len().min(16),
+            p = in(reg) from.as_ptr(),
+            out("v0") v,
+            out("p0") _,
+            options(readonly, nostack),
+        )
+    };
+    v
+}
+
+/// Stores as many bytes as fit.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+#[target_feature(enable = "sve")]
+pub fn store16_masked(v: u8x16, to: &[AtomicU8]) {
+    // SAFETY: writes the first `len` bytes of `to`, and touches no others.
+    unsafe {
+        asm!(
+            "whilelo p0.b, xzr, {len}",
+            "st1b {{z0.b}}, p0, [{p}]",
+            len = in(reg) to.len().min(16),
+            p = in(reg) to.as_ptr(),
+            in("v0") v,
+            out("p0") _,
+            options(nostack),
+        )
+    }
+}

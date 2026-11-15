@@ -25,6 +25,14 @@ fn is_group(token: &TokenTree, delimiter: Delimiter) -> bool {
     matches!(token, TokenTree::Group(group) if group.delimiter() == delimiter)
 }
 
+fn is_cfg_or_doc(attribute: &TokenTree) -> bool {
+    let TokenTree::Group(group) = attribute else {
+        return false;
+    };
+    let name = group.stream().into_iter().next();
+    is(name.as_ref(), "cfg") || is(name.as_ref(), "doc")
+}
+
 fn is_inline(attribute: &TokenTree) -> bool {
     attribute.to_string().starts_with("[inline")
 }
@@ -138,45 +146,47 @@ fn enable_features(stream: TokenStream, features: &[&str]) -> TokenStream {
 
 /// The arguments of `export!` that precede the signature.
 fn targets_to_export(arguments: &str) -> TokenStream {
-    let up_to = arguments.strip_prefix("up_to=");
-    let is_top = |target: &Target| target.arch().is_some() && Some(target.name()) == up_to;
+    let has = |argument: &str| arguments.split(',').any(|it| it == argument);
+    let top_of = |argument: &str| {
+        let name = argument.strip_prefix("up_to=");
+        Target::ALL.into_iter().find(|it| Some(it.name()) == name)
+    };
+    let arch_of = |argument: &str| match argument {
+        "long_running" => LONG_RUNNING_ONLY.arch(),
+        _ => top_of(argument)?.arch(),
+    };
+    let is_valid = match arguments.split_once(',') {
+        Some((a, b)) => arch_of(a).zip(arch_of(b)).is_some_and(|(a, b)| a != b),
+        None => matches!(arguments, "" | "baseline") || arch_of(arguments).is_some(),
+    };
     assert!(
-        matches!(arguments, "" | "long_running" | "baseline") || Target::ALL.iter().any(is_top),
-        "expected `long_running`, `baseline` or `up_to = <target>`"
+        is_valid,
+        "expected `baseline`, or for each architecture `long_running` or `up_to = <target>`"
     );
-    let [mut best, mut native, mut portable] = [const { String::new() }; 3];
+    let is_top = |target: &Target| arguments.split(',').any(|it| top_of(it) == Some(*target));
+    let [mut native, mut portable] = [const { String::new() }; 2];
     for family in Target::ALL.chunk_by(|a, b| a.arch() == b.arch()) {
-        let Some(arch) = family[0].arch() else {
+        if family[0].arch().is_none() {
             continue;
+        }
+        let top = match has("baseline") {
+            true => family.len() - 1,
+            false => family.iter().position(is_top).unwrap_or(0),
         };
-        let top = match arguments {
-            "baseline" => family.len() - 1,
-            _ => family.iter().position(is_top).unwrap_or(0),
-        };
-        let mut has_best = false;
         for &target in &family[top..] {
-            let is_default = target != LONG_RUNNING_ONLY || arguments == "long_running";
-            if is_default && !has_best {
-                best += &format!("{target:?} ");
-                has_best = true;
-            }
-            if is_default || IS_FOR_TESTS {
-                let is_wanted = if is_default {
-                    "is_allowed"
-                } else {
-                    "is_asked_for"
-                };
-                let (name, features) = (target.name(), target.features());
-                native += &format!("{is_wanted} {arch:?} {target:?} {name} {features:?} ");
-            }
+            let is_wanted = match target != LONG_RUNNING_ONLY || has("long_running") {
+                true => "is_allowed",
+                false if IS_FOR_TESTS => "is_asked_for",
+                false => continue,
+            };
+            let (cfg, name, features) = (target.cfg(), target.name(), target.features());
+            native += &format!("{is_wanted} ({cfg}) {target:?} {name} {features:?} ");
         }
     }
     if IS_FOR_TESTS {
         portable += "Portable64 portable64 Portable32 portable32";
     }
-    parse(&format!(
-        "best[{best}] native[{native}] portable_for_tests[{portable}]"
-    ))
+    parse(&format!("native[{native}] portable_for_tests[{portable}]"))
 }
 
 /// Drops `#[inline]` and the `mut` of parameters.
@@ -196,7 +206,7 @@ fn signature_to_export(signature: &[TokenTree]) -> impl Iterator<Item = TokenTre
 
 /// Returns the module without `#[export]`, and the functions that dispatch.
 fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
-    let (mut body, mut exports) = (TokenStream::new(), TokenStream::new());
+    let (mut body, mut exports) = (Vec::new(), TokenStream::new());
     let mut rest = module.into_iter().peekable();
     while let Some(token) = rest.next() {
         let attribute: Vec<TokenTree> = match rest.peek() {
@@ -211,23 +221,31 @@ fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
                 group.stream().to_string().replace(' ', "")
             }
             _ => {
-                body.extend([token]);
+                body.push(token);
                 continue;
             }
         };
         rest.next();
+        let count = body.rchunks(2).take_while(|it| is(it.first(), "#")).count();
+        let earlier = body[body.len() - 2 * count..].chunks(2);
+        let mut export = targets_to_export(&arguments);
+        export.extend(
+            earlier
+                .filter(|it| is_cfg_or_doc(&it[1]))
+                .flatten()
+                .cloned(),
+        );
+
         let signature = std::iter::from_fn(|| rest.next_if(|t| !is_group(t, Delimiter::Brace)));
         let signature: Vec<TokenTree> = signature.collect();
         if !signature.iter().any(is_inline) {
             body.extend(parse("#[inline(never)]"));
         }
         body.extend(signature.iter().cloned());
-
-        let mut export = targets_to_export(&arguments);
         export.extend(signature_to_export(&signature));
         exports.extend(block("::bun_simd::export!", export));
     }
-    (body, exports)
+    (body.into_iter().collect(), exports)
 }
 
 /// Compiles the module once per target, with the types of that target as `isa`. See the README.
@@ -239,12 +257,6 @@ pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
         let mut out = parse("#![allow(unreachable_pub)] #[allow(unused_imports)] use super::*;");
         for target in Target::ALL {
             let name = target.name();
-            if let Some(arch) = target.arch() {
-                out.extend(parse(&format!("#[cfg(target_arch = {arch:?})]")));
-            } else if target != Target::Portable && !IS_FOR_TESTS {
-                // Elsewhere, nothing else checks that the module compiles for these widths.
-                out.extend(parse("#[cfg(not(target_arch = \"x86_64\"))]"));
-            }
             let mut copy = TokenStream::new();
             // Every export refers to the portable copy, so that one reports the dead code.
             if target != Target::Portable {
@@ -260,7 +272,15 @@ pub fn foreach_target(_: TokenStream, item: TokenStream) -> TokenStream {
             let with_name = |ident: Ident| TokenTree::from(Ident::new(name, ident.span())).into();
             let body = replace_ident(body.clone(), "this_target", &with_name);
             copy.extend(enable_features(body, target.features()));
-            out.extend(block(&format!("pub mod {name}"), copy));
+            let cfg = match target {
+                // Elsewhere, nothing else checks that the module compiles for these widths.
+                Target::Portable64 | Target::Portable32 if !IS_FOR_TESTS => {
+                    "not(target_arch = \"x86_64\")"
+                }
+                _ => target.cfg(),
+            };
+            let head = format!("#[cfg({cfg})] pub mod {name}");
+            out.extend(block(&head, copy));
         }
         out.extend(exports);
         out

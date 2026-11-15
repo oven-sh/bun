@@ -9,10 +9,13 @@ use core::simd::{ToBytes, prelude::*};
 #[cfg(target_endian = "big")]
 compile_error!("these ops assume little-endian lanes");
 
+/// With SVE2, the ops are the same, but a load or a store can skip lanes.
 #[derive(Clone, Copy)]
-pub struct Neon;
+pub struct Neon<const HAS_SVE2: bool>;
 
-crate::isa::vector_types!(Neon, 16);
+crate::isa::vector_types!(Neon<false>, 16);
+
+type Lanes<T, const N: usize, const S: bool> = crate::Vector<T, N, Neon<S>>;
 
 /// `addp`
 #[inline(always)]
@@ -23,8 +26,8 @@ fn pairwise_add(a: u8x16, b: u8x16) -> u8x16 {
 
 /// For each byte, `offset` and its index in the last mask that has it set, or else `none`.
 #[inline(always)]
-fn select_indices<T: Int<N>, const N: usize>(
-    masks: impl Iterator<Item = (Mask<T, N>, usize)>,
+fn select_indices<T: Int<N>, const N: usize, I: crate::Isa>(
+    masks: impl Iterator<Item = (crate::Mask<T, N, I>, usize)>,
     offset: usize,
     none: u8,
 ) -> u8x16 {
@@ -36,13 +39,15 @@ fn select_indices<T: Int<N>, const N: usize>(
     })
 }
 
-impl crate::Isa for Neon {
+impl<const S: bool> crate::Isa for Neon<S> {
+    const MASKED_BYTES: usize = if S { 16 } else { 0 };
+    const IS_SLOW_TO_SKIP_PAGE: bool = false;
     const HAS_INTERLEAVED_MEMORY: bool = true;
     const HAS_SINGLE_CYCLE_OPS: bool = false;
 
     /// `shrn` leaves 4 bits per byte.
     #[inline(always)]
-    fn movemask<T: Int<N>, const N: usize>(mask: Mask<T, N>) -> (u64, usize) {
+    fn movemask<T: Int<N>, const N: usize>(mask: crate::Mask<T, N, Self>) -> (u64, usize) {
         if size_of::<[T; N]>() != 16 {
             return (mask.to_bitmask(), 1);
         }
@@ -51,13 +56,13 @@ impl crate::Isa for Neon {
     }
 
     #[inline(always)]
-    fn any<T: Int<N>, const N: usize>(mask: Mask<T, N>) -> bool {
+    fn any<T: Int<N>, const N: usize>(mask: crate::Mask<T, N, Self>) -> bool {
         mask.0.any()
     }
 
     #[inline(always)]
     fn first_set_of<T: Int<N>, const N: usize, const K: usize>(
-        masks: [(Mask<T, N>, usize); K],
+        masks: [(crate::Mask<T, N, Self>, usize); K],
     ) -> Option<usize> {
         if size_of::<[T; N]>() != 16 {
             return movemask_of(masks).0.lowest_one().map(|lane| lane as usize);
@@ -72,7 +77,7 @@ impl crate::Isa for Neon {
 
     #[inline(always)]
     fn last_set_of<T: Int<N>, const N: usize, const K: usize>(
-        masks: [(Mask<T, N>, usize); K],
+        masks: [(crate::Mask<T, N, Self>, usize); K],
     ) -> Option<usize> {
         if size_of::<[T; N]>() != 16 {
             return movemask_of(masks).0.highest_one().map(|lane| lane as usize);
@@ -83,7 +88,10 @@ impl crate::Isa for Neon {
 
     /// There is no `popcnt` for general registers.
     #[inline(always)]
-    fn count_before<T: Int<N>, const N: usize>(mask: Mask<T, N>, lane: usize) -> usize {
+    fn count_before<T: Int<N>, const N: usize>(
+        mask: crate::Mask<T, N, Self>,
+        lane: usize,
+    ) -> usize {
         const STEP: &[u8; 32] = &core::array::from_fn(const |i| 1 - i as u8 / 16);
         if size_of::<[T; N]>() != 16 {
             return (mask.to_bitmask() & !u64::MAX.unbounded_shl(lane as u32)).count_ones()
@@ -96,7 +104,7 @@ impl crate::Isa for Neon {
     }
 
     #[inline(always)]
-    fn bitmask_of_four<const N: usize>(masks: [Mask<u8, N>; 4]) -> u64
+    fn bitmask_of_four<const N: usize>(masks: [crate::Mask<u8, N, Self>; 4]) -> u64
     where
         u8: Int<N>,
     {
@@ -107,13 +115,13 @@ impl crate::Isa for Neon {
     }
 
     #[inline(always)]
-    fn saturating_cast_u8<const N: usize>(v: Vector<i32, N>) -> Vector<u8, N> {
+    fn saturating_cast_u8<const N: usize>(v: Lanes<i32, N, S>) -> Lanes<u8, N, S> {
         let words = v.0.simd_max(Simd::splat(0)).simd_min(Simd::splat(0xFFFF));
-        Vector::new(words.cast::<u16>().simd_min(Simd::splat(0xFF)).cast())
+        Lanes::new(words.cast::<u16>().simd_min(Simd::splat(0xFF)).cast())
     }
 }
 
-impl U8 {
+impl<const S: bool> Lanes<u8, 16, S> {
     #[inline]
     #[target_feature(enable = "neon")]
     pub fn lookup(self, indices: Self) -> Self {
@@ -122,7 +130,7 @@ impl U8 {
 
     #[inline]
     #[target_feature(enable = "neon")]
-    pub fn saturating_narrow(first: I16, second: I16) -> Self {
+    pub fn saturating_narrow(first: Lanes<i16, 8, S>, second: Lanes<i16, 8, S>) -> Self {
         Self::new(vqmovun_high_s16(
             vqmovun_s16(first.0.into()),
             second.0.into(),
@@ -130,38 +138,41 @@ impl U8 {
     }
 }
 
-impl I16 {
+impl<const S: bool> Lanes<i16, 8, S> {
     #[inline(always)]
-    pub fn saturating_pairwise_dot(a: U8, b: I8) -> Self {
-        let (a, b) = (a.bitcast::<U16>(), b.bitcast::<I16>());
-        let even = (a & 0xFF).bitcast::<I16>() * (b << 8 >> 8);
-        let odd = (a >> 8).bitcast::<I16>() * (b >> 8);
+    pub fn saturating_pairwise_dot(a: Lanes<u8, 16, S>, b: Lanes<i8, 16, S>) -> Self {
+        let (a, b) = (
+            a.bitcast::<Lanes<u16, 8, S>>(),
+            b.bitcast::<Lanes<i16, 8, S>>(),
+        );
+        let even = (a & 0xFF).bitcast::<Lanes<i16, 8, S>>() * (b << 8 >> 8);
+        let odd = (a >> 8).bitcast::<Lanes<i16, 8, S>>() * (b >> 8);
         Self::new(even.0.saturating_add(odd.0))
     }
 }
 
-impl I32 {
+impl<const S: bool> Lanes<i32, 4, S> {
     #[inline]
     #[target_feature(enable = "neon")]
-    pub fn pairwise_dot(a: I16, b: I16) -> Self {
+    pub fn pairwise_dot(a: Lanes<i16, 8, S>, b: Lanes<i16, 8, S>) -> Self {
         let (a, b) = (a.0.into(), b.0.into());
         let low = vmull_s16(vget_low_s16(a), vget_low_s16(b));
         Self::new(vpaddq_s32(low, vmull_high_s16(a, b)))
     }
 }
 
-impl U64 {
+impl<const S: bool> Lanes<u64, 2, S> {
     #[inline]
     #[target_feature(enable = "neon")]
-    pub fn sums_of_8(bytes: U8) -> Self {
+    pub fn sums_of_8(bytes: Lanes<u8, 16, S>) -> Self {
         Self::new(vpaddlq_u32(vpaddlq_u16(vpaddlq_u8(bytes.0.into()))))
     }
 }
 
-impl F32 {
+impl<const S: bool> Lanes<f32, 4, S> {
     #[inline(always)]
-    pub fn to_i32(self) -> I32 {
-        I32::new(self.0.cast())
+    pub fn to_i32(self) -> Lanes<i32, 4, S> {
+        Lanes::new(self.0.cast())
     }
 
     #[inline]

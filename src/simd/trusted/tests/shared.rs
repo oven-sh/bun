@@ -152,19 +152,21 @@ fn bytes_64() {
     whole("avx512f", loads, [store64::<3, 0>, store64::<3, 2>]);
 }
 
-#[cfg(target_arch = "x86_64")]
-#[test]
-fn masked() {
-    if !detected().contains(Features::named(&["avx512bw"])) {
+fn masked<const N: usize>(
+    feature: &str,
+    load: unsafe fn(&[SharedU8]) -> Simd<u8, N>,
+    store: unsafe fn(Simd<u8, N>, &[AtomicU8]),
+) {
+    if !detected().contains(Features::named(&[feature])) {
         return;
     }
     let room = fenced();
-    for len in 0..70 {
+    for len in 0..N + 6 {
         for start in [0, 77, ROOM - len] {
             let to = &room[start..start + len];
             let text = SharedU8::from_slice(to);
             reset(room);
-            let want: [u8; 64] = core::array::from_fn(|i| {
+            let want: [u8; N] = core::array::from_fn(|i| {
                 if i < len {
                     ((start + i) % 251) as u8
                 } else {
@@ -173,19 +175,27 @@ fn masked() {
             });
             // SAFETY: the CPU has the feature.
             unsafe {
-                assert_eq!(load64_masked(text).to_array(), want);
-                store64_masked(Simd::splat(255), to);
+                assert_eq!(load(text).to_array(), want);
+                store(Simd::splat(255), to);
                 // With what was stored still in a register.
-                assert!(
-                    load64_masked(text)[len.min(64)..]
-                        .iter()
-                        .all(|&lane| lane == 0)
-                );
+                assert!(load(text)[len.min(N)..].iter().all(|&lane| lane == 0));
             }
             assert_eq!(
                 changed(room),
-                (start..start + len.min(64)).collect::<Vec<_>>()
+                (start..start + len.min(N)).collect::<Vec<_>>()
             );
         }
     }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[test]
+fn masked_64() {
+    masked("avx512bw", load64_masked, store64_masked);
+}
+
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn masked_16() {
+    masked("sve", load16_masked, store16_masked);
 }

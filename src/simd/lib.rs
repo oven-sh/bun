@@ -31,6 +31,8 @@ mod partial;
 pub mod portable;
 mod sink;
 mod source;
+#[cfg(all(target_arch = "aarch64", not(target_vendor = "apple")))]
+pub mod sve2;
 mod swizzle;
 mod vector;
 #[cfg(target_arch = "x86_64")]

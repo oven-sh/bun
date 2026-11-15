@@ -392,6 +392,12 @@ _ZN3bun10N_SVE2_12814LineStartsImplEPKhmPj        [SVE]
 _ZN3bun10N_SVE2_12813OddBlocksImplEPKhmPm         [SVE]
 
 # ----------------------------------------------------------------------------
+# The copies of a `mod simd` with #[bun_simd::foreach_target]. Gate: if_supported! in
+# src/simd/trusted/gate.rs.
+# ----------------------------------------------------------------------------
+_R*4simd4sve2*  [SVE]
+
+# ----------------------------------------------------------------------------
 # src/simd/conformance/probe.rs: one instruction of each feature. Gate: bun_simd::detected().
 # ----------------------------------------------------------------------------
 _R*20bun_simd_conformance5probe4runs*22instruction_of_feature

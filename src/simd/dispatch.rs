@@ -40,6 +40,14 @@ pub const fn is_floor(target: Target) -> bool {
     !IS_FOR_TESTS && target.is_in_build()
 }
 
+/// The CPU makes no difference.
+pub const fn is_direct(best_first: &[Target]) -> bool {
+    match best_first {
+        [best, ..] => is_floor(*best),
+        [] => true,
+    }
+}
+
 pub fn is_allowed(target: Target) -> bool {
     target as u8 >= limit()
 }
@@ -53,8 +61,7 @@ pub fn is_asked_for(target: Target) -> bool {
 #[macro_export]
 macro_rules! export {
     (
-        best[$($Best:ident)*]
-        native[$($is_wanted:ident $arch:literal $Target:ident $module:ident $features:tt)*]
+        native[$($is_wanted:ident ($cfg:meta) $Target:ident $module:ident $features:tt)*]
         portable_for_tests[$($Portable:ident $portable:ident)*]
         $(#[$meta:meta])* $vis:vis fn $name:ident $(<$($life:lifetime),+>)?
         ($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?
@@ -74,7 +81,7 @@ macro_rules! export {
                     }
                 )*
                 $(
-                    #[cfg(target_arch = $arch)]
+                    #[cfg($cfg)]
                     if (const { is_floor(Target::$Target) } || $is_wanted(Target::$Target))
                         && let Some(kernel) =
                             $crate::if_supported!($features, __Kernel, $module::$name)
@@ -91,7 +98,7 @@ macro_rules! export {
 
             if const {
                 use $crate::{Target, dispatch::*};
-                IS_FOR_TESTS $(|| is_floor(Target::$Best))*
+                IS_FOR_TESTS || is_direct(&[$(#[cfg($cfg)] Target::$Target),*])
             } {
                 // Outside of tests, this is a direct call.
                 __choose()($($arg),*)

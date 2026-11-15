@@ -5,8 +5,10 @@ use core::simd::prelude::{Simd, SimdInt, SimdOrd};
 pub trait Isa: Copy {
     /// Comparisons write to them.
     const HAS_MASK_REGISTERS: bool = false;
-    /// Loads and stores can skip lanes.
-    const HAS_MASKED_MEMORY: bool = Self::HAS_MASK_REGISTERS;
+    /// The size up to which loads and stores can skip lanes.
+    const MASKED_BYTES: usize = if Self::HAS_MASK_REGISTERS { 64 } else { 0 };
+    /// It takes hundreds of cycles to skip lanes in an unmapped page.
+    const IS_SLOW_TO_SKIP_PAGE: bool = true;
     const HAS_UNSIGNED_COMPARE: bool = true;
     /// `load_interleaved4` and `store_interleaved4` take one instruction.
     const HAS_INTERLEAVED_MEMORY: bool = false;

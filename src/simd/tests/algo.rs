@@ -436,13 +436,28 @@ mod simd {
                 let to = to[range].as_mut().into();
                 assert_eq!(U8::narrow(lanes, lanes).store_partial(to), slice);
             }
+            if len < 16 {
+                let wide: Vec<u16> = slice.iter().map(|&byte| byte.into()).collect();
+                let lanes = Vector::<u16, 16>::load_partial(black_box(&wide))
+                    .unwrap()
+                    .lanes;
+                let mut both_ways = (vec![0; len], vec![0; len]);
+                lanes
+                    .cast::<u8>()
+                    .store_partial(both_ways.0[..].as_mut().into());
+                let lanes = Vector::<u8, 16>::load_partial(slice).unwrap().lanes;
+                lanes
+                    .cast::<u16>()
+                    .store_partial(both_ways.1[..].as_mut().into());
+                assert_eq!(both_ways, (slice.to_vec(), wide));
+            }
         }
     }
 
     /// As if another thread wrote between two reads.
     #[export]
     pub fn matches_that_go_once_they_are_seen() {
-        let bytes = &mut vec![0; 13 * U8::LEN];
+        let bytes = &mut [0; 13 * U8::LEN];
         let (slice, last) = (shared(bytes), 13 * U8::LEN - 1);
         for (goes, stays) in (0..=last).flat_map(|at| [(at, last / 3), (at, last - last / 3)]) {
             let test = |v: U8| {

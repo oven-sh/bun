@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
 fn targets() -> impl Iterator<Item = Target> {
     // Miri lacks some of the intrinsics.
-    let is_skipped = |target| cfg!(miri) && target == Target::Neon;
+    let is_skipped = |target: Target| cfg!(miri) && target.arch() == Some("aarch64");
     let all = Target::ALL.into_iter();
     let supported = all.filter(move |&it| it.is_supported() && !is_skipped(it));
     supported.inspect(|&target| limit_to(target))

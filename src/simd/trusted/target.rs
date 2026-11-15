@@ -7,6 +7,7 @@ pub enum Target {
     Avx512Skx,
     Avx2,
     Sse4,
+    Sve2,
     Neon,
     Portable64,
     Portable32,
@@ -14,11 +15,12 @@ pub enum Target {
 }
 
 impl Target {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Avx512Icl,
         Self::Avx512Skx,
         Self::Avx2,
         Self::Sse4,
+        Self::Sve2,
         Self::Neon,
         Self::Portable64,
         Self::Portable32,
@@ -32,6 +34,7 @@ impl Target {
             Self::Avx512Skx => "avx512_skx",
             Self::Avx2 => "avx2",
             Self::Sse4 => "sse4",
+            Self::Sve2 => "sve2",
             Self::Neon => "neon",
             Self::Portable64 => "portable64",
             Self::Portable32 => "portable32",
@@ -43,8 +46,20 @@ impl Target {
     pub const fn arch(self) -> Option<&'static str> {
         match self {
             Self::Avx512Icl | Self::Avx512Skx | Self::Avx2 | Self::Sse4 => Some("x86_64"),
-            Self::Neon => Some("aarch64"),
+            Self::Sve2 | Self::Neon => Some("aarch64"),
             Self::Portable64 | Self::Portable32 | Self::Portable => None,
+        }
+    }
+
+    /// The builds that can run it, as in `#[cfg]`. Apple's cores have SVE only in streaming mode.
+    pub const fn cfg(self) -> &'static str {
+        match self {
+            Self::Avx512Icl | Self::Avx512Skx | Self::Avx2 | Self::Sse4 => {
+                r#"target_arch = "x86_64""#
+            }
+            Self::Sve2 => r#"all(target_arch = "aarch64", not(target_vendor = "apple"))"#,
+            Self::Neon => r#"target_arch = "aarch64""#,
+            Self::Portable64 | Self::Portable32 | Self::Portable => "true",
         }
     }
 
@@ -61,12 +76,13 @@ impl Target {
             ],
             Self::Avx2 => &["popcnt", "bmi1", "bmi2", "lzcnt", "pclmulqdq", "avx2", "fma", "f16c"],
             Self::Sse4 => &["popcnt", "sse4.2"],
+            Self::Sve2 => &["sve2"],
             Self::Neon => &["neon"],
             Self::Portable64 | Self::Portable32 | Self::Portable => &[],
         }
     }
 
-    /// `None` on another architecture.
+    /// `None` if `cfg` does not hold.
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
     const fn needs(self) -> Option<crate::Features> {
         let this_arch = if cfg!(target_arch = "x86_64") {
@@ -76,6 +92,7 @@ impl Target {
         };
         match self.arch() {
             Some(arch) if !arch.eq_ignore_ascii_case(this_arch) => None,
+            _ if cfg!(target_vendor = "apple") && matches!(self, Self::Sve2) => None,
             _ => Some(crate::Features::named(self.features())),
         }
     }

@@ -564,6 +564,16 @@ mod simd {
 }
 ```
 
+Two limits for one architecture:
+
+```rust,compile_fail
+#[bun_simd::foreach_target]
+mod simd {
+    #[export(up_to = sse4, up_to = avx2)]
+    pub fn f() {}
+}
+```
+
 An attribute that only the macro may use:
 
 ```rust,compile_fail,E0658
@@ -686,7 +696,7 @@ mod portable {
     pub fn f() {}
 }
 bun_simd::export! {
-    best[] native[is_allowed "x86_64" Sse4 portable ["sse2"]] portable_for_tests[]
+    native[is_allowed (all()) Sse4 portable ["sse2"]] portable_for_tests[]
     #[unsafe(export_name = "g")]
     fn f()
 }

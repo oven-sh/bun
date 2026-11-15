@@ -271,8 +271,13 @@ impl Build<'_> {
                         }
                         debug_assert_eq!(entry_points.len(), program.entries.len());
                         steps.end("link stage: built-ins that are replaced, names, stamps");
-                        let listed_modules = (self.options.lists_modules)
-                            .then(|| collect_module_list(&loaded, &bound, &modules, runs_tests));
+                        let listed_modules = (self.options.lists_modules).then(|| {
+                            let mut listed =
+                                collect_module_list(&loaded, &bound, &modules, runs_tests);
+                            let embedded = self.provider.list_files_embedded_implicitly();
+                            listed.add_embedded_files(&embedded, &self.options.load.project_root);
+                            listed
+                        });
                         steps.end("link stage: list of modules");
                         (entry_points, folders, listed_modules)
                     },

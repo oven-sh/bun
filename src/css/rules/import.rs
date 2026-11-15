@@ -1,31 +1,27 @@
-use crate::css_rules::Location;
 use crate::css_rules::layer::LayerName;
 use crate::css_rules::supports::SupportsCondition;
+use crate::css_rules::{Location, layer, media, supports};
 use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
 
 /// Layer slot of `ImportConditions.layer`.
-#[derive(Default)]
 pub struct Layer<'bump> {
     /// PERF: null pointer optimizaiton, nullable
-    pub v: Option<LayerName<'bump>>,
-    /// Set by the bundler. Each visit of a bare `layer` import is a layer of its own.
-    pub anonymous_id: u32,
+    pub(crate) v: Option<LayerName<'bump>>,
 }
 
 impl Layer<'_> {
     pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
-            anonymous_id: self.anonymous_id,
         }
     }
 
     pub fn eql(&self, other: &Self) -> bool {
         match (&self.v, &other.v) {
-            (None, None) => self.anonymous_id == other.anonymous_id,
+            (None, None) => true,
             (None, _) | (_, None) => false,
             (Some(a), Some(b)) => a.eql(b),
         }
@@ -33,7 +29,6 @@ impl Layer<'_> {
 }
 
 /// The conditions of an [`ImportRule`].
-#[derive(Default)]
 pub struct ImportConditions<'bump> {
     /// An optional cascade layer name, or `None` for an anonymous layer.
     pub layer: Option<Layer<'bump>>,
@@ -86,6 +81,39 @@ impl<'bump> ImportConditions<'bump> {
         Ok(())
     }
 
+    /// Prints `body` in the `@media` and `@supports` blocks that stand for these conditions.
+    pub fn conditional_blocks_to_css<'p>(
+        &self,
+        dest: &mut Printer<'p>,
+        body: impl FnOnce(&mut Printer<'p>) -> Result<(), PrintErr>,
+    ) -> Result<(), PrintErr> {
+        let supports = |d: &mut Printer<'p>| match &self.supports {
+            Some(condition) => supports::block_to_css(condition, d, body),
+            None => body(d),
+        };
+        if self.media.media_queries.is_empty() {
+            supports(dest)
+        } else {
+            media::block_to_css(&self.media, dest, supports)
+        }
+    }
+
+    /// Prints `body` in the `@media`, `@supports` and `@layer` blocks that stand for these conditions.
+    pub fn blocks_to_css<'p>(
+        &self,
+        dest: &mut Printer<'p>,
+        body: impl FnOnce(&mut Printer<'p>) -> Result<(), PrintErr>,
+    ) -> Result<(), PrintErr> {
+        self.conditional_blocks_to_css(dest, |d| match &self.layer {
+            Some(layer) => layer::block_to_css(layer.v.as_ref(), d, body),
+            None => body(d),
+        })
+    }
+
+    pub fn layer_name(&self) -> Option<&LayerName<'bump>> {
+        self.layer.as_ref()?.v.as_ref()
+    }
+
     pub fn layers_eql(lhs: &Self, rhs: &Self) -> bool {
         match (&lhs.layer, &rhs.layer) {
             (None, None) => true,
@@ -106,7 +134,7 @@ impl<'bump> ImportConditions<'bump> {
 /// A [@import](https://drafts.csswg.org/css-cascade/#at-import) rule.
 pub struct ImportRule<'bump> {
     /// The url to import.
-    pub url: &'bump [u8],
+    pub(crate) url: &'bump [u8],
 
     /// The layer, `supports()` condition and media query.
     pub conditions: ImportConditions<'bump>,
@@ -117,29 +145,10 @@ pub struct ImportRule<'bump> {
     pub import_record_idx: u32,
 
     /// The location of the rule in the source file.
-    pub loc: Location,
-}
-
-impl Default for ImportRule<'_> {
-    fn default() -> Self {
-        Self {
-            url: b"",
-            conditions: ImportConditions::default(),
-            import_record_idx: u32::MAX,
-            loc: Location::dummy(),
-        }
-    }
+    pub(crate) loc: Location,
 }
 
 impl<'bump> ImportRule<'bump> {
-    pub fn from_url_and_import_record_idx(url: &'bump [u8], import_record_idx: u32) -> Self {
-        Self {
-            url,
-            import_record_idx,
-            ..Default::default()
-        }
-    }
-
     pub fn has_conditions(&self) -> bool {
         self.conditions.layer.is_some()
             || self.conditions.supports.is_some()
@@ -159,10 +168,20 @@ impl<'bump> ImportRule<'bump> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
-        dest.write_str("@import ")?;
-        dest.serialize_string(self.url)?;
-
-        self.conditions.to_css(dest)?;
-        dest.write_str(";")
+        rule_to_css(self.url, Some(&self.conditions), dest)
     }
+}
+
+pub fn rule_to_css(
+    url: &[u8],
+    conditions: Option<&ImportConditions>,
+    dest: &mut Printer,
+) -> Result<(), PrintErr> {
+    dest.write_str("@import ")?;
+    dest.serialize_string(url)?;
+
+    if let Some(conditions) = conditions {
+        conditions.to_css(dest)?;
+    }
+    dest.write_str(";")
 }

@@ -227,23 +227,7 @@ impl PackageManager {
 
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
-        Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
-        // `self` (the struct that owns `event_loop`), so use the raw-pointer
-        // `tick_raw` variant which only holds `&mut event_loop` between
-        // `is_done` calls.
-        let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        let event_loop = core::ptr::addr_of_mut!(self.event_loop);
-        // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
-        // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
-        unsafe {
-            bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
-                // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
-                // for the duration of `sleep`.
-                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
-                this.has_no_more_pending_lifecycle_scripts()
-            });
-        }
+        self.sleep_until(Self::has_no_more_pending_lifecycle_scripts);
     }
 
     pub(crate) fn report_slow_lifecycle_scripts(&mut self) {
@@ -397,7 +381,7 @@ impl PackageManager {
 
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
-        // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
+        // owning `CStringList` by value so its `K=V\0` strings outlive
         // this stack frame (freed by the subprocess's `Drop`).
         let envp = script_env.create_null_delimited_env_map()?;
 
@@ -418,7 +402,7 @@ impl PackageManager {
             log_level,
             foreground,
             install_ctx,
-        )?;
+        );
         Ok(())
     }
 

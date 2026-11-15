@@ -8,6 +8,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bun_core::strings;
+use bun_ptr::{AliasableBox, RefPtr};
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
@@ -23,10 +24,7 @@ use crate::h3_client::h3_client;
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct ClientSession {
-    /// Ref holders: the `ClientContext.sessions` registry while listed (1), the
-    /// `quic.Socket` ext slot while connected (1, transferred from the registry
-    /// add via `connect`), and one per entry in `pending`. `PendingConnect` holds
-    /// an extra ref while DNS is in flight.
+    /// Held by the `ClientContext.sessions` registry, and by `PendingConnect` while DNS is in flight.
     ref_count: Cell<u32>,
     /// Null while DNS is in flight; set once `us_quic_connect_addr` returns.
     // FFI handle that becomes dangling after onConnClose; raw is intentional.
@@ -42,20 +40,18 @@ pub struct ClientSession {
 
     /// Requests waiting for `onStreamOpen` to hand them a stream. Order is
     /// FIFO; `lsquic_conn_make_stream` was already called once per entry.
-    // BACKREF/INTRUSIVE: Stream is heap-allocated by Stream::new and destroyed in detach().
-    pub(crate) pending: Vec<*mut Stream>,
+    pub(crate) pending: Vec<AliasableBox<Stream>>,
 }
 
 impl ClientSession {
-    /// `bun.TrivialNew(@This())` — heap-allocate and return raw; pointer is
-    /// stashed in the `quic.Socket` ext slot and the `ClientContext` registry.
     pub(crate) fn new(
         hostname: Vec<u8>,
         port: u16,
         reject_unauthorized: bool,
         pool_id: u64,
-    ) -> *mut ClientSession {
-        bun_core::heap::into_raw(Box::new(ClientSession {
+    ) -> RefPtr<ClientSession> {
+        H3::live_sessions.fetch_add(1, Ordering::Relaxed);
+        RefPtr::new(ClientSession {
             ref_count: Cell::new(1),
             qsocket: None,
             hostname,
@@ -66,7 +62,7 @@ impl ClientSession {
             closed: false,
             registry_index: u32::MAX,
             pending: Vec::new(),
-        }))
+        })
     }
 
     pub(crate) fn matches(
@@ -135,11 +131,10 @@ impl ClientSession {
         client.flags.protocol = Protocol::Http3;
         client.allow_retry = false;
 
-        let stream = Stream::new(self, client);
+        let stream = AliasableBox::new(Stream::new(self, client));
         let _ = H3::live_streams.fetch_add(1, Ordering::Relaxed);
-        client.h3 = Some(NonNull::new(stream).expect("Stream::new returns a fresh allocation"));
+        client.h3 = NonNull::new(stream.as_ptr());
         self.pending.push(stream);
-        self.ref_();
 
         if self.handshake_done {
             // handshake_done implies qsocket is Some and valid.
@@ -152,7 +147,7 @@ impl ClientSession {
         async_http_id: u32,
         message: WriteMessageType,
     ) -> bool {
-        for &stream_ptr in self.pending.iter() {
+        for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
                 continue;
@@ -177,7 +172,7 @@ impl ClientSession {
     }
 
     pub(crate) fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
-        for &stream_ptr in self.pending.iter() {
+        for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
             let stream = stream_mut(stream_ptr);
             let Some(client) = stream.client else {
                 continue;
@@ -195,15 +190,7 @@ impl ClientSession {
         false
     }
 
-    /// Unlink and free `stream`, releasing the ref `enqueue` took for it.
-    ///
-    /// That release is never the session's last one: the connection's own ref
-    /// (`ClientSession::new`'s, held by the registry and then the quic socket)
-    /// is released only by `callbacks::on_conn_close` and
-    /// `PendingConnect::fail_session`, and both empty `pending` through here
-    /// first. So the session outlives this call and `&mut self` is a sound
-    /// receiver; the release still goes through the pending entry's own
-    /// backref rather than the receiver, like every other holder's does.
+    /// Unlink and free `stream`.
     pub(super) fn detach(&mut self, stream: *mut Stream) {
         self.detach_with(stream, false);
     }
@@ -211,8 +198,7 @@ impl ClientSession {
     /// `abort` kills the lsquic stream even when the request body is done (the response is not).
     fn detach_with(&mut self, stream: *mut Stream, abort: bool) {
         let st = stream_mut(stream);
-        let session = st.session.as_ptr();
-        debug_assert!(core::ptr::eq(session, self));
+        debug_assert!(core::ptr::eq(st.session.as_ptr(), self));
         if let Some(cl) = st.client {
             client_mut(cl).h3 = None;
         }
@@ -230,15 +216,9 @@ impl ClientSession {
             }
         }
         st.qstream = None;
-        if let Some(i) = self.pending.iter().position(|&s| core::ptr::eq(s, stream)) {
+        if let Some(i) = self.pending.iter().position(|s| s.as_ptr() == stream) {
             self.pending.remove(i);
         }
-        // SAFETY: stream was heap-allocated by Stream::new; ownership is reclaimed
-        // here. `Stream::Drop` decrements live_streams.
-        unsafe { drop(bun_core::heap::take(stream)) };
-        // SAFETY: the entry held the ref taken in `enqueue`, and the session is
-        // live because this is not its last ref (see above).
-        unsafe { ClientSession::deref(session) };
     }
 
     pub(crate) fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
@@ -310,7 +290,7 @@ impl ClientSession {
         // holds `&self.pending`, and only one entry can match — so locate
         // first via raw-ptr reads, then act.
         let mut found: *mut Stream = core::ptr::null_mut();
-        for &stream_ptr in self.pending.iter() {
+        for stream_ptr in self.pending.iter().map(AliasableBox::as_ptr) {
             // pending entries are live until detach(); `stream_ref` reads the
             // Copy `client` field — no `&mut Stream` materialized.
             let Some(cl) = stream_ref(stream_ptr).client else {
@@ -490,8 +470,7 @@ pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream 
     unsafe { &mut *s }
 }
 
-/// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from
-/// it) to `&mut Stream`. Entries are heap-allocated by `Stream::new` and live
+/// Upgrade a `*mut Stream` (a `self.pending` entry) to `&mut Stream`. Entries live
 /// until `detach()` reclaims them; HTTP-thread only, so the `&mut` is the sole
 /// live borrow.
 #[inline]
@@ -541,8 +520,7 @@ fn finish(client: &mut HTTPClient) {
 
 impl Drop for ClientSession {
     fn drop(&mut self) {
+        H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
         debug_assert!(self.pending.is_empty());
-        // pending: Vec and hostname: Vec<u8> drop automatically.
-        // `bun.destroy(this)` is handled by `deref()` via heap::take.
     }
 }

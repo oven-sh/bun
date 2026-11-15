@@ -250,7 +250,7 @@ impl Handlers {
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                listener.poll_ref.unref(bun_io::js_vm_ctx());
                 listener.this_value.with_mut(|r| r.downgrade());
                 listener
                     .strong_data
@@ -278,12 +278,9 @@ impl Handlers {
         let on_error = self.on_error();
 
         if on_error.is_empty() {
-            // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object
+                .bun_vm()
+                .uncaught_exception(&global_object, args[1], false);
             return Ok(());
         }
 

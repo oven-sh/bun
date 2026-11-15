@@ -214,6 +214,7 @@ pub(super) fn compute_import_uses(
     for index in 0..hir.exprs.len() {
         let e = ExprId(index as u32);
         if bound.is_evaluated_ident(e)
+            && !hir.is_in_known_evaluation(hir[e].pos)
             && let Binding::Symbol(symbol) = bound.binding(e)
         {
             let is_live = !decisions.is_dead_expr(e);

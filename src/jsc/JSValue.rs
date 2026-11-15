@@ -1662,7 +1662,7 @@ impl JSValue {
     fn has_nobody_to_call(self, global: &JSGlobalObject) -> bool {
         let vm = global.bun_vm();
         vm.calls_nobody()
-            || (vm.test_isolation_enabled && self.is_from_retired_test_isolation_realm())
+            || (vm.test_isolation_enabled.get() && self.is_from_retired_test_isolation_realm())
     }
 
     /// Whether the `undefined` that [`call`](Self::call) just returned may be its silent no-op, for a caller that reads it as consent.
@@ -1679,13 +1679,6 @@ impl JSValue {
 #[must_use = "dropping immediately unprotects; bind to a local"]
 pub struct Protected(JSValue);
 impl Protected {
-    /// Wrap an **already-protected** value so it is unprotected on drop.
-    /// Unlike [`JSValue::protected`], this does *not* bump the protect
-    /// refcount — use when adopting a `protect()` taken elsewhere.
-    #[inline]
-    pub fn adopt(value: JSValue) -> Self {
-        Self(value)
-    }
     #[inline]
     pub fn value(&self) -> JSValue {
         self.0

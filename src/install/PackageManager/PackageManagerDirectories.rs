@@ -268,7 +268,7 @@ fn get_temporary_directory_run(
                 return Err(DirectoryError::ProbeTemporary(err2));
             }
         };
-        let _ = file.close(); // close error is non-actionable
+        drop(file);
 
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
@@ -1237,9 +1237,7 @@ pub(crate) fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
 }
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {
-    let file = attempt_to_create_package_json_and_open()?;
-    let _ = file.close(); // close error is non-actionable
-    Ok(())
+    attempt_to_create_package_json_and_open().map(drop)
 }
 
 pub fn save_lockfile(
@@ -1306,7 +1304,7 @@ pub fn save_lockfile(
 
     if log_level.show_progress() {
         this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        this.progress.start(ProgressStrings::save(), 0).activate();
+        this.progress.start(ProgressStrings::save(), 0);
 
         this.progress.refresh();
     }
@@ -1343,9 +1341,9 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        this.progress.root.end();
+        this.progress.end();
         this.progress.refresh();
-        this.progress.root.end();
+        this.progress.end();
         this.progress = Default::default();
     } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");
@@ -1363,8 +1361,7 @@ pub fn update_lockfile_if_needed(
 ) -> Result<(), Error> {
     if let LoadResult::Ok(ok) = load_result {
         if ok.serializer_result.packages_need_update {
-            let mut slice = manager.lockfile.packages.slice();
-            for meta in slice.items_meta_mut() {
+            for meta in manager.lockfile.packages.items_meta_mut() {
                 // these are possibly updated later, but need to make sure non are zero
                 meta.set_has_install_script(false);
             }

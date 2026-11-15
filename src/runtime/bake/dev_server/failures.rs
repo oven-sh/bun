@@ -133,11 +133,11 @@ impl DevServer {
                     // `resolution_failure_entries` keys are `OwnerPacked` (1-bit side + file).
                     let index = owner.file();
                     match owner.side() {
-                        bake::Side::Client => self.client_graph.insert_failure(
+                        bake::Side::Client => self.graphs.insert_failure::<{ Side::Client }>(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
                         )?,
-                        bake::Side::Server => self.server_graph.insert_failure(
+                        bake::Side::Server => self.graphs.insert_failure::<{ Side::Server }>(
                             incremental_graph::InsertFailureKey::Index(index),
                             log,
                         )?,
@@ -151,7 +151,7 @@ impl DevServer {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
-            let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = self.log.print(Output::error_writer());
         }
         Ok(())
     }
@@ -178,13 +178,14 @@ impl DevServer {
                 }
                 // `finalize_bundle` answers this bundle's requests from the failures it added: re-add an older one.
                 route_bundle::State::Bundling => self
+                    .graphs
                     .incremental_result
                     .failures_added
                     .iter()
                     .any(failed_in_this_bundle),
                 // An earlier failure still gates the route, unless this bundle cleared it without delivering html.
                 route_bundle::State::PossibleBundlingFailures | route_bundle::State::Loaded => {
-                    self.client_graph.bundled_files.values()[file_index.get() as usize].failed
+                    self.graphs.client.bundled_files.values()[file_index.get() as usize].failed
                 }
             };
             if has_failure {
@@ -192,7 +193,7 @@ impl DevServer {
             }
 
             let log = html.html_bundle.bundle.no_html_page_log();
-            self.client_graph.insert_failure(
+            self.graphs.insert_failure::<{ Side::Client }>(
                 incremental_graph::InsertFailureKey::Index(file_index.get()),
                 &log,
             )?;
@@ -203,64 +204,66 @@ impl DevServer {
     pub(super) fn index_failures(&mut self) -> crate::Result<()> {
         // After inserting failures into the IncrementalGraphs, they are traced to their routes.
 
-        if !self.incremental_result.failures_added.is_empty() {
+        if !self.graphs.incremental_result.failures_added.is_empty() {
             let mut total_len: usize =
                 ::core::mem::size_of::<MessageId>() + ::core::mem::size_of::<u32>();
 
-            for fail in &self.incremental_result.failures_added {
+            for fail in &self.graphs.incremental_result.failures_added {
                 total_len += fail.data.len();
             }
 
-            total_len +=
-                self.incremental_result.failures_removed.len() * ::core::mem::size_of::<u32>();
+            total_len += self.graphs.incremental_result.failures_removed.len()
+                * ::core::mem::size_of::<u32>();
 
-            let mut gts = self.init_graph_trace_state(0)?;
+            let mut gts = self.graphs.init_graph_trace_state(0)?;
 
             let mut payload: Vec<u8> = Vec::with_capacity(total_len);
             payload.push(MessageId::Errors.char());
 
             payload.extend_from_slice(
-                &u32::try_from(self.incremental_result.failures_removed.len())
+                &u32::try_from(self.graphs.incremental_result.failures_removed.len())
                     .unwrap()
                     .to_le_bytes(),
             );
 
-            for removed in &self.incremental_result.failures_removed {
+            for removed in &self.graphs.incremental_result.failures_removed {
                 payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
-                removed.deinit(self);
             }
 
-            for added in &self.incremental_result.failures_added {
+            let mut i = 0;
+            while let Some(added) = self.graphs.incremental_result.failures_added.get(i) {
+                i += 1;
                 payload.extend_from_slice(&added.data);
 
                 match added.get_owner() {
                     serialized_failure::Owner::None | serialized_failure::Owner::Route(_) => {
                         unreachable!()
                     }
-                    serialized_failure::Owner::Server(index) => {
-                        self.server_graph.trace_dependencies(
-                            index,
-                            &mut gts,
-                            incremental_graph::TraceDependencyGoal::NoStop,
-                            index,
-                        )?
-                    }
-                    serialized_failure::Owner::Client(index) => {
-                        self.client_graph.trace_dependencies(
-                            index,
-                            &mut gts,
-                            incremental_graph::TraceDependencyGoal::NoStop,
-                            index,
-                        )?
-                    }
+                    serialized_failure::Owner::Server(index) => self.graphs.trace_dependencies(
+                        index,
+                        &mut gts,
+                        incremental_graph::TraceDependencyGoal::NoStop,
+                        index,
+                    )?,
+                    serialized_failure::Owner::Client(index) => self.graphs.trace_dependencies(
+                        index,
+                        &mut gts,
+                        incremental_graph::TraceDependencyGoal::NoStop,
+                        index,
+                    )?,
                 }
             }
 
             // Note: iterate by index — the loop bodies need
             // `&mut self.route_bundles` / `&mut self.router`, which conflicts
-            // with the `&self.incremental_result` iterator borrow.
-            for i in 0..self.incremental_result.framework_routes_affected.len() {
-                let entry = self.incremental_result.framework_routes_affected[i];
+            // with the `incremental_result` iterator borrow.
+            for i in 0..self
+                .graphs
+                .incremental_result
+                .framework_routes_affected
+                .len()
+            {
+                let entry = self.graphs.incremental_result.framework_routes_affected[i];
                 if let Some(index) = self.router.route_ptr(entry.route_index()).bundle {
                     self.route_bundle_ptr(index).server_state =
                         route_bundle::State::PossibleBundlingFailures;
@@ -270,43 +273,52 @@ impl DevServer {
                 }
             }
 
-            for i in 0..self.incremental_result.html_routes_soft_affected.len() {
-                let index = self.incremental_result.html_routes_soft_affected[i];
+            for i in 0..self
+                .graphs
+                .incremental_result
+                .html_routes_soft_affected
+                .len()
+            {
+                let index = self.graphs.incremental_result.html_routes_soft_affected[i];
                 self.route_bundle_ptr(index).server_state =
                     route_bundle::State::PossibleBundlingFailures;
             }
 
-            for i in 0..self.incremental_result.html_routes_hard_affected.len() {
-                let index = self.incremental_result.html_routes_hard_affected[i];
+            for i in 0..self
+                .graphs
+                .incremental_result
+                .html_routes_hard_affected
+                .len()
+            {
+                let index = self.graphs.incremental_result.html_routes_hard_affected[i];
                 self.route_bundle_ptr(index).server_state =
                     route_bundle::State::PossibleBundlingFailures;
             }
 
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
-        } else if !self.incremental_result.failures_removed.is_empty() {
+        } else if !self.graphs.incremental_result.failures_removed.is_empty() {
             let mut payload: Vec<u8> = Vec::with_capacity(
                 ::core::mem::size_of::<MessageId>()
                     + ::core::mem::size_of::<u32>()
-                    + self.incremental_result.failures_removed.len()
+                    + self.graphs.incremental_result.failures_removed.len()
                         * ::core::mem::size_of::<u32>(),
             );
             payload.push(MessageId::Errors.char());
 
             payload.extend_from_slice(
-                &u32::try_from(self.incremental_result.failures_removed.len())
+                &u32::try_from(self.graphs.incremental_result.failures_removed.len())
                     .unwrap()
                     .to_le_bytes(),
             );
 
-            for removed in &self.incremental_result.failures_removed {
+            for removed in &self.graphs.incremental_result.failures_removed {
                 payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
-                removed.deinit(self);
             }
 
             self.publish(HmrTopic::Errors, &payload, Opcode::BINARY);
         }
 
-        self.incremental_result.failures_removed.clear();
+        self.graphs.incremental_result.failures_removed.clear();
         Ok(())
     }
 
@@ -334,20 +346,21 @@ impl DevServer {
             // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.on_file_deleted(abs_path, bv2)?
+                    self.graphs.server.on_file_deleted(abs_path, bv2)?
                 }
                 bake::Graph::Client => {
-                    self.client_graph.on_file_deleted(abs_path, bv2)?;
+                    self.graphs.client.on_file_deleted(abs_path, bv2)?;
                     // The html file of a route has no importer.
                     if let Some(file) = self
-                        .client_graph
+                        .graphs
+                        .client
                         .bundled_files
                         .get(abs_path)
                         .filter(|file| file.html_route_bundle_index.is_some())
                     {
                         // `failed` is cleared by the next successful bundle.
                         watch_for_route_file = !file.failed;
-                        self.client_graph.insert_failure(
+                        self.graphs.insert_failure::<{ Side::Client }>(
                             incremental_graph::InsertFailureKey::AbsPath(abs_path, graph),
                             log,
                         )?;
@@ -358,9 +371,9 @@ impl DevServer {
             let key = incremental_graph::InsertFailureKey::AbsPath(abs_path, graph);
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
-                    self.server_graph.insert_failure(key, log)?
+                    self.graphs.insert_failure::<{ Side::Server }>(key, log)?
                 }
-                bake::Graph::Client => self.client_graph.insert_failure(key, log)?,
+                bake::Graph::Client => self.graphs.insert_failure::<{ Side::Client }>(key, log)?,
             }
         }
         // `track_resolution_failure` takes the graph lock itself.
@@ -368,7 +381,7 @@ impl DevServer {
 
         if watch_for_route_file {
             // Bundles the route again once its html file exists, like a failed import.
-            self.directory_watchers.track_resolution_failure(
+            self.track_resolution_failure(
                 abs_path,
                 paths::basename(abs_path),
                 bake::Graph::Client,
@@ -389,10 +402,14 @@ impl DevServer {
         let _g = self.graph_safety_lock.guard();
 
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
-            let idx = self.client_graph.insert_stale(abs_path, graph)?;
+            let idx = self
+                .graphs
+                .insert_stale::<{ Side::Client }>(abs_path, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
         } else {
-            let idx = self.server_graph.insert_stale(abs_path, graph)?;
+            let idx = self
+                .graphs
+                .insert_stale::<{ Side::Server }>(abs_path, graph)?;
             serialized_failure::OwnerPacked::new(bake::Side::Server, idx.get())
         };
         let current_bundle = self

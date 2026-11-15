@@ -23,10 +23,10 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]
 pub struct ModuleLoader {
-    pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
-    pub eval_source: Option<Box<bun_ast::Source<'static>>>,
+    pub transpile_source_code_arena: crate::JsCell<Option<Box<ArenaAllocator>>>,
+    pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
-    pub interactive_eval_script: Option<&'static [u8]>,
+    pub interactive_eval_script: core::cell::Cell<Option<&'static [u8]>>,
 }
 
 static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
@@ -47,12 +47,7 @@ pub fn is_allowed_to_use_internal_testing_apis() -> bool {
 
 impl ModuleLoader {
     /// This must be called after calling transpileSourceCode
-    ///
-    /// Takes only `&mut VirtualMachine` (not `&mut self,
-    /// &mut VirtualMachine`) — `ModuleLoader` is a value field of
-    /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
-    /// Access `module_loader` through `jsc_vm` instead.
-    pub(crate) fn reset_arena(jsc_vm: &mut VirtualMachine) {
+    pub(crate) fn reset_arena(&self) {
         // PERF: this unconditionally calls `reset()`. Per
         // `MimallocArena::reset_retain_with_limit`'s doc comment, the
         // "mimalloc's segment cache keeps pages warm anyway" theory behind
@@ -63,41 +58,29 @@ impl ModuleLoader {
         // a perf-sensitive change that
         // needs benchmarking (transpile arena RSS vs cycle cost), so it is
         // tracked as a dedicated work order rather than changed inline.
-        if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
-            arena.reset();
-        }
+        self.transpile_source_code_arena.with_mut(|arena| {
+            if let Some(arena) = arena {
+                arena.reset();
+            }
+        });
     }
 }
 
-/// RAII guard that calls
-/// [`ModuleLoader::reset_arena`] on the held VM when dropped. Holds a
-/// [`BackRef`] (not `&mut`) so the body of the guarded scope may also reach
-/// into the VM via raw pointers without aliasing the guard; the VM-outlives-
-/// guard contract is the BackRef type invariant.
-///
-/// [`BackRef`]: bun_ptr::BackRef
+/// Calls [`ModuleLoader::reset_arena`] when dropped.
 #[must_use = "dropping immediately resets the arena before transpilation"]
-pub struct ArenaResetGuard(bun_ptr::BackRef<VirtualMachine>);
+pub struct ArenaResetGuard<'a>(&'a VirtualMachine);
 
-impl ArenaResetGuard {
-    /// `vm` must be the live per-thread VM (the [`bun_ptr::BackRef`]
-    /// invariant). Drop routes through [`VirtualMachine::as_mut`], which
-    /// derives provenance from the thread-local slot, so neither construction
-    /// nor teardown performs a raw deref here.
+impl<'a> ArenaResetGuard<'a> {
     #[inline]
-    pub fn new(vm: *mut VirtualMachine) -> Self {
-        Self(bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(vm).expect("vm non-null"),
-        ))
+    pub fn new(vm: &'a VirtualMachine) -> Self {
+        Self(vm)
     }
 }
 
-impl Drop for ArenaResetGuard {
+impl Drop for ArenaResetGuard<'_> {
     #[inline]
     fn drop(&mut self) {
-        // BackRef invariant: VM outlives guard. `as_mut()` re-derives the
-        // `&mut` from the thread-local slot (debug-asserts `self.0` is that VM).
-        ModuleLoader::reset_arena(self.0.get().as_mut());
+        self.0.module_loader.reset_arena();
     }
 }
 
@@ -140,7 +123,7 @@ pub struct TranspileExtra<'a> {
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
     pub(crate) fn __bun_transpile_source_code(
-        jsc_vm: *mut VirtualMachine,
+        jsc_vm: &VirtualMachine,
         args: &TranspileArgs<'_>,
     ) -> Result<ResolvedSource, crate::CrateError>;
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
@@ -224,7 +207,7 @@ extern "C" fn Bun__fetchBuiltinModule(
     let is_compiled_with_program = match specifier.to_utf8().slice() {
         b"bun:wrap" => true,
         MAIN_FILE_NAME => {
-            jsc_vm.main_entry_point == MainEntryPoint::Compiled
+            jsc_vm.main_entry_point.get() == MainEntryPoint::Compiled
                 && !alias_cfg().rewrite_jest_for_tests
         }
         _ => false,
@@ -341,6 +324,7 @@ extern "C" fn Bun__getDefaultLoader(
                 match global
                     .bun_vm()
                     .transpiler
+                    .get()
                     .options
                     .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
                 {

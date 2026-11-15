@@ -133,6 +133,7 @@ fn final_long(seed: u64, key: &[u8]) -> u64 {
         ),
         _ => unreachable!(),
     };
+    // After the `match`, which proves the length.
     let head = mix0(
         read_8bytes_swapped(key),
         read_8bytes_swapped(&key[8..]),
@@ -534,6 +535,7 @@ impl Wyhash {
 
     // input_lb must be at least 16-bytes long (in shorter key cases the small_key function will be
     // used instead). Indexes into a slice rather than offsetting raw pointers.
+    // `input` is the unhashed tail of `input_lb`.
     #[inline]
     fn final1(&mut self, input_lb: &[u8], mut input: &[u8]) {
         debug_assert!(input_lb.len() >= 16);
@@ -584,17 +586,17 @@ impl Wyhash {
                 while rest.len() > 48 {
                     let words = rest[..48].as_chunks().0;
                     macro_rules! r8 {
-                        ($o:literal) => {
-                            u64::from_le_bytes(words[$o / 8])
+                        ($i:literal) => {
+                            u64::from_le_bytes(words[$i])
                         };
                     }
                     // u64×u64 → u128 cannot overflow; `wrapping_mul` skips
                     // the debug-mode overflow check that plain `*` emits.
-                    let m0 = ((r8!(0) ^ k1) as u128).wrapping_mul((r8!(8) ^ s0) as u128);
+                    let m0 = ((r8!(0) ^ k1) as u128).wrapping_mul((r8!(1) ^ s0) as u128);
                     s0 = (m0 as u64) ^ ((m0 >> 64) as u64);
-                    let m1 = ((r8!(16) ^ k2) as u128).wrapping_mul((r8!(24) ^ s1) as u128);
+                    let m1 = ((r8!(2) ^ k2) as u128).wrapping_mul((r8!(3) ^ s1) as u128);
                     s1 = (m1 as u64) ^ ((m1 >> 64) as u64);
-                    let m2 = ((r8!(32) ^ k3) as u128).wrapping_mul((r8!(40) ^ s2) as u128);
+                    let m2 = ((r8!(4) ^ k3) as u128).wrapping_mul((r8!(5) ^ s2) as u128);
                     s2 = (m2 as u64) ^ ((m2 >> 64) as u64);
                     rest = &rest[48..];
                 }

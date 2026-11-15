@@ -944,7 +944,13 @@ fn newest_allowed(manager: &mut PackageManager, pkg_id: PackageID) -> Option<Box
             continue;
         };
         let Some(found) = manifest
-            .find_for_range(range.literal.slice(buf), &range.npm, buf, min_age, excludes)
+            .find_for_range(
+                range.literal.slice(buf),
+                &range.npm.version,
+                buf,
+                min_age,
+                excludes,
+            )
             .unwrap()
         else {
             continue;

@@ -24,7 +24,7 @@ use crate::{DependencyID, PackageID, PackageManager, lockfile::Package};
 // `Dir::borrow(&fd)` where a `&Dir` is needed.
 
 pub struct PatchTask {
-    /// Borrowed view of the manager's temp directory fd (see comment at top of file).
+    /// Borrowed view of the process-wide temp directory fd (see comment at top of file).
     pub(crate) tempdir: Fd,
     pub(crate) project_dir: &'static [u8],
     pub(crate) callback: Callback,
@@ -72,7 +72,7 @@ pub struct CalcPatchHash {
     pub(crate) logger: Log,
 }
 
-/// Of an npm package.
+/// Only created for npm packages.
 pub struct EnqueueAfterState {
     pub(crate) pkg_id: PackageID,
     pub(crate) dependency_id: DependencyID,
@@ -86,7 +86,7 @@ pub struct ApplyPatch {
     pub(crate) pkgname: SemverString,
     resolution_tag: ResolutionTag,
 
-    /// Borrowed view of the manager's cache directory fd (see comment at top of file).
+    /// Borrowed view of the process-wide cache directory fd (see comment at top of file).
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: ZBox,
     pub(crate) cache_dir_subpath_without_patch_hash: ZBox,
@@ -354,7 +354,7 @@ impl PatchTask {
                         match package_manager::generate_network_task_for_tarball(
                             manager,
                             task_id,
-                            b"",
+                            None,
                             is_required,
                             dep_id,
                             &pkg,

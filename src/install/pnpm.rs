@@ -721,15 +721,17 @@ pub(crate) fn migrate_pnpm_lockfile(
         'next_dep: for dep_id in deps.begin()..deps.end() {
             let dep = lockfile.buffers.dependencies[dep_id as usize].clone();
 
-            if dep.behavior.is_workspace()
-                || !match &dep.version.value {
-                    dependency::Value::Folder(_) | dependency::Value::Workspace(_) => true,
-                    dependency::Value::Symlink(target) => {
-                        dependency::is_link_path(target.slice(string_bytes!(lockfile)))
-                    }
-                    _ => false,
+            if dep.behavior.is_workspace() {
+                continue;
+            }
+            let is_local = match &dep.version.value {
+                dependency::Value::Folder(_) | dependency::Value::Workspace(_) => true,
+                dependency::Value::Symlink(target) => {
+                    dependency::is_link_path(target.slice(string_bytes!(lockfile)))
                 }
-            {
+                _ => false,
+            };
+            if !is_local {
                 continue;
             }
             let Some(version_str) = importer_versions.get(dep.name.slice(string_bytes!(lockfile)))

@@ -576,7 +576,7 @@ impl PackageManagerCommand {
             }
 
             let mut dir = bun_paths::path_buffer_pool::get();
-            let fd = get_cache_directory(pm);
+            let fd = get_cache_directory(pm).handle.fd();
             let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
                 Ok(p) => &p[..],
                 Err(err) => Self::crash_getting_cache_directory(err),

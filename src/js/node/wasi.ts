@@ -1211,8 +1211,7 @@ class WASI {
             // Node narrows whence to a uint8_t, so 256 seeks like WASI_WHENCE_SET there. lseek(2) refuses 256, and so does this: https://github.com/nodejs/node/blob/v26.3.0/src/node_wasi.cc#L805-L816
             return WASI_EINVAL;
         }
-        // As lseek() does for a position before the start of a file: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L191-L193
-        // WASI_WHENCE_CUR is not tested: it adds to an offset that fd_write does not advance (#40772).
+        // As lseek() does, EINVAL for a SET or END position before the start of a file. CUR waits for #40772: https://github.com/nodejs/node/blob/v26.3.0/deps/uvwasi/src/uvwasi.c#L191-L193
         if (whence !== WASI_WHENCE_CUR && newOffset < 0n && stats.filetype === WASI_FILETYPE_REGULAR_FILE) {
           return WASI_EINVAL;
         }

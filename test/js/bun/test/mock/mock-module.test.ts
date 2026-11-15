@@ -612,12 +612,17 @@ test.concurrent("mock.module() of a module whose import() is still loading its d
 });
 
 // The assertions are inside the fixtures. `pass` makes sure every test in them actually ran.
-async function expectFixturesToPass(files: Record<string, string>, pass: number, args: string[] = []) {
+async function expectFixturesToPass(
+  files: Record<string, string>,
+  pass: number,
+  args: string[] = [],
+  env: Record<string, string> = {},
+) {
   using dir = tempDir("mock-module", files);
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", ...args],
     cwd: String(dir),
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stdout: "pipe",
     stderr: "pipe",
     timeout: 60_000,
@@ -1488,27 +1493,29 @@ describe.concurrent("a module mocked without a factory", () => {
       {
         ...written,
         "hot.test.js": `
-          import { describe, expect, test, vi } from "vitest";
+          import { expect, test, vi } from "vitest";
           vi.mock("./dep.js", () => ({ useDep: () => "mocked" }));
           import * as namespace from "./dep.js";
           const remove = object => delete object.added;
           const write = (object, value) => { object.added = value; };
 
-          // describe() has no time limit. A test has five seconds, which the loops take in a Bun with a sanitizer on a busy machine.
-          describe("in a hot loop", () => {
-            for (let i = 0; i < 10_000; i++) remove(namespace);
+          test("in a hot loop", () => {
+            for (let i = 0; i < 1_000; i++) remove(namespace);
             let wrong = 0;
-            for (let i = 0; i < 10_000; i++) {
+            for (let i = 0; i < 1_000; i++) {
               write(namespace, i);
               if (namespace.added !== i) wrong++;
               remove(namespace);
               if ("added" in namespace) wrong++;
             }
-            test("nothing is wrong", () => expect(wrong).toBe(0));
+            expect(wrong).toBe(0);
           });
         `,
       },
       1,
+      [],
+      // With a concurrent JIT, the loops can end before the functions are compiled.
+      { BUN_JSC_useConcurrentJIT: "0" },
     );
   });
 

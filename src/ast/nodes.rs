@@ -3,19 +3,19 @@
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 
-use bun_collections::{ArrayHashMap, AutoContext, MultiArrayList, StringHashMap};
 use bun_core::Output;
 
 use crate::char_freq::CHAR_FREQ_COUNT;
+use crate::{AstArena, AstArrayHashMap, AstBox, AstStringHashMap, AstVec};
 use crate::{Binding, E, Expr, Index, Ref, Scope, Stmt, symbol};
 
 pub use crate::flags as Flags;
 
 // ───────────────────────────────────────────────────────────────────────────
-// StoreRef — arena-owned pointer into a node Store / bump arena.
+// StoreRef — pointer to a node in an arena.
 //
 // Thin `NonNull<T>` newtype — `Copy`, `Deref`/`DerefMut`. The pointee lives
-// until the owning Store/arena is `reset()`; callers must not hold a `StoreRef`
+// until the owning arena is `reset()`; callers must not hold a `StoreRef`
 // across that boundary.
 //
 // `packed(4)` lowers the alignment to 4 without changing the single-scalar
@@ -35,7 +35,7 @@ const _: () = assert!(core::mem::size_of::<Option<StoreRef<u8>>>() == 8);
 // SAFETY: `StoreRef` is a thin pointer into a single-threaded bump arena.
 // We assert Send/Sync so payload types embedding `Option<StoreRef<T>>`
 // (e.g. `E::EString::next`) can sit in `static` tables. Callers are
-// responsible for not actually sharing a Store across threads.
+// responsible for not actually sharing an arena across threads.
 //
 // Bounded on `T` so `StoreRef` cannot launder a `!Send`/`!Sync` payload (e.g.
 // `StoreRef<Cell<_>>`) past auto-trait inference: `Deref` yields `&T` (needs
@@ -91,7 +91,7 @@ impl<T> Deref for StoreRef<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &T {
-        // SAFETY: StoreRef invariant — points into a live Store/arena block.
+        // SAFETY: StoreRef invariant — points into a live arena block.
         unsafe { &*self.as_ptr() }
     }
 }
@@ -140,7 +140,7 @@ const fn empty_arena_str() -> ArenaStr {
 // ─── StoreStr — arena-owned string slice (StoreRef's [u8] sibling) ──────────
 //
 // AST string fields (`E::Dot.name`, `E::String.data`, …) borrow from the parse
-// arena and are bulk-freed at `Store::reset()`. `StoreStr` mirrors
+// arena and are bulk-freed with it. `StoreStr` mirrors
 // `StoreRef<T>` (raw `NonNull<T>`) and `StmtNodeList` (`StoreSlice<Stmt>`): a
 // thin lifetime-erased pointer with safe construction and `Deref<Target=[u8]>`
 // under the same callers-must-not-outlive-the-arena contract that `StoreRef`
@@ -162,7 +162,7 @@ const _: () = assert!(core::mem::align_of::<StoreStr>() == 4);
 
 // SAFETY: same rationale as `StoreRef` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in
-// `static` Prefill tables; callers must not actually share a Store across
+// `static` Prefill tables; callers must not actually share an arena across
 // threads (unchanged contract).
 unsafe impl Send for StoreStr {}
 // SAFETY: see the `Send` impl above — `StoreStr` is a raw `(ptr, len)` into a
@@ -335,7 +335,7 @@ impl<T> Clone for StoreSlice<T> {
 
 // SAFETY: same rationale as `StoreStr` — points into a single-threaded bump
 // arena. Asserted Send/Sync so payload types can sit in `static` Prefill
-// tables; callers must not actually share a Store across threads. Bounded on
+// tables; callers must not actually share an arena across threads. Bounded on
 // `T: Send` so the impl can't smuggle a non-`Send` payload across a thread
 // boundary through the safe `slice()`/`Deref` accessors.
 unsafe impl<T: Send> Send for StoreSlice<T> {}
@@ -372,6 +372,10 @@ impl<T> StoreSlice<T> {
             ptr: NonNull::from_mut(s).cast(),
             len: s.len() as u32,
         }
+    }
+
+    pub fn from_iter_in(items: impl IntoIterator<Item = T>, arena: &AstArena) -> Self {
+        AstVec::from_iter_in(items, arena).into_store_slice()
     }
 
     /// Re-borrow as `&[T]`. Same safety contract as `StoreStr::slice` /
@@ -507,7 +511,7 @@ pub const NAMESPACE_EXPORT_PART_INDEX: u32 = 0;
 // But we must have pointers somewhere in here because can't have types that contain themselves
 
 /// Slice that stores capacity and length in the same space as a regular slice.
-pub type ExprNodeList = Vec<Expr, bun_alloc::AstAlloc>;
+pub type ExprNodeList = AstVec<Expr>;
 
 // Arena-owned `[Stmt]` view — see `StoreSlice<T>` doc above.
 // A `PhantomData<&'arena ()>` can be added to `StoreSlice` later as a
@@ -853,101 +857,64 @@ pub struct DeclaredSymbol {
     pub is_top_level: bool,
 }
 
+#[derive(Default)]
 pub struct DeclaredSymbolList {
-    pub(crate) entries: MultiArrayList<DeclaredSymbol, bun_alloc::AstAlloc>,
-}
-
-impl Default for DeclaredSymbolList {
-    fn default() -> Self {
-        Self {
-            entries: MultiArrayList::new_in(bun_alloc::AstAlloc),
-        }
-    }
+    refs: AstVec<Ref>,
+    is_top_level: AstVec<bool>,
 }
 
 impl DeclaredSymbolList {
     pub fn refs(&self) -> &[Ref] {
-        self.entries.items::<"ref_", Ref>()
+        &self.refs
     }
 
     pub fn to_owned_slice(&mut self) -> DeclaredSymbolList {
         core::mem::take(self)
     }
 
-    pub fn clone(&self) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        Ok(DeclaredSymbolList {
-            entries: self.entries.clone()?,
-        })
+    pub fn clone_in(&self, arena: &AstArena) -> DeclaredSymbolList {
+        DeclaredSymbolList {
+            refs: AstVec::from_slice_in(&self.refs, arena),
+            is_top_level: AstVec::from_slice_in(&self.is_top_level, arena),
+        }
     }
 
     #[inline]
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.refs.len()
     }
 
-    pub fn append(
-        &mut self,
-        entry: DeclaredSymbol,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.ensure_unused_capacity(1)?;
-        self.append_assume_capacity(entry);
-        Ok(())
+    pub fn append(&mut self, arena: &AstArena, entry: DeclaredSymbol) {
+        self.refs.push(arena, entry.ref_);
+        self.is_top_level.push(arena, entry.is_top_level);
     }
 
-    pub fn append_list(
-        &mut self,
-        other: &DeclaredSymbolList,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.ensure_unused_capacity(other.len())?;
-        self.append_list_assume_capacity(other);
-        Ok(())
-    }
-
-    pub(crate) fn append_list_assume_capacity(&mut self, other: &DeclaredSymbolList) {
-        self.entries.append_list_assume_capacity(&other.entries);
-    }
-
-    pub fn append_assume_capacity(&mut self, entry: DeclaredSymbol) {
-        self.entries.append_assume_capacity(entry);
-    }
-
-    pub fn ensure_total_capacity(
-        &mut self,
-        count: usize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.entries.ensure_total_capacity(count)
-    }
-
-    pub fn ensure_unused_capacity(
-        &mut self,
-        count: usize,
-    ) -> core::result::Result<(), bun_alloc::AllocError> {
-        self.entries.ensure_unused_capacity(count)
+    pub fn append_list(&mut self, arena: &AstArena, other: &DeclaredSymbolList) {
+        self.refs.extend_from_slice(arena, &other.refs);
+        self.is_top_level
+            .extend_from_slice(arena, &other.is_top_level);
     }
 
     pub fn clear_retaining_capacity(&mut self) {
-        self.entries.clear_retaining_capacity();
+        self.refs.clear();
+        self.is_top_level.clear();
     }
 
-    // `deinit` → Drop on MultiArrayList; no explicit body needed.
-
-    pub fn init_capacity(
-        capacity: usize,
-    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut entries = MultiArrayList::new_in(bun_alloc::AstAlloc);
-        entries.ensure_unused_capacity(capacity)?;
-        Ok(DeclaredSymbolList { entries })
-    }
-
-    pub fn from_slice(
-        entries: &[DeclaredSymbol],
-    ) -> core::result::Result<DeclaredSymbolList, bun_alloc::AllocError> {
-        let mut this = Self::init_capacity(entries.len())?;
-        // errdefer this.deinit() → Drop handles it
-        for entry in entries {
-            this.append_assume_capacity(*entry);
+    pub fn with_capacity_in(capacity: usize, arena: &AstArena) -> DeclaredSymbolList {
+        DeclaredSymbolList {
+            refs: AstVec::with_capacity_in(capacity, arena),
+            is_top_level: AstVec::with_capacity_in(capacity, arena),
         }
-        Ok(this)
+    }
+
+    pub fn from_slice_in(entries: &[DeclaredSymbol], arena: &AstArena) -> DeclaredSymbolList {
+        DeclaredSymbolList {
+            refs: AstVec::from_iter_in(entries.iter().map(|entry| entry.ref_), arena),
+            is_top_level: AstVec::from_iter_in(
+                entries.iter().map(|entry| entry.is_top_level),
+                arena,
+            ),
+        }
     }
 }
 
@@ -957,13 +924,9 @@ impl DeclaredSymbol {
         ctx: &mut C,
         f: impl Fn(&mut C, Ref),
     ) {
-        let entries = &decls.entries;
-        let is_top_level: &[bool] = entries.items::<"is_top_level", bool>();
-        let refs: &[Ref] = entries.items::<"ref_", Ref>();
-
         // TODO: SIMD
-        debug_assert_eq!(is_top_level.len(), refs.len());
-        for (top, ref_) in is_top_level.iter().zip(refs.iter()) {
+        debug_assert_eq!(decls.is_top_level.len(), decls.refs.len());
+        for (top, ref_) in decls.is_top_level.iter().zip(&decls.refs) {
             if *top {
                 f(ctx, *ref_);
             }
@@ -985,7 +948,7 @@ pub struct Dependency {
     pub part_index: u32, // Index.Int
 }
 
-pub type DependencyList = bun_alloc::AstVec<Dependency>;
+pub type DependencyList = AstVec<Dependency>;
 
 // PERF: these may be arena-backed in callers; revisit with
 // bumpalo::collections::Vec if profiling shows churn.
@@ -1016,7 +979,7 @@ pub struct Part {
     /// value or not. This is only known during linking. So we defer adding
     /// a dependency on these imported symbols until we know whether the
     /// property access is an inlined enum value or not.
-    pub import_symbol_property_uses: Option<bun_alloc::AstBox<PartSymbolPropertyUseMap>>,
+    pub import_symbol_property_uses: Option<AstBox<PartSymbolPropertyUseMap>>,
 
     /// The indices of the other parts in this file that are needed if this part
     /// is needed.
@@ -1038,7 +1001,7 @@ pub struct Part {
     pub tag: PartTag,
 }
 
-pub type PartImportRecordIndices = Vec<u32, bun_alloc::AstAlloc>;
+pub type PartImportRecordIndices = AstVec<u32>;
 pub type PartList<'a> = bun_alloc::ArenaVec<'a, Part>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -1054,13 +1017,8 @@ pub enum PartTag {
     ImportToConvertFromRequire,
 }
 
-pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
-pub type PartSymbolPropertyUseMap = ArrayHashMap<
-    Ref,
-    StringHashMap<PropertyUse, bun_alloc::AstAlloc>,
-    AutoContext,
-    bun_alloc::AstAlloc,
->;
+pub type PartSymbolUseMap = AstArrayHashMap<Ref, symbol::Use>;
+pub type PartSymbolPropertyUseMap = AstArrayHashMap<Ref, AstStringHashMap<PropertyUse>>;
 
 /// The reads of one `X.name` in `Part::import_symbol_property_uses`.
 #[derive(Default, Clone, Copy)]
@@ -1075,11 +1033,11 @@ impl Default for Part {
         Self {
             stmts: StoreSlice::EMPTY,
             scopes: StoreSlice::EMPTY,
-            import_record_indices: PartImportRecordIndices::new_in(bun_alloc::AstAlloc),
+            import_record_indices: AstVec::new(),
             declared_symbols: DeclaredSymbolList::default(),
             symbol_uses: PartSymbolUseMap::default(),
             import_symbol_property_uses: None,
-            dependencies: Vec::new_in(bun_alloc::AstAlloc),
+            dependencies: AstVec::new(),
             can_be_removed_if_unused: false,
             force_tree_shaking: false,
             tag: PartTag::None,
@@ -1100,7 +1058,7 @@ impl Default for StmtOrExpr {
 }
 
 impl StmtOrExpr {
-    pub fn to_expr(self) -> Expr {
+    pub fn to_expr(self, bump: &AstArena) -> Expr {
         match self {
             StmtOrExpr::Expr(expr) => expr,
             StmtOrExpr::Stmt(stmt) => match stmt.data {
@@ -1108,11 +1066,11 @@ impl StmtOrExpr {
                     // The StoreRef arena slot is never individually dropped, so
                     // `take` (replace with Default) is safe here.
                     let func = core::mem::take(&mut s.func);
-                    Expr::init(E::Function { func }, stmt.loc)
+                    Expr::allocate(bump, E::Function { func }, stmt.loc)
                 }
                 crate::stmt::Data::SClass(mut s) => {
                     let class = core::mem::take(&mut s.class);
-                    Expr::init::<E::Class>(class, stmt.loc)
+                    Expr::allocate::<E::Class>(bump, class, stmt.loc)
                 }
                 other => Output::panic(format_args!(
                     "Unexpected statement type in default export: .{}",
@@ -1125,7 +1083,7 @@ impl StmtOrExpr {
 
 pub struct NamedImport {
     /// Parts within this file that use this import
-    pub local_parts_with_uses: bun_alloc::AstVec<u32>,
+    pub local_parts_with_uses: AstVec<u32>,
 
     /// The original export name from the source module being imported.
     /// Examples:

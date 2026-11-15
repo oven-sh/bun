@@ -1,7 +1,6 @@
 use crate::mal_prelude::*;
 use bun_alloc::Arena;
 use bun_ast::ImportRecord;
-use bun_collections::VecExt;
 
 use crate::{Index, LinkerContext};
 use bun_collections::DynamicBitSet as BitSet;

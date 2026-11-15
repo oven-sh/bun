@@ -12,7 +12,6 @@ unsafe extern "C" {
     /// No preconditions; returns null on failure.
     pub safe fn mi_calloc(count: usize, size: usize) -> *mut c_void;
     pub fn mi_realloc(p: *mut c_void, newsize: usize) -> *mut c_void;
-    pub fn mi_expand(p: *mut c_void, newsize: usize) -> *mut c_void;
     pub fn mi_free(p: *mut c_void);
     /// No preconditions; returns null on failure.
     pub safe fn mi_zalloc(size: usize) -> *mut c_void;
@@ -199,22 +198,6 @@ pub fn mi_zalloc_auto_align(size: usize, align: usize) -> *mut c_void {
         mi_zalloc_aligned(size, align)
     } else {
         mi_zalloc(size)
-    }
-}
-
-/// Heap-scoped variant of [`mi_malloc_auto_align`].
-///
-/// # Safety
-/// `heap` must point to a live `mi_heap_t`.
-#[inline(always)]
-pub unsafe fn mi_heap_malloc_auto_align(heap: *mut Heap, size: usize, align: usize) -> *mut c_void {
-    // SAFETY: caller guarantees `heap` is live.
-    unsafe {
-        if must_use_aligned_alloc(align) {
-            mi_heap_malloc_aligned(heap, size, align)
-        } else {
-            mi_heap_malloc(heap, size)
-        }
     }
 }
 

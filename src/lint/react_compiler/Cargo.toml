@@ -9,7 +9,6 @@ path = "lib.rs"
 [dependencies]
 bun_lint.workspace = true
 bun_react_compiler = { path = "../../react_compiler" }
-bun_alloc.workspace = true
 bun_ast.workspace = true
 bun_core.workspace = true
 rustc-hash = "2"

@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use core::cmp::Ordering;
 
 use crate::bun_json::{E, Expr, ExprData, JsonView, value_loc_of_property};

@@ -2146,9 +2146,8 @@ impl<'a> Repl<'a> {
         // Create symbol map from ast.symbols
         // Note: `Map::init_with_one_list` takes ownership of `ast.symbols`
         // — see Symbol.rs note on the dangling-slice hazard.
-        let arena = *ast.symbols.allocator();
         let symbols_map = bun_ast::symbol::Map::init_with_one_list(
-            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
+            core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena.heap()))
                 .into_iter()
                 .collect(),
         );
@@ -2158,7 +2157,7 @@ impl<'a> Repl<'a> {
             /* GENERATE_SOURCE_MAP */ false,
         >(
             &mut buffer_printer,
-            arena,
+            &arena,
             &ast,
             symbols_map,
             &source,

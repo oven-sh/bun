@@ -1185,8 +1185,6 @@ impl ByteRangeMapping {
 fn print_for_coverage(path: &[u8], text: &[u8]) -> Option<bun_core::MutableString> {
     bun_removable_features::removable_definition!(TestCommand, print_for_coverage);
     let arena = bun_ast::AstArena::new();
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
-    let _ast_scope = ast_memory_allocator.enter();
 
     let source = bun_ast::Source::init_path_string(path, text);
     let mut options = bun_js_parser::ParserOptions::init(Default::default(), bun_ast::Loader::Js);

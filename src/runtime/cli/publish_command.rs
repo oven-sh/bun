@@ -1,4 +1,3 @@
-use bun_collections::VecExt;
 use std::io::Write as _;
 
 use crate::Error;
@@ -105,7 +104,7 @@ fn object_expr(bump: &bun_ast::AstArena, properties: Vec<G::Property>) -> Expr {
     Expr::allocate(
         bump,
         E::Object {
-            properties: bun_alloc::AstAlloc::vec_from_iter(properties),
+            properties: G::PropertyList::from_iter_in(properties, bump),
             ..Default::default()
         },
         bun_ast::Loc::EMPTY,
@@ -321,6 +320,7 @@ impl Context {
             &package_name,
             &package_version,
             &mut json,
+            &bump,
             &json_source,
             shasum,
             integrity,
@@ -1093,6 +1093,7 @@ impl PublishCommand {
         package_name: &[u8],
         package_version: &[u8],
         json: &mut Expr,
+        bump: &bun_ast::AstArena,
         json_source: &bun_ast::Source,
         shasum: SHA1Digest,
         integrity: SHA512Digest,
@@ -1100,14 +1101,13 @@ impl PublishCommand {
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
-        let bump = bun_ast::AstArena::new();
         let registry = manager.scope_for_package_name(package_name);
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
 
         // `E::String` erases the lifetime of its bytes, so `cli_dupe` keeps them alive through
         // printing.
-        Expr::set_string(json, &bump, b"version", cli_dupe(version_without_build_tag))?;
+        Expr::set_string(json, bump, b"version", cli_dupe(version_without_build_tag))?;
 
         let integrity_fmt = cli_dupe(
             bun_fmt::integrity::<false>(integrity)
@@ -1121,24 +1121,24 @@ impl PublishCommand {
             bstr::BStr::new(version_without_build_tag)
         );
 
-        Expr::set_string(json, &bump, b"_id", cli_dupe(id.as_bytes()))?;
-        Expr::set_string(json, &bump, b"_integrity", integrity_fmt)?;
+        Expr::set_string(json, bump, b"_id", cli_dupe(id.as_bytes()))?;
+        Expr::set_string(json, bump, b"_integrity", integrity_fmt)?;
         Expr::set_string(
             json,
-            &bump,
+            bump,
             b"_nodeVersion",
             Environment::REPORTED_NODEJS_VERSION.as_bytes(),
         )?;
         // TODO: npm version
-        Expr::set_string(json, &bump, b"_npmVersion", b"10.8.3")?;
-        Expr::set_string(json, &bump, b"integrity", integrity_fmt)?;
-        Expr::set_string(json, &bump, b"shasum", shasum_fmt)?;
+        Expr::set_string(json, bump, b"_npmVersion", b"10.8.3")?;
+        Expr::set_string(json, bump, b"integrity", integrity_fmt)?;
+        Expr::set_string(json, bump, b"shasum", shasum_fmt)?;
 
         // Like `npm publish` does. A `readme` in package.json takes precedence.
         if let Some(r) = readme {
             if json.get(b"readme").is_none() {
-                Expr::set_string(json, &bump, b"readme", cli_dupe(&r.contents))?;
-                Expr::set_string(json, &bump, b"readmeFilename", cli_dupe(&r.filename))?;
+                Expr::set_string(json, bump, b"readme", cli_dupe(&r.contents))?;
+                Expr::set_string(json, bump, b"readmeFilename", cli_dupe(&r.filename))?;
             }
         }
 
@@ -1154,19 +1154,19 @@ impl PublishCommand {
         );
 
         json.set(
-            &bump,
+            bump,
             b"dist",
             object_expr(
-                &bump,
+                bump,
                 vec![
-                    string_property(&bump, b"integrity", integrity_fmt),
-                    string_property(&bump, b"shasum", shasum_fmt),
-                    string_property(&bump, b"tarball", cli_dupe(tarball.as_bytes())),
+                    string_property(bump, b"integrity", integrity_fmt),
+                    string_property(bump, b"shasum", shasum_fmt),
+                    string_property(bump, b"tarball", cli_dupe(tarball.as_bytes())),
                 ],
             ),
         )?;
 
-        Self::normalize_bin(json, &bump, package_name, &files)?;
+        Self::normalize_bin(json, bump, package_name, &files)?;
 
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);

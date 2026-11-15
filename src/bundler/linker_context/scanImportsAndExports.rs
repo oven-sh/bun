@@ -1,6 +1,6 @@
 use crate::mal_prelude::*;
 use bun_ast::Source;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, import_record};
+use bun_ast::{AstVec, ImportKind, ImportRecord, ImportRecordFlags, import_record};
 use bun_collections::{HashMap, VecExt};
 use bun_core::FeatureFlags;
 
@@ -46,6 +46,7 @@ pub(crate) fn scan_imports_and_exports(
 ) -> Result<(), ScanImportsAndExportsError> {
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
+    let ast_arena = this.graph.ast_arena();
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
@@ -146,7 +147,7 @@ pub(crate) fn scan_imports_and_exports(
                 {
                     dyn_ref_aliases[other].merge_all();
                 } else if let Some(alias) = ni.alias {
-                    dyn_ref_aliases[other].insert(alias.slice());
+                    dyn_ref_aliases[other].insert(ast_arena, alias.slice());
                 }
             }
             for &star in ast.export_star_import_records[id].iter() {
@@ -208,12 +209,13 @@ pub(crate) fn scan_imports_and_exports(
                                 }
                                 Some(dynamic_use) => {
                                     dyn_ref_aliases[other_file]
-                                        .merge_partial(dynamic_use.aliases.slice());
+                                        .merge_partial(ast_arena, dynamic_use.aliases.slice());
                                     // Observed without being named: `await import()`
                                     // resolves through a `then` export, and `require()`
                                     // of an ES module returns its `module.exports`
                                     // export when it has one.
                                     dyn_ref_aliases[other_file].insert(
+                                        ast_arena,
                                         if record.kind == ImportKind::Require {
                                             b"module.exports"
                                         } else {
@@ -656,6 +658,7 @@ pub(crate) fn scan_imports_and_exports(
         let entry_point_kinds = this.graph.files.items_entry_point_kind();
         let (exports_refs, module_refs) = (&*ast.exports_ref, &*ast.module_ref);
         let mut uses = SymbolUseColumns {
+            arena: ast_arena,
             parts: ast.parts,
             ast_flags: ast.flags,
             exports_ref: exports_refs,
@@ -743,23 +746,21 @@ pub(crate) fn scan_imports_and_exports(
             // are necessary later. This is done now because the symbols map cannot be
             // mutated later due to parallelism.
             if is_entry_point && output_format == Format::Esm {
-                let mut copies: bun_alloc::AstVec<Ref> =
-                    bun_alloc::AstAlloc::vec_with_capacity(aliases.len());
-                copies.resize(aliases.len(), Ref::NONE);
-
-                debug_assert_eq!(aliases.len(), copies.len());
-                for (alias, copy) in aliases.iter().zip(copies.iter_mut()) {
+                let mut copies = AstVec::with_capacity_in(aliases.len(), ast_arena);
+                for alias in aliases {
                     let original_name = builder.fmt(format_args!(
                         "export_{}",
                         bun_core::fmt::fmt_identifier(alias)
                     ));
-                    *copy = crate::linker_graph::generate_new_symbol(
+                    let copy = crate::linker_graph::generate_new_symbol(
+                        ast_arena,
                         &mut this.graph.symbols,
                         ast.module_scope,
                         source_index,
                         SymbolKind::Other,
                         original_name,
                     );
+                    copies.push(ast_arena, copy);
                 }
                 meta.cjs_export_copies[id] = copies;
             }
@@ -860,24 +861,27 @@ pub(crate) fn scan_imports_and_exports(
                         for &part_index in named_import.local_parts_with_uses.slice() {
                             let part: &mut Part =
                                 &mut uses.parts[id].as_mut_slice()[part_index as usize];
-                            let total_len = parts_declaring_symbol.len()
-                                + re_exports.len()
-                                + part.dependencies.len() as usize;
-                            part.dependencies.ensure_total_capacity(total_len);
+                            part.dependencies.reserve(
+                                ast_arena,
+                                parts_declaring_symbol.len() + re_exports.len(),
+                            );
 
                             // Depend on the file containing the imported symbol
                             for &resolved_part_index in parts_declaring_symbol {
-                                part.dependencies.append_assume_capacity(Dependency {
-                                    source_index: bun_ast::Index::source(
-                                        import_source_index as usize,
-                                    ),
-                                    part_index: resolved_part_index,
-                                });
+                                part.dependencies.push(
+                                    ast_arena,
+                                    Dependency {
+                                        source_index: bun_ast::Index::source(
+                                            import_source_index as usize,
+                                        ),
+                                        part_index: resolved_part_index,
+                                    },
+                                );
                             }
 
                             // Also depend on any files that re-exported this symbol in between the
                             // file containing the import and the file containing the imported symbol
-                            part.dependencies.append_slice_assume_capacity(re_exports);
+                            part.dependencies.extend_from_slice(ast_arena, re_exports);
                         }
                     }
 
@@ -895,7 +899,7 @@ pub(crate) fn scan_imports_and_exports(
                 let extra_count = (include_namespace as usize) + (add_wrapper as usize);
 
                 let mut dependencies =
-                    bun_ast::DependencyList::with_capacity_in(extra_count, bun_alloc::AstAlloc);
+                    bun_ast::DependencyList::with_capacity_in(extra_count, ast_arena);
 
                 for alias in meta.sorted_and_filtered_export_aliases[id].iter() {
                     let exp = meta.resolved_exports[id].get(alias).unwrap();
@@ -910,7 +914,7 @@ pub(crate) fn scan_imports_and_exports(
                         target_ref = import_data.data.import_ref;
 
                         for dep in import_data.re_exports.slice() {
-                            dependencies.push(*dep);
+                            dependencies.push(ast_arena, *dep);
                         }
                     }
 
@@ -921,39 +925,42 @@ pub(crate) fn scan_imports_and_exports(
                         target_source_index.get(),
                         target_ref,
                     );
-                    dependencies.reserve(top_to_parts.len());
-                    for part_index in top_to_parts {
-                        dependencies.push(Dependency {
-                            // `crate::Index` ↔ `bun_ast::Index` are both
-                            // `#[repr(transparent)] u32` newtypes;
-                            // bridge by `.value` until B-3
-                            // collapses them to a single re-export.
+                    dependencies.extend(
+                        ast_arena,
+                        top_to_parts.iter().map(|&part_index| Dependency {
                             source_index: bun_ast::Index(target_source_index.get()),
-                            part_index: *part_index,
-                        });
-                    }
+                            part_index,
+                        }),
+                    );
                 }
 
-                dependencies.reserve(extra_count);
+                dependencies.reserve(ast_arena, extra_count);
 
                 // Ensure "exports" is included if the current output format needs it
                 if include_namespace {
-                    dependencies.push(Dependency {
-                        source_index: bun_ast::Index::source(source_index as usize),
-                        part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
-                    });
+                    dependencies.push(
+                        ast_arena,
+                        Dependency {
+                            source_index: bun_ast::Index::source(source_index as usize),
+                            part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
+                        },
+                    );
                 }
 
                 // Include the wrapper if present
                 if add_wrapper {
-                    dependencies.push(Dependency {
-                        source_index: bun_ast::Index::source(source_index as usize),
-                        part_index: meta.wrapper_part_index[id].get(),
-                    });
+                    dependencies.push(
+                        ast_arena,
+                        Dependency {
+                            source_index: bun_ast::Index::source(source_index as usize),
+                            part_index: meta.wrapper_part_index[id].get(),
+                        },
+                    );
                 }
 
                 // Represent these constraints with a dummy part
                 let entry_point_part_index = add_part_to_file(
+                    ast_arena,
                     uses.parts,
                     uses.top_level_symbol_to_parts_overlay,
                     uses.top_level_symbols_to_parts,
@@ -1346,7 +1353,7 @@ struct DependencyWrapper<'a> {
     import_records: &'a [ImportRecordList<'a>],
     export_star_map: HashMap<IndexInt, ()>,
     entry_point_kinds: &'a [EntryPoint::Kind],
-    export_star_records: &'a [bun_alloc::AstVec<u32>],
+    export_star_records: &'a [AstVec<u32>],
     output_format: options::Format,
     wrap_stack: Vec<IndexInt>,
     export_star_stack: Vec<ExportStarFrame>,
@@ -1496,6 +1503,7 @@ impl ExportStarContext {
     /// statements into its `resolved_exports`. `stack` is the
     /// `export *` path from `source_index` to the file being merged.
     fn add_exports(&mut self, graph: &mut LinkerGraph, source_index: IndexInt) {
+        let arena = graph.ast_arena();
         let export_star_records = graph.ast.items_export_star_import_records();
         let import_records_list = graph.ast.items_import_records();
         let named_exports = graph.ast.items_named_exports();
@@ -1560,7 +1568,7 @@ impl ExportStarContext {
                     }
                 }
 
-                let gop = resolved_exports.get_or_put(alias_slice).expect("oom");
+                let gop = resolved_exports.get_or_put(arena, alias_slice);
                 if !gop.found_existing {
                     // Initialize the re-export
                     *gop.value_ptr = ExportData {
@@ -1574,31 +1582,31 @@ impl ExportStarContext {
 
                     // Make sure the symbol is marked as imported so that code splitting
                     // imports it correctly if it ends up being shared with another chunk
-                    meta.imports_to_bind[source_index as usize]
-                        .put(
-                            name.ref_,
-                            ImportData {
-                                data: ImportTracker {
-                                    import_ref: name.ref_,
-                                    source_index: Index::source(other_source_index),
-                                    ..Default::default()
-                                },
+                    meta.imports_to_bind[source_index as usize].put(
+                        arena,
+                        name.ref_,
+                        ImportData {
+                            data: ImportTracker {
+                                import_ref: name.ref_,
+                                source_index: Index::source(other_source_index),
                                 ..Default::default()
                             },
-                        )
-                        .expect("oom");
+                            ..Default::default()
+                        },
+                    );
                 } else if gop.value_ptr.data.source_index.get() != other_source_index {
                     // Two different re-exports colliding makes it potentially ambiguous
-                    gop.value_ptr
-                        .potentially_ambiguous_export_star_refs
-                        .push(ImportData {
+                    gop.value_ptr.potentially_ambiguous_export_star_refs.push(
+                        arena,
+                        ImportData {
                             data: ImportTracker {
                                 source_index: Index::source(other_source_index),
                                 import_ref: name.ref_,
                                 name_loc: name.alias_loc,
                             },
                             ..Default::default()
-                        });
+                        },
+                    );
                 }
             }
 

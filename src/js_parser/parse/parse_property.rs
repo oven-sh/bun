@@ -1,6 +1,5 @@
 #![warn(unused_must_use)]
 
-use bun_collections::VecExt;
 use bun_core;
 
 use crate::lexer as js_lexer;
@@ -10,6 +9,7 @@ use crate::parser::{
     SkipTypeParameterResult, TypeParameterFlag,
 };
 use bun_ast as js_ast;
+use bun_ast::AstVec;
 use bun_ast::flags;
 use bun_ast::lexer_tables::PropertyModifierKeyword;
 use bun_ast::op::Level;
@@ -523,15 +523,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
                             // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.
-                            let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
-                            let block = p.arena.alloc(G::ClassStaticBlock {
+                            let stmt_list =
+                                AstVec::<Stmt>::from_slice_in(stmts.as_slice(), p.ast_arena);
+                            let block = p.ast_arena.alloc_node(G::ClassStaticBlock {
                                 stmts: stmt_list,
                                 loc,
                             });
 
                             return Ok(Some(G::Property {
                                 kind: PropertyKind::ClassStaticBlock,
-                                class_static_block: Some(js_ast::StoreRef::from_bump(block)),
+                                class_static_block: Some(block),
                                 ..Default::default()
                             }));
                         }

@@ -9,7 +9,7 @@ use bun_ast::lexer_tables::{
 use bun_ast::symbol;
 use bun_ast::symbol::SlotNamespace;
 use bun_ast::{Ref, Symbol};
-use bun_collections::{HashMap, StringHashMap, VecExt};
+use bun_collections::{HashMap, StringHashMap};
 use bun_core::Output;
 use bun_core::{MutableString, strings};
 use bun_options_types::Format;
@@ -1316,7 +1316,7 @@ impl<'a> ScopeUses<'a> {
         if scopes.get(i).is_some_and(|&at| at <= last) {
             return true;
         }
-        let spans = self.list.spans.as_slice();
+        let spans = self.list.spans.slice();
         let i = spans.partition_point(|s| s.symbol < symbol);
         spans[i..]
             .iter()
@@ -1362,7 +1362,7 @@ impl ScopeUseIndex {
 
         // Bucket the points by symbol (counting sort), then order each
         // symbol's scopes.
-        let points = file.list.points.as_slice();
+        let points = file.list.points.slice();
         // `offsets[i]` = end of bucket `i`; filling each bucket from its end
         // turns it into the start.
         let mut offsets = vec![0u32; file_symbols.len() + 1];

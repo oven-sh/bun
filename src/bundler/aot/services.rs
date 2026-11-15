@@ -205,7 +205,6 @@ pub(crate) fn with_test_context<R>(
         None,
         &arena,
         Some(NonNull::from(&event_loop)),
-        false,
         None,
         &arena,
     );

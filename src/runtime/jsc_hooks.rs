@@ -19,6 +19,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::Status as PromiseStatus;
@@ -84,8 +85,6 @@ pub(crate) struct RuntimeState {
     pub(crate) transpiler_arena: Box<bun_ast::AstArena>,
     /// Taken by `with_text_format_source` while it runs.
     pub(crate) text_format_arena: Cell<bun_ast::AstArena>,
-    /// Moved from `InitOptions::owned_env_loader`. `vm.transpiler` points to it.
-    pub(crate) owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
     /// (`Request.body` payloads).
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
@@ -336,7 +335,6 @@ unsafe fn init_runtime_state(
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_ast::AstArena::borrowing_default()),
         text_format_arena: Cell::default(),
-        owned_env_loader: opts.owned_env_loader.take(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
             // ~100 KB pool in a stack temporary before moving it into the box (see
@@ -413,16 +411,9 @@ unsafe fn init_runtime_state(
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
         let arena: &'static bun_ast::AstArena = unsafe { &*(*state).transpiler_arena };
-        // Forward `opts.env_loader` so the VM
-        // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
-        // `NODE_ENV=test` into it after init).
-        // SAFETY: same as the arena above.
-        let env_loader: Option<*mut bun_dotenv::Loader> = unsafe {
-            match (*state).owned_env_loader.as_deref_mut() {
-                Some(owned) => Some(ptr::from_mut(owned)),
-                None => opts.env_loader.map(|p| p.as_ptr()),
-            }
-        };
+        let mut env_loader = opts.env_loader.take().unwrap_or_default();
+        // `process.env` writes go to the loader, so no other VM may have it.
+        Arc::make_mut(&mut env_loader);
         match bun_bundler::Transpiler::init(arena, log, args, env_loader) {
             Ok(transpiler) => {
                 // SAFETY: `vm` is the unique freshly-boxed VM; `transpiler`

@@ -506,8 +506,7 @@ pub(crate) struct DevServer {
     // Each logical graph gets its own bundler configuration.
     // Note: `'static` is the DevServer-self lifetime stand-in (see
     // `CurrentBundle.bv2`). `Transpiler<'a>` borrows the global
-    // `Fs::FileSystem` singleton + `dot_env::Loader`, both of which outlive
-    // the server.
+    // `Fs::FileSystem` singleton, which outlives the server.
     // `ManuallyDrop`: dropped in `Drop for DevServer`, before the framework views they borrow.
     pub(crate) server_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,
     pub(crate) client_transpiler: ::core::mem::ManuallyDrop<Transpiler<'static>>,

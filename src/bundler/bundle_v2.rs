@@ -1786,7 +1786,6 @@ pub mod bv2_impl {
             // `arena` is only the scratch param for `Transpiler::for_worker`; the
             // returned `Transpiler` itself is NOT placed in it.
             let this_compile = this_transpiler.options.compile_mode.is_executable();
-            let this_env = this_transpiler.env;
 
             let log = this_transpiler.log();
             let mut ct = Transpiler::for_worker(this_transpiler, arena, log);
@@ -1834,7 +1833,7 @@ pub mod bv2_impl {
             // Re-project the resolver subset now that `target`/`conditions` etc.
             // have been overwritten for the browser.
             boxed.sync_resolver_opts();
-            boxed.resolver.env_loader = NonNull::new(this_env.cast());
+            boxed.resolver.care_about_node_path = true;
 
             Ok(boxed)
         }

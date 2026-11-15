@@ -619,9 +619,10 @@ impl TranspilerJob {
         // The whole Transpiler is copied by value here.
         // `Transpiler<'static>` is not `Clone`; we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
-        // a raw pointer; every internal raw pointer in the copy
+        // a raw pointer; every pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
-        // outlives this stack frame; `vm.transpiler` is not concurrently mutated.
+        // outlives this stack frame; `vm.transpiler` is not concurrently mutated. The VM
+        // shares the env, so `env_mut` panics on the copy.
         // The by-value copy must not be deinitialized; `MaybeUninit` suppresses Drop so owned
         // fields aren't double-freed against `vm.transpiler`. The `&mut` to the package manager,
         // which only the JS thread may use, is overwritten before the copy is used as a value.

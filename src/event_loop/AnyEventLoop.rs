@@ -1,6 +1,5 @@
 use core::ptr::NonNull;
 
-use bun_dotenv::Loader as DotEnvLoader;
 use bun_ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
@@ -355,20 +354,6 @@ impl EventLoopHandle {
     #[inline]
     pub fn uv_loop(self) -> *mut bun_io::Loop {
         self.r#loop().uv_loop()
-    }
-
-    pub fn env(self) -> *mut DotEnvLoader {
-        match self {
-            EventLoopHandle::Js { owner } => owner.env(),
-            // `env` must be set — caller invariant. `env_ptr()` takes
-            // `&self` and returns `Option<NonNull<DotEnvLoader>>` (mutable
-            // provenance). Safe via `BackRef: Deref`.
-            EventLoopHandle::Mini(mini) => mini
-                .env_ptr()
-                .expect("MiniEventLoop.env unset")
-                .as_ptr()
-                .cast(),
-        }
     }
 }
 

@@ -11,6 +11,7 @@ mod trimming;
 
 use core::ptr::NonNull;
 use core::time::Duration;
+use std::sync::Arc;
 
 use bun_aot::report::ReportMessage;
 use bun_bundler::aot::PluginSetup;
@@ -87,8 +88,7 @@ pub(crate) struct ExecutableSettings<'r> {
     pub(crate) target: &'r CompileTarget,
     pub(crate) executable_path: Option<&'r [u8]>,
     pub(crate) root_dir: Fd,
-    /// The transpiler reads through the same pointer while the build runs, so each use makes its own reference.
-    pub(crate) env: *mut bun_dotenv::Loader,
+    pub(crate) env: Arc<bun_dotenv::Loader>,
     pub(crate) windows: &'r WindowsOptions,
     pub(crate) exec_argv: &'r [u8],
     pub(crate) flags: Flags,

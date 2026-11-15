@@ -40,6 +40,8 @@ public:
     struct IdentifierRange {
         uint16_t start;
         uint16_t count;
+        // Each name is one inline property of the structure, in order.
+        bool isInline;
     };
 
     static ServerRouteList* create(
@@ -86,7 +88,7 @@ public:
     JSValue callRoute(Zig::GlobalObject* globalObject, uint32_t index, void* requestPtr, EncodedJSValue serverObject, EncodedJSValue* requestObject, Req* req);
 
 private:
-    Structure* structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers);
+    Structure* structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers, bool isInline);
     template<typename Req>
     JSObject* paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, Req* req);
 
@@ -122,13 +124,21 @@ private:
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
             size_t identifierCount = 0;
+            bool isInline = true;
+            // A name starts at the last colon of its segment, so "/:a/:b:a" repeats one and "/urn:isbn:1" has an index.
+            auto appendIdentifier = [&](WTF::String&& name) {
+                auto identifier = JSC::Identifier::fromString(vm, name);
+                bool isRepeated = std::ranges::any_of(m_pathIdentifiers.subspan(originalIdentifierIndex), [&](auto& earlier) { return earlier == identifier; });
+                if (isRepeated || parseIndex(identifier))
+                    isInline = false;
+                m_pathIdentifiers.append(isRepeated ? JSC::Identifier() : identifier);
+                identifierCount++;
+            };
             for (size_t j = 0; j < path.length(); j++) {
                 switch (path[j]) {
                 case '/': {
                     if (startOfIdentifier && startOfIdentifier < j) {
-                        WTF::String&& identifier = path.substring(startOfIdentifier, j - startOfIdentifier);
-                        m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
-                        identifierCount++;
+                        appendIdentifier(path.substring(startOfIdentifier, j - startOfIdentifier));
                     }
                     startOfIdentifier = 0;
                     break;
@@ -143,12 +153,10 @@ private:
                 }
             }
             if (startOfIdentifier && startOfIdentifier < path.length()) {
-                WTF::String&& identifier = path.substring(startOfIdentifier, path.length() - startOfIdentifier);
-                m_pathIdentifiers.append(JSC::Identifier::fromString(vm, identifier));
-                identifierCount++;
+                appendIdentifier(path.substring(startOfIdentifier, path.length() - startOfIdentifier));
             }
 
-            pathIdentifierRanges[0] = { static_cast<uint16_t>(originalIdentifierIndex), static_cast<uint16_t>(identifierCount) };
+            pathIdentifierRanges[0] = { static_cast<uint16_t>(originalIdentifierIndex), static_cast<uint16_t>(identifierCount), isInline && identifierCount < JSC::JSFinalObject::maxInlineCapacity };
             pathIdentifierRanges = pathIdentifierRanges.subspan(1);
         }
     }
@@ -169,7 +177,7 @@ void ServerRouteList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 DEFINE_VISIT_CHILDREN(ServerRouteList);
 
-Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers)
+Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, uint32_t index, std::span<const Identifier> identifiers, bool isInline)
 {
 
     if (identifiers.empty()) {
@@ -182,7 +190,7 @@ Structure* ServerRouteList::structureForParamsObject(JSC::VM& vm, JSC::JSGlobalO
         unsigned inlineCapacity = std::min(identifiers.size(), static_cast<size_t>(JSC::JSFinalObject::maxInlineCapacity));
         auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(FinalObjectType, StructureFlags), JSFinalObject::info(), NonArray, inlineCapacity);
 
-        if (identifiers.size() < JSC::JSFinalObject::maxInlineCapacity) {
+        if (isInline) {
             PropertyOffset offset;
             for (const auto& identifier : identifiers) {
                 structure = structure->addPropertyTransition(vm, structure, identifier, JSC::PropertyAttribute::DontDelete | 0, offset);
@@ -218,16 +226,18 @@ JSObject* ServerRouteList::paramsObjectForRoute(JSC::VM& vm, JSC::JSGlobalObject
 
     const std::span<const Identifier> identifiers = m_pathIdentifiers.subspan(offset, identifierCount);
 
-    auto* structure = structureForParamsObject(vm, globalObject, index, identifiers);
+    auto* structure = structureForParamsObject(vm, globalObject, index, identifiers, range.isInline);
     JSObject* object = constructEmptyObject(vm, structure);
 
-    if (identifierCount < JSC::JSFinalObject::maxInlineCapacity) {
+    if (range.isInline) {
         for (size_t i = 0; i < identifierCount; i++) {
             object->putDirectOffset(vm, i, args.at(i));
         }
     } else {
-        for (size_t i = 0; i < identifierCount; i++) {
-            object->putDirect(vm, identifiers[i], args.at(i));
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        for (size_t i = 0; !scope.exception() && i < identifierCount; i++) {
+            if (!identifiers[i].isNull())
+                object->putDirectMayBeIndex(globalObject, identifiers[i], args.at(i));
         }
     }
 

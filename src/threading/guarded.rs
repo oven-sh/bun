@@ -58,7 +58,7 @@ impl<Value> GuardedBy<Value, Mutex> {
 
     /// Runs `f` under the lock, for a critical section that lets another thread free `*this`.
     ///
-    /// SAFETY: `this` stays live until the lock is released.
+    /// SAFETY: `this` stays live until the unlock after `f` returns.
     pub unsafe fn with_lock_raw<R>(
         this: *const Self,
         f: impl FnOnce(&mut GuardedLock<'_, Value, Mutex>) -> R,

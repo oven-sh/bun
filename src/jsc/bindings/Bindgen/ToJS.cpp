@@ -1,6 +1,7 @@
 #include "root.h"
 #include "Bindgen/ExternTraits.h"
 #include "Bindgen/SchemaStrings.h"
+#include "BunClientData.h"
 #include "JSAbortSignal.h"
 #include "JSBuffer.h"
 #include "JSDOMURL.h"
@@ -11,6 +12,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/ImmutablePropertyNames.h>
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/NativeExecutable.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -28,6 +30,53 @@ EncodedJSValue createFunctionNamedAsBound(JSGlobalObject* globalObject, unsigned
     JSFunction* result = JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public);
     uncheckedDowncast<NativeExecutable>(result->executable())->setIsNamedAsBound();
     return JSValue::encode(result);
+}
+
+class BoundFunctionReplacement final : public JSFunction {
+public:
+    using Base = JSFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags & ~ImplementsDefaultHasInstance;
+    static_assert(StructureFlags & ImplementsHasInstance);
+
+    DECLARE_INFO;
+
+    static BoundFunctionReplacement* create(VM& vm, JSGlobalObject* globalObject, Structure* structure, NativeExecutable* executable)
+    {
+        auto* function = new (NotNull, allocateCell<BoundFunctionReplacement>(vm)) BoundFunctionReplacement(vm, executable, globalObject, structure);
+        function->finishCreation(vm);
+        return function;
+    }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
+    {
+        Structure* structure = Bun::createClassStructure(vm, globalObject, globalObject->functionPrototype(), TypeInfo(JSFunctionType, StructureFlags), info());
+        ImmutablePropertyNames* names = globalObject->hostFunctionStructure()->listedImmutablePropertyNames();
+        return names ? Structure::makeListedPropertiesImmutableTransition(vm, structure, *names) : structure;
+    }
+
+    static bool customHasInstance(JSObject*, JSGlobalObject* globalObject, JSValue value)
+    {
+        return defaultHasInstance(globalObject, value, jsUndefined());
+    }
+
+private:
+    BoundFunctionReplacement(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
+        : Base(vm, executable, globalObject, structure)
+    {
+    }
+};
+static_assert(sizeof(BoundFunctionReplacement) == sizeof(JSFunction), "Allocated in JSFunction IsoSubspace");
+
+const ClassInfo BoundFunctionReplacement::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(BoundFunctionReplacement) };
+
+EncodedJSValue createBoundFunctionReplacement(JSGlobalObject* globalObject, unsigned length, ASCIILiteral name, NativeFunction function)
+{
+    VM& vm = getVM(globalObject);
+    auto& cached = uncheckedDowncast<Zig::GlobalObject>(globalObject)->m_bindgenAdditions.m_boundFunctionReplacementStructure;
+    if (!cached)
+        cached.set(vm, globalObject, BoundFunctionReplacement::createStructure(vm, globalObject));
+    NativeExecutable* executable = vm.getHostFunction(function, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
+    return JSValue::encode(BoundFunctionReplacement::create(vm, globalObject, cached.get(), executable));
 }
 
 static NEVER_INLINE Structure* createReturnedDictionaryStructure(VM& vm, Zig::GlobalObject* globalObject, WriteBarrier<Structure>& cached, unsigned firstMemberNameIndex, unsigned count)

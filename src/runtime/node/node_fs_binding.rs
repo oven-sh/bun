@@ -82,11 +82,15 @@ macro_rules! sync_functions {
 }
 
 sync_functions! {
-    exists_sync    => Exists,   args::Exists<'static>,   ret::Exists;
-    lstat_sync     => Lstat,    args::Lstat<'static>,    ret::Lstat;
-    readdir_sync   => Readdir,  args::Readdir<'static>,  ret::Readdir;
-    read_file_sync => ReadFile, args::ReadFile<'static>, ret::ReadFile;
-    stat_sync      => Stat,     args::Stat<'static>,     ret::Stat;
+    append_file_sync => AppendFile, args::AppendFile<'static>, ret::AppendFile;
+    chmod_sync       => Chmod,      args::Chmod<'static>,      ret::Chmod;
+    close_sync       => Close,      args::Close,               ret::Close;
+    exists_sync      => Exists,     args::Exists<'static>,     ret::Exists;
+    fstat_sync       => Fstat,      args::Fstat,               ret::Fstat;
+    lstat_sync       => Lstat,      args::Lstat<'static>,      ret::Lstat;
+    readdir_sync     => Readdir,    args::Readdir<'static>,    ret::Readdir;
+    read_file_sync   => ReadFile,   args::ReadFile<'static>,   ret::ReadFile;
+    stat_sync        => Stat,       args::Stat<'static>,       ret::Stat;
 }
 
 /// Which arm of an async binding was called.

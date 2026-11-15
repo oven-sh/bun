@@ -1011,8 +1011,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order
             .set(bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8);
-        // `vm.main` is a BACKREF into these bytes and the runner never returns,
-        // so the allocation is process-lifetime by construction.
         let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
             BootMain::File { path, loader } => (Some(Box::leak(path)), loader),
             BootMain::Bake => (None, None),
@@ -1206,9 +1204,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.preload.set(std::mem::take(&mut ctx.preloads));
 
-        // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
-        // buffer and the runner never returns, so the allocation is
-        // process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         vm.set_main(Some(entry));
 

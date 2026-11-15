@@ -209,6 +209,7 @@ mod _impl {
     use bun_jsc::{
         EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker,
     };
+    use bun_ptr::CellExt as _;
 
     // ───────────────────────────── title ─────────────────────────────
 
@@ -631,7 +632,7 @@ mod _impl {
             bun_sys::Result::Ok(()) => {
                 bun_core::set_working_directory_in_executable(None);
                 if vm.test_isolation_enabled.get() {
-                    vm.test_isolation_state.saved_cwd.with_mut(|saved| {
+                    vm.test_isolation_state.saved_cwd.with_taken(|saved| {
                         saved.get_or_insert(prev_cwd);
                     });
                 }

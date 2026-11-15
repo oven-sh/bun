@@ -8,7 +8,10 @@
 //! `WebCore::ScriptExecutionContext` does the same for `ActiveDOMObject`s, and
 //! owns the Rust context of a graph.
 
+use core::cell::Cell;
 use core::ptr;
+
+use bun_ptr::CellExt as _;
 
 use crate::virtual_machine::SweepResult;
 use crate::{AbortSignal, AbortSignalRef, JSValue, JsCell};
@@ -41,20 +44,20 @@ pub enum AbortCause {
 type AbortFn = unsafe fn(handle: *mut AbortHandle, cause: AbortCause);
 
 pub struct ScriptExecutionContext {
-    id: JsCell<ContextId>,
+    id: Cell<ContextId>,
     /// Armed handles, oldest first.
-    head: JsCell<*mut AbortHandle>,
-    tail: JsCell<*mut AbortHandle>,
+    head: Cell<*mut AbortHandle>,
+    tail: Cell<*mut AbortHandle>,
     /// A graph's context after [`stop`](Self::stop): what is armed from then
     /// on (script of the disposed graph still running) is stopped at once.
-    stopped: JsCell<bool>,
+    stopped: Cell<bool>,
     /// The client sockets script of a graph's context opened (`Bun.connect`,
     /// WebSocket, SQL, Valkey). A VM's own contexts use `RareData`'s.
     socket_groups: core::cell::OnceCell<Box<crate::rare_data::SocketGroups>>,
-    stop_again_queued: JsCell<bool>,
+    stop_again_queued: Cell<bool>,
     /// A graph's context: its `WebCore::ScriptExecutionContext`, which owns this
     /// one and the ActiveDOMObjects (workers, WebSockets) the graph's script made.
-    dom_context: core::cell::Cell<*mut core::ffi::c_void>,
+    dom_context: Cell<*mut core::ffi::c_void>,
     /// The timers script of a graph's context set that have not been freed
     /// (`TimerObjectInternals` / `AbortSignal` `Timeout`), so stopping it
     /// cancels exactly those. A VM's own contexts walk the timer heap.
@@ -73,13 +76,13 @@ pub enum ContextTimer {
 impl Default for ScriptExecutionContext {
     fn default() -> Self {
         Self {
-            id: JsCell::new(ContextId::default()),
-            head: JsCell::new(ptr::null_mut()),
-            tail: JsCell::new(ptr::null_mut()),
-            stopped: JsCell::new(false),
+            id: Cell::new(ContextId::default()),
+            head: Cell::new(ptr::null_mut()),
+            tail: Cell::new(ptr::null_mut()),
+            stopped: Cell::new(false),
             socket_groups: core::cell::OnceCell::new(),
-            stop_again_queued: JsCell::new(false),
-            dom_context: core::cell::Cell::new(ptr::null_mut()),
+            stop_again_queued: Cell::new(false),
+            dom_context: Cell::new(ptr::null_mut()),
             timers: JsCell::new(Default::default()),
         }
     }
@@ -88,7 +91,7 @@ impl Default for ScriptExecutionContext {
 impl ScriptExecutionContext {
     #[inline]
     pub fn id(&self) -> ContextId {
-        *self.id.get()
+        self.id.get()
     }
 
     /// `VirtualMachine::root_context`: the Rust half of the context of every global the VM makes.
@@ -145,7 +148,7 @@ impl ScriptExecutionContext {
 
     #[inline]
     pub fn is_stopped(&self) -> bool {
-        *self.stopped.get()
+        self.stopped.get()
     }
 
     /// A graph's context stops for good (JS thread): one stop-phase sweep over
@@ -225,7 +228,7 @@ impl ScriptExecutionContext {
     /// # Safety
     /// `node` is a live, unlinked handle.
     unsafe fn push(&self, node: *mut AbortHandle) {
-        let tail = *self.tail.get();
+        let tail = self.tail.get();
         // SAFETY: fn contract.
         let handle = unsafe { &*node };
         handle.prev.set(tail);
@@ -241,7 +244,7 @@ impl ScriptExecutionContext {
     }
 
     fn unlink(&self, handle: &AbortHandle) {
-        let (prev, next) = (*handle.prev.get(), *handle.next.get());
+        let (prev, next) = (handle.prev.get(), handle.next.get());
         // SAFETY: neighbours of a linked node are linked, hence live.
         unsafe {
             if prev.is_null() {
@@ -266,7 +269,7 @@ impl ScriptExecutionContext {
     pub fn stop_handles(&self, reason: StopReason) -> SweepResult {
         let mut result = SweepResult::Idle;
         loop {
-            let newest = *self.tail.get();
+            let newest = self.tail.get();
             if newest.is_null() {
                 return result;
             }
@@ -289,29 +292,29 @@ impl ScriptExecutionContext {
 ///
 /// Address-stable while armed: embed it in a heap-allocated owner.
 pub struct AbortHandle {
-    prev: JsCell<*mut AbortHandle>,
-    next: JsCell<*mut AbortHandle>,
+    prev: Cell<*mut AbortHandle>,
+    next: Cell<*mut AbortHandle>,
     /// The context this is linked into; null while disarmed.
-    context: JsCell<*const ScriptExecutionContext>,
+    context: Cell<*const ScriptExecutionContext>,
     on_abort: AbortFn,
-    signal: JsCell<Option<AbortSignalRef>>,
+    signal: Cell<Option<AbortSignalRef>>,
     /// Its context stopped it, or had already stopped when it was armed.
-    context_stopped: core::cell::Cell<bool>,
+    context_stopped: Cell<bool>,
     /// The owner never runs script by itself, like the sink of an idle `process.stdout`.
-    only_waits_to_be_closed: core::cell::Cell<bool>,
+    only_waits_to_be_closed: Cell<bool>,
 }
 
 impl AbortHandle {
     /// The handle `O` embeds (at the field [`AbortHandleOwner::abort_handle`] names).
     pub const fn for_owner<O: AbortHandleOwner>() -> Self {
         Self {
-            prev: JsCell::new(ptr::null_mut()),
-            next: JsCell::new(ptr::null_mut()),
-            context: JsCell::new(ptr::null()),
+            prev: Cell::new(ptr::null_mut()),
+            next: Cell::new(ptr::null_mut()),
+            context: Cell::new(ptr::null()),
             on_abort: Self::owner_aborted::<O>,
-            signal: JsCell::new(None),
-            context_stopped: core::cell::Cell::new(false),
-            only_waits_to_be_closed: core::cell::Cell::new(false),
+            signal: Cell::new(None),
+            context_stopped: Cell::new(false),
+            only_waits_to_be_closed: Cell::new(false),
         }
     }
 
@@ -346,8 +349,13 @@ impl AbortHandle {
     }
 
     #[inline]
-    pub fn signal(&self) -> Option<&AbortSignal> {
-        self.signal.get().as_deref()
+    pub fn signal(&mut self) -> Option<&AbortSignal> {
+        self.signal.get_mut().as_deref()
+    }
+
+    pub fn signal_timeout_deadline(&self) -> Option<bun_core::Timespec> {
+        self.signal
+            .with_taken(|signal| signal.as_ref()?.timeout_deadline())
     }
 
     /// # Safety

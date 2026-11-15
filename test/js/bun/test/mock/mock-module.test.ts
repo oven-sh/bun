@@ -1951,6 +1951,82 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     );
   });
 
+  // Test files wrote the second mock to reach require(). It still works, and it is no longer needed.
+  test("a mock of the name with a mock of the path of require() beside it, in both orders", async () => {
+    const head = `
+      import { expect, jest, mock, test } from "bun:test";
+      const requirePath = require.resolve("dual");
+      // What require() of the name, require() of that path and an import of the name get.
+      const all = async () => [require("dual").which, require(requirePath).which, (await import("dual")).which];
+      const real = ["real cjs", "real cjs", "real esm"];
+      const byName = () => mock.module("dual", () => ({ which: "by name" }));
+      const byPath = () => mock.module(requirePath, () => ({ which: "by path" }));
+    `;
+    await expectFixturesToPass(
+      {
+        ...files,
+        "1.test.js": `
+          ${head}
+          test("the name, then the path: jest.unmock() of the name ends both", async () => {
+            globalThis.ran = require("dual");
+            byName();
+            byPath();
+            expect(await all()).toEqual(["by path", "by path", "by name"]);
+            expect(jest.requireActual("dual")).toBe(globalThis.ran);
+            jest.unmock("dual");
+            expect(await all()).toEqual(real);
+            jest.unmock(requirePath);
+            expect(await all()).toEqual(real);
+            expect(require("dual")).toBe(globalThis.ran);
+          });
+          test("the name, then the path: jest.unmock() of the path ends the mock of the path alone", async () => {
+            byName();
+            byPath();
+            jest.unmock(requirePath);
+            expect(await all()).toEqual(["real cjs", "real cjs", "by name"]);
+            jest.unmock("dual");
+            expect(await all()).toEqual(real);
+            expect(require("dual")).toBe(globalThis.ran);
+          });
+          test("the path, then the name: the mock of the name has the path, and jest.unmock() of the path ends it", async () => {
+            byPath();
+            byName();
+            expect(await all()).toEqual(["by name", "by name", "by name"]);
+            expect(jest.requireActual("dual")).toBe(globalThis.ran);
+            jest.unmock(requirePath);
+            expect(await all()).toEqual(real);
+            jest.unmock("dual");
+            expect(await all()).toEqual(real);
+            expect(require("dual")).toBe(globalThis.ran);
+          });
+          test("the path, then the name: jest.unmock() of the name ends it too", async () => {
+            byPath();
+            byName();
+            jest.unmock("dual");
+            expect(await all()).toEqual(real);
+            jest.unmock(requirePath);
+            expect(await all()).toEqual(real);
+            expect(require("dual")).toBe(globalThis.ran);
+          });
+          test("both are left to the end of the test file", async () => {
+            byName();
+            byPath();
+            expect(await all()).toEqual(["by path", "by path", "by name"]);
+          });
+        `,
+        "2.test.js": `
+          ${head}
+          test("the next test file gets the files, and each has run once", async () => {
+            expect(await all()).toEqual(real);
+            expect(require("dual")).toBe(globalThis.ran);
+            expect(globalThis.loaded).toEqual(["dual cjs", "dual esm"]);
+          });
+        `,
+      },
+      6,
+    );
+  });
+
   test("a factory that requires its own name gets the CommonJS file, however require() resolves the name", async () => {
     await expectFixturesToPass(
       {

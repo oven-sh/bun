@@ -3,9 +3,9 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
 
 use bun_jsc::JsResult;
+use bun_ptr::CellExt as _;
 
 use crate::test_runner::bun_test::{BunTest, DescribeScope, ExecutionEntry, TestScheduleEntry};
-use crate::test_runner::cells::CellExt as _;
 
 fn dump_sub(buntest: &BunTest, current: TestScheduleEntry) -> JsResult<()> {
     if !group::get_log_enabled() {

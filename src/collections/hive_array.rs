@@ -441,6 +441,11 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
         unsafe { boxed.assume_init() }
     }
 
+    /// Whether a slot of the inline hive is claimed.
+    pub fn is_in_use(&self) -> bool {
+        self.hive.used.iter_set().next().is_some()
+    }
+
     /// One-shot claim + write. Preferred entry point — no uninit window.
     /// Infallible: spills to a heap `Box<T>` when the inline hive is full.
     #[inline]

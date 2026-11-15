@@ -135,7 +135,6 @@ macro_rules! throw_pretty_static {
 
 cfg_jsc! {
     #[path = "bun_test.rs"]       pub(crate) mod bun_test;
-    #[path = "cells.rs"]          pub(crate) mod cells;
     #[path = "Collection.rs"]     pub(crate) mod collection;
     #[path = "debug.rs"]          pub(crate) mod debug;
     #[path = "diff_format.rs"]    pub(crate) mod diff_format;

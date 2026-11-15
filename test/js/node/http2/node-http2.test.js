@@ -4380,6 +4380,41 @@ describe.concurrent(
       },
     );
 
+    // A queued frame holds one callback, so a write that lands in the same frame completes the
+    // write before it. That callback is the JS here: the socket is native.
+    it("previous write's callback running while the next write is queued, native writer", async () => {
+      const result = await run(/* js */ `
+      const server = http2.createServer({ settings: { initialWindowSize: 100 } });
+      server.on("error", die("server error"));
+      const body = new Promise(resolve => {
+        server.on("stream", (stream, headers) => {
+          if (headers[":path"] === "/blocked") return;
+          const chunks = [];
+          stream.on("data", c => chunks.push(c));
+          stream.on("end", () => resolve(Buffer.concat(chunks)));
+        });
+      });
+      await new Promise(r => server.listen(0, "127.0.0.1", r));
+      const session = http2.connect("http://127.0.0.1:" + server.address().port);
+      session.on("error", die("session error"));
+      await new Promise(r => session.once("remoteSettings", r));
+      const blocked = session.request({ ":method": "POST", ":path": "/blocked" });
+      const req = session.request({ ":method": "POST", ":path": "/" });
+      blocked._write(Buffer.alloc(200), "buffer", () => {});
+      const holder = { src: payload(8000, false) };
+      const snap = Buffer.from(holder.src);
+      let fired = false;
+      // write() waits for the callback; _write() queues two writes at once.
+      req._write(Buffer.from("aaa"), "buffer", () => { fired = true; yank(holder, "transfer"); });
+      req._write(holder.src, "buffer", () => req.end());
+      const firedDuringWrite = fired;
+      const got = (await body).subarray(3);
+      console.log(JSON.stringify({ native: !!session.socket._handle, firedDuringWrite, foreign: foreign(got, snap) }));
+      process.exit(0);
+    `);
+      expect(result).toEqual({ native: true, firedDuringWrite: true, foreign: 0 });
+    });
+
     // The session's socket is a native TLSSocket, but one upgraded from a JS Duplex
     // (tls.connect({ socket })), so every TLS record is written through that Duplex's JS.
     // Oracle: the request body a real secure server receives.

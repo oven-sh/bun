@@ -500,9 +500,56 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       req.end(body);
       await until(() => req.writableFinished);
       console.log(Buffer.concat(frames(0).map(frame => frame.body)).equals(body));
+      console.log(frames(0).map(frame => frame.flags).join());
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+      expect(result).toEqual({ stdout: "true\n0,0,0,0,0,1", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test.each([
+    ["_write", "req.end(Buffer.alloc(70000));"],
+    ["_writev", "req.write(Buffer.alloc(35000)); req.end(Buffer.alloc(35000));"],
+  ])(
+    "can reopen the window for a request made before the connection (%s)",
+    async (_, send) => {
+      const result = await run(/* js */ `
+      const written = [];
+      const duplex = transport({}, chunk => written.push(Buffer.from(chunk)));
+      duplex.minLength = 65535;
+      duplex.inNextWrite = () => duplex.push(Buffer.concat([frame(4, 0, 0), windowUpdate(0), windowUpdate(1)]));
+      const session = http2.connect("http://localhost:1", { createConnection: () => duplex });
+      const req = session.request(post).on("error", () => {});
+      ${send}
+      await until(() => req.writableFinished);
+      const data = parse(Buffer.concat(written).subarray(preface.length), 0);
+      console.log(data.map(frame => frame.flags).join());
+      session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "0,0,0,0,0,1", stderr: "", exitCode: 0 });
+    },
+    10_000 * ASAN_MULTIPLIER,
+  );
+
+  test(
+    "echoes more than a window over duplexPair()",
+    async () => {
+      const result = await run(/* js */ `
+      const [clientSide, serverSide] = require("node:stream").duplexPair();
+      http2.performServerHandshake(serverSide).on("stream", stream => {
+        stream.respond();
+        stream.pipe(stream);
+      });
+      const session = http2.connect("http://localhost:1", { createConnection: () => clientSide });
+      const req = session.request(post);
+      let received = 0;
+      req.on("data", chunk => (received += chunk.length)).end(Buffer.alloc(70000));
+      await until(() => req.destroyed);
+      console.log(received, req.rstCode);
+      session.destroy();
+    `);
+      expect(result).toEqual({ stdout: "70000 0", stderr: "", exitCode: 0 });
     },
     10_000 * ASAN_MULTIPLIER,
   );

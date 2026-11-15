@@ -1,0 +1,3 @@
+export * from "./f3.mjs";
+import "./f6.mjs";
+import "./f7.mjs";

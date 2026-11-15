@@ -13,8 +13,8 @@ use bun_jsc::{ErrorCode, JSBigInt, JSGlobalObject, JSMap, JSValue, JsResult, MAX
 use bun_threading::Guarded;
 
 use crate::generated_bindgen::histogram::{HistogramJSON, js_ELDHistogram, js_RecordableHistogram};
+use crate::jsc_hooks::timer_all;
 use crate::node::util::validators;
-use crate::timer::event_loop_delay_monitor;
 
 /// The GC is told what JavaScriptCore tells it of a `SharedArrayBuffer`, which also grows and which a structured clone
 /// also shares with other threads. Every object, a clone too, counts the whole size (`JSArrayBuffer::finishCreation`):
@@ -384,9 +384,9 @@ impl Histogram {
         if enable {
             // The time it was disabled for is not a delay of the event loop.
             self.with(|state| state.previous_ns = 0);
-            event_loop_delay_monitor::enable(interval);
+            timer_all().event_loop_delay.enable(interval);
         } else {
-            event_loop_delay_monitor::disable(interval);
+            timer_all().event_loop_delay.disable(interval);
         }
         true
     }

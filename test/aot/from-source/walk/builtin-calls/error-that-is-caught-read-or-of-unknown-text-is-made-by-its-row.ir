@@ -1,0 +1,32 @@
+# an error is made by its row and thrown by a Throw where a handler of the unit stands over the two, where something that is no cast stands between them, and where nobody knows the message
+# all five are handed to sink: nobody knows their callers. Each refusal has a run of its own in which the one operation stands nowhere
+# f1 = refuse, f2 = caught, f3 = kept, f4 = noted, f5 = refuseWith
+# -- source: error-that-is-caught-read-or-of-unknown-text-is-made-by-its-row.ts
+# declare function sink(...values: unknown[]): void;
+# function refuse(x: number) { if (x < 0) throw new TypeError("bad input"); return x; }
+# function caught(x: number) { try { if (x < 0) throw new TypeError("bad input"); return x; } catch (e) { return e; } }
+# function kept(x: number) { if (x < 0) { const e: any = new TypeError("bad input"); e.extra = 1; throw e; } return x; }
+# function noted(x: number) { if (x < 0) { const e = new TypeError("bad input"); sink(e); throw e; } return x; }
+# function refuseWith(x: number, what: string) { if (x < 0) throw new Error("bad " + what); return x; }
+# sink(refuse, caught, kept, noted, refuseWith);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: ThrowNewError {{*}}errorKind=TypeError
+# RUN(CAUGHT): walk f2 mechanisms=all
+# CAUGHT-NOT: ThrowNewError
+# RUN(KEPT): walk f3 mechanisms=all
+# KEPT-NOT: ThrowNewError
+# RUN(NOTED): walk f4 mechanisms=all
+# NOTED-NOT: ThrowNewError
+# RUN(UNKNOWN): walk f5 mechanisms=all
+# UNKNOWN-NOT: ThrowNewError
+# RUN(THROWN): walk f2 f3 f4 f5 mechanisms=all
+# THROWN-LABEL: code f2:Body
+# THROWN: Throw v
+# THROWN-LABEL: code f3:Body
+# THROWN: Throw v
+# THROWN-LABEL: code f4:Body
+# THROWN: Throw v
+# THROWN-LABEL: code f5:Body
+# THROWN: Throw v

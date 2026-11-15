@@ -5327,7 +5327,7 @@ impl<'p, 's> Printer<'_, 'p, 's> {
                 let inner = *inner;
                 return self.signature_parameters(inner);
             }
-            SigData::Synth { params, .. } => {
+            SigData::Synth(SynthSig { params, .. }) => {
                 let mut list = Vec::with_capacity(params.len());
                 for (i, parameter) in params.iter().enumerate() {
                     let name = if parameter.name.is_some() {

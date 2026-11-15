@@ -1,0 +1,36 @@
+# (hidden ? {} : hidden).MORE = hidden
+# A control of what-is-stored-into-a-dictionary-that-the-body-has-made-brings-no-warning-printer.ir: behind the join the object is whichever of the two.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/ProcessObjectInternals.ts" displayPath="/$bun/js/builtins/ProcessObjectInternals.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ProcessObjectInternalsCreateOnWarning function=f1
+runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="hidden" [isFreeName]
+    v4 = ToBoolean v3
+    Branch v4 -> taken b1(), notTaken b2()
+  b1():
+    v5 = NewDictionary
+    Jump -> next b3(v5)
+  b2():
+    Jump -> next b3(v3)
+  b3(v6):
+    PropSet v6, v3 key="MORE"
+    Return v6
+}
+function f1 name="createOnWarning" module=m1 kind=Method role=Library flags=[HasExplicitName] length=4 enclosingRuntimeFunction=ProcessObjectInternalsCreateOnWarning thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    Return v0
+}
+function f2 name="initializeNextTickQueue" module=m1 kind=Method role=Library flags=[HasExplicitName] length=3 enclosingRuntimeFunction=ProcessObjectInternalsInitializeNextTickQueue thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    Return v0
+}

@@ -1,0 +1,15 @@
+# -- source: main.cjs
+# "use strict";
+# const held = sink();
+# function multiplied() { let s = 0; for (let i = 0; i < held.length; i++) s = s + held[i] * 2; return s; }
+# function masked() { let s = 0; for (let i = 0; i < held.length; i++) s = s ^ (held[i] & 255); return s; }
+# sink(multiplied, masked);
+# -- end of source
+# Where a loop multiplies the elements, a Float64Array and a Float32Array each have a copy of the loop of their own behind the front; where it takes only their bits, they share one copy with the other views.
+# Which of the two holds was asked of the loop's text by the holder, and a holder that the turn reads off a variable was passed over: its doubles ran the shared copy, three times as slow.
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = TypeTest {{*}}testedType=Float64Array
+# RUN(MASKED): walk f2:Body mechanisms=all
+# MASKED-LABEL: code f2:Body
+# MASKED: = TypeTest {{*}}testedType=Float32Array|Float64Array|

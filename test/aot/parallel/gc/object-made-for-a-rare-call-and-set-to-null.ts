@@ -1,5 +1,4 @@
 // `point = null` is no reason to make the object on the path that never hands it out.
-// STATISTIC: AllocationsSunk >= 1
 type Point = { x: number; y: number };
 const kept: Point[] = [];
 function keep(point: Point) {

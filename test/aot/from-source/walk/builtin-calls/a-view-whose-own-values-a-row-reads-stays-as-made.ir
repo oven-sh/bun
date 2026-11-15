@@ -1,0 +1,26 @@
+# -- source: a-view-whose-own-values-a-row-reads-stays-as-made.ts
+# declare function sink(value: unknown): void;
+# const bytes = new Uint8Array(16); for (let i = 0; i < 16; i++) bytes[i] = i * 3;
+# const withOwnIterator: any = new Uint8Array(4);
+# function copyOfPart(): number { const part = bytes.slice(2, 6); let sum = 0; for (let i = 0; i < part.length; i++) sum += part[i]!; return sum; }
+# function whatFromMakes(): number { const made = Uint16Array.from(bytes); let sum = 0; for (let i = 0; i < made.length; i++) sum += made[i]!; return sum; }
+# function copyOfOther(): number { return withOwnIterator.slice(1, 3).length; }
+# function fromOwnIterator(): string { return Uint16Array.from(withOwnIterator).join(); }
+# const said: unknown[] = [copyOfPart(), whatFromMakes(), copyOfOther(), fromOwnIterator()];
+# withOwnIterator[Symbol.iterator] = function* () { yield 5; yield 6; };
+# said.push(copyOfPart(), whatFromMakes(), copyOfOther(), fromOwnIterator());
+# sink(said.join(" | "));
+# -- end of source
+# `Uint16Array.from(bytes)` let `bytes` go in Link, and with it every method of that view anywhere in the program. from's row reads the own values of its items, and a row that does so asks whether the
+# instance is as its class makes it IN STORAGE too: whether something may lie under an index above it. That was asked of the prototypes of views as it is of the prototypes of lists, and they do not close
+# their index keys. A read under an index never climbs from a view: behind the end it gives undefined. So nothing lies under an index above a view, whatever its prototypes hold.
+# withOwnIterator is WRITTEN ON: an iterator of its own under the symbol: from runs it, the view is let go and its slice is not found.
+# f1 = copyOfPart, f3 = copyOfOther
+# RUN: walk f1:Body f3:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: PropGet {{*}} key="slice"
+# CHECK: Uint8Array @JSValue = CallBuiltin {{*}} overload=TypedArrayPrototypeSlice/0
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: overload=TypedArrayPrototypeSlice
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: 42 | 360 | 2 | 0,0,0,0 | 42 | 360 | 2 | 5,6

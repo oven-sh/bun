@@ -1,9 +1,18 @@
 use super::resolver::{ExprState, Resolver};
 use crate::builtins::intrinsics::{find_intrinsic, find_native_call_kind, find_symbol_key};
-use crate::builtins::table::{self, Intrinsic, IntrinsicPosition};
+use crate::builtins::table::{self, BuiltinId, Intrinsic, IntrinsicPosition, Mutability};
 use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, Parent};
 use bun_sema::hir::{ExprId, ExprKind};
+use std::sync::OnceLock;
+
+static NATIVES: OnceLock<Vec<(BuiltinId, bool)>> = OnceLock::new();
+
+pub fn set_natives<'a>(names: impl Iterator<Item = (&'a [u8], bool)>) {
+    let find =
+        |(name, is_also_member)| Some((table::global(table::find_name(name)?)?, is_also_member));
+    NATIVES.get_or_init(|| names.filter_map(find).collect());
+}
 
 impl Resolver<'_, '_> {
     fn is_callee_of(&self, expr: ExprId, parent: ExprId) -> bool {
@@ -20,6 +29,15 @@ impl Resolver<'_, '_> {
         };
         find_intrinsic(input.names, name, position)
             .or_else(|| input.names.get(name).and_then(table::prefixed_global))
+            .or_else(|| self.find_native(name, false))
+    }
+
+    pub(super) fn find_native(&self, name: Atom, is_member: bool) -> Option<Intrinsic> {
+        let global = table::global(self.input.names.get(name)?)?;
+        let &(_, is_also_member) = NATIVES.get()?.iter().find(|native| native.0 == global)?;
+        let is_one_object = table::entry(global).mutability != Mutability::ChangesOnItsOwn;
+        (is_one_object && (is_also_member || !is_member))
+            .then(|| Intrinsic::Builtin(table::canonical_id(global)))
     }
 
     pub(super) fn find_runtime_member(&self, name: Atom) -> Option<Intrinsic> {

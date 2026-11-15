@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 use bun_alloc::AllocError;
-use bun_ast::{E, Expr, ExprData, Loc, StoreStr};
+use bun_ast::{E, Expr, ExprData, Loc, StoreRef, StoreStr};
 use bun_collections::VecExt as _;
 use bun_core::fmt::for_terminal;
 use bun_core::{Global, Output, strings};
@@ -673,14 +673,13 @@ fn settle_resolved_positional(
     package_json: &Expr,
     dependency_list: &[u8],
     flag: &[u8],
-    e_string: *mut E::EString,
+    e_string: StoreRef<E::EString>,
     target: &[u8],
     quiet: bool,
 ) -> Decision {
     let name: &[u8] = request.get_resolved_name(lockfile);
     let name_hash = lockfile.packages.items_name_hash()[request.package_id as usize];
-    // SAFETY: same slot `edit` just wrote through; see the write in `edit_target`.
-    let literal: &[u8] = unsafe { (*e_string).data }.slice();
+    let literal: &[u8] = e_string.data.slice();
 
     if keys_named(package_json, dependency_list, name) > 1 {
         refuse_declared(literal, target, name, flag);
@@ -759,7 +758,7 @@ pub(crate) fn edit_target(
     let flag_literal = flag.map(|name| StoreStr::new(reference_literal(arena, name)));
 
     for request in updates.iter_mut() {
-        let Some(e_string) = request.e_string else {
+        let Some(mut e_string) = request.e_string else {
             continue;
         };
         if !request.is_aliased {
@@ -781,8 +780,7 @@ pub(crate) fn edit_target(
                 quiet,
             );
             if decision == Decision::Convert {
-                // SAFETY: see the write at the bottom of this loop.
-                unsafe { (*e_string).data = flag_literal.expect("infallible: flag is Some") };
+                e_string.data = flag_literal.expect("infallible: flag is Some");
             }
             continue;
         }
@@ -817,8 +815,7 @@ pub(crate) fn edit_target(
                         Decision::Convert => flag_literal.expect("infallible: flag is Some"),
                         Decision::Keep => {
                             if let Some(slot) = existing {
-                                // SAFETY: see the write at the bottom of this loop.
-                                unsafe { (*e_string).data = slot };
+                                e_string.data = slot;
                             }
                             request.e_string = None;
                             continue;
@@ -831,8 +828,7 @@ pub(crate) fn edit_target(
                 _ => continue,
             }
         };
-        // SAFETY: same slot `edit` just wrote through (PackageJSONEditor.rs `request.e_string` loop); the tree it points into is still live and no other borrow of it exists here.
-        unsafe { (*e_string).data = literal };
+        e_string.data = literal;
     }
     Ok(())
 }

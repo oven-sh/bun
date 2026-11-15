@@ -1,57 +1,48 @@
 use bun_aot_interface as interface;
 use bun_aot_interface::Opaque;
 use bun_ast::Log;
-use bun_options_types::aot_options::{ExplainSet, ReplacedByTests, ReportDetail};
+use bun_options_types::aot_options::{AotOptions, ExplainSet};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::NamedValues;
 use bun_sema::hir_from_data::DataValue;
 use bun_sema::program::Files;
 use bun_sema::session::Arena;
-use bun_sema::util::SharedSort;
 use bun_trim::UsedFeatures;
 
-use crate::builtins::unlinked_files::UnlinkedFiles;
 use crate::compile::{BuildFailed, CodeOfWorkers, Compilation, compile};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::log_diagnostic;
 use crate::engine::{self, EngineModuleId, EngineResult, RejectedOptionWord};
 use crate::load::data_modules::parse_json;
 use crate::load::source_provider::SourceProvider;
+use crate::modules::UnlinkedFiles;
 use crate::options::Options;
 use crate::report::{self, ReportEntry, ReportInput, ReportMessage};
-use crate::statistics::{StatisticId, Statistics};
+use crate::statistics::{
+    StatisticId, Statistics, log_part_outside_stages, log_time_outside_stages,
+};
 
 fn wrap_statistics(statistics: Statistics) -> interface::statistics::Statistics {
     interface::statistics::Statistics(Opaque::new(statistics))
 }
 
 fn wrap_compilation(compilation: Compilation) -> interface::Compilation {
-    let wrap_engine = |engine| interface::engine::EngineResult(Opaque::new(engine));
-    let (summary, further) = (compilation.summary, compilation.further_programs);
-    // Where no file names a constructor and flow finds no start without a name, a constructor is at most within reach of an object
-    // that has escaped, which starts nothing.
+    let summary = compilation.summary;
     let starts_workers_from_unseen_code = compilation.started_workers.code == CodeOfWorkers::Unseen;
-    let mut replaced_builtins = compilation.replaced_builtins;
-    replaced_builtins.builtins.shared_sort_unstable();
-    replaced_builtins.builtins.dedup();
-    replaced_builtins
-        .names_added_to_builtins
-        .shared_sort_unstable();
-    replaced_builtins.names_added_to_builtins.dedup();
     interface::Compilation {
-        replaced_builtins,
         starts_workers_from_unseen_code,
         names_of_worker_files: compilation.started_workers.names,
+        names_followed: compilation.started_workers.names_followed,
+        names_plugin: compilation.started_workers.names_plugin,
         root_folders_spelled: compilation.started_workers.root_folders_spelled,
+        levels_above_root: compilation.started_workers.levels_above_root,
         holds_source_paths: compilation.holds_source_paths,
-        imports_file_with_query: compilation.started_workers.imports_file_with_query,
         program_files: compilation.started_workers.program_files,
-        engine: wrap_engine(compilation.engine),
-        further_programs: further.into_iter().map(wrap_engine).collect(),
+        names_added_to_builtins: compilation.names_added_to_builtins,
+        engine: interface::engine::EngineResult(Opaque::new(compilation.engine)),
         summary: interface::compile::ProgramSummary {
             entry_points: summary.entry_points,
             folders: summary.folders,
-            names: interface::link::ProgramNames(Opaque::new(summary.names)),
             texts: interface::report::SourceTexts(Opaque::new(summary.texts)),
             statistics: wrap_statistics(summary.statistics),
             modules: summary.modules,
@@ -64,17 +55,12 @@ fn wrap_failure(failure: BuildFailed) -> interface::BuildFailed {
         stage: failure.stage,
         is_internal_error: failure.is_internal_error,
         statistics: wrap_statistics(failure.statistics),
-        compilation: failure
-            .compilation
-            .map(|compilation| Box::new(wrap_compilation(*compilation))),
-        refused_entry_points: failure.refused_entry_points,
     }
 }
 
 fn unwrap_input<'a>(input: &interface::report::ReportInput<'a>) -> ReportInput<'a> {
     ReportInput {
         engine: input.engine.0.get(),
-        names: input.names.0.get(),
         texts: input.texts.0.get(),
         statistics: input.statistics.0.get(),
         options: input.options,
@@ -91,7 +77,6 @@ interface::define_linked_functions! {
     fn bun_aot_compile(options: &Options<'_>, provider: &dyn SourceProvider, log: &mut Log) -> Result<interface::Compilation, interface::BuildFailed> {
         compile(options, provider, log).map(wrap_compilation).map_err(wrap_failure)
     }
-
 
     fn bun_aot_log_diagnostic(log: &mut Log, code: Code, arguments: &[&[u8]]) {
         log_diagnostic(log, code, arguments);
@@ -113,12 +98,12 @@ interface::define_linked_functions! {
         result.0.get::<EngineResult>().image()
     }
 
-    fn bun_aot_entry_module_ids(result: &interface::engine::EngineResult) -> &[EngineModuleId] {
-        result.0.get::<EngineResult>().entry_module_ids()
+    fn bun_aot_image_mut_and_symbols(result: &mut interface::engine::EngineResult) -> (Option<&mut [u8]>, &[u8]) {
+        result.0.get_mut::<EngineResult>().image_mut_and_symbols()
     }
 
-    fn bun_aot_symbols(result: &interface::engine::EngineResult) -> &[u8] {
-        result.0.get::<EngineResult>().symbols()
+    fn bun_aot_entry_module_ids(result: &interface::engine::EngineResult) -> &[EngineModuleId] {
+        result.0.get::<EngineResult>().entry_module_ids()
     }
 
     fn bun_aot_new_statistics() -> interface::statistics::Statistics {
@@ -129,16 +114,24 @@ interface::define_linked_functions! {
         statistics.0.get::<Statistics>().get(id)
     }
 
+    fn bun_aot_log_time_outside_stages(name: &str) {
+        log_time_outside_stages(name);
+    }
+
+    fn bun_aot_log_part_outside_stages(name: &str) {
+        log_part_outside_stages(name);
+    }
+
     fn bun_aot_new_report_line(kind: ExplainSet, text: Vec<u8>) -> interface::report::ReportEntry {
         wrap_entry(ReportEntry::line(kind, text))
     }
 
-    fn bun_aot_write_summary(input: &interface::report::ReportInput<'_>, out: &mut Vec<u8>) {
-        report::write_summary(&unwrap_input(input), out);
+    fn bun_aot_write_summary(input: &interface::report::ReportInput<'_>, has_colors: bool, out: &mut Vec<u8>) {
+        report::write_summary(&unwrap_input(input), has_colors, out);
     }
 
-    fn bun_aot_write_untyped_note(statistics: &interface::statistics::Statistics, out: &mut Vec<u8>) {
-        report::write_untyped_note(statistics.0.get(), out);
+    fn bun_aot_write_developer_options(options: &AotOptions, out: &mut Vec<u8>) {
+        report::write_developer_options(options, out);
     }
 
     fn bun_aot_collect_report_entries(input: &interface::report::ReportInput<'_>, kinds: ExplainSet) -> Vec<interface::report::ReportEntry> {
@@ -151,44 +144,28 @@ interface::define_linked_functions! {
         report::to_messages(texts.0.get(), &entries)
     }
 
-    fn bun_aot_write_obfuscation_map(engine: &interface::engine::EngineResult, names: &interface::link::ProgramNames, texts: &interface::report::SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Vec<u8> {
+    fn bun_aot_write_obfuscation_map(engine: &interface::engine::EngineResult, texts: &interface::report::SourceTexts, file_name: &[u8], debug_id: Option<&[u8]>) -> Result<Vec<u8>, interface::report::SourceChanged> {
         let executable = report::obfuscation_map::Executable { file_name, debug_id };
-        report::obfuscation_map::write(engine.0.get(), names.0.get(), texts.0.get(), executable)
+        report::obfuscation_map::write(engine.0.get(), texts.0.get(), executable)
     }
 
-    fn bun_aot_write_build_report(input: &interface::report::ReportInput<'_>, detail: ReportDetail, build_id: Option<&[u8]>) -> Vec<u8> {
-        report::build_report::write(&unwrap_input(input), detail, build_id)
+    fn bun_aot_globals_that_a_window_replaces() -> Vec<u32> {
+        crate::load::globals_of_a_window::globals_that_a_window_replaces()
     }
 
-    fn bun_aot_write_registry() -> Vec<u8> {
-        report::registry::write()
+    fn bun_aot_lists_laid_anew_between_test_files() -> Vec<u32> {
+        crate::load::asked_by_test_runner::lists_laid_anew_between_test_files()
     }
 
-    fn bun_aot_unlinked_named_values<'a, 's>(files: &'a Files<'s>, atoms: &Interner<'s>) -> Box<dyn NamedValues + 'a> {
-        Box::new(UnlinkedFiles::new(files, atoms))
+    fn bun_aot_find_importers_outside_run(root: &[u8], files: &[Vec<u8>], is_compiled: &(dyn Fn(&[u8]) -> bool + Sync)) -> Vec<Option<Vec<u8>>> {
+        crate::test_runs::files_of_run::find_importers_on_disk(root, files, is_compiled)
     }
 
-    fn bun_aot_find_what_tests_replace(files: &[Vec<u8>], threads: usize, resolve: &mut dyn FnMut(&[u8], &[u8], bool) -> Option<Vec<u8>>) -> ReplacedByTests {
-        crate::load::replaced_by_tests::find_what_tests_replace(files, threads, resolve)
+    fn bun_aot_imports_vitest(path: &[u8], text: &[u8]) -> bool {
+        crate::load::asked_by_test_runner::imports_vitest(path, text)
     }
 
-    fn bun_aot_everything_that_tests_replace() -> ReplacedByTests {
-        crate::load::replaced_by_tests::everything_that_tests_replace()
-    }
-
-    fn bun_aot_library_modules_that_programs_load() -> Vec<&'static [u8]> {
-        crate::load::runtime_modules::library_modules_that_programs_load()
-    }
-
-    fn bun_aot_builtins_that_load_library_modules() -> Vec<String> {
-        crate::load::runtime_modules::builtins_that_load_library_modules()
-    }
-
-    fn bun_aot_library_modules_spelled_in(text: &[u8]) -> Option<Vec<&'static [u8]>> {
-        crate::load::runtime_modules::library_modules_spelled_in(text)
-    }
-
-    fn bun_aot_builtins_that_load_library_modules_spelled_in(text: &[u8]) -> Option<Vec<String>> {
-        crate::load::runtime_modules::builtins_that_load_library_modules_spelled_in(text)
+    fn bun_aot_name_values_of_unlinked_files<'a>(files: &'a Files<'_>) -> Box<dyn NamedValues + 'a> {
+        Box::new(UnlinkedFiles::new(files))
     }
 }

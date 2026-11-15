@@ -1,15 +1,15 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="unused"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="used"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="helper"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="helperOfUnused"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 
 // What `import()` answers with holds every export.

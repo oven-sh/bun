@@ -1,0 +1,17 @@
+# A word that comes round as an int32 is asked in front of the typed copy for an integer from -2 ** 31 to 2 ** 32 - 1. -0 is none: with no turn at all the loop hands back -0 itself, with one turn 1.
+# The questions are counted.
+# -- source: a-word-that-is-minus-zero-is-handed-back-as-it-entered.ts
+# declare function hidden(): number;
+# declare function say(x: string): void;
+# function last(xs: number[], n: number): number { let a = xs[0]!; for (let i = 0; i < n; i++) a = (a + 1) | 0; return a; }
+# say(String(Object.is(last([hidden()], hidden()), -0))); say(String(Object.is(last([hidden()], hidden()), 0))); say(String(last([hidden()], hidden()))); say(String(last([hidden()], hidden())));
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK: = TypeTest {{*}}testedType=int[-562949953421312, 562949953421312]
+# RUN(COUNT): compile Int32OrUint32GuardsHoisted mechanisms=all
+# COUNT: statistic Int32OrUint32GuardsHoisted 1
+# RUN(SHELL): run-in-shell const all = [-0, 0, 0, 0, -0, 1, 4294967295, 0]; let at = 0; globalThis.hidden = () => all[at++]; globalThis.say = (x) => print(String(x));
+# SHELL: true
+# SHELL-NEXT: true
+# SHELL-NEXT: 1
+# SHELL-NEXT: 4294967295

@@ -1,0 +1,16 @@
+# -- source: main.js
+# const table = { handler: (x) => x + 3 };
+# globalThis.table = table;
+# function run() { let sum = 0; for (let i = 0; i < 64; i++) sum = table.handler(sum) | 0; return sum; }
+# globalThis.run = run;
+# print(run());
+# -- end of source
+# `table` goes out of sight, so nothing is proven of what it holds. It is stored once, by a literal of its own file: that record is expected of it, and behind one test of the record its slot is read.
+# f1 = run
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: = PropGet {{*}} key="handler"
+# CHECK: = GetSlot {{*}} key="handler" receivers=[L0]
+# CHECK-NOT: = PropGet {{*}} key="handler"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 192

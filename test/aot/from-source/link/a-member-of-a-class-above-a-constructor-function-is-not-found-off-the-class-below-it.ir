@@ -1,0 +1,23 @@
+# Only the prototype objects are linked: Base.prototype stands below Top.prototype, and the function object Base stands below Function.prototype as every function does.
+# `A.make` goes A, Base, Function.prototype and never passes Top: nothing is found, and the call throws. If the lookup went up the row of layouts it would enter Top.make, which nobody calls, and `x` would be held to take a text.
+# -- source: main.js
+# function Base() {}
+# class O { constructor(n) { this.x = n; } }
+# class Top { static make(o) { o.x = "text"; return 1; } }
+# Object.setPrototypeOf(Base.prototype, Top.prototype);
+# class A extends Base {}
+# const o = new O(1);
+# let said;
+# try { said = A.make(o); } catch (error) { said = error.constructor.name; }
+# print(said, o.x + 1, new A() instanceof Top);
+# -- end of source
+# f4 = make
+# RUN: link functions fields mechanisms=all
+# CHECK: function f4 unreached
+# CHECK: field L0.0 "x" proven=int[0, 2147483647] writers-known
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: TypeError 2 true
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: TypeError 2 true
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: TypeError 2 true

@@ -1,5 +1,5 @@
 // Every way in which JavaScript that isn't in the executable could start inside it, one small program each. The whole-program analysis of --aot assumes that it
-// has seen all the code that will ever run: either the build finds that the program can run other code (the report lists an event under `unseenCode`, and nothing
+// has seen all the code that will ever run: either the build finds that the program can run other code (`--explain=trim` prints a line for the event, and nothing
 // is proven about what that code can reach), or the attempt throws at run time. A route that runs the code in an executable whose build found no event fails here.
 // An evaluator is followed as a value: the event is raised where it is called, and where the compiler loses track of it. One that is read off a value the compiler
 // knows nothing about raises no event, and its call throws before any string is evaluated.
@@ -9,7 +9,6 @@
 // What native code can do to a compiled program is the subject of native-addons.test.ts.
 import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { readFileSync } from "node:fs";
 import { join } from "path";
 import { slot, spawned } from "./harness/commands";
 import { beforeAll, describe, test } from "./supported";
@@ -146,22 +145,22 @@ const routes: Record<string, Record<string, Route>> = {
   },
   "workers": {
     "worker of a file": {
-      body: `const w = new Worker(temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker of a blob url": {
       runsApartFromTheProgram: true,
-      body: `const w = new Worker(URL.createObjectURL(new Blob([glue('postMessage(', '1)')], { type: 'text/javascript' }))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(URL.createObjectURL(new Blob([glue('postMessage(', '1)')], { type: 'text/javascript' }))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker of a data url": {
       runsApartFromTheProgram: true,
-      body: `const w = new Worker(glue('data:text/javascript,', 'postMessage(1)')); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(glue('data:text/javascript,', 'postMessage(1)')); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker threads eval": {
       runsApartFromTheProgram: true,
-      body: `const { Worker } = require('node:worker_threads'); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const { Worker } = require('node:worker_threads'); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); w.on('exit', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "worker with preload": {
-      body: `const w = new Worker(temporaryFile('.js', ''), { preload: [temporaryFile('.js', glue('postMessage(', '1)'))] }); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new Worker(temporaryFile('.js', ''), { preload: [temporaryFile('.js', glue('postMessage(', '1)'))] }); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
   },
   "Bun's own APIs": {
@@ -256,14 +255,14 @@ const routes: Record<string, Record<string, Route>> = {
     },
     "unnamed worker threads eval": {
       runsApartFromTheProgram: true,
-      body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const { Worker } = require(glue('node:', 'worker_threads')); const w = new Worker(glue('require("node:worker_threads").parentPort.postMessage(', '1)'), { eval: true }); await new Promise((res, rej) => { w.on('message', () => { globalThis.RAN = 1; res(); }); w.on('error', rej); w.on('exit', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "unnamed repl": { body: `typeof require(glue('node:', 'repl')).start` },
     "plugin under a computed name": {
       body: `Bun[glue('plu', 'gin')]({ name: 'p', setup(b) { b.module(glue('virtual-', 'module'), () => ({ contents: moduleText, loader: 'js' })); } }); await import(glue('virtual-', 'module'))`,
     },
     "worker under a computed name": {
-      body: `const w = new globalThis[glue('Wor', 'ker')](temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); setTimeout(() => rej(new Error('no message')), 1500); }).finally(() => w.terminate())`,
+      body: `const w = new globalThis[glue('Wor', 'ker')](temporaryFile('.js', glue('postMessage(', '1)'))); await new Promise((res, rej) => { w.onmessage = () => { globalThis.RAN = 1; res(); }; w.onerror = e => rej(new Error(e.message)); w.addEventListener('close', () => rej(new Error('no message'))); }).finally(() => w.terminate())`,
     },
     "module compile under a computed name": {
       body: `const Module = require(glue('node:', 'module')); new Module('/x.js')[glue('_com', 'pile')](moduleText, '/x.js')`,
@@ -329,23 +328,17 @@ const routes: Record<string, Record<string, Route>> = {
   },
 };
 
-// One build for each route would be a hundred builds. The routes are files of two programs, whose entry points import the file that ROUTE names, and the report says in which file each event lies.
-// In the first program are the routes for which the build finds an event: each opens the program to unseen code by itself. In the second are those for which it finds none, so that program stays
-// closed, and a route in it that runs the code fails.
+// A route for which the build finds an event is a program of its own: the report has a line for each kind of event and each API, with one place, so in company it would not tell whose an event is.
+// The routes for which the build finds none are files of one program, whose entry point imports the file that ROUTE names: that program stays closed, and a route in it that runs the code fails.
 const findsNoEvent = new Set([
-  "addon extension handler",
-  "addon extension handler under a computed name",
   "arguments callee caller",
   "be bun in environment",
   "call site get function",
   "call site get this",
   "eval argument",
-  "eval from a descriptor",
-  "eval under a computed name",
   "function arguments",
   "function caller",
   "function constructor under a computed member",
-  "function constructor under a computed name",
   "immediate with a string",
   "inspect argument",
   "inspect in environment",
@@ -356,11 +349,8 @@ const findsNoEvent = new Set([
   "loader provide fetch",
   "loader registry hands out modules",
   "loader request import",
-  "module compile through constructor",
-  "module extensions",
   "module prototype load",
   "module register",
-  "module run main",
   "preload argument",
   "preload in bun options",
   "preload in bunfig",
@@ -381,22 +371,14 @@ const findsNoEvent = new Set([
   "worker of a data url",
   "worker of a file",
   "worker threads eval",
-  "worker under a computed name",
   "worker with preload",
 ]);
 
-// The event of these lies in a built-in module or nowhere, so only a program of their own tells whose it is.
-const builtAlone = new Set([
-  "eval as a callback of map",
-  "eval as a promise reaction",
-  "function constructor through reflect construct",
-  "function constructor bound",
-  "vm named",
-  "bun ffi named",
-  "bun ffi cc",
-]);
-
-type Event = { location: { file: string } | null };
+/** `file`: as the build prints it. Undefined: the event lies nowhere in the program. */
+type Event = { file: string | undefined };
+// That the program starts a Worker from code outside the executable is printed in a line of the same make. It is no event: that code runs apart from the program.
+const lineOfEvent =
+  /^aot: trim: blocked by (?!dynamic-import: the program starts a Worker from code that isn't in the executable)[\w-]+: .*?(?: at (.+):\d+:\d+)?$/;
 const all = Object.entries(routes).flatMap(([group, members]) =>
   Object.entries(members).map(([name, route]) => ({
     group,
@@ -417,14 +399,17 @@ const others = {
 
 async function build(folder: string, main: string) {
   const executable = join(folder, isWindows ? "program.exe" : "program");
-  const report = join(folder, "report.json");
   const built = await spawned(
-    [bunExe(), "build", "--compile", "--aot", "--aot-report=" + report, main, "--outfile", executable],
+    [bunExe(), "build", "--compile", "--aot", "--explain=trim", main, "--outfile", executable],
     folder,
-    bunEnv,
+    { ...bunEnv, NO_COLOR: "1" },
   );
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
-  return { executable, events: JSON.parse(readFileSync(report, "utf8")).unseenCode as Event[] };
+  const events: Event[] = built.stderr.split(/\r?\n/).flatMap(line => {
+    const found = lineOfEvent.exec(line);
+    return found ? [{ file: found[1] }] : [];
+  });
+  return { executable, events };
 }
 
 async function judge(
@@ -466,51 +451,44 @@ async function judge(
 
 export function codeTheCompilerNeverSaw() {
   describe.concurrent("code the compiler never saw, in a program of its own", () => {
-    for (const { group, name, route, file } of all.filter(({ name }) => builtAlone.has(name))) {
+    for (const { group, name, route, file } of all.filter(({ name }) => !findsNoEvent.has(name))) {
       test(
         `${group}: ${name}`,
         () =>
           slot(async () => {
             using dir = tempDir("aot-unseen-code", { [file]: textOf(route), ...others });
             const { executable, events } = await build(String(dir), file);
-            await judge(String(dir), executable, events.length > 0, route);
+            expect({ sawAnEvent: events.length > 0 }).toEqual({ sawAnEvent: true });
+            await judge(String(dir), executable, true, route);
           }),
         600_000,
       );
     }
   });
 
-  for (const [title, routesOfProgram] of [
-    [
-      "in a program that the build finds open",
-      all.filter(({ name }) => !findsNoEvent.has(name) && !builtAlone.has(name)),
-    ],
-    ["in a program that the build finds closed", all.filter(({ name }) => findsNoEvent.has(name))],
-  ] as const) {
-    describe(`code the compiler never saw, ${title}`, () => {
-      const dir = tempDir("aot-unseen-code", {
-        "main.js":
-          `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
-          `routes[process.env.ROUTE]();\n`,
-        ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
-        ...others,
-      });
-      afterAll(() => dir[Symbol.dispose]());
-      let built: Awaited<ReturnType<typeof build>>;
-      beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
-      for (const { group, name, route, file } of routesOfProgram) {
-        test.concurrent(
-          `${group}: ${name}`,
-          () =>
-            slot(async () => {
-              using run = tempDir("aot-unseen-code-run", others);
-              const sawAnEvent = built.events.some(event => event.location?.file.replaceAll("\\", "/").endsWith(file));
-              expect({ sawAnEvent }).toEqual({ sawAnEvent: !findsNoEvent.has(name) });
-              await judge(String(run), built.executable, sawAnEvent, route, { ROUTE: file });
-            }),
-          600_000,
-        );
-      }
+  const routesOfProgram = all.filter(({ name }) => findsNoEvent.has(name));
+  describe("code the compiler never saw, in a program that the build finds closed", () => {
+    const dir = tempDir("aot-unseen-code", {
+      "main.js":
+        `const routes = {\n${routesOfProgram.map(({ file }) => `  ${JSON.stringify(file)}: () => import("./${file}"),\n`).join("")}};\n` +
+        `routes[process.env.ROUTE]();\n`,
+      ...Object.fromEntries(routesOfProgram.map(({ file, route }) => [file, textOf(route)])),
+      ...others,
     });
-  }
+    afterAll(() => dir[Symbol.dispose]());
+    let built: Awaited<ReturnType<typeof build>>;
+    beforeAll(async () => void (built = await build(String(dir), "main.js")), 600_000);
+    for (const { group, name, route, file } of routesOfProgram) {
+      test.concurrent(
+        `${group}: ${name}`,
+        () =>
+          slot(async () => {
+            using run = tempDir("aot-unseen-code-run", others);
+            expect(built.events).toEqual([]);
+            await judge(String(run), built.executable, false, route, { ROUTE: file });
+          }),
+        600_000,
+      );
+    }
+  });
 }

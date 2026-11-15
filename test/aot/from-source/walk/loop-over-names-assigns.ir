@@ -1,0 +1,17 @@
+# -- source: main.js
+# class Meter { k = 2; read(x) { return x + this.k; } scale(x) { return x * this.k; } rest(x) { return x; } }
+# for (const name of ["read", "scale"]) { const original = Meter.prototype[name]; Meter.prototype[name] = function (x) { return original.call(this, x) + 1; }; }
+# function run(n) { const meter = new Meter(); let s = 0; for (let i = 0; i < n; i++) s = (s + meter.read(i & 3) + meter.scale(i) + meter.rest(i)) | 0; return s; }
+# print(run(100));
+# -- end of source
+# LIBRARY: own
+# A loop over written names wraps two of three methods. The two have guards of their own, and the third keeps the guard of a declared method.
+# RUN(READ): walk f1 mechanisms=all
+# READ: {{*}}kind=MemberAssigned layout=L0 key="read"{{*}}
+# RUN(SCALE): walk f1 mechanisms=all
+# SCALE: {{*}}kind=MemberAssigned layout=L0 key="scale"{{*}}
+# RUN(REST): walk f1 mechanisms=all
+# REST-NOT: {{*}}kind=MemberAssigned layout=L0 key="rest"{{*}}
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 15400
+# ANSWERS-NEXT: exited with 0

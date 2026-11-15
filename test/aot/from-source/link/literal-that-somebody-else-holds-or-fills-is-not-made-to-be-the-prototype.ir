@@ -1,0 +1,18 @@
+# A literal is known as the prototype object of a function only where it is filled under written names.
+# Filled under a key that is computed . filled by a spread: nobody follows it, nothing is expected of it, and the function and its layout go, as with any other object stored there.
+# That each of them also lays a getter changes nothing.
+# A literal that a call is passed ahead of the store, and one that is stored under two functions, are known by now: the prototype objects of their own constructors, whatever else holds them.
+# -- source: main.js
+# function Keyed() { this.d = 1; }
+# function Spread() { this.e = 1; }
+# Keyed.prototype = { [name()]: function () { return 3; }, m: function () { return 3; }, get g() { return 3; } };
+# Spread.prototype = { ...base(), m: function () { return 4; }, get g() { return 4; } };
+# print(new Keyed().m(), new Spread().m());
+# -- end of source
+# RUN(SCAN): summary f0
+# SCAN-NOT: made-for-it
+# SCAN-NOT: DefinesByDescriptor a
+# RUN: link members layouts mechanisms=all
+# CHECK-NOT: on-prototype
+# CHECK: layout L0 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+# CHECK: layout L1 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]

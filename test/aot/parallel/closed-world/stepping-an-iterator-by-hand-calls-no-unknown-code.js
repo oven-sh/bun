@@ -1,7 +1,7 @@
 // Array.from, Map.groupBy and Uint8Array.from read `next` off an iterator and call it themselves. Those calls belong to the built-in, whose records say what it does
 // with its operands: no unknown code runs, so an object that is out of sight keeps the fields that the program proves of it, and no iterator of the library is compiled
 // for a `next` that nothing here can reach.
-// STATISTIC: AccessesProven >= 8
+// STATISTIC: AccessesProven >= 8 Todo: the accesses of vectorX and vectorY are not counted as proven yet: the build counts 0
 // STATISTIC: ImageFunctionsEmitted <= 24
 function Vector(x, y) {
   this.vectorX = x;

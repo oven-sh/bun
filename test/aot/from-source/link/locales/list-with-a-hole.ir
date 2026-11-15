@@ -1,0 +1,10 @@
+# a hole finds what lies above the list
+# -- source: list-with-a-hole.ts
+# declare function sink(...values: unknown[]): void;
+# declare const input: any; // @ts-expect-error
+# new Intl.Collator(["fr", , "it"]);
+# -- end of source
+# RUN: locales
+# CHECK: locale unknown IntlCollator at f0
+# RUN(NEVER): locales
+# NEVER-NOT: locale constant

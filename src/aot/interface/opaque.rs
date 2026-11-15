@@ -10,4 +10,8 @@ impl Opaque {
     pub fn get<T: Any>(&self) -> &T {
         self.0.downcast_ref().expect("a value of another type")
     }
+
+    pub fn get_mut<T: Any>(&mut self) -> &mut T {
+        self.0.downcast_mut().expect("a value of another type")
+    }
 }

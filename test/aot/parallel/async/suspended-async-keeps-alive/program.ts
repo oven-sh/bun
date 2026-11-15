@@ -212,8 +212,8 @@ async function readInCatch(i: number): Promise<number> {
   }
 }
 
-// Starts 16 calls, lets them reach `await gate`, collects garbage and counts the bodies that are still alive. The collector scans
-// the stack conservatively, so a stale word may keep one or two of them.
+// Starts 16 calls, lets them reach `await gate`, collects garbage and counts the bodies that are still alive.
+// One or two that still are count as none.
 async function judge(name: string, start: (i: number) => Promise<number>): Promise<void> {
   watched = [];
   leaked = [];

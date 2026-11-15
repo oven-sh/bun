@@ -1,0 +1,12 @@
+# f1 = sum
+# -- source: main.ts
+# var holder: any = JSON.parse("{\"n\":3}"); holder.t = new Int32Array([1, 2, 3, 4]);
+# function sum(n: any): number { let s = 0; for (let i = 0, end = n | 0; i < end; i++) s = (s + holder.t[i & 3]) | 0; return s; }
+# print(sum(JSON.parse("6")));
+# -- end of source
+# A view is expected of the field. The preheader reads the variable and the field and tells the kinds of views apart, whatever is expected.
+# RUN: walk f1 mechanisms=all
+# CHECK: TypeTest {{*}} testedType=Uint8Array
+# CHECK: testedType=Float32Array|Float64Array|Int16Array|Int32Array
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 13

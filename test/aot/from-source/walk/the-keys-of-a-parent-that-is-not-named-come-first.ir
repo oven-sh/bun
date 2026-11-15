@@ -1,0 +1,19 @@
+# -- source: main.cjs
+# const Mix = Base => class extends Base { constructor(...list) { super(...list); this.m = 1; } };
+# class A { constructor(x) { this.x = x; } }
+# const B = Mix(A);
+# const kept = [null, null, null, null];
+# function run(count) { for (let i = 0; i < count; i++) kept[i & 3] = new B(i); return Object.keys(kept[1]).join(); }
+# print(run(9));
+# -- end of source
+# The parent's constructor runs first, so its keys come first: one allocation lists x ahead of m, and asks no table of key orders. f1 = run
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK-NOT: HasKeyOrder
+# CHECK: = NewObject -, {{*}} layout=L1 fields=[1, 0]
+# CHECK-NOT: HasKeyOrder
+# RUN(FIELDS): link fields mechanisms=all
+# FIELDS: field L1.0 "m"
+# FIELDS: field L1.1 "x"
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: x,m

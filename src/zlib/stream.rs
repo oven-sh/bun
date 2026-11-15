@@ -10,7 +10,7 @@ use bun_zlib_sys::shared::{DataType, ReturnCode, uInt, uLong, zStream_struct};
 
 #[allow(non_snake_case)]
 mod ZlibAllocator {
-    bun_alloc::c_thunks_for_zone!("zlib");
+    bun_alloc::c_thunks_for_zone!(c"zlib");
     pub(crate) use malloc_items as alloc;
 }
 

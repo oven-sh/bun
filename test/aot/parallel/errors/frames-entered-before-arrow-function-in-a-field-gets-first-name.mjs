@@ -1,4 +1,3 @@
-// Todo: row 3558: the calls `holder.handle(..)` of the object whose arrow function gets the name print `handle`: they enter the function without its function object, which is made when the field is read
 // An arrow function in a field of a class is made for every object. One of them leaves sight and gets a name behind the stacks. The others keep the name that is written.
 const never = process.argv.length > 1000 ? "x" : "";
 const handedBack = new Function("f", "return f;" + never);

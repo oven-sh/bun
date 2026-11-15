@@ -1,0 +1,23 @@
+# -- source: a-generator-of-two-yields-is-walked-in-place-where-the-loop-over-it-returns-in-its-first-turn.ts
+# declare const sink: any;
+# type Part = { flags: number; name: string };
+# const parts: Part[] = JSON.parse('[{"flags":3,"name":"a"},{"flags":1,"name":"b"},{"flags":0,"name":"c"},{"flags":2,"name":"d"}]');
+# const known = new Map<string, Part>([["c", parts[2]], ["b", parts[1]]]);
+# let turns = 0;
+# function* unmatched(all: Part[], wanted: boolean, least: number) { for (const part of all) { turns++; if (part.flags === 3) continue; if (wanted || !(part.flags & 1)) { const found = known.get(part.name); if (!found) yield part; else if (found.flags > least) yield part; } } }
+# function first(all: Part[], wanted: boolean, least: number) { for (const value of unmatched(all, wanted, least)) return value; return undefined; }
+# const seen: string[] = [];
+# for (const [wanted, least] of [[false, 9], [true, 9], [true, 0], [false, -1], [true, -1]] as [boolean, number][]) seen.push(String(first(parts, wanted, least)?.name) + turns);
+# seen.push(String(first([], true, 0)) + turns);
+# sink(seen.join(" "));
+# -- end of source
+# `for (const value of unmatched(..)) return value;`: the loop over the generator returns in its first turn, so the step stands in the block of the call and of the open. A generator of more than one yield is
+# not walked in place where the region of the iteration itself holds an iteration that is walked in place; the rule read the whole block and so counted the open of this very generator against it: the
+# generator was made, stepped by a stub and closed: 316 instructions a call more. What stands in front of the step is no part of the region.
+# f1 = unmatched, f2 = first
+# RUN: walk f2:Body mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: coroutine(f1)
+# CHECK-NOT: = StepGenerator
+# RUN(SHELL): run-in-shell globalThis.sink = print;
+# SHELL: d4 d8 b10 c13 b15 undefined15

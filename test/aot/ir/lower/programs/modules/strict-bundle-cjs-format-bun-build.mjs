@@ -30,8 +30,6 @@ exports.late = 2;
 // CHECK: function {{*}}
 // CHECK: module=[[m_0]] kind=Module thisType={type=anything} results=[{type=anything}] {
 // CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
 // CHECK-NEXT: v0 = Builtin builtin=GlobalThis
 // CHECK-NEXT: v1 = PropGet v0 key="console" [isFreeName]
 // CHECK-NEXT: v2 = Convert v1 declared={type=builtin(Console) flags=[IsExpected]}
@@ -41,10 +39,9 @@ exports.late = 2;
 // CHECK-NEXT: v6 = PropGet v5 key="stringify"
 // CHECK-NEXT: v7 = Convert v6 declared={type=builtin(JSONStringify) flags=[IsExpected]}
 // CHECK-NEXT: v8 = GetModuleVariable variable=[[g_1]]
-// CHECK-NEXT: v9 = Convert v8 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
+// CHECK-NEXT: v9 = CheckInitialized v8 name="m"
 // CHECK-NEXT: v10 = Call v7, v5, v9 calleeKey="stringify" calleeName="JSON.stringify"
-// CHECK-NEXT: v11 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: v12 = Call v4, v2, v11 calleeKey="log" calleeName="console.log"
-// CHECK-NEXT: v13 = Undefined
-// CHECK-NEXT: Return v13
+// CHECK-NEXT: v11 = Call v4, v2, v10 calleeKey="log" calleeName="console.log"
+// CHECK-NEXT: v12 = Undefined
+// CHECK-NEXT: Return v12
 // CHECK-NEXT: }

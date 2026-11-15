@@ -1,0 +1,30 @@
+# -- source: main.js
+# function one(x) { return x + 1; }
+# function two(x) { return x + 2; }
+# function three(x) { return x + 3; }
+# function four(x) { return x + 4; }
+# function pick(i) { return i & 1 ? one : two; }
+# function other(i) { return i & 1 ? three : four; }
+# print(pick(1)(1) + pick(2)(1));
+# const marked = pick(1);
+# marked.tag = "t";
+# print(one.tag + two.tag);
+# print(other(1)(1) + other(2)(1));
+# print(hand(other(1)) + hand(other(2)));
+# print([1, 2].map(pick(2)).join());
+# -- end of source
+# A store through the set lands on one of the two, unseen code calls what it is handed with a text, and a built-in calls its callback with three arguments. Whoever does more with the set than call it lets its members go, and what Link proved of them goes with that.
+# RUN(ANSWER): run-in-shell globalThis.hand = (f) => f("s");
+# ANSWER: 5
+# ANSWER-NEXT: tundefined
+# ANSWER-NEXT: 9
+# ANSWER-NEXT: s3s4
+# ANSWER-NEXT: 3,4
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.hand = (f) => f("s");
+# CHECKED: 5
+# CHECKED-NEXT: tundefined
+# CHECKED-NEXT: 9
+# CHECKED-NEXT: s3s4
+# CHECKED-NEXT: 3,4
+# CHECKED-NEXT: exited with 0

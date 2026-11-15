@@ -1,0 +1,3 @@
+// parent getter of function, nothing
+const show = (label, f) => { let r; try { r = f(); } catch (e) { r = `${e?.name}: ${e?.message}`.slice(0, 90); } console.log(label, typeof r === "object" ? Object.prototype.toString.call(r) : String(r).slice(0, 60)); };
+function f() { class P { k = 3; m(n) { return n * 2000 + this.k; } } class A extends P { z = 1; } let a = new A(); Object.defineProperty(P.prototype, "m", { get() { return function (n) { return n * 9 + this.k; }; }, configurable: true }); let s = 0; for (let j = 0; j < 150; j++) { s += a.m(j & 3); if (j === 70) {  } } a = new A(); for (let j = 0; j < 50; j++) { s += a.m(j & 3); } return s; } show("in a loop of a function", f);

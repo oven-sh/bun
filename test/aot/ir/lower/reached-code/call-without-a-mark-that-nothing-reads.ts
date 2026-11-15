@@ -1,9 +1,9 @@
 // RUN: link
 // CHECK-LABEL: function {{*}}name="usedHelper"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 // CHECK-LABEL: function {{*}}name="helperOfUnmarked"
-// CHECK-NOT: LeftOutOfExecutable
+// CHECK-NOT: OmittedFromExecutable
 // CHECK: Return
 
 // A call without the mark runs, whether or not anything reads its result.

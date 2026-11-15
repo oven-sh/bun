@@ -1,0 +1,14 @@
+# f1 = count
+# f2 = changed
+# -- source: main.mjs
+# function count(o, n) { let found = 0; for (let i = 0; i < n; i++) found += ("a" in o ? 1 : 0) + ("z" in o ? 10 : 0); return found; }
+# function changed(o, n) { let found = 0; for (let i = 0; i < n; i++) { if ("a" in o) found++; if (i === 2) delete o.a; } return found; }
+# const o = JSON.parse('{"a":1,"b":2}');
+# print(count(Object.create(o), 5), count(new Proxy(o, {}), 3), changed(o, 6));
+# -- end of source
+# The loop runs no code: both questions are asked once, before it.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = HasPropertyOrAbsent {{*}} key="a"
+# CHECK: = HasPropertyOrAbsent {{*}} key="z"
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 5 3 3

@@ -1,0 +1,17 @@
+# -- source: a-switch-over-an-element-with-cases-of-one-unit-speaks-for-a-text-as-a-comparison-does.js
+# function vowels(w) {
+#   let c = 0;
+#   for (const x of w) for (let i = 0; i < x.length; i++) { switch (x[i]) { case "a": case "e": case "i": case "o": case "u": c++; } }
+#   return c;
+# }
+# sink(vowels);
+# print(vowels(["alpha", "Beta", "gamma ray"]), vowels([["a", "b", "e"], "io"]), vowels([new Uint8Array(3)]));
+# -- end of source
+# A loop that holds `x[i]` against a text of one unit is built for a text and for a list: `x[i] === "a"`. A switch all of whose cases are texts of one unit says the same of `x`. In the text's copy the turn
+# reads a code unit and makes no text.
+# f1 = vowels
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = TypeTest {{*}} testedType=string
+# CHECK: = GetStringCodeUnit
+# RUN(ANSWERS): run-in-shell globalThis.sink = () => {};
+# ANSWERS: 7 4 0

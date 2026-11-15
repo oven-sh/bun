@@ -1,0 +1,14 @@
+# -- source: beside-an-element-off-a-list-that-holds-a-text-the-left-side-of-a-sum-keeps-its-hole.cjs
+# "use strict";
+# function lastLabel(list, names, t) { let last = "", sum = t & 1; for (let k = 0; k < 40; k++) { sum += list[k & 1] * 2; last = list[k & 3] + names[0]; } return sum + "|" + last; }
+# print(lastLabel([1.5, 2.5, 3.5], ["x", "y"], 3));
+# -- end of source
+# In a loop the left element of a sum of two elements reads a hole as NaN only where the right side is no text: it comes off a list of numbers tested in front of the loop. Here both lists are parameters, so nothing but a written
+# key stands between the two reads, and the right one holds texts: the left element keeps its hole: past the end it gives undefined, and the sum is "undefinedx". One read alone reads its hole as NaN: the one under the product.
+# What the safeguard is worth is asked by a lie in the file beside this one.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 161|undefinedx
+# CHECK-NEXT: exited with 0
+# RUN(KEEPS): walk f1 mechanisms=all
+# KEEPS-COUNT-1: readsHoleAsNaN
+# KEEPS-NOT: readsHoleAsNaN

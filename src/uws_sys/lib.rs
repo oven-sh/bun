@@ -529,14 +529,14 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, NOW_NS_UNKNOWN};
+pub use loop_::{Loop, NOW_NS_UNKNOWN, ThreadLoop};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;
 
 pub use body_reader_mixin::BodyReaderMixin;
 pub use connecting_socket::ConnectingSocket;
-pub use listen_socket::ListenSocket;
+pub use listen_socket::{ListenSocket, OwnedListenSocket};
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, SocketAddress, WebSocketUpgradeContext};

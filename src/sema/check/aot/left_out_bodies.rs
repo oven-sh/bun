@@ -57,15 +57,24 @@ impl LeftOutBodies {
 pub(in crate::check) struct LeftOutOfCheck<'p> {
     bodies: Option<&'p LeftOutBodies>,
     ranges: Vec<(u32, u32)>,
+    files_of_loader: &'p [FileId],
 }
 
 impl<'p> Checker<'p, '_> {
     pub fn set_left_out_bodies(&mut self, bodies: Option<&'p LeftOutBodies>) {
         self.left_out.bodies = bodies.filter(|bodies| !bodies.is_empty());
     }
+
+    pub fn set_files_left_to_loader(&mut self, files: &'p [FileId]) {
+        self.left_out.files_of_loader = files;
+    }
 }
 
 impl Checker<'_, '_> {
+    pub(in crate::check) fn is_left_to_loader(&self, file: FileId) -> bool {
+        self.left_out.files_of_loader.binary_search(&file).is_ok()
+    }
+
     pub(in crate::check) fn is_left_out(&self, file: FileId, function: FnId) -> bool {
         let bodies = self.left_out.bodies;
         bodies.is_some_and(|bodies| bodies.contains(FunctionRef { file, function }))
@@ -91,9 +100,11 @@ impl Checker<'_, '_> {
         (start, self.end_of_node(file, hir.node(function)))
     }
 
-    pub(in crate::check) fn find_left_out_ranges(&mut self, file: FileId) {
-        let mut ranges = std::mem::take(&mut self.left_out.ranges);
-        ranges.clear();
+    pub(in crate::check) fn push_left_out_functions_of(
+        &self,
+        file: FileId,
+        ranges: &mut Vec<(u32, u32)>,
+    ) {
         let functions = self
             .left_out
             .bodies
@@ -102,6 +113,12 @@ impl Checker<'_, '_> {
         let functions =
             functions.filter(|&it| !self.may_have_parameters_evaluated_with_class(file, it));
         ranges.extend(functions.map(|it| self.left_out_range(file, it)));
+    }
+
+    pub(in crate::check) fn find_left_out_ranges(&mut self, file: FileId) {
+        let mut ranges = std::mem::take(&mut self.left_out.ranges);
+        ranges.clear();
+        self.push_left_out_functions_of(file, &mut ranges);
         ranges.shared_sort_unstable();
         let mut end_of_outermost = 0;
         ranges.retain(|&(_, end)| {

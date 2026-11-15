@@ -157,7 +157,13 @@ throw new Error("execv failed");
       });
       if (holds(mustDeny)) expect(onAnOldKernel.stderr).toContain("prctl(PR_SET_MDWE)");
 
-      if ((await run([executable])).exitCode !== 0) return;
+      // On a kernel without PR_SET_MDWE an executable that must have it does not start, and says so. Whatever else ends it is a fault.
+      const started = await run([executable]);
+      if (holds(mustDeny) && started.exitCode === 1 && started.stderr.includes("prctl(PR_SET_MDWE)")) return;
+      expect({ stderr: started.stderr, exitCode: started.exitCode }).toEqual({
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
       const steered = await run([executable], undefined, { ...bunEnv, BUN_JSC_logGC: "1" });
       expect({ [readsFew.symbol]: holds(readsFew), [readsEvery.symbol]: holds(readsEvery) }).toEqual({
         [readsFew.symbol]: steered.exitCode === 1,

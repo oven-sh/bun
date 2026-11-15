@@ -1,5 +1,6 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::marker::{PhantomData, PhantomPinned};
+use core::ptr::NonNull;
 
 use bun_core::ZStr;
 use bun_http_types::Method::Method;
@@ -37,7 +38,7 @@ use bun_ptr::ThisPtr;
 //
 // 3. App.rs - Rust bindings that call the C wrapper functions
 //    - App<const SSL: bool> generic struct parameterized by SSL boolean
-//    - Methods like create(), destroy(), close() call corresponding C functions
+//    - Methods like close() call corresponding C functions
 //    - Type-safe wrappers around raw C pointers and function calls
 //    - Converts Rust slices to C pointer/length pairs
 //    - Provides compile-time SSL flag selection via SSL as i32
@@ -83,6 +84,27 @@ macro_rules! uws_app_route_methods {
     )*};
 }
 
+pub struct OwnedApp<const SSL: bool>(NonNull<App<SSL>>);
+
+impl<const SSL: bool> OwnedApp<SSL> {
+    pub fn new(opts: &BunSocketContextOptions) -> Option<Self> {
+        // SAFETY: FFI call; uws_create_app returns null on failure.
+        let app = unsafe { c::uws_create_app(App::<SSL>::SSL_FLAG, *opts) };
+        NonNull::new(app.cast()).map(Self)
+    }
+
+    pub fn as_ptr(&self) -> *mut App<SSL> {
+        self.0.as_ptr()
+    }
+}
+
+impl<const SSL: bool> Drop for OwnedApp<SSL> {
+    fn drop(&mut self) {
+        // SAFETY: created in `new` with the same flag, destroyed once.
+        unsafe { c::uws_app_destroy(App::<SSL>::SSL_FLAG, self.as_ptr().cast()) }
+    }
+}
+
 impl<const SSL: bool> App<SSL> {
     const SSL_FLAG: i32 = SSL as i32;
 
@@ -107,24 +129,6 @@ impl<const SSL: bool> App<SSL> {
     /// Returns the number of connections closed.
     pub fn close_idle_connections(&mut self, close_when_idle: bool) -> usize {
         c::uws_app_close_idle(Self::SSL_FLAG, self.as_raw(), i32::from(close_when_idle))
-    }
-
-    pub fn create(opts: &BunSocketContextOptions) -> Option<*mut Self> {
-        // SAFETY: FFI call; uws_create_app returns null on failure.
-        let app = unsafe { c::uws_create_app(Self::SSL_FLAG, *opts) };
-        if app.is_null() {
-            None
-        } else {
-            Some(app.cast::<Self>())
-        }
-    }
-
-    /// # Safety
-    /// `this` must be a live app handle from [`App::create`]. Caller must not use it after.
-    /// (FFI destroy on an opaque C-owned handle — intentionally not `Drop`.)
-    pub unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is a valid *mut uws_app_s; ssl flag matches construction.
-        unsafe { c::uws_app_destroy(Self::SSL_FLAG, this.cast::<uws_app_t>()) }
     }
 
     pub fn set_flags(
@@ -465,15 +469,20 @@ pub struct ListenSocket<const SSL: bool> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-impl<const SSL: bool> ListenSocket<SSL> {
-    #[inline]
-    pub fn close(&mut self) {
-        // S008: ListenSocket<SSL> is layout-identical to crate::ListenSocket
-        // (both ZST opaques) — safe deref via `opaque_deref_mut`.
-        bun_opaque::opaque_deref_mut(std::ptr::from_mut::<Self>(self).cast::<UwsListenSocket>())
-            .close()
+pub struct OwnedListenSocket<const SSL: bool>(crate::OwnedListenSocket);
+
+impl<const SSL: bool> OwnedListenSocket<SSL> {
+    /// SAFETY: `socket` is from an app's listen callback, and this drops before the loop frees it.
+    pub unsafe fn from_raw(socket: *mut UwsListenSocket) -> Option<Self> {
+        NonNull::new(socket).map(|socket| Self(crate::OwnedListenSocket(socket)))
     }
 
+    pub fn as_ptr(&self) -> *mut ListenSocket<SSL> {
+        self.0.as_ptr().cast()
+    }
+}
+
+impl<const SSL: bool> ListenSocket<SSL> {
     #[inline]
     pub fn get_local_port(&mut self) -> Option<u16> {
         // S008: opaque ZST cast as above.

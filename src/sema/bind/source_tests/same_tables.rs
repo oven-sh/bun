@@ -135,6 +135,7 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
         end,
         exit,
         contains_this,
+        is_context_sensitive,
     } = *info;
     let scope = numbering.scope(scope);
     let returns: Vec<StmtId> = bound.ids(returns).collect();
@@ -149,7 +150,8 @@ fn describe_fn(info: &FnInfo, bound: &Bound<'_>, numbering: &Numbering) -> Strin
             yields,
             end,
             exit,
-            contains_this
+            contains_this,
+            is_context_sensitive
         )
     )
 }
@@ -215,7 +217,7 @@ fn describe(
         class_symbol, class_owner, class_scope, interface_symbol, interface_scope,
         interface_contains_this, enum_scope, module_scope, alias_symbol, alias_scope, enum_symbol,
         enum_member_symbol, enum_member_owner, module_symbol, module_instance_state, var_stmt,
-        assignments, type_query_operands, unchecked_exprs,
+        assignments, type_query_operands, assignment_patterns, lists_assignment_patterns, unchecked_exprs,
         unchecked_types, infer_positions, expando_declarations, computed_symbols, case_stmt,
         stmt_flow, case_fallthrough, hoisted_vars, rejected_decorators, unused_labels, import_scope,
         import_equals_scope, export_scope, expr_scope: _, private_class,
@@ -284,7 +286,8 @@ fn describe(
     ));
 
     push_fields!(described, scalar_text: ran_out_of_stack, is_unbound, is_bound_in_part, file_symbol, commonjs_indicator,
-        module_exports_property, flow_depth, has_loop_types_that_depend_on_order);
+        module_exports_property, flow_depth, has_loop_types_that_depend_on_order,
+        lists_assignment_patterns);
     push_fields!(described, list_text: entries, nested_names, export_stars, ambient_modules,
         pattern_ambient_modules, global_augmentations, redeclarations, umd_globals, specifiers,
         module_augmentations, ambient_specifiers, expr_parent, stmt_parent,
@@ -292,7 +295,7 @@ fn describe(
         type_param_symbol, requires_scope_change, fn_symbol, class_symbol, class_owner,
         interface_symbol, interface_contains_this, alias_symbol, enum_symbol, enum_member_symbol,
         enum_member_owner, module_symbol, module_instance_state, var_stmt, assignments,
-        type_query_operands, unchecked_exprs, unchecked_types,
+        type_query_operands, assignment_patterns, unchecked_exprs, unchecked_types,
         infer_positions, expando_declarations, case_stmt, case_fallthrough,
         rejected_decorators, unused_labels, private_names_outside_class_bodies,
         classes_of_private_names, arguments_objects, identifiers_in_parameters,

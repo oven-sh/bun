@@ -1,0 +1,17 @@
+# f1 = squaredLength
+# -- source: destructure-a-pair-of-numbers.ts
+# function squaredLength(pair: [number, number]): number {
+#   const [x, y] = pair;
+#   return x * x + y * y;
+# }
+# declare const input: any;
+# const pair: [number, number] = [+input, +input];
+# (globalThis as any).pair = pair;
+# (globalThis as any).answer = squaredLength(pair);
+# -- end of source
+# The compiler before this one: 14 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 8, patches 4, moves 10, unlikely or rare 0.
+# RUN(X64): steps most:18 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 18

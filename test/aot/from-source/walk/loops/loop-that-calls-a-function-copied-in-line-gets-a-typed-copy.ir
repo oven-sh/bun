@@ -1,0 +1,16 @@
+# f1 = area, f2 = sum
+# -- source: main.ts
+# declare function sink(...values: unknown[]): void;
+# type Box = { w: number; h: number };
+# function area(box: Box): number { return box.w * box.h; }
+# function sum(kept: Box[]) { let total = 0; for (let i = 0; i < 64; i++) total += area(kept[i]); return total; }
+# const kept: Box[] = [];
+# for (let i = 0; i < 64; i++) kept.push({ w: i, h: i + 1 });
+# sink(kept, area);
+# sink(sum(kept));
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: isLoopHead=true
+# CHECK: isLoopHead=true
+# CHECK-NOT: form=Generic

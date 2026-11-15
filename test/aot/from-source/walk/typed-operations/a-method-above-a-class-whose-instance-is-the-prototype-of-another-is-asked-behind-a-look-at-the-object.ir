@@ -1,0 +1,35 @@
+# -- source: main.js
+# function Base(a) { this.a = a; }
+# Base.prototype.area = function () { return this.a + 1; };
+# function Heir(a) { this.a = a; this.b = 2; }
+# Heir.prototype = new Base(0);
+# Heir.prototype.constructor = Heir;
+# Heir.prototype.area = function () { return this.a + this.b; };
+# function Third(a) { this.a = a; this.b = 2; this.c = 3; }
+# Third.prototype = new Heir(0);
+# Third.prototype.constructor = Third;
+# Third.prototype.area = function () { return this.a + this.c; };
+# function run(turns) { var sum = 0; for (var i = 0; i < turns; i++) sum = (sum + new Heir(i & 7).area() + 7 * new Third(i & 3).area()) | 0; return sum; }
+# var made = [new Heir(1), new Heir(2)];
+# function each(turns) { var sum = 0; for (var i = 0; i < turns; i++) sum = (sum + made[i & 1].area()) | 0; return sum; }
+# print(run(10), each(10));
+# Heir.prototype[JSON.parse('"area"')] = function () { return 1000 + this.a; };
+# print(run(10), each(10));
+# -- end of source
+# f4 = run, f5 = each
+# An instance of Heir is the prototype of Third and holds a method under the name of a method of Heir: one object of Heir hides it, and the guard that speaks of every object of Heir ends when that
+# method is laid. The text says so: an instance of Heir is stored under `prototype`. So run() asks of Heir the guard that speaks of what stands above the objects, which a hiding object does not end;
+# the object that it made itself has nothing beside its fields.
+# RUN(GUARD): walk f4 mechanisms=all
+# GUARD: kind=MemberUnchangedAbove layout=L1 key="area"
+# each() looks at the objects that it finds in the list: any of them may be the one that hides the method.
+# RUN(LOOK): walk f5 mechanisms=all
+# LOOK: HasNoExtraProperties
+# RUN: run-in-shell
+# CHECK: 350 35
+# CHECK-NEXT: 10330 10015
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: 350 35
+# CHECKED-NEXT: 10330 10015
+# CHECKED-NEXT: exited with 0

@@ -1,0 +1,70 @@
+# -- source: four-pairs-of-loops-side-by-side-of-which-one-grows-a-text-cost-fifteen-walks-a-pair.js
+# function nest(count) {
+#   const n = count | 0;
+#   const list = [3, 1, 4, 1, 5, 9, 2, 6];
+#   const words = ["w", "x", "y", "z"];
+#   let s = 0;
+#   let text = "";
+#   for (let i1 = 0; i1 < n; i1++) {
+#     s = (s + list[(i1) & 7]) | 0;
+#     for (let j0 = 0; j0 < n; j0++) {
+#       text += "a";
+#       for (let m0 = 0; m0 < n; m0++) {
+#         text += words[(j0 + m0) & 3];
+#       }
+#     }
+#     for (let k0 = 0; k0 < n; k0++) {
+#       s = (s + list[(i1 + k0 + 0) & 7]) | 0;
+#       for (let q0 = 0; q0 < n; q0++) {
+#         s = (s + list[(k0 + q0) & 7]) | 0;
+#       }
+#     }
+#     for (let j1 = 0; j1 < n; j1++) {
+#       text += "a";
+#       for (let m1 = 0; m1 < n; m1++) {
+#         text += words[(j1 + m1) & 3];
+#       }
+#     }
+#     for (let k1 = 0; k1 < n; k1++) {
+#       s = (s + list[(i1 + k1 + 1) & 7]) | 0;
+#       for (let q1 = 0; q1 < n; q1++) {
+#         s = (s + list[(k1 + q1) & 7]) | 0;
+#       }
+#     }
+#     for (let j2 = 0; j2 < n; j2++) {
+#       text += "a";
+#       for (let m2 = 0; m2 < n; m2++) {
+#         text += words[(j2 + m2) & 3];
+#       }
+#     }
+#     for (let k2 = 0; k2 < n; k2++) {
+#       s = (s + list[(i1 + k2 + 2) & 7]) | 0;
+#       for (let q2 = 0; q2 < n; q2++) {
+#         s = (s + list[(k2 + q2) & 7]) | 0;
+#       }
+#     }
+#     for (let j3 = 0; j3 < n; j3++) {
+#       text += "a";
+#       for (let m3 = 0; m3 < n; m3++) {
+#         text += words[(j3 + m3) & 3];
+#       }
+#     }
+#     for (let k3 = 0; k3 < n; k3++) {
+#       s = (s + list[(i1 + k3 + 3) & 7]) | 0;
+#       for (let q3 = 0; q3 < n; q3++) {
+#         s = (s + list[(k3 + q3) & 7]) | 0;
+#       }
+#     }
+#   }
+#   return s + " " + text.length + " " + text.slice(0, 9);
+# }
+# print(nest(JSON.parse("3")));
+# -- end of source
+# Four pairs of loops stand side by side in the turn of one loop, and each loop holds a loop. One of a pair grows a text, the other is only found quiet: they do not wish for the same thing. The walks grow with the
+# width by a line: fifteen a pair and three, as its twin of eight pairs shows.
+# RUN: compile LoopVisits mechanisms=all
+# CHECK: statistic LoopVisits 63
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 440 144 awxyaxyza
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same

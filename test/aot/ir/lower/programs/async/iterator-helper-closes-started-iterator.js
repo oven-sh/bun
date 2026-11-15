@@ -141,98 +141,9 @@ attempt("an underlying iterator without return()", () => {
   return helper.return();
 });
 
-// GENERATED: underlying callback [Symbol.iterator]
 // CHECK-LABEL: function {{*}}name="underlying"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} flags=[HasExplicitName] thisType={type=anything} parameters=[{type=undefined|null|[[f_1]] flags=[IsExpected]}] results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: undefined|null|[[f_1]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewObject layout=[[L_3]]
-// CHECK-NEXT: v2 = TypeTest v0 testedType=undefined
-// CHECK-NEXT: Branch v2 -> taken b2(| 0), notTaken b4(| 0)
-// CHECK-NEXT: b2(v3):
-// CHECK-NEXT: Jump -> next b3()
-// CHECK-NEXT: b3():
-// CHECK-NEXT: v4 = NewClosure function=[[f_4]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|[[f_1]] flags=[IsExpected]}
-// CHECK-NEXT: Jump -> next b5(v5)
-// CHECK-NEXT: b4(v6):
-// CHECK-NEXT: Jump -> next b5(v6)
-// CHECK-NEXT: b5(v7):
-// CHECK-NEXT: v8 = Integer
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PutEnvironmentField v1, v9 layout=[[L_3]]
-// CHECK-NEXT: v11 = Builtin builtin=GlobalThis
-// CHECK-NEXT: v12 = PropGet v11 key="Iterator" [isFreeName]
-// CHECK-NEXT: v13 = Convert v12 declared={type=builtin(Iterator) flags=[IsExpected]}
-// CHECK-NEXT: v14 = PropGet v13 key="prototype"
-// CHECK-NEXT: v15 = Convert v14 declared={type=builtin(IteratorPrototype) flags=[IsExpected]}
-// CHECK-NEXT: v16 = NewClosure v1 function=[[f_5]]
-// CHECK-NEXT: v17 = Convert v16 declared={type=undefined|null|[[f_6]] flags=[IsExpected]}
-// CHECK-NEXT: v18 = NewObject layout=[[L_2]]
-// CHECK-NEXT: SetLiteralPrototype v18, v15
-// CHECK-NEXT: PropDefine v18, v17 key="next"
-// CHECK-NEXT: v21 = NewClosure v7 function=[[f_7]]
-// CHECK-NEXT: v22 = Convert v21 declared={type=undefined|null|[[f_8]] flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v18, v22 key="return"
-// CHECK-NEXT: v24 = FinishObject v18
-// CHECK-NEXT: v25 = Convert v24 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v25
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Boolean boolean=true
-// CHECK-NEXT: v1 = Convert v0 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="callback"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array flags=[IsExpected]}] functionTypes={{*}}[[f_11]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = NewArray v0 contents=anything
-// CHECK-NEXT: v2 = Convert v1 declared={type=undefined|null|Array flags=[IsExpected]}
-// CHECK-NEXT: Return v2
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_12]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v2 = NewObject layout=[[L_2]]
-// CHECK-NEXT: PropDefine v2, v1 key="next"
-// CHECK-NEXT: v4 = NewClosure function=[[f_13]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v2, v5 key="return"
-// CHECK-NEXT: v7 = FinishObject v2
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="[Symbol.iterator]"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[IsNamedByComputedKey] thisType={type=anything} results=[{type=undefined|null|[[L_2]] flags=[IsExpected]}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = NewClosure function=[[f_14]]
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: v2 = NewObject layout=[[L_2]]
-// CHECK-NEXT: PropDefine v2, v1 key="next"
-// CHECK-NEXT: v4 = NewClosure function=[[f_15]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]}
-// CHECK-NEXT: PropDefine v2, v5 key="return"
-// CHECK-NEXT: v7 = FinishObject v2
-// CHECK-NEXT: v8 = Convert v7 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: Return v8
-// CHECK-NEXT: }

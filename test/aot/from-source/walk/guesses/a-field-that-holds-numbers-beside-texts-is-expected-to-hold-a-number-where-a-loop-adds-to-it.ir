@@ -1,0 +1,10 @@
+# -- source: main.js
+# class Sum { constructor() { this.total = 0; } add(s) { for (let i = 0; i < s.length; i++) this.total += s[i]; return this.total; } }
+# globalThis.kept = [Sum, new Sum()[JSON.parse('"add"')](JSON.parse("[1.5,2]"))];
+# -- end of source
+# All that is stored into the field is 0 and its own sum with an element of which nothing is known: it is held to numbers, texts and nothing. In the copy of the loop for a list of numbers the element is a number or missing,
+# and what stands beside it in the sum is expected to be a number: one test, the sum in numbers, and the store of a number behind it in the same arm.
+# RUN(WALK): walk f2 mechanisms=all
+# WALK: [[total]]: {{*}} = GetSlot {{*}} key="total"
+# WALK: [[test]]: boolean {{*}} = TypeTest [[total]] testedType=number
+# WALK: = Add {{*}} form=Numbers

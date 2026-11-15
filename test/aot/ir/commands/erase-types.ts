@@ -4,9 +4,10 @@
 // CHECK-NOT: illTypedCause=
 // CHECK-LABEL: function {{*}}name="narrow"
 // CHECK-NOT: site=
-// CHECK: results=[{type=undefined|null|string flags=[IsExpected]}]
+// CHECK: results=[{type=anything}]
 // CHECK: ([[value]]: anything):
-// CHECK: = Convert [[value]] declared={type=undefined|null|string flags=[IsExpected]}
+// CHECK-NOT: Convert
+// CHECK: Return [[value]]
 // CHECK-NOT: site=
 // CHECK-NOT: illTypedCause=
 

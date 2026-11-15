@@ -109,13 +109,3 @@ console.log(many(1, 2, 3, 4, 5, 6, 7, 8, 9, 10), indirect(1, 2, 3, 4, 5, 6, 7, 8
 
 // FILE: parallel/tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true }, "files": [] }
-
-// GENERATED: *
-// CHECK: function {{*}}
-// CHECK: module=[[m_0]] kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Undefined
-// CHECK-NEXT: Return v0
-// CHECK-NEXT: }

@@ -1,0 +1,13 @@
+# -- source: scope-leaves-where-a-closure-made-in-a-turn-comes-round.js
+# function run(turns) { let work = 0; for (let i = 0; i < 2; i++) work = (work + i) | 0; let count = 0; let seen = 0; let last = null; for (let turn = 0; turn < turns; turn++) { if (last !== null) last(); seen += count; last = () => { count += 1; }; } return seen + " " + count + " " + work; }
+# print(run(5));
+# print(run(3));
+# -- end of source
+# The arrow is made in a turn over a scope from in front of the loop, comes round the back edge and is called in the next turn. At the head it is a parameter, and behind a parameter nobody finds the scope that it holds:
+# so what comes round leaves the unit at the back edge, as it does at every other edge, and the scope with it: `count` is read out of memory in each turn. It was held for the constant 0: run(5) gave "0 0 1".
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: isInLoop=true isLoopHead=true:
+# CHECK: GetEnvironmentField {{*}}[isKnownInitialized]
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: the source prints the same

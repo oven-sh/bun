@@ -1,0 +1,28 @@
+# -- source: main.cjs
+# "use strict";
+# class Reader { constructor(list) { this.list = list; this.n = 0; }
+#     front() { let s = 0; for (let i = 0; i < 40; i++) { this.n++; s = (s * 31 + this.list[i]) | 0; } return s; }
+#     behind() { let s = 0; for (let i = 0; i < 40; i++) { s = (s * 31 + this.list[i]) | 0; this.n++; } return s; }
+#     leaves(at) { for (let i = 0; i < 40; i++) { this.n++; if (i === at) return i; } return -1; } }
+# globalThis.kept = new Reader([1, 2]);
+# const whole = []; for (let i = 0; i < 48; i++) whole.push((i * 7) & 255);
+# const holed = whole.slice(); delete holed[9];
+# for (const list of [whole, holed, whole.map(x => x + 0.5), whole.slice(0, 20)]) { const reader = new Reader(list); console.log(reader.front(), reader.n, reader.behind(), reader.n, reader.leaves(9), reader.n); }
+# -- end of source
+# A turn that stores a number into a slot of an object is laid out like any other: the list's kind and the counter's written bound are asked once, in front, also where the store stands in front of the read.
+# A way out of a turn laid out is taken by running that turn again in the loop as written: so holes do not leave such turns, and a turn that something leaves behind its store (`leaves`) is not laid out.
+# RUN: compile UnrolledLoopsWithSlotStores ArrayBoundsChecksHoisted mechanisms=all
+# CHECK: statistic UnrolledLoopsWithSlotStores 3
+# CHECK: statistic ArrayBoundsChecksHoisted 4
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: -630921332 40 -630921332 80 9 90
+# RIGHT-NEXT: -1741656407 40 -1741656407 80 9 90
+# RIGHT-NEXT: 1579574542 40 1579574542 80 9 90
+# RIGHT-NEXT: 0 40 0 80 9 90
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: -630921332 40 -630921332 80 9 90
+# HELD-NEXT: -1741656407 40 -1741656407 80 9 90
+# HELD-NEXT: 1579574542 40 1579574542 80 9 90
+# HELD-NEXT: 0 40 0 80 9 90
+# HELD-NEXT: exited with 0

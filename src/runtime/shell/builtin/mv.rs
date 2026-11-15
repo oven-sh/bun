@@ -1,13 +1,15 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use bun_core::{ZBox, ZStr};
+use bun_core::{ZBox, ZStr, strings};
 use bun_paths::{PathBuffer, resolve_path};
 use bun_ptr::BackRef;
 
+use crate::node::fs::{is_on_disk_at, note_moved_shell_operand, refuse_move};
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    Interpreter, NodeId, ShellTask, closefd, shell_lstatat, shell_openat, shell_statat,
+    Interpreter, NodeId, OwnedFd, PoolTask, ShellTask, ShellWork, shell_lstatat, shell_openat,
+    shell_statat,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -24,7 +26,7 @@ pub(crate) struct MvArgs {
     pub(crate) sources_start: usize,
     /// argv[sources_start..target_idx] are sources; argv[target_idx] is dest.
     pub(crate) target_idx: usize,
-    pub(crate) target_fd: Option<bun_sys::Fd>,
+    pub(crate) target_fd: Option<OwnedFd>,
     /// `-n` — do not overwrite an existing file
     pub(crate) no_clobber: bool,
 }
@@ -33,7 +35,8 @@ pub(crate) struct MvArgs {
 pub(crate) enum MvState {
     #[default]
     Idle,
-    CheckTarget(Box<ShellMvCheckTargetTask>),
+    /// `None` until the task is back.
+    CheckTarget(Option<Result<Option<OwnedFd>, bun_sys::Error>>),
     Executing {
         task_count: usize,
         tasks_done: usize,
@@ -112,46 +115,33 @@ impl Mv {
                 let cwd = Builtin::cwd(interp, cmd);
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
                 let target = ZBox::from_bytes(Builtin::of(interp, cmd).arg_bytes(target_idx));
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let mut task = Box::new(ShellMvCheckTargetTask {
+                let task = ShellMvCheckTargetTask {
                     cmd,
                     cwd,
                     target,
                     result: None,
-                    done: false,
-                    task: ShellTask::new(evtloop),
-                });
-                task.task.interp = interp.as_ctx_ptr();
-                // SAFETY: `task` is heap-allocated and outlives the worker
-                // call (held in `MvState::CheckTarget` below).
-                unsafe { ShellTask::schedule(&raw mut *task) };
-                Self::state_mut(interp, cmd).state = MvState::CheckTarget(task);
+                };
+                PoolTask::schedule(interp, task);
+                Self::state_mut(interp, cmd).state = MvState::CheckTarget(None);
                 Yield::suspended()
             }
             Tag::CheckTarget => {
-                let done = match &Self::state_mut(interp, cmd).state {
-                    MvState::CheckTarget(t) => t.done,
-                    _ => unreachable!(),
-                };
-                if !done {
-                    return Yield::suspended();
-                }
                 let result = match &mut Self::state_mut(interp, cmd).state {
-                    MvState::CheckTarget(t) => t.result.take(),
+                    MvState::CheckTarget(result) => result.take(),
                     _ => unreachable!(),
                 };
-                debug_assert!(result.is_some());
-                let maybe_fd: Option<bun_sys::Fd> = match result.unwrap() {
+                let Some(result) = result else {
+                    return Yield::suspended();
+                };
+                let target_idx = Self::state_mut(interp, cmd).args.target_idx;
+                let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
+                let target_fd = match result {
                     Ok(fd) => fd,
                     Err(e) => {
                         // Only ENOENT (rename to a
                         // new path) is acceptable, and only with exactly
                         // one source. Any other errno (EACCES, ELOOP, …)
                         // is reported and fails regardless of source count.
-                        let target = match &Self::state_mut(interp, cmd).state {
-                            MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
-                            _ => unreachable!(),
-                        };
                         if e.get_errno() == bun_sys::E::ENOENT {
                             let n_sources = {
                                 let me = Self::state_mut(interp, cmd);
@@ -166,7 +156,7 @@ impl Mv {
                                     Some(Kind::Mv),
                                     format_args!(
                                         "{}: No such file or directory\n",
-                                        bstr::BStr::new(&target)
+                                        bstr::BStr::new(target)
                                     ),
                                 )
                                 .to_vec();
@@ -180,7 +170,7 @@ impl Mv {
                                 Some(Kind::Mv),
                                 format_args!(
                                     "{}: {}\n",
-                                    bstr::BStr::new(&target),
+                                    bstr::BStr::new(target),
                                     bstr::BStr::new(msg)
                                 ),
                             )
@@ -190,22 +180,19 @@ impl Mv {
                     }
                 };
 
+                let maybe_fd = target_fd.as_ref().map(OwnedFd::fd);
                 let n_sources = {
                     let me = Self::state_mut(interp, cmd);
-                    me.args.target_fd = maybe_fd;
+                    me.args.target_fd = target_fd;
                     me.args.target_idx - me.args.sources_start
                 };
                 // Trying to move multiple files into a non-directory.
                 if maybe_fd.is_none() && n_sources > 1 {
-                    let target = match &Self::state_mut(interp, cmd).state {
-                        MvState::CheckTarget(t) => t.target.as_bytes().to_vec(),
-                        _ => unreachable!(),
-                    };
                     let buf = Builtin::fmt_error_arena(
                         interp,
                         cmd,
                         Some(Kind::Mv),
-                        format_args!("{} is not a directory\n", bstr::BStr::new(&target)),
+                        format_args!("{} is not a directory\n", bstr::BStr::new(target)),
                     )
                     .to_vec();
                     return Self::write_failing_error(interp, cmd, &buf, 1);
@@ -214,16 +201,10 @@ impl Mv {
                 const BATCH: usize = ShellMvBatchedTask::BATCH_SIZE;
                 let task_count = n_sources.div_ceil(BATCH);
                 let cwd = Builtin::cwd(interp, cmd);
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let (sources_start, target_idx, no_clobber) = {
+                let (sources_start, no_clobber) = {
                     let me = Self::state_mut(interp, cmd);
-                    (
-                        me.args.sources_start,
-                        me.args.target_idx,
-                        me.args.no_clobber,
-                    )
+                    (me.args.sources_start, me.args.no_clobber)
                 };
-                let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
                 let mut tasks: Vec<ShellMvBatchedTask> = Vec::with_capacity(task_count);
                 for i in 0..task_count {
@@ -236,6 +217,10 @@ impl Mv {
                     tasks.push(ShellMvBatchedTask {
                         cmd,
                         idx: i,
+                        was_on_disk: srcs
+                            .iter()
+                            .map(|it| is_on_disk_at(cwd, it.as_bytes()))
+                            .collect(),
                         sources: srcs,
                         target: ZBox::from_bytes(target),
                         target_fd: maybe_fd,
@@ -243,7 +228,7 @@ impl Mv {
                         cwd,
                         error_signal: None,
                         err: None,
-                        task: ShellTask::new(evtloop),
+                        task: ShellTask::new(interp),
                     });
                 }
 
@@ -256,7 +241,6 @@ impl Mv {
                 };
                 // Now that the AtomicBool has its final address, point
                 // every task at it and schedule.
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 if let MvState::Executing {
                     error_signal,
                     tasks,
@@ -266,7 +250,6 @@ impl Mv {
                     let sig = BackRef::new(&*error_signal);
                     for t in tasks.iter_mut() {
                         t.error_signal = Some(sig);
-                        t.task.interp = interp_ptr;
                         // SAFETY: `t` lives in `MvState::Executing::tasks`,
                         // which is fully populated before any task is scheduled
                         // and never grown afterward, so its address is stable
@@ -304,15 +287,8 @@ impl Mv {
         }
     }
 
-    fn check_target_task_done(interp: &Interpreter, cmd: NodeId) {
-        if let MvState::CheckTarget(t) = &mut Self::state_mut(interp, cmd).state {
-            t.done = true;
-        }
-        Self::next(interp, cmd).run(interp);
-    }
-
     fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
-        let (all_done, had_err) = {
+        let (all_done, had_err, sources, was_on_disk, target, is_folder) = {
             let MvState::Executing {
                 task_count,
                 tasks_done,
@@ -323,15 +299,39 @@ impl Mv {
             else {
                 unreachable!()
             };
+            let target = ZBox::from_bytes(tasks[task_idx].target.as_bytes());
             if let Some(e) = tasks[task_idx].err.take() {
                 error_signal.store(true, Ordering::SeqCst);
                 if err.is_none() {
                     *err = Some(e);
                 }
             }
+            let sources = core::mem::take(&mut tasks[task_idx].sources);
+            let was_on_disk = core::mem::take(&mut tasks[task_idx].was_on_disk);
+            let is_folder = tasks[task_idx].target_fd.is_some() || sources.len() > 1;
             *tasks_done += 1;
-            (*tasks_done >= *task_count, err.is_some())
+            (
+                *tasks_done >= *task_count,
+                err.is_some(),
+                sources,
+                was_on_disk,
+                target,
+                is_folder,
+            )
         };
+        // A task that fails has moved those in front, and `-n` leaves some where they are.
+        let sources = sources.iter().zip(was_on_disk);
+        for (source, _) in sources.filter(|&(_, was_on_disk)| was_on_disk) {
+            let (cwd, source) = (Builtin::shell(interp, cmd).cwd(), source.as_bytes());
+            let name = bun_paths::basename(strings::without_trailing_slash(source));
+            match is_folder {
+                true => {
+                    let target = [target.as_bytes(), b"/", name].concat();
+                    note_moved_shell_operand(cwd, source, &target);
+                }
+                false => note_moved_shell_operand(cwd, source, target.as_bytes()),
+            }
+        }
         if all_done {
             if had_err {
                 let e = match &mut Self::state_mut(interp, cmd).state {
@@ -395,18 +395,6 @@ impl Mv {
     }
 }
 
-impl Drop for Mv {
-    /// Close the directory fd opened by
-    /// `ShellMvCheckTargetTask` (`openat(target, O_RDONLY|O_DIRECTORY)`).
-    /// `bun_sys::Fd` is `Copy` with no `Drop`, so without this every
-    /// `mv srcs... dir/` leaks one open fd.
-    fn drop(&mut self) {
-        if let Some(fd) = self.args.target_fd.take() {
-            closefd(fd);
-        }
-    }
-}
-
 enum MvFlag {
     ContinueParsing,
     Done,
@@ -421,20 +409,22 @@ pub(crate) struct ShellMvCheckTargetTask {
     pub(crate) target: ZBox,
     /// `Ok(Some(fd))` → directory; `Ok(None)` → not a directory; `Err(e)` →
     /// open error (e.g. ENOENT).
-    pub(crate) result: Option<Result<Option<bun_sys::Fd>, bun_sys::Error>>,
-    pub(crate) done: bool,
-    pub task: ShellTask,
+    pub(crate) result: Option<Result<Option<OwnedFd>, bun_sys::Error>>,
 }
 
-impl ShellMvCheckTargetTask {
-    fn run_from_thread_pool(this: &mut ShellMvCheckTargetTask) {
+impl ShellWork for ShellMvCheckTargetTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+    fn run_from_thread_pool(&mut self, _: &ShellTask) {
         let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-        this.result = Some(match shell_openat(this.cwd, &this.target, flags, 0) {
-            Ok(fd) => Ok(Some(fd)),
+        self.result = Some(match shell_openat(self.cwd, &self.target, flags, 0) {
+            Ok(fd) => Ok(Some(OwnedFd(fd))),
             Err(e) if e.get_errno() == bun_sys::E::ENOTDIR => Ok(None),
             Err(e) => Err(e),
         });
-        // Bounce-back is posted by `shell_task_trampoline`.
+    }
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+        Mv::state_mut(interp, self.cmd).state = MvState::CheckTarget(self.result.take());
+        Mv::next(interp, self.cmd)
     }
 }
 
@@ -445,6 +435,8 @@ pub(crate) struct ShellMvBatchedTask {
     /// can route to `Mv::batched_move_task_done`.
     pub(crate) idx: usize,
     pub(crate) sources: Vec<ZBox>,
+    /// Which of them the disk has had.
+    was_on_disk: Vec<bool>,
     pub(crate) target: ZBox,
     pub(crate) target_fd: Option<bun_sys::Fd>,
     pub(crate) no_clobber: bool,
@@ -509,6 +501,9 @@ impl ShellMvBatchedTask {
     ) -> Result<(), bun_sys::Error> {
         use bun_sys::E;
 
+        if let Some(error) = refuse_move((src_dir, src.as_bytes()), (dst_dir, dst.as_bytes())) {
+            return Err(error);
+        }
         if no_clobber {
             if shell_lstatat(dst_dir, dst).is_ok() {
                 // `dst` stays. A missing `src` is still an error.
@@ -633,16 +628,9 @@ impl ShellMvBatchedTask {
             )?);
             // Boxed: `WrappedIterator` embeds an 8 KB inline readdir buffer.
             let mut iter = Box::new(bun_sys::dir_iterator::iterate(sd.fd()));
-            let mut nbuf = bun_paths::path_buffer_pool::get();
             while let Some(entry) = iter.next()? {
-                let name = entry.name.slice_u8();
-                if name.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::rename));
-                }
-                nbuf[..name.len()].copy_from_slice(name);
-                nbuf[name.len()] = 0;
-                let name_z = ZStr::from_buf(&nbuf[..], name.len());
-                Self::move_across_devices(sd.fd(), name_z, dd.fd(), name_z, Some(output))?;
+                let name = entry.name.as_zstr();
+                Self::move_across_devices(sd.fd(), name, dd.fd(), name, Some(output))?;
             }
             #[cfg(unix)]
             let _ = bun_sys::fchown(dd.fd(), st.st_uid as _, st.st_gid as _);
@@ -811,26 +799,10 @@ impl ShellMvBatchedTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
-    /// Owned by the builtin's `MvState`, which frees it with the interpreter;
-    /// only the keep-alive is this hop's to drop.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract; the Mv state outlives the queue entry.
-        unsafe { (*this).task.unref_unrun() }
-    }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
 impl bun_event_loop::Taskable for ShellMvBatchedTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
-    /// An element of `MvState::Executing.tasks`; as `ShellMvCheckTargetTask`.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: as above.
-        unsafe { (*this).task.unref_unrun() }
-    }
+    /// An element of `MvState::Executing.tasks`, which drops with the interpreter.
+    unsafe fn release_unrun(_: *mut Self) {}
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
@@ -839,19 +811,6 @@ impl bun_event_loop::Taskable for ShellMvBatchedTask {
 
 // `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's
 // internal deref is SAFETY-commented.
-impl crate::shell::interpreter::ShellTaskCtx for ShellMvCheckTargetTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
-        // is a live `ShellMvCheckTargetTask` held in `MvState::CheckTarget`.
-        let this = unsafe { this.as_ref() }.unwrap();
-        Mv::check_target_task_done(interp, this.cmd);
-    }
-}
-
 impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(this: &mut Self) {

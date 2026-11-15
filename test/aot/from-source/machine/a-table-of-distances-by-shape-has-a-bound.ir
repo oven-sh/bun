@@ -1,0 +1,57 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# interface HasV { v: number }
+# class P0 { a0 = 0; }
+# class P1 extends P0 { a1 = 0; } class P2 extends P1 { a2 = 0; }
+# class K0 extends P0 { v = 0; } class K1 extends P1 { v = 1; } class K2 extends P2 { v = 2; } class K3 extends P0 { v = 3; }
+# class K4 extends P1 { v = 4; } class K5 extends P2 { v = 5; } class K6 extends P0 { v = 6; } class K7 extends P1 { v = 7; }
+# class K8 extends P2 { v = 8; } class K9 extends P0 { v = 9; } class K10 extends P1 { v = 10; } class K11 extends P2 { v = 11; }
+# class K12 extends P0 { v = 12; } class K13 extends P1 { v = 13; } class K14 extends P2 { v = 14; } class K15 extends P0 { v = 15; }
+# class K16 extends P1 { v = 16; } class K17 extends P2 { v = 17; } class K18 extends P0 { v = 18; } class K19 extends P1 { v = 19; }
+# class K20 extends P2 { v = 20; } class K21 extends P0 { v = 21; } class K22 extends P1 { v = 22; } class K23 extends P2 { v = 23; }
+# class K24 extends P0 { v = 24; } class K25 extends P1 { v = 25; } class K26 extends P2 { v = 26; } class K27 extends P0 { v = 27; }
+# class K28 extends P1 { v = 28; } class K29 extends P2 { v = 29; } class K30 extends P0 { v = 30; } class K31 extends P1 { v = 31; }
+# class K32 extends P2 { v = 32; } class K33 extends P0 { v = 33; } class K34 extends P1 { v = 34; } class K35 extends P2 { v = 35; }
+# class K36 extends P0 { v = 36; } class K37 extends P1 { v = 37; } class K38 extends P2 { v = 38; } class K39 extends P0 { v = 39; }
+# class K40 extends P1 { v = 40; } class K41 extends P2 { v = 41; } class K42 extends P0 { v = 42; } class K43 extends P1 { v = 43; }
+# class K44 extends P2 { v = 44; } class K45 extends P0 { v = 45; } class K46 extends P1 { v = 46; } class K47 extends P2 { v = 47; }
+# class K48 extends P0 { v = 48; } class K49 extends P1 { v = 49; } class K50 extends P2 { v = 50; } class K51 extends P0 { v = 51; }
+# class K52 extends P1 { v = 52; } class K53 extends P2 { v = 53; } class K54 extends P0 { v = 54; } class K55 extends P1 { v = 55; }
+# class K56 extends P2 { v = 56; } class K57 extends P0 { v = 57; } class K58 extends P1 { v = 58; } class K59 extends P2 { v = 59; }
+# function pick(which: number): HasV {
+#   switch (which) {
+#     case 0: return new K0(); case 1: return new K1(); case 2: return new K2(); case 3: return new K3(); case 4: return new K4(); case 5: return new K5();
+#     case 6: return new K6(); case 7: return new K7(); case 8: return new K8(); case 9: return new K9(); case 10: return new K10(); case 11: return new K11();
+#     case 12: return new K12(); case 13: return new K13(); case 14: return new K14(); case 15: return new K15(); case 16: return new K16(); case 17: return new K17();
+#     case 18: return new K18(); case 19: return new K19(); case 20: return new K20(); case 21: return new K21(); case 22: return new K22(); case 23: return new K23();
+#     case 24: return new K24(); case 25: return new K25(); case 26: return new K26(); case 27: return new K27(); case 28: return new K28(); case 29: return new K29();
+#     case 30: return new K30(); case 31: return new K31(); case 32: return new K32(); case 33: return new K33(); case 34: return new K34(); case 35: return new K35();
+#     case 36: return new K36(); case 37: return new K37(); case 38: return new K38(); case 39: return new K39(); case 40: return new K40(); case 41: return new K41();
+#     case 42: return new K42(); case 43: return new K43(); case 44: return new K44(); case 45: return new K45(); case 46: return new K46(); case 47: return new K47();
+#     case 48: return new K48(); case 49: return new K49(); case 50: return new K50(); case 51: return new K51(); case 52: return new K52(); case 53: return new K53();
+#     case 54: return new K54(); case 55: return new K55(); case 56: return new K56(); case 57: return new K57(); case 58: return new K58();
+#     default: return new K59();
+#   }
+# }
+# function weigh(thing: HasV, depth: number): number {
+#   if (depth > 0) return weigh(thing, -depth);
+#   const before = thing.v;
+#   thing.v = before + 1;
+#   return before;
+# }
+# let sum = 0, behind = 0;
+# for (let which = 0; which < 60; which++) { const thing = pick(which); sum += weigh(thing, 1); behind += thing.v; }
+# print(sum, behind);
+# -- end of source
+# A bound on a table of field offsets. `v` lies behind one, two or three inherited fields, so the read and the store in `weigh` and the read in the loop look up where it lies.
+# Only an inherited prefix pins a field: below one base, in unrelated classes and in literals `v` lies at one offset and there is no table.
+# f1 = weigh
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 1770 1830
+# RIGHT-NEXT: exited with 0
+# RUN(HIGHEST): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/ShapesOfField
+# HIGHEST: bun: internal AOT error:
+# HIGHEST-NOT: exited with 0
+# RUN(MIDDLE): run-in-shell mechanisms=all testing=UnderstateEffects:Callee/f1/MiddleShapesOfField
+# MIDDLE: bun: internal AOT error:
+# MIDDLE-NOT: exited with 0

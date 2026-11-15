@@ -1,0 +1,19 @@
+# `for (let place = 0; place < rows.length; place++) total = total + weights[place]`, both constants of the file of which nothing is known: the loop only MEASURES `rows`. Read in every turn off a value that may be anything, the length may run other code, so the typed turn left at the head, every time:
+# 1,320 instructions a call for 16 turns, where the same loop bound by `weights.length` takes 183.
+# A holder that a loop only measures is expected to be a list and asked in front of it, but only a holder that stands in front of the loop was looked at, and a variable of the file is read in the turn. Every turn passes the head, so the question may stand in front.
+# Now the variable is read in front of the loop for its length too, and the name under which its value enters is the holder that is asked.
+# Each read of a variable of the file is a value of its own, so "only measured" is asked of the variable over the whole body: in `alsoRead` the body reads `table[0]` as well, and nothing is asked of `table`.
+# -- source: main.cjs
+# const rows = JSON.parse('[{"a":1},{"a":2},{"a":3}]'), weights = JSON.parse("[0.5, 53.5, 106.5]"), text = JSON.parse('"abc"'), table = JSON.parse("[7, 8, 9]");
+# function tally(start) { let total = start; for (let place = 0; place < rows.length; place++) total = total + weights[place]; return total; }
+# function overText(start) { let total = start; for (let place = 0; place < text.length; place++) total = total + weights[place]; return total; }
+# function alsoRead(start) { let total = start; for (let place = 0; place < table.length; place++) total = total + weights[place]; return total + table[0]; }
+# print(tally([].length + 1), overText([].length + 1), alsoRead([].length + 1));
+# -- end of source
+# f1 = tally
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = GetArrayElement {{*}}level=Proven
+# RUN(COUNT): compile ArraysSpeculatedFromLoopBounds mechanisms=all
+# COUNT: statistic ArraysSpeculatedFromLoopBounds 8
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 161.5 161.5 168.5

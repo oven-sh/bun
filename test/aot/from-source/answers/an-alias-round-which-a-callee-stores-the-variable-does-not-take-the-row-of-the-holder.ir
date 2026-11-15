@@ -1,0 +1,30 @@
+# -- source: main.cjs
+# const box = JSON.parse('{"name":"rows","second":"other","holder":{"rows":[1,2,3,4,5,6,7,8,9,10,11,12],"other":[100,200,300]},"spare":{"rows":[50,60,70,80,90,100],"other":[7,7]}}');
+# const data = box.holder, w = box.name, spare = box.spare, otherKey = box.second;
+# let cursor = data;
+# function put(x) { cursor = x; }
+# function f() { let s = 0, n = 0; for (let i = 0; i < data[w].length; i++) { s = s + data[w][i]; put(spare); const second = cursor; put(data); n = n + second[w].length; } return s * 1000 + n; }
+# print(f(), f());
+# -- end of source
+# The row found under a key is remembered under two values: the holder and the key as they were read in the preheader.
+# When the walk visits a read, it looks the row up by the values that the read's own operands were bound to when they were read.
+# The first version of this optimization identified an operand by what its variable held when the read was visited.
+# `const second = cursor` was read while `cursor` held another value, `cursor = data` followed, and `second[w]` took the row of `data`.
+# The program silently printed 78144 instead of 78072, and none of our checks caught it. The injected fault, testing=MisidentifyHoistedReadOperands, identifies operands that way again.
+# Where proofs are checked, a row that is taken from the remembered one is checked against the operation that runs no code, applied to the operands themselves inside the iteration.
+# With the fault injected, that check crashes the process at the read.
+# RUN(EVENT): compile KeyedRowLookupsHoisted mechanisms=all
+# EVENT: statistic KeyedRowLookupsHoisted 1
+# RUN(RIGHT): run-in-shell mechanisms=all
+# RIGHT: 78072 78072
+# RIGHT-NEXT: exited with 0
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 78072 78072
+# HELD-NEXT: exited with 0
+# RUN(LIE): run-in-shell mechanisms=all testing=MisidentifyHoistedReadOperands
+# LIE: 78144 78144
+# LIE-NEXT: exited with 0
+# RUN(STOPPED): run-in-shell mechanisms=all testing=CheckProofsAtRunTime,MisidentifyHoistedReadOperands
+# STOPPED: bun: internal AOT error: redundancy elimination check failed
+# STOPPED-NEXT: a load or check that the compiler removed as redundant gives a different result here
+# STOPPED: crashed with

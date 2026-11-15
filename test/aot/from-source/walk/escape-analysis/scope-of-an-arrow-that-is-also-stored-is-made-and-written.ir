@@ -1,0 +1,21 @@
+# -- source: scope-of-an-arrow-that-is-also-stored-is-made-and-written.ts
+# declare function report(value: unknown): void;
+# interface Row { id: number; name: string; }
+# const kept: ((x: Row) => void)[] = [];
+# function forEach<T>(list: T[], f: (x: T) => void): void { for (let i = 0; i < list.length; i++) f(list[i]); }
+# function total(rows: Row[]): number { let sum = 0; const add = (row: Row) => { sum += row.id; }; kept.push(add); forEach(rows, add); return sum; }
+# const rows: Row[] = [];
+# for (let i = 0; i < 12; i++) rows.push({ id: i, name: "row" + i });
+# report(total(rows) + 1);
+# report(total(rows) + 1);
+# kept[0](rows[3]);
+# report(kept.length);
+# report(kept.length);
+# -- end of source
+# The control of variable-that-an-arrow-copied-in-line-writes-is-a-parameter-of-the-loop.ir: the arrow is copied in line all the same, but the list holds it too, so whoever calls it later reads the scope: the allocation and the store of every turn stay.
+# OPTIONS: check=Validate
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = NewObject {{*}}layout=L1
+# CHECK: = NewClosure
+# CHECK: PutEnvironmentField

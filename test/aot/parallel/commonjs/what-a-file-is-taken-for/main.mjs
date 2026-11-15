@@ -1,5 +1,4 @@
 // Whether a file is CommonJS or an ES module, sloppy or strict, by its name, its package, what it names and who loads it.
-// Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
 // Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
 console.log("# mjs-calls-require");
 await import("./mjs-calls-require/main.mjs");

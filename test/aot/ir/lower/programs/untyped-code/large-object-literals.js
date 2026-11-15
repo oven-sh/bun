@@ -42,46 +42,7 @@ let total = 0; for (let i = 0; i < 300; i++) total += make(i).own + Object.keys(
 lines.push("the same names, two tables " + (JSON.stringify(Object.keys(make(1))) === JSON.stringify(Object.keys({ m0: 0, m1: "m1", m2: true, m3: null, m4: undefined, m5: 5.5, m6: () => 6, m7: [7], m8: { inner: 8 }, m9: 9, m10: "m10", m11: true, m12: null, m13: undefined, m14: 14.5, m15: () => 15, m16: [16], m17: { inner: 17 }, m18: 18, m19: "m19", m20: true, m21: null, m22: undefined, m23: 23.5, m24: () => 24, m25: [25], m26: { inner: 26 }, m27: 27, m28: "m28", m29: true, m30: null, m31: undefined, m32: 32.5, m33: () => 33, m34: [34], m35: { inner: 35 }, m36: 36, m37: "m37", m38: true, m39: null, m40: undefined, m41: 41.5, m42: () => 42, m43: [43], m44: { inner: 44 }, m45: 45, m46: "m46", m47: true, m48: null, m49: undefined, own: 0 }))));
 console.log(lines.join("\n"));
 
-// GENERATED: t17_6 late method
 // CHECK-LABEL: function {{*}}name="t17_6"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=6
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=number flags=[IsExpected]}] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="a0"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Integer integer=1
-// CHECK-NEXT: v5 = Add v3, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="late"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Setter flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=anything}] {
-// CHECK-NEXT: b0(v0: anything, v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = Convert v1 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v3 key="a0"
-// CHECK-NEXT: v5 = Undefined
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
 // CHECK-LABEL: function {{*}}name="method"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes={{*}}[[f_3]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = String string="m"
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|string flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

@@ -1,0 +1,44 @@
+# -- source: main.ts
+# import type { int32 } from "bun";
+# declare const sink: any;
+# declare const numbers: number[];
+# class Cursor { line: int32 = 0; weight = 0; parent: Cursor | null = null; }
+# class Vertex { id: int32; mark: int32; first: Vertex | null; second: Vertex | null; third: Vertex | null; constructor(id: int32, mark: int32, next: Vertex | null) { this.id = id; this.mark = mark; this.first = next; this.second = null; this.third = next; } }
+# class Entry { hash: int32; count: int32 | null; next: Entry | null; key: string; constructor(hash: int32, count: int32 | null, next: Entry | null) { this.hash = hash; this.count = count; this.next = next; this.key = `${hash}`; } }
+# class Task { id: int32; priority: int32; state: int32; link: Task | null; queue: Vertex | null; owner: Vertex; constructor(id: int32, priority: int32, link: Task | null, queue: Vertex | null, owner: Vertex) { this.id = id; this.priority = priority; this.state = ~id; this.link = link; this.queue = queue; this.owner = owner; } }
+# function make(line: int32, weight: number, parent: Cursor | null): Cursor { const cursor = new Cursor(); cursor.line = line; cursor.weight = weight; cursor.parent = parent; return cursor; }
+# let top: Cursor | null = null;
+# let vertex: Vertex | null = null;
+# let entry: Entry | null = null;
+# let task: Task | null = null;
+# for (let i = 0; i < numbers.length; i++) { top = make(numbers[i]! | 0, i / 3, top); vertex = new Vertex(numbers[i]! | 0, ~i, vertex); entry = new Entry(numbers[i]! | 0, i % 3 ? numbers[i]! & 1023 : null, entry); task = new Task(numbers[i]! | 0, i & 255, task, i % 5 ? vertex : null, vertex); }
+# let total = 0;
+# for (let cursor: Cursor | null = top; cursor; cursor = cursor.parent) total += cursor.weight + cursor.line;
+# for (let one: Vertex | null = vertex; one; one = one.first) total += one.id + one.mark + (one.second ? 1 : 0) + (one.third ? 1 : 0);
+# for (let one: Entry | null = entry; one; one = one.next) total += one.hash + (one.count ?? 1) + one.key.length;
+# for (let one: Task | null = task; one; one = one.link) total += one.id + one.priority + one.state + (one.queue ? 1 : 0) + one.owner.id;
+# sink(total);
+# -- end of source
+# An int32 field that nobody meets empty takes four bytes, whatever int32 it holds: a cursor takes 32 bytes, not 48.
+# The cell of a vertex gets smaller by its two int32s alone. Its references stay wide.
+# An entry loses a third of its cell, so its count and its link have markers in four bytes. A task would lose a quarter: its slots stay wide.
+# RUN(PLAN): plan layouts
+# PLAN: layout L0 CompiledObject size=32
+# PLAN: slot 0 "line" Int32 Inline
+# PLAN: slot 1 "weight" OptionalDouble Inline
+# PLAN: slot 2 "parent" OptionalCell32 Inline
+# PLAN: layout L1 CompiledObject size=48
+# PLAN: slot 0 "id" Int32 Inline
+# PLAN: slot 1 "mark" Int32 Inline
+# PLAN: slot 2 "first" JSValue Inline
+# PLAN: slot 3 "second" JSValue Inline
+# PLAN: slot 4 "third" JSValue Inline
+# PLAN: layout L2 CompiledObject size=32
+# PLAN: slot 0 "hash" Int32 Inline
+# PLAN: slot 1 "count" OptionalInt32 Inline
+# PLAN: slot 2 "next" OptionalCell32 Inline
+# PLAN: slot 3 "key" {{*}}Cell32 Inline
+# PLAN: layout L3 CompiledObject size=64
+# PLAN: slot 0 "id" OptionalInt64 Inline
+# PLAN: slot 3 "link" JSValue Inline
+# PLAN: slot 4 "queue" JSValue Inline

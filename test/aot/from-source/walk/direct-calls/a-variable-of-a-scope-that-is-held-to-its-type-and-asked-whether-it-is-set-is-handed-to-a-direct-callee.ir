@@ -1,0 +1,22 @@
+# -- source: main.ts
+# let out = "";
+# function note(value: any): void { out += String(value) + ";"; }
+# function block(): void {
+#   const list: number[] = [3, 3, -1];
+#   let text = "", met = "";
+#   try { list.forEach(() => { met += "x"; }); } catch (error) { note("threw"); }
+#   note(text); note(met); note(list);
+# }
+# block();
+# console.log(out);
+# -- end of source
+# In a unit that is walked closed, `met` is read out of its scope as anything, held to its type by a check, and asked whether it is set; what that question hands on goes to note(). The unit leaves the checked type at note(),
+# and the judge of calls finds the check: it follows the question to the read as the walk does.
+# f2 = block
+# OPTIONS: check=Validate testing=ForceWalkMode:Closed
+# RUN: walk f2 mechanisms=all
+# CHECK: code f2:Body
+# CHECK: [[read]]: {{*}} = GetEnvironmentField
+# CHECK-NEXT: CheckProof [[read]] checkedType=string
+# CHECK-NEXT: [[set]]: {{*}} = CheckInitialized [[read]]
+# CHECK-NEXT: = CallDirect [[set]] function=f1

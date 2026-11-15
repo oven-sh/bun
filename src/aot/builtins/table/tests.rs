@@ -1,7 +1,7 @@
+mod by_name;
 mod ids;
 mod lookup;
 mod modules;
-mod removable_calls;
 mod syntax;
 
 use super::{BuiltinId, BuiltinName, find_name};

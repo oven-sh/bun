@@ -222,7 +222,8 @@ pub(crate) struct FFI {
     /// Leaked when not close()d: dlclose on GC is unsound because .ptr addresses escape the collector's view.
     pub functions: ManuallyDrop<JsCell<StringArrayHashMap<Function>>>,
     pub closed: Cell<bool>,
-    pub shared_state: Cell<Option<NonNull<TCC::State>>>,
+    /// Leaked like `functions`, which call into it.
+    pub shared_state: ManuallyDrop<Cell<Option<TCC::OwnedState>>>,
 }
 
 impl Default for FFI {
@@ -231,7 +232,7 @@ impl Default for FFI {
             dylib: JsCell::new(None),
             functions: ManuallyDrop::new(JsCell::new(StringArrayHashMap::default())),
             closed: Cell::new(false),
-            shared_state: Cell::new(None),
+            shared_state: ManuallyDrop::new(Cell::new(None)),
         }
     }
 }
@@ -476,8 +477,7 @@ enum DeferredError {
 }
 
 // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type
-// (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
+// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -647,7 +647,8 @@ impl CompileC {
     pub(crate) fn compile(
         &mut self,
         global_this: &JSGlobalObject,
-    ) -> crate::Result<NonNull<TCC::State>> {
+    ) -> crate::Result<TCC::OwnedState> {
+        let ctx = std::ptr::from_mut::<CompileC>(self);
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -661,11 +662,11 @@ impl CompileC {
         };
 
         // TODO: correctly handle invalid user-provided options
-        let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
-            options: Some(NonNull::from(compile_options)),
+        let mut state = match TCC::OwnedState::init::<CompileC, true>(&TCC::Config {
+            options: Some(compile_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(std::ptr::from_mut::<CompileC>(self)),
+                ctx: Some(ctx),
                 handler: Self::handle_compilation_error,
             },
         }) {
@@ -678,9 +679,6 @@ impl CompileC {
                 return Err(crate::Error::DeferredErrors);
             }
         };
-        // SAFETY: `state_ptr` was just returned non-null by `TCC::State::init`;
-        // we hold the only reference for the rest of this function.
-        let state: &mut TCC::State = unsafe { &mut *state_ptr.as_ptr() };
 
         if let Some(compiler_rt_dir) = CompilerRT::dir() {
             if state.add_sys_include_path(compiler_rt_dir).is_err() {
@@ -829,7 +827,7 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        CompilerRT::define(state);
+        CompilerRT::define(&mut state);
 
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
@@ -855,7 +853,7 @@ impl CompileC {
 
         if self
             .source
-            .add(state, &mut self.current_file_for_errors)
+            .add(&mut state, &mut self.current_file_for_errors)
             .is_err()
         {
             if !self.deferred_errors.is_empty() {
@@ -866,8 +864,8 @@ impl CompileC {
             }
         }
 
-        CompilerRT::inject(state);
-        stdarg::inject(state);
+        CompilerRT::inject(&mut state);
+        stdarg::inject(&mut state);
 
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
@@ -922,7 +920,7 @@ impl CompileC {
         self.error_check()
             .map_err(|_| crate::Error::DeferredErrors)?;
 
-        Ok(state_ptr)
+        Ok(state)
     }
 }
 
@@ -1197,8 +1195,8 @@ impl FFI {
         }
 
         // Now we compile the code with tinycc.
-        let mut tcc_state: Option<NonNull<TCC::State>> = match compile_c.compile(global_this) {
-            Ok(s) => Some(s),
+        let tcc_state = match compile_c.compile(global_this) {
+            Ok(s) => s,
             Err(err) => match err {
                 crate::Error::DeferredErrors => {
                     let mut combined: Vec<u8> = Vec::new();
@@ -1227,12 +1225,6 @@ impl FFI {
                 }
             },
         };
-        let _tcc_guard = scopeguard::guard(&mut tcc_state, |s| {
-            if let Some(state) = s {
-                // SAFETY: state is a valid TCC::State pointer from compile()
-                unsafe { TCC::State::destroy(state.as_ptr()) };
-            }
-        });
 
         let napi_env = make_napi_env_if_needed(compile_c.symbols.map.values(), global_this);
 
@@ -1281,7 +1273,7 @@ impl FFI {
 
         let lib = FFI {
             dylib: JsCell::new(None),
-            shared_state: Cell::new(scopeguard::ScopeGuard::into_inner(_tcc_guard).take()),
+            shared_state: ManuallyDrop::new(Cell::new(Some(tcc_state))),
             functions: ManuallyDrop::new(JsCell::new(core::mem::take(&mut compile_c.symbols.map))),
             closed: Cell::new(false),
         };
@@ -1362,17 +1354,22 @@ impl FFI {
     pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
             /// Type-checks `library` (`dynamicDowncast`) before use.
-            safe fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
+            fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        let is_running = Bun__FFI__closeFunctions(cx.global(), this_value.to_js());
+        // SAFETY: C++ indexes `functionsValue` unchecked up to its length. It is empty or the array
+        // that `cc` filled from 0 to its length, which JS never sees.
+        let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
-            self.shared_state.set(None);
+            if let Some(state) = self.shared_state.take() {
+                state.leak();
+            }
             self.functions.with_mut(|functions| {
-                for function in functions.values_mut() {
-                    function.state = None;
-                }
+                let states = functions.values_mut().iter_mut();
+                states
+                    .filter_map(|function| function.state.take())
+                    .for_each(TCC::OwnedState::leak);
             });
         }
         self.do_close();
@@ -1393,11 +1390,8 @@ impl FFI {
             .values()
             .iter()
             .any(Function::needs_napi_env);
-        if let Some(state) = self.shared_state.take()
-            && !has_napi_env
-        {
-            // SAFETY: state is a valid TCC::State pointer; we have exclusive ownership
-            unsafe { TCC::State::destroy(state.as_ptr()) };
+        if !has_napi_env {
+            self.shared_state.set(None);
         }
         self.functions.set(StringArrayHashMap::default());
     }
@@ -1644,6 +1638,8 @@ impl FFI {
         let _js_object_guard = js_object.protected();
         // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
         let lib = unsafe { this_value.payload_ptr().as_ref() };
+        lib.dylib.set(Some(dylib));
+        let dylib = lib.dylib.get().as_ref().expect("just set");
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_bytes());
@@ -1657,7 +1653,6 @@ impl FFI {
                         BStr::new(function_name.as_bytes()),
                         BStr::new(name)
                     ));
-                    dylib.close();
                     lib.do_close();
                     return Ok(ret);
                 };
@@ -1667,7 +1662,6 @@ impl FFI {
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
-                dylib.close();
                 lib.do_close();
                 return Ok(err);
             }
@@ -1687,7 +1681,6 @@ impl FFI {
                                 BStr::new(name)
                             ))
                         });
-                        dylib.close();
                         lib.do_close();
                         return ret;
                     }
@@ -1695,14 +1688,12 @@ impl FFI {
             // Symbol names are user input, so one can be an array index like "0".
             let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
-                dylib.close();
                 lib.do_close();
                 return Err(err);
             }
         }
 
         lib.functions.set(symbols);
-        lib.dylib.set(Some(dylib));
         js::symbols_value_set_cached(js_object, global, obj);
         Ok(js_object)
     }
@@ -2008,7 +1999,7 @@ pub(super) fn generate_symbols(
 pub(crate) struct Function {
     pub symbol_from_dynamic_library: Option<*mut c_void>,
     pub base_name: ZBox,
-    pub state: Option<NonNull<TCC::State>>,
+    pub state: Option<TCC::OwnedState>,
 
     pub return_type: ABIType,
     pub arg_types: Vec<ABIType>,
@@ -2027,16 +2018,6 @@ impl Default for Function {
             arg_types: Vec::new(),
             step: Step::Pending,
             threadsafe: false,
-        }
-    }
-}
-
-impl Drop for Function {
-    fn drop(&mut self) {
-        // base_name, arg_types, Step::Failed.msg are owned and freed by drop glue.
-        if let Some(state) = self.state.take() {
-            // SAFETY: state is a valid TCC::State pointer; we own it
-            unsafe { TCC::State::destroy(state.as_ptr()) };
         }
     }
 }
@@ -2094,7 +2075,7 @@ impl Function {
         }
     }
 
-    pub(crate) fn compile(&mut self, napi_env: Option<&napi::NapiEnv>) -> crate::Result<()> {
+    pub(crate) fn compile(&mut self, napi_env: Option<NonNull<c_void>>) -> crate::Result<()> {
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2104,8 +2085,8 @@ impl Function {
         } else {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
-        let state = match TCC::State::init::<Function, false>(&TCC::Config {
-            options: Some(NonNull::from(tcc_options)),
+        let mut state = match TCC::OwnedState::init::<Function, false>(&TCC::Config {
+            options: Some(tcc_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),
@@ -2116,27 +2097,10 @@ impl Function {
             Err(_) => return Err(crate::Error::TCCMissing),
         };
 
-        self.state = Some(state);
-        let _guard = scopeguard::guard(std::ptr::from_mut::<Function>(self), |this_ptr| {
-            // SAFETY: this_ptr is &mut self for the duration of compile()
-            if matches!(unsafe { &(*this_ptr).step }, Step::Failed { .. }) {
-                // SAFETY: as above.
-                if let Some(s) = unsafe { (*this_ptr).state.take() } {
-                    // SAFETY: we own the state
-                    unsafe { TCC::State::destroy(s.as_ptr()) };
-                }
-            }
-        });
-        // SAFETY: state is non-null, just stored above
-        let state = unsafe { self.state.unwrap().as_mut() };
-
         if let Some(env) = napi_env {
-            // `env` is the live VM-owned napi env; process-lifetime.
+            // `makeNapiEnvForFFI` leaks a ref on `env`: the address stays valid for JIT'd code.
             if state
-                .add_symbol(
-                    zstr!("Bun__thisFFIModuleNapiEnv"),
-                    std::ptr::from_ref(env).cast::<c_void>(),
-                )
+                .add_symbol(zstr!("Bun__thisFFIModuleNapiEnv"), env.as_ptr())
                 .is_err()
             {
                 self.fail(b"Failed to add NAPI env symbol");
@@ -2144,7 +2108,7 @@ impl Function {
             }
         }
 
-        CompilerRT::define(state);
+        CompilerRT::define(&mut state);
 
         // SAFETY: source_code was NUL-terminated above
         if state
@@ -2155,7 +2119,7 @@ impl Function {
             return Ok(());
         }
 
-        CompilerRT::inject(state);
+        CompilerRT::inject(&mut state);
         // `symbol_from_dynamic_library` is a dlsym'd address; valid for the
         // loaded library's lifetime, which outlives the TCC state.
         if state
@@ -2181,6 +2145,7 @@ impl Function {
             ptr: symbol.as_ptr().cast::<c_void>(),
             ..Default::default()
         });
+        self.state = Some(state);
         Ok(())
     }
 
@@ -2749,17 +2714,10 @@ static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
 fn make_napi_env_if_needed<'a>(
     functions: impl IntoIterator<Item = &'a Function>,
     global_this: &JSGlobalObject,
-) -> Option<&'static napi::NapiEnv> {
-    // Return is `'static`, not `'a` — the env is heap-allocated by C++
-    // (`makeNapiEnvForFFI`) and owned by the VM for process lifetime; tying it
-    // to `'a` (the iterator borrow) is over-restrictive and blocks the
-    // immediate-after `values_mut()` loop at every call site.
+) -> Option<NonNull<c_void>> {
     for function in functions {
         if function.needs_napi_env() {
-            // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
-            // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
-            return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
+            return NonNull::new(global_this.make_napi_env_for_ffi());
         }
     }
     None

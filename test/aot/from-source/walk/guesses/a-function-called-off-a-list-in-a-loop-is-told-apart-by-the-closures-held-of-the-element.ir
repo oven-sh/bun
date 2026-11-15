@@ -1,0 +1,26 @@
+# `steps[i & 1](i)` in a loop: two closures are held of the element, and that is no proof: each is tested for and its body is copied in behind its test; what fails both tests leaves
+# for the loop that calls a value, so that the loop in front calls nothing. Outside a loop, and off a list of nine, the call stays one call of a value.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = Call
+# CHECK: = TypeTest {{*}} testedType=f4
+# CHECK-NOT: = Call
+# CHECK: = TypeTest {{*}} testedType=f5
+# CHECK-NOT: = Call
+# RUN(ONCE): walk f2 mechanisms=all
+# ONCE-LABEL: code f2:Body
+# ONCE-NOT: testedType=f
+# ONCE: = Call
+# RUN(NINE): walk f3 mechanisms=all
+# NINE-LABEL: code f3:Body
+# NINE-NOT: testedType=f
+# NINE: = Call
+# -- source: a-function-called-off-a-list-in-a-loop-is-told-apart-by-the-closures-held-of-the-element.ts
+# declare function sink(...values: unknown[]): void;
+# const steps = [(x: number) => (x + 1) | 0, (x: number) => (x * 2) | 0];
+# const many = [(x: number) => x + 1, (x: number) => x + 2, (x: number) => x + 3, (x: number) => x + 4, (x: number) => x + 5, (x: number) => x + 6, (x: number) => x + 7, (x: number) => x + 8, (x: number) => x + 9];
+# function inLoop(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum = (sum + steps[i & 1](i)) | 0; return sum; }
+# function once(i: number): number { return steps[i & 1](i); }
+# function offNine(n: number): number { let sum = 0; for (let i = 0; i < n; i++) sum += many[i % 9](i); return sum; }
+# sink(inLoop, once, offNine);
+# -- end of source

@@ -1,0 +1,11 @@
+# -- source: main.cjs
+# var list = [1, 2].map(x => x + 1);
+# var limit = 2048;
+# function pad(first, second) { var index = 0; while (index < limit) { second[index] = first[index] = 0; ++index; } }
+# globalThis.pads = [pad, list];
+# const call = (0, eval)("(function (f, ...r) { return f(...r); })");
+# call(pad, new Float32Array(2048), new Float32Array(2048));
+# -- end of source
+# The loop reads its bound out of a variable that holds one number. Views are held against that number in front of the loop, so the stores ask for no length.
+# RUN: walk f1 mechanisms=all
+# CHECK: PutTypedArrayElement {{*}}isInsideView

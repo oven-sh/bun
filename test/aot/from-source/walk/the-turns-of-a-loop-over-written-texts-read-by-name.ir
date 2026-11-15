@@ -1,0 +1,27 @@
+# `for (const side of ["x", "y", "z"]) peg[side]`: nobody but the loop has the list: its turns are written out, each turn's key is the text written there, and the reads go by name: no read by key, no loop.
+# A list that the turns hand to a function may be written by it: its elements are read.
+# -- source: main.js
+# class Peg { constructor() { this.x = 1; this.y = 2; this.z = 3; } }
+# function sum(peg) { let total = 0; for (const side of ["x", "y", "z"]) total = total * 10 + peg[side]; return total; }
+# function touch(sides) { sides[1] = "z"; }
+# function handedOut(peg) { const sides = ["x", "y", "z"]; let total = 0; for (const side of sides) { total = total * 10 + peg[side]; touch(sides); } return total; }
+# const peg = new Peg();
+# print(sum(peg) + " " + handedOut(peg));
+# -- end of source
+# f1 = touch, f2 = sum, f3 = handedOut
+# RUN(NAMES): walk f2 mechanisms=all-Inlining
+# NAMES-LABEL: code f2:Body
+# NAMES-NOT: isLoopHead=true
+# NAMES-NOT: = ElemGet
+# NAMES: = GetSlot {{*}}key="x"
+# NAMES-NOT: = ElemGet
+# NAMES: = GetSlot {{*}}key="y"
+# NAMES-NOT: = ElemGet
+# NAMES: = GetSlot {{*}}key="z"
+# NAMES-NOT: = ElemGet
+# RUN(HANDED): walk f3 mechanisms=all-Inlining
+# HANDED-LABEL: code f3:Body
+# HANDED: = GetArrayElement
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 123 133
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,25 @@
+# a join that a copied callee returns gives its parts to the row of the caller: one Strcat is left, and the callee's, which nobody reads and which cannot throw, is dropped
+# in the third function the text that the callee returns has a second reader, so it is made, and it is one part of the caller's row
+# the two callers are handed to code that nobody has seen, and test what they are handed
+# f1 = tag, f2 = lines, f3 = both
+# -- source: join-that-a-copied-callee-returns-joins-the-row-of-the-caller.ts
+# declare function sink(...values: unknown[]): void;
+# function tag(n: number) { return "[" + n + "]"; }
+# function lines(n: unknown) { if (typeof n !== "number") return; for (let i = 0; i < n; i++) sink("<" + tag(i) + ">"); }
+# function both(n: unknown) { if (typeof n !== "number") return; for (let i = 0; i < n; i++) { const text = tag(i); sink("<" + text + ">", text); } }
+# sink(lines, both);
+# -- end of source
+# RUN: walk f2 mechanisms=none+TypedOperations+DirectCalls+Inlining
+# CHECK-LABEL: code f2:Body
+# CHECK-COUNT-1: = Strcat
+# CHECK-NOT: = Strcat
+# RUN(COPIED): walk f2 mechanisms=none+TypedOperations+DirectCalls+Inlining
+# COPIED-NOT: = CallDirect
+# RUN(BOTH): walk f3 mechanisms=none+TypedOperations+DirectCalls+Inlining
+# BOTH-LABEL: code f3:Body
+# BOTH-COUNT-2: = Strcat
+# under all mechanisms the loop is built twice (the lesser bound of its counter buys a build that counts in int32): one Strcat in each build, the callee's dropped in both
+# RUN(ALL): walk f2 mechanisms=all
+# ALL-LABEL: code f2:Body
+# ALL-COUNT-2: = Strcat
+# ALL-NOT: = Strcat

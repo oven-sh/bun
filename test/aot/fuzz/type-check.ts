@@ -133,6 +133,44 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
 }
 
 /**
+ * The same checker in a thread of its own, one question at a time. Some programs cost TypeScript's flow analysis
+ * minutes, and the fuzzer has one thread for all its builds. Answers "late" where TypeScript has not answered in
+ * `seconds`: the thread is ended, and the next question starts another. Answers nothing if TypeScript is not installed.
+ */
+export function typeCheckerApart(settings: Parameters<typeof typeChecker>[0], seconds: number) {
+  let thread: Worker | undefined;
+  let turn: Promise<unknown> = Promise.resolve();
+  const ask = (programs: Parameters<Checker>[0]) =>
+    new Promise<string[][] | "late" | undefined>((resolve, reject) => {
+      thread ??= new Worker(new URL("./type-check-apart.ts", import.meta.url).href);
+      thread.unref();
+      const ended = (answer: string[][] | "late" | undefined, isOver: boolean) => {
+        clearTimeout(timer);
+        if (isOver) (thread?.terminate(), (thread = undefined));
+        resolve(answer);
+      };
+      const timer = setTimeout(ended, seconds * 1000, "late", true);
+      thread.onmessage = ({ data }) => ended(data, false);
+      thread.onerror = () => ended(undefined, true);
+      try {
+        // Only what the checker reads: a program may also hold a function, and no message carries one.
+        const read = programs.map(program =>
+          typeof program === "string" ? program : { text: program.text, files: program.files },
+        );
+        thread.postMessage({ settings, programs: read });
+      } catch (error) {
+        clearTimeout(timer);
+        reject(error);
+      }
+    });
+  return (programs: Parameters<Checker>[0]) => {
+    const answer = turn.then(() => ask(programs));
+    turn = answer.catch(() => {});
+    return answer;
+  };
+}
+
+/**
  * Escapes that a source's rules forbid although the checker accepts them: a cast, `any`, `!`, a comment that silences
  * the checker.
  */

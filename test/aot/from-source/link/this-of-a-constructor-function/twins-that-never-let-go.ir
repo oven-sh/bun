@@ -1,0 +1,19 @@
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Alone(v) { this.held = v; }
+# function Looks(v) { this.seen = v === o; }
+# class BelowLooks extends Looks { constructor(v) { super(v); this.y = 2; } }
+# class Upper { constructor(v) { this.held = v; } }
+# class Lower extends Upper { constructor(v) { super(v); this.y = 3; } }
+# print(new Alone(o).held === o, new BelowLooks(o).seen, new Lower(o).held === o, o.m());
+# -- end of source
+# Three shapes that kept `o` in sight before: a constructor function that nothing stands below, one that is handed the value from below and does not store it, and a class below a class.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: true true true 1
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: true true true 1
+# CHECKED-NEXT: exited with 0

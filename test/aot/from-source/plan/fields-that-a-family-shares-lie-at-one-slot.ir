@@ -1,0 +1,28 @@
+# The two constructor functions store the fields in different orders, and one has a field of its own between them. What every member of the declared family lists lies in front, at one offset in all of them, so a read through the family is one load behind one test of the family.
+# `parent`, which both constructors only give undefined and the type lets be left out, takes one granule in all of them. So does a name that is stored later on all of them. The order in which the keys are listed is that of the stores, whatever the slots: the run time goes by the key order.
+# -- source: shared-by-a-family.ts
+# interface Node { kind: number; flags: number; parent?: Node; symbol?: object }
+# function Big(this: Node, kind: number) { this.kind = kind; (this as any).extra = 0; this.flags = 0; this.parent = undefined; }
+# function Small(this: Node, kind: number) { this.flags = 1; this.kind = kind; this.parent = undefined; }
+# function make(kind: number): Node { return kind & 1 ? new (Big as any)(kind) : new (Small as any)(kind); }
+# function bind(node: Node, symbol: object) { node.symbol = symbol; }
+# function read(node: Node) { return node.kind + node.flags + (node.parent ? 1 : 0) + (node.symbol ? 2 : 0); }
+# let sum = 0;
+# for (let i = 0; i < 10; i++) { const node = make(i); if (i & 2) bind(node, {}); sum += read(node); }
+# console.log(sum);
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject size=48 extension=24
+# CHECK-NEXT: slot 0 "kind" {{*}}Inline offset=24
+# CHECK-NEXT: slot 1 "extra" {{*}}Inline offset=32
+# CHECK-NEXT: slot 2 "flags" {{*}}Inline offset=28
+# CHECK-NEXT: slot 3 "parent" JSValue OutOfLine offset=8
+# CHECK-NEXT: slot 4 "symbol" appended JSValue OutOfLine offset=16
+# CHECK: layout L1 CompiledObject size=32 extension=24
+# CHECK-NEXT: slot 0 "flags" {{*}}Inline offset=28
+# CHECK-NEXT: slot 1 "kind" {{*}}Inline offset=24
+# CHECK-NEXT: slot 2 "parent" JSValue OutOfLine offset=8
+# CHECK-NEXT: slot 3 "symbol" appended JSValue OutOfLine offset=16
+# RUN(WALK): walk f5 mechanisms=all
+# WALK: = GetSlot {{*}}key="kind" receivers=[L0, L1]
+# WALK: = GetSlot {{*}}key="flags" receivers=[L0, L1]

@@ -1,0 +1,21 @@
+# A bound that arithmetic makes before the loop is a double: it is rounded and checked for an int32 there, and the counter is an int32.
+# LIBRARY: own
+# -- source: main.ts
+# function sum(list: number[], n: number): number { let s = 0; for (let i = 2; i <= Math.sqrt(n); i++) s += list[i]; return s; }
+# const list = [1, 2, 4, 8, 16, 32, 64, 128];
+# publish((n) => sum(list, n));
+# declare function publish(run: (n: number) => number): void;
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: IntegerBound {{*}} comparison=LessEq
+# CHECK: TypeTest {{*}} testedType=i32
+# CHECK: isInLoop=true isLoopHead=true
+# CHECK: LessEq {{*}} form=Integers
+# CHECK: Increment {{*}} form=Integers
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { for (const n of [16, 26, 3, -1, NaN, Infinity]) print(n === Infinity ? "" : run(n)); };
+# SHELL: 28
+# SHELL-NEXT: 60
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0
+# SHELL-NEXT: 0

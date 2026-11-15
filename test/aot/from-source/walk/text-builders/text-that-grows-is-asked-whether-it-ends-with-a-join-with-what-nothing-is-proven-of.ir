@@ -1,0 +1,13 @@
+# `if (line.endsWith("," + tail)) hits++; line += ..`, nothing proven of `tail`: the test against a join looks ahead at the call, whose receiver is still bound to the builder. It passes the builder by, and the call gets a string.
+# f1 = gather
+# -- source: text-that-grows-is-asked-whether-it-ends-with-a-join-with-what-nothing-is-proven-of.js
+# function gather(count, tail) { let line = ""; let hits = 0; for (let i = 0; i < count; i++) { if (line.endsWith("," + tail)) hits++; line += "k" + i + "," + tail; } return line.length + ":" + hits; }
+# let last = ""; for (let turn = 0; turn < 30; turn++) last = gather(id(3), id("-"));
+# print(last);
+# -- end of source
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 12:2
+# RUN(FORM): walk f1 mechanisms=all
+# FORM-LABEL: code f1:Body
+# FORM: StringBuilderBegin
+# FORM: StringBuilderToString

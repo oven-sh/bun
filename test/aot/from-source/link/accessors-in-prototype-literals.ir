@@ -1,0 +1,18 @@
+# -- source: main.cjs
+# function Getters(k) { this._k = k; }
+# Getters.prototype = { get key() { return this._k; }, twice: function () { return this.key * 2; } };
+# function Both(k) { this._k = k; }
+# Both.prototype = { get key() { return this._k; }, set key(x) { this._k = x; } };
+# function Again(k) { this._k = k; }
+# Again.prototype = { get key() { return -1; }, get key() { return this._k; } };
+# const b = new Both(2);
+# b.key = 5;
+# print(new Getters(1).twice() + new Getters(1).key + b.key + new Again(3).key);
+# -- end of source
+# The closures of getters and setters in a prototype literal are in sight, so the classes stay. Two getters under one name let the class out.
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# CHECK: layout L1 {{*}}stays-with-compiled-code
+# CHECK: layout L2 {{*}}changes=[IsFrozen
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 11

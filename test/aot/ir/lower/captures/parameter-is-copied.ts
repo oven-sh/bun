@@ -1,10 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="f"
-// CHECK: parameters=[{type=number site=[[site]]}]
+// CHECK: parameters=[{type=number}]
 // CHECK: b0([[p]]: number):
 // CHECK: = NewClosure [[p]] function=
 // CHECK-LABEL: function {{*}}kind=Arrow
-// CHECK: captures=[{type=number site=[[site]] variableName="p"}] thisType
+// CHECK: captures=[{type=number variableName="p"}] thisType
 
 // RUN(ENVIRONMENTS): lower
 // ENVIRONMENTS-NOT: = NewObject

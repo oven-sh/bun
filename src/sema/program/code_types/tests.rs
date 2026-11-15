@@ -182,7 +182,7 @@ fn load<'s, 'r>(context: &CodeLoadContext<'_, 's, 'r>, path: &str) -> ParsedCode
         context.session.arena(),
         target,
         text,
-        LoadInputs::default(),
+        &LoadInputs::default(),
     )
 }
 

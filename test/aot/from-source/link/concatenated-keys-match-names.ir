@@ -1,0 +1,15 @@
+# -- source: concatenated-keys-match-names.js
+# class Item { constructor(n) { this.count = n; } }
+# class Store { constructor() { this._firstList = []; this._secondList = []; this._size = 0; } list(name) { return this[`_${name}List`]; } add(name, n) { const list = this["_" + name.toLowerCase() + "List"]; const item = new Item(n); list.push(item); return item; } }
+# const store = new Store();
+# let sum = 0;
+# for (let i = 0; i < 4; i++) sum += store.add(i & 1 ? "FIRST" : "Second", i).count;
+# print(sum, store.list("first").length, store.list("second")[0].count, typeof store.list("none"));
+# -- end of source
+# L0 = Item, L1 = Store. The reads find the two lists alone: no method, no prototype, no member of Object.prototype has such a name.
+# RUN(ITEM): link why-gone L0
+# ITEM: why-gone L0: it has not gone
+# RUN(STORE): link why-gone L1
+# STORE: why-gone L1: it has not gone
+# RUN(ANSWERS): run-in-shell
+# ANSWERS: 6 2 0 undefined

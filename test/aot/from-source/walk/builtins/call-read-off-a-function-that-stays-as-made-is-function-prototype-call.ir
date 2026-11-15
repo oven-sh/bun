@@ -1,0 +1,20 @@
+# -- source: call-read-off-a-function-that-stays-as-made-is-function-prototype-call.js
+# function Base(a) { this.a = a; }
+# function Below(a, b) { Base.call(this, a); this.b = b; }
+# Object.setPrototypeOf(Below.prototype, Base.prototype);
+# function Tagged(a) { this.a = a; }
+# Tagged.call = function (self, a) { self.a = a + 1; };
+# function BelowTagged(a) { Tagged.call(this, a); }
+# function make(n) { return new Below(n, 2).a + new BelowTagged(n).a; }
+# sink(make(1));
+# -- end of source
+# `Base.call(this, a)`: nothing gives Base a `call` of its own, lays it below something else or hands it out: the read finds Function.prototype.call. No read by name, no test of what was read, no arm that boxes `this`.
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: key="call"
+# RUN(TEST): walk f2 mechanisms=all
+# TEST-NOT: = TypeTest
+# Tagged has one of its own.
+# RUN(OWN): walk f4 mechanisms=all
+# OWN-LABEL: code f4:Body
+# OWN: key="call"

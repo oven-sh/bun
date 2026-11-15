@@ -1,0 +1,16 @@
+# the same program with typed operations withheld: no access has a slot, and each read by name stands where it is written
+# RUN: walk f1 mechanisms=none+Folding
+# CHECK-LABEL: code f1:Body
+# CHECK-COUNT-2: = PropGet {{*}}key="c"
+# -- source: store-through-one-object-leaves-what-is-known-of-another.ts
+# declare function sink(...values: unknown[]): void;
+# class P { c = 1; }
+# class Q { c = 2; }
+# const p = new P();
+# const other = new P();
+# const q = new Q();
+# function apart() { const before = p.c; q.c = 5; return before + p.c; }
+# function alike() { const before = p.c; other.c = 5; return before + p.c; }
+# sink(apart, alike);
+# -- end of source
+# f1 = apart, f2 = alike

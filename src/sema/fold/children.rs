@@ -22,20 +22,32 @@ pub fn push_children<S: Storage>(hir: &FileIn<S>, node: TreeNode, stack: &mut Ve
     }
 }
 
+#[inline]
 fn push_exprs(exprs: impl IntoIterator<Item = ExprId>, stack: &mut Vec<TreeNode>) {
-    let present = exprs.into_iter().filter(|e| e.is_some());
-    stack.extend(present.map(TreeNode::Expr));
+    for e in exprs {
+        if e.is_some() {
+            stack.push(TreeNode::Expr(e));
+        }
+    }
 }
 
+#[inline]
 fn push_stmts(stmts: impl IntoIterator<Item = StmtId>, stack: &mut Vec<TreeNode>) {
-    let present = stmts.into_iter().filter(|stmt| stmt.is_some());
-    stack.extend(present.map(TreeNode::Stmt));
+    for stmt in stmts {
+        if stmt.is_some() {
+            stack.push(TreeNode::Stmt(stmt));
+        }
+    }
 }
 
+#[inline]
 fn push_pattern(pattern: PatId, stack: &mut Vec<TreeNode>) {
-    stack.extend(pattern.some().map(TreeNode::Pattern));
+    if pattern.is_some() {
+        stack.push(TreeNode::Pattern(pattern));
+    }
 }
 
+#[inline]
 fn push_computed_key(key: PropKey, stack: &mut Vec<TreeNode>) {
     match key {
         PropKey::Computed(e) => push_exprs([e], stack),

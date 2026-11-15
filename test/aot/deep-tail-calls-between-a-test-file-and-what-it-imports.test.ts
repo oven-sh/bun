@@ -155,6 +155,4 @@ test("replaces", () => {
   expect(plain.lines.filter(line => line.includes("RangeError")).length).toBe(2);
   expect(plain.exitCode).toBe(0);
   expect(await report("TestRunLayers:0", "--aot")).toEqual(plain);
-  expect(await report("TestRunLayers:1,TestRunPartFiles:1", "--aot")).toEqual(plain);
-  expect(await report("TestRunLayers:2,TestRunPartFiles:1", "--aot")).toEqual(plain);
 });

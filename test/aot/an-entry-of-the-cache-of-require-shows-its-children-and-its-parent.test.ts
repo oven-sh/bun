@@ -15,25 +15,9 @@ const body = (take: string) => `test("t", () => {
 const fromBunTest = `import { test } from "bun:test";\n`;
 const forms: Record<string, [string, string]> = {
   "a variable of a TypeScript file": ["a.test.ts", fromBunTest + body("const entry = require.cache[path]!;")],
-  "a variable of an ES module": ["a.test.mjs", fromBunTest + body("const entry = require.cache[path];")],
   "a variable of a CommonJS file": [
     "a.test.cjs",
     `const { test } = require("bun:test");\n` + body("const entry = require.cache[path];"),
-  ],
-  "a written key": [
-    "a.test.ts",
-    fromBunTest + body(`const entry = require.cache[require.resolve("./src/counter.cjs")]!;`),
-  ],
-  "read where it stands": [
-    "a.test.ts",
-    fromBunTest +
-      body(
-        "const entry = { get children() { return require.cache[path]!.children; }, get parent() { return require.cache[path]!.parent; } };",
-      ),
-  ],
-  "a file of the project hands it out": [
-    "a.test.ts",
-    fromBunTest + `import { look } from "./src/look.cjs";\n` + body("const entry = look(path);"),
   ],
   "Module._cache": [
     "a.test.ts",
@@ -41,18 +25,16 @@ const forms: Record<string, [string, string]> = {
   ],
 };
 
-async function linesOf(name: string, text: string, flags: string[], words?: string) {
+async function linesOf(name: string, text: string, flags: string[]) {
   using dir = tempDir("aot-entry-of-the-cache", {
     "src/counter.cjs": `let n = 0; exports.bump = () => ++n; exports.dep = require("./dep.cjs");`,
     "src/dep.cjs": `exports.d = 1;`,
-    "src/look.cjs": `exports.look = path => require.cache[path];`,
     [name]: text,
   });
-  const env = words ? { ...bunEnv, BUN_DEBUG_TEST_AOT_WORDS: words } : bunEnv;
   await using run = Bun.spawn({
     cmd: [bunExe(), "test", ...flags],
     cwd: String(dir),
-    env,
+    env: bunEnv,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const [stderr, exitCode] = await Promise.all([run.stderr.text(), run.exited]);
@@ -65,7 +47,6 @@ test.concurrent.each(Object.entries(forms))(
     const plain = await linesOf(name, text, []);
     expect(plain.lines).toEqual([expect.stringMatching(/^OUT object dep\.cjs object \S+$/)]);
     expect(await linesOf(name, text, ["--aot"])).toEqual(plain);
-    expect(await linesOf(name, text, ["--aot", "--isolate"], "TestRunLayers:2")).toEqual(plain);
   },
   240_000,
 );

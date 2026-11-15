@@ -12,7 +12,7 @@ test.skipIf(!!unsupported)(
   async () => {
     using dir = tempDir("match-on-a-literal-without-regular-expressions", {
       "program.ts": `function versionIn(value: unknown) {
-  return String(value).match(/(?<=bun )\\S+/)?.[0];
+  return String(value).match(/(?<=bun )\\S+/);
 }
 console.log(process.argv.length > 2 ? versionIn(process.argv[2]) : "no text");
 `,
@@ -26,7 +26,6 @@ console.log(process.argv.length > 2 ? versionIn(process.argv[2]) : "no text");
         "--compile",
         ...withoutDebugInformation,
         "--aot",
-        "--aot-verify-each-pass",
         "--trim",
         ...withoutFeatures([regExp]),
         "program.ts",

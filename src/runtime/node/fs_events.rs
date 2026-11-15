@@ -5,7 +5,8 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_collections::VecExt;
 use bun_core::zstr;
-use bun_threading::{Mutex, Semaphore, UnboundedQueue};
+use bun_ptr::AliasableBox;
+use bun_threading::{Guarded, Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
 // are fine in Rust, so import the real shapes instead of mirroring them.
@@ -268,62 +269,83 @@ fn init_core_services() -> CoreServices {
 pub(crate) struct FSEventsLoop {
     signal_source: AtomicPtr<c_void>,
     loop_: AtomicPtr<c_void>,
-    mutex: Mutex,
+    mutex: Guarded<FSEventsLoopState>,
     sem: Semaphore,
     tasks: UnboundedQueue<ConcurrentTask>,
     thread: UnsafeCell<Option<std::thread::JoinHandle<()>>>,
-    state: UnsafeCell<FSEventsLoopState>,
 }
 
 struct FSEventsLoopState {
     watchers: Vec<Option<NonNull<FSEventsWatcher>>>,
     watcher_count: u32,
     has_scheduled_watchers: bool,
-    fsevent_stream: FSEventStreamRef,
-    paths: Option<Box<[*mut c_void]>>,
-    cf_paths: CFArrayRef,
+    stream: Option<StartedStream>,
 }
 
-// SAFETY: cross-thread pointers are `AtomicPtr`; `state` is only accessed under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
-unsafe impl Sync for FSEventsLoop {}
-// SAFETY: no thread-affine data; the loop is a leaked `&'static` singleton and all shared access is synchronized per the `Sync` impl above.
-unsafe impl Send for FSEventsLoop {}
+/// The array does not retain the strings in it.
+struct StreamPaths {
+    strings: Box<[CFStringRef]>,
+    array: CFArrayRef,
+}
 
-impl FSEventsLoop {
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    unsafe fn state(&self) -> &mut FSEventsLoopState {
-        // SAFETY: the caller holds `self.mutex`, so this is the only live reference to `state`.
-        unsafe { &mut *self.state.get() }
+impl Drop for StreamPaths {
+    fn drop(&mut self) {
+        let cf = CoreFoundation::get();
+        for &object in self.strings.iter().chain([&self.array]) {
+            if !object.is_null() {
+                // SAFETY: from a `Create` function, and released nowhere else.
+                unsafe { (cf.release)(object) };
+            }
+        }
     }
 }
 
+struct EventStream(NonNull<c_void>);
+
+impl Drop for EventStream {
+    fn drop(&mut self) {
+        let cs = CoreServices::get();
+        // SAFETY: from `FSEventStreamCreate`, and scheduled on the run loop of this thread.
+        unsafe {
+            (cs.fs_event_stream_invalidate)(self.0.as_ptr());
+            (cs.fs_event_stream_release)(self.0.as_ptr());
+        }
+    }
+}
+
+struct StartedStream {
+    stream: EventStream,
+    _paths: StreamPaths,
+}
+
+impl Drop for StartedStream {
+    fn drop(&mut self) {
+        // SAFETY: `FSEventStreamStart` succeeded.
+        unsafe { (CoreServices::get().fs_event_stream_stop)(self.stream.0.as_ptr()) };
+    }
+}
+
+// SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
+unsafe impl Sync for FSEventsLoop {}
+
 pub(crate) struct Task {
-    pub ctx: *mut (),
-    pub callback: fn(*mut ()),
+    pub ctx: &'static FSEventsLoop,
+    pub callback: fn(&FSEventsLoop),
 }
 
 impl Task {
     pub(crate) fn run(&mut self) {
-        let callback = self.callback;
-        let ctx = self.ctx;
-        debug_assert!(!ctx.is_null());
-        callback(ctx);
+        (self.callback)(self.ctx);
     }
 
-    pub(crate) fn new<T>(ctx: &'static T, callback: fn(&T)) -> Task {
-        Task {
-            // SAFETY: `fn(&T)` and `fn(*mut ())` have identical single-pointer ABI, and `ctx` is a valid `&T` at call time.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&T), fn(*mut ())>(callback) },
-            ctx: core::ptr::from_ref::<T>(ctx).cast_mut().cast::<()>(),
-        }
+    pub(crate) fn new(ctx: &'static FSEventsLoop, callback: fn(&FSEventsLoop)) -> Task {
+        Task { ctx, callback }
     }
 }
 
 pub(crate) struct ConcurrentTask {
     pub task: Task,
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
-    pub(crate) auto_delete: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
@@ -379,42 +401,28 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue; this
-            // thread owns it exclusively once popped. Scoped accesses so no
-            // reference is live when the node is freed below.
-            let auto_delete = unsafe {
-                (*task).task.run();
-                (*task).auto_delete
-            };
-            if auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent; freed
-                // through the queue pointer (allocation provenance).
-                drop(unsafe { bun_core::heap::take(task) });
-            }
+            // SAFETY: heap-allocated in `enqueue_task_concurrent`; this thread
+            // owns it exclusively once popped.
+            unsafe { bun_core::heap::take(task) }.task.run();
         }
     }
 
     pub(crate) fn init() -> crate::Result<&'static FSEventsLoop> {
-        // Owning raw pointer first, shared view second: the error paths below reclaim
-        // through `this_ptr`, which must not be derived from a shared reference.
-        let this_ptr: *mut FSEventsLoop = bun_core::heap::into_raw(Box::new(FSEventsLoop {
+        let owned = AliasableBox::new(FSEventsLoop {
             signal_source: AtomicPtr::new(ptr::null_mut()),
             loop_: AtomicPtr::new(ptr::null_mut()),
-            mutex: Mutex::new(),
             sem: Semaphore::default(),
             tasks: UnboundedQueue::default(),
             thread: UnsafeCell::new(None),
-            state: UnsafeCell::new(FSEventsLoopState {
+            mutex: Guarded::new(FSEventsLoopState {
                 watchers: Vec::new(),
                 watcher_count: 0,
                 has_scheduled_watchers: false,
-                fsevent_stream: ptr::null_mut(),
-                paths: None,
-                cf_paths: ptr::null_mut(),
+                stream: None,
             }),
-        }));
-        // SAFETY: just allocated and exclusively owned; the CF thread only sees it after spawn.
-        let this: &'static FSEventsLoop = unsafe { &*this_ptr };
+        });
+        // SAFETY: leaked once the CF thread has it, and not used after an early return.
+        let this: &'static FSEventsLoop = unsafe { &*owned.as_ptr() };
 
         let cf = CoreFoundation::get();
 
@@ -437,8 +445,6 @@ impl FSEventsLoop {
         let signal_source =
             unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
-            // SAFETY: nothing else has seen the allocation (published only on Ok).
-            drop(unsafe { bun_core::heap::take(this_ptr) });
             return Err(crate::Error::FailedToCreateCoreFoudationSourceLoop);
         }
         this.signal_source.store(signal_source, Ordering::Relaxed);
@@ -449,15 +455,12 @@ impl FSEventsLoop {
         {
             Ok(handle) => handle,
             Err(_) => {
-                // SAFETY: the source was never scheduled on a run loop and the allocation
-                // was never published, so both are exclusively owned here.
-                unsafe {
-                    (cf.release)(signal_source.cast());
-                    drop(bun_core::heap::take(this_ptr));
-                }
+                // SAFETY: the source was never scheduled on a run loop.
+                unsafe { (cf.release)(signal_source.cast()) };
                 return Err(crate::Error::FailedToSpawnFSEventsThread);
             }
         };
+        owned.into_raw();
         // SAFETY: `thread` is only touched by `init()`/`shutdown()` on the JS thread; the CF thread never accesses it.
         unsafe {
             *this.thread.get() = Some(handle);
@@ -473,7 +476,6 @@ impl FSEventsLoop {
         self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
             task,
             next: bun_threading::Link::new(),
-            auto_delete: true,
         }));
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);
@@ -509,9 +511,7 @@ impl FSEventsLoop {
         // so without this lock we can read `handle.path` / call `handle.emit`
         // on freed memory. Holding the lock also prevents `registerWatcher`
         // from reallocating the `watchers` buffer mid-iteration.
-        let _guard = loop_.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { loop_.state() };
+        let state = loop_.mutex.lock();
 
         for watcher in state.watchers.slice() {
             let Some(handle) = *watcher else { continue };
@@ -584,48 +584,24 @@ impl FSEventsLoop {
 
     // Runs on CF Thread
     fn schedule(&self) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         state.has_scheduled_watchers = false;
         let watcher_count = state.watcher_count;
+
+        state.stream = None;
+        if watcher_count == 0 {
+            return;
+        }
 
         let cf = CoreFoundation::get();
         let cs = CoreServices::get();
 
         // SAFETY: all CF/CS calls below operate on handles we own
         unsafe {
-            if !state.fsevent_stream.is_null() {
-                let stream = state.fsevent_stream;
-                // Stop emitting events
-                (cs.fs_event_stream_stop)(stream);
-
-                // Release stream
-                (cs.fs_event_stream_invalidate)(stream);
-                (cs.fs_event_stream_release)(stream);
-                state.fsevent_stream = ptr::null_mut();
-            }
-            // clean old paths
-            if let Some(p) = state.paths.take() {
-                for s in p.iter() {
-                    if !s.is_null() {
-                        (cf.release)(*s);
-                    }
-                }
-                drop(p);
-            }
-            if !state.cf_paths.is_null() {
-                let cfp = state.cf_paths;
-                state.cf_paths = ptr::null_mut();
-                (cf.release)(cfp);
-            }
-
-            if watcher_count == 0 {
-                return;
-            }
-
-            let mut paths: Box<[*mut c_void]> =
-                vec![ptr::null_mut(); watcher_count as usize].into_boxed_slice();
+            let mut paths = StreamPaths {
+                strings: vec![ptr::null_mut(); watcher_count as usize].into_boxed_slice(),
+                array: ptr::null_mut(),
+            };
             let mut count: u32 = 0;
             for w in state.watchers.slice() {
                 if let Some(watcher) = *w {
@@ -637,14 +613,14 @@ impl FSEventsLoop {
                         ptr::null_mut(),
                         watcher.path.slice().as_ptr().cast(),
                     );
-                    paths[count as usize] = path;
+                    paths.strings[count as usize] = path;
                     count += 1;
                 }
             }
 
-            let cf_paths = (cf.array_create)(
+            paths.array = (cf.array_create)(
                 ptr::null_mut(),
-                paths.as_mut_ptr(),
+                paths.strings.as_mut_ptr(),
                 count as CFIndex,
                 ptr::null(),
             );
@@ -682,52 +658,33 @@ impl FSEventsLoop {
                 ptr::null_mut(),
                 Self::events_cb,
                 &raw mut ctx,
-                cf_paths,
+                paths.array,
                 cs.k_fs_event_stream_event_id_since_now,
                 latency,
                 flags,
             );
-            if r#ref.is_null() {
+            let Some(stream) = NonNull::new(r#ref).map(EventStream) else {
                 // FSEventStreamCreate can fail under rapid stream churn (resource
                 // exhaustion); passing NULL into ScheduleWithRunLoop crashes the CF thread.
-                for s in &paths[..count as usize] {
-                    if !s.is_null() {
-                        (cf.release)(*s);
-                    }
-                }
-                drop(paths);
-                (cf.release)(cf_paths);
                 return;
-            }
+            };
 
             (cs.fs_event_stream_schedule_with_run_loop)(
                 r#ref,
                 self.loop_.load(Ordering::Relaxed),
                 *cf.run_loop_default_mode,
             );
-            if (cs.fs_event_stream_start)(r#ref) == 0 {
-                //clean in case of failure
-                for s in &paths[..count as usize] {
-                    if !s.is_null() {
-                        (cf.release)(*s);
-                    }
-                }
-                drop(paths);
-                (cf.release)(cf_paths);
-                (cs.fs_event_stream_invalidate)(r#ref);
-                (cs.fs_event_stream_release)(r#ref);
-                return;
+            if (cs.fs_event_stream_start)(r#ref) != 0 {
+                state.stream = Some(StartedStream {
+                    stream,
+                    _paths: paths,
+                });
             }
-            state.fsevent_stream = r#ref;
-            state.paths = Some(paths);
-            state.cf_paths = cf_paths;
         }
     }
 
     fn register_watcher(&'static self, watcher: *mut FSEventsWatcher) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         if state.watcher_count as usize == state.watchers.len() {
             state.watcher_count += 1;
             state.watchers.push(NonNull::new(watcher));
@@ -750,9 +707,7 @@ impl FSEventsLoop {
     }
 
     fn unregister_watcher(&'static self, watcher: *mut FSEventsWatcher) {
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         let len = state.watchers.len() as usize;
         for i in 0..len {
             if let Some(item) = state.watchers.slice_mut()[i] {
@@ -808,9 +763,7 @@ impl FSEventsLoop {
         // SAFETY: signal_source is a valid CF object until released here
         unsafe { (cf.release)(signal_source) };
 
-        let _guard = self.mutex.lock_guard();
-        // SAFETY: holding `mutex` — see `FSEventsLoop::state`.
-        let state = unsafe { self.state() };
+        let mut state = self.mutex.lock();
         if state.watcher_count > 0 {
             while let Some(watcher) = state.watchers.pop() {
                 if let Some(w) = watcher {

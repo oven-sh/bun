@@ -1,4 +1,5 @@
 // This is close to WHATWG URL, but we don't want the validation errors
+#![feature(core_io_borrowed_buf)]
 #![warn(unused_must_use)]
 pub mod error;
 pub use error::{Error, Result};
@@ -627,14 +628,11 @@ impl<'a> URL<'a> {
             buf_heap.reserve_exact(total);
             buf_heap.spare_capacity_mut()
         };
-        let mut buf_i: usize = 0;
+        let mut joined = bun_core::vec::BorrowedBuf::from(buf);
         for part in &path_parts[0..path_end] {
-            buf[buf_i..buf_i + part.len()].write_copy_of_slice(part);
-            buf_i += part.len();
+            joined.unfilled().append(part);
         }
-        // SAFETY: the loop above wrote every byte of `buf[..buf_i]`.
-        let joined = unsafe { buf[..buf_i].assume_init_ref() };
-        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined, out)
+        resolve_path::normalize_string_buf::<false, platform::Loose, false>(joined.filled(), out)
     }
 
     pub fn join_write(

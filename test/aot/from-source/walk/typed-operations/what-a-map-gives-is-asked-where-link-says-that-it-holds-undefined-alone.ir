@@ -1,0 +1,31 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# declare function id(value: any): any;
+# const table = new Map<string, any>();
+# table.set("a", id(3));
+# const bare = new Map<string, undefined>();
+# bare.set("a", undefined);
+# function ask(key: string): string { const got = table.get(key); return got === undefined ? "nothing" : "something"; }
+# function miss(key: string): string { const got = bare.get(key); return got === undefined ? "nothing" : "something"; }
+# print("SAID", miss(JSON.parse('"a"')), ask(JSON.parse('"a"')));
+# print("went on");
+# -- end of source
+# LIBRARY: own
+# What Link claims that a container holds is checked where it is read. `get` returns what the map holds or, on a miss, undefined.
+# Where Link claims that the map holds only undefined, or nothing, the type of the result is a single marker, a type that needs no register.
+# So the operation held no value, no entry check of the contents followed it, and `=== undefined` was folded to true at compile time.
+# Now such an operation keeps what the map returns, just like an operation whose type, derived from the contents, is an unboxed number.
+# A map that truly holds only undefined: the entry check is there and lets the value pass.
+# RUN(TRUE): walk f2 mechanisms=all
+# TRUE: [[got]]: undefined @JSValue = CallInline {{*}} inlineBuiltin=MapGet
+# TRUE: = CheckProof [[got]] checkedType=undefined {{*}} source=Contents
+# RUN(RIGHT): run-in-shell mechanisms=all globalThis.id = (x) => x;
+# RIGHT: SAID nothing something
+# RIGHT-NEXT: went on
+# RIGHT-NEXT: exited with 0
+# Fault injection, testing=AssumeUnknownCallsReturnUndefined: unknown code is assumed to return undefined, so Link claims that the map holds only undefined, while it holds 3.
+# RUN(LIE): run-in-shell mechanisms=all testing=AssumeUnknownCallsReturnUndefined globalThis.id = (x) => x;
+# LIE: bun: internal AOT error: type check failed at {{*}} (ask)
+# LIE-NEXT: in an element
+# LIE-NOT: went on
+# LIE: crashed with

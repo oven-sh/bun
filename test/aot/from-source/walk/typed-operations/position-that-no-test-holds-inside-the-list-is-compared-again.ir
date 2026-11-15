@@ -1,0 +1,28 @@
+# the read keeps its own test of the bound where the test of the program lets the end in, speaks of another list, stands in front of code that may shorten the list, has seen another position, or says nothing of the lower end
+# the twin that is read without a test is position-below-the-length-of-the-list-is-read-without-a-second-test.ir
+# f1 = letsTheEndIn, f2 = asksAnotherList, f3 = callsBetween, f4 = stepsBetween, f5 = mayStartBelowZero, f6 = keepsAnOldLength
+# -- source: position-that-no-test-holds-inside-the-list-is-compared-again.ts
+# declare function sink(...values: unknown[]): void;
+# function letsTheEndIn(list: string[]) { let n = 0; for (let i = 0; i <= list.length; i++) { n += list[i] === "" ? 1 : 0; sink(i); } return n; }
+# function asksAnotherList(list: string[], other: string[]) { let n = 0; for (let i = 0; i < other.length; i++) { n += list[i] === "" ? 1 : 0; sink(i); } return n; }
+# function callsBetween(list: string[]) { let n = 0; for (let i = 0; i < list.length; i++) { sink(i); n += list[i] === "" ? 1 : 0; } return n; }
+# function stepsBetween(list: string[]) { let n = 0; for (let i = 0; i < list.length; ) { i++; n += list[i] === "" ? 1 : 0; sink(i); } return n; }
+# function mayStartBelowZero(list: string[], from: number) { let n = 0; for (let i = from | 0; i < list.length; i++) { n += list[i] === "" ? 1 : 0; sink(i); } return n; }
+# function keepsAnOldLength(list: string[]) { const end = list.length; let n = 0; for (let i = 0; i < end; i++) { n += list[i] === "" ? 1 : 0; sink(i); } return n; }
+# sink(letsTheEndIn, asksAnotherList, callsBetween, stepsBetween, mayStartBelowZero, keepsAnOldLength);
+# -- end of source
+# RUN(ATMOST): walk f1 mechanisms=all
+# ATMOST-NOT: isInBounds
+# RUN(OTHER): walk f2 mechanisms=all
+# OTHER-NOT: isInBounds
+# RUN(CALL): walk f3 mechanisms=all
+# CALL-NOT: isInBounds
+# RUN(STEP): walk f4 mechanisms=all
+# STEP-NOT: isInBounds
+# RUN(BELOW): walk f5 mechanisms=all
+# BELOW-NOT: isInBounds
+# RUN(OLD): walk f6 mechanisms=all
+# OLD-NOT: isInBounds
+# RUN(READS): walk f1 mechanisms=all
+# READS-LABEL: code f1:Body
+# READS: = GetArrayElement

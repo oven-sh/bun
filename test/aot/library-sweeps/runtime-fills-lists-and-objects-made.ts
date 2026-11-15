@@ -1,5 +1,4 @@
 // The runtime's own modules put elements and properties straight into lists and objects that they have made themselves: the callbacks that a plugin of a build registers under one namespace, the queue of a stream when it grows around its end, the cells of the rows that a query inserts, and the Node stream that is laid over a file's stream. The program drives each of the four and prints what comes out.
-// Flags: --aot-verify-each-pass
 import { SQL } from "bun";
 import { unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

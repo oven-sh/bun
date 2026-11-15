@@ -1,0 +1,17 @@
+# f1 = sumBelow
+# -- source: count-up-to-a-number.ts
+# function sumBelow(limit: number): number {
+#   let sum = 0;
+#   for (let index = 0; index < limit; index++) sum += index;
+#   return sum;
+# }
+# declare const input: any;
+# (globalThis as any).answer = sumBelow(input | 0) + sumBelow(1000);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches ; 5 instructions, 1 of them patches.
+# When the bound was taken: loop: operations 20, patches 0, moves 0, unlikely 11 ; loop: operations 6, patches 1, moves 0, unlikely 0.
+# RUN(X64): loops most:20,6 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 20
+# X64-NEXT: loop: at most 6

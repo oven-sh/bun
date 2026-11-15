@@ -1,0 +1,12 @@
+# A loop of more than a hundred operations compares elements of a view with one another: it has a version for the view all the same.
+# LIBRARY: own
+# -- source: main.js
+# class State { constructor() { this.window = new Uint8Array(256); this.prev = new Uint16Array(64); for (let i = 0; i < 256; i++) this.window[i] = i % 5; for (let i = 0; i < 64; i++) this.prev[i] = i > 4 ? i - 5 : 0; } }
+# function match(state, scan, chain) { const window = state.window, prev = state.prev; let best = 2, at = -1, head = scan - 5; do { let m = head; if (window[m + best] !== window[scan + best] || window[m + best - 1] !== window[scan + best - 1] || window[m] !== window[scan] || window[++m] !== window[scan + 1]) continue; let s = scan + 2; m++; do { } while (window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && window[++s] === window[++m] && s < scan + 60); const len = s - scan; if (len > best) { best = len; at = head; if (len > 70) break; } } while ((head = prev[head & 63]) > 0 && --chain !== 0); return best * 100 + at; }
+# globalThis.publish(() => match(new State, 100, 20));
+# -- end of source
+# RUN: walk f1:Body mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: : int[1, 65535] @Int32) isInLoop=true isLoopHead=true
+# RUN(SHELL): run-in-shell globalThis.publish = (run) => { print(run()); };
+# SHELL: 6695

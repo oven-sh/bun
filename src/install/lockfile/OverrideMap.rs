@@ -433,6 +433,11 @@ impl OverrideMap {
             .is_some_and(|dep| dep.name.slice(buf) == name)
     }
 
+    /// What every rule replaces a dependency with.
+    pub(crate) fn values(&self) -> impl Iterator<Item = &Dependency> {
+        (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep))
+    }
+
     #[inline]
     pub(crate) fn is_empty(&self) -> bool {
         self.map.count() == 0 && self.scoped.is_empty()
@@ -477,8 +482,7 @@ impl OverrideMap {
         root: &Expr,
         has_workspaces: bool,
     ) {
-        let rules = (self.map.values().iter()).chain(self.scoped.iter().map(|rule| &rule.dep));
-        for dep in rules.filter(|dep| dep.version.tag == VersionTag::Catalog) {
+        for dep in (self.values()).filter(|dep| dep.version.tag == VersionTag::Catalog) {
             if (catalogs.get_ref(buf, *dep.version.catalog(), dep.name)).is_some() {
                 continue;
             }

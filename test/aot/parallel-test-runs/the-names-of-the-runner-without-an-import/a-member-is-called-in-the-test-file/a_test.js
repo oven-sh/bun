@@ -1,0 +1,15 @@
+// A member of the object is called where the name stands. The name of the test runner stands in the test file, which imports no runner.
+import * as lib from "./lib.js";
+import { read } from "./reader.js";
+
+const act = lib => {
+  const spy = vi.spyOn(lib, "total").mockReturnValue("spied");
+  return () => spy.mockRestore();
+};
+
+test("what the reader gets", async () => {
+  const undo = act(lib);
+  console.log("under it", read());
+  if (undo) await undo();
+  console.log("behind it", read());
+});

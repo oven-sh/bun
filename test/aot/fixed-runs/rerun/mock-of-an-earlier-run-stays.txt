@@ -1,0 +1,18 @@
+A mock of an earlier run stays, and import.meta is a new object. `bun test --rerun-each=3` loads a test file three times in one realm: each load is a new module of the file, and what the file imports is loaded once.
+#### mock.test.ts
+import { mock, test } from "bun:test";
+import { metas, templates, value } from "./real.ts";
+const tag = (strings: TemplateStringsArray) => strings;
+templates.add(tag`x`);
+metas.add(import.meta);
+const before = value();
+test("mock", () => {
+  console.log("| CASE run", before, value(), templates.size, metas.size);
+  mock.module("./real.ts", () => ({ value: () => "mocked", templates, metas }));
+  console.log("| CASE after", value());
+});
+#### real.ts
+export function value() { return "real"; }
+export const templates = new Set<unknown>(), metas = new Set<unknown>();
+#### package.json
+{ "type": "module" }

@@ -317,6 +317,7 @@ const checkout = {
     set(JavaScriptCore_AOT_TEST_SOURCES aot/tests/testaot.cpp)
     set(JavaScriptCore_AOT_PROGRAM_SOURCES aot/runtime/AOTNoFeatureRemoved.cpp)
     set(JavaScriptCore_AOT_SHELL_SOURCES aot/tests/AOTShell.cpp)
+    set(JavaScriptCore_AOT_STAND_IN_HOST_TEST_SOURCES aot/tests/host/AOTNativeTestsOfStandInHost.cpp)
     function(AOT_CHECK_SOURCE_LISTS)
         if (NO SUCH OPERATOR)
         endif ()
@@ -333,7 +334,9 @@ const checkout = {
   "Source/JavaScriptCore/aot/ir/generator/package.json": "",
   "Source/JavaScriptCore/aot/ir/AOTValue.cpp": "",
   "Source/JavaScriptCore/aot/runtime/AOTNoFeatureRemoved.cpp": "",
+  "Source/JavaScriptCore/aot/runtime/generator/forced-jumps-fixtures/leaves-by-no-forced-jump.txt": "",
   "Source/JavaScriptCore/aot/tests/AOTShell.cpp": "",
+  "Source/JavaScriptCore/aot/tests/host/AOTNativeTestsOfStandInHost.cpp": "",
   "Source/JavaScriptCore/aot/tests/testaot.cpp": "",
   "Source/JavaScriptCore/b3/testb3_1.cpp": "",
   "Source/JavaScriptCore/b3/testb3_bun_loops.cpp": "",
@@ -648,6 +651,11 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
         "a listed file that does not exist",
         { "aot/tests/AOTShell.cpp": undefined },
         "aot/tests/AOTShell.cpp: listed, and there is no such file",
+      ],
+      [
+        "a listed file of the stand-in host that does not exist",
+        { "aot/tests/host/AOTNativeTestsOfStandInHost.cpp": undefined },
+        "aot/tests/host/AOTNativeTestsOfStandInHost.cpp: listed, and there is no such file",
       ],
       [
         "a path in a list where it does not belong",

@@ -33,11 +33,14 @@ pub enum Angle {
 impl Angle {
     // ~toCssImpl
 
-    pub(crate) fn parse(input: &mut Parser) -> Result<Angle> {
+    pub(crate) fn parse<'bump>(input: &mut Parser<'_, 'bump>) -> Result<'bump, Angle> {
         Angle::parse_internal(input, false)
     }
 
-    fn parse_internal(input: &mut Parser, allow_unitless_zero: bool) -> Result<Angle> {
+    fn parse_internal<'bump>(
+        input: &mut Parser<'_, 'bump>,
+        allow_unitless_zero: bool,
+    ) -> Result<'bump, Angle> {
         if let Ok(calc_value) = input.try_parse(Calc::<Angle>::parse) {
             if let Calc::Value(value) = calc_value {
                 return Ok(*value);
@@ -70,7 +73,9 @@ impl Angle {
         Err(location.new_unexpected_token_error(token))
     }
 
-    pub(crate) fn parse_with_unitless_zero(input: &mut Parser) -> Result<Angle> {
+    pub(crate) fn parse_with_unitless_zero<'bump>(
+        input: &mut Parser<'_, 'bump>,
+    ) -> Result<'bump, Angle> {
         Angle::parse_internal(input, true)
     }
 

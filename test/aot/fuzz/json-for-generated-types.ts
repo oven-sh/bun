@@ -4,7 +4,7 @@
 // again and again. --workers runs the program in Workers that are terminated after a few milliseconds. --growth checks
 // that inputs sixteen times as long take about sixteen times as long, not the square.
 //
-//   bun test/aot/fuzz/json-for-generated-types.ts --seconds 600 --jobs 16 --out /tmp/texts [--bun <path>] [--seed <n>] [--types 40] [--run-seconds 20] [--flags "--aot-validate;--aot-heat=everything-is-hot"] [--stress 1,2,3,5,7,11] [--growth] [--full-heap] [--workers]
+//   bun test/aot/fuzz/json-for-generated-types.ts --seconds 600 --jobs 16 --out /tmp/texts [--bun <path>] [--seed <n>] [--types 40] [--run-seconds 20] [--flags "--aot-erase-types;--aot-huge-heap"] [--stress 1,2,3,5,7,11] [--growth] [--full-heap] [--workers]
 //   bun test/aot/fuzz/json-for-generated-types.ts --print <seed> [--types 40]      the program of one seed
 import { spawn } from "bun";
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "fs";

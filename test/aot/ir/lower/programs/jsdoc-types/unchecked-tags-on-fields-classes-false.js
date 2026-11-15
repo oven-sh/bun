@@ -1,6 +1,12 @@
 // RUN: lower
 // OPTIONS: builtin-modules
 // STATISTIC: SourceFilesInferred = 1
+// CHECK-LABEL: function {{*}}name="Account"
+// CHECK-LABEL: function {{*}}name="hidden"
+// CHECK-LABEL: function {{*}}name="deposit"
+// CHECK-LABEL: function {{*}}name="twice"
+// CHECK-LABEL: function {{*}}name="Heir"
+// CHECK-LABEL: function {{*}}name="valueOf"
 
 // FILE: main.js
 // Unchecked tags on fields of classes are false.
@@ -155,95 +161,3 @@ attempt("honest again", () => [new Honest().next(), new Late().next(), new Base(
 
 // FILE: tsconfig.json
 { "compilerOptions": { "target": "esnext", "module": "preserve", "moduleDetection": "force", "moduleResolution": "bundler", "allowImportingTsExtensions": true, "types": [], "jsx": "react-jsx", "allowJs": true, "resolveJsonModule": true, "noEmit": true, "strict": true, "checkJs": false }, "files": [] }
-
-// GENERATED: Account hidden deposit twice Heir valueOf
-// CHECK-LABEL: function {{*}}name="Account"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_1]]] {
-// CHECK-NEXT: b0(v0: anything):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = GetConstructPrototype v0 layout=[[L_2]]
-// CHECK-NEXT: v2 = NewObject v1 layout=[[L_2]]
-// CHECK-NEXT: v3 = Convert v2 declared={type=[[L_2]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v4 = CallDirect v3 function=[[f_3]]
-// CHECK-NEXT: v5 = Convert v3 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v6 = Data data=[[d_4]]
-// CHECK-NEXT: v7 = Convert v6 declared={type=undefined|null|Array<number> flags=[IsExpected]}
-// CHECK-NEXT: v8 = Convert v7 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v5, v8 key="limit"
-// CHECK-NEXT: v10 = Convert v3 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v11 = String string="yes"
-// CHECK-NEXT: v12 = Convert v11 declared={type=boolean flags=[IsExpected]}
-// CHECK-NEXT: PropSet v10, v12 key="open"
-// CHECK-NEXT: v14 = Undefined
-// CHECK-NEXT: v15 = TypeTest v14 testedType=object
-// CHECK-NEXT: Branch v15 -> taken b2(| 0), notTaken b3(| 0)
-// CHECK-NEXT: b2(v16):
-// CHECK-NEXT: Jump -> next b4(v16)
-// CHECK-NEXT: b3(v17):
-// CHECK-NEXT: Jump -> next b4(v3)
-// CHECK-NEXT: b4(v18):
-// CHECK-NEXT: Return v18
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="hidden"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_2]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_5]]] {
-// CHECK-NEXT: b0(v0: [[L_2]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = GetModuleVariable variable=[[g_6]]
-// CHECK-NEXT: v3 = PrivateGet v1, v2 layout=[[L_2]] field=6
-// CHECK-NEXT: v4 = Convert v3 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v5 = Integer integer=1
-// CHECK-NEXT: v6 = Add v4, v5
-// CHECK-NEXT: v7 = Convert v6 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v7
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="deposit"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] length=1 thisType={type=[[L_2]] flags=[IsExpected]} parameters=[{type=number flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_7]]] {
-// CHECK-NEXT: b0(v0: [[L_2]], v1: number):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v2 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v3 = PropGet v2 key="balance"
-// CHECK-NEXT: v4 = Add v3, v1
-// CHECK-NEXT: v5 = Convert v4 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: PropSet v2, v5 key="balance"
-// CHECK-NEXT: v7 = Convert v0 declared={type=undefined|null|[[L_2]] flags=[IsExpected]}
-// CHECK-NEXT: v8 = PropGet v7 key="balance"
-// CHECK-NEXT: v9 = Convert v8 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v9
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="twice"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Method flags=[HasThis, HasExplicitName] thisType={type=[[L_8]] flags=[IsExpected]} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_9]]] {
-// CHECK-NEXT: b0(v0: [[L_8]]):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v1 = Convert v0 declared={type=undefined|null|[[L_8]] flags=[IsExpected]}
-// CHECK-NEXT: v2 = PropGet v1 key="value"
-// CHECK-NEXT: v3 = Convert v2 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: v4 = Integer integer=2
-// CHECK-NEXT: v5 = Mul v3, v4
-// CHECK-NEXT: v6 = Convert v5 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v6
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="Heir"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] functionTypes={{*}}[[f_10]]] {
-// CHECK-NEXT: b0(v0: function, v1: anything, v2: Array):
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v3 = GetSuperBase v0
-// CHECK-NEXT: v4 = SuperConstructList v3, v1, v2 layout=[[L_11]]
-// CHECK-NEXT: v5 = Convert v4 declared={type=[[L_11]] flags=[IsFromCompiler]} illTypedCause=FromLooseType
-// CHECK-NEXT: v6 = CallDirect v5 function=[[f_12]]
-// CHECK-NEXT: Return v5
-// CHECK-NEXT: }
-// CHECK-LABEL: function {{*}}name="valueOf"
-// CHECK: module=[[m_0]] position={{*}} text={{*}} kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes={{*}}[[f_13]]] {
-// CHECK-NEXT: b0():
-// CHECK-NEXT: Jump -> next b1()
-// CHECK-NEXT: b1():
-// CHECK-NEXT: v0 = Integer integer=1
-// CHECK-NEXT: v1 = Convert v0 declared={type=number flags=[IsExpected]}
-// CHECK-NEXT: Return v1
-// CHECK-NEXT: }

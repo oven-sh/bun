@@ -1,0 +1,8 @@
+// A small view keeps its bytes beside its cell until somebody asks for its buffer: then they move. What a loop has read of the view in front of that turn is void behind it.
+type Samples = Int8Array | Uint8Array | Uint8ClampedArray | Int16Array | Uint16Array | Int32Array | Uint32Array | Float32Array | Float64Array;
+function fill(samples: Samples, when: number): string { let kept: ArrayBufferLike | undefined; for (let place = 0; place < samples.length; place++) { if (place === when) kept = samples.buffer; samples[place] = place + 1; } return (kept ? Array.from(new Uint8Array(kept)).join() : "-") + "|" + Array.from(samples as unknown as number[]).join(); }
+function total(samples: Samples, when: number): string { let kept: ArrayBufferLike | undefined, sum = 0; for (let place = 0; place < samples.length; place++) { if (place === when) { kept = samples.buffer; new Uint8Array(kept).fill(3); } sum += samples[place]; } return sum + "|" + (kept ? kept.byteLength : -1); }
+const turns = Number(process.argv[2] ?? "30"); let out = "";
+for (let turn = 0; turn < turns; turn++) out = fill(new Int16Array(6), -1) + fill(new Float64Array(4), -1) + total(new Uint8Array(5), -1);
+for (const when of [0, 2, 5]) out += "\n" + [fill(new Int8Array(6), when), fill(new Uint8Array(6), when), fill(new Uint8ClampedArray(6), when), fill(new Int16Array(6), when), fill(new Uint16Array(6), when), fill(new Int32Array(6), when), fill(new Uint32Array(6), when), fill(new Float32Array(6), when), fill(new Float64Array(6), when)].join(";") + "\n" + [total(new Int8Array(6), when), total(new Uint16Array(6), when), total(new Int32Array(6), when), total(new Float32Array(6), when), total(new Float64Array(6), when)].join(";");
+console.log(out);

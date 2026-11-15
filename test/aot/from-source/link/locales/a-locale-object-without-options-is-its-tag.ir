@@ -1,0 +1,11 @@
+# no options, and options that are undefined, replace nothing
+# -- source: a-locale-object-without-options-is-its-tag.ts
+# new Intl.Locale("en");
+# new Intl.Locale("de", undefined);
+# -- end of source
+# RUN: locales
+# CHECK: locale constant "en" IntlLocale
+# CHECK: locale constant "de" IntlLocale
+# RUN(NEVER): locales
+# NEVER-NOT: locale unknown
+# NEVER-NOT: locale host-default

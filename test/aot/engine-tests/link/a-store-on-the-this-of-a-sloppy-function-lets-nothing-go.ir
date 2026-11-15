@@ -1,0 +1,23 @@
+# function Gauge(start) { this.level = start; } Gauge(3)
+# A control of the-global-object-behind-the-this-of-a-sloppy-function-is-let-go-where-a-formatter-prints-it.ir: called without a receiver the function stores on the global object.
+# That is a store, and no native code walks anything: the world of the program stays closed. Constructor functions of many packages begin with
+# `if (!(this instanceof Gauge)) return new Gauge(..)`, and the flow does not narrow by that test.
+# RUN: causes
+# CHECK: unseen-code cannot-run
+
+module m0 path="main.cjs" displayPath="main.cjs" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Integer integer=3
+    v2 = Call v0, -, v1
+    Return v2
+}
+function f1 module=m0 flags=[IsSloppy, HasThis] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToThis v0
+    PropSet v2, v1 key="level" mode=Sloppy
+    v4 = Undefined
+    Return v4
+}

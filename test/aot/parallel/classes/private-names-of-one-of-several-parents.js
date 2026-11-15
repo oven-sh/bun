@@ -6,7 +6,7 @@
 // COUNT: operation:operationAOTPrivateDefine <= 160100
 // COUNT: operation:operationAOTPrivateGet <= 120
 // COUNT: operation:operationAOTPrivateSet <= 10
-// COUNT: counter:CompiledStructuresMade <= 45
+// COUNT: counter:CompiledStructuresCreated <= 45
 const say = (...words) => console.log(words.join(" "));
 const attempt = run => {
   try {

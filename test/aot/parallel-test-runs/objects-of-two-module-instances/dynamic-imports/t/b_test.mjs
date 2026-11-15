@@ -1,0 +1,20 @@
+import { test, expect, vi, mock } from "bun:test";
+const say = (...all) => console.log("SAID", ...all);
+import * as user from "../src/user.mjs";
+test("second", async () => {
+  const { first, typed, a, d } = globalThis.kept;
+  vi.doMock("../src/dep.mjs", () => ({ base: 2 }));
+  const second = await import("../src/lib.mjs?".slice(0, -1));
+  const typedAgain = await import("../src/typed.mjs");
+  const b = second.make(1), e = second.makeDeep(2);
+  say("same file", first === second, first.load, second.load);
+  say("second", user.one(b), user.one(e), second.Box.where(), second.tools.add(1), second.tools.sub(1), second.tools.now, second.arrow(1));
+  say("both", user.sums([a, b], 8), user.sizes([a, b, d, e], 8), user.sums([d, e, a], 9));
+  say("old", user.one(a), user.one(d), typed.own(6), typed.made(4), typed.strings(4), first.Box.where());
+  say("new", typedAgain === typed, typedAgain.own(6), typedAgain.made(4), typedAgain.strings(4));
+  say("set", user.set(a), user.set(b));
+  say("async", await a.later(1), await b.later(1), [...a.each(3)].join(","), [...b.each(3)].join(","));
+  second.bump(); first.bump();
+  say("bumped", user.one(a), user.one(b), typed.own(3), typedAgain.own(3));
+  say("cross", typed.during(b, 3, () => second.bump()), typedAgain.during(a, 3, () => first.bump()));
+});

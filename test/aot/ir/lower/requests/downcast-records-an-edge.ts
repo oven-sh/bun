@@ -1,20 +1,22 @@
 // RUN: link
-// CHECK: layout {{*}}name="Base" {{*}}supertypes=[
+// CHECK: layout {{*}}fields=[{key="x"{{*}}supertypes=[
 // CHECK-NOT: ,
 // CHECK: [[derived]]]
-// CHECK: layout [[derived]] name="Derived"
+// CHECK: layout [[derived]] {{*}}fields=[{key="deep"
 // CHECK-NOT: supertypes=
-// CHECK: layout
+// CHECK: variable
 
 // RUN(SIDEWAYS): link
-// SIDEWAYS: layout {{*}}name="Left" {{*}}supertypes=[
+// SIDEWAYS: layout [[right]] {{*}}fields=[{key="kind"{{*}}{key="right"
+// SIDEWAYS: layout {{*}}fields=[{key="kind"{{*}}{key="left"{{*}}supertypes=[
 // SIDEWAYS-NOT: ,
 // SIDEWAYS: [[right]]]
-// SIDEWAYS: layout [[right]] name="Right"
-// SIDEWAYS-NOT: supertypes=
+
+// RUN(RIGHT): link
+// RIGHT-NOT: layout {{*}}{key="right"{{*}}supertypes=
 
 // RUN(UNRELATED): link
-// UNRELATED: layout {{*}}name="Unrelated"
+// UNRELATED: layout {{*}}fields=[{key="odd"
 // UNRELATED-NOT: supertypes=
 // UNRELATED: layout
 
@@ -25,8 +27,8 @@ interface Base {
 }
 
 interface Derived {
+  deep: number;
   x: number;
-  y: number;
 }
 
 interface Left {
@@ -40,8 +42,8 @@ interface Right {
 }
 
 interface Unrelated {
+  odd: number;
   x: string;
-  z: number;
 }
 
 export function down(b: Base | Unrelated) {

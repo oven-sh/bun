@@ -1,0 +1,20 @@
+# -- source: main.js
+# class O { constructor() { this.x = 1; } m() { return this.x; } }
+# const o = new O();
+# function Base(v) { this.held = v; }
+# function A(v) { Base.call(this, v); this.y = 2; }
+# Object.setPrototypeOf(A.prototype, Base.prototype);
+# const a = new A(o);
+# print(a.y, o.m(), a.held === o, a instanceof Base);
+# -- end of source
+# The function below hands its own new object to `Base` as the receiver of a call. That object alone arrives at `this` of `Base`, so what `Base` stores into it stays in sight.
+# RUN(LAYOUTS): link layouts mechanisms=all
+# LAYOUTS: layout L0 changes=[] stays-with-compiled-code
+# RUN(FUNCTIONS): link functions mechanisms=all
+# FUNCTIONS: parameter 0 expected=L1 declared proven=L1
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: 2 1 true true
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: 2 1 true true
+# CHECKED-NEXT: exited with 0

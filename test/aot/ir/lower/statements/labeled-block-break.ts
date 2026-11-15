@@ -1,9 +1,6 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}name="leaveBlock"
-// CHECK: Branch
-// CHECK: Jump -> next [[break]]()
-// CHECK-NEXT: [[break]]():
-// CHECK-NEXT: Jump -> next [[after]]()
+// CHECK: Branch {{*}} -> taken [[after]]()
 // CHECK: integer=1
 // CHECK: Jump -> next [[after]]()
 // CHECK-NEXT: [[after]]():

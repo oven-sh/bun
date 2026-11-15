@@ -1,0 +1,18 @@
+# A loop replaces its object in each turn. Here somebody gets the object on the way that is always taken: in a turn, behind the loop, in a handler, behind a suspension.
+# Each turn's cell is another object, with its keys in their order. A turn that leaves the parameter in its place goes on with the same object. Nobody knows the number of turns, so no loop is written out.
+# -- source: main.js
+# function stays(seen, n) { let p = { x: 1, y: 2 }; for (let i = 0; i < n; i++) { seen.push(p); p = { x: p.x + 1, y: p.y }; } return p; }
+# function skips(s, n) { let p = { x: 0 }; for (let i = 0; i < n; i++) { s.push(p); if (i & 1) continue; p = { x: p.x + 1 }; } return p; }
+# function caught(f, n) { let p = { x: 0 }; try { for (let i = 0; i < n; i++) { p = { x: p.x + 1 }; f(i); } } catch { } return p; }
+# async function later(n) { let p = { x: 1, y: 2 }; for (let i = 0; i < n; i++) p = { x: p.x + i, y: p.y }; await 0; return p; }
+# function leftInPlace(n) { let p = { x: 0 }; for (let i = 0; i < n; i++) { if (i & 1) continue; p = { x: p.x + 1 }; } return p; }
+# sink(stays, skips, caught, later, leftInPlace);
+# -- end of source
+# RUN: run-in-shell globalThis.sink = (stays, skips, caught, later, leftInPlace) => { const text = list => { let t = ""; for (let k = 0; k < list.length; k++) t += (k ? "," : "") + JSON.stringify(list[k]); return t; }; const pairs = list => { let same = 0; for (let a = 0; a < list.length; a++) for (let b = a + 1; b < list.length; b++) same += list[a] === list[b]; return same; }; const seen = []; seen.push(stays(seen, 12)); print(text(seen), pairs(seen)); const s = []; s.push(skips(s, 12)); print(text(s), pairs(s), s[1] === s[2], s[0] === s[1], s[11] === s[12]); print(JSON.stringify(caught(i => { if (i == 10) throw 0; }, 12))); print(JSON.stringify(leftInPlace(12))); later(12).then(p => print(JSON.stringify(p))); };
+# CHECK: {"x":1,"y":2},{"x":2,"y":2},{"x":3,"y":2},{"x":4,"y":2},{"x":5,"y":2},{"x":6,"y":2},{"x":7,"y":2},{"x":8,"y":2},{"x":9,"y":2},{"x":10,"y":2},{"x":11,"y":2},{"x":12,"y":2},{"x":13,"y":2} 0
+# CHECK-NEXT: {"x":0},{"x":1},{"x":1},{"x":2},{"x":2},{"x":3},{"x":3},{"x":4},{"x":4},{"x":5},{"x":5},{"x":6},{"x":6} 6 true false true
+# CHECK-NEXT: {"x":11}
+# CHECK-NEXT: {"x":6}
+# CHECK-NEXT: {"x":67,"y":2}
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

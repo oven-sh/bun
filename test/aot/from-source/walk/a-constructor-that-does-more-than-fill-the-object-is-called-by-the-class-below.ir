@@ -1,0 +1,17 @@
+# -- source: main.js
+# function make(id, note) { return id % 2 ? new Noted(id, note) : new Plain(id); }
+# function run(count) { var text = ""; for (var i = 0; i < count; i++) { var made = make(i, notes[i % 3]); text += made.id + (made.note ? made.note.name : "-") + (made.mark ?? "") + Object.keys(made).length + " "; } return text; }
+# function tell(id) { seen.push(id); }
+# class Plain { id; note; next; constructor(id) { this.id = id; this.note = undefined; this.next = null; tell(id); } }
+# class Noted extends Plain { mark; constructor(id, note) { super(id); this.note = note; this.mark = id + 1; } }
+# const notes = [{ name: "x" }, { name: "y" }, { name: "z" }], seen = [];
+# print(run(10), seen.length);
+# -- end of source
+# f4 = the constructor of Plain, f5 = the constructor of Noted
+# The constructor of Plain calls a function: its text does more than fill the object. A copy in each class below would write that call once more a class and gain only the call of the constructor, so `super(id)` calls it.
+# RUN(CALLED): walk f5 mechanisms=all
+# CALLED: function=f4
+# CALLED: Return
+# RUN: run-in-shell void 0;
+# CHECK: 0-3 1y24 2-3 3x44 4-3 5z64 6-3 7y84 8-3 9x104  10
+# CHECK-NEXT: exited with 0

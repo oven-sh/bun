@@ -195,6 +195,7 @@ fn host_module_source_is_file_candidate() {
             directory: b"/p",
             kind: Import,
             form: CodeImportForm::Static,
+            site: Default::default(),
         });
         let file = CodeFile {
             path: b"/bun/fs.ts",
@@ -559,7 +560,6 @@ fn path_that_leads_out_of_the_package_of_the_importer_is_a_name_made_at_run_time
     );
     assert_eq!(from_main("../../"), "All(NoConstantPrefix)");
     assert_eq!(from_main("/"), "All(NoConstantPrefix)");
-    // A folder that is named is meant, wherever it lies. The walk stays out of the package below it.
     assert_eq!(from_main("/w/"), "/w/beside.ts, /w/package.json");
     assert_eq!(
         from_main("../../app/src/"),
@@ -587,7 +587,6 @@ fn walk_from_a_path_stays_out_of_the_folders_of_other_packages() {
         import_pattern(&host, "./d/", ".ts"),
         "/p/d/a.ts, /p/d/esm/b.ts"
     );
-    // The prefix lies inside it already.
     assert_eq!(
         import_pattern(&host, "./d/other/", ".ts"),
         "/p/d/other/c.ts"

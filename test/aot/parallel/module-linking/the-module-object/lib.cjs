@@ -1,1 +1,0 @@
-exports.m = [typeof module.id, typeof module.filename, module.loaded, Array.isArray(module.children), Array.isArray(module.paths), typeof module.parent, typeof module.require, module.exports === exports, require.main === module, typeof require.resolve, typeof require.cache, Object.keys(module).sort().join()].join(" ");

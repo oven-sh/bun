@@ -1,0 +1,20 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function isOne(x: unknown): boolean { return x === 1; }
+# function isOther(x: unknown): boolean { return x !== 5000000000.5; }
+# const given: unknown[] = JSON.parse("[1, 2, 5000000000.5, \"1\", 1e0, null]");
+# for (const x of given)
+#     print(isOne(x), isOther(x));
+# -- end of source
+# An equality with a constant that no immediate holds is one instruction off the instruction pointer.
+# REQUIRES: x86_64
+# RUN: bytes f1 mechanisms=all-Inlining
+# CHECK: unit f1:Body
+# CHECK-NEXT: size=32 frame=none
+# RUN(SHELL): run-in-shell mechanisms=all-Inlining
+# SHELL: true true
+# SHELL-NEXT: false true
+# SHELL-NEXT: false false
+# SHELL-NEXT: false true
+# SHELL-NEXT: true true
+# SHELL-NEXT: false true

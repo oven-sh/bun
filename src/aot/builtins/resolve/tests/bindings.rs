@@ -58,19 +58,15 @@ fn locked_global_in_dynamic_scope_is_predicted() {
 
 #[test]
 fn sloppy_direct_eval() {
-    let sloppy = [
-        "function f(s) { eval(s); return Math.floor; }",
-        r#"function f(s) { "use strict"; eval(s); return Math.floor; }"#,
-    ];
-    for source in sloppy {
-        with_case(SCRIPT, source, |case| {
-            assert_unresolved(case, "Math.floor");
-            assert!(case.dynamic_global_at(case.expr("Math")).is_some());
-            assert!(case.exposes(BuiltinId::Math));
-        });
-    }
+    let sloppy = "function f(s) { eval(s); return Math.floor; }";
+    with_case(SCRIPT, sloppy, |case| {
+        assert_unresolved(case, "Math.floor");
+        assert!(case.dynamic_global_at(case.expr("Math")).is_some());
+        assert!(case.exposes(BuiltinId::Math));
+    });
     let strict = [
         r#""use strict"; function f(s) { eval(s); return Math.floor; }"#,
+        r#"function f(s) { "use strict"; eval(s); return Math.floor; }"#,
         "class C { m(s) { eval(s); return Math.floor; } }",
     ];
     for source in strict {

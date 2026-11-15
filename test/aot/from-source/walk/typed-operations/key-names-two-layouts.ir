@@ -1,0 +1,15 @@
+# -- source: key-names-two-layouts.ts
+# declare function print(value: unknown): void;
+# declare const process: { readonly argv: readonly string[] };
+# interface Row { id: number; age: number }
+# class Person { id: number; age: number; constructor(id: number) { this.id = id; this.age = id * 2; } }
+# const rows: Row[] = [];
+# for (let i = 0; i < 9; i++) rows.push(i % 2 ? new Person(i) : { age: i, id: i });
+# function count(key: string): number { return rows.filter(row => (row as unknown as Record<string, number>)[key] === 2).length; }
+# function longest(key: string): number { return rows.map(row => String((row as unknown as Record<string, number>)[key]).length)[0]!; }
+# print(count(process.argv[2]!) + longest(process.argv[2]!));
+# -- end of source
+# The names of a holder of a few layouts tell a key apart, also where the value read is an argument of a call.
+# RUN: walk f1:Body mechanisms=all
+# CHECK: = GetSlot {{*}}key="id" receivers=[L0, L1] level=Proven
+# CHECK: = GetSlot {{*}}key="age" receivers=[L0, L1] level=Proven

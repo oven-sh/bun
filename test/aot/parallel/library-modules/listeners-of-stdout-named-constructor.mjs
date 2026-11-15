@@ -1,3 +1,4 @@
+// The Function constructor comes out of code of the library under the name `constructor`, and runs the text, as in `bun <file>`: as a listener of process.stdout.
 const found = process.stdout.listeners("constructor")[0];
 try {
   console.log(
@@ -12,6 +13,3 @@ try {
   console.log(error.name);
 }
 
-/* Output:
-EvalError
-*/

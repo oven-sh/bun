@@ -1,0 +1,15 @@
+# -- source: main.mjs
+# function use(y) { return y.value; }
+# function describe(y) { return y === null ? -1 : -2; }
+# function read(x) { const y = x; if (!y) return describe(y); return use(y); }
+# function kept(x) { const y = x; let total = 0; try { if (y) total += use(y); total += y ? use(y) : describe(y); } catch (error) { total = y ? -3 : -4; } return total; }
+# const list = [{ value: 1 }, null, { value: 3 }, undefined, { get value() { throw 1; } }];
+# function run(turns) { let total = 0; for (let i = 0; i < turns; i++) total += read(list[i & 3]) + kept(list[i % 5]); return total; }
+# print(run(20), run(0));
+# -- end of source
+# The branch on which a local is true narrows the local. The other branch reads the value itself, and so does the code behind the branches.
+# RUN: print f3
+# CHECK: NarrowByTest
+# CHECK-NOT: NarrowByTest
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 13 0

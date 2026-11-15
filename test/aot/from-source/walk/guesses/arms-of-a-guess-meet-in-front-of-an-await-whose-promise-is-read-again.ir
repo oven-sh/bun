@@ -1,0 +1,19 @@
+# the promise of the method call is awaited and handed on beside what the await gives. Both arms have to give the promise, so they meet behind the call and one await stands behind them
+# the call stands in a loop: in the body of a coroutine a method above an expected receiver gets its two arms in loops alone. So the test holds with the library beside the program too, where the read of the method is built behind looks
+# f1 = serve
+# -- source: arms-of-a-guess-meet-in-front-of-an-await-whose-promise-is-read-again.ts
+# declare function sink(...values: unknown[]): void;
+# class Handler { n = 1; async load(request: number) { await null; return request + this.n; } }
+# class Other { n = 10; load(request: number) { return "other " + (request + this.n); } }
+# const literal = { n: 100, load(request: number) { return request; } };
+# async function serve(handler: Handler, request: number) { let answer: unknown; for (let turn = 0; turn < 2; turn++) { const promise = handler.load(request); answer = await promise; sink(promise); } return answer; }
+# sink(serve(new Handler(), 1), serve(new Other() as any, 2), serve(literal as any, 3), serve(null as any, 4));
+# -- end of source
+# RUN: walk f1:CoroutineBody mechanisms=all-ParameterGuards
+# CHECK-LABEL: code f1:CoroutineBody
+# CHECK: = AwaitBySavingFrame
+# CHECK-NOT: = AwaitBySavingFrame
+# RUN(DIRECT): walk f1:CoroutineBody mechanisms=all-ParameterGuards
+# DIRECT: = CallDirect {{*}}role=CoroutineBody
+# RUN(NEVER): walk f1:CoroutineBody mechanisms=all-ParameterGuards
+# NEVER-NOT: = AwaitCallBySavingFrame

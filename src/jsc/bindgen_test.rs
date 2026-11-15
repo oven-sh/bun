@@ -128,8 +128,7 @@ pub(crate) fn describe_anything(value: TestAnything<'_>) -> Vec<u8> {
         TestAnything::Integer(integer) => format!("integer {integer}").into_bytes(),
         TestAnything::Text(text) => format!("text {text}").into_bytes(),
         TestAnything::Bytes(buffer) => {
-            // SAFETY: `buffer` holds a ref on it, and nothing else borrows it here.
-            let buffer: crate::ArrayBuffer = unsafe { (*buffer.get()).as_array_buffer() };
+            let buffer: crate::ArrayBuffer = buffer.as_array_buffer();
             format!("bytes {}", buffer.byte_slice().len()).into_bytes()
         }
         TestAnything::Blob(_) => b"blob".to_vec(),
@@ -1008,15 +1007,14 @@ pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
     Bun__NativePromiseContext__create(
         cx.global(),
-        PROMISE_CONTEXT.as_ptr().cast(),
+        TestRefCounted::constructor(42).cast(),
         0,
         JSValue::ZERO,
     )
 }
 
-pub(crate) fn read_native_promise_context(context: Option<NonNull<AtomicI32>>) -> Option<i32> {
-    // SAFETY: `make_native_promise_context` made the cell of a static.
-    context.map(|context| unsafe { context.as_ref() }.load(Ordering::Relaxed))
+pub(crate) fn read_native_promise_context(context: Option<RefPtr<TestRefCounted>>) -> Option<i32> {
+    context.map(|context| context.get_value())
 }
 
 pub(crate) fn primes() -> [u32; 3] {

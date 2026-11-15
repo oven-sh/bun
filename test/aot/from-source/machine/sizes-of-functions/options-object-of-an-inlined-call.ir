@@ -1,0 +1,18 @@
+# f2 = square
+# -- source: options-object-of-an-inlined-call.ts
+# type Size = { width: number; height: number };
+# function area(size: Size): number {
+#   return size.width * size.height;
+# }
+# function square(side: number): number {
+#   return area({ width: side, height: side });
+# }
+# declare const input: any;
+# (globalThis as any).answer = square(+input);
+# -- end of source
+# The compiler before this one: 2 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 6, patches 2, moves 2, unlikely or rare 0.
+# RUN(X64): steps most:8 f2 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f2:Body
+# X64-NEXT: steps: at most 8

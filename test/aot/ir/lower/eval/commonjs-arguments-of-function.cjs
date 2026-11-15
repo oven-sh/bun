@@ -2,7 +2,7 @@
 // CHECK: evalscope [[scope]] mode=Sloppy
 // CHECK: {name="arguments" kind=Arguments
 // CHECK-NOT: {name="arguments"
-// CHECK: {name="exports" depth=[[depth]] layout=
+// CHECK: {name="exports" depth=[[depth]] variable=
 // CHECK: function {{*}}kind=CommonJsModule flags=[IsSloppy, IsHiddenInStackTraces] thisType
 // CHECK: = CallDirect {{*}}function=[[wrapper]]
 // CHECK: function [[wrapper]] module={{*}}flags=[IsSloppy, HasThis] length=5

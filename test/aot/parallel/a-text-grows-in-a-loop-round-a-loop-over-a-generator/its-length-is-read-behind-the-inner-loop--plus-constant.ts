@@ -1,0 +1,7 @@
+function* pair(a: number, b: number) { yield a; yield b; }
+function run(times: number): number {
+  let total = 0; let last = "";
+  for (let round = 0; round < times; round++) { for (const value of pair(1, 2)) total += value; total += last.length; last += "c"; }
+  return total;
+}
+console.log(run(3), run(10));

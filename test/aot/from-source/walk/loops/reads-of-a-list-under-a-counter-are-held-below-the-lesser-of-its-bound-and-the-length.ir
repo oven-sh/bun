@@ -1,0 +1,43 @@
+# -- source: main.ts
+# declare function publish(...functions: unknown[]): void;
+# function underBoundOfItsOwn(list: number[], bound: number) {
+#     const n = bound | 0;
+#     let sum = 0;
+#     for (let i = 0; i < n; i++)
+#         sum += list[i];
+#     return sum;
+# }
+# function besideCounter(list: number[], bound: number) {
+#     const n = bound | 0;
+#     let sum = 0;
+#     for (let i = 0; i < n; i++)
+#         sum += list[i + 2];
+#     return sum;
+# }
+# function storedInto(list: number[], bound: number) {
+#     const n = bound | 0;
+#     let sum = 0;
+#     for (let i = 0; i < n; i++) {
+#         sum += list[i];
+#         list[i] = 0;
+#     }
+#     return sum;
+# }
+# publish(underBoundOfItsOwn, besideCounter, storedInto);
+# -- end of source
+# `i < n` says nothing of `list[i]`, so each read asked `i < length` besides. In front of the typed build the lesser of the bound and the length is taken (of the length less what stands beside the counter in the key), the head
+# asks the counter against it, and the reads ask nothing. Where the lesser bound is reached the turn goes to the other build, which asks as before. A list that the turns store into is left as it was.
+# RUN: walk f1 f2 f3 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = GetArrayLength
+# CHECK: = Less {{*}}form=Integers
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayElement {{*}}level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN
+# CHECK-LABEL: code f2:Body
+# CHECK: = GetArrayLength
+# CHECK: = Sub {{*}}form=Integers
+# CHECK: = Less {{*}}form=Integers
+# CHECK: isLoopHead=true
+# CHECK: = GetArrayElement {{*}}level=Proven [keyIsIntegral, isInBounds, readsHoleAsNaN
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = GetArrayElement {{*}}isInBounds

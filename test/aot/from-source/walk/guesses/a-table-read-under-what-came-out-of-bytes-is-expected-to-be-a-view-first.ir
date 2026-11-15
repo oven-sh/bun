@@ -1,0 +1,22 @@
+# -- source: main.js
+# var key = JSON.parse('"go"');
+# var T = { go(d, table) { var h = 0; for (var i = 0; i < d.length; i++) h = (h >>> 8) ^ table[(h ^ d[i]) & 255]; return h; } };
+# var bytes = new Uint8Array([1, 2, 3, 250, 7]), fill = function (made) { for (var k = 0; k < 256; k++) made[k] = (k * 2654435761) | 0; return made; };
+# print(T[key](bytes, fill(new Int32Array(256))), T[key](bytes, fill(new Uint32Array(256))), T[key](bytes, fill(new Uint8Array(256))), T[key](bytes, fill(new Float64Array(256))), T[key](bytes, fill([])), T[key](bytes, fill({})), T[key](bytes, new Int32Array(3)), T[key]([1, 2, 3], fill(new Int32Array(256))));
+# -- end of source
+# The table is read under what came out of the other holder, not in step with it. Use says "a list of numbers", so every copy of the loop asked it for a list, and a view, which is what stands beside bytes as often,
+# sent the whole loop to the closed copy: a thousand bytes 159,134 instructions, plain Bun 14,085. In the copies for bytes and for views there is a start in front of the others in which such a table is expected to be a
+# view of any kind; who fails there goes on to the start that asks for the list, as before (18,530 | 18,537). 10,395.
+# f1 = go
+# RUN: walk f1:Body mechanisms=all
+# Beside a list of numbers too (the bytes of a file kept in a list): 126,124 > 39,124. One copy more: eight heads of loops in this function.
+# CHECK: = HasArrayStorage
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
+# CHECK: = TypeTest {{*}} testedType=Float32Array|Float64Array|Int16Array|Int32Array|Int8Array|Uint16Array|Uint32Array|Uint8Array|Uint8ClampedArray
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1215875475 1215875475 13 1215875475 1215875475 1215875475 0 1454810312
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: 1215875475 1215875475 13 1215875475 1215875475 1215875475 0 1454810312
+# NONE-NEXT: exited with 0

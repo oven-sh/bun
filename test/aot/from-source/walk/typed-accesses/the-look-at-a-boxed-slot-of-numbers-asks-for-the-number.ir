@@ -1,0 +1,25 @@
+# a boxed slot that is held to numbers may hold undefined or null beside them. The look at the slot asks for the number: one test refuses the empty slot and both markers, and its failing side is the rare arm.
+# so the read gives an int32, the operators on it are in their forms on integers, none of them may run code, and the second read of the field is answered by what the first one found.
+# f1 = pass
+# -- source: the-look-at-a-boxed-slot-of-numbers-asks-for-the-number.ts
+# declare function sink(...values: unknown[]): void;
+# const enum Mark { Open = 1, Busy = 2, Late = 4, Done = 8 }
+# const marks = Symbol("marks");
+# class Gate { [marks]: Mark = Mark.Open; }
+# function pass(gate: Gate): number { if ((gate[marks] & Mark.Done) !== 0) return 0; return (gate[marks] & Mark.Late) * 3; }
+# sink(Gate, pass);
+# -- end of source
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = IsSlotFilled {{*}}key=symbol("marks"){{*}}level=Proven [holdsDeclaredType]
+# CHECK: : i32 @JSValue = GetSlot {{*}}key=symbol("marks"){{*}}level=Proven [holdsDeclaredType]
+# CHECK: = BitAnd {{*}}form=Integers
+# CHECK: = BitAnd {{*}}form=Integers
+# RUN(ONCE): walk f1 mechanisms=all
+# ONCE-COUNT-1: = GetSlot {{*}}key=symbol("marks")
+# ONCE-NOT: = GetSlot {{*}}key=symbol("marks")
+# RUN(NEVER): walk f1 mechanisms=all
+# NEVER-NOT: undefined|null|i32
+# NEVER-NOT: @OptionalInt64
+# NEVER-NOT: @OptionalDouble
+# NEVER-NOT: form=Numbers

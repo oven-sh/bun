@@ -1,0 +1,22 @@
+# `row.owner === owner` takes any value: by the function's own text it says nothing of `owner`. Where nothing is written of the parameter its word is what Link saw arrive: here, through `fn.apply(this, args)`
+# on a set of closures, a number and a record. The guard of parameters took the record out of it, because two records are compared by their bits; a number failed the guard at every call, and the function ran in its slow version.
+# byOwner (f2): the parameter stands in an equality alone: it is compared as any value . byHolder (f3): the function reads `size` off the parameter; the record that was seen to arrive is the other argument's, `{ least }`,
+# which has no such name: it is not what the text means, and the parameter is not tested for it.
+# -- source: an-equality-alone-asks-a-parameter-for-nothing-that-nobody-wrote.cjs
+# const rows = hidden();
+# function wrap(fn) { return function (...args) { return fn.apply(this, args); }; }
+# const byOwner = wrap((owner, query) => { let found = 0; for (const row of rows) if (row.owner === owner && (!query || row.size >= query.least)) found++; return found; });
+# const byHolder = wrap((holder, query) => { let found = holder.size; for (const row of rows) if (row.holder === holder && (!query || row.size >= query.least)) found++; return found; });
+# say(byOwner(1, undefined)); say(byOwner(2, { least: 5 })); say(byOwner(rows[0], undefined)); say(byHolder(rows[0], undefined)); say(byHolder(rows[0], { least: 5 }));
+# -- end of source
+# RUN: walk f2 f3 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK-NOT: , v0 form=Bits
+# CHECK-LABEL: code f3:Body
+# CHECK-NOT: = ShapeTest v0 layouts=[L0]
+# RUN(SHELL): run-in-shell const first = { owner: 1, size: 4, holder: null }, second = { owner: 2, size: 9, holder: first }, third = { owner: 1, size: 2, holder: first }; globalThis.hidden = () => [first, second, third]; globalThis.say = (x) => print(String(x));
+# SHELL: 2
+# SHELL-NEXT: 1
+# SHELL-NEXT: 0
+# SHELL-NEXT: 6
+# SHELL-NEXT: 5

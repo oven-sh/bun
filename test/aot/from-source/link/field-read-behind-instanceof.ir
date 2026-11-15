@@ -1,0 +1,30 @@
+# -- source: field-read-behind-instanceof.ts
+# class Word { constructor(readonly text: string) {} }
+# class Count { constructor(readonly amount: number) {} }
+# declare function print(...values: unknown[]): void;
+# function join(left: Word | Count, right: Word | Count): Word | Count {
+#   if (left instanceof Word && right instanceof Word) return new Word(left.text + right.text);
+#   return left;
+# }
+# function twice(word: Word): string { return word.text + word.text; }
+# function other(left: any, right: any): string {
+#   if (left instanceof Word) return right.text + right.text;
+#   return "far";
+# }
+# const ab = join(new Word("a"), new Word("b")) as Word;
+# print(ab.text, twice(ab), (join(new Count(1), ab) as Count).amount, join(ab, new Count(1)) === ab);
+# print(other(new Word("a"), new Count(1)), other(new Word("a"), new Word("c")), other(new Count(1), new Word("b")));
+# -- end of source
+# Behind `left instanceof Word` the field is not read off a Count, which lacks it: the sum that a new Word holds is a string. A test of another value says nothing: there the sum may be of undefined.
+# f2 = twice
+# RUN: walk f2 mechanisms=all
+# CHECK-LABEL: code f2:Body
+# CHECK: = Add {{*}}form=Strings
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: ab abab 1 true
+# ANSWERS-NEXT: NaN cc far
+# ANSWERS-NEXT: exited with 0
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: ab abab 1 true
+# NONE-NEXT: NaN cc far
+# NONE-NEXT: exited with 0

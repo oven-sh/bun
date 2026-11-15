@@ -40,7 +40,8 @@ test("asymmetric matchers against typed objects", () => {
 
 async function rowsOf(cwd: string, aot: boolean) {
   const { stdout, stderr, exitCode } = await run(
-    [bunExe(), "test", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
+    // On a busy machine the first test has taken 9 s, and the 5 s that a test has by default ended it.
+    [bunExe(), "test", "--timeout=60000", ...(aot ? ["--debug-aot"] : []), "./matchers.test.ts"],
     cwd,
   );
   return { rows: stdout.split("\n").filter(line => line.startsWith("ROW ")), stderr: exitCode ? stderr : "", exitCode };

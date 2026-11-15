@@ -1,0 +1,26 @@
+# print({}); a read of the private name asyncContext off Bun.peek.
+# The private globals hang on the global object alone: off any other holder the name is one that no row answers.
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="/$bun/js/builtins/UtilInspect.ts" displayPath="/$bun/js/builtins/UtilInspect.ts" flags=[IsLibrary]
+entry module=m0
+layout L0 module=m0
+runtimefunction id=UtilInspectStylizeWithNoColor function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=BunPeek
+    v1 = PropGet v0 key=@"asyncContext"
+    v2 = Builtin builtin=GlobalThis
+    v3 = NewObject layout=L0
+    v4 = FinishObject v3
+    v5 = PropGet v2 key="print" [isFreeName]
+    v6 = Call v5, -, v4 calleeName="print"
+    Return v1
+}
+function f1 module=m1 kind=Method role=Library length=1 enclosingRuntimeFunction=UtilInspectStylizeWithNoColor thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

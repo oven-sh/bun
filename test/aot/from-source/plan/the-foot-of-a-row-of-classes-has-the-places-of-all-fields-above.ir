@@ -1,0 +1,23 @@
+# Five classes in a row, each with fields; only the foot is constructed. The three classes between have no cells, and two of them repeat what their base says of the fields above:
+# the plan passes over those rows, and the foot takes the places of the fields above from the first row that is not passed over.
+# -- source: the-foot-of-a-row-of-classes-has-the-places-of-all-fields-above.ts
+# declare function sink(...values: unknown[]): void;
+# class Top { first = 1; second = 2.5; }
+# class Upper extends Top { third = "three"; }
+# class Middle extends Upper { fourth = true; }
+# class Lower extends Middle { fifth = 5; }
+# class Foot extends Lower { sixth = 6.5; }
+# function read(it: Foot) { return it.first + it.second + it.third.length + (it.fourth ? 1 : 0) + it.fifth + it.sixth; }
+# sink(read(new Foot()));
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L1 None never-allocated
+# CHECK: layout L2 None never-allocated
+# CHECK: layout L3 None never-allocated
+# CHECK: layout L4 CompiledObject size=64
+# CHECK: "sixth" {{*}} Inline offset=56
+# CHECK: "fifth" {{*}} Inline offset=48
+# CHECK: "fourth" {{*}} Inline offset=40
+# CHECK: "third" {{*}} Inline offset=32
+# CHECK: "first" {{*}} Inline offset=16
+# CHECK: "second" {{*}} Inline offset=24

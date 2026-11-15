@@ -1,0 +1,20 @@
+# Once a call of Object.assign has gone through one source key by key (a string, an array), it goes through every later source so too: names first, then symbols.
+# A number and a Map it takes as they got their properties, names and symbols alike, and so what stands behind them.
+# No function of the language tells a symbol that was created in front of a name from one behind it. console.log does, and so does the shell here: it copies what was made into an ordinary object, which keeps the order, and prints the table of its Structure by offset.
+# -- source: main.js
+# const s = Symbol("s");
+# const map = new Map();
+# map[s] = 1;
+# map.a = 2;
+# report(Object.assign({ x: 1 }, "", { [s]: 1, a: 2 }));
+# report(Object.assign({ x: 1 }, [], { [s]: 1, a: 2 }, { [s]: 3, b: 4 }));
+# report(Object.assign({ x: 1 }, 1, { [s]: 1, a: 2 }));
+# report(Object.assign({ x: 1 }, map, { [s]: 3, b: 4 }));
+# -- end of source
+# RUN: run-in-shell globalThis.report = made => print(/\{(.*?)\}/.exec(describe(Object.assign({}, made)))[1].split(", ").sort((one, other) => one.split(":")[1] - other.split(":")[1]).join(" "));
+# CHECK: x:0 a:1 s:2
+# CHECK-NEXT: x:0 a:1 s:2 b:3
+# CHECK-NEXT: x:0 s:1 a:2
+# CHECK-NEXT: x:0 s:1 a:2 b:3
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same

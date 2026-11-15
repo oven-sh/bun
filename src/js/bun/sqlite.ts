@@ -346,6 +346,23 @@ class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = an
 
 const cachedCount = Symbol.for("Bun.Database.cache.count");
 
+// SQLite opens paths of the disk alone. The binding of node:fs reads what an executable holds.
+function readEmbeddedDatabase(filename: string) {
+  if (!Bun.isStandaloneExecutable) return;
+  let bytes: Buffer;
+  try {
+    bytes = require("internal/fs/binding").readFileSync(filename);
+  } catch {
+    return;
+  }
+  // A database in write-ahead mode needs a file beside it. Its last checkpoint is a database of the older mode.
+  if (bytes.length > 19) {
+    if (bytes[18] === 2) bytes[18] = 1;
+    if (bytes[19] === 2) bytes[19] = 1;
+  }
+  return bytes;
+}
+
 class Database implements SqliteTypes.Database {
   declare exec: Database["run"];
 
@@ -414,7 +431,13 @@ class Database implements SqliteTypes.Database {
       throw new Error("Cannot open an anonymous database in read-only mode.");
     }
 
-    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
+    try {
+      this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags);
+    } catch (error) {
+      const bytes = (flags & constants.SQLITE_OPEN_READONLY) !== 0 ? readEmbeddedDatabase(filename) : undefined;
+      if (bytes === undefined) throw error;
+      this.#handle = SQL.deserialize(bytes, constants.SQLITE_DESERIALIZE_READONLY);
+    }
     this.filename = filename;
   }
 

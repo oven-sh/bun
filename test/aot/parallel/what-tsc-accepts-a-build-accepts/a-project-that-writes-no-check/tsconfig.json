@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "noCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "types": []
+  }
+}

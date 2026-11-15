@@ -213,9 +213,7 @@ void HostClient::onWritable()
 
 // Open + mmap the child-written shm segment. The child already munmapped
 // its side before sendReply, so we're the sole mapper. O_RDWR + PROT_WRITE
-// because the child's allocator poisons the buffer in
-// safe builds BEFORE the vtable free (which munmap's) — a PROT_READ
-// mapping SIGBUS'd on that poison. MAP_SHARED is required for POSIX shm
+// because JS can be given the pages to write to. MAP_SHARED is required for POSIX shm
 // objects on macOS — MAP_PRIVATE returns EINVAL (the kernel's posix_shm
 // vfs doesn't implement VM_BEHAVIOR_COPY). Returns nullptr on failure
 // with errno set; caller reports it.
@@ -277,8 +275,7 @@ static JSValue openShmScreenshot(JSGlobalObject* g, const char* name, uint32_t n
 
     switch (enc) {
     case ScreenshotEncoding::Blob: {
-        // Blob adopts the mapping — no copy. Store's allocator.free
-        // munmap's when the Blob's refcount drops to zero.
+        // Blob adopts the mapping — no copy. Its store munmap's when dropped.
         // `await blob.bytes()` reads directly from these pages.
         void* impl = Blob__fromMmapWithType(g, static_cast<uint8_t*>(map), byteLen, mime);
         ok = true;

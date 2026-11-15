@@ -2,12 +2,10 @@
 // CHECK-LABEL: function {{*}}name="spread"
 // CHECK: b0([[x]]: anything, [[a]]: anything, [[y]]: anything, [[b]]: anything):
 // CHECK: [[array]] = NewArray [[x]] contents=anything
-// CHECK-NEXT: [[convertedA]] = Convert [[a]] declared={type=undefined|null|string|Array flags=[IsExpected]}
-// CHECK-NEXT: AppendSpread [[array]], [[convertedA]]
+// CHECK-NEXT: AppendSpread [[array]], [[a]]
 // CHECK-NEXT: AppendElement [[array]], [[y]]
 // CHECK-NEXT: AppendHole [[array]]
-// CHECK-NEXT: [[convertedB]] = Convert [[b]] declared={type=undefined|null|string|Array flags=[IsExpected]}
-// CHECK-NEXT: AppendSpread [[array]], [[convertedB]]
+// CHECK-NEXT: AppendSpread [[array]], [[b]]
 
 // RUN(NOWHERE): lower
 // NOWHERE-NOT: IteratorOpen

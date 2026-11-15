@@ -1,0 +1,28 @@
+# -- source: main.ts
+# declare const sink: any;
+# declare const numbers: number[];
+# class Pixel { r: number; g: number; h: number; s: number; t: number; u: number; constructor(r: number, g: number) { this.r = r & 255; this.g = g >>> 8; this.h = (r ^ g) >>> 0; this.s = (r & 15) | (g & 3); this.t = r & -2; this.u = (r >>> 0) >> 1; } }
+# function low(a: number): number { return a & 255; }
+# function kept(a: number): number { const x = a >>> 0; return x; }
+# function signed(a: number): number { return (a & 255) ^ -1; }
+# let state = 1;
+# function next(a: number): number { state = (state * 3 + a) >>> 0; return state; }
+# const pixel = new Pixel(numbers[0]!, numbers[1]!);
+# sink(pixel.r + pixel.g + pixel.h + pixel.s + pixel.t + pixel.u, low(numbers[2]!), kept(numbers[3]!), signed(numbers[4]!), next(numbers[5]!));
+# -- end of source
+# Bit operators tell Link that what they give is a count: from zero up, below 2^31 or below 2^32.
+# RUN(FUNCTIONS): link functions
+# FUNCTIONS: function f1 {{*}} result=int[0, 2147483647]
+# FUNCTIONS: function f2 {{*}} result=int[0, 4294967295]
+# FUNCTIONS: function f3 {{*}} result=i32
+# FUNCTIONS: function f4 {{*}} result=int[0, 4294967295]
+# RUN(FIELDS): link fields variables
+# FIELDS: field L0.0 "r" proven=int[0, 2147483647]
+# FIELDS: field L0.1 "g" proven=int[0, 2147483647]
+# FIELDS: field L0.2 "h" proven=int[0, 4294967295]
+# FIELDS: field L0.3 "s" proven=int[0, 2147483647]
+# FIELDS: field L0.4 "t" proven=i32
+# FIELDS: field L0.5 "u" proven=i32
+# FIELDS: variable g0 proven=int[0, 4294967295]
+# RUN(PLAN): plan layouts
+# PLAN: slot 0 "r" Int32

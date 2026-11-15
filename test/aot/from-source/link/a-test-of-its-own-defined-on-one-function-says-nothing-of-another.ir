@@ -1,0 +1,14 @@
+# Writable has a function of its own under Symbol.hasInstance, laid by a descriptor. It lies on Writable and on nothing else: `instanceof Stream` does not find it, so Stream, and what is tested against it, stay in sight.
+# -- source: main.js
+# function Stream() { this.open = true; }
+# function Writable() { this.w = 1; }
+# function Other() { this.n = 2; }
+# Object.defineProperty(Writable, Symbol.hasInstance, { value: function (object) { return !!object && object.w === 1; } });
+# print(new Other() instanceof Stream, new Stream() instanceof Stream, { w: 1 } instanceof Writable, new Other() instanceof Writable);
+# -- end of source
+# RUN: link layouts mechanisms=all
+# CHECK: layout L0 {{*}}changes=[] stays-with-compiled-code
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: false true true false
+# RUN(NONE): run-in-shell mechanisms=none
+# NONE: false true true false

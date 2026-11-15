@@ -21,7 +21,7 @@ use smallvec::SmallVec;
 /// Generic over `A` so the bundler can put both the SoA slab and every
 /// `columns_for_non_ascii` payload into the per-worker AST heap (`AstAlloc`)
 /// and bulk-free them on `mi_heap_destroy` instead of walking
-/// `LinkerGraph.files` in `deinit_without_freeing_arena`. The runtime printer's
+/// `LinkerGraph.files` in `BundleV2::drop`. The runtime printer's
 /// lazy table keeps the `Global` default and frees normally.
 pub struct LineOffsetTable<A: Allocator = Global> {
     pub columns_for_non_ascii: Box<[i32], A>,

@@ -1,0 +1,34 @@
+# The slot of `limit` is planned as an accessor's by the written type of the helper's parameter. What unseen code does to the name: never defined . defined by the helper . stored plainly . stored, then defined . defined, then deleted .
+# deleted and stored . a value by descriptor over it . another getter alone . frozen . a name in front of it . the helper on a plain object. Read by compiled code in front of a store by unseen code and behind it. As plain.
+# -- source: main.ts
+# declare function print(value: any): void;
+# declare function deeds(make: unknown, define: unknown): any[];
+# declare function store(gate: unknown, value: unknown): string;
+# interface Gate { limit: number | null; open: boolean; width?: number }
+# function limitGet(this: Gate) { return this.open ? 7 : 8; }
+# function limitSet(this: Gate, value: number | null) { this.open = value !== null; }
+# function defineLimit(gate: Gate) {
+#   Object.defineProperty(gate, "limit", { configurable: true, enumerable: true, get: limitGet, set: limitSet });
+# }
+# function Gate(): void {
+#   if (!(this instanceof Gate)) return new Gate();
+#   this.open = true;
+# }
+# function tell(gate: Gate): string { return String(gate.limit) + ":" + String(gate.open) + ":" + Object.keys(gate).join() + ":" + typeof Object.getOwnPropertyDescriptor(gate, "limit")?.get; }
+# for (const [name, gate] of deeds(Gate, defineLimit)) { const before = tell(gate); print(name + " | " + before + " | " + store(gate, null) + " | " + tell(gate)); }
+# -- end of source
+# RUN(PLAN): plan layouts mechanisms=all
+# PLAN: slot {{*}}"limit" appended {{*}}accessor
+# RUN(ANSWERS): run-in-shell globalThis.deeds = (Gate, defineLimit) => { const list = []; const add = (name, deed) => { const gate = new Gate(); deed(gate); list.push([name, gate]); }; add("0 never defined", gate => { }); add("1 defined by the helper", gate => defineLimit(gate)); add("2 stored plainly", gate => { gate.limit = 5; }); add("3 stored plainly, then defined", gate => { gate.limit = 5; defineLimit(gate); }); add("4 defined, then deleted", gate => { defineLimit(gate); delete gate.limit; }); add("5 defined, deleted, stored", gate => { defineLimit(gate); delete gate.limit; gate.limit = 6; }); add("6 defined, then a value by descriptor", gate => { defineLimit(gate); Object.defineProperty(gate, "limit", { value: 9, writable: false, enumerable: false, configurable: true }); }); add("7 another getter alone", gate => Object.defineProperty(gate, "limit", { get() { return "other"; }, configurable: true })); add("8 defined and frozen", gate => { defineLimit(gate); Object.freeze(gate); }); add("9 a name in front, then defined", gate => { gate.width = 3; defineLimit(gate); }); const plain = { open: false }; defineLimit(plain); list.push(["10 the helper on a plain object", plain]); return list; }; globalThis.store = (gate, value) => { "use strict"; try { gate.limit = value; return "stored"; } catch (error) { return error.name; } };
+# ANSWERS: 0 never defined | undefined:true:open:undefined | stored | null:true:open,limit:undefined
+# ANSWERS-NEXT: 1 defined by the helper | 7:true:open,limit:function | stored | 8:false:open,limit:function
+# ANSWERS-NEXT: 2 stored plainly | 5:true:open,limit:undefined | stored | null:true:open,limit:undefined
+# ANSWERS-NEXT: 3 stored plainly, then defined | 7:true:open,limit:function | stored | 8:false:open,limit:function
+# ANSWERS-NEXT: 4 defined, then deleted | undefined:true:open:undefined | stored | null:true:open,limit:undefined
+# ANSWERS-NEXT: 5 defined, deleted, stored | 6:true:open,limit:undefined | stored | null:true:open,limit:undefined
+# ANSWERS-NEXT: 6 defined, then a value by descriptor | 9:true:open:undefined | TypeError | 9:true:open:undefined
+# ANSWERS-NEXT: 7 another getter alone | other:true:open:function | TypeError | other:true:open:function
+# ANSWERS-NEXT: 8 defined and frozen | 7:true:open,limit:function | TypeError | 7:true:open,limit:function
+# ANSWERS-NEXT: 9 a name in front, then defined | 7:true:open,width,limit:function | stored | 8:false:open,width,limit:function
+# ANSWERS-NEXT: 10 the helper on a plain object | 8:false:open,limit:function | stored | 8:false:open,limit:function
+# ANSWERS-NEXT: exited with 0

@@ -1,0 +1,32 @@
+jest.requireActual() in a factory, in a test, and test files beside them that mock by hand or not at all.
+#### alone.test.ts
+import { test, jest } from "bun:test";
+test("jest.requireActual() of a file that no mock names, in a program without a require of its own", () => {
+  const real = jest.requireActual("./src/real");
+  console.error("| CASE alone", real.kept, real.replaced, real.twice(2));
+});
+#### package.json
+{ "name": "mock-import-original" }
+#### required.test.ts
+
+import { test, jest } from "bun:test";
+import { seen } from "./src/user";
+jest.mock("./src/real", () => ({ ...jest.requireActual("./src/real"), replaced: "mocked" }));
+test("jest.requireActual() in the factory", () => console.error("| CASE required", seen()));
+#### src/real.ts
+console.error("| CASE real runs");
+export const kept = "kept";
+export const replaced = "real";
+export function twice(n: number) { return n * 2; }
+#### src/user.ts
+import { kept, replaced, twice } from "./real";
+export const seen = () => [kept, replaced, twice(2)].join();
+#### unmocked.test.ts
+import { test } from "bun:test";
+import { seen } from "./src/user";
+test("no mock and no original", () => console.error("| CASE unmocked", seen()));
+#### written.test.ts
+import { test, jest } from "bun:test";
+import { seen } from "./src/user";
+jest.mock("./src/real", () => ({ kept: "kept", replaced: "mocked", twice: (n: number) => n * 2 }));
+test("the same mock with its three members written out", () => console.error("| CASE written", seen()));

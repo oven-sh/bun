@@ -1,6 +1,6 @@
 // Flags: --aot-allow-code-from-disk
-// STATISTIC: ImageFunctionsEmitted <= 400
-// STATISTIC: FlowEdgesLogged <= 30000
+// STATISTIC: ImageFunctionsEmitted <= 400 Todo: what this program reaches of Bun's library is not cut down to what it uses yet
+// STATISTIC: FactEdges <= 30000
 const kinds: string[] = [];
 for (const name of ["os", "path"]) {
   const loaded = await import(name);

@@ -1,0 +1,12 @@
+# `a[0] * b[0]`: a read off a list of numbers may give NaN for a hole where its user takes undefined for NaN, and that hangs on what stands beside it. For the FIRST side the walk looks ahead at the second: a read by key off a list of numbers tested in front. The look wanted the later read's key to be built already or cut by a written mask; a WRITTEN position stands behind the first read in the text, so the look failed, the first side kept its hole, and its read was not asked in front of the typed copy: the reads of the first list stayed in every turn.
+# A written position that is not negative passes the look.
+# -- source: the-first-side-of-a-product-takes-nan-for-a-hole-where-the-second-is-read-at-a-written-position.cjs
+# function dot(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
+# const first = JSON.parse("[0.5, 1.5, 2.5]"), second = JSON.parse("[1.5, 2.5, 3.5]");
+# function sum(start) { let total = start; for (let turn = 0; turn < 100; turn++) total += dot(first, second); return total; }
+# print(sum([].length + 1));
+# -- end of source
+# RUN(COUNT): compile NumericElementReadsHoisted mechanisms=all
+# COUNT: statistic NumericElementReadsHoisted 5
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 1326

@@ -1,0 +1,12 @@
+# `util.inspect` is a function of the library, in a file that loads at the first call. Its body is copied into the loop of the program, and there it reads a constant of its own file.
+# Link's word "filled at every read" holds for as long as the function that holds the read runs. In front of the PROGRAM's loop nobody has loaded the file: the read stays in the turn. f0 = the program.
+# RUN: walk f0 mechanisms=all
+# CHECK-NOT: = GetModuleVariable
+# CHECK: isLoopHead=true
+# CHECK: = GetModuleVariable
+# -- source: a-constant-of-a-file-that-loads-in-the-turn-is-read-in-the-turn-where-its-reader-is-copied-into-the-loop.mjs
+# import util from "node:util";
+# let last = "";
+# for (let turn = 0; turn < Number("30"); turn++) last = util.inspect({});
+# console.log(last);
+# -- end of source

@@ -1,0 +1,1 @@
+const view = new Int32Array(8); view[1] = 5; const thief = { valueOf() { view.buffer.transfer(); return 1; } }; function masked(v, i) { return v[i & 7]; } console.log(masked(view, 1), String(masked(view, thief)), String(masked(view, 1)));

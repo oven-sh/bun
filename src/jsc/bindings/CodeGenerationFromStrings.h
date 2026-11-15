@@ -51,7 +51,7 @@ inline ASCIILiteral codeGenerationFromStringsDisallowedMessage()
 #if !defined(BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS)
     // Ahead of the message of --trim: where the compiled program refuses text, keeping the interpreter changes nothing.
     if (Bun__isCodeGenerationDisallowedByCompiledProgram())
-        return JSC::AOT::evaluationRefusedMessage();
+        return JSC::AOT::rejectedEvaluationMessage();
     if (Bun__isCodeGenerationDisallowedByTrimming())
         return "Code generation from strings disallowed for this context: eval() and new Function() were removed by --trim because your code never uses them. To keep them, add \"interpreter\" to compile.trim.allow in Bun.build()."_s;
 #endif
@@ -121,6 +121,13 @@ inline JSC::JSObject* createCodeGenerationFromStringsError(JSC::JSGlobalObject* 
 inline bool isDataOrBlobURL(const WTF::String& specifier)
 {
     return specifier.startsWith("data:"_s) || specifier.startsWith("blob:"_s);
+}
+
+// Such a URL may name a compiled module, if it is a literal specifier of an import or of a Worker. With "=strict" a
+// computed specifier cannot load it.
+inline bool isModuleRefusedByName(const WTF::String& name)
+{
+    return isDataOrBlobURL(name) && isCodeGenerationFromStringsStrictByFlags();
 }
 
 } // namespace Bun

@@ -1,0 +1,21 @@
+# -- source: main.js
+# const known = ["leaf", "log", "own", "relay", "middle"];
+# function leaf() { return new Error("x").stack.split("\n").map(line => line.split("@")[0]).filter(name => known.includes(name)).join(" "); }
+# function log(...parts) { if (!globalThis.on) return ""; const r = leaf() + parts.length; return r + "b"; }
+# function own() { if (!globalThis.on) return ""; const r = leaf() + arguments.length; return r + "b"; }
+# function relay() { const r = globalThis.fs.log.apply(this, arguments); return r + "r"; }
+# function middle(f) { const r = f(1, 2); return r + "c"; }
+# globalThis.on = true;
+# globalThis.fs = { log, own, relay };
+# print(middle(globalThis.fs.log));
+# print(middle(globalThis.fs.own));
+# print(middle(globalThis.fs.relay));
+# print([7].map(globalThis.fs.log).join());
+# -- end of source
+# The generic call entry of each of the three walks the body. A unit that holds the body of a function is that function's frame: it stands in a trace wherever it lies, not only on top.
+# RUN: run-in-shell
+# CHECK: leaf log middle2bc
+# CHECK-NEXT: leaf own middle2bc
+# CHECK-NEXT: leaf log relay middle2brc
+# CHECK-NEXT: leaf log3b
+# CHECK-NEXT: exited with 0

@@ -1,0 +1,56 @@
+# An accessor that lies on the object under a name that the native prototype of `process` lacks is run by whoever asks `process` for that name, native code among them, with `process` as `this`.
+#   function Bell() { this.rung = 0; }  Bell.prototype.on = function () { return 1; };  Bell.prototype._eventsCount = 0;  Object.defineProperties(Bell.prototype, { noDeprecation: { get() {} } });  makeProcessInheritFrom(Bell.prototype);
+#   require("node:events");
+# LIBRARY: own
+# RUN: link functions layouts mechanisms=all
+# CHECK-NOT: function f3 unreached
+# CHECK: layout L0 {{*}}changes=[IsFrozen, GainsProperty, LosesProperty, ChangesPrototype, GetsAccessor]
+
+layout L0 kind=Instance name="Bell" module=m1 constructor=f2 fields=[{key="rung" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction]
+layout L1 module=m1 fields=[{key="get" declared={type=anything}}]
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="node:events" displayPath="node:events" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:events"
+    v1 = Undefined
+    Return v1
+}
+function f1 module=m1 kind=Module role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="on"
+    v4 = Integer integer=0
+    PropSet v1, v4 key="_eventsCount"
+    v6 = Builtin builtin=Object
+    v7 = Builtin builtin=ObjectDefineProperties
+    v8 = NewDictionary
+    v9 = NewClosure function=f4
+    v10 = NewObject -, v9 layout=L1 fields=[0]
+    PropDefine v8, v10 key="noDeprecation"
+    v12 = Call v7, v6, v1, v8 calleeName="Object.defineProperties"
+    v13 = NativeBinding builtin=NativeNewCppFunctionBunProcessCppJsFunctionMakeProcessInheritFrom
+    v14 = Call v13, -, v1 calleeName="makeProcessInheritFrom"
+    v15 = Undefined
+    Return v15
+}
+function f2 name="Bell" module=m1 role=Library flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="rung"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="on" module=m1 role=Library flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f4 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, autoInstallTempDir as tempDir } from "harness";
 import { join } from "node:path";
 
 // When auto-install is enabled, the resolver must not attempt to install a

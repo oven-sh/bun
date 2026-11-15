@@ -1,11 +1,10 @@
 // RUN: lower
 // CHECK-LABEL: function {{*}}kind=Module
 // CHECK: [[wellKnown]] = NewClosure function=
-// CHECK-NEXT: [[head]] = NewObject
-// CHECK-NEXT: PropDefine [[head]], [[wellKnown]] key=@@iterator
-// CHECK: PropDefine {{*}}key="plain"
+// CHECK-NEXT: [[plain]] = NewClosure function=
 // CHECK: [[made]] = NewClosure function=
-// CHECK: SetFunctionName [[made]], {{*}}
+// CHECK-NEXT: SetFunctionName [[made]], {{*}}
+// CHECK-NEXT: = NewObject -, [[wellKnown]], [[plain]] {{*}}fields=[1, 0]
 
 // RUN(ONCE): lower
 // ONCE-COUNT-1: SetFunctionName
@@ -17,8 +16,10 @@
 // NAMED-NOT: function {{*}}name=
 // NAMED: function {{*}}name="plain"
 // NAMED-NOT: function {{*}}name=
+// NAMED: function {{*}}name="[own]" {{*}}IsNamedByComputedKey
+// NAMED-NOT: function {{*}}name=
 
-// A function under a symbol has no name of its own: it gets the property `name` and nothing else, so the console prints `[Function]`. Under a symbol that the program makes SetFunctionName gives it the property.
+// A function under a symbol has no name of its own: it gets the property `name` and nothing else, so the console prints `[Function]`. Under a symbol that the program makes SetFunctionName gives it the property, and the text that the symbol spells stands in the header, marked IsNamedByComputedKey, for the frames of a stack.
 // Under a well-known symbol the text is known when the program is compiled: it stands in the header, marked IsNamedByComputedKey, and nothing runs for it when the literal is evaluated.
 const own = Symbol("own");
 

@@ -1,0 +1,61 @@
+# `import { Point } from "node:events"; function make(n) { return new Point(n); }`: the value of a module of the library is a function, and its classes hang on it as properties. The loader reads each name off that function into a variable.
+# The value of a public module goes to unseen code, so nothing is proven of the read. What some store has laid under the name is held to lie there (Facts::held()): `new` tests for that function and goes straight to its body.
+# Without it each `new` of a class of the library that is imported by name asks the run time for `this`.
+# A read that the program itself writes finds what is laid on that one function under the name (LinkFlow::laidOnClosuresOf()), and nothing that is laid under the name on anything else: `holder.Point` in f4. So the constructors of the library's own classes do not meet.
+# f0 = main, f1 = the body of the module, f2 = Point, f3 = the function that the module returns, f4 = byHand, f5 = make
+# RUN(HELD): link held calls mechanisms=all
+# HELD: call f4 {{*}} -> f2
+# HELD: call f5 {{*}} -> f2
+# RUN(PROVEN): link calls mechanisms=all
+# PROVEN-NOT: {{*}} -> f2
+# RUN(FORM): walk f5 mechanisms=all
+# FORM: TypeTest {{*}}testedType=f2
+
+module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}]
+module m1 path="node:events" displayPath="node:events" kind=RuntimeSource flags=[IsLoadedByImportOnly, RejectsRequireCacheOverride] exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeEvents body=f1 syntheticExports=[{name="Point" variable=g0}]
+entry module=m0
+layout L0 kind=Instance name="Point" module=m1 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+variable g0 name="Point" module=m1 declared={type=anything|absent}
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Convert v0 declared={type=f5 flags=[IsFromCompiler]}
+    v2 = Integer integer=1
+    v3 = Call v1, -, v2 calleeName="make"
+    v4 = Integer integer=2
+    v5 = Call v1, -, v4 calleeName="make"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="print" [isFreeName]
+    v8 = Call v7, -, v3, v5
+    Return
+}
+function f1 module=m1 kind=Module role=Library results=[{type=anything}] {
+    v0 = NewClosure function=f2
+    v1 = NewClosure function=f3
+    PropSet v1, v0 key="Point"
+    v3 = NewClosure function=f4
+    v4 = Call v3, -, v1
+    Return v1
+}
+function f2 name="Point" module=m1 role=Library flags=[HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x"
+    v3 = Undefined
+    Return v3
+}
+function f3 name="holder" module=m1 role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}
+function f4 name="byHand" module=m1 role=Library flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="Point"
+    v2 = Integer integer=2
+    v3 = Construct v1, -, v2 calleeName="holder.Point"
+    Return v3
+}
+function f5 name="make" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Construct v1, -, v0 calleeName="Point"
+    Return v2
+}

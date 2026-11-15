@@ -1,0 +1,40 @@
+# -- source: main.js
+# function Carrier() { this.weight = 1; }
+# function Wagon() { Carrier.call(this); this.wheels = 4; }
+# function Sledge() { Carrier.call(this); this.runners = 2; }
+# function besideFamily(carrier, count) { var total = 0; for (var i = 0; i < count; i++) { total += carrier.load(i) + bonus; last = new Sledge(); } return total; }
+# function besideOne(sledge, count) { var total = 0; for (var i = 0; i < count; i++) { total += sledge.load(i) + bonus; last = new Sledge(); } return total; }
+# Carrier.prototype.load = function (n) { return this.weight + n; };
+# Object.setPrototypeOf(Wagon.prototype, Carrier.prototype);
+# Object.setPrototypeOf(Sledge.prototype, Carrier.prototype);
+# var last;
+# let bonus = 0;
+# publish(Carrier, Wagon, Sledge, besideFamily, besideOne);
+# print(besideFamily(new Wagon(), 3));
+# if (pick()) print(besideFamily(new Sledge(), 1) + besideFamily(new Carrier(), 1));
+# print(last.load(1) + (Object.getPrototypeOf(last) === Sledge.prototype ? 10000 : 0));
+# print(besideOne(new Sledge(), 3));
+# -- end of source
+# The carrier is an object of one class. A test in front of `load` that asks the guards of all that it may be of is no word on a class of which it is not: no Sledge need have been made.
+# So the birth behind it begins the guards of Sledge and asks guards of Sledge for itself: while one of them holds, what stands under `prototype` is the prototype of the class.
+# RUN(BIRTH): walk f4 mechanisms=all
+# BIRTH-LABEL: code f4:Body
+# BIRTH: BeginMemberGuards layout=L2
+# BIRTH: = AreMembersUnchanged conditions=[{kind=MemberPassedByStores layout=L2
+# BIRTH: = NewObject -, 
+# RUN(ANSWERS): run-in-shell globalThis.publish = () => { }; globalThis.pick = () => false;
+# ANSWERS: 6
+# ANSWERS-NEXT: 10002
+# ANSWERS-NEXT: 6
+# ANSWERS-NEXT: exited with 0
+# In the run REFUSED a list lies under `prototype` of Sledge ahead of its first object, which the run time takes for the prototype of no class. In the run LAID Sledge.prototype has a `load` of its own by then.
+# RUN(REFUSED): run-in-shell globalThis.publish = (Carrier, Wagon, Sledge) => { const list = []; list.load = n => 500 + n; Sledge.prototype = list; }; globalThis.pick = () => false;
+# REFUSED: 6
+# REFUSED-NEXT: 10501
+# REFUSED-NEXT: 1503
+# REFUSED-NEXT: exited with 0
+# RUN(LAID): run-in-shell globalThis.publish = (Carrier, Wagon, Sledge) => { Sledge.prototype.load = n => 1000 + n; }; globalThis.pick = () => false;
+# LAID: 6
+# LAID-NEXT: 11001
+# LAID-NEXT: 3003
+# LAID-NEXT: exited with 0

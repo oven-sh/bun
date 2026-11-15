@@ -1,0 +1,12 @@
+# `for (let i = 0; i < point[key]; i++) take(i)`: `i` has no int32 written and is a parameter of the head of the loop; the relation that bounds it stands on the way into the body, where it enters the parameter of `take`.
+# The promise is judged in the block in which it is made. Once it was judged in the block of the value, in front of which no relation stands: "it can be anything from 0 to 9007199254740992". Unseen for `i < point.x`: there the walk narrows by itself.
+# f2 = upTo
+# -- source: relation-between-where-a-value-is-made-and-where-it-enters-the-promise.ts
+# declare function sink(...values: unknown[]): void;
+# class Point { x: Bun.int32 = 7; y: Bun.int32 = 12; }
+# function take(n: Bun.int32): Bun.int32 { return n; }
+# function upTo(point: Point, key: "x" | "y"): number { let s = 0; for (let i = 0; i < point[key]; i++) s += take(i); return s; }
+# sink(upTo);
+# -- end of source
+# RUN: walk f2 mechanisms=all
+# CHECK: code f2:Body

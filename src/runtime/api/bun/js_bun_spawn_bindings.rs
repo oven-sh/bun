@@ -1500,8 +1500,7 @@ fn spawn_maybe_sync(
 
     // Start the readers before the Writable::Buffer stdin writer so that if
     // the writer's start() throws below, on_process_exit drains started readers.
-    // A sync spawn reads in its wait loop, as Node.js does: the child is watched
-    // there, so the read that passes `maxBuffer` can signal it.
+    // A sync spawn reads in its wait loop, where the child is watched and a read past `maxBuffer` can signal it.
     let read_now = !is_sync && !lazy;
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`

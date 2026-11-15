@@ -613,9 +613,7 @@ impl Process {
     pub fn kill(&self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
-            // Detached is a deliberate no-op: the child is not watched yet, or
-            // it is reaped or given up on and its pid may be another process's
-            // (`watch_or_reap`, #44581). Do not widen this match to
+            // Detached is a deliberate no-op: not watched yet, or reaped or given up on with a pid that may be another process's (#44581). Do not widen this match to
             // mask spawn-maxbuf.test.ts — the async-path hang there has a
             // different root cause (poller is already Fd when `on_max_buffer`
             // fires, so this arm is unreachable on that path).

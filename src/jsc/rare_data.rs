@@ -687,12 +687,12 @@ impl RareData {
 
     /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
     /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::Decompressor> {
+    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::OwnedDecompressor> {
         let cell = &self.libdeflate_decompressor;
         if cell.get().is_none() {
             let _ = cell.set(libdeflate::OwnedDecompressor::new()?);
         }
-        cell.get().map(|decompressor| &**decompressor)
+        cell.get()
     }
 
     pub fn default_csrf_secret(&self) -> &[u8] {

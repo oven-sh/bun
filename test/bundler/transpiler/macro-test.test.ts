@@ -17,6 +17,24 @@ import defaultMacro, {
 
 import * as macros from "./macro.ts" with { type: "macro" };
 
+async function run(files: Record<string, string>, env: Record<string, string> = {}) {
+  using dir = tempDir("macro-run", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index.ts"],
+    env: { ...bunEnv, ...env },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds also print "[macro] call <name>" to stdout.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .filter(line => !line.startsWith("[macro]"));
+  return { lines, stderr, exitCode };
+}
+
 test("bun builtins can be used in macros", async () => {
   expect(escapeHTML("abc!")).toBe("abc!");
 });
@@ -220,8 +238,8 @@ test("object destructuring of a macro result keeps every bound property regardle
   expect(exitCode).toBe(0);
 });
 
-test("destructuring a macro result keeps what another binding reads", async () => {
-  using dir = tempDir("macro-destructure-shared", {
+test.concurrent("destructuring a macro result keeps what another binding reads", async () => {
+  const files = {
     "m.ts": `
       export function objects() {
         const shared = { x: 1, y: 2 };
@@ -241,21 +259,14 @@ test("destructuring a macro result keeps what another binding reads", async () =
       const { a: { x: sameKeyX }, a: { y: sameKeyY } } = object();
       const whole = object();
       const { key } = yes() ? whole : whole;
-      const { [process.argv[2]]: computed } = object();
+      const { [process.env.MACRO_TEST_KEY!]: computed } = object();
       const { 0: numeric } = object();
       console.log(JSON.stringify({ x, y, first, second, third, sameKeyX, sameKeyY, whole, key, computed, numeric }));
     `,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "index.ts", "key"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  };
+  const { lines, stderr, exitCode } = await run(files, { MACRO_TEST_KEY: "key" });
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim().split("\n").pop()!)).toEqual({
+  expect(JSON.parse(lines.join("\n"))).toEqual({
     x: 1,
     y: 2,
     first: 1,
@@ -287,14 +298,15 @@ test.concurrent.each(["{ 0: zero, key }", "{ key, 0: zero }"])(
       env: bunEnv,
       cwd: String(dir),
       stdout: "ignore",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    expect(await proc.exited).toBe(0);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     expect(await Bun.file(path.join(String(dir), "out.js")).text()).toEndWith(`console.log(zero, "value");\n`);
   },
 );
 
-test("import.meta.hot.accept() doesn't change the other uses of the const it is given", async () => {
+test.concurrent("import.meta.hot.accept() doesn't change the other uses of the const it is given", async () => {
   using dir = tempDir("macro-hot-accept-shared", {
     "m.ts": `export const specifiers = () => ["./dep.ts"];`,
     "dep.ts": ``,
@@ -463,8 +475,8 @@ test("a macro that returns a JSON or text Response or Blob is inlined by its con
   expect(exitCode).toBe(0);
 });
 
-test("the JSON of a Blob or Response is still inlined after a later macro collects it", async () => {
-  using dir = tempDir("macro-json-collected", {
+test.concurrent("the JSON of a Blob or Response is still inlined after a later macro collects it", async () => {
+  const result = await run({
     "m.ts": `
       const json = (letter: string) => JSON.stringify({ text: Buffer.alloc(4096, letter).toString() });
       export const blob = (letter: string) => new Blob([json(letter)], { type: "application/json" });
@@ -485,23 +497,11 @@ test("the JSON of a Blob or Response is still inlined after a later macro collec
       console.log(values.map(({ text }) => text.length + [...new Set(text)].join("")).join());
     `,
   });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "index.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ lastLine: stdout.trim().split("\n").pop(), stderr, exitCode }).toEqual({
-    lastLine: "4096a,4096b,4096c,4096d,4096e,4096f",
-    stderr: "",
-    exitCode: 0,
-  });
+  expect(result).toEqual({ lines: ["4096a,4096b,4096c,4096d,4096e,4096f"], stderr: "", exitCode: 0 });
 });
 
 // Both parse an empty JSON document. A Worker parses the defines again.
-test("a macro that returns an empty JSON Blob doesn't change what an empty --define is", async () => {
+test.concurrent("a macro that returns an empty JSON Blob doesn't change what an empty --define is", async () => {
   using dir = tempDir("macro-empty-json", {
     "m.ts": `export const empty = () => new Blob([], { type: "application/json" });`,
     "worker.ts": `const object = EMPTY;\nobject.key = 1;\nconsole.log(object.key, object === object);`,
@@ -596,24 +596,6 @@ test("a Response or Blob returned from a macro is classified by its MIME essence
 // (or it is stranded and its keep-alive holds the process open). These run the macro in the main VM:
 // the entry file's macros, or a module require()d so it transpiles on the main thread.
 describe("event loop routing around macros", () => {
-  async function run(files: Record<string, string>, env: Record<string, string> = {}) {
-    using dir = tempDir("macro-loops", files);
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "index.ts"],
-      env: { ...bunEnv, ...env },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // Debug builds also print "[macro] call <name>" to stdout.
-    const lines = stdout
-      .trim()
-      .split("\n")
-      .filter(line => !line.startsWith("[macro]"));
-    return { lines, stderr, exitCode };
-  }
-
   const unawaited: [name: string, macroSource: string][] = [
     [
       "an fs.promises call inside the macro",

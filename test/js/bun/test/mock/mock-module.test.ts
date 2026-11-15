@@ -2051,6 +2051,16 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     await expectFixturesToPass(
       {
         ...files,
+        // "imports" can also give an import a builtin module for a name that require() resolves to a file. The key of
+        // a mock of that name is the builtin module.
+        "package.json": JSON.stringify({
+          name: "project",
+          imports: {
+            "#dep": { import: "./dep.mjs", require: "./dep.cjs" },
+            "#querystring": { import: "node:querystring", require: "./querystring.cjs" },
+          },
+        }),
+        "querystring.cjs": `const builtin = require("querystring"); module.exports = { which: "real cjs", ofBuiltin: builtin.which ?? typeof builtin.stringify };`,
         "node_modules/create-require/package.json": JSON.stringify({
           name: "create-require",
           exports: { ".": { import: "./wrapper.mjs", require: "./index.cjs" } },
@@ -2059,7 +2069,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         "node_modules/create-require/wrapper.mjs": `import { createRequire } from "node:module"; const cjs = createRequire(import.meta.url)("./index.cjs"); (globalThis.loaded ??= []).push("create-require esm"); export const which = cjs.which; export default cjs;`,
         "seen.cjs": `const lib = require("./lib"); exports.which = () => lib.which;`,
         "replaced.test.js": `
-          import { afterAll, expect, mock, test } from "bun:test";
+          import { afterAll, expect, jest, mock, test } from "bun:test";
           import Module from "node:module";
           const resolveFilename = Module._resolveFilename;
           Module._resolveFilename = (...args) => resolveFilename.apply(Module, args);
@@ -2087,6 +2097,13 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect([imported.which, imported.extra, require("create-require").extra]).toEqual(["real", 1, 1]);
             expect(globalThis.loaded.filter(file => file.startsWith("create-require"))).toEqual(["create-require cjs", "create-require esm"]);
           });
+          // What the CommonJS file of the name requires by the name of the builtin module is that module, not the
+          // mock that stands under its key.
+          test("the CommonJS file of a name that an import resolves to a builtin module requires that module", () => {
+            mock.module("#querystring", () => ({ which: "mock" }));
+            expect([require("#querystring").which, require("querystring").which]).toEqual(["mock", "mock"]);
+            expect(jest.requireActual("#querystring")).toEqual({ which: "real cjs", ofBuiltin: "function" });
+          });
         `,
         "paths.test.cjs": `
           const { expect, mock, test } = require("bun:test");
@@ -2096,7 +2113,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
         `,
       },
-      5,
+      6,
     );
   });
 
@@ -2189,8 +2206,22 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect(globalThis.loaded).toBeUndefined();
           });
         `,
+        "loads.cjs": `module.exports = { which: require("dual").which };`,
+        "5.test.js": `
+          import { expect, jest, test } from "bun:test";
+          test("a test file that ends it gets the CommonJS file, also in a module that requires the name as it loads", () => {
+            jest.unmock("dual");
+            expect([require("dual").which, require("./loads.cjs").which]).toEqual(["real cjs", "real cjs"]);
+          });
+        `,
+        "6.test.js": `
+          import { expect, test } from "bun:test";
+          test("and in the next one that module runs again for the mock", () => {
+            expect([require("dual").which, require("./loads.cjs").which]).toEqual(["mock", "mock"]);
+          });
+        `,
       },
-      4,
+      6,
       ["--preload", "./preload.js", ...args],
     );
   });
@@ -2696,6 +2727,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
     await expectFixturesToPass(
       {
         ...files,
+        "waits.mjs": `import { which } from "./folder"; export const seen = which;`,
         "unmock.test.js": `
           import { expect, jest, mock, test, vi } from "bun:test";
           const both = async name => [require(name).which, (await import(name)).which];
@@ -2718,6 +2750,17 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             mock.module("#dep", () => ({ which: "second" }));
             expect(await both("#dep")).toEqual(["second", "second"]);
           });
+          // waits.mjs imports the name and waits for the factory of the first mock, which never settles. require() of
+          // the name ends that wait as an import of it would, and the module gets the second mock.
+          test("a second mock of the name, while a module waits for the factory of the first", async () => {
+            const called = Promise.withResolvers();
+            mock.module("./folder", () => (called.resolve(), new Promise(() => {})));
+            const waiting = import("./waits.mjs");
+            await called.promise;
+            mock.module("./folder", () => ({ which: "second" }));
+            expect(require("./folder").which).toBe("second");
+            expect((await waiting).seen).toBe("second");
+          });
           test("jest.resetModules() calls the factory once more, for both", async () => {
             let calls = 0;
             jest.doMock("./lib", () => ({ fn: () => "mock", calls: ++calls }));
@@ -2731,7 +2774,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
         `,
       },
-      7,
+      8,
     );
   });
 
@@ -3388,6 +3431,15 @@ describe.concurrent("a name that import and require() resolve to two files", () 
       "node_modules/apart/index.cjs": `exports.named = () => "real cjs"; exports.viaHelper = require("./helper.cjs");`,
       "node_modules/apart/helper.cjs": `const index = require("./index.cjs"); module.exports = () => index.named();`,
     };
+    // A package whose CommonJS file requires the package by its own name when it is called.
+    const ownName = {
+      "node_modules/own-name/package.json": JSON.stringify({
+        name: "own-name",
+        exports: { ".": { import: "./esm.mjs", require: "./index.cjs" } },
+      }),
+      "node_modules/own-name/esm.mjs": `export const which = "real esm";`,
+      "node_modules/own-name/index.cjs": `exports.which = "real cjs"; exports.again = () => require("own-name");`,
+    };
     // A library that requires the CommonJS file of wrap-b as it loads.
     const usesWrapB = {
       "node_modules/uses-wrap-b/package.json": `{ "name": "uses-wrap-b", "main": "index.js" }`,
@@ -3584,7 +3636,15 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             const actual = jest.requireActual("cycle");
             expect([require("cycle").named(), actual.named(), actual.viaHelper()]).toEqual(["mock", "real named", "mock"]);
           });
+          test("the CommonJS file itself, which requires its own name, keeps getting itself", () => {
+            const first = require("own-name");
+            expect(first.again()).toBe(first);
+            mock.module("own-name", () => ({ which: "mock" }));
+            expect(require("own-name").which).toBe("mock");
+            expect(first.again()).toBe(first);
+          });
         `,
+          ownName,
         ),
         ...inFolder(
           "require-actual-apart",
@@ -3744,7 +3804,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           usesWrapB,
         ),
       },
-      34,
+      35,
       args,
     );
   });

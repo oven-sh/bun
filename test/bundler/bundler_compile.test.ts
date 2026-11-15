@@ -1460,6 +1460,45 @@ error: Hello World`,
     ],
   });
 
+  // An executable built with --env=disable reads NODE_ENV when it runs, and React picks its build from it then. Only
+  // the development build has jsxDEV. This stand-in for React does the same.
+  test("compile/EnvDisableRunsJSXUnderEitherNodeEnv", async () => {
+    using dir = tempDir("compile-env-disable-jsx", {
+      "app.jsx": `const element = <div />;\nconsole.log(element.via, element.mode);`,
+      "node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0" }),
+      "node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = () => ({ via: "jsx", mode: process.env.NODE_ENV });`,
+      "node_modules/react/jsx-dev-runtime.js": `if (process.env.NODE_ENV !== "production") exports.jsxDEV = () => ({ via: "jsxDEV", mode: process.env.NODE_ENV });`,
+    });
+    const outfile = join(String(dir), isWindows ? "app.exe" : "app");
+    const spawned = async (cmd: string[], NODE_ENV: string | undefined) => {
+      await using proc = Bun.spawn({
+        cmd,
+        env: { ...bunEnv, NODE_ENV, BUN_ENV: undefined },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const built = await spawned(
+      [bunExe(), "build", "--compile", "--env=disable", "./app.jsx", "--outfile", outfile],
+      undefined,
+    );
+    expect(built.stderr).not.toContain("error:");
+    expect(built.exitCode).toBe(0);
+
+    const ran = async (NODE_ENV: string) => {
+      const { stdout, exitCode } = await spawned([outfile], NODE_ENV);
+      return { stdout, exitCode };
+    };
+    expect({ production: await ran("production"), development: await ran("development") }).toEqual({
+      production: { stdout: "jsx production\n", exitCode: 0 },
+      development: { stdout: "jsx development\n", exitCode: 0 },
+    });
+  });
+
   test("does not crash", async () => {
     await using dir = tempDir("bundler-compile-shadcn", {
       "frontend.tsx": `console.log("Hello, world!");`,

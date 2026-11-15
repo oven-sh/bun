@@ -169,6 +169,7 @@ pub struct Pragma {
     /// - `--define=process.env.NODE_ENV=...`
     /// - `NODE_ENV=...`
     /// - tsconfig.json's `compilerOptions.jsx` (`react-jsx` or `react-jsxdev`)
+    /// - `bun build`: false when no define puts a literal in place of `process.env.NODE_ENV` and nothing states `react-jsxdev`
     pub development: bool,
     pub parse: bool,
     pub side_effects: bool,

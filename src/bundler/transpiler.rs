@@ -515,6 +515,47 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
+    /// For a program that runs later and reads `process.env.NODE_ENV` then: it calls `jsx`, which both builds of React have, unless the configuration states `jsxDEV`.
+    #[cold]
+    pub fn emit_jsx_for_runtime_node_env(&mut self) {
+        debug_assert!(self.options.defines_loaded);
+        if !self.options.forced_jsx_development() || self.options.has_literal_node_env_define() {
+            return;
+        }
+        if self.states_jsx_development() || self.has_only_jsx_dev_runtime() {
+            return;
+        }
+        self.options.jsx.development = false;
+        self.options.force_node_env = options::ForceNodeEnv::Unspecified;
+        self.resolver.opts.jsx.development = false;
+        self.resolver.opts.force_node_env = options::ForceNodeEnv::Unspecified;
+    }
+
+    /// bunfig.toml says `jsx = "react-jsxDEV"`, or the tsconfig.json of the build says `"jsx": "react-jsxdev"`.
+    fn states_jsx_development(&mut self) -> bool {
+        let jsx = self.options.transform_options.jsx.as_ref();
+        if jsx.is_some_and(|jsx| jsx.development_stated) {
+            return true;
+        }
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let Ok(Some(root_dir)) = self.resolver.read_dir_info(top_level_dir) else {
+            return false;
+        };
+        let tsconfig = self.resolver.tsconfig_json(&root_dir);
+        tsconfig.is_some_and(|tsconfig| tsconfig.states_jsx_development())
+    }
+
+    /// The JSX import source has `jsx-dev-runtime` and no `jsx-runtime`: a call of `jsx` would not resolve.
+    fn has_only_jsx_dev_runtime(&mut self) -> bool {
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
+        let source = self.options.jsx.import_source.clone();
+        let mut resolves = |path: &[u8]| {
+            let kind = bun_ast::ImportKind::Stmt;
+            self.resolver.resolve(top_level_dir, path, kind).is_ok()
+        };
+        !resolves(&source.production) && resolves(&source.development)
+    }
+
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler` mutates

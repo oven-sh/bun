@@ -342,4 +342,66 @@ describe.concurrent("compile/aot/flags of bun build", () => {
       60_000,
     );
   }
+
+  // --env=disable leaves NODE_ENV to the run, where React picks its development or its production build. Only the development build has
+  // jsxDEV, and this stand-in does the same. A run in place transpiles for the NODE_ENV of its own process, as plain `bun test` does.
+  test(
+    "--env=disable: the JSX of the executable runs under either NODE_ENV",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-build-env-disable-jsx", {
+          "main.jsx": `const element = <div />;\nconsole.log(element.via, element.mode);`,
+          "in-place.test.jsx": `import { test } from "bun:test";\nconst element = <div />;\ntest("t", () => console.log(element.via, element.mode));`,
+          "node_modules/react/package.json": `{ "name": "react", "version": "0.0.0" }`,
+          "node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = () => ({ via: "jsx", mode: process.env.NODE_ENV });`,
+          "node_modules/react/jsx-dev-runtime.js": `if (process.env.NODE_ENV !== "production") exports.jsxDEV = () => ({ via: "jsxDEV", mode: process.env.NODE_ENV });`,
+        });
+        const folder = String(dir);
+        const env = (NODE_ENV?: string) => ({ ...bunEnv, BUN_ENV: undefined, NODE_ENV });
+        const printed = async (cmd: string[], NODE_ENV?: string) => {
+          const ran = await spawned(cmd, folder, env(NODE_ENV));
+          return ran.exitCode === 0 ? ran.stdout : ran;
+        };
+        const executable = join(folder, "program" + (isWindows ? ".exe" : ""));
+        const fromExecutable: Record<string, unknown> = {};
+        for (const how of [
+          ["build", "--compile"],
+          ["build", "--compile", "--aot"],
+          ["build", "--compile", "--aot", "--compile-in-place"],
+          ["compile"],
+        ]) {
+          const built = await spawned(
+            [bunExe(), ...how, "--env=disable", "main.jsx", "--outfile", executable],
+            folder,
+            env(),
+          );
+          expect({ how, stderr: built.stderr, exitCode: built.exitCode }).toEqual({
+            how,
+            stderr: expect.any(String),
+            exitCode: 0,
+          });
+          fromExecutable[how.join(" ")] = {
+            production: await printed([executable], "production"),
+            development: await printed([executable], "development"),
+          };
+        }
+        const either = { production: "jsx production\n", development: "jsx development\n" };
+        expect(fromExecutable).toEqual({
+          "build --compile": either,
+          "build --compile --aot": either,
+          "build --compile --aot --compile-in-place": either,
+          "compile": either,
+        });
+
+        const inPlace = async (...flags: string[]) => {
+          const ran = await spawned([bunExe(), "test", ...flags, "in-place.test.jsx"], folder, env());
+          return ran.exitCode === 0 ? ran.stdout.split("\n").filter(line => line.startsWith("jsx")) : ran;
+        };
+        expect({ "bun test": await inPlace(), "bun test --aot": await inPlace("--aot") }).toEqual({
+          "bun test": ["jsxDEV test"],
+          "bun test --aot": ["jsxDEV test"],
+        });
+      }),
+    600_000,
+  );
 });

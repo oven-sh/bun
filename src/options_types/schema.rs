@@ -443,6 +443,8 @@ pub mod api {
         pub runtime: JsxRuntime,
         pub fragment: Box<[u8]>,
         pub development: bool,
+        /// bunfig.toml says `jsx = "react-jsxDEV"`. `development` is also true when nothing states it.
+        pub development_stated: bool,
         pub import_source: Box<[u8]>,
         pub side_effects: bool,
     }

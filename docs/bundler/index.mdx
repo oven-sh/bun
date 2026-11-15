@@ -736,6 +736,8 @@ console.log(process.env.BAZ);
 
 Disables environment variable injection entirely.
 
+On the command line, `bun build --env=disable` also leaves `process.env.NODE_ENV` in the bundle, so the bundle reads it when it runs. React selects its development or production build at that time, and only the development build has `jsxDEV`. For such a bundle, `bun build` compiles JSX to `jsx` from `react/jsx-runtime`, which both builds have. To get `jsxDEV`, set `"jsx": "react-jsxdev"` in the `tsconfig.json` of the working directory.
+
 ### sourcemap
 
 Specifies the type of sourcemap to generate.

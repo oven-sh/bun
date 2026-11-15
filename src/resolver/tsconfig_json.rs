@@ -302,6 +302,11 @@ impl TSConfigJSON {
         out
     }
 
+    /// `"jsx": "react-jsxdev"`, here or in a file this one extends.
+    pub fn states_jsx_development(&self) -> bool {
+        self.jsx_flags.contains(JsxField::Development) && self.jsx.development
+    }
+
     /// Support ${configDir}, but avoid allocating when possible.
     ///
     /// https://github.com/microsoft/TypeScript/issues/57485

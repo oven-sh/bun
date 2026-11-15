@@ -598,6 +598,7 @@ impl BuildCommand {
             this_transpiler.options.jsx.development = false;
             this_transpiler.resolver.opts.jsx.development = false;
         }
+        this_transpiler.emit_jsx_for_runtime_node_env();
 
         match &ctx.debug.macros {
             MacroOptions::Disable => {

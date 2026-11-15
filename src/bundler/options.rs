@@ -1547,6 +1547,17 @@ impl<'a> BundleOptions<'a> {
         }
     }
 
+    /// Whether a define puts a literal in place of `process.env.NODE_ENV`. An identifier (the key defined as itself) only moves the read.
+    pub(crate) fn has_literal_node_env_define(&self) -> bool {
+        let Some(dots) = self.define.dots.get(b"NODE_ENV".as_slice()) else {
+            return false;
+        };
+        dots.iter().any(|dot| {
+            matches!(&*dot.parts, [process, env, _] if &**process == b"process" && &**env == b"env")
+                && !matches!(dot.data.value, defines::DefineValue::EIdentifier(_))
+        })
+    }
+
     /// Per-worker deep clone — replaces the prior bitwise
     /// `ptr::copy_nonoverlapping` of the parent `Transpiler` (which aliased
     /// every `Box`/`Vec` in here between parent and worker; reassigning any of
@@ -2107,6 +2118,77 @@ impl Drop for BundleOptions<'_> {
         //
         // bundler_feature_flags is `Option<Box<StringSet>>`; `None` ≡ the static
         // empty set (nothing to free), `Some` drops the Box here automatically.
+    }
+}
+
+#[cfg(test)]
+#[test]
+#[cfg_attr(miri, ignore)]
+fn literal_define_of_node_env_is_told_from_a_read() {
+    // `bun build` puts the mode of the build in place of the read. `bun build --env=disable` does not.
+    const NO_FLAG: api::DotEnvBehavior = api::DotEnvBehavior::disable;
+    const ENV_DISABLE: api::DotEnvBehavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+    const NODE_ENV: &str = "process.env.NODE_ENV";
+    const DEV: &str = "\"development\"";
+    // The behavior of `--env`, one `--define` or none, and whether a literal is in place of the read.
+    let cases: &[(api::DotEnvBehavior, &str, &str, bool)] = &[
+        (NO_FLAG, "", "", true),
+        (ENV_DISABLE, "", "", false),
+        (ENV_DISABLE, NODE_ENV, DEV, true),
+        (ENV_DISABLE, NODE_ENV, "undefined", true),
+        (ENV_DISABLE, NODE_ENV, "null", true),
+        (ENV_DISABLE, NODE_ENV, "0", true),
+        (ENV_DISABLE, NODE_ENV, "true", true),
+        (ENV_DISABLE, NODE_ENV, "{}", true),
+        (ENV_DISABLE, NODE_ENV, NODE_ENV, false),
+        (NO_FLAG, NODE_ENV, NODE_ENV, false),
+        (NO_FLAG, NODE_ENV, "globalThis.mode", false),
+        (ENV_DISABLE, "import.meta.env.NODE_ENV", DEV, false),
+        (ENV_DISABLE, "process.env.BUN_ENV", DEV, false),
+        (ENV_DISABLE, "process.env", "{\"NODE_ENV\":1}", false),
+    ];
+
+    assert!(Fs::FileSystem::init(None).is_ok(), "file system");
+    let arena = bun_alloc::Arena::new();
+    let mut log = bun_ast::Log::init();
+    let options = BundleOptions::from_api(&raw mut log, api::TransformOptions::default());
+    let Ok(mut options) = options else {
+        panic!("options");
+    };
+    for &(behavior, key, value, expected) in cases {
+        let stated = !key.is_empty();
+        let input = api::StringMap {
+            keys: stated
+                .then(|| Box::from(key.as_bytes()))
+                .into_iter()
+                .collect(),
+            values: stated
+                .then(|| Box::from(value.as_bytes()))
+                .into_iter()
+                .collect(),
+        };
+        let env = Env {
+            behavior,
+            ..Env::default()
+        };
+        let mut loader = DotEnv::Loader::init();
+        let define = defines_from_transform_options(
+            &mut log,
+            Some(&input),
+            Target::Bun,
+            Some(&mut loader),
+            Some(&env),
+            None,
+            &[],
+            false,
+            &arena,
+        );
+        let Ok(define) = define else {
+            panic!("defines of {key}={value}");
+        };
+        options.define = define;
+        let is_literal = options.has_literal_node_env_define();
+        assert_eq!(is_literal, expected, "{behavior:?} {key}={value}");
     }
 }
 

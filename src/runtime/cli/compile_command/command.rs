@@ -71,6 +71,7 @@ fn run(ctx: Context<'_>, origin: RequestOrigin) -> Result<(), crate::Error> {
     }
 
     let configuration = configuration::configure(&mut *ctx)?;
+    configuration.transpiler.emit_jsx_for_runtime_node_env();
     let location = configuration::output_location(
         &ctx.bundler_options.compile_target,
         &configuration.outfile,

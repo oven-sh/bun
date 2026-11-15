@@ -27,7 +27,12 @@ InspectorBunFrontendDevServerAgent::InspectorBunFrontendDevServerAgent(JSC::JSGl
 {
 }
 
-InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent() = default;
+InspectorBunFrontendDevServerAgent::~InspectorBunFrontendDevServerAgent()
+{
+    if (m_enabled) {
+        Bun__InspectorBunFrontendDevServerAgent__setEnabled(nullptr);
+    }
+}
 
 void InspectorBunFrontendDevServerAgent::didCreateFrontendAndBackend()
 {

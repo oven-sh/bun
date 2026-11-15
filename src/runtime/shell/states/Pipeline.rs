@@ -1,10 +1,9 @@
 use bun_ptr::AliasableBox;
+use bun_sys::File;
 
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, Pipe, ShellExecEnv, ShellExecEnvKind, closefd, log,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::{IO, InKind, OutKind};
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::{self, IOWriter};
@@ -155,7 +154,7 @@ impl Pipeline {
             return Some(Self::finish(interp, this, 0));
         }
 
-        let mut pipes: Vec<Pipe> = Vec::with_capacity(cmd_count - 1);
+        let mut pipes: Vec<[File; 2]> = Vec::with_capacity(cmd_count - 1);
         for _ in 0..cmd_count - 1 {
             // On POSIX use a
             // UNIX stream socketpair via `socketpairForShell` — on macOS
@@ -168,12 +167,9 @@ impl Pipeline {
             #[cfg(unix)]
             let r = bun_sys::socketpair_for_shell(libc::AF_UNIX, libc::SOCK_STREAM, 0, false);
             match r {
-                Ok(p) => pipes.push(p),
+                Ok(p) => pipes.push(p.map(File::from_fd)),
                 Err(e) => {
-                    for p in &pipes {
-                        closefd(p[0]);
-                        closefd(p[1]);
-                    }
+                    drop(pipes);
                     let sys_err = e.to_shell_system_error();
                     return Some(Self::write_failing_error(
                         interp,
@@ -184,30 +180,28 @@ impl Pipeline {
             }
         }
 
+        let mut pipes = pipes.into_iter();
+        let mut read_end: Option<File> = None;
         let mut cmds: Vec<CmdOrResult> = Vec::with_capacity(cmd_count);
         for item in items {
             if matches!(item, ast::PipelineItem::Assigns(_)) {
                 continue;
             }
-            // Position among runnable children (indexes `pipes[]`/`cmds[]`).
-            let cmd_idx = cmds.len();
-
             let child_io = {
                 let me = interp.as_pipeline(this);
-                let stdin = if cmd_idx == 0 {
-                    me.io.stdin.clone()
-                } else {
-                    let r = IOReader::init(pipes[cmd_idx - 1][0], evtloop);
+                let stdin = if let Some(read_end) = read_end.take() {
+                    let r = IOReader::init(read_end.into_raw(), evtloop);
                     r.set_interp(interp);
                     InKind::Fd(r)
-                };
-                let stdout = if cmd_idx == cmd_count - 1 {
-                    me.io.stdout.clone()
                 } else {
+                    me.io.stdin.clone()
+                };
+                let stdout = if let Some([read, write]) = pipes.next() {
+                    read_end = Some(read);
                     // `is_socket` is set on POSIX — the POSIX
                     // pipe is actually a socketpair end (see above).
                     let w = IOWriter::init(
-                        pipes[cmd_idx][1],
+                        write.into_raw(),
                         io_writer::Flags {
                             pollable: true,
                             is_socket: cfg!(unix),
@@ -220,6 +214,8 @@ impl Pipeline {
                         writer: w,
                         captured: None,
                     })
+                } else {
+                    me.io.stdout.clone()
                 };
                 IO {
                     stdin,
@@ -237,14 +233,7 @@ impl Pipeline {
             } {
                 Ok(d) => d,
                 Err(e) => {
-                    // Close the pipe ends that neither `child_io` nor an inited child owns.
-                    drop(child_io);
-                    for p in &pipes[cmd_idx..] {
-                        closefd(p[0]);
-                    }
-                    for p in &pipes[core::cmp::min(cmd_idx + 1, pipes.len())..] {
-                        closefd(p[1]);
-                    }
+                    drop((child_io, read_end, pipes));
                     interp.as_pipeline_mut(this).cmds = Some(cmds.into_boxed_slice());
                     let sys_err = e.to_shell_system_error();
                     return Some(Self::write_failing_error(

@@ -1,4 +1,5 @@
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use bun_ptr::{BackRef, RawSlice, RefPtr};
@@ -174,18 +175,6 @@ pub enum StreamResult {
     Temporary(RawSlice<u8>),
     IntoArray(IntoArray),
     IntoArrayAndDone(IntoArray),
-}
-
-impl StreamResult {
-    pub(crate) fn release(&mut self) {
-        match self {
-            StreamResult::Owned(owned) | StreamResult::OwnedAndDone(owned) => {
-                owned.clear_and_free()
-            }
-            StreamResult::Err(StreamError::JSValue(s)) => s.deinit(),
-            _ => {}
-        }
-    }
 }
 
 /// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
@@ -370,8 +359,6 @@ impl Writable {
         promise: &mut JSPromise,
         cx: &bun_jsc::JsThread<'_>,
     ) {
-        // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
-        let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         let settled = match result {
             Writable::Err(err) => {
                 promise.reject_with_async_stack(cx.global(), Ok(err.to_js(cx.global())))
@@ -596,10 +583,8 @@ impl StreamResult {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _unprotect = jsc::js_value::Protected::adopt(JSPromise::opaque_ref(promise).to_js());
 
-        // A completion for a VM that no longer runs script settles nothing: `release()` frees
-        // `.owned`/`.owned_and_done` and unprotects `.err` instead of leaking them.
+        // A completion for a VM that no longer runs script settles nothing.
         if !vm.script_allowed() {
-            result.release();
             *result = StreamResult::Temporary(RawSlice::EMPTY);
             return;
         }
@@ -1064,7 +1049,8 @@ pub(crate) enum HTTPServerWritableState {
 pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) res: Option<uws::AnyResponse>,
     pub(crate) buffer: Vec<u8>,
-    pub(crate) pooled_buffer: Option<NonNull<ByteListPoolNode>>,
+    /// `destroy` hands it back.
+    pub(crate) pooled_buffer: ManuallyDrop<Option<Box<ByteListPoolNode>>>,
     pub offset: BlobSizeType,
 
     pub(crate) wrote: BlobSizeType,
@@ -1079,8 +1065,8 @@ pub struct HTTPServerWritable<const SSL: bool> {
     /// `flush_promise()` → `pending.run()`.
     pub(crate) pending: WritablePending,
     pub(crate) wrote_at_start_of_flush: BlobSizeType,
-    // JSC_BORROW: process-lifetime VM global, set at construction. Safe `Deref` via `BackRef`.
-    pub global_this: Option<BackRef<JSGlobalObject>>,
+    // JSC_BORROW: process-lifetime VM global. Safe `Deref` via `BackRef`.
+    pub global_this: BackRef<JSGlobalObject>,
     pub(crate) high_water_mark: BlobSizeType,
 
     pub(crate) requested_end: bool,
@@ -1109,12 +1095,29 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) auto_flusher: AutoFlusher,
 }
 
-impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
-    fn default() -> Self {
+impl<const SSL: bool> Drop for HTTPServerWritable<SSL> {
+    fn drop(&mut self) {
+        bun_core::scoped_log!(HTTPServerWritableLog, "drop()");
+        // A `write()` that is still parked: not every teardown goes through `flush_promise`.
+        self.pending.result = Writable::Done;
+        self.pending.run();
+        // Still checked out if `finalize` has not run (`assign_to_stream` failed).
+        self.release_pooled_buffer();
+        self.unregister_auto_flusher();
+    }
+}
+
+impl<const SSL: bool> HTTPServerWritable<SSL> {
+    pub(crate) fn new(
+        res: uws::AnyResponse,
+        on_first_write: fn(Option<*mut c_void>),
+        ctx: *mut c_void,
+        global_this: &JSGlobalObject,
+    ) -> Self {
         Self {
-            res: None,
+            res: Some(res),
             buffer: Vec::<u8>::default(),
-            pooled_buffer: None,
+            pooled_buffer: ManuallyDrop::new(None),
             offset: 0,
             wrote: 0,
             state: HTTPServerWritableState::Writing,
@@ -1122,32 +1125,17 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
             pipe: PipeCell::default(),
             pending: WritablePending::default(),
             wrote_at_start_of_flush: 0,
-            global_this: None,
+            global_this: BackRef::new(global_this),
             high_water_mark: 2048,
             requested_end: false,
             has_backpressure: false,
             source_pending_pull: false,
             end_len: 0,
             ended_response: false,
-            on_first_write: None,
-            ctx: None,
+            on_first_write: Some(on_first_write),
+            ctx: Some(ctx),
             auto_flusher: AutoFlusher::default(),
         }
-    }
-}
-
-impl<const SSL: bool> HTTPServerWritable<SSL> {
-    /// Borrow the JS global stored at construction.
-    ///
-    /// Invariant: `global_this` is set before first use (any auto-flusher
-    /// registration / pending-flush creation) and the VM-owned global outlives
-    /// this sink (JSC_BORROW). Never `None` once initialized.
-    #[inline]
-    pub fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-            .as_ref()
-            .expect("HTTPServerWritable.global_this used before init")
-            .get()
     }
 
     /// Don't include @sizeOf(This) because it's already included in the memoryCost of the sink
@@ -1515,15 +1503,9 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if self.buffer.capacity() == 0 {
             debug_assert!(self.pooled_buffer.is_none());
             if FeatureFlags::HTTP_BUFFER_POOLING {
-                if let Some(pooled_node) = ByteListPool::get_if_exists() {
-                    let pooled_node = NonNull::new(pooled_node)
-                        .expect("ByteListPool::get_if_exists returns a live heap node when Some");
-                    self.pooled_buffer = Some(pooled_node);
-                    // SAFETY: pooled_node is a valid pool checkout; `data` was
-                    // written by `ByteListPool::push` (or zero-initialized).
-                    // Move the Vec<u8> out by bitwise read and reset the slot.
-                    self.buffer =
-                        unsafe { core::mem::take((*pooled_node.as_ptr()).data.assume_init_mut()) };
+                if let Some(mut pooled_node) = ByteListPool::get_if_exists() {
+                    self.buffer = core::mem::take(&mut pooled_node.data);
+                    self.pooled_buffer = ManuallyDrop::new(Some(pooled_node));
                 }
             }
         }
@@ -1757,9 +1739,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     /// `controller.close()`: flush and end like `controller.end()`; the owner awaits any parked `pending_flush`.
     pub(crate) fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
-        let global_this = self
-            .global_this
-            .expect("HTTPServerWritable.global_this used before init");
+        let global_this = self.global_this;
         self.finish(&global_this).map(|_| ())
     }
 
@@ -1853,7 +1833,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     fn unregister_auto_flusher(&mut self) {
         if self.auto_flusher.registered.get() {
-            let vm = self.global_this().bun_vm();
+            let vm = self.global_this.bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1865,7 +1845,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // timeout.
         res.reset_timeout();
         if !self.auto_flusher.registered.get() {
-            let vm = self.global_this().bun_vm();
+            let vm = self.global_this.bun_vm();
             AutoFlusher::register_deferred_microtask_with_type_unchecked::<Self>(self, vm);
         }
     }
@@ -1902,42 +1882,17 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         false
     }
 
-    /// # Safety
-    /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
-    /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    pub(crate) fn destroy(this: *mut Self) {
-        bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
-        // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
-        // the Box first so we never hold a `&mut *this` alongside the Box's
-        // unique pointer.
-        let mut this = unsafe { bun_core::heap::take(this) };
-        // Callers may tear this sink down without routing through
-        // flushPromise() (e.g. handleResolveStream / handleRejectStream).
-        // Drop the GC root so the promise can be collected.
-        this.pending.result = Writable::Done;
-        this.pending.run();
-        // A sink torn down without finalize() (assignToStream failed synchronously) still holds its pool checkout.
-        this.release_pooled_buffer();
-        this.buffer.clear_and_free();
-        this.unregister_auto_flusher();
-        drop(this);
-    }
-
     /// Hand the pool checkout back with the (emptied) buffer; `false` when nothing was checked out.
     fn release_pooled_buffer(&mut self) -> bool {
-        let Some(pooled) = self.pooled_buffer.take() else {
+        let Some(mut pooled) = self.pooled_buffer.take() else {
             return false;
         };
         self.buffer.clear();
         if self.buffer.capacity() > 64 * 1024 {
             self.buffer.clear_and_free();
         }
-        // SAFETY: `pooled` is this sink's exclusive `ByteListPool` checkout; `data` is rewritten before the release.
-        unsafe {
-            (*pooled.as_ptr()).data =
-                core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
-            ByteListPool::release(pooled.as_ptr());
-        }
+        core::mem::swap(&mut pooled.data, &mut self.buffer);
+        ByteListPool::release(pooled);
         true
     }
 
@@ -1982,7 +1937,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             let buffer = core::mem::take(&mut self.buffer);
             ByteListPool::push(buffer);
         } else {
-            // Don't release this buffer until destroy() is called
+            // Don't release this buffer until the sink is dropped
             self.buffer.clear();
         }
     }
@@ -2002,7 +1957,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return JSPromise::opaque_ref(parked).to_js();
         }
         let promise = JSPromise::create(global_this).to_js();
-        self.global_this = Some(BackRef::new(global_this));
+        self.global_this = BackRef::new(global_this);
         self.pipe.set_done(promise);
         promise
     }
@@ -2017,7 +1972,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         if let Some(prom) = self.take_pending_flush() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
-            let global_this = self.global_this();
+            let global_this = self.global_this.get();
             let _keep = ::bun_jsc::EnsureStillAlive(JSPromise::opaque_ref(prom).to_js());
             let result = JSPromise::opaque_mut(prom).resolve(
                 global_this,
@@ -2051,8 +2006,8 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
     crate::impl_js_sink_forwarders!();
 
     unsafe fn finalize(this: *mut Self) {
-        // SAFETY: trait contract — `this` is live, and only the RequestContext's
-        // `destroy` frees it (never the inherent `finalize`), so the `&mut`
+        // SAFETY: trait contract — `this` is live, and only the RequestContext
+        // frees it (never the inherent `finalize`), so the `&mut`
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
     }
@@ -2115,6 +2070,8 @@ pub struct NetworkSink {
     /// failure callback can reject with the original JS error (e.g. S3
     /// `NoSuchKey`) instead of the generic `UnknownError` passed to `fail()`.
     pub(crate) upstream_error: jsc::strong::Optional,
+    /// Keeps the wrapper, which owns this sink, for as long as a `ByteStream` feeds it.
+    pub(crate) native_pump_ref: Option<RefPtr<crate::webcore::s3::client::S3UploadStreamWrapper>>,
     pub(crate) ended: bool,
     pub(crate) done: bool,
     /// `s3file.writer()`: the box is referenced by the JS wrapper (`finalize`) and by the upload's
@@ -2133,6 +2090,7 @@ impl Default for NetworkSink {
             pending: WritablePending::default(),
             end_promise: JSPromiseStrong::default(),
             upstream_error: jsc::strong::Optional::empty(),
+            native_pump_ref: None,
             ended: false,
             done: false,
             writer_holders: core::cell::Cell::new(0),
@@ -2276,42 +2234,43 @@ impl NetworkSink {
         self.finalize();
     }
 
-    /// The upload queue is full. Native ByteStream/FileReader pumps match on
-    /// `Backpressure` directly; a JS controller gets a pending Promise so
+    /// The upload queue is full: a JS controller gets a pending Promise so
     /// `await controller.write()` parks until `on_writable` → `pending.run()`.
     fn backpressure_result(&mut self, len: BlobSizeType) -> Writable {
-        if matches!(
-            self.source,
-            SourceHandle::ByteStream(_) | SourceHandle::FileReader(_)
-        ) {
-            return Writable::Backpressure(len);
-        }
         self.pending.consumed = len;
         self.pending.result = Writable::Owned(len);
         Writable::Pending(core::ptr::from_mut(&mut self.pending))
     }
 
-    pub fn write(&mut self, data: &StreamResult) -> Writable {
-        if self.ended {
-            return Writable::Owned(0);
-        }
+    /// Raw `*mut Self`: a write that fails the upload frees the sink of a `ByteStream`.
+    pub(crate) fn write(this: *mut Self, data: &StreamResult) -> Writable {
         let bytes = data.slice();
         let len = bytes.len() as BlobSizeType;
+        // SAFETY: `this` is live until the write.
+        let (task, source) = unsafe {
+            if (*this).ended {
+                return Writable::Owned(0);
+            }
+            match &(*this).task {
+                Some(task) => (task.this_ptr(), (*this).source),
+                None => return Writable::Owned(len),
+            }
+        };
         // Direct `.writer()` (no source) exposes `write()` as `number`; only
         // the pump paths consume `Backpressure`/`Done`.
-        let has_source = !matches!(self.source, SourceHandle::None);
-
-        let result = match self.task_ref() {
-            Some(task) => task.write_bytes(bytes, false),
-            None => return Writable::Owned(len),
-        };
-        match result {
-            Ok(bun_s3::UploadBackpressure::Backpressure) if has_source => {
-                self.backpressure_result(len)
+        match (task.write_bytes(bytes, false), source) {
+            (Err(_), _) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            (Ok(bun_s3::UploadBackpressure::WantMore), _) | (_, SourceHandle::None) => {
+                Writable::Owned(len)
             }
-            Ok(bun_s3::UploadBackpressure::Done) if has_source => Writable::Done,
-            Ok(_) => Writable::Owned(len),
-            Err(_) => Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
+            (Ok(bun_s3::UploadBackpressure::Done), _) => Writable::Done,
+            (Ok(bun_s3::UploadBackpressure::Backpressure), SourceHandle::ByteStream(_)) => {
+                Writable::Backpressure(len)
+            }
+            // SAFETY: the pump's promise keeps the sink of a JS controller.
+            (Ok(bun_s3::UploadBackpressure::Backpressure), _) => unsafe {
+                (*this).backpressure_result(len)
+            },
         }
     }
 
@@ -2418,7 +2377,7 @@ impl NetworkSink {
     ///
     /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
     /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
-    /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
+    /// releasing the pump's ref may free `*this` via `detach_sink`.
     pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
         // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.
@@ -2442,17 +2401,13 @@ impl NetworkSink {
             return;
         }
         // SAFETY: scoped accesses for field writes; no re-entry in this block.
-        let (task, wrapper) = unsafe {
+        let (task, _pump_ref) = unsafe {
             (*this).ended = true;
             (*this).source.clear();
             // Our own ref: `fail`/`write_bytes` re-enter and may clear `(*this).task`.
             let Some(task) = (*this).task.clone() else {
                 return;
             };
-            let wrapper = task
-                .callback_context
-                .get()
-                .cast::<crate::webcore::s3::client::S3UploadStreamWrapper>();
             if let Some(err) = &err {
                 (*this).done = true;
                 let global = (*this)
@@ -2463,7 +2418,7 @@ impl NetworkSink {
                     (*this).upstream_error.set(&global, js_err);
                 }
             }
-            (task, wrapper)
+            (task, (*this).native_pump_ref.take())
         };
         if err.is_some() {
             let _ = task.fail(bun_s3_signing::error::S3Error {
@@ -2473,8 +2428,6 @@ impl NetworkSink {
         } else {
             let _ = task.write_bytes(b"", true);
         }
-        // SAFETY: `wrapper` live with rc ≥ 1; this may free `*this`.
-        unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
     pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {

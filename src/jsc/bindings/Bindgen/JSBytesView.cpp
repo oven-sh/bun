@@ -5,9 +5,25 @@
 #include "blob.h"
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
+#include <openssl/mem.h>
 
 namespace Bun::Bindgen {
 using namespace JSC;
+
+RefPtr<ArrayBuffer> tryCopySensitiveBytes(std::span<const uint8_t> bytes)
+{
+    static LazyNeverDestroyed<Ref<SharedTask<void(void*)>>> destructor;
+    static std::once_flag once;
+    std::call_once(once, [] { destructor.construct(createSharedTask<void(void*)>([](void* copy) { OPENSSL_free(copy); })); });
+
+    // At least a byte: a buffer without data is a detached one.
+    auto* data = static_cast<uint8_t*>(OPENSSL_malloc(std::max<size_t>(bytes.size(), 1)));
+    if (!data)
+        return nullptr;
+    std::span copy { data, bytes.size() };
+    memcpySpan(copy, bytes);
+    return ArrayBuffer::createFromBytes(copy, destructor->copyRef());
+}
 
 bool checkInMemoryBlob(JSGlobalObject& globalObject, JSValue value)
 {

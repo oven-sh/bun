@@ -1485,8 +1485,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if body.needs_to_read_file() {
         'prepare_body: {
             // A local `PathBuffer` serves as NUL-termination scratch for
-            // `path.slice_z()` (the `vm.node_fs()` accessor is gated behind a
-            // jsc↔runtime cycle).
+            // `path.slice_z()`.
             let mut open_path_buf = bun_paths::path_buffer_pool::get();
             let opened_fd_res: bun_sys::Result<bun_sys::Fd> = {
                 let store = body.store().expect("needs_to_read_file implies store");
@@ -1584,16 +1583,14 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // TODO: make this async + lazy
             let blob_offset = body.any_blob().blob().offset.get();
             let blob_size = body.any_blob().blob().size.get();
-            // The `vm.node_fs()` accessor is a jsc↔runtime cycle. `read_file`
-            // with an `Fd` path only touches `self.sync_error_buf` for
-            // path-variant inputs, so a fresh `NodeFS` is sufficient here.
             let mut node_fs = node::fs::NodeFS::default();
-            // `ReadFile` has `Drop`; can't use FRU `..Default::default()`.
-            let mut rf_args = node::fs::args::ReadFile::default();
-            rf_args.encoding = Encoding::Buffer;
-            rf_args.path = PathOrFileDescriptor::Fd(opened_file.fd());
-            rf_args.offset = blob_offset;
-            rf_args.max_size = Some(blob_size);
+            let rf_args = node::fs::args::ReadFile {
+                encoding: Encoding::Buffer,
+                path: PathOrFileDescriptor::Fd(opened_file.fd()),
+                offset: blob_offset,
+                max_size: Some(blob_size),
+                ..Default::default()
+            };
             let res = node_fs.read_file(&rf_args, node::fs::Flavor::Sync);
 
             // Eagerly close before constructing the (potentially large) JS result.
@@ -1606,16 +1603,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     body.detach();
                     return Ok(rejected_value);
                 }
-                Ok(mut result) => {
+                Ok(result) => {
                     body.detach();
                     body = HTTPRequestBody::AnyBlob(blob::Any::from_owned_slice(
                         result.slice().to_vec(),
                     ));
-                    // StringOrBuffer::Drop is a no-op for Buffer; release the
-                    // readFile allocation now that the bytes are copied out.
-                    if let crate::node::types::StringOrBuffer::Buffer(buf) = &mut result {
-                        buf.destroy();
-                    }
                 }
             }
         }

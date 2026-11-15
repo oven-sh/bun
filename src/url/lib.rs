@@ -27,7 +27,7 @@ pub mod route_param {
     #[derive(Clone, Copy)]
     pub struct Param<'a> {
         pub name: &'a [u8],
-        /// In the matched path, without its leading slashes.
+        /// Offset and length in the matched path, after its leading slashes.
         pub value: super::api::StringPointer,
     }
     // SoA (`MultiArrayList`) layout would be a perf optimization only; a plain
@@ -977,7 +977,7 @@ impl<'a> QueryStringMap<'a> {
     }
 
     pub(crate) fn str(&self, ptr: api::StringPointer) -> &[u8] {
-        &self.bytes[ptr.offset as usize..ptr.offset as usize + ptr.length as usize]
+        ptr.slice(&self.bytes)
     }
 
     /// `route_params` were matched in `pathname`.
@@ -991,7 +991,8 @@ impl<'a> QueryStringMap<'a> {
         let mut scanner = Scanner::init(query_string);
 
         let mut count = route_params.len();
-        let mut estimated_str_len: usize = (route_params.iter())
+        let mut estimated_str_len: usize = route_params
+            .iter()
             .map(|param| param.name.len() + param.value.length as usize)
             .sum();
 
@@ -1001,10 +1002,6 @@ impl<'a> QueryStringMap<'a> {
             };
             estimated_str_len += result.name.length as usize + result.value.length as usize;
             count += 1;
-        }
-
-        if count == 0 {
-            return Ok(None);
         }
 
         list.reserve(count.min(MAX_QUERY_STRING_PARAMS));
@@ -1047,10 +1044,7 @@ impl<'a> QueryStringMap<'a> {
             let mut value = result.value;
             let name_hash: u64;
             if result.name_needs_decoding {
-                name.length = match PercentEncoding::decode(
-                    &mut buf,
-                    &query_string[name.offset as usize..][..name.length as usize],
-                ) {
+                name.length = match PercentEncoding::decode(&mut buf, name.slice(query_string)) {
                     Ok(n) => n,
                     Err(_) => {
                         buf.truncate(buf_writer_pos as usize);
@@ -1078,10 +1072,8 @@ impl<'a> QueryStringMap<'a> {
 
                     name = list[index].name;
                 } else {
-                    name.length = match PercentEncoding::decode(
-                        &mut buf,
-                        &query_string[name.offset as usize..][..name.length as usize],
-                    ) {
+                    name.length = match PercentEncoding::decode(&mut buf, name.slice(query_string))
+                    {
                         Ok(n) => n,
                         Err(_) => {
                             buf.truncate(buf_writer_pos as usize);
@@ -1093,10 +1085,7 @@ impl<'a> QueryStringMap<'a> {
                 }
             }
 
-            value.length = match PercentEncoding::decode(
-                &mut buf,
-                &query_string[value.offset as usize..][..value.length as usize],
-            ) {
+            value.length = match PercentEncoding::decode(&mut buf, value.slice(query_string)) {
                 Ok(n) => n,
                 Err(_) => {
                     buf.truncate(buf_writer_pos as usize);

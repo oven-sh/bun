@@ -1,4 +1,7 @@
-use bun_alloc::{BSSList, IndexMapHasher, IndexType};
+use core::hash::BuildHasherDefault;
+
+use bun_alloc::{BSSList, IdentityU64Hasher, IndexType};
+use bun_collections::hashbrown::HashMap;
 use bun_core::feature_flags as FeatureFlags;
 use bun_core::{Generation, Once, strings};
 use bun_sys::Fd;
@@ -160,30 +163,31 @@ pub use Flags as Flag;
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
 pub(crate) struct Cache {
     state: Guarded<CacheState>,
-    /// What `by_hash` points to for a directory that does not exist.
-    not_found: DirInfo,
 }
+
+const DIR_COUNT: usize = 2048;
 
 struct CacheState {
-    by_hash: bun_collections::hashbrown::HashMap<u64, Option<&'static DirInfo>, IndexMapHasher>,
-    store: BSSList<DirInfo, 2048>,
+    by_hash: HashMap<u64, Cached, BuildHasherDefault<IdentityU64Hasher>>,
+    store: BSSList<DirInfo, DIR_COUNT>,
 }
 
+#[derive(Clone, Copy, Default)]
 pub(crate) enum Cached {
+    #[default]
     Unknown,
     NotFound,
     Exists(&'static DirInfo),
 }
 
 impl Cache {
-    pub(crate) fn get() -> &'static Cache {
+    pub(crate) fn instance() -> &'static Cache {
         static CACHE: Once<Cache> = Once::new();
         CACHE.get_or_init(|| Cache {
             state: Guarded::new(CacheState {
                 by_hash: Default::default(),
-                store: BSSList::new(2048),
+                store: BSSList::new(DIR_COUNT),
             }),
-            not_found: DirInfo::default(),
         })
     }
 
@@ -193,23 +197,18 @@ impl Cache {
     }
 
     pub(crate) fn get_or_put(&self, hash: u64) -> Cached {
-        let cached = *self.state.lock().by_hash.entry(hash).or_default();
-        match cached {
-            None => Cached::Unknown,
-            Some(info) if core::ptr::eq(info, &raw const self.not_found) => Cached::NotFound,
-            Some(info) => Cached::Exists(info),
-        }
+        *self.state.lock().by_hash.entry(hash).or_default()
     }
 
     pub(crate) fn put(&self, hash: u64, info: DirInfo) -> &'static DirInfo {
         let mut state = self.state.lock();
         let info = state.store.append_uninit().write(info);
-        state.by_hash.insert(hash, Some(info));
+        state.by_hash.insert(hash, Cached::Exists(info));
         info
     }
 
-    pub(crate) fn mark_not_found(&'static self, hash: u64) {
-        (self.state.lock().by_hash).insert(hash, Some(&self.not_found));
+    pub(crate) fn mark_not_found(&self, hash: u64) {
+        self.state.lock().by_hash.insert(hash, Cached::NotFound);
     }
 
     /// True if there was an entry, in any state.

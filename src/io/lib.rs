@@ -763,7 +763,7 @@ static INIT_LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
 #[cfg(not(windows))]
 impl IoRequestLoop {
     /// On failure, closes the fds it opened so a later call can retry.
-    fn load() -> sys::Result<Self> {
+    fn init() -> sys::Result<Self> {
         #[cfg(not(target_os = "macos"))]
         use bun_sys::FdExt as _;
 
@@ -872,8 +872,8 @@ impl IoRequestLoop {
         let this = match LOOP.get() {
             Some(this) => this,
             None => {
-                let loaded = Self::load()?;
-                LOOP.get_or_init(|| loaded)
+                let request_loop = Self::init()?;
+                LOOP.get_or_init(|| request_loop)
             }
         };
         if !IS_RUNNING.load(Ordering::Relaxed) {

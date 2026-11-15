@@ -166,9 +166,7 @@ const EV_EOF: u16 = 0x8000;
 // owns the per-tag `match` so the variant types are never named in this crate.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Closed set of [`Owner`] kinds. Variant types live in higher-tier
-/// crates; `__bun_run_io` (link-time, in `bun_runtime::dispatch`)
-/// matches on this and calls the per-kind handler directly.
+/// Closed set of [`Owner`] kinds, which `bun_runtime::dispatch::__bun_run_io` matches on.
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum PollTag {
@@ -297,8 +295,7 @@ impl FilePoll {
         self.flags.update(|flags| flags - removed);
     }
 
-    /// # Safety
-    /// See [`crate::OwnedFilePoll::new`].
+    /// SAFETY: see [`crate::OwnedFilePoll::new`].
     pub unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
     }
@@ -1248,8 +1245,7 @@ impl Store {
         count
     }
 
-    /// # Safety
-    /// `poll` is a slot of `self.hive` that the caller gives up, `vm` is the loop that has this store.
+    /// SAFETY: `poll` is a slot of `self.hive` that the caller gives up, `vm` is the loop that has this store.
     unsafe fn put(&self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
         if !ever_registered {
@@ -1302,8 +1298,7 @@ pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(ptr::NonNull<File
 
 #[cfg(not(windows))]
 impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
-    /// # Safety
-    /// `owner` is what `__bun_run_io` takes its tag for, until the poll is dropped or has another owner.
+    /// SAFETY: `owner` is what `__bun_run_io` takes its tag for, until the poll is dropped or has another owner.
     pub unsafe fn new(event_loop: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
         let this = Self(
             event_loop.file_polls().hive.get_init(FilePoll {

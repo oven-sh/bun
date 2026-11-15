@@ -319,8 +319,7 @@ impl<Parent: WriterParent> Drop for KeepParentAlive<Parent> {
 /// pointers and never form a `&mut Parent` inside the writer.
 #[cfg(unix)]
 pub trait PosixBufferedWriterParent: WriterParent {
-    /// The tag of this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_io`
+    /// For `bun_runtime::dispatch::__bun_run_io`, which
     /// recovers `*mut PosixBufferedWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
     /// # Safety
@@ -620,8 +619,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// pointers and never form a `&mut Parent` inside the writer.
 #[cfg(unix)]
 pub trait PosixStreamingWriterParent: WriterParent {
-    /// The tag of this writer's `FilePoll` owner. The
-    /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_io`
+    /// For `bun_runtime::dispatch::__bun_run_io`, which
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
     /// # Safety

@@ -45,7 +45,7 @@ fn env_string_store_put(
     key: &[u8],
     value: &[u8],
 ) -> Result<(), crate::Error> {
-    // Copy the value because `Bun__setEnvValue` frees the env-map entry it points into.
+    // Copy the value because the env map can be freed first.
     let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bump.alloc_node(bun_ast::E::EString::init(value)));
     let data = DefineData::init(Options {

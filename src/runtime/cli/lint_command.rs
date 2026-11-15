@@ -227,9 +227,7 @@ fn run_to_end(
         envp: Some(envp.as_list()),
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None,
-            )),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global()),
             ..Default::default()
         },
         ..Default::default()

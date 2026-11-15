@@ -351,7 +351,7 @@ impl<'a> Cmd<'a> {
         spawn_args.fill_env(&env.cmd_local_env);
 
         let first_arg = &me.args[0][..me.args[0].len() - 1];
-        let resolved = match spawn_args.which(interp.event_loop, env.cwd(), first_arg) {
+        let resolved = match spawn_args.which(interp.env_loader(), env.cwd(), first_arg) {
             None if first_arg == b"bun" || first_arg == b"bun-debug" => bun_core::self_exe_path()
                 .ok()
                 .map(|z| z.as_bytes().to_vec()),

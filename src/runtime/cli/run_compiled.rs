@@ -167,7 +167,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
         .is_some_and(|aot| aot.checks_only);
 
     let watched =
-        (ctx.debug.hot_reload == HotReload::Watch).then(|| WatchedFiles::start(&entry_points));
+        (ctx.debug.hot_reload == HotReload::Watch).then(|| WatchedFiles::start(ctx, &entry_points));
     if let (Some(watched), Some(aot)) = (watched, ctx.bundler_options.aot.as_mut()) {
         aot.before_read = Some(ReadListener(Arc::new(move |path: &[u8]| {
             watched.add_read_file(path)
@@ -200,7 +200,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
             print_log(&said_before_the_build);
             print_log(ctx.log());
             Output::err_generic("{}", (BStr::new(error.name()),));
-            exit_or_wait_for_change(watched)
+            exit_or_wait_for_change(ctx, watched)
         }
         Ok(Err(failure)) => {
             let log = ctx.log();
@@ -210,7 +210,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
             let target = &ctx.bundler_options.compile_target;
             print_log(&said_before_the_build);
             print_failure(ctx.log(), RequestOrigin::BuildFlag, target, &failure);
-            exit_or_wait_for_change(watched)
+            exit_or_wait_for_change(ctx, watched)
         }
         Ok(Ok(outcome)) => outcome,
     };
@@ -244,7 +244,7 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
         },
     };
     log_what_is_handed_over(ctx, test_file_count, handover);
-    hand_over(&typed, own_count, handover, ctx.original_cwd.as_deref())
+    hand_over(ctx, &typed, own_count, handover)
 }
 
 /// With a word of `BUN_DEBUG_TEST_AOT_WORDS` that begins with `TestRun`, or with `BUN_JSC_logAOTPhaseTimes`: what the build of a test
@@ -398,19 +398,18 @@ fn number_behind_word(prefix: &[u8]) -> Option<u32> {
 }
 
 fn hand_over(
+    ctx: &ContextData,
     typed: &[&'static [u8]],
     own_count: usize,
     handover: Handover<'_>,
-    original_cwd: Option<&[u8]>,
 ) -> ! {
-    // `bun run`: the one loader of the process has read the files, for the run command where it looked for a script, else for the build.
-    if let Some(loader) =
-        bun_dotenv::instance().filter(|_| !HAS_HANDED_ON_ENVIRONMENT.load(Ordering::Relaxed))
+    // `bun run`: the loader has read the files, for the run command where it looked for a script, else for the build.
+    if let Some(loader) = &ctx.env_loader
+        && !HAS_HANDED_ON_ENVIRONMENT.load(Ordering::Relaxed)
     {
-        // SAFETY: this is the main thread, the only one that has the loader.
-        hand_on_environment(unsafe { &(*loader).map });
+        hand_on_environment(&loader.map);
     }
-    start_second_process(typed, own_count, handover, original_cwd)
+    start_second_process(typed, own_count, handover, ctx.original_cwd.as_deref())
 }
 
 struct WatchedFiles {
@@ -450,8 +449,8 @@ impl WatcherContext for RestartOnChange {
 impl WatchedFiles {
     #[cold]
     #[inline(never)]
-    fn start(entry_points: &[Box<[u8]>]) -> &'static WatchedFiles {
-        decide_whether_to_clear_terminal();
+    fn start(ctx: &ContextData, entry_points: &[Box<[u8]>]) -> &'static WatchedFiles {
+        decide_whether_to_clear_terminal(ctx);
         let working_directory = super::check_command::working_directory();
         let directory: &'static [u8] = Box::leak(working_directory.clone().into_boxed_slice());
         let started = Watcher::init(Box::new(RestartOnChange), directory).and_then(|watcher| {
@@ -494,11 +493,10 @@ impl WatchedFiles {
     }
 }
 
-fn decide_whether_to_clear_terminal() {
+fn decide_whether_to_clear_terminal(ctx: &ContextData) {
     let keeps_by_default = !Output::enable_ansi_colors_stdout();
-    let keeps = match bun_dotenv::instance() {
-        // SAFETY: this is the main thread, the only one that has the loader.
-        Some(loader) => unsafe { (*loader).has_set_no_clear_terminal_on_reload(keeps_by_default) },
+    let keeps = match &ctx.env_loader {
+        Some(loader) => loader.has_set_no_clear_terminal_on_reload(keeps_by_default),
         None => {
             (bun_dotenv::HAS_NO_CLEAR_SCREEN_CLI_FLAG.get().copied()).unwrap_or(keeps_by_default)
         }
@@ -506,11 +504,11 @@ fn decide_whether_to_clear_terminal() {
     CLEARS_TERMINAL.store(!keeps, Ordering::Relaxed);
 }
 
-fn exit_or_wait_for_change(watched: Option<&'static WatchedFiles>) -> ! {
+fn exit_or_wait_for_change(ctx: &ContextData, watched: Option<&'static WatchedFiles>) -> ! {
     if watched.is_none() {
         Global::exit(1)
     }
-    decide_whether_to_clear_terminal();
+    decide_whether_to_clear_terminal(ctx);
     Output::flush();
     loop {
         std::thread::park();
@@ -959,9 +957,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
         stdout: sync::SyncStdio::Inherit,
         stdin: sync::SyncStdio::Inherit,
         windows: crate::api::bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-                None,
-            )),
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global()),
             ..Default::default()
         },
         inherited_extra_fds: list_inherited_extra_descriptors(),

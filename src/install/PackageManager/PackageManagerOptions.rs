@@ -351,7 +351,7 @@ impl Options {
         name: &[u8],
         current: &Npm::registry::Scope,
         url: &[u8],
-        env: Option<&mut DotEnvLoader>,
+        env: Option<&DotEnvLoader>,
     ) -> crate::Result<Npm::registry::Scope> {
         let registry = Api::NpmRegistry::from_url(url);
         let has_userinfo = registry.has_credentials();
@@ -690,7 +690,7 @@ impl Options {
     pub(crate) fn load(
         &mut self,
         log: &bun_ast::Log,
-        env: &mut DotEnvLoader,
+        env: &DotEnvLoader,
         cli: &CommandLineArguments,
         // Every access below is a read of `config.*`; no field is ever written.
         // Taking `&` (not `&mut`) keeps provenance coherent with the bundler/
@@ -730,7 +730,7 @@ impl Options {
         if base.url.is_empty() {
             base.url = Npm::registry::DEFAULT_URL.as_bytes().into();
         }
-        self.scope = Npm::registry::Scope::from_api(b"", base, Some(&mut *env))?;
+        self.scope = Npm::registry::Scope::from_api(b"", base, Some(env))?;
         // `did_override_default_scope` is set at the end of this fn;
         // on the OOM error path the field is irrelevant (process aborts).
 
@@ -755,7 +755,7 @@ impl Options {
                     }
                     self.registries.put(
                         Npm::registry::Scope::hash(name),
-                        Npm::registry::Scope::from_api(name, registry.clone(), Some(&mut *env))?,
+                        Npm::registry::Scope::from_api(name, registry.clone(), Some(env))?,
                     )?;
                 }
             }
@@ -951,7 +951,7 @@ impl Options {
                     if !registry_.is_empty() {
                         let url: Box<[u8]> = registry_.into();
                         self.scope =
-                            self.scope_for_registry_url(b"", &self.scope, &url, Some(&mut *env))?;
+                            self.scope_for_registry_url(b"", &self.scope, &url, Some(env))?;
                         break;
                     }
                 }
@@ -959,8 +959,7 @@ impl Options {
         }
 
         if !cli.registry.is_empty() {
-            self.scope =
-                self.scope_for_registry_url(b"", &self.scope, cli.registry, Some(&mut *env))?;
+            self.scope = self.scope_for_registry_url(b"", &self.scope, cli.registry, Some(env))?;
             self.registry_from_command_line = true;
         }
 
@@ -977,7 +976,7 @@ impl Options {
             };
             self.registries.put(
                 Npm::registry::Scope::hash(name),
-                Npm::registry::Scope::from_api(name, registry, Some(&mut *env))?,
+                Npm::registry::Scope::from_api(name, registry, Some(env))?,
             )?;
         }
 

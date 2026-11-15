@@ -37,7 +37,7 @@ using namespace JSC;
 
 extern "C" size_t Bun__getEnvCount(JSGlobalObject* globalObject, void** list_ptr);
 extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
-extern "C" void Bun__getEnvValueAt(JSGlobalObject* globalObject, size_t index, EncodedSlice* value);
+extern "C" EncodedJSValue Bun__getEnvValueAt(JSGlobalObject* globalObject, size_t index);
 
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const EncodedSlice* name, EncodedSlice* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
@@ -1072,9 +1072,7 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     bool hasBunConfigVerboseFetch = false;
 
     auto valueAt = [&](size_t index) {
-        EncodedSlice value = { nullptr, 0 };
-        Bun__getEnvValueAt(globalObject, index, &value);
-        return jsString(vm, Zig::toStringCopy(value));
+        return asString(JSValue::decode(Bun__getEnvValueAt(globalObject, index)));
     };
     auto putValue = [&](const Identifier& name, JSValue value) {
 #if OS(WINDOWS)

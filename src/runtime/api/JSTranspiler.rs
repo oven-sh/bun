@@ -4,6 +4,7 @@ use bun_alloc::ArenaVecExt as _;
 use bun_options_types::TargetExt as _;
 use core::cell::Cell;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use crate::Error;
 use crate::generated_bindgen::transpiler::{
@@ -632,7 +633,7 @@ impl TransformTask {
         let log = bun_ast::Log::with_level(transpiler.log_level);
 
         // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
-        // wrapper owns; `run` replaces its log before it uses the copy.
+        // wrapper owns; `run` replaces its log before it uses the copy, and does not write to its env.
         let transpiler_copy = core::mem::ManuallyDrop::new(unsafe {
             core::ptr::read(transpiler.transpiler.as_ptr())
         });
@@ -877,22 +878,23 @@ impl JSTranspiler {
         let vm = VirtualMachine::get();
         let _redirect = vm.log.redirect(&mut log);
         let log = vm.log;
-        let transpiler = match Transpiler::Transpiler::init(
-            arena_ref,
-            log,
-            config.transform.clone(),
-            Some(vm.transpiler.get().env),
-        ) {
-            Ok(t) => t,
-            Err(err) => {
-                if log.has_any() {
-                    return Err(global.throw_value(
-                        log.to_js(global, format_args!("Failed to create transpiler"))?,
-                    ));
+        let mut env = Arc::clone(vm.env_loader());
+        if config.transform.target == Some(api::Target::BunMacro) {
+            // `configure_defines` loads `.env` files for this target.
+            Arc::make_mut(&mut env);
+        }
+        let transpiler =
+            match Transpiler::Transpiler::init(arena_ref, log, config.transform.clone(), env) {
+                Ok(t) => t,
+                Err(err) => {
+                    if log.has_any() {
+                        return Err(global.throw_value(
+                            log.to_js(global, format_args!("Failed to create transpiler"))?,
+                        ));
+                    }
+                    return Err(global.throw_error(err, "Error creating transpiler"));
                 }
-                return Err(global.throw_error(err, "Error creating transpiler"));
-            }
-        };
+            };
 
         let mut this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config,

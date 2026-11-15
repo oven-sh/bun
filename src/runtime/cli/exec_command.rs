@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bstr::BStr;
 
 use bun_bundler::Transpiler;
@@ -23,7 +25,7 @@ impl ExecCommand {
                 args.target = Some(api::Target::Bun);
                 args
             },
-            None,
+            Arc::default(),
         )?;
         // Read the field before the `&mut` method call (borrowck).
         let disable_default_env_files = bundle.options.env.disable_default_env_files;
@@ -36,18 +38,12 @@ impl ExecCommand {
                 Global::exit(1);
             }
         };
-        // SAFETY: `Transpiler::init` always populates `env` (caller-supplied,
-        // process singleton, or freshly `heap::alloc`'d) — never null. The
-        // loader is a thread-/process-lifetime singleton, so `&'static mut` is
-        // sound for the single CLI dispatch thread.
-        let env = unsafe { &mut *bundle.env };
-        let mini = bun_event_loop::MiniEventLoop::init_global(Some(env));
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
         let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
 
         let code = match ShellInterpreter::init_and_run_from_source(
             ctx,
-            mini,
+            bundle.env(),
             script_path,
             script,
             None,

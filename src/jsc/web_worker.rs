@@ -49,6 +49,7 @@ use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, Timespec, TimespecMockMode, WTFStringImpl};
@@ -144,7 +145,6 @@ pub struct WebWorker {
 struct WorkerVmInit {
     transform_options: bun_options_types::schema::api::TransformOptions,
     env_loader: bun_dotenv::Loader,
-    proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
 
 /// What the worker thread is handed: its refcounted `WebWorker` (a ref of the
@@ -163,8 +163,8 @@ struct OwnedByThread {
 // SAFETY: whoever holds it last takes the box. Of what is in the box,
 // `WebWorker` is shared across threads by design (atomics,
 // `Guarded`, thread-confined cells — see the struct doc) and holds no
-// parent-VM state; `init` is an owned copy — byte buffers, scalars and
-// `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
+// parent-VM state; `init` is an owned copy — byte buffers and
+// scalars, no JSC or atom strings; the parent VM
 // itself is kept by `_parent_ticket`; `table_pages` is unused address
 // space that only the new thread touches.
 unsafe impl Send for OwnedByThread {}
@@ -476,27 +476,14 @@ impl WebWorker {
                 transform_options.allow_ffi_cc = Some(parent_allows_ffi_cc && flags.allow_ffi_cc);
             }
         }
-        // The worker's `process.env` starts as a copy of the parent's now (as in
-        // Node). Proxy-env values may be RefCountedEnvValue bytes owned by the
-        // parent's proxy_env_storage: snapshot slots + map under its lock so
-        // every slice copied is backed by a ref the snapshot holds.
-        let mut proxy_env_slots = jsc::rare_data::ProxyEnvSlots::default();
-        let mut env_loader = {
-            let parent_slots = parent.proxy_env_storage.lock();
-            proxy_env_slots.clone_from(&parent_slots);
-            match parent.env_loader().clone_for_worker() {
-                Ok(loader) => loader,
-                Err(_) => {
-                    *error_message = BunString::static_("Out of memory");
-                    return core::ptr::null_mut();
-                }
-            }
+        // The worker's `process.env` starts as a copy of the parent's now (as in Node).
+        let Ok(env_loader) = parent.env_loader().clone_for_worker() else {
+            *error_message = BunString::static_("Out of memory");
+            return core::ptr::null_mut();
         };
-        proxy_env_slots.sync_into(&mut env_loader.map);
         let init = WorkerVmInit {
             transform_options,
             env_loader,
-            proxy_env_slots,
         };
 
         // The construction ref: handed to C++ on success, dropped on failure.
@@ -900,8 +887,7 @@ impl WebWorker {
     fn run(&self, init: WorkerVmInit) -> i32 {
         let WorkerVmInit {
             transform_options,
-            mut env_loader,
-            proxy_env_slots,
+            env_loader,
         } = init;
         let log = bun_ast::Log::default();
         let dot_slash = OnceCell::new();
@@ -909,13 +895,13 @@ impl WebWorker {
         if !self.has_requested_terminate() {
             let options = virtual_machine::Options {
                 args: transform_options,
-                env_loader: Some(NonNull::from(&mut env_loader)),
+                env_loader: Some(Arc::new(env_loader)),
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             };
             // SAFETY: `shutdown()` frees the VM before this frame returns.
             let log = unsafe { bun_ptr::detach_lifetime_ref(&log) };
-            let vm = match self.start_vm(log, options, proxy_env_slots) {
+            let vm = match self.start_vm(log, options) {
                 Ok(vm) => vm,
                 Err(err) => {
                     bun_core::output::panic(format_args!(
@@ -936,7 +922,6 @@ impl WebWorker {
         &self,
         log: &'static bun_ast::Log,
         options: virtual_machine::Options,
-        proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
     ) -> crate::CrateResult<&'static VirtualMachine> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
@@ -947,7 +932,6 @@ impl WebWorker {
             crate::compiled_program::use_no_image_on_this_thread(&self.unresolved_specifier);
         }
         let vm = VirtualMachine::init_worker(self, log, options)?;
-        *vm.proxy_env_storage.lock() = proxy_env_slots;
         VirtualMachine::set_is_main_thread_vm(false);
         vm.on_unhandled_rejection.set(on_unhandled_rejection);
 
@@ -963,7 +947,7 @@ impl WebWorker {
         // SAFETY: no script has run: nothing else borrows the transpiler.
         unsafe {
             let b = vm.transpiler.get_mut();
-            b.resolver.env_loader = NonNull::new(b.env);
+            b.resolver.care_about_node_path = true;
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 

@@ -2,8 +2,6 @@ use bun_jsc::bindgen::JsScope;
 use bun_jsc::{JSValue, StringJsc as _};
 
 pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsResult<JSValue> {
-    use core::ptr::NonNull;
-
     use bstr::BStr;
     use bun_install::lockfile::lockfile_json_stringify_for_debugging::{
         WriteStream, WriteStreamOptions, json_stringify,
@@ -34,9 +32,6 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
 
     let vm = global.bun_vm();
     let load_result = vm.transpiler.with_mut(|t| {
-        if t.resolver.env_loader.is_none() {
-            t.resolver.env_loader = NonNull::new(t.env);
-        }
         t.resolver.get_package_manager().map(|manager| {
             let manager = (manager as &mut dyn core::any::Any).downcast_mut();
             lockfile_.load_or_migrate(dir.fd(), manager.expect("the only `AutoInstaller`"), &log)

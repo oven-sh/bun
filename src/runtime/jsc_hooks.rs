@@ -1619,18 +1619,17 @@ fn retroactively_report_discovered_tests(
     agent: &mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
-    use crate::test_runner::bun_test::{Phase, TestScheduleEntry};
+    use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry};
+    use crate::test_runner::cells::CellExt as _;
     use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::TestType;
 
     let Some(runner) = Jest::runner() else {
         return next_test_id;
     };
-    let Some(active_file) = runner.bun_test_root.active_file.as_ref() else {
+    let Some(active_file) = runner.bun_test_root.clone_active_file() else {
         return next_test_id;
     };
-    // SAFETY: single-threaded; `active_file` keeps the cell alive for this call.
-    let active_file = unsafe { &mut *active_file.as_ptr() };
 
     // Only report if we're in collection or execution phase (tests have been
     // discovered).
@@ -1649,52 +1648,34 @@ fn retroactively_report_discovered_tests(
     let mut max_id: i32 = next_test_id;
 
     // Use an explicit stack because describe() can nest to any depth.
-    let mut open: Vec<(core::slice::IterMut<'_, TestScheduleEntry>, i32)> =
-        vec![(active_file.collection.root_scope.entries.iter_mut(), -1)];
-    while let Some((children, parent_id)) = open.last_mut() {
-        let parent_id = *parent_id;
-        let Some(entry) = children.next() else {
-            open.pop();
-            continue;
+    let mut pending: Vec<(TestScheduleEntry, i32)> = Vec::new();
+    let push_children = |pending: &mut Vec<_>, scope: ScopeId, id: i32| {
+        let entries = &active_file.scope(scope).entries;
+        entries.with_taken(|entries| pending.extend(entries.iter().rev().map(|&it| (it, id))));
+    };
+    push_children(&mut pending, ScopeId::ROOT, -1);
+    while let Some((entry, parent_id)) = pending.pop() {
+        let (base, test_type) = match entry {
+            TestScheduleEntry::Describe(id) => (&active_file.scope(id).base, TestType::Describe),
+            TestScheduleEntry::TestCallback(id) => (&active_file.entry(id).base, TestType::Test),
         };
-        match entry {
-            TestScheduleEntry::Describe(describe) => {
-                if describe.base.test_id_for_debugger == 0 {
-                    max_id += 1;
-                    // Assign the ID so start/end events will fire during execution.
-                    describe.base.test_id_for_debugger = max_id;
-                    let name = bun_core::StringView::from_bytes(
-                        describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                    );
-                    agent.report_test_found_with_location(
-                        max_id,
-                        &name,
-                        TestType::Describe,
-                        parent_id,
-                        &source_url,
-                        describe.base.line_no as i32,
-                    );
-                }
-                let describe_id = describe.base.test_id_for_debugger;
-                open.push((describe.entries.iter_mut(), describe_id));
-            }
-            TestScheduleEntry::TestCallback(test_entry) => {
-                if test_entry.base.test_id_for_debugger == 0 {
-                    max_id += 1;
-                    test_entry.base.test_id_for_debugger = max_id;
-                    let name = bun_core::StringView::from_bytes(
-                        test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
-                    );
-                    agent.report_test_found_with_location(
-                        max_id,
-                        &name,
-                        TestType::Test,
-                        parent_id,
-                        &source_url,
-                        test_entry.base.line_no as i32,
-                    );
-                }
-            }
+        if base.test_id_for_debugger.get() == 0 {
+            max_id += 1;
+            // Assign the ID so start/end events will fire during execution.
+            base.test_id_for_debugger.set(max_id);
+            let name =
+                bun_core::StringView::from_bytes(base.name.as_deref().unwrap_or(b"(unnamed)"));
+            agent.report_test_found_with_location(
+                max_id,
+                &name,
+                test_type,
+                parent_id,
+                &source_url,
+                base.line_no as i32,
+            );
+        }
+        if let TestScheduleEntry::Describe(id) = entry {
+            push_children(&mut pending, id, base.test_id_for_debugger.get());
         }
     }
     max_id

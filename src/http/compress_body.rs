@@ -196,7 +196,7 @@ fn compress_brotli(
     let window = c::BROTLI_DEFAULT_WINDOW;
     let mode = c::BrotliEncoderMode::generic;
 
-    let bound = c::BrotliEncoderMaxCompressedSize(input.len());
+    let bound = bun_brotli::encode_bound(input.len());
     // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
     // size_t — fall back to a heap buffer in that case.
     if bound != 0 && bound <= state.shared_buffer.len() {

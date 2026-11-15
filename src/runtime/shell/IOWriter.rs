@@ -129,7 +129,7 @@ impl Writer {
     /// Tee `chunk` into the optional capture buffer.
     ///
     /// `bytelist` (when set) points into a live `ShellExecEnv` `Bufio`
-    /// (`OutFd::captured` — see its doc); the env outlives every queued
+    /// (`OutFd::captured` — see its doc); the root env outlives every queued
     /// `Writer`. Localises the per-callsite raw deref in
     /// `do_file_write` / `on_write_pollable`.
     #[inline]

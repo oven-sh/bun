@@ -443,7 +443,7 @@ impl StaticRoute {
         if self.has_date {
             resp.mark_wrote_date_header();
         }
-        let entries = self.headers.entries.slice();
+        let entries = &self.headers.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();

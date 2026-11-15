@@ -4240,9 +4240,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let macro_remap = if Self::ALLOW_MACROS {
             self.options
-                .macro_context
-                .as_deref()
-                .and_then(|ctx| ctx.get_remap(path.text))
+                .macro_remap
+                .filter(|remap| !remap.is_empty())
+                .and_then(|remap| remap.get(path.text))
         } else {
             None
         };
@@ -5009,7 +5009,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   import-stmt emitters (`generate_import_stmt` etc.).
     ///   `module_scope.generated` alone is not read by `NumberRenamer`'s
     ///   top-level pass for wrap=none/ESM.
-    /// - Otherwise: `printAst` uses `NoOpRenamer`, which prints
+    /// - Otherwise: `printAst` uses `Renamer::no_op`, which prints
     ///   `symbol.original_name` verbatim with no collision handling. The
     ///   `generatedSymbolName` hash suffix appended here is the sole
     ///   collision guard on that path.
@@ -5381,7 +5381,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         self.log().level = bun_ast::Level::Verbose;
-        let _ = self.log().print(std::ptr::from_mut(Output::error_writer()));
+        let _ = self.log().print(Output::error_writer());
 
         Output::panic(format_args!("{}\n{}", fmt, args));
     }
@@ -6976,9 +6976,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )
         };
 
-        // `G::Arg` is not `Copy` (contains `Vec<Decorator>`); use
-        // `alloc_slice_fill_iter` instead of `alloc_slice_copy`.
-        let func_args = bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter([G::Arg {
+        let func_args = bun_ast::StoreSlice::new_mut(arena.alloc_slice_copy(&[G::Arg {
             binding: self.b(B::Identifier { r#ref: arg_ref }, name_loc),
             ..Default::default()
         }]));
@@ -7285,8 +7283,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let mut instance_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut static_members = BumpVec::<Stmt>::new_in(self.arena);
                 let mut class_properties = BumpVec::<G::Property>::new_in(self.arena);
+                let mut constructor_param_decorators = BumpVec::<Expr>::new_in(self.arena);
 
-                for prop in s_class.class.properties.slice_mut().iter_mut() {
+                for prop in s_class.class.properties.slice() {
+                    let mut param_decorators = BumpVec::<Expr>::new_in(self.arena);
                     // merge parameter decorators with method decorators
                     if prop.flags.contains(Flags::Property::IsMethod) {
                         if let Some(prop_value) = prop.value {
@@ -7314,15 +7314,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                                 b"__legacyDecorateParamTS",
                                                 args,
                                             );
-                                            let decorators = if is_constructor {
-                                                // `prop` borrows the (separate) properties arena
-                                                // slice, not the `S::Class` allocation, so this
-                                                // fresh `DerefMut` does not alias it.
-                                                &mut s_class.class.ts_decorators
+                                            if is_constructor {
+                                                constructor_param_decorators.push(call);
                                             } else {
-                                                &mut prop.ts_decorators
-                                            };
-                                            decorators.push(call);
+                                                param_decorators.push(call);
+                                            }
                                         }
                                     }
                                 }
@@ -7336,7 +7332,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     // TODO: prop.kind == .declare and prop.value == null
 
-                    if prop.ts_decorators.len_u32() > 0 {
+                    let is_decorated =
+                        !prop.ts_decorators.is_empty() || !param_decorators.is_empty();
+                    if is_decorated {
                         let descriptor_key = prop.key.expect("infallible: prop has key");
                         let loc = descriptor_key.loc;
 
@@ -7375,10 +7373,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let mut full = BumpVec::<Expr>::with_capacity_in(
-                            prop.ts_decorators.len_u32() as usize + array.len(),
+                            prop.ts_decorators.len() + param_decorators.len() + array.len(),
                             self.arena,
                         );
-                        full.extend_from_slice(prop.ts_decorators.slice());
+                        full.extend_from_slice(&prop.ts_decorators);
+                        full.extend_from_slice(&param_decorators);
                         full.extend_from_slice(&array);
                         let full_items = ExprNodeList::from_bump_vec(full);
                         let array_expr = self.new_expr(
@@ -7422,7 +7421,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             prop.key.map(|k| k.data),
                             Some(js_ast::ExprData::EPrivateIdentifier(_))
                         )
-                        && prop.ts_decorators.len_u32() > 0
+                        && is_decorated
                     {
                         // remove decorated fields without initializers to avoid assigning undefined.
                         let Some(initializer) = prop.initializer else {
@@ -7478,9 +7477,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         continue;
                     }
 
-                    // The old backing slice is overwritten right after this loop, so
-                    // `take` is fine here (Property: Default).
-                    class_properties.push(core::mem::take(prop));
+                    class_properties.push(*prop);
                 }
 
                 s_class.class.properties =
@@ -7514,7 +7511,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             bun_ast::StoreSlice::new_mut(constructor_stmts.into_bump_slice_mut());
                     } else {
                         // Rebuild the property list with the new entry at index 0
-                        // (Property is not Clone).
                         let old_props: bun_ast::StoreSlice<G::Property> = s_class.class.properties;
                         let old_len = old_props.len();
                         let mut properties =
@@ -7582,9 +7578,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(value_expr),
                             ..Default::default()
                         });
-                        for old in old_props.slice_mut().iter_mut() {
-                            properties.push(core::mem::take(old));
-                        }
+                        properties.extend_from_slice(&old_props);
 
                         s_class.class.properties =
                             bun_ast::StoreSlice::new_mut(properties.into_bump_slice_mut());
@@ -7596,7 +7590,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                 let mut stmts_count: usize =
                     1 + static_members.len() + instance_decorators.len() + static_decorators.len();
-                if s_class.class.ts_decorators.len_u32() > 0 {
+                let is_decorated = !s_class.class.ts_decorators.is_empty()
+                    || !constructor_param_decorators.is_empty();
+                if is_decorated {
                     stmts_count += 1;
                 }
                 let mut stmts = BumpVec::<Stmt>::with_capacity_in(stmts_count, self.arena);
@@ -7604,8 +7600,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 stmts.extend_from_slice(&static_members);
                 stmts.extend_from_slice(&instance_decorators);
                 stmts.extend_from_slice(&static_decorators);
-                if s_class.class.ts_decorators.len_u32() > 0 {
-                    let mut array: Vec<Expr> = s_class.class.ts_decorators.move_to_list_managed();
+                if is_decorated {
+                    let decorators = core::mem::take(&mut s_class.class.ts_decorators);
+                    let mut array = ExprNodeList::init_capacity(
+                        decorators.len() + constructor_param_decorators.len() + 1,
+                    );
+                    array.extend_from_slice(&decorators);
+                    array.extend_from_slice(&constructor_param_decorators);
 
                     if self.options.features.emit_decorator_metadata {
                         if let Some(cf) = constructor_function {
@@ -7617,7 +7618,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     .alloc_slice_fill_default::<Expr>(constructor_args.len());
                                 for (i, ca) in constructor_args.iter().enumerate() {
                                     param_array[i] = self
-                                        .serialize_metadata(ca.ts_metadata.clone())
+                                        .serialize_metadata(ca.ts_metadata)
                                         .expect("unreachable");
                                 }
                                 let items = ExprNodeList::from_arena_slice(param_array);
@@ -7649,10 +7650,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let class_name = s_class.class.class_name.unwrap();
                     let class_ref = class_name.ref_;
-                    let array_items = ExprNodeList::move_from_list(array);
                     let array_expr = self.new_expr(
                         E::Array {
-                            items: array_items,
+                            items: array,
                             ..Default::default()
                         },
                         stmt.loc,
@@ -7715,7 +7715,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     // design:type
                     let v = self
-                        .serialize_metadata(prop.ts_metadata.clone())
+                        .serialize_metadata(prop.ts_metadata)
                         .expect("unreachable");
                     push_metadata!(b"design:type", v);
                 }
@@ -7734,7 +7734,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7749,7 +7749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:returntype", v);
                         }
@@ -7766,7 +7766,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: variant checked");
                         {
                             let v = self
-                                .serialize_metadata(func.func.return_ts_metadata.clone())
+                                .serialize_metadata(func.func.return_ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -7801,7 +7801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .alloc_slice_fill_default::<Expr>(method_args.len());
                             for (entry, method_arg) in args_array.iter_mut().zip(method_args) {
                                 *entry = self
-                                    .serialize_metadata(method_arg.ts_metadata.clone())
+                                    .serialize_metadata(method_arg.ts_metadata)
                                     .expect("unreachable");
                             }
                             let items = ExprNodeList::from_arena_slice(args_array);
@@ -7816,7 +7816,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if !method_args.is_empty() {
                             let v = self
-                                .serialize_metadata(method_args[0].ts_metadata.clone())
+                                .serialize_metadata(method_args[0].ts_metadata)
                                 .expect("unreachable");
                             push_metadata!(b"design:type", v);
                         }
@@ -8852,7 +8852,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // }
 
         let bundling = self.options.bundle;
-        let mut parts_end: usize = usize::from(bundling);
 
         // When bundling with HMR, we need every module to be just a
         // single part, as we later wrap each module into a function,
@@ -8912,147 +8911,56 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Handle import paths after the whole file has been visited because we need
             // symbol usage counts to be able to remove unused type-only imports in
             // TypeScript code.
-            loop {
-                let mut kept_import_equals = false;
-                let mut removed_import_equals = false;
-
-                let begin = parts_end;
-                // Potentially remove some statements, then filter out parts to remove any
-                // with no statements
-                for idx in begin..parts.len() {
-                    // A shallow bitwise copy leaves `parts[idx]` intact so the outer
-                    // multi-pass loop (which restarts at `begin = parts_end`) re-scans
-                    // real data on the next iteration. `mem::take` would zero the slot
-                    // and degrade this to a single pass, so use `ptr::read`; the
-                    // duplicate is non-owning (paired with `ptr::write`/`forget`
-                    // below to avoid double-drop of arena-backed Vec fields).
-                    // SAFETY: idx < parts.len(); Part fields are arena/bump-backed
-                    // (Borrowed-origin BabyLists, raw stmt slices), so the bitwise copy is
-                    // a valid non-owning duplicate.
-                    let mut part = core::mem::ManuallyDrop::new(unsafe {
-                        core::ptr::read(&raw const parts[idx])
-                    });
-                    self.import_records_for_current_part.clear();
-                    self.declared_symbols.clear_retaining_capacity();
-
-                    let result = match ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
-                        self,
-                        part.stmts.slice_mut(),
-                        wrap_mode != WrapMode::None,
-                        None,
-                    ) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            // `part` is a bitwise duplicate of `parts[idx]` held in
-                            // `ManuallyDrop`; let it fall out of scope so the source
-                            // slot keeps sole ownership.
-                            return Err(e);
-                        }
-                    };
-                    kept_import_equals = kept_import_equals || result.kept_import_equals;
-                    removed_import_equals = removed_import_equals || result.removed_import_equals;
-
-                    part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
-                    if !part.stmts.is_empty() {
-                        if self.module_scope().contains_direct_eval
-                            && part.declared_symbols.len() > 0
-                        {
-                            // If this file contains a direct call to "eval()", all parts that
-                            // declare top-level symbols must be kept since the eval'd code may
-                            // reference those symbols.
-                            part.can_be_removed_if_unused = false;
-                        }
-                        if part.declared_symbols.len() == 0 {
-                            // SAFETY: `part` is a bitwise duplicate of `parts[idx]`
-                            // (via `ptr::read` above); the old `declared_symbols`
-                            // is still owned by that slot. Overwrite without running
-                            // Drop, which would double-free the original.
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.declared_symbols,
-                                    self.declared_symbols.clone().expect("unreachable"),
-                                );
-                            }
-                        } else {
-                            part.declared_symbols
-                                .append_list(&self.declared_symbols)
-                                .expect("unreachable");
-                        }
-
-                        if part.import_record_indices.is_empty() {
-                            // The *old* value is a bitwise duplicate of
-                            // `parts[idx].import_record_indices` and may be Owned —
-                            // overwrite without running Drop, which would double-free the original.
-                            // SAFETY: bitwise duplicate field — overwrite without
-                            // running Drop (see `declared_symbols` above).
-                            unsafe {
-                                core::ptr::write(
-                                    &raw mut part.import_record_indices,
-                                    Vec::from_arena_slice(arena.alloc_slice_copy(
-                                        self.import_records_for_current_part.as_slice(),
-                                    )),
-                                );
-                            }
-                        } else {
-                            part.import_record_indices
-                                .append_slice(self.import_records_for_current_part.as_slice());
-                        }
-
-                        // Wipe the source slot's heap-backed maps so a multi-pass
-                        // re-scan of `idx` never aliases the compacted survivor.
-                        // SAFETY: `idx < parts.len()`; field-only write, `part` owns the old bits.
-                        unsafe {
-                            let src = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*src).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*src).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // SAFETY: bitwise overwrite — the old slot value is intentionally not
-                        // dropped (its fields are arena-owned, so abandoning it does not leak).
-                        unsafe {
-                            core::ptr::write(
-                                parts.as_mut_ptr().add(parts_end),
-                                core::mem::ManuallyDrop::into_inner(part),
-                            )
-                        };
-                        parts_end += 1;
-                    } else {
-                        // Filtered out; free the global-heap maps and clear the
-                        // alias in `parts[idx]` so a re-scan never sees freed handles.
-                        drop(core::mem::take(&mut part.symbol_uses));
-                        drop(core::mem::take(&mut part.import_symbol_property_uses));
-                        // SAFETY: `idx < parts.len()`; field-only write, old bits just freed above.
-                        unsafe {
-                            let slot = parts.as_mut_ptr().add(idx);
-                            core::ptr::write(&raw mut (*slot).symbol_uses, Default::default());
-                            core::ptr::write(
-                                &raw mut (*slot).import_symbol_property_uses,
-                                Default::default(),
-                            );
-                        }
-                        // `part` is `ManuallyDrop`; falls out of scope without dropping.
-                    }
-                }
-
-                // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned (arena-/process-lifetime).
-                unsafe { parts.set_len(parts_end) };
-
-                // We need to iterate multiple times if an import-equals statement was
-                // removed and there are more import-equals statements that may be removed
-                if !kept_import_equals || !removed_import_equals {
-                    break;
-                }
-            }
 
             // leave the first part in there for namespace export when bundling
-            // `truncate` would drop slots that may alias kept parts (the loop
-            // above did `ptr::read` without clearing the source), so use
-            // `set_len`, which runs no destructors.
-            // SAFETY: `parts_end <= parts.len()`; tail slots are abandoned
-            // (arena-/process-lifetime).
-            unsafe { parts.set_len(parts_end) };
+            let begin = usize::from(bundling);
+            let mut parts_end = begin;
+            let slots = parts.as_mut_slice();
+            // Potentially remove some statements, then the parts that have none left
+            for idx in begin..slots.len() {
+                let (before, rest) = slots.split_at_mut(idx);
+                let part = &mut rest[0];
+                self.import_records_for_current_part.clear();
+                self.declared_symbols.clear_retaining_capacity();
+
+                let result = ImportScanner::scan::<TYPESCRIPT, SCAN_ONLY, false>(
+                    self,
+                    part.stmts.slice_mut(),
+                    wrap_mode != WrapMode::None,
+                    None,
+                )?;
+
+                part.stmts = bun_ast::StoreSlice::new_mut(result.stmts);
+                if part.stmts.is_empty() {
+                    continue;
+                }
+
+                if self.module_scope().contains_direct_eval && part.declared_symbols.len() > 0 {
+                    // The eval'd code may reference any top-level symbol.
+                    part.can_be_removed_if_unused = false;
+                }
+                if part.declared_symbols.len() == 0 {
+                    part.declared_symbols = self.declared_symbols.clone().expect("unreachable");
+                } else {
+                    part.declared_symbols
+                        .append_list(&self.declared_symbols)
+                        .expect("unreachable");
+                }
+
+                if part.import_record_indices.is_empty() {
+                    part.import_record_indices =
+                        Vec::from_arena_slice(self.import_records_for_current_part.as_slice());
+                } else {
+                    part.import_record_indices
+                        .append_slice(self.import_records_for_current_part.as_slice());
+                }
+
+                if let Some(removed) = before.get_mut(parts_end) {
+                    core::mem::swap(removed, part);
+                }
+                parts_end += 1;
+            }
+            parts.truncate(parts_end);
 
             // Do a second pass for exported items now that imported items are filled out.
             // This isn't done for HMR because it already deletes all `.s_export_clause`s
@@ -9418,7 +9326,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             top_level_await_keyword: self.top_level_await_keyword,
             commonjs_named_exports: core::mem::take(&mut self.commonjs_named_exports),
             has_commonjs_export_names: self.has_commonjs_export_names,
-            has_import_meta: self.has_import_meta,
 
             hashbang: hashbang.into(),
             export_default_alias_of_import: self.export_default_alias_of_import,

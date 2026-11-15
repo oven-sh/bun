@@ -3,10 +3,12 @@
 #![cfg(windows)]
 
 use core::ffi::{c_char, c_int, c_uint};
+use core::mem::MaybeUninit;
 
 use bstr::BStr;
 
 use bun_core::ZStr;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 
 use crate::ReturnCodeExt;
 use crate::Tag;
@@ -650,9 +652,25 @@ pub fn readv(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
 }
 
 pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
+    pread_buf(fd, BorrowedBuf::from(buf).unfilled(), position)
+}
+
+fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, position: i64) -> Result<usize> {
+    // SAFETY: as in `crate::read_buf`.
+    unsafe { pread_uninit(fd, cursor.as_mut(), position).inspect(|&n| _ = cursor.advance(n)) }
+}
+
+fn iovec(buf: &mut [MaybeUninit<u8>]) -> PlatformIOVec {
+    PlatformIOVec {
+        len: buf.len() as uv::ULONG,
+        base: buf.as_mut_ptr().cast(),
+    }
+}
+
+pub(crate) fn pread_uninit(fd: Fd, buf: &mut [MaybeUninit<u8>], position: i64) -> Result<usize> {
     // If buffer fits in a single uv_buf_t, use the simple path
     if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(buf)];
+        let bufs: [PlatformIOVec; 1] = [iovec(buf)];
         return preadv(fd, &bufs, position);
     }
 
@@ -663,7 +681,7 @@ pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
 
     while !remaining.is_empty() {
         let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
+        let bufs: [PlatformIOVec; 1] = [iovec(&mut remaining[0..chunk_len])];
 
         match preadv(fd, &bufs, current_position) {
             Result::Err(err) => return Result::Err(err),
@@ -685,36 +703,8 @@ pub fn pread(fd: Fd, buf: &mut [u8], position: i64) -> Result<usize> {
     Result::Ok(total_read)
 }
 
-pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
-    // If buffer fits in a single uv_buf_t, use the simple path
-    if buf.len() <= MAX_BUF_LEN {
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(buf)];
-        return readv(fd, &bufs);
-    }
-
-    // Buffer is too large, need to chunk it
-    let mut total_read: usize = 0;
-    let mut remaining = buf;
-
-    while !remaining.is_empty() {
-        let chunk_len = remaining.len().min(MAX_BUF_LEN);
-        let bufs: [PlatformIOVec; 1] = [crate::platform_iovec_create(&mut remaining[0..chunk_len])];
-
-        match readv(fd, &bufs) {
-            Result::Err(err) => return Result::Err(err),
-            Result::Ok(bytes_read) => {
-                total_read += bytes_read;
-
-                if bytes_read == 0 || bytes_read < chunk_len {
-                    break;
-                }
-
-                remaining = &mut remaining[chunk_len..];
-            }
-        }
-    }
-
-    Result::Ok(total_read)
+pub fn read_buf(fd: Fd, cursor: BorrowedCursor<'_, u8>) -> Result<usize> {
+    pread_buf(fd, cursor, -1)
 }
 
 #[inline]

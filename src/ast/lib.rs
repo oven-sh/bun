@@ -383,18 +383,6 @@ impl fmt::Debug for Ref {
     }
 }
 
-// Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
-// be `bun_paths`); defined here so init_file / init_recycled_file resolve.
-// `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file`.
-/// A [`Source`]'s path paired with its raw bytes (used by virtual-module
-/// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
-#[derive(Clone, Copy)]
-pub struct PathContentsPair<'a> {
-    pub path: bun_paths::fs::Path<'a>,
-    pub contents: &'a [u8],
-}
-
 /// Owned/borrowed → `Cow<'static, [u8]>` for `Data.text`. Superset of the old
 /// `impl Into<Cow<'static, [u8]>>` bound on [`range_data`] that additionally
 /// admits `&'static str` (so `concat!()` literals work) and `&[u8; N]`.
@@ -445,7 +433,7 @@ impl IntoText for Box<[u8]> {
 }
 
 /// Sink adapter for [`Log::print`] — lets callers pass either a borrowed
-/// `fmt::Write` impl or the `*mut bun_core::io::Writer` returned by
+/// `fmt::Write` impl or the `&bun_core::io::Writer` returned by
 /// `Output::error_writer()` (the dominant call shape across the tree).
 pub trait IntoLogWrite {
     type W: fmt::Write;
@@ -458,29 +446,20 @@ impl<'a, W: fmt::Write> IntoLogWrite for &'a mut W {
         self
     }
 }
-/// `fmt::Write` view over a `*mut bun_core::io::Writer`.
-pub struct IoWriterAdapter(*mut bun_core::io::Writer);
-impl fmt::Write for IoWriterAdapter {
+/// `fmt::Write` view over a `bun_core::io::Writer`.
+pub struct IoWriterAdapter<'a>(&'a bun_core::io::Writer);
+impl fmt::Write for IoWriterAdapter<'_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        if self.0.is_null() {
-            return Ok(());
-        }
-        // SAFETY: `Output::error_writer()` returns a pointer to a long-lived
-        // adapter header (see bun_core::io::Writer); callers hold it only for
-        // the duration of this `print` call.
-        unsafe { (*self.0).write_all(s.as_bytes()) }.map_err(|_| fmt::Error)
+        self.0.write_all(s.as_bytes()).map_err(|_| fmt::Error)
     }
 }
-impl IntoLogWrite for *mut bun_core::io::Writer {
-    type W = IoWriterAdapter;
+impl<'a> IntoLogWrite for &'a bun_core::io::Writer {
+    type W = IoWriterAdapter<'a>;
     #[inline]
-    fn into_log_write(self) -> IoWriterAdapter {
+    fn into_log_write(self) -> IoWriterAdapter<'a> {
         IoWriterAdapter(self)
     }
 }
-// NOTE: a `&mut *mut Writer` blanket can't coexist with the generic
-// `&mut W: fmt::Write` impl above (coherence reservation). Callers holding a
-// `&mut *mut Writer` deref to `*mut Writer` and hit the impl above.
 
 // ───────────────────────────────────────────────────────────────────────────
 // Kind
@@ -2075,7 +2054,6 @@ pub struct Source<'a> {
 
     /// `Owned` when the `Source` read the file itself ([`source_from_file`]).
     pub contents: Cow<'a, [u8]>,
-    pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
@@ -2090,7 +2068,6 @@ impl Default for Source<'_> {
         Source {
             path: bun_paths::fs::Path::default(),
             contents: Cow::Borrowed(b""),
-            contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
         }
@@ -2364,17 +2341,6 @@ impl<'a> Source<'a> {
             contents: Cow::Borrowed(b""),
             ..Default::default()
         }
-    }
-
-    pub fn init_recycled_file(file: &PathContentsPair<'a>) -> crate::Result<Source<'a>> {
-        let mut source = Source {
-            path: file.path,
-            contents: Cow::Borrowed(file.contents),
-            contents_is_recycled: true,
-            ..Default::default()
-        };
-        source.path.namespace = b"file";
-        Ok(source)
     }
 
     pub fn init_path_string(

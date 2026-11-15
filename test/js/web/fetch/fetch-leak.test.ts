@@ -257,8 +257,8 @@ test("fetch() compress option does not leak bodies or compressor state", async (
   //  - the custom-level path (allocates a temporary libdeflate compressor that
   //    must be freed each call)
   //  - a small body (HTTP-thread LibdeflateState shared_buffer fast path)
-  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed in
-  //    on_async_http_callback_raw)
+  //  - a ~700 KiB body (zlib-streaming slow path → per-request Vec, freed
+  //    with the request)
   using server = Bun.serve({
     port: 0,
     idleTimeout: 0,

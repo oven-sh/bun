@@ -763,6 +763,7 @@ impl Build<'_> {
                 checks_only_requested_paths: true,
                 takes_defaults_of_tsc: true,
                 takes_aot_sources_last: true,
+                shares_every_file: true,
                 declarations_of_last_resort: Some(runtime_types::PROMISED_TYPES_PATH),
                 ..Default::default()
             },

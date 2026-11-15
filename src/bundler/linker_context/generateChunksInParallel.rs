@@ -8,7 +8,6 @@ use bun_collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_paths as path;
-use bun_threading::thread_pool as ThreadPoolLib;
 
 use crate::Chunk;
 use crate::Index;
@@ -18,6 +17,7 @@ use crate::chunk::{ReferencePathStyle, SourceMapShiftTracking};
 use crate::options;
 use crate::options::Loader;
 
+use crate::CompileResult;
 use crate::LinkerContext;
 use crate::linker_context::generate_compile_result_for_css_chunk::{
     generate_compile_result_for_css_chunk, nest_external_imports,
@@ -27,7 +27,7 @@ use crate::linker_context::generate_compile_result_for_js_chunk::generate_compil
 use crate::linker_context::output_file_list_builder::OutputFileList as OutputFileListBuilder;
 use crate::linker_context::static_route_visitor::StaticRouteVisitor;
 use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
-use crate::linker_context_mod::{GenerateChunkCtx, PendingPartRange};
+use crate::linker_context_mod::GenerateChunkCtx;
 
 use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
@@ -58,10 +58,8 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             crate::linker_context::cross_chunk_names::assign_unminified(c, chunks)?;
         }
         if !c.options.minify_identifiers {
-            c.renamer_rows = crate::linker_context::rename_symbols_in_chunk::renamer_rows(
-                c.graph.symbols.symbols_for_source.len(),
-                chunks,
-            );
+            c.renamer_rows =
+                crate::linker_context::rename_symbols_in_chunk::renamer_rows(c, chunks);
         }
         c.worker_pool()
             .each_ptr(&*c, |c, chunk, _| c.generate_js_renamer(chunk), chunks);
@@ -118,100 +116,46 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
     {
         {
-            let mut chunk_contexts: Vec<GenerateChunkCtx> = Vec::with_capacity(chunks.len());
             let mut total_count: usize = 0;
-            // Before the `iter_mut()` borrow, so the same slice backref can be stored in every ctx.
-            let chunks_ref: bun_ptr::BackRef<[Chunk]> = bun_ptr::BackRef::new(&*chunks);
-            for chunk in chunks.iter_mut() {
-                chunk_contexts.push(GenerateChunkCtx {
-                    c,
-                    chunks: chunks_ref,
-                    chunk: bun_ptr::BackRef::new_mut(chunk),
-                });
-                match &mut chunk.content {
+            let mut compile_results: Vec<Box<[CompileResult]>> = Vec::with_capacity(chunks.len());
+            for chunk in chunks.iter() {
+                let count = match &chunk.content {
                     crate::chunk::Content::Javascript(js) => {
-                        total_count += js.parts_in_chunk_in_order.len();
-                        chunk.compile_results_for_chunk =
-                            crate::chunk::CompileResultSlots::new(js.parts_in_chunk_in_order.len());
                         has_js_chunk = true;
+                        js.parts_in_chunk_in_order.len()
                     }
                     crate::chunk::Content::Css(css) => {
                         has_css_chunk = true;
-                        total_count += css.imports_in_chunk_in_order.len() as usize;
-                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(
-                            css.imports_in_chunk_in_order.len() as usize,
-                        );
+                        css.imports_in_chunk_in_order.len()
                     }
                     crate::chunk::Content::Html => {
                         has_html_chunk = true;
                         // HTML gets only one chunk.
-                        total_count += 1;
-                        chunk.compile_results_for_chunk = crate::chunk::CompileResultSlots::new(1);
+                        1
                     }
-                }
+                };
+                total_count += count;
+                compile_results.push((0..count).map(|_| CompileResult::default()).collect());
             }
-
-            debug_assert_eq!(chunks.len(), chunk_contexts.len());
 
             debug!(" START {} compiling part ranges", total_count);
-            // Pre-reserved to `total_count` so pushes never reallocate; the
-            // batch holds raw pointers into this buffer.
-            let group = bun_threading::WaitGroup::init_with_count(total_count);
-            let mut combined_part_ranges: Vec<PendingPartRange> = Vec::with_capacity(total_count);
-            let mut batch = ThreadPoolLib::Batch::default();
-            for (chunk, chunk_ctx) in chunks.iter().zip(chunk_contexts.iter()) {
-                match &chunk.content {
-                    crate::chunk::Content::Javascript(js) => {
-                        for (i, part_range) in js.parts_in_chunk_in_order.iter().enumerate() {
-                            combined_part_ranges.push(PendingPartRange {
-                                part_range: *part_range,
-                                i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::CountedTask::new(
-                                    generate_compile_result_for_js_chunk,
-                                    &group,
-                                ),
-                                ctx: chunk_ctx,
-                            });
-                            batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
-                            ));
-                        }
-                    }
-                    crate::chunk::Content::Css(css) => {
-                        for i in 0..css.imports_in_chunk_in_order.len() as usize {
-                            combined_part_ranges.push(PendingPartRange {
-                                part_range: Default::default(),
-                                i: u32::try_from(i).expect("int cast"),
-                                task: ThreadPoolLib::CountedTask::new(
-                                    generate_compile_result_for_css_chunk,
-                                    &group,
-                                ),
-                                ctx: chunk_ctx,
-                            });
-                            batch.push(ThreadPoolLib::Batch::from(
-                                &raw mut combined_part_ranges.last_mut().unwrap().task.task,
-                            ));
-                        }
-                    }
-                    crate::chunk::Content::Html => {
-                        combined_part_ranges.push(PendingPartRange {
-                            part_range: Default::default(),
-                            i: 0,
-                            task: ThreadPoolLib::CountedTask::new(
-                                generate_compile_result_for_html_chunk,
-                                &group,
-                            ),
-                            ctx: chunk_ctx,
-                        });
-                        batch.push(ThreadPoolLib::Batch::from(
-                            &raw mut combined_part_ranges.last_mut().unwrap().task.task,
-                        ));
-                    }
-                }
+            c.worker_pool().each_owned(
+                (&*c, &*chunks),
+                |&(c, chunks), (chunk, i, result)| {
+                    **result = generate_compile_result(c, chunks, chunk, *i);
+                },
+                total_count,
+                chunks
+                    .iter()
+                    .zip(&mut compile_results)
+                    .flat_map(|(chunk, results)| {
+                        let results = results.iter_mut().enumerate();
+                        results.map(move |(i, result)| (chunk, i, result))
+                    }),
+            );
+            for (chunk, results) in chunks.iter_mut().zip(compile_results) {
+                chunk.compile_results_for_chunk = results;
             }
-            debug_assert_eq!(combined_part_ranges.len(), total_count);
-            c.worker_pool().schedule(batch);
-            group.wait();
             debug!("  DONE {} compiling part ranges", total_count);
         }
 
@@ -235,7 +179,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             for chunk in chunks.iter() {
                 for compile_result in chunk.compile_results_for_chunk.iter() {
                     let message: Cow<'static, [u8]> = match compile_result {
-                        crate::CompileResult::Javascript {
+                        CompileResult::Javascript {
                             result: bun_js_printer::PrintResult::Err(err),
                             ..
                         } => match err {
@@ -248,7 +192,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                                     .into_bytes(),
                             ),
                         },
-                        crate::CompileResult::Css {
+                        CompileResult::Css {
                             result: Err(err), ..
                         } => Cow::Owned(
                             format!("Failed to generate CSS for this file ({})", err.name())
@@ -276,7 +220,6 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         }
 
         let ctx = GenerateChunkCtx {
-            chunk: bun_ptr::BackRef::new_mut(&mut chunks[0]),
             c,
             chunks: bun_ptr::BackRef::new(&*chunks),
         };
@@ -1783,6 +1726,28 @@ fn append_internal_module_bytecode(
             is_executable: false,
             ..Default::default()
         }));
+    }
+}
+
+/// Runs on the pool, for element `i` of `chunk.compile_results_for_chunk`.
+fn generate_compile_result<'a>(
+    c: &LinkerContext<'_, 'a>,
+    chunks: &[Chunk<'a>],
+    chunk: &Chunk<'a>,
+    i: usize,
+) -> CompileResult {
+    let mut worker = crate::thread_pool::Worker::get(c.bundle);
+    match &chunk.content {
+        crate::chunk::Content::Javascript(js) => generate_compile_result_for_js_chunk(
+            &mut worker,
+            c,
+            chunk,
+            js.parts_in_chunk_in_order[i],
+        ),
+        crate::chunk::Content::Css(_) => {
+            generate_compile_result_for_css_chunk(&mut worker, c, chunk, i)
+        }
+        crate::chunk::Content::Html => generate_compile_result_for_html_chunk(c, chunk, chunks),
     }
 }
 

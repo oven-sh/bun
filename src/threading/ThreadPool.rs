@@ -400,7 +400,7 @@ pub struct CountedTask {
 unsafe impl Send for CountedTask {}
 
 impl CountedTask {
-    /// `group` must already count this task and outlive its completion (`WaitGroup::wait()`
+    /// `group` must count this task before it runs and outlive its completion (`WaitGroup::wait()`
     /// returning is that completion).
     pub fn new(run: unsafe fn(*mut Task), group: &WaitGroup) -> Self {
         Self {
@@ -481,31 +481,6 @@ pub struct Batch {
 }
 
 impl Batch {
-    pub fn pop(&mut self) -> Option<NonNull<Task>> {
-        let len = self.len;
-        if len == 0 {
-            return None;
-        }
-        let task = self.head.unwrap();
-        // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
-        let next = unsafe { (*Task::node_of(task).as_ptr()).next };
-        if !next.is_null() {
-            self.head = NonNull::new(Task::from_node(next));
-        } else {
-            if task != self.tail.unwrap() {
-                unreachable!();
-            }
-            self.tail = None;
-            self.head = None;
-        }
-
-        self.len -= 1;
-        if len == 0 {
-            self.tail = None;
-        }
-        Some(task)
-    }
-
     /// Create a batch from a single task.
     pub fn from(task: *mut Task) -> Batch {
         let task = NonNull::new(task);
@@ -541,33 +516,6 @@ impl Batch {
     }
 }
 
-/// Dispatch trait for `each_impl`: the by-value vs by-`&mut` branch as two impls.
-trait EachCall<Ctx, V>: core::marker::Sync {
-    fn call(&self, ctx: &Ctx, value: &mut V, i: usize);
-}
-
-struct ByValue<F>(F);
-impl<Ctx, V: Copy, F> EachCall<Ctx, V> for ByValue<F>
-where
-    F: Fn(&Ctx, V, usize) + core::marker::Sync,
-{
-    #[inline]
-    fn call(&self, ctx: &Ctx, value: &mut V, i: usize) {
-        (self.0)(ctx, *value, i);
-    }
-}
-
-struct ByPtr<F>(F);
-impl<Ctx, V, F> EachCall<Ctx, V> for ByPtr<F>
-where
-    F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
-{
-    #[inline]
-    fn call(&self, ctx: &Ctx, value: &mut V, i: usize) {
-        (self.0)(ctx, value, i);
-    }
-}
-
 impl ThreadPool {
     /// Loop over an array of tasks and invoke `run_fn` on each one in a different thread.
     /// **Blocks the calling thread** until all tasks are completed.
@@ -584,7 +532,7 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, || {});
+        self.each_while(ctx, run_fn, values, || {});
     }
 
     /// Like `each`, but calls `on_calling_thread` once the tasks are scheduled, and waits for them
@@ -600,7 +548,13 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: Copy + core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByValue(run_fn), values, on_calling_thread);
+        self.each_impl(
+            ctx,
+            move |ctx, &mut (i, value)| run_fn(ctx, value, i),
+            values.len(),
+            values.iter().copied().enumerate().rev(),
+            on_calling_thread,
+        );
     }
 
     /// The most threads that this pool starts.
@@ -631,76 +585,70 @@ impl ThreadPool {
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
-        self.each_impl(ctx, ByPtr(run_fn), values, || {});
+        self.each_owned(
+            ctx,
+            move |ctx, (i, value)| run_fn(ctx, value, *i),
+            values.len(),
+            values.iter_mut().enumerate().rev(),
+        );
+    }
+
+    /// Like `each_ptr`, for values that exist only for the call. `len` is how many to make room for.
+    pub fn each_owned<Ctx, V, F>(
+        &self,
+        ctx: Ctx,
+        run_fn: F,
+        len: usize,
+        values: impl Iterator<Item = V>,
+    ) where
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
+        Ctx: core::marker::Sync,
+        V: core::marker::Send,
+    {
+        self.each_impl(ctx, run_fn, len, values, || {});
     }
 
     fn each_impl<Ctx, V, F>(
         &self,
         ctx: Ctx,
         run_fn: F,
-        values: &mut [V],
+        len: usize,
+        values: impl Iterator<Item = V>,
         on_calling_thread: impl FnOnce(),
     ) where
-        F: EachCall<Ctx, V>,
+        F: Fn(&Ctx, &mut V) + core::marker::Sync,
         Ctx: core::marker::Sync,
-        V: core::marker::Sync + core::marker::Send,
+        V: core::marker::Send,
     {
-        if values.is_empty() {
+        struct RunnerTask<'a, Ctx, V, F> {
+            task: CountedTask,
+            shared: &'a (Ctx, F),
+            value: V,
+        }
+
+        unsafe fn call<Ctx, V, F: Fn(&Ctx, &mut V)>(task: *mut Task) {
+            // SAFETY: `task` is the field of an element of `tasks`, which `each_impl` does not
+            // touch between `schedule` and the end of `wait`.
+            let runner_task =
+                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
+            let (ctx, run_fn) = runner_task.shared;
+            run_fn(ctx, &mut runner_task.value);
+        }
+
+        let shared = (ctx, run_fn);
+        let group = WaitGroup::init();
+        let mut tasks = Vec::with_capacity(len);
+        tasks.extend(values.map(|value| RunnerTask {
+            task: CountedTask::new(call::<Ctx, V, F>, &group),
+            shared: &shared,
+            value,
+        }));
+        if tasks.is_empty() {
             return on_calling_thread();
         }
 
-        struct WaitContext<Ctx, V, F> {
-            ctx: Ctx,
-            values: *mut [V],
-            run_fn: F,
-        }
-
-        #[repr(C)]
-        struct RunnerTask<Ctx, V, F> {
-            task: CountedTask,
-            // LIFETIMES.tsv row 2144: BORROW_PARAM. The stack-local `WaitContext`
-            // strictly outlives every `RunnerTask` (`group.wait()` blocks until all
-            // tasks finish), so this is the canonical `BackRef` invariant.
-            ctx: bun_ptr::BackRef<WaitContext<Ctx, V, F>>,
-            i: usize,
-        }
-
-        // `run_fn` is stored in WaitContext and dispatched via the `EachCall`
-        // trait (ByValue vs ByPtr).
-        unsafe fn call<Ctx, V, F: EachCall<Ctx, V>>(task: *mut Task) {
-            // SAFETY: task points to RunnerTask.task (offset 0, repr(C)).
-            let runner_task =
-                unsafe { &mut *bun_core::from_field_ptr!(RunnerTask<Ctx, V, F>, task, task) };
-            let i = runner_task.i;
-            let wctx = runner_task.ctx.get();
-            // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
-            // every task finishes); each task owns a distinct index `i`.
-            // `each_impl` holds the exclusive borrow of `values` and does not use it between `schedule` and `wait()`.
-            let value: &mut V = unsafe { &mut (*wctx.values)[i] };
-            wctx.run_fn.call(&wctx.ctx, value, i);
-        }
-
-        let wait_context = WaitContext {
-            ctx,
-            values: std::ptr::from_mut::<[V]>(values),
-            run_fn,
-        };
-
-        let group = WaitGroup::init_with_count(values.len());
-        let mut tasks: Vec<RunnerTask<Ctx, V, F>> = Vec::with_capacity(values.len());
+        group.add(tasks.len());
         let mut batch = Batch::default();
-        let mut offset = values.len();
-
-        for _ in 0..values.len() {
-            offset -= 1;
-            tasks.push(RunnerTask {
-                i: offset,
-                task: CountedTask::new(call::<Ctx, V, F>, &group),
-                ctx: bun_ptr::BackRef::new(&wait_context),
-            });
-        }
-        // Push to the Vec first (no realloc: capacity reserved), then take
-        // stable addresses.
         for runner_task in tasks.iter_mut() {
             batch.push(Batch::from(&raw mut runner_task.task.task));
         }

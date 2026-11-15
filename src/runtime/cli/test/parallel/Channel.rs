@@ -9,7 +9,7 @@
 //!
 //! Lifetime: a `Channel` is embedded as a field in an owner that outlives all
 //! uv/usockets callbacks (the coordinator's `Worker[]`, or the worker's
-//! `WorkerLoop` which lives for the process). `Drop` assumes no write is in flight: true for both
+//! `WorkerLink` which lives for the process). `Drop` assumes no write is in flight: true for both
 //! sites (start() errdefer and reap_worker after the peer has exited).
 
 use core::cell::Cell;

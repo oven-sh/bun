@@ -150,7 +150,13 @@ test.skipIf(!isASAN || isWindows)(
       postMessage("ok");
     `,
       {},
-      expectClosedByTerminate("out.txt"),
+      {
+        // The child has its own copy, so there is nothing left for terminate() to close.
+        beforeTerminate: `
+          ${defineIsOpen("out.txt")}
+          if (isOpen()) throw new Error("still open after the spawn");
+        `,
+      },
     );
   },
   LEAK_TEST_TIMEOUT,

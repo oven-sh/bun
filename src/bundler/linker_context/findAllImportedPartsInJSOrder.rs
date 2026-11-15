@@ -126,7 +126,7 @@ pub(crate) fn find_imported_parts_in_js_order(
         namespace_objects: Vec::new(),
         chunk_index,
         // The one column written through a shared `&LinkerContext` (see `place`).
-        entry_point_chunk_indices: this.graph.files.slice().split_raw().entry_point_chunk_index,
+        entry_point_chunk_indices: this.graph.files.split_raw().entry_point_chunk_index,
     };
 
     // The runtime goes first: every helper a file calls is declared above it.
@@ -1088,7 +1088,7 @@ impl ChunkLayout<'_, '_> {
             // through `self.c`), valid for
             // `graph.files.len()` writes for the duration of the link step.
             // Chunks run in parallel and, without code splitting, several may
-            // contain this file: highest index wins (unset is `u32::MAX`), as
+            // contain this file: highest index wins, as
             // when this ran chunk by chunk.
             // Err = another chunk with a higher index already claimed it.
             let _ = unsafe {
@@ -1100,7 +1100,7 @@ impl ChunkLayout<'_, '_> {
                 .try_update(
                     core::sync::atomic::Ordering::Relaxed,
                     core::sync::atomic::Ordering::Relaxed,
-                    |cur| (cur == u32::MAX || cur < self.chunk_index).then_some(self.chunk_index),
+                    |cur| (cur < self.chunk_index).then_some(self.chunk_index),
                 )
             };
         }

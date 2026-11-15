@@ -411,9 +411,7 @@ impl Watcher {
         // So if we just sort the list by the biggest index first, that should be fine
         index_sort::sort_slice_by(&mut self.evict_list[0..evict_list_i], |a, b| b.cmp(a));
 
-        // reshaped for borrowck — capture fds.len() before loop
-        let slice = self.watchlist.slice();
-        let fds = slice.items_fd();
+        let fds = self.watchlist.items_fd();
         let fds_len = fds.len();
         let mut last_item = NO_WATCH_ITEM;
 
@@ -705,17 +703,15 @@ impl Watcher {
         let autowatch_parent_dir =
             feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
         if autowatch_parent_dir {
-            let watchlist_slice = self.watchlist.slice();
-
             if dir_fd.is_valid() {
-                let fds = watchlist_slice.items_fd();
+                let fds = self.watchlist.items_fd();
                 if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
                     parent_watch_item = Some(i as WatchItemIndex);
                 }
             }
 
             if parent_watch_item.is_none() {
-                let hashes = watchlist_slice.items_hash();
+                let hashes = self.watchlist.items_hash();
                 if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
                     parent_watch_item = Some(i as WatchItemIndex);
                 }
@@ -1085,8 +1081,6 @@ pub enum FdOwnership {
 
 /// Typed SoA column accessors — thin safe wrappers over the reflection-backed
 /// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
-/// Implemented locally so callers can write `watchlist.items_fd()` instead of
-/// the unsafe generic `Slice::items::<F>(field)`.
 pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];
@@ -1099,31 +1093,6 @@ pub trait WatchItemColumns {
 }
 
 impl WatchItemColumns for WatchList {
-    fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
-        self.items::<"file_path", Cow<'static, [u8]>>()
-    }
-    fn items_hash(&self) -> &[u32] {
-        self.items::<"hash", u32>()
-    }
-    fn items_fd(&self) -> &[Fd] {
-        self.items::<"fd", Fd>()
-    }
-    fn items_fd_mut(&mut self) -> &mut [Fd] {
-        self.items_mut::<"fd", Fd>()
-    }
-    fn items_parent_hash(&self) -> &[u32] {
-        self.items::<"parent_hash", u32>()
-    }
-    fn items_kind(&self) -> &[WatchItemKind] {
-        self.items::<"kind", WatchItemKind>()
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
-        self.items::<"eventlist_index", platform::EventListIndex>()
-    }
-}
-
-impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
     }

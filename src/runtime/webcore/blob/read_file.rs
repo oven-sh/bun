@@ -1,5 +1,4 @@
 use core::marker::PhantomData;
-#[cfg(windows)]
 use core::mem::MaybeUninit;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicU8, Ordering};
@@ -18,6 +17,8 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
 use bun_core::String as BunString;
+#[cfg(not(windows))]
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 #[cfg(windows)]
 use bun_io::IntrusiveUvFs as _;
 #[cfg(not(windows))]
@@ -225,7 +226,6 @@ pub(crate) struct ReadFile {
     pub(crate) max_length: SizeType,
     pub(crate) total_size: SizeType,
     pub(crate) opened_fd: Fd,
-    pub(crate) read_off: SizeType,
     pub(crate) read_eof: bool,
     pub(crate) size: SizeType,
     pub(crate) buffer: Vec<u8>,
@@ -289,7 +289,6 @@ impl ReadFile {
             max_length: blob.size.get(),
             total_size: MAX_SIZE,
             opened_fd: Fd::INVALID,
-            read_off: 0,
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
@@ -423,44 +422,11 @@ impl ReadFile {
         io::IoRequestLoop::schedule(&mut self.io_request);
     }
 
-    /// Pick the read target: `buffer`'s spare capacity if it is at least as
-    /// large as `stack_buffer`, otherwise `stack_buffer`; capped by
-    /// `max_length - read_off`. Returns `(use_stack, target)` so the caller
-    /// keys its `extend_from_slice`/`commit_spare` decision off the same
-    /// branch taken here.
-    fn remaining_buffer<'a>(
-        buffer: &'a mut Vec<u8>,
-        stack_buffer: &'a mut [u8],
-        max_length: SizeType,
-        read_off: SizeType,
-    ) -> (bool, &'a mut [u8]) {
-        let cap = (max_length.saturating_sub(read_off)) as usize;
-        let spare = buffer.spare_capacity_mut();
-        if spare.len() < stack_buffer.len() {
-            let n = stack_buffer.len().min(cap);
-            (true, &mut stack_buffer[..n])
-        } else {
-            let n = spare.len().min(cap);
-            // SAFETY: `spare` is `&mut [MaybeUninit<u8>]` over the Vec's spare
-            // capacity. The bytes are only written by the `read()`/`recv()`
-            // syscall below and `commit_spare` advances `len` by exactly the
-            // kernel-reported initialized count; no uninit byte is ever read.
-            let target =
-                unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), n) };
-            (false, target)
-        }
-    }
-
     /// Never touches `self.buffer`; the caller moves it out for the duration.
-    pub(crate) fn do_read(
-        &mut self,
-        buf: &mut [u8],
-        read_len: &mut usize,
-        retry: &mut bool,
-    ) -> bool {
+    fn do_read(&mut self, buf: BorrowedCursor<'_, u8>, retry: &mut bool) -> bool {
         let result: bun_sys::Result<usize> = 'brk: {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
-                break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
+                break 'brk bun_sys::recv_non_block_buf(self.opened_fd, buf);
             }
             break 'brk crate::node::fs::read_descriptor(self.opened_fd, buf);
         };
@@ -468,7 +434,6 @@ impl ReadFile {
         loop {
             match &result {
                 Ok(res) => {
-                    *read_len = *res as usize; // @truncate — usize→usize is identity here
                     self.read_eof = *res == 0;
                 }
                 Err(err) => {
@@ -673,7 +638,6 @@ impl ReadFile {
             }
             self.buffer = v;
         }
-        self.read_off = 0;
 
         // If it's not a regular file, it might be something
         // which would block on the next read. So we should
@@ -711,26 +675,19 @@ impl ReadFile {
         //
         // 64 KB is large, but since this is running in a thread
         // with it's own stack, it should have sufficient space.
-        let mut stack_storage = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-        // SAFETY: only `do_read` writes into it and only `stack_buffer[..read_amount]` is read back.
-        let stack_buffer = unsafe { stack_storage.as_bytes_mut() };
-        // `do_read` never touches `self.buffer`; move it out so the read
-        // target slice (which may point into its spare capacity) can be
-        // held as a safe `&mut [u8]` across the `&mut self` call.
+        let mut stack_buffer = [const { MaybeUninit::uninit() }; 64 * 1024];
         let mut buffer = core::mem::take(&mut self.buffer);
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-            let (use_stack, buf) =
-                Self::remaining_buffer(&mut buffer, stack_buffer, self.max_length, self.read_off);
+            let max = (self.max_length as usize).saturating_sub(buffer.len());
 
-            if !buf.is_empty() && self.errno.is_none() && !self.read_eof {
-                let mut read_amount: usize = 0;
+            if max != 0 && self.errno.is_none() && !self.read_eof {
                 let mut retry = false;
-                let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
-
-                // We might read into the stack buffer, so we need to copy it into the heap.
-                if use_stack {
-                    // `do_read` initialized exactly `stack_buffer[..read_amount]` (0 on error/retry).
-                    let read = &stack_buffer[..read_amount];
+                let continue_reading = if buffer.capacity() - buffer.len() >= stack_buffer.len() {
+                    append_with(&mut buffer, max, |spare| self.do_read(spare, &mut retry))
+                } else {
+                    let len = stack_buffer.len().min(max);
+                    let mut read = BorrowedBuf::from(&mut stack_buffer[..len]);
+                    let continue_reading = self.do_read(read.unfilled(), &mut retry);
                     if buffer.capacity() == 0 {
                         // We need to allocate a new buffer
                         // In this case, we want to use `ensureTotalCapacityPrecise` so that it's an exact amount
@@ -739,12 +696,9 @@ impl ReadFile {
                     } else {
                         buffer.reserve(read.len());
                     }
-                    buffer.extend_from_slice(read);
-                } else {
-                    // record the amount of data read
-                    // SAFETY: read() wrote `read_amount` initialized bytes into spare capacity.
-                    unsafe { bun_core::vec::commit_spare(&mut buffer, read_amount) };
-                }
+                    buffer.extend_from_slice(read.filled());
+                    continue_reading
+                };
                 // - If they DID set a max length, we should stop
                 //   reading after that.
                 //

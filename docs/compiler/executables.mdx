@@ -1359,6 +1359,8 @@ interface CompileBuildOptions {
   allowCodeFromDisk?: boolean; // With aot: let import(), require() and new Worker() load code from disk (default: false)
   inspector?: boolean; // With aot: let a debugger attach to the executable (default: false)
   aotHarden?: string | string[]; // With aot: add run-time checks, "proof-checks" and "ignore-told-ranges" (default: none)
+  aotOrder?: string | string[]; // With aot: order file(s) to lay the executable out by, most important first
+  aotRecordOrder?: boolean; // With aot: build an executable that writes an order file when it runs (default: false)
   trim?: boolean | TrimOptions; // Remove the Bun and Node.js APIs your code never calls (default: false)
   disallowCodeGenerationFromStrings?: boolean | "strict"; // eval() and new Function() throw (default: false)
   windows?: {

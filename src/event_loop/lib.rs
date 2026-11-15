@@ -25,7 +25,7 @@ pub mod any_event_loop;
 // ─── public surface ─────────────────────────────────────────────────────────
 
 pub type JsResult<T> = core::result::Result<T, bun_core::JsError>;
-pub use ConcurrentTask::{ContextId, Task, TaskTag, Taskable, task_tag};
+pub use ConcurrentTask::{BoxedTask, ContextId, Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers avoid
 // the type/module namespace collision on the PascalCase form.
@@ -57,7 +57,6 @@ bun_dispatch::link_interface! {
         fn enqueue_task_after_yield(task: Task);
         fn js_poster() -> any_event_loop::JsPoster;
         fn env() -> *mut bun_dotenv::Loader;
-        fn create_null_delimited_env_map() -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError>;
     }
 }
 

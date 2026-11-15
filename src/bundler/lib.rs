@@ -98,10 +98,7 @@ pub use bundle_v2::{
     CompileResult, CompileResultForSourceMap, ContentHasher, EventLoop, ImportTracker, PartRange,
     StableRef, WrapKind, generic_path_with_pretty_initialized, target_from_hashbang,
 };
-pub use chunk::{
-    CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
-    cross_chunk_import,
-};
+pub use chunk::{CrossChunkImportItem, CrossChunkImportItemList, bun_renamer};
 pub use linker_graph::{
     ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
     entry_point, js_meta,
@@ -123,8 +120,6 @@ pub mod DeferredBatchTask;
 pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
-
-pub mod BundleThread;
 
 pub mod ServerComponentParseTask;
 

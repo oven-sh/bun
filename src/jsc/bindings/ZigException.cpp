@@ -267,6 +267,7 @@ public:
 
         bool isConstructor = false;
         bool isGlobalCode = false;
+        bool isFunction = false;
         bool isAsync = false;
     };
 
@@ -405,6 +406,8 @@ public:
         if (functionName == "global code"_s) {
             functionName = StringView();
             frame.isGlobalCode = true;
+        } else {
+            frame.isFunction = true;
         }
 
         if (functionName.startsWith("async "_s)) {
@@ -652,7 +655,7 @@ __attribute__((minsize)) static void fromErrorInstance(ZigException& except, JSC
                             current.code_type = ZigStackFrameCodeConstructor;
                         } else if (frame.isGlobalCode) {
                             current.code_type = ZigStackFrameCodeGlobal;
-                        } else if (frame.isAsync) {
+                        } else if (frame.isFunction) {
                             current.code_type = ZigStackFrameCodeFunction;
                         }
 

@@ -194,7 +194,7 @@ fn finalize_bundle_inner(
     let input_file_loaders = bv2.graph.input_files.items_loader();
     let import_records = bv2.graph.ast.items_import_records();
     let targets = bv2.graph.ast.items_target();
-    let scbs = bv2.graph.server_component_boundaries.slice();
+    let scbs = &bv2.graph.server_component_boundaries;
 
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
@@ -441,7 +441,7 @@ fn finalize_bundle_inner(
             code: compile_result_code,
             script_injection_offset: compile_result_offset,
             ..
-        } = chunk.compile_results_for_chunk.get_mut(0)
+        } = &mut chunk.compile_results_for_chunk[0]
         else {
             unreachable!()
         };

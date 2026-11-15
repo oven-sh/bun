@@ -942,35 +942,17 @@ impl Builder {
             let total: usize = object_braces_offset + object_braces_bytes + STREAM_TAIL_PAD;
 
             let mut out = MutableString::init_empty();
-            // Every byte in [0..total) is written below: [0..20] zero-filled,
-            // [20..32] header u32s, [32..32+sync_bytes] sync table memcpy,
-            // [stream_offset..stream_offset+win_stream.len()] stream memcpy,
-            // [object_braces_offset..total-STREAM_TAIL_PAD] object braces memcpy,
-            // [total-STREAM_TAIL_PAD..total] zero-filled. These ranges are
-            // contiguous (HEADER_SIZE==32, stream_offset==32+sync_bytes), so
-            // no uninit bytes are exposed by set_len.
-            // SAFETY: every byte in [0..total) is written below (see comment above).
-            let blob = unsafe { out.list.writable_slice_exact(total) };
-
-            blob[0..20].fill(0);
-            blob[20..24].copy_from_slice(
-                &u32::try_from(self.object_braces.len())
-                    .expect("int cast")
-                    .to_ne_bytes(),
-            );
-            blob[24..28].copy_from_slice(
-                &u32::try_from(self.sync_entries.len())
-                    .expect("int cast")
-                    .to_ne_bytes(),
-            );
-            blob[28..32].copy_from_slice(&stream_offset.to_ne_bytes());
-            if sync_bytes > 0 {
-                blob[HEADER_SIZE..HEADER_SIZE + sync_bytes].copy_from_slice(sync_entries);
-            }
-            blob[stream_offset as usize..stream_offset as usize + self.win_stream.len()]
-                .copy_from_slice(&self.win_stream);
-            blob[object_braces_offset..][..object_braces_bytes].copy_from_slice(object_braces);
-            blob[total - STREAM_TAIL_PAD..total].fill(0);
+            out.list.reserve_exact(total);
+            let count = |len: usize| u32::try_from(len).expect("int cast").to_ne_bytes();
+            out.list.extend_from_slice(&[0; 20]);
+            out.list.extend_from_slice(&count(self.object_braces.len()));
+            out.list.extend_from_slice(&count(self.sync_entries.len()));
+            out.list.extend_from_slice(&stream_offset.to_ne_bytes());
+            out.list.extend_from_slice(sync_entries);
+            out.list.extend_from_slice(&self.win_stream);
+            out.list.extend_from_slice(object_braces);
+            out.list.extend_from_slice(&[0; STREAM_TAIL_PAD]);
+            debug_assert_eq!(out.list.len(), total);
 
             self.win_stream = Vec::new();
             self.sync_entries = Vec::new();

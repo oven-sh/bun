@@ -42,6 +42,54 @@ fn validity_of_read(graph: &ModuleGraph, input: &BindInput<'_, '_>, name: &str) 
     read.expect("the member is known").validity
 }
 
+fn is_read_off_object_behind(store: &str) -> bool {
+    let reader = format!("{READS} {store}");
+    let helper = "export function set(target: any, key: string) { target[key] = 9; } export const read = (target: any) => target.Ready;";
+    let files = [
+        ("a.test.ts", reader.as_str()),
+        ("states.ts", STATES),
+        ("helper.ts", helper),
+    ];
+    with_graph(&files, |graph, input| {
+        validity_of_read(graph, input, "Ready") == Validity::WhileObjectIsNotHandedOn
+    })
+}
+
+#[test]
+fn members_of_enums_that_the_program_stores_into() {
+    for store in [
+        "(State as any).Ready = 9;",
+        "(State as any)['Ready'] = 9;",
+        "(State as any)[process.argv[2]] = 9;",
+        "delete (State as any).Ready;",
+        "(State as any).Done++;",
+        "[(State as any).Ready] = [9];",
+        "for ((State as any).Ready of [9]);",
+        "Object.assign(State, { Ready: 9 });",
+        "Object.defineProperty(State, 'Ready', { value: 9 });",
+        "Reflect.set(State, process.argv[2], 9);",
+        "const held: any = State; held.Ready = 9;",
+        "let held: any; held = process.argv[2] ? State : {}; held.Ready = 9;",
+        "function set(held: any = State) { held.Ready = 9; } set();",
+        "function set(held: any) { const again = held; again.Ready = 9; } set(State);",
+        "(function (held: any) { held.Ready = 9; })(State);",
+        "import { set } from './helper'; set(State, 'Ready');",
+        "import * as helpers from './helper'; helpers.set(State, 'Ready');",
+        "import * as all from './states'; (all.State as any).Ready = 9;",
+    ] {
+        assert!(is_read_off_object_behind(store), "{store}");
+    }
+    for read in [
+        "console.log(Object.values(State), { ...State });",
+        "(State as any).Later = 9;",
+        "Object.assign({}, State);",
+        "const held: any = { ...State }; held.Ready = 9;",
+        "import { read } from './helper'; read(State);",
+    ] {
+        assert!(!is_read_off_object_behind(read), "{read}");
+    }
+}
+
 #[test]
 fn foreign_members_in_test_runs() {
     let own = "enum Own { Here = 1 } console.log(Own.Here);";

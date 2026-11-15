@@ -221,7 +221,7 @@ impl TimerHeap {
     /// # Safety
     /// `v` is a node currently in *this* heap.
     #[inline]
-    pub(crate) unsafe fn remove(&self, v: *const EventLoopTimer) {
+    unsafe fn remove(&self, v: *const EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
         unsafe { self.0.remove(v.cast_mut()) };
     }
@@ -234,18 +234,38 @@ impl TimerHeap {
         if r.is_null() { None } else { Some(r) }
     }
 
+    pub(crate) fn first_deadline(&self) -> Option<Timespec> {
+        // SAFETY: `peek` returns a live heap node.
+        self.peek().map(|first| unsafe { (*first).next.get() })
+    }
+
     #[inline]
-    pub(crate) fn find_max(&self) -> Option<*mut EventLoopTimer> {
+    pub(crate) fn last_deadline(&self) -> Option<Timespec> {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
-        // live for the heap's lifetime (intrusive invariant maintained by `All`).
-        let r = unsafe { self.0.find_max() };
-        if r.is_null() { None } else { Some(r) }
+        // live while linked (intrusive invariant maintained by `All`).
+        unsafe { self.0.find_max().as_ref() }.map(|last| last.next.get())
+    }
+
+    pub(crate) fn has_immediate(&self) -> bool {
+        self.first_immediate().is_some()
+    }
+
+    pub(crate) fn delete_first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let first = self.first_immediate()?;
+        // SAFETY: just found in this heap.
+        unsafe { self.remove(first) };
+        Some(first)
     }
 
     /// Only a faked `setImmediate` puts an `ImmediateObject` in a heap.
-    pub(crate) fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+    fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
+        let root = self.peek()?;
+        // SAFETY: `peek` returns a live heap node.
+        if unsafe { (*root).tag } == EventLoopTimerTag::ImmediateObject {
+            return Some(root);
+        }
         let mut first: Option<*mut EventLoopTimer> = None;
-        let mut stack = vec![self.0.peek()];
+        let mut stack = vec![root];
         while let Some(node) = stack.pop() {
             if node.is_null() {
                 continue;
@@ -658,14 +678,8 @@ impl All {
             "timer scheduled after teardown closed the heap's uv timer"
         );
 
-        let reg_next = self.timers.peek().map(|timer| {
-            // SAFETY: `peek` returns a live heap node.
-            unsafe { (*timer).next.get() }
-        });
-        let wtf_next = self.wtf_timers.lock().peek().map(|timer| {
-            // SAFETY: `peek` returns a live heap node.
-            unsafe { (*timer).next.get() }
-        });
+        let reg_next = self.timers.first_deadline();
+        let wtf_next = self.wtf_timers.lock().first_deadline();
         let Some(next_ts) = Self::soonest(reg_next, wtf_next) else {
             return;
         };
@@ -854,10 +868,7 @@ impl All {
 
         let wtf_next = self.drain_due_wtf_timers(maybe_now, vm);
 
-        let reg_next = self.timers.peek().map(|min| {
-            // SAFETY: `peek` returns a live heap node.
-            unsafe { (*min).next.get() }
-        });
+        let reg_next = self.timers.first_deadline();
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
             if let Some(us) = quic_next_tick_us {

@@ -36,7 +36,7 @@ pub(crate) fn read_trusted_dependencies(pm: &mut PackageManager) -> Option<Trust
     {
         Ok(recorded) => recorded,
         Err(err) => {
-            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(Output::error_writer());
             Output::err(err, "failed to read trustedDependencies", ());
             Global::crash();
         }
@@ -80,7 +80,7 @@ impl Blocked {
         folder: &mut AutoAbsPath,
     ) -> crate::Result<Option<ScriptsList>> {
         let buf = lockfile.buffers.string_bytes.as_slice();
-        let packages = lockfile.packages.slice();
+        let packages = &lockfile.packages;
         let package_id = package_id as usize;
         // called alias because a dependency name is not always the package name
         let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
@@ -558,7 +558,6 @@ impl TrustCommand {
                 let output_in_foreground = false;
                 let optional = false;
                 pm.spawn_package_lifecycle_scripts(
-                    &mut *ctx,
                     info.scripts_list.clone(),
                     optional,
                     output_in_foreground,
@@ -601,9 +600,7 @@ impl TrustCommand {
         ) {
             Ok(v) => v,
             Err(err) => {
-                let _ = ctx
-                    .log_ref()
-                    .print(std::ptr::from_mut(Output::error_writer()));
+                let _ = ctx.log_ref().print(Output::error_writer());
 
                 Output::err_generic("failed to parse package.json: {s}", (err.name(),));
                 Global::crash();

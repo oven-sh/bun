@@ -41,7 +41,7 @@ pub(crate) use crate::shell::env_map::EnvMap;
 use crate::shell::io::IO;
 use crate::shell::states::assigns::Assigns;
 use crate::shell::states::r#async::Async;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::binary::Binary;
 pub(crate) use crate::shell::states::cmd::Cmd;
 use crate::shell::states::cond_expr::CondExpr;
@@ -834,7 +834,7 @@ impl Interpreter {
         if let Node::Pipeline(p) = self.node(parent) {
             let rightmost = p.cmds.as_deref().is_none_or(|c| {
                 c.len() < 2
-                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd { id, .. }) if *id == child)
+                    || matches!(c.last(), Some(crate::shell::states::pipeline::CmdOrResult::Cmd(id)) if *id == child)
             });
             if rightmost {
                 self.as_pipeline_mut(parent).base.interrupted = true;
@@ -946,15 +946,15 @@ impl Interpreter {
         io: IO,
     ) -> (Option<NodeId>, Yield) {
         let child = match expr {
-            ast::Expr::Cmd(c) => Cmd::init(self, shell, *c, parent, io),
+            ast::Expr::Cmd(c) => Cmd::init(self, Env::inherited(shell), *c, parent, io),
             ast::Expr::Binary(b) => Binary::init(self, shell, *b, parent, io),
             ast::Expr::Pipeline(p) => Pipeline::init(self, shell, *p, parent, io),
             ast::Expr::Assign(a) => Assigns::init(self, shell, *a, parent, AssignCtx::Shell),
-            ast::Expr::If(i) => If::init(self, shell, *i, parent, io),
-            ast::Expr::CondExpr(c) => CondExpr::init(self, shell, *c, parent, io),
+            ast::Expr::If(i) => If::init(self, Env::inherited(shell), *i, parent, io),
+            ast::Expr::CondExpr(c) => CondExpr::init(self, Env::inherited(shell), *c, parent, io),
             ast::Expr::Subshell(s) => {
                 // Stmt/Binary callers dupe
-                // the env here so `Subshell::start`/`next` can use `base.shell`
+                // the env here so `Subshell::start`/`next` can use `shell`
                 // as-is. (Pipeline dupes itself and calls `Subshell::init`
                 // directly, so it does NOT go through this path.)
                 // SAFETY: `shell` is the live parent `ShellExecEnv` borrowed for the
@@ -1178,7 +1178,7 @@ impl Interpreter {
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
         Ok(())
     }
@@ -1368,7 +1368,7 @@ impl Interpreter {
         let shell = self.root_shell.as_ptr();
         let ast = &self.args.get().script_ast;
         let io = self.root_io.get().clone();
-        let root = Script::init(self, shell, ast, NodeId::INTERPRETER, io);
+        let root = Script::init(self, Env::inherited(shell), ast, NodeId::INTERPRETER, io);
         Script::start(self, root).run(self);
         if global_this.has_exception() {
             return Err(crate::jsc::JsError::Thrown);
@@ -1568,7 +1568,6 @@ pub(crate) fn throw_shell_err(
 // ────────────────────────────────────────────────────────────────────────────
 
 /// Shell execution environment (env vars, cwd, captured stdout/stderr).
-/// Every state node holds a `*mut ShellExecEnv` in its `Base`.
 pub(crate) struct ShellExecEnv {
     pub(crate) _buffered_stdout: Bufio,
     pub(crate) _buffered_stderr: Bufio,
@@ -2631,7 +2630,7 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub(crate) unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask};
+        use bun_event_loop::EventLoopTask;
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the
@@ -2648,8 +2647,7 @@ impl ShellTask {
             match &mut (*this).concurrent_task {
                 EventLoopTask::Js(ct) => {
                     // Tag resolved via `C: Taskable`.
-                    ct.from(ctx, AutoDeinit::ManualDeinit);
-                    poster.post_js(core::ptr::NonNull::from(ct));
+                    poster.post_js_intrusive(core::ptr::NonNull::from(ct.from(ctx)));
                 }
                 EventLoopTask::Mini(at) => {
                     // Pass the monomorphised callback explicitly.

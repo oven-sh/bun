@@ -1377,7 +1377,7 @@ pub struct PropertyOpts {
     pub(crate) class_has_extends: bool,
     pub(crate) allow_ts_decorators: bool,
     pub(crate) is_ts_abstract: bool,
-    pub(crate) ts_decorators: ExprNodeList,
+    pub(crate) ts_decorators: js_ast::StoreSlice<Expr>,
     pub(crate) has_argument_decorators: bool,
     pub(crate) has_class_decorators: bool,
 }
@@ -1393,7 +1393,7 @@ impl Default for PropertyOpts {
             class_has_extends: false,
             allow_ts_decorators: false,
             is_ts_abstract: false,
-            ts_decorators: bun_alloc::AstAlloc::vec(),
+            ts_decorators: js_ast::StoreSlice::EMPTY,
             has_argument_decorators: false,
             has_class_decorators: false,
         }

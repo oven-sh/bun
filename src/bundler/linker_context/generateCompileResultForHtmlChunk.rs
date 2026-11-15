@@ -4,12 +4,11 @@ use bstr::BStr;
 
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_core::strings;
-use bun_threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 
 use crate::HTMLScanner::{HTMLProcessor, HTMLProcessorHandler};
-use crate::linker_context_mod::{GenerateChunkCtx, LinkerContext, debug};
+use crate::linker_context_mod::{LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
 
@@ -32,38 +31,18 @@ use crate::{Chunk, CompileResult};
 ///    a <link rel="modulepreload" href="..." crossorigin> tag that
 ///    points to the module or chunk's unique key so that we tell the
 ///    browser to preload the user's code.
-// CONCURRENCY: thread-pool callback — runs on worker threads, one task per
-// HTML `PendingPartRange` (exactly one per HTML chunk). Writes:
-// `chunk.compile_results_for_chunk[0]` (per-chunk disjoint). Reads
-// `c.parse_graph().input_files` / `c.graph` / `ctx.chunks` shared. Never forms
-// `&mut LinkerContext`. See `generate_compile_result_for_js_chunk` for the
-// `PendingPartRange: Send` justification.
-//
-/// # Safety
-///
-/// `task` must be the intrusive `task` field of a live `PendingPartRange`
-/// scheduled by `generate_chunks_in_parallel`; see
-/// [`pending_part_range_prologue`](crate::linker_context_mod::pending_part_range_prologue)
-/// for the full contract. Matches the `Task::callback: unsafe fn(*mut Task)`
-/// contract.
-pub(crate) unsafe fn generate_compile_result_for_html_chunk(task: *mut ThreadPoolLibTask) {
-    // SAFETY: `task` is the intrusive `task` field of a `PendingPartRange`
-    // scheduled by `generate_chunks_in_parallel`; see the helper's contract.
-    let (part_range, chunk_ptr, _worker) =
-        unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
-    let i = part_range.i as usize;
-    let ctx: &GenerateChunkCtx = part_range.ctx;
-
-    // `ctx.chunk` / `ctx.chunks` are `BackRef`s;
-    // all yield safe shared borrows via `.get()`. `chunk` is this task's
-    // exclusively-owned HTML chunk for the duration of the compile step.
-    let c_ref: &LinkerContext = ctx.c;
-    let chunk_ref: &Chunk = ctx.chunk.get();
-    let chunks: &[Chunk] = ctx.chunks.get();
-    let result = generate_compile_result_for_html_chunk_impl(c_ref, chunk_ref, chunks);
-    // SAFETY: HTML chunks have exactly one part-range (i == 0); see
-    // `Chunk::write_compile_result_slot` for the disjoint-slot contract.
-    unsafe { Chunk::write_compile_result_slot(chunk_ptr, i, result) };
+struct HTMLLoader<'r, 'a> {
+    linker: &'r LinkerContext<'r, 'a>,
+    import_records: &'r [ImportRecord<'a>],
+    current_import_record_index: u32,
+    /// This task's HTML chunk, an element of `chunks`.
+    chunk: &'r Chunk<'a>,
+    chunks: &'r [Chunk<'a>],
+    compile_to_standalone_html: bool,
+    output: Vec<u8>,
+    end_tag_indices: EndTagIndices,
+    added_head_tags: bool,
+    added_body_script: bool,
 }
 
 #[derive(Default)]
@@ -71,20 +50,6 @@ struct EndTagIndices {
     head: Option<u32>,
     body: Option<u32>,
     html: Option<u32>,
-}
-
-struct HTMLLoader<'a> {
-    linker: &'a LinkerContext<'a, 'a>,
-    import_records: &'a [ImportRecord<'a>],
-    current_import_record_index: u32,
-    /// This task's HTML chunk, an element of `chunks`.
-    chunk: &'a Chunk<'a>,
-    chunks: &'a [Chunk<'a>],
-    compile_to_standalone_html: bool,
-    output: Vec<u8>,
-    end_tag_indices: EndTagIndices,
-    added_head_tags: bool,
-    added_body_script: bool,
 }
 
 /// `Element::set_attribute` takes `&str`, so non-UTF-8 `name`/`value` bytes
@@ -99,7 +64,7 @@ fn set_attribute(element: &mut Element<'_, '_>, name: &[u8], value: &[u8]) {
     }
 }
 
-impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
+impl HTMLProcessorHandler for HTMLLoader<'_, '_> {
     fn on_write_html(&mut self, bytes: &[u8]) {
         self.output.extend_from_slice(bytes);
     }
@@ -215,10 +180,10 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
 
 /// An `HTMLLoader` end-tag callback. It receives the loader as an erased
 /// `*mut ()` so the closure boxed into `Element::end_tag_handlers` captures
-/// only `'static` data — `HTMLLoader<'a>` itself is not `'static`.
+/// only `'static` data — `HTMLLoader` itself is not `'static`.
 type EndTagHandlerFn = fn(*mut (), &mut EndTag<'_>) -> HandlerResult;
 
-impl<'a> HTMLLoader<'a> {
+impl HTMLLoader<'_, '_> {
     /// Arranges for `handler(self, end_tag)` to run when `element`'s end tag
     /// is reached. Returns `true` (stop the rewriter) if `element` cannot
     /// have an end tag.
@@ -360,10 +325,10 @@ impl<'a> HTMLLoader<'a> {
     }
 }
 
-fn generate_compile_result_for_html_chunk_impl<'a>(
-    c: &'a LinkerContext<'_, 'a>,
-    chunk: &'a Chunk<'a>,
-    chunks: &'a [Chunk<'a>],
+pub(crate) fn generate_compile_result_for_html_chunk<'a>(
+    c: &LinkerContext<'_, 'a>,
+    chunk: &Chunk<'a>,
+    chunks: &[Chunk<'a>],
 ) -> CompileResult {
     let parse_graph = c.parse_graph();
     let sources = parse_graph.input_files.items_source();

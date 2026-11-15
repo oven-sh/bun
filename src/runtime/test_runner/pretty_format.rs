@@ -4677,7 +4677,7 @@ impl JestPrettyFormat {
         let Some(utils) = expect::ExpectMatcherUtils::from_js(utils_value) else { return Ok(None) };
         // SAFETY: `utils_value` is on the stack and owns the payload.
         let utils = unsafe { &*utils };
-        let file = super::jest::Jest::file_generation(global);
+        let file = super::jest::Jest::file_generation();
         let is_same_file = utils.serializers_file.replace(file) == file;
         let Some(serializers) = js_ExpectMatcherUtils::snapshot_serializers_get_cached(utils_value) else {
             return Ok(None);

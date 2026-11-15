@@ -208,7 +208,7 @@ impl FileRoute {
 
     fn write_headers(&self, resp: AnyResponse) {
         use bun_http_types::ETag::HeaderEntryColumns;
-        let entries = self.headers.entries.slice();
+        let entries = &self.headers.entries;
         let names: &[StringPointer] = entries.items_name();
         let values: &[StringPointer] = entries.items_value();
         let buf = self.headers.buf.as_slice();

@@ -57,7 +57,7 @@ pub struct PendingImport {
     pub(crate) import_record_index: u32,
 }
 
-/// The imports that failed to resolve, by what `DevServerHandle::mark_resolution_failure` returns for the importer.
+/// One log per importer.
 pub type ResolutionFailures = ArrayHashMap<u32, bun_ast::Log>;
 
 pub struct BundleV2<'a> {
@@ -1824,36 +1824,36 @@ pub mod bv2_impl {
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> &bun_ast::Log {
-            let entry = self.mark_resolution_failure(abs_path, bake_graph);
+            let index = self.resolution_log_index(abs_path, bake_graph);
             Self::log_for_resolution_failures_impl(
                 &mut self.resolution_failures,
-                entry,
+                index,
                 self.transpiler.log(),
             )
         }
 
-        /// The first half of `log_for_resolution_failures`: the file's position in `resolution_failures`.
-        fn mark_resolution_failure(
+        /// `None` without `dev_server`.
+        fn resolution_log_index(
             &mut self,
             abs_path: &[u8],
             bake_graph: bake::Graph,
         ) -> Option<usize> {
-            let file = (self.dev_server?).mark_resolution_failure(abs_path, bake_graph);
-            let entry = bun_core::handle_oom(self.resolution_failures.as_mut().get_or_put(file));
+            let owner = (self.dev_server?).insert_stale_owner(abs_path, bake_graph);
+            let entry = bun_core::handle_oom(self.resolution_failures.as_mut().get_or_put(owner));
             if !entry.found_existing {
                 *entry.value_ptr = bun_ast::Log::init();
             }
             Some(entry.index)
         }
 
-        /// The second half, for callers that use the rest of the bundle meanwhile.
+        /// Borrows only `resolution_failures`.
         fn log_for_resolution_failures_impl<'s>(
             resolution_failures: &'s mut SyncView<ResolutionFailures>,
-            entry: Option<usize>,
+            index: Option<usize>,
             transpiler_log: &'s bun_ast::Log,
         ) -> &'s bun_ast::Log {
-            match entry {
-                Some(entry) => &resolution_failures.as_mut().values()[entry],
+            match index {
+                Some(index) => &resolution_failures.as_mut().values()[index],
                 None => transpiler_log,
             }
         }
@@ -2512,13 +2512,11 @@ pub mod bv2_impl {
                         let handles_import_errors;
                         let ignore_module_resolution_errors =
                             self.transpiler.options.ignore_module_resolution_errors;
-                        let entry = self.mark_resolution_failure(
-                            import_record.source_file,
-                            target.bake_graph(),
-                        );
+                        let index = self
+                            .resolution_log_index(import_record.source_file, target.bake_graph());
                         let log = Self::log_for_resolution_failures_impl(
                             &mut self.resolution_failures,
-                            entry,
+                            index,
                             self.transpiler.log(),
                         );
 
@@ -4619,13 +4617,13 @@ pub mod bv2_impl {
                         return;
                     }
 
-                    let entry = this.mark_resolution_failure(
+                    let index = this.resolution_log_index(
                         resolve.import_record.source_file,
                         resolve.import_record.original_target.bake_graph(),
                     );
                     let log = Self::log_for_resolution_failures_impl(
                         &mut this.resolution_failures,
-                        entry,
+                        index,
                         this.transpiler.log(),
                     );
 
@@ -6025,8 +6023,8 @@ pub mod bv2_impl {
                         ) {
                         Ok(r) => break r,
                         Err(err) => {
-                            let entry = self
-                                .mark_resolution_failure(source.path.text, ctx.target.bake_graph());
+                            let index = self
+                                .resolution_log_index(source.path.text, ctx.target.bake_graph());
 
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
@@ -6075,7 +6073,7 @@ pub mod bv2_impl {
 
                             let log = Self::log_for_resolution_failures_impl(
                                 &mut self.resolution_failures,
-                                entry,
+                                index,
                                 self.transpiler.log(),
                             );
                             if err == _resolver::Error::ModuleNotFound {

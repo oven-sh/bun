@@ -1278,10 +1278,10 @@ impl Log {
         self.line_column_tracker.set(None);
     }
 
-    /// Until the guard drops, `self` has the messages, counts and level of `into`, and what is logged ends up there.
-    pub fn redirect<'g>(&'g self, into: &'g mut Log) -> LogRedirect<'g> {
-        self.swap(into);
-        LogRedirect { log: self, into }
+    /// Swaps contents with `target` until the guard drops, so `target` gets what is logged to `self`.
+    pub fn redirect<'a>(&'a self, target: &'a mut Log) -> LogRedirectGuard<'a> {
+        self.swap(target);
+        LogRedirectGuard { log: self, target }
     }
 
     fn swap(&self, other: &mut Log) {
@@ -1309,14 +1309,14 @@ impl Log {
 
 /// See [`Log::redirect`].
 #[must_use = "the redirect ends on drop; bind to a named local"]
-pub struct LogRedirect<'g> {
-    log: &'g Log,
-    into: &'g mut Log,
+pub struct LogRedirectGuard<'a> {
+    log: &'a Log,
+    target: &'a mut Log,
 }
 
-impl Drop for LogRedirect<'_> {
+impl Drop for LogRedirectGuard<'_> {
     fn drop(&mut self) {
-        self.log.swap(self.into);
+        self.log.swap(self.target);
     }
 }
 

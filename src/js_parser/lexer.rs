@@ -131,7 +131,7 @@ pub struct ScanResult<'a> {
 /// POD snapshot of all backtrack-relevant lexer state.
 ///
 /// Backtracking can't snapshot the lexer with a full struct copy because
-/// `Lexer` owns heap-backed buffers and a `Log` pointer. Instead, callers do:
+/// `Lexer` owns heap-backed buffers. Instead, callers do:
 ///
 /// ```ignore
 /// let snap = p.lexer.snapshot();

@@ -886,7 +886,7 @@ impl BunxCommand {
 
     pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
         // Don't log stuff
-        bun_options_types::context::SILENT.store(true, core::sync::atomic::Ordering::Relaxed);
+        bun_options_types::context::IS_SILENT.store(true, core::sync::atomic::Ordering::Relaxed);
 
         let opts = Options::parse(ctx, argv)?;
 

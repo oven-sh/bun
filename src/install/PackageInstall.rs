@@ -15,9 +15,10 @@ use bun_threading::thread_pool::Batch;
 use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask};
 
 use crate::package_installer::NodeModulesFolder;
+use crate::package_manager::package_manager_lifecycle::PreinstallStates;
 use crate::package_manager::{INBOX, THREAD_POOL};
 use crate::{
-    BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
+    BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, resolution,
 };
 
@@ -930,7 +931,7 @@ impl HardLinkWindowsInstallTask {
             return None;
         }
 
-        if PackageManager::verbose_install() {
+        if crate::PackageManager::verbose_install() {
             bun_core::run_once! {{
                 bun_core::warn!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
@@ -2254,11 +2255,11 @@ impl<'a> PackageInstall<'a> {
 
     pub(crate) fn package_missing_from_cache(
         &mut self,
-        manager: &mut PackageManager,
+        preinstall_state: &mut PreinstallStates,
         package_id: PackageID,
         resolution_tag: resolution::Tag,
     ) -> bool {
-        match manager.get_preinstall_state(package_id) {
+        match preinstall_state.get(package_id) {
             // A tarball has no cache entry name until extraction records its integrity.
             _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
@@ -2282,7 +2283,7 @@ impl<'a> PackageInstall<'a> {
                     resolution_tag,
                 );
                 if exists {
-                    manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                    preinstall_state.set(self.lockfile, package_id, crate::PreinstallState::Done);
                 }
                 !exists
             }
@@ -2291,13 +2292,13 @@ impl<'a> PackageInstall<'a> {
 
     pub(crate) fn patched_package_missing_from_cache(
         &mut self,
-        manager: &mut PackageManager,
+        preinstall_state: &mut PreinstallStates,
         package_id: PackageID,
     ) -> bool {
         let exists =
             sys::directory_exists_at(self.cache_dir, self.cache_dir_subpath).unwrap_or(false);
         if exists {
-            manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+            preinstall_state.set(self.lockfile, package_id, crate::PreinstallState::Done);
         }
         !exists
     }

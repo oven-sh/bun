@@ -53,8 +53,6 @@ pub use process::{
 bun_dispatch::link_interface! {
     pub ProcessExit[
         Subprocess,
-        LifecycleScript,
-        InstallGit,
         SecurityScan,
         Shell,
         FilterRunHandle,

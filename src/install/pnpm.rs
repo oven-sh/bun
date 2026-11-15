@@ -391,6 +391,7 @@ pub(crate) fn migrate_pnpm_lockfile(
     manager: &mut PackageManager,
     log: &bun_ast::Log,
     data: &[u8],
+    swap_into_manager: bool,
 ) -> Result<LoadResult, MigratePnpmLockfileError> {
     lockfile.init_empty();
     bun_core::analytics::Features::pnpm_migration_inc(1);
@@ -1207,7 +1208,9 @@ pub(crate) fn migrate_pnpm_lockfile(
         );
     }
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
-        manager, false, // update_os_cpu
+        manager,
+        swap_into_manager,
+        false, // update_os_cpu
         false, // fill_integrity
         None,
     )?;

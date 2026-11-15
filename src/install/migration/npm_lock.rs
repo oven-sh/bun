@@ -249,6 +249,7 @@ pub(super) fn migrate_packages(
     if !unverified.is_empty() {
         (migrator.this).fetch_necessary_package_metadata_after_yarn_or_pnpm_migration(
             migrator.manager,
+            true,  // swap_into_manager
             false, // update_os_cpu
             true,  // fill_integrity
             Some(&unverified),

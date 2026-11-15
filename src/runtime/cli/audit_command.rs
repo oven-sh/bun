@@ -260,7 +260,7 @@ impl AuditCommand {
             Global::exit(1);
         }
 
-        if pm.any_failed_to_install {
+        if pm.state.any_failed_to_install {
             Global::exit(1);
         }
 

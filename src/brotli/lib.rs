@@ -2,7 +2,6 @@
 use core::ffi::c_uint;
 use core::ptr::{self, NonNull};
 
-use bun_core::compress::Buffers;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
 pub mod error;
@@ -48,22 +47,25 @@ const MAX_DICTIONARY_LEN: usize = 1 << 30;
 
 /// Runs `call(available_in, next_in, available_out, next_out)` and returns how much input it consumed.
 fn with_buffers<R>(
-    mut buffers: impl Buffers,
+    input: &[u8],
+    mut out: BorrowedCursor<'_, u8>,
     call: impl FnOnce(*mut usize, *mut *const u8, *mut usize, *mut *mut u8) -> R,
 ) -> (usize, R) {
-    let (input, out) = buffers.as_raw();
-    let (mut available_in, mut next_in) = (input.len(), input.cast::<u8>());
-    let (mut available_out, mut next_out) = (out.len(), out.cast::<u8>());
-    let result = call(
-        &raw mut available_in,
-        &raw mut next_in,
-        &raw mut available_out,
-        &raw mut next_out,
-    );
-    let consumed = input.len() - available_in;
-    // SAFETY: only brotli lowers the two counts, `available_out` by as many bytes as it wrote at the start of `out`.
-    unsafe { buffers.advance(consumed, out.len() - available_out) };
-    (consumed, result)
+    let capacity = out.capacity();
+    let (mut available_in, mut next_in) = (input.len(), input.as_ptr());
+    let mut available_out = capacity;
+    // SAFETY: only brotli lowers `available_out`, by as many bytes as it wrote at the start of `out`.
+    unsafe {
+        let mut next_out = out.as_mut().as_mut_ptr().cast::<u8>();
+        let result = call(
+            &raw mut available_in,
+            &raw mut next_in,
+            &raw mut available_out,
+            &raw mut next_out,
+        );
+        out.advance(capacity - available_out);
+        (input.len() - available_in, result)
+    }
 }
 
 pub struct OwnedDecoder {
@@ -117,18 +119,26 @@ impl OwnedDecoder {
     }
 
     /// One `BrotliDecoderDecompressStream()` call. Returns how much input it consumed.
-    pub fn step(&mut self, buffers: impl Buffers) -> (usize, c::BrotliDecoderResult) {
+    pub fn step(
+        &mut self,
+        input: &[u8],
+        out: BorrowedCursor<'_, u8>,
+    ) -> (usize, c::BrotliDecoderResult) {
         // SAFETY: created in `new`; `with_buffers` passes valid pointers.
-        with_buffers(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
-            c::BrotliDecoderDecompressStream(
-                self.state.as_ptr(),
-                avail_in,
-                next_in,
-                avail_out,
-                next_out,
-                ptr::null_mut(),
-            )
-        })
+        with_buffers(
+            input,
+            out,
+            |avail_in, next_in, avail_out, next_out| unsafe {
+                c::BrotliDecoderDecompressStream(
+                    self.state.as_ptr(),
+                    avail_in,
+                    next_in,
+                    avail_out,
+                    next_out,
+                    ptr::null_mut(),
+                )
+            },
+        )
     }
 
     /// True when decoded bytes are still held in the decoder's ring buffer.
@@ -196,19 +206,28 @@ impl OwnedEncoder {
     }
 
     /// One `BrotliEncoderCompressStream()` call. Returns how much input it consumed, and whether it succeeded.
-    pub fn step(&mut self, buffers: impl Buffers, op: c::BrotliEncoderOperation) -> (usize, bool) {
+    pub fn step(
+        &mut self,
+        input: &[u8],
+        out: BorrowedCursor<'_, u8>,
+        op: c::BrotliEncoderOperation,
+    ) -> (usize, bool) {
         // SAFETY: created in `new`; `with_buffers` passes valid pointers.
-        with_buffers(buffers, |avail_in, next_in, avail_out, next_out| unsafe {
-            c::BrotliEncoderCompressStream(
-                self.state.as_ptr(),
-                op,
-                avail_in,
-                next_in,
-                avail_out,
-                next_out,
-                ptr::null_mut(),
-            ) != 0
-        })
+        with_buffers(
+            input,
+            out,
+            |avail_in, next_in, avail_out, next_out| unsafe {
+                c::BrotliEncoderCompressStream(
+                    self.state.as_ptr(),
+                    op,
+                    avail_in,
+                    next_in,
+                    avail_out,
+                    next_out,
+                    ptr::null_mut(),
+                ) != 0
+            },
+        )
     }
 }
 
@@ -358,7 +377,7 @@ impl StreamingDecoder {
             }
             let len_before = out.len();
             let (bytes_read, result) = append_with(out, max_output - len_before, |out| {
-                self.brotli.step((&input[total_in..], out))
+                self.brotli.step(&input[total_in..], out)
             });
             total_in += bytes_read;
 

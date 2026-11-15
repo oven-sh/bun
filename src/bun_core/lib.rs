@@ -29,7 +29,17 @@ pub mod util;
 pub use atomic_cell::{Atom, AtomicCell, ThreadCell};
 pub use c_str_list::{CStrList, CStrRef, CStringList};
 
-pub mod compress;
+/// Shared state-machine tag for the streaming (de)compressors in
+/// `bun_brotli` / `bun_zlib` / `bun_zstd`.
+pub mod compress {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum State {
+        Uninitialized,
+        Inflating,
+        End,
+        Error,
+    }
+}
 pub mod heap;
 
 pub mod current_work;

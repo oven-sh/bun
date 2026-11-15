@@ -31,7 +31,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::{CStr, c_uint};
 
-    use bun_core::compress::RawBuffers;
+    use bun_core::vec::BorrowedCursor;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{ErrorCode, JsResult};
 
@@ -295,24 +295,26 @@ mod _impl {
             };
         }
 
-        fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
+        fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
             match &mut self.state {
                 // Driven before `init()`.
                 None => {}
                 Some(State::Encoder(encoder)) => {
-                    let (_, ok) = encoder.step(&mut buffers, self.flush);
+                    let (consumed, ok) = encoder.step(input, out.reborrow(), self.flush);
+                    input = &input[consumed..];
                     self.last_result = c_int::from(ok);
                 }
                 Some(State::Decoder(decoder)) => {
-                    let (_, result) = decoder.step(&mut buffers);
+                    let (consumed, result) = decoder.step(input, out.reborrow());
+                    input = &input[consumed..];
                     self.last_result = result as c_int;
                     if result == c::BrotliDecoderResult::err {
                         self.error = decoder.error_code();
                     }
                 }
             }
-            self.avail_in = buffers.avail_in();
-            self.avail_out = buffers.avail_out();
+            self.avail_in = input.len();
+            self.avail_out = out.capacity();
         }
 
         fn write_result(&self) -> Result<[u32; 2], Error> {

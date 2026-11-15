@@ -418,7 +418,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let (consumed, ok) =
-                        append_step(out, cap, |spare| p.step((remaining, spare), op))?;
+                        append_step(out, cap, |spare| p.step(remaining, spare, op))?;
                     remaining = &remaining[consumed..];
                     if !ok {
                         return Err(CodecError::Message("brotli encode failed"));
@@ -445,7 +445,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let (consumed, result) =
-                        append_step(out, cap, |spare| p.step((remaining, spare)))?;
+                        append_step(out, cap, |spare| p.step(remaining, spare))?;
                     remaining = &remaining[consumed..];
                     match result {
                         brotli::BrotliDecoderResult::success => {
@@ -489,7 +489,7 @@ impl CompressionStreamCoder {
                         });
                     }
                     let (consumed, hint) =
-                        append_step(out, cap, |spare| p.step((remaining, spare), end))?;
+                        append_step(out, cap, |spare| p.step(remaining, spare, end))?;
                     remaining = &remaining[consumed..];
                     let hint = hint.map_err(|code| zstd_error(code, "zstd encode failed"))?;
                     if remaining.is_empty() && (!finish || hint == 0) {
@@ -526,8 +526,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let (consumed, hint) =
-                        append_step(out, cap, |spare| p.step((remaining, spare)))?;
+                    let (consumed, hint) = append_step(out, cap, |spare| p.step(remaining, spare))?;
                     remaining = &remaining[consumed..];
                     if hint.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
                         self.ended = true;

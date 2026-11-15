@@ -1,6 +1,6 @@
 use core::ffi::{CStr, c_int};
 
-use bun_core::compress::RawBuffers;
+use bun_core::vec::BorrowedCursor;
 use bun_zlib as c;
 
 use crate::node::node_zlib_binding::{CompressionContext, Error};
@@ -293,8 +293,8 @@ impl Context {
     }
 
     /// Resolves `UNZIP` to `GUNZIP` or `INFLATE` once the first bytes tell which it is.
-    fn detect_gzip_header(&mut self, buffers: &RawBuffers<'_>) {
-        let mut header = (0..2).map_while(|index| buffers.input_byte(index));
+    fn detect_gzip_header(&mut self, input: &[u8]) {
+        let mut header = input.iter().copied();
         if self.gzip_id_bytes_read == 0 {
             match header.next() {
                 Some(Self::GZIP_HEADER_ID1) => self.gzip_id_bytes_read = 1,
@@ -346,42 +346,49 @@ impl CompressionContext for Context {
         };
     }
 
-    fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
+    fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
         if self.mode == c::NodeMode::UNZIP {
-            self.detect_gzip_header(&buffers);
+            self.detect_gzip_header(input);
         }
 
         match &mut self.state {
             None => self.err = c::ReturnCode::StreamError,
             Some(State::Deflate(encoder)) => {
-                self.err = encoder.step_buffers(&mut buffers, self.flush).1;
+                let consumed;
+                (consumed, self.err) = encoder.step_into(input, out.reborrow(), self.flush);
+                input = &input[consumed..];
             }
             Some(State::Inflate(decoder)) => {
-                self.err = decoder.step_buffers(&mut buffers, self.flush).1;
+                let mut step = |decoder: &mut c::InflateDecoder, input: &mut &[u8]| {
+                    let (consumed, err) = decoder.step_into(input, out.reborrow(), self.flush);
+                    *input = &input[consumed..];
+                    err
+                };
+                self.err = step(decoder, &mut input);
 
                 if self.mode != c::NodeMode::INFLATERAW
                     && self.err == c::ReturnCode::NeedDict
                     && !self.dictionary.is_empty()
                 {
                     self.err = match decoder.set_dictionary(&self.dictionary) {
-                        c::ReturnCode::Ok => decoder.step_buffers(&mut buffers, self.flush).1,
+                        c::ReturnCode::Ok => step(decoder, &mut input),
                         c::ReturnCode::DataError => c::ReturnCode::NeedDict,
                         err => err,
                     };
                 }
                 while self.mode == c::NodeMode::GUNZIP
                     && self.err == c::ReturnCode::StreamEnd
-                    && buffers.input_byte(0).is_some_and(|byte| byte != 0)
+                    && input.first().is_some_and(|&byte| byte != 0)
                 {
                     // Another member of the archive, or trailing garbage. Trailing zero bytes are padding.
                     let _ = decoder.reset();
-                    self.err = decoder.step_buffers(&mut buffers, self.flush).1;
+                    self.err = step(decoder, &mut input);
                 }
             }
         }
 
-        self.avail_in = buffers.avail_in();
-        self.avail_out = buffers.avail_out();
+        self.avail_in = input.len();
+        self.avail_out = out.capacity();
     }
 
     fn write_result(&self) -> Result<[u32; 2], Error> {

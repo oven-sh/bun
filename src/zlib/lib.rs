@@ -1,9 +1,9 @@
+#![feature(core_io_borrowed_buf)]
 // @link "deps/zlib/libz.a"
 
 use core::ffi::{CStr, c_char, c_int, c_uint};
 
-use bun_core::compress::{Buffers, RawBuffers};
-use bun_core::vec::append_with;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
 // Externs stay in this crate per PORTING.md §FFI: "If your file has externs
 // and isn't already *_sys, leave them in place".
@@ -653,12 +653,11 @@ impl DeflateEncoder {
 
     /// `deflateParams()` with no room for output: `BufError` if a block has to be flushed first.
     pub fn set_params(&mut self, level: c_int, strategy: c_int) -> ReturnCode {
-        let (_, rc) = self
-            .strm
-            .with_buffers(&mut RawBuffers::new(&[], &mut []), |strm| {
-                // SAFETY: strm was initialized via deflateInit2_, and `with_buffers` set its buffers.
-                unsafe { deflateParams(strm, level, strategy) }
-            });
+        let mut no_room = BorrowedBuf::from(<&mut [u8]>::default());
+        let (_, rc) = self.strm.with_buffers(&[], no_room.unfilled(), |strm| {
+            // SAFETY: strm was initialized via deflateInit2_, and `with_buffers` set its buffers.
+            unsafe { deflateParams(strm, level, strategy) }
+        });
         rc
     }
 
@@ -712,18 +711,19 @@ impl DeflateEncoder {
         if out.try_reserve(reserve).is_err() {
             return (0, ReturnCode::MemError);
         }
-        append_with(out, limit, |out| self.step_buffers((input, out), flush))
+        append_with(out, limit, |out| self.step_into(input, out, flush))
     }
 
-    /// Like [`step`](Self::step), but over `buffers`.
-    pub fn step_buffers(
+    /// Like [`step`](Self::step), but appends to a buffer that does not grow.
+    pub fn step_into(
         &mut self,
-        buffers: impl Buffers,
+        input: &[u8],
+        out: BorrowedCursor<'_, u8>,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
         // SAFETY: strm was initialized via deflateInit2_, and `with_buffers` set its buffers.
         self.strm
-            .with_buffers(buffers, |strm| unsafe { deflate(strm, flush) })
+            .with_buffers(input, out, |strm| unsafe { deflate(strm, flush) })
     }
 }
 
@@ -841,18 +841,19 @@ impl InflateDecoder {
         if out.try_reserve(reserve).is_err() {
             return (0, ReturnCode::MemError);
         }
-        append_with(out, limit, |out| self.step_buffers((input, out), flush))
+        append_with(out, limit, |out| self.step_into(input, out, flush))
     }
 
-    /// Like [`step`](Self::step), but over `buffers`.
-    pub fn step_buffers(
+    /// Like [`step`](Self::step), but appends to a buffer that does not grow.
+    pub fn step_into(
         &mut self,
-        buffers: impl Buffers,
+        input: &[u8],
+        out: BorrowedCursor<'_, u8>,
         flush: FlushValue,
     ) -> (usize, ReturnCode) {
         // SAFETY: strm was initialized via inflateInit2_, and `with_buffers` set its buffers.
         self.strm
-            .with_buffers(buffers, |strm| unsafe { inflate(strm, flush) })
+            .with_buffers(input, out, |strm| unsafe { inflate(strm, flush) })
     }
 
     /// Append decompressed output to `out` (growing by 4096-byte steps, capped at

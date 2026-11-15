@@ -4,7 +4,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::{c_int, c_uint};
 
-    use bun_core::compress::RawBuffers;
+    use bun_core::vec::BorrowedCursor;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{self as jsc, JsResult};
     use bun_zstd::{OwnedCCtx, OwnedDCtx, c};
@@ -272,15 +272,14 @@ mod _impl {
         const ZSTD_MAGIC_SKIPPABLE: [u8; 4] = 0x184D2A50u32.to_le_bytes();
 
         /// True when the unconsumed input begins a zstd/skippable frame magic (or a prefix of one).
-        fn next_input_is_frame(buffers: &RawBuffers<'_>) -> bool {
-            let n = buffers.avail_in().min(4);
+        fn next_input_is_frame(input: &[u8]) -> bool {
+            let n = input.len().min(4);
             if n == 0 {
                 return false;
             }
-            let head: [u8; 4] = core::array::from_fn(|i| buffers.input_byte(i).unwrap_or(0));
-            head[..n] == Self::ZSTD_MAGICNUMBER[..n]
-                || (head[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
-                    && head[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
+            input[..n] == Self::ZSTD_MAGICNUMBER[..n]
+                || (input[0] & 0xF0 == Self::ZSTD_MAGIC_SKIPPABLE[0]
+                    && input[1..n] == Self::ZSTD_MAGIC_SKIPPABLE[1..n])
         }
     }
 
@@ -300,27 +299,27 @@ mod _impl {
             self.flush = flush;
         }
 
-        fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
+        fn do_work(&mut self, mut input: &[u8], mut out: BorrowedCursor<'_, u8>) {
             match &mut self.state {
                 // Driven before `init()`.
                 None => self.error = None,
                 Some(State::Compress(cctx)) => {
-                    self.error = cctx.step(&mut buffers, self.flush as c_uint).1.err();
+                    let (consumed, result) = cctx.step(input, out.reborrow(), self.flush as c_uint);
+                    input = &input[consumed..];
+                    self.error = result.err();
                 }
                 Some(State::Decompress(dctx)) => loop {
-                    let (_, result) = dctx.step(&mut buffers);
+                    let (consumed, result) = dctx.step(input, out.reborrow());
+                    input = &input[consumed..];
                     // 0 is frame-complete; mirrors the GUNZIP loop in NativeZlib.
-                    if result != Ok(0)
-                        || buffers.avail_out() == 0
-                        || !Self::next_input_is_frame(&buffers)
-                    {
+                    if result != Ok(0) || out.capacity() == 0 || !Self::next_input_is_frame(input) {
                         self.error = result.err();
                         break;
                     }
                 },
             }
-            self.avail_in = buffers.avail_in();
-            self.avail_out = buffers.avail_out();
+            self.avail_in = input.len();
+            self.avail_out = out.capacity();
         }
 
         fn write_result(&self) -> Result<[u32; 2], Error> {

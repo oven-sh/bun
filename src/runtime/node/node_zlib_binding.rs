@@ -4,7 +4,7 @@ use core::ops::Range;
 
 use scopeguard::ScopeGuard;
 
-use bun_core::compress::RawBuffers;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor};
 use bun_jsc::bindgen::{JsLocal, JsPayload, JsScope, JsWrapper, StrongWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -48,7 +48,7 @@ pub(crate) fn crc32(data: &[u8], value: u32) -> u32 {
 pub(crate) trait CompressionContext: Send + 'static {
     fn set_flush(&mut self, flush: i32);
     fn flush_value_is_valid(flush: u32) -> bool;
-    fn do_work(&mut self, buffers: RawBuffers<'_>);
+    fn do_work(&mut self, input: &[u8], out: BorrowedCursor<'_, u8>);
     fn reset(&mut self) -> Result<(), Error>;
     /// `[avail_out, avail_in]`, the order `_writeState` holds them in, or why `do_work` failed.
     fn write_result(&self) -> Result<[u32; 2], Error>;
@@ -169,21 +169,13 @@ impl PendingBuffers {
         Ok(Self { input, out })
     }
 
-    fn raw_buffers<'a>(&'a self, input_copy: &'a InputCopy) -> RawBuffers<'a> {
-        let bytes = |buffer: &ArrayBuffer| -> *mut [u8] {
-            if buffer.is_detached() {
-                return &mut [];
-            }
-            core::ptr::slice_from_raw_parts_mut(buffer.ptr, buffer.byte_len)
-        };
-        let input: *const [u8] = match &self.input {
+    fn slices<'a>(&'a mut self, input_copy: &'a InputCopy) -> (&'a [u8], &'a mut [u8]) {
+        let input = match &self.input {
             PendingInput::Empty => &[],
-            PendingInput::Pinned(buffer) => bytes(buffer),
-            PendingInput::Copied(range) => &raw const input_copy.bytes[range.clone()],
+            PendingInput::Pinned(buffer) => buffer.byte_slice(),
+            PendingInput::Copied(range) => &input_copy.bytes[range.clone()],
         };
-        // SAFETY: `write` refuses an output, and `pin` copies an input, that can be freed while it
-        // is pinned. `pin` checked for overlap. The gap that `pinStorage` documents is still open.
-        unsafe { RawBuffers::from_raw(input, bytes(&self.out)) }
+        (input, self.out.slice_mut())
     }
 }
 
@@ -202,8 +194,9 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
 
     fn run(write: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         if done.ticket().script_allowed() {
-            let buffers = write.buffers.raw_buffers(&write.stream.input_copy);
-            write.stream.context.do_work(buffers);
+            let (input, out) = write.buffers.slices(&write.stream.input_copy);
+            let mut out = BorrowedBuf::from(out);
+            write.stream.context.do_work(input, out.unfilled());
         }
         Some(done)
     }
@@ -570,8 +563,8 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         stream
             .context
             .set_flush(i32::try_from(flush).expect("int cast"));
-        let buffers = RawBuffers::new(in_buf.byte_slice(), out_buf.byte_slice_mut());
-        stream.context.do_work(buffers);
+        let mut out = BorrowedBuf::from(out_buf.byte_slice_mut());
+        stream.context.do_work(in_buf.byte_slice(), out.unfilled());
         let result = stream.context.write_result();
         drop(stream);
 

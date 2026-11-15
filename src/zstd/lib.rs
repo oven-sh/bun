@@ -4,7 +4,6 @@ use core::ffi::{CStr, c_int, c_ulonglong, c_void};
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
-use bun_core::compress::Buffers;
 use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 
 // ─── FFI bindings ─────────────────────────────────────────────────────────
@@ -226,24 +225,26 @@ impl ErrorCode {
 type StepResult = (usize, core::result::Result<usize, ErrorCode>);
 
 fn with_buffers(
-    mut buffers: impl Buffers,
+    input: &[u8],
+    mut out: BorrowedCursor<'_, u8>,
     call: impl FnOnce(*mut c::ZSTD_outBuffer, *mut c::ZSTD_inBuffer) -> usize,
 ) -> StepResult {
-    let (input, out) = buffers.as_raw();
     let mut in_buf = c::ZSTD_inBuffer {
-        src: input.cast::<c_void>(),
+        src: input.as_ptr().cast::<c_void>(),
         size: input.len(),
         pos: 0,
     };
-    let mut out_buf = c::ZSTD_outBuffer {
-        dst: out.cast::<c_void>(),
-        size: out.len(),
-        pos: 0,
-    };
-    let rc = call(&raw mut out_buf, &raw mut in_buf);
-    // SAFETY: only zstd raises a `pos`, the output's by as many bytes as it wrote at the start of `out`.
-    unsafe { buffers.advance(in_buf.pos, out_buf.pos) };
-    (in_buf.pos, ErrorCode::check(rc))
+    // SAFETY: only zstd raises `out_buf.pos`, by as many bytes as it wrote at the start of `out`.
+    unsafe {
+        let mut out_buf = c::ZSTD_outBuffer {
+            size: out.capacity(),
+            dst: out.as_mut().as_mut_ptr().cast::<c_void>(),
+            pos: 0,
+        };
+        let rc = call(&raw mut out_buf, &raw mut in_buf);
+        out.advance(out_buf.pos);
+        (in_buf.pos, ErrorCode::check(rc))
+    }
 }
 
 /// Runs `call(dst, dst_capacity)`, which returns an error code or how many bytes zstd wrote.
@@ -311,13 +312,18 @@ impl OwnedCCtx {
     }
 
     /// One `ZSTD_compressStream2()` call. After an error, every call returns that error.
-    pub fn step(&mut self, buffers: impl Buffers, end_op: c::ZSTD_EndDirective) -> StepResult {
+    pub fn step(
+        &mut self,
+        input: &[u8],
+        out: BorrowedCursor<'_, u8>,
+        end_op: c::ZSTD_EndDirective,
+    ) -> StepResult {
         let cctx = match self.try_as_ptr() {
             Ok(cctx) => cctx,
             Err(err) => return (0, Err(err)),
         };
         // SAFETY: `cctx` is live and has not failed, `with_buffers` passes valid pointers, and zstd checks `end_op`.
-        let (consumed, result) = with_buffers(buffers, |out, input| unsafe {
+        let (consumed, result) = with_buffers(input, out, |out, input| unsafe {
             c::ZSTD_compressStream2(cctx, out, input, end_op)
         });
         self.error = result.err();
@@ -384,13 +390,13 @@ impl OwnedDCtx {
     }
 
     /// One `ZSTD_decompressStream()` call. After an error, every call returns that error until [`reset`](Self::reset).
-    pub fn step(&mut self, buffers: impl Buffers) -> StepResult {
+    pub fn step(&mut self, input: &[u8], out: BorrowedCursor<'_, u8>) -> StepResult {
         let dctx = match self.try_as_ptr() {
             Ok(dctx) => dctx,
             Err(err) => return (0, Err(err)),
         };
         // SAFETY: `dctx` is live and has not failed, and `with_buffers` passes valid pointers.
-        let (consumed, result) = with_buffers(buffers, |out, input| unsafe {
+        let (consumed, result) = with_buffers(input, out, |out, input| unsafe {
             c::ZSTD_decompressStream(dctx, out, input)
         });
         self.error = result.err();
@@ -673,7 +679,7 @@ impl StreamingDecoder {
             }
             let budget = remaining_output.min(max_output - out.len());
             let (bytes_read, rc) = append_with(out, budget, |mut out| {
-                let step = self.stream.step((next_in, out.reborrow()));
+                let step = self.stream.step(next_in, out.reborrow());
                 self.output_full = out.capacity() == 0;
                 step
             });

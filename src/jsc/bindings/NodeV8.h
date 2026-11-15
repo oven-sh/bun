@@ -18,8 +18,7 @@
 
 namespace Bun {
 
-// Node's external memory, as of now: the bytes that heap objects own outside the heap. The one number behind
-// process.memoryUsage().external, v8.getHeapStatistics().external_memory and worker.getHeapStatistics().external_memory.
+// Node's external_memory, as of now: the bytes that heap objects own outside the heap.
 inline size_t externalMemorySize(JSC::Heap& heap)
 {
     return heap.extraMemorySizeForReporting() + heap.externalMemorySize();

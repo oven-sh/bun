@@ -3432,6 +3432,9 @@ struct ModulesToEvict {
     // Packages that vi.mock() is about to mock.
     Vector<String> packagesToStash;
     bool onlyImportersFromEarlierTestFiles { false };
+    // Listed as patched, though no mock patches it: the file that require() resolves the name of a mock to. It stays as it ran, and its importers go to get the mock.
+    // This is the key of that mock. The module under it has the file as it is on disk (see keyOfModuleMockAtRequirePath()), so it is none of those importers.
+    String keyOfMockOfRequireFile;
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
     bool hasLoadSettled { false };
@@ -3818,6 +3821,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToRestore.contains(key) || evict.packagesToStash.contains(key)))
                 continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
+                continue;
+            if (stays && importer == evict.keyOfMockOfRequireFile)
                 continue;
             bool stayed = staysInRegistry.remove(importer);
             stayed |= staysInRequireCache.remove(importer);
@@ -5942,6 +5947,28 @@ static std::optional<size_t> recordBodyMock(Zig::GlobalObject* globalObject, JSC
 }
 #endif
 
+// `mock` is laid, and require() resolves its name to another file than an import does. No mock patches that file: it stays as it ran, in the registry and in require.cache.
+// What earlier test files loaded of its importers goes, as for a module that a mock patches (wasLoadedByEarlierTestFile in mockModule()): loaded again, it gets the mock.
+// `previous` is the mock of a name that answered require() of that file before this one. If this test file laid it, that lay has evicted them.
+static void evictImportersOfRequireFileFromEarlierTestFiles(Zig::GlobalObject* globalObject, JSModuleMock* mock, JSModuleMock* previous)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    String path = mock->requirePath->tryGetValue().data;
+    if (mock->isFromPreload || (previous && !previous->isFromPreload) || plugins.testFile <= 1 || plugins.testFileOfModule.get(path) == plugins.testFile)
+        return;
+    LoadedModule loaded = findLoadedModule(globalObject, mock->requirePath.get());
+    RETURN_IF_EXCEPTION(scope, );
+    if (!loaded.esmNamespace && !loaded.commonJSModule)
+        return;
+    ModulesToEvict evict;
+    evict.onlyImportersFromEarlierTestFiles = true;
+    evict.patchedESModules.append(path);
+    evict.patchedCommonJSModules.append(path);
+    evict.keyOfMockOfRequireFile = mock->specifier->tryGetValue().data;
+    RELEASE_AND_RETURN(scope, evictModulesAndTheirImporters(globalObject, WTF::move(evict)));
+}
+
 __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, ModuleMockFunction function)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -6067,6 +6094,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     RETURN_IF_EXCEPTION(scope, {});
     JSModuleMock* previous = registeredModuleMock(globalObject, specifier);
     [[maybe_unused]] bool wasMocked = previous;
+    // The same for the path that require() resolves the name to: the mock of a name that answers require() of it.
+    JSModuleMock* previousOfRequirePath = requirePath ? moduleMockOfRequirePath(globalObject, requirePath->tryGetValue().data) : nullptr;
 #if ENABLE(AOT)
     if (previous && previous->isFromPreload && previous->state == JSModuleMock::State::Running && !previous->wasFactoryStartedByRequire && !mock->isFromPreload && vm.hasCompiledCode() && Bun__AOT__runsTestFilesAgain()) [[unlikely]]
         Bun::recordRepeatedFileRun(globalObject, specifier, "it was mocked while the factory of the mock of a preload ran"_s);
@@ -6842,8 +6871,12 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
                     plugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, standing });
                 unmockModule(globalObject, standing, path);
                 RETURN_IF_EXCEPTION(scope, {});
-            } else
+            } else {
                 plugins.virtualModules->remove(path);
+                // Where a mock stood under the path, its end has evicted what imports the path.
+                evictImportersOfRequireFileFromEarlierTestFiles(globalObject, mock, previousOfRequirePath);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
             // addModuleMock() wrote nothing for the path while something stood under it.
             letModuleMockAnswerRequirePath(globalObject, specifier, mock);
         }

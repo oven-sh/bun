@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { SourceMapConsumer } from "source-map";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
@@ -934,6 +934,29 @@ console.log(typeof url, url.endsWith(".html"));
       });
     }
   }
+
+  test("html-import/metafile-path", async () => {
+    using dir = tempDir("html-import-metafile-path", {
+      "server.js": `import page from "./page.html"; console.log(page.index);`,
+      "page.html": `<!doctype html><html><head></head><body><p>made up</p></body></html>`,
+    });
+    for (const plugins of [
+      [],
+      [{ name: "declines", setup: (b: Bun.PluginBuilder) => void b.onResolve({ filter: /.*/ }, () => undefined) }],
+    ]) {
+      const { metafile } = await Bun.build({
+        entrypoints: [join(String(dir), "server.js")],
+        target: "bun",
+        root: String(dir),
+        metafile: true,
+        plugins,
+      });
+      const { imports } = Object.entries(metafile!.inputs).find(([path]) => path.endsWith("server.js"))![1];
+      expect(imports.map(it => [it.kind, basename(it.path), isAbsolute(it.path)])).toEqual([
+        ["html_manifest", "page.html", false],
+      ]);
+    }
+  });
 
   // Of a page that nothing else imports.
   for (const splitting of [false, true]) {

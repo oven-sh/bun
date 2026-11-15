@@ -6860,9 +6860,12 @@ pub mod bv2_impl {
 
                 match html_import {
                     HtmlImport::No => {}
-                    HtmlImport::Manifest => self
-                        .generate_server_html_module(path, target, import_record)
-                        .expect("unreachable"),
+                    HtmlImport::Manifest => {
+                        // `path` can still lack its pretty form.
+                        let page = import_record.path;
+                        self.generate_server_html_module(&page, target, import_record)
+                            .expect("unreachable");
+                    }
                     HtmlImport::AfterOnLoad => resolve_task.on_load_decides_html_import = true,
                 }
                 enqueue(resolve_task);

@@ -671,11 +671,10 @@ pub(crate) struct Payload {
 impl Payload {
     /// `None` if the range is out of bounds or overlaps the image.
     pub(crate) fn bytes(&self, offset: usize, length: usize) -> Option<&'static [u8]> {
-        let rest = match offset.checked_sub(self.image_end) {
-            Some(offset) => self.after_image.get(offset..)?,
-            None => self.before_image.get(offset..)?,
-        };
-        rest.get(..length)
+        match offset.checked_sub(self.image_end) {
+            Some(offset) => self.after_image.get(offset..offset.checked_add(length)?),
+            None => self.before_image.get(offset..offset.checked_add(length)?),
+        }
     }
 
     pub(crate) fn pointed_bytes(&self, pointer: StringPointer) -> Option<&'static [u8]> {

@@ -1199,8 +1199,7 @@ fn process_exit(global: &JSGlobalObject, code: u8) {
     crate::node::process::exit(global, code);
 }
 
-/// Lazily decodes the embedded source map for `path`. The returned `Arc` is
-/// the caller's strong ref.
+/// Lazily decodes the embedded source map for `path`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {

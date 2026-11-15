@@ -12,7 +12,8 @@ use crate::fold_transfer_encoding;
 /// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
 /// at every `AsyncHTTP::init` call site.
 pub enum HTTPRequestBody<'a> {
-    /// Borrowed bytes — caller guarantees they outlive the request.
+    /// Borrowed bytes — caller guarantees they outlive the request, or the
+    /// result that reports `HTTPClientResult::request_body_released`.
     Bytes(&'a [u8]),
     Sendfile(SendFile),
     Stream(Stream),

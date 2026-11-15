@@ -317,11 +317,13 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
         HTTPRequestBody::Bytes(_) => {
             let pending = stream.pending_body;
             let sent = write_data_windowed(session, stream, pending.slice(), true, cap);
-            // pending_body[sent..] is a suffix of the original slice.
-            stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
-            if stream.pending_body.is_empty() {
+            if sent == pending.len() {
+                stream.pending_body = bun_ptr::RawSlice::EMPTY;
                 stream.sent_end_stream();
                 client.state.request_stage = HTTPStage::Done;
+            } else {
+                // pending_body[sent..] is a suffix of the original slice.
+                stream.pending_body = bun_ptr::RawSlice::new(&pending.slice()[sent..]);
             }
         }
         HTTPRequestBody::Stream(body) => {

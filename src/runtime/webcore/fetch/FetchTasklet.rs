@@ -836,7 +836,12 @@ impl FetchTasklet {
         }
 
         let result = self.deliver_progress(vm);
+        let request_body_released = core::mem::take(&mut self.result.request_body_released);
         drop(lock);
+        if request_body_released {
+            // Under the lock, freeing a large body would stall the HTTP thread in `callback`.
+            self.request_body = HTTPRequestBody::default();
+        }
         if is_done {
             // The HTTP layer will not drain the request body again.
             self.cancel_request_body_sink(JSValue::UNDEFINED);
@@ -1884,8 +1889,9 @@ impl FetchTasklet {
         // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
         // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
-        // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
-        // lifetime of the request, whose ref on the tasklet goes after `callback` has dropped it.
+        // `request_headers.buf` and `unix_socket_path` are not reallocated for the lifetime of the
+        // request, whose ref on the tasklet goes after `callback` has dropped it. Neither is
+        // `request_body`, until the request has reported `request_body_released`.
         let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
@@ -1940,6 +1946,12 @@ impl FetchTasklet {
             HTTPRequestBody::ReadableStream(_)
         );
         http.client.flags.is_streaming_request_body = is_stream;
+        http.client.flags.releases_request_body = match fetch_tasklet.request_body {
+            HTTPRequestBody::AnyBlob(_) => !request_body_slice.is_empty(),
+            HTTPRequestBody::Sendfile { .. } => true,
+            // Not even if a 303 drops it: this roots the stream, which is still to be cancelled.
+            HTTPRequestBody::ReadableStream(_) => false,
+        };
         http.client.flags.forced_protocol = fetch_options.forced_protocol;
         http.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
@@ -2309,6 +2321,8 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
+        // Reported once, and possibly not seen by the JS thread yet.
+        result.request_body_released |= task_ref.result.request_body_released;
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
         // callbacks; the terminal callback carries the bytes in `body_owned`
         // instead. Capture both; the stored copy keeps neither.

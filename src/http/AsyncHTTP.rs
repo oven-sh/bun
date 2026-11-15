@@ -606,9 +606,12 @@ impl<'a> AsyncHTTP<'a> {
 
         self.elapsed = http_thread_timer_read();
 
+        debug_assert!(!(self.client.flags.releases_request_body && self.request_body.is_stream()));
         let body = match self.request_body {
             // Stays for the next attempt.
-            HTTPRequestBody::Bytes(bytes) => HTTPRequestBody::Bytes(bytes),
+            HTTPRequestBody::Bytes(bytes) if !self.client.flags.releases_request_body => {
+                HTTPRequestBody::Bytes(bytes)
+            }
             _ => core::mem::replace(&mut self.request_body, HTTPRequestBody::Bytes(b"")),
         };
         self.client.start(body);
@@ -616,6 +619,7 @@ impl<'a> AsyncHTTP<'a> {
 
     /// Undoes what the last attempt, and its redirects above all, did to `client`.
     fn rewind(&mut self, as_sent: AsSent<'a>) {
+        debug_assert!(!as_sent.flags.releases_request_body);
         let client = &mut self.client;
         client.method = self.method;
         client.url = self.url.clone();

@@ -220,6 +220,9 @@ pub struct Flags {
     pub reject_unauthorized: bool,
     pub(crate) is_preconnect_only: bool,
     pub is_streaming_request_body: bool,
+    /// The owner does not schedule this request again, and frees its `Bytes` or `Sendfile` body
+    /// at `HTTPClientResult::request_body_released`.
+    pub releases_request_body: bool,
     pub(crate) defer_terminal_dispatch_until_connecting_is_complete: bool,
     pub(crate) upgrade_state: HTTPUpgradeState,
     pub(crate) protocol: Protocol,
@@ -246,6 +249,7 @@ impl Default for Flags {
             reject_unauthorized: true,
             is_preconnect_only: false,
             is_streaming_request_body: false,
+            releases_request_body: false,
             defer_terminal_dispatch_until_connecting_is_complete: false,
             upgrade_state: HTTPUpgradeState::None,
             protocol: Protocol::Http1_1,
@@ -468,6 +472,9 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
+    /// For `Flags::releases_request_body`: the request is sent and no longer borrows the body it
+    /// was started with. Set at most once, with `metadata`.
+    pub request_body_released: bool,
 
     pub fail: Option<crate::Error>,
     /// Raw `getaddrinfo(3)` return code when `fail` is `DNSResolveFailed`;
@@ -580,7 +587,8 @@ impl<'a> HTTPClientResult<'a> {
     }
 }
 
-/// The request, with its last result. It can be scheduled again.
+/// The request, with its last result. It can be scheduled again, unless it has
+/// `Flags::releases_request_body`.
 pub type Finished = Option<Box<AsyncHTTP<'static>>>;
 
 pub type HTTPClientResultCallbackFunction = fn(*mut (), Finished, HTTPClientResult<'_>);
@@ -1593,6 +1601,18 @@ impl<'a> HTTPClient<'a> {
     #[inline]
     fn is_request_fully_sent(&self) -> bool {
         self.state.request_stage == RequestStage::Done
+    }
+
+    /// Lets go of a fully written body as the response head is reported: past
+    /// that point no redirect or retry sends it again.
+    fn release_sent_request_body(&mut self) -> bool {
+        if !self.flags.releases_request_body || !self.is_request_fully_sent() {
+            return false;
+        }
+        self.state.original_request_body = HTTPRequestBody::Bytes(b"");
+        self.state.request_body = bun_ptr::RawSlice::EMPTY;
+        self.compressed_request_body = Vec::new();
+        true
     }
 
     #[inline]
@@ -2962,7 +2982,8 @@ impl<'a> HTTPClient<'a> {
             compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
         };
         self.compressed_body_len = slice.len();
-        // The `Vec` is next rewritten only once `reset()`/`init()` has re-seated this cursor.
+        // The `Vec` is next rewritten only once `reset()`/`init()`/`release_sent_request_body()`
+        // has re-seated this cursor.
         self.state.request_body = bun_ptr::RawSlice::new(slice);
         self.state.flags.body_compressed = true;
         Ok(())
@@ -3659,7 +3680,7 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) {
         bun_core::scoped_log!(fetch, "closeAndFail: {:?}", err);
-        if cfg!(target_os = "macos") && self.state.original_request_body.len() > 0 {
+        if cfg!(target_os = "macos") && self.state.flags.has_request_body {
             GenHttpContext::<IS_SSL>::fail_socket(socket);
         } else {
             GenHttpContext::<IS_SSL>::terminate_socket(socket);
@@ -4571,6 +4592,7 @@ impl<'a> HTTPClient<'a> {
         let certificate_info = self.state.certificate_info.take();
         if certificate_info.is_none() {
             if let Some(metadata) = self.state.cloned_metadata.take() {
+                let request_body_released = self.release_sent_request_body();
                 // transfer ownership of the metadata here
                 return HTTPClientResult {
                     metadata: Some(metadata),
@@ -4590,6 +4612,7 @@ impl<'a> HTTPClient<'a> {
                         || self.state.request_stage == RequestStage::ProxyBody)
                         && self.flags.is_streaming_request_body,
                     is_http2: self.flags.protocol != Protocol::Http1_1,
+                    request_body_released,
                 };
             }
         }
@@ -4614,6 +4637,7 @@ impl<'a> HTTPClient<'a> {
                 || self.state.request_stage == RequestStage::ProxyBody)
                 && self.flags.is_streaming_request_body,
             is_http2: self.flags.protocol != Protocol::Http1_1,
+            request_body_released: false,
         }
     }
 

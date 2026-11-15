@@ -1,6 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tls as COMMON_CERT, gc, isASAN, isCI, isDebug } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  tls as COMMON_CERT,
+  expectRssDeltaBelow,
+  gc,
+  isASAN,
+  isCI,
+  isDebug,
+  isWindows,
+  tempDir,
+} from "harness";
+import { randomBytes } from "node:crypto";
 import { once } from "node:events";
+import { fstatSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import net from "node:net";
 import { join } from "node:path";
@@ -1136,6 +1149,245 @@ test("fetch().arrayBuffer() of a large Content-Length body peaks at ~1x the payl
     server.close();
   }
 }, 60000);
+
+describe("fetch() frees a sent request body while the response is still streaming", () => {
+  const endless = () =>
+    new Response(
+      new ReadableStream({
+        start(controller) {
+          controller.enqueue("data: 1\n\n");
+        },
+      }),
+      { headers: { "Content-Type": "text/event-stream" } },
+    );
+
+  const secure = { tls: COMMON_CERT, hostname: "127.0.0.1" };
+  const anyCert = { tls: { rejectUnauthorized: false } };
+  type Transport = [serve: object, init: BunFetchRequestInit];
+  const tcp: Transport = [{}, {}];
+  const tls: Transport = [secure, anyCert];
+  const h2: Transport = [
+    { ...secure, http2: true, http1: false },
+    { ...anyCert, protocol: "http2" },
+  ];
+  const h3: Transport = [
+    { ...secure, http3: true, http1: false },
+    { ...anyCert, protocol: "http3" },
+  ];
+
+  test.concurrent.each<[string, string, ...Transport]>([
+    // Copied per fetch().
+    ["typed array", `const body = () => bytes;`, ...tcp],
+    // Transcoded to UTF-8 per fetch().
+    ["non-ASCII string", `const shared = bytes.latin1Slice() + "\\u00e9"; const body = () => shared;`, ...tcp],
+    // fetch() shares these with the JS value, so each fetch() needs a value that only it keeps.
+    ["ASCII string", `const body = () => bytes.latin1Slice();`, ...tcp],
+    ["Blob", `const body = () => new Blob([bytes]);`, ...tcp],
+    ["typed array that a 303 redirect drops", `const body = () => bytes; path = "/303";`, ...tcp],
+    [
+      "typed array and its compressed copy",
+      `require("crypto").randomFillSync(bytes); const body = () => bytes;`,
+      {},
+      { compress: { encoding: "zstd", level: 1 } },
+    ],
+    ["typed array over TLS", `const body = () => bytes;`, ...tls],
+    ["typed array over HTTP/2", `const body = () => bytes;`, ...h2],
+    ["typed array over HTTP/3", `const body = () => bytes;`, ...h3],
+  ])("%s", async (_, setup, options, init) => {
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      ...options,
+      async fetch(req) {
+        await req.arrayBuffer();
+        return new URL(req.url).pathname === "/303" ? Response.redirect("/", 303) : endless();
+      },
+    });
+    // TLS is slow on a debug build.
+    const count = init.tls ? 12 : 24;
+    const code = /* js */ `
+      const bytes = Buffer.alloc(4 * 1024 * 1024, "a");
+      const init = { ...${JSON.stringify(init)}, method: "POST" };
+      let path = "/";
+      ${setup}
+      const responses = [];
+      async function run(count) {
+        for (let i = 0; i < count; i++) {
+          const response = await fetch(new URL(path, ${JSON.stringify(server.url.href)}), { ...init, body: body() });
+          // Any other response has ended, which frees the body anyway.
+          if (response.status !== 200 || response.redirected !== (path === "/303")) throw new Error("not the stream");
+          responses.push(response);
+        }
+        Bun.gc(true);
+        return process.memoryUsage.rss();
+      }
+      const before = await run(2);
+      const after = await run(${count});
+      console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+      process.exit(0);
+    `;
+    // Unfixed: 4 MiB per request. Fixed: about 0, but up to a third of that for the values that the
+    // GC frees on a debug build, where a loop that only makes them grows no less.
+    await expectRssDeltaBelow(["--smol", "-e", code], { release: count * 2, debug: count * 2.5 });
+  });
+
+  // How many of this process's file descriptors are open on `path`.
+  function countOpen(path: string) {
+    const { dev, ino } = statSync(path);
+    return readdirSync("/dev/fd").filter(fd => {
+      try {
+        const stat = fstatSync(+fd);
+        return stat.dev === dev && stat.ino === ino;
+      } catch {
+        // The descriptor that read the directory.
+        return false;
+      }
+    }).length;
+  }
+
+  // Windows has no sendfile(): fetch() reads the file first and sends bytes.
+  test.concurrent.skipIf(isWindows)("file sent with sendfile()", async () => {
+    using dir = tempDir("fetch-sendfile-body", { "body.bin": Buffer.alloc(64 * 1024, "a") });
+    const path = join(String(dir), "body.bin");
+    let beforeHead = -1;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.arrayBuffer();
+        beforeHead = countOpen(path);
+        return endless();
+      },
+    });
+    const response = await fetch(server.url, { method: "POST", body: Bun.file(path) });
+    const afterHead = countOpen(path);
+    await response.body!.cancel();
+    expect({ beforeHead, afterHead }).toEqual({ beforeHead: 1, afterHead: 0 });
+  });
+
+  test.concurrent.skipIf(isWindows)("when JavaScript is busy until more than the head has arrived", async () => {
+    using dir = tempDir("fetch-busy-body", { "body.bin": Buffer.alloc(64 * 1024, "a") });
+    const file = Promise.withResolvers<ReadableStreamDefaultController>();
+    const redirected = Promise.withResolvers<void>();
+    const delivered = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      async fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/file") {
+          await req.arrayBuffer();
+          return new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue("first");
+                file.resolve(controller);
+              },
+            }),
+          );
+        }
+        if (pathname === "/stream") return Response.redirect("/redirected", 303);
+        if (pathname === "/redirected") {
+          redirected.resolve();
+          return endless();
+        }
+        // The client's HTTP thread follows redirects on its own. Once it is two hops further, it
+        // has been through its event loop and has read what was written before those hops.
+        const hop = +pathname.slice(1);
+        if (hop === 0) await Promise.all([file.promise, redirected.promise]);
+        if (hop === 3) (await file.promise).enqueue("second");
+        if (hop < 6) return Response.redirect(`/${hop + 1}`, 302);
+        delivered.resolve();
+        return new Response();
+      },
+    });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          import { fstatSync, readdirSync, readSync, statSync } from "node:fs";
+          ${countOpen}
+          const url = path => new URL(path, ${JSON.stringify(server.url.href)});
+          const cancelled = Promise.withResolvers();
+          const controller = new AbortController();
+          const responses = Promise.all([
+            fetch(url("/file"), { method: "POST", body: Bun.file("body.bin") }),
+            fetch(url("/stream"), {
+              method: "POST",
+              body: new ReadableStream({ cancel: () => cancelled.resolve(true) }),
+              signal: controller.signal,
+            }),
+            fetch(url("/0")),
+          ]);
+          readSync(0, Buffer.alloc(1));
+          await responses;
+          const open = countOpen("body.bin");
+          // A stream is not a body that fetch() may just drop: its source has to be cancelled.
+          Bun.gc(true);
+          controller.abort();
+          console.log(JSON.stringify({ open, cancelled: await cancelled.promise }));
+          process.exit(0);
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    await Promise.race([delivered.promise, proc.exited]);
+    proc.stdin.write("x");
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({ stdout: `{"open":0,"cancelled":true}`, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  // These pass without the early free too, and fail if it does not wait for the send. The server
+  // answers first and reads once fetch() has resolved. Until then it takes 1 MiB of the 16, and the
+  // flow-control window or the kernel a few more (the kernel of Windows takes everything).
+  test.concurrent.each<[string, ...Transport]>([
+    ["typed array", ...tcp],
+    ["file", ...tcp],
+    ["typed array over TLS", ...tls],
+    // These have a second slice of the body in the stream, which would then point at freed memory.
+    ["typed array over HTTP/2", ...h2],
+    ["typed array over HTTP/3", ...h3],
+    ["compressed copy over HTTP/2", h2[0], { ...h2[1], compress: { encoding: "zstd", level: 1 } }],
+  ])("but not a %s that is still being sent", async (kind, options, init) => {
+    const bytes = randomBytes(16 * 1024 * 1024);
+    using dir = tempDir("fetch-unsent-body", kind === "file" ? { "body.bin": bytes } : {});
+    const path = join(String(dir), "body.bin");
+    const resolved = Promise.withResolvers<void>();
+    using server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      ...options,
+      fetch: ({ body }) =>
+        new Response(
+          new ReadableStream({
+            async start(controller) {
+              controller.enqueue("sha1 ");
+              await resolved.promise;
+              const sent = await Bun.readableStreamToBytes(body!);
+              controller.enqueue(Bun.SHA1.hash(init.compress ? Bun.zstdDecompressSync(sent) : sent, "hex"));
+              controller.close();
+            },
+          }),
+        ),
+    });
+    const response = await fetch(server.url, {
+      ...init,
+      method: "POST",
+      body: kind === "file" ? Bun.file(path) : bytes,
+    });
+    if (kind === "file" && !isWindows) expect(countOpen(path)).toBe(1);
+    // Without ASAN, freed bytes stay as they were until the allocator collects them.
+    Bun.gc(true);
+    resolved.resolve();
+    expect(await response.text()).toBe(`sha1 ${Bun.SHA1.hash(bytes, "hex")}`);
+  });
+});
 
 test.concurrent("a read that replaces a pending read unroots its promise", async () => {
   await using proc = Bun.spawn({

@@ -59,13 +59,14 @@ impl<V> AppendOnlyMap<V> {
     pub fn values(&self) -> impl Iterator<Item = &V> {
         // SAFETY: as in `len`.
         let slots = unsafe { &*self.map.get() }.capacity();
-        (0..slots).filter_map(|slot| {
+        let values = (0..slots).filter_map(|slot| {
             // SAFETY: as in `get`. Each step borrows `map` anew.
             unsafe {
                 let value = (*self.map.get()).value_in_slot(slot)?;
                 Some(&*value.as_ptr())
             }
-        })
+        });
+        values.take(self.len())
     }
 
     pub fn remove(&mut self, id: u32) {

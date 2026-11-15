@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 use std::io::Write as _;
+use std::sync::Arc;
 
 use super::entry_points::{
     EntryPointError, NamedEntryPoint, find_default_entry_point, find_named_entry_point,
@@ -228,8 +229,11 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
         .is_some_and(|aot| aot.missing_tsconfig_override.is_some());
 
     let arena: &'static bun_ast::AstArena = crate::cli::cli_arena();
+    let mut env = ctx.env_loader.take().unwrap_or_default();
+    // Copies the loader if the VM of `bun test` or an earlier build still has it.
+    Arc::make_mut(&mut env);
     let this_transpiler: &'static mut Transpiler<'static> =
-        arena.alloc(Transpiler::init(arena, ctx.log(), ctx.args.clone(), None)?);
+        arena.alloc(Transpiler::init(arena, ctx.log(), ctx.args.clone(), env)?);
     if reads_no_configuration {
         this_transpiler.options.load_tsconfig_json = false;
         this_transpiler.resolver.opts.load_tsconfig_json = false;
@@ -251,7 +255,9 @@ pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error>
     apply_bundler_options(ctx, this_transpiler);
     let name = name_executable(ctx, this_transpiler, &first_entry_point);
     resolve_root_directory(ctx, this_transpiler);
-    finish(ctx, this_transpiler)?;
+    let finished = finish(ctx, this_transpiler);
+    ctx.env_loader = Some(Arc::clone(this_transpiler.env()));
+    finished?;
 
     Ok(Configuration {
         transpiler: this_transpiler,
@@ -514,8 +520,7 @@ fn finish(
         .clone_from(&ctx.bundler_options.env_prefix);
 
     if ctx.bundler_options.production {
-        // SAFETY: `env` is a process-lifetime singleton set in `Transpiler::init`.
-        unsafe { (*this_transpiler.env).map.put(b"NODE_ENV", b"production")? };
+        (this_transpiler.env_mut().map).put(b"NODE_ENV", b"production")?;
     }
 
     this_transpiler.configure_defines()?;
@@ -531,7 +536,7 @@ fn finish(
     }
 
     this_transpiler.sync_resolver_opts();
-    this_transpiler.resolver.env_loader = NonNull::new(this_transpiler.env);
+    this_transpiler.resolver.care_about_node_path = true;
 
     if ctx.bundler_options.production {
         this_transpiler.options.jsx.development = false;
@@ -578,7 +583,7 @@ pub(super) fn request_from_context<'r>(
         entry_points.map(|path| -> &'static [u8] { arena.alloc_slice_copy(&path[..]) }),
     );
     let embeds_source_maps = transpiler.options.source_map != options::SourceMapOption::None;
-    let env = transpiler.env;
+    let env = Arc::clone(transpiler.env());
 
     CompileRequest {
         origin,

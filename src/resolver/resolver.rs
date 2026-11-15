@@ -27,17 +27,17 @@ use ::bun_semver as Semver;
 // `bun_install`, which depends on this crate. It and `Dependency.parse` are defined
 // `#[no_mangle]` in `bun_install::auto_installer` and resolved at link time
 // (same pattern as `__bun_regex_*` / `__BUN_RUNTIME_HOOKS`). `install` is the
-// `?*Api.BunInstall` (`self.opts.install`); `env` is the `*DotEnv.Loader`.
+// `?*Api.BunInstall` (`self.opts.install`).
 unsafe extern "Rust" {
     /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// reborrows `&mut *env` and reads `*install` if non-null. Both must point at process-lifetime Transpiler-owned storage.
+    /// reads `*install` if non-null, which must point at process-lifetime Transpiler-owned storage.
     /// Errs when the one-time init fails (e.g. the top-level directory is
     /// unreadable) or auto-install is off; the failure is sticky across calls.
     /// Only the first call on the main thread can succeed.
     fn __bun_resolver_init_package_manager(
         log: &bun_ast::Log,
         install: Option<NonNull<bun_options_types::schema::api::BunInstall>>,
-        env: NonNull<bun_dotenv::Loader>,
+        env: &Arc<bun_dotenv::Loader>,
         prefer_offline: bool,
         importer_dir: &[u8],
     ) -> crate::CrateResult<&'static mut dyn AutoInstaller>;
@@ -408,13 +408,8 @@ pub struct Resolver<'a> {
     /// factory and keeps it here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
     pub package_manager: SyncView<Option<&'static mut dyn AutoInstaller>>,
-    // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
-    // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
-    // set (e.g. bake/production/mod.rs assigns this then calls `configure_defines()`
-    // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
-    // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
-    // pointer carries no aliasing guarantee.
-    pub env_loader: Option<NonNull<DotEnv::Loader>>,
+    pub env_loader: Arc<DotEnv::Loader>,
+    pub care_about_node_path: bool,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'static dyn StandaloneModuleGraph>,
@@ -519,7 +514,8 @@ impl<'a> Resolver<'a> {
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: SyncView::new(None),
-            env_loader: from.env_loader,
+            env_loader: Arc::clone(&from.env_loader),
+            care_about_node_path: from.care_about_node_path,
             store_fd: from.store_fd,
             standalone_module_graph: from.standalone_module_graph,
             outfile_of_build: from.outfile_of_build,
@@ -601,6 +597,11 @@ impl<'a> Resolver<'a> {
         *self.log.as_mut()
     }
 
+    /// Panics if the loader is shared.
+    pub fn env_loader_mut(&mut self) -> &mut DotEnv::Loader {
+        Arc::get_mut(&mut self.env_loader).expect("the env loader is not shared")
+    }
+
     pub fn set_log(&mut self, log: Option<&'a bun_ast::Log>) {
         self.log = SyncView::new(log);
     }
@@ -625,14 +626,11 @@ impl<'a> Resolver<'a> {
         if self.package_manager.as_mut().is_some() {
             return Ok(());
         }
-        let env: NonNull<DotEnv::Loader> = self
-            .env_loader
-            .expect("Resolver.env_loader must be set before auto-install");
         let unread_log = bun_ast::Log::init();
         let log = self.log().unwrap_or(&unread_log);
         // SAFETY: `__bun_resolver_init_package_manager` is defined
         // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
-        // final binary; `self.opts.install` / `env` point at
+        // final binary; `self.opts.install` points at
         // process-lifetime storage (Transpiler-owned).
         let pm = unsafe {
             bun_removable_features::call_removable!(
@@ -641,7 +639,7 @@ impl<'a> Resolver<'a> {
                 __bun_resolver_init_package_manager,
                 log,
                 self.opts.install,
-                env,
+                &self.env_loader,
                 self.opts.install_preference
                     == bun_options_types::offline_mode::OfflineMode::Offline,
                 importer_dir,
@@ -708,24 +706,6 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Safe read-only accessor for the optional `DotEnv::Loader` back-reference.
-    ///
-    /// Single `unsafe` deref site for the `env_loader: Option<NonNull<_>>`
-    /// field. The pointee is the Transpiler-owned loader (set from
-    /// `transpiler.env`) and strictly outlives the resolver. Only called once
-    /// resolution has begun (after `run_env_loader()`), so no `&mut Loader` is
-    /// live concurrently — see the field comment for why this is *not* stored
-    /// as `Option<&'a Loader>`.
-    #[inline]
-    pub(crate) fn env_loader(&self) -> Option<&'a DotEnv::Loader> {
-        // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
-        // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
-        // never mutates the env, so no `&mut Loader` overlaps this shared
-        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
-        // the env borrow across `&mut self` resolver calls.
-        self.env_loader.map(|p| unsafe { p.as_ref() })
-    }
-
     #[inline]
     pub(crate) fn use_package_manager(&self) -> bool {
         // TODO: make this configurable. the rationale for disabling
@@ -754,6 +734,7 @@ impl<'a> Resolver<'a> {
         log: &'a bun_ast::Log,
         _fs: *mut Fs::FileSystem,
         opts: options::BundleOptions,
+        env_loader: Arc<DotEnv::Loader>,
     ) -> Self {
         // resolver_Mutex_loaded check elided; static is const-inited in Rust.
 
@@ -776,7 +757,8 @@ impl<'a> Resolver<'a> {
             watcher: None,
             generation: 0,
             package_manager: SyncView::new(None),
-            env_loader: None,
+            env_loader,
+            care_about_node_path: false,
             store_fd: false,
             standalone_module_graph: None,
             outfile_of_build: None,
@@ -3013,11 +2995,11 @@ impl<'a> Resolver<'a> {
 
         // try resolve from `NODE_PATH`
         // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
-            .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
-        if !node_path.is_empty() {
+        if self.care_about_node_path
+            && (self.env_loader.get(b"NODE_PATH")).is_some_and(|path| !path.is_empty())
+        {
+            let env = Arc::clone(&self.env_loader);
+            let node_path = env.get(b"NODE_PATH").unwrap_or_default();
             let delim = if cfg!(windows) { b';' } else { b':' };
             for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
                 let Some(abs_path) = self

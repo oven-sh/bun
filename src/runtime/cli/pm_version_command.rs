@@ -12,6 +12,7 @@ use bun_ast::AstArena;
 use bun_ast::ExprData;
 use bun_core::strings;
 use bun_core::{Global, Output, env_var};
+use bun_dotenv::Loader;
 use bun_install::LogLevel;
 use bun_install::PackageManager;
 use bun_js_printer as JSPrinter;
@@ -199,10 +200,6 @@ impl PmVersionCommand {
 
         let (version_type, new_version) = Self::parse_version_argument(positionals[1]);
 
-        // Bun's shell runs the scripts with the global `MiniEventLoop`'s environment, which only
-        // the first `init_global` call sets. On Windows, spawning git would otherwise be that call.
-        bun_event_loop::MiniEventLoop::init_global(Some(pm.env_mut()));
-
         Self::verify_git(&package_json_dir, pm);
 
         let mut path_buf = bun_paths::path_buffer_pool::get();
@@ -257,7 +254,7 @@ impl PmVersionCommand {
 
         let silent = pm.options.log_level == LogLevel::Silent;
 
-        let mut run_script = |name: &[u8]| -> Result<(), crate::Error> {
+        let mut run_script = |name: &[u8], env: &mut Loader| -> Result<(), crate::Error> {
             let script = scripts_obj.and_then(|scripts| scripts.get(name));
             let Some(script_command) = script.and_then(|script| script.as_string(&json_bump))
             else {
@@ -268,7 +265,7 @@ impl PmVersionCommand {
                 script_command,
                 name,
                 &package_json_dir,
-                pm.env_mut(),
+                env,
                 silent,
             )
         };
@@ -320,7 +317,7 @@ impl PmVersionCommand {
             }
         }
 
-        run_script(b"preversion")?;
+        run_script(b"preversion", pm.env_mut())?;
 
         json.data
             .e_object_mut()
@@ -357,13 +354,13 @@ impl PmVersionCommand {
         pm.env_mut()
             .map
             .put(b"npm_package_version", &new_version_str)?;
-        run_script(b"version")?;
+        run_script(b"version", pm.env_mut())?;
 
         if pm.options.git_tag_version {
             Self::git_commit_and_tag(&new_version_str, pm.options.message, &package_json_dir);
         }
 
-        run_script(b"postversion")?;
+        run_script(b"postversion", pm.env_mut())?;
 
         Output::print(format_args!("v{}\n", BStr::new(&new_version_str)));
         Output::flush();
@@ -703,9 +700,7 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
 #[inline]
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
-        loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
-            None,
-        )),
+        loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global()),
         ..Default::default()
     }
 }

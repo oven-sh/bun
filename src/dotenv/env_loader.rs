@@ -1,10 +1,10 @@
-use core::cell::Cell;
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use core::ops::Deref;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMapExt, GetOrPutResult, StringSet};
-use bun_core::{self, Output};
+use bun_core::{self, Mutex, Output};
 use bun_core::{CStringList, ZStr, strings};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
@@ -136,7 +136,9 @@ pub struct S3Credentials {
     pub insecure_http: bool,
 }
 
+#[derive(Default)]
 pub struct Loader {
+    /// Does not have the changes of `set_proxy_env`: see `snapshot`.
     pub map: Map,
     // allocator dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) default_files_loaded: EnumSet<DefaultEnvFile>,
@@ -151,11 +153,49 @@ pub struct Loader {
     pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
-    pub(crate) reject_unauthorized: Cell<Option<bool>>,
+    reject_unauthorized: OnceLock<bool>,
 
     // Local POD mirror of `bun_s3_signing::S3Credentials` — see type doc above.
-    aws_credentials: Option<S3Credentials>,
+    aws_credentials: OnceLock<S3Credentials>,
+
+    /// A copy with the changes of `set_proxy_env`, made by the first call.
+    with_proxy_env: OnceLock<Mutex<Option<Arc<Loader>>>>,
 }
+
+impl Clone for Loader {
+    /// The clone remembers which files `self` loaded, so it only reads the ones `self` skipped.
+    fn clone(&self) -> Self {
+        bun_core::handle_oom(self.try_clone())
+    }
+}
+
+/// See [`Loader::snapshot`].
+pub enum Snapshot<'a> {
+    Borrowed(&'a Loader),
+    Shared(Arc<Loader>),
+}
+
+impl Deref for Snapshot<'_> {
+    type Target = Loader;
+    fn deref(&self) -> &Loader {
+        match self {
+            Self::Borrowed(loader) => loader,
+            Self::Shared(loader) => loader,
+        }
+    }
+}
+
+/// Uppercase first: on Windows `find_key` returns that entry for either case.
+const PROXY_ENV_KEYS: [&[u8]; 8] = [
+    b"HTTP_PROXY",
+    b"http_proxy",
+    b"HTTPS_PROXY",
+    b"https_proxy",
+    b"ALL_PROXY",
+    b"all_proxy",
+    b"NO_PROXY",
+    b"no_proxy",
+];
 
 static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
 // Overwritten on every `load_node_js_config` call. NOT set-once despite the
@@ -166,15 +206,19 @@ static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 /// Compares like [`HashTable`] keys, which are ASCII case-insensitive on Windows.
-fn is_ipc_channel_key(key: &[u8]) -> bool {
-    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
-    KEYS.iter().any(|&k| {
+fn find_key(keys: &[&'static [u8]], key: &[u8]) -> Option<&'static [u8]> {
+    keys.iter().copied().find(|k| {
         if cfg!(windows) {
             strings::eql_case_insensitive_ascii(key, k, true)
         } else {
             strings::eql(key, k)
         }
     })
+}
+
+fn is_ipc_channel_key(key: &[u8]) -> bool {
+    const KEYS: [&[u8]; 2] = [b"NODE_CHANNEL_FD", b"NODE_CHANNEL_SERIALIZATION_MODE"];
+    find_key(&KEYS, key).is_some()
 }
 
 impl Loader {
@@ -197,6 +241,35 @@ impl Loader {
             }
         }
         self.get(upper)
+    }
+
+    /// `self` with the changes of `set_proxy_env` so far.
+    pub fn snapshot(&self) -> Snapshot<'_> {
+        (self.with_proxy_env.get())
+            .and_then(|with_proxy_env| with_proxy_env.lock().clone())
+            .map_or(Snapshot::Borrowed(self), Snapshot::Shared)
+    }
+
+    /// Records a write to `process.env`. `None` removes the variable. Ignores other variables.
+    pub fn set_proxy_env(&self, name: &[u8], value: Option<&[u8]>) {
+        let Some(key) = find_key(&PROXY_ENV_KEYS, name) else {
+            return;
+        };
+        let mut with_proxy_env = self.with_proxy_env.get_or_init(Default::default).lock();
+        let with_proxy_env = with_proxy_env
+            .get_or_insert_with(|| Arc::new(bun_core::handle_oom(self.clone_loaded())));
+        let map = &mut Arc::make_mut(with_proxy_env).map;
+        match value {
+            Some(value) => bun_core::handle_oom(map.put(key, value)),
+            None => map.remove(key),
+        }
+    }
+
+    /// Undoes every `set_proxy_env`.
+    pub fn reset_proxy_env(&self) {
+        if let Some(with_proxy_env) = self.with_proxy_env.get() {
+            *with_proxy_env.lock() = None;
+        }
     }
 
     pub fn has(&self, input: &[u8]) -> bool {
@@ -223,7 +296,7 @@ impl Loader {
     }
 
     pub fn get_node_path<'b>(
-        &mut self,
+        &self,
         fs: &bun_paths::fs::FileSystem,
         buf: &'b mut PathBuffer,
     ) -> Option<&'b ZStr> {
@@ -258,11 +331,8 @@ impl Loader {
             .is_some()
     }
 
-    pub fn get_s3_credentials(&mut self) -> &S3Credentials {
-        if self.aws_credentials.is_none() {
-            // Copy to `Box<[u8]>` so the cached struct owns its bytes and we
-            // can release the `&self` borrow before writing `&mut self.aws_credentials`.
-            // One-shot and cached — copies are negligible.
+    pub fn get_s3_credentials(&self) -> &S3Credentials {
+        self.aws_credentials.get_or_init(|| {
             let access_key_id: Box<[u8]> = self
                 .get(b"S3_ACCESS_KEY_ID")
                 .or_else(|| self.get(b"AWS_ACCESS_KEY_ID"))
@@ -301,7 +371,7 @@ impl Loader {
                 .map(Box::from)
                 .unwrap_or_default();
 
-            self.aws_credentials = Some(S3Credentials {
+            S3Credentials {
                 access_key_id,
                 secret_access_key,
                 region,
@@ -309,10 +379,8 @@ impl Loader {
                 bucket,
                 session_token,
                 insecure_http,
-            });
-        }
-
-        self.aws_credentials.as_ref().unwrap()
+            }
+        })
     }
 
     /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` (matching
@@ -320,15 +388,13 @@ impl Loader {
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn get_tls_reject_unauthorized(&self) -> bool {
-        if let Some(reject_unauthorized) = self.reject_unauthorized.get() {
-            return reject_unauthorized;
-        }
         // default: true
-        let result = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") != Some(b"0");
-        self.reject_unauthorized.set(Some(result));
-        result
+        *(self.reject_unauthorized)
+            .get_or_init(|| self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") != Some(b"0"))
     }
+}
 
+impl Snapshot<'_> {
     pub fn get_http_proxy_for(&self, url: &URL<'_>) -> Option<URL<'_>> {
         // `http://DOMAIN\user:pass@proxy:8080` is a domain login, as curl reads it.
         let proxy = URL::parse_single_reader(self.proxy_env_for_scheme(url.is_http())?);
@@ -368,7 +434,7 @@ impl Loader {
         } else {
             self.get_lower_then_upper(b"https_proxy", b"HTTPS_PROXY")
         };
-        specific.filter(|p| !Self::is_emptyish(p))
+        specific.filter(|p| !Loader::is_emptyish(p))
     }
 
     /// The proxy for every target scheme. It commonly names a SOCKS proxy,
@@ -379,7 +445,7 @@ impl Loader {
     fn all_proxy(&self) -> Option<&[u8]> {
         let value = self
             .get_lower_then_upper(b"all_proxy", b"ALL_PROXY")
-            .filter(|p| !Self::is_emptyish(p))?;
+            .filter(|p| !Loader::is_emptyish(p))?;
         let url = URL::parse_single_reader(value);
         (url.protocol.is_empty() || url.has_http_like_protocol()).then_some(value)
     }
@@ -387,7 +453,7 @@ impl Loader {
     /// `no_proxy`, else `NO_PROXY`: one list, the lowercase name first, as curl,
     /// node and undici read it.
     pub fn no_proxy_list(&self) -> &[u8] {
-        let read = |name: &[u8]| self.get(name).filter(|v| !Self::is_emptyish(v));
+        let read = |name: &[u8]| self.get(name).filter(|v| !Loader::is_emptyish(v));
         read(b"no_proxy")
             .or_else(|| read(b"NO_PROXY"))
             .unwrap_or(b"")
@@ -398,7 +464,9 @@ impl Loader {
     pub fn is_no_proxy(&self, hostname: &[u8], port: u16) -> bool {
         crate::no_proxy::matches(self.no_proxy_list(), hostname, port)
     }
+}
 
+impl Loader {
     pub fn load_ccache_path(&mut self, fs: &bun_paths::fs::FileSystem) {
         if DID_LOAD_CCACHE_PATH.load(Ordering::Relaxed) {
             return;
@@ -534,39 +602,22 @@ impl Loader {
     // only reads `self.map.map.{keys,values}()` from this crate.
 
     pub fn init() -> Loader {
-        Self::init_with_map(Map::init())
+        Self::default()
     }
 
     pub fn init_with_map(map: Map) -> Loader {
         Loader {
             map,
-            default_files_loaded: EnumSet::empty(),
-            custom_files_loaded: StringSet::new(),
-            quiet: false,
-            quiet_loaded_files: false,
-            did_load_process: false,
-            reject_unauthorized: Cell::new(None),
-            aws_credentials: None,
+            ..Default::default()
         }
     }
 
-    /// A `Worker`'s loader: the map, with the explicit entries marked loaded so a pipe is not read twice.
-    pub fn clone_for_worker(&self) -> Result<Loader, AllocError> {
-        Ok(Loader {
-            map: self.map.clone_with_allocator()?,
-            default_files_loaded: EnumSet::empty(),
-            custom_files_loaded: self.custom_files_loaded.clone()?,
-            quiet: false,
-            quiet_loaded_files: false,
-            did_load_process: false,
-            reject_unauthorized: Cell::new(None),
-            aws_credentials: None,
-        })
+    /// As `clone`.
+    pub fn try_clone(&self) -> Result<Loader, AllocError> {
+        self.snapshot().clone_loaded()
     }
 
-    /// Clones the loader for a macro VM. The clone remembers which files `self` loaded, so it only
-    /// reads the ones `self` skipped.
-    pub fn clone_loaded(&self) -> Result<Loader, AllocError> {
+    fn clone_loaded(&self) -> Result<Loader, AllocError> {
         Ok(Loader {
             map: self.map.clone_with_allocator()?,
             default_files_loaded: self.default_files_loaded,
@@ -574,9 +625,12 @@ impl Loader {
             quiet: self.quiet,
             quiet_loaded_files: self.quiet_loaded_files,
             did_load_process: self.did_load_process,
-            reject_unauthorized: Cell::new(None),
-            aws_credentials: None,
+            ..Default::default()
         })
+    }
+
+    pub fn did_load_process(&self) -> bool {
+        self.did_load_process
     }
 
     pub fn load_process(&mut self) -> Result<(), AllocError> {
@@ -1314,6 +1368,7 @@ pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
 #[cfg(windows)]
 pub type HashTable = bun_collections::CaseInsensitiveAsciiStringArrayHashMap<HashTableValue>;
 
+#[derive(Default)]
 pub struct Map {
     pub map: HashTable,
 }
@@ -1363,13 +1418,6 @@ impl Map {
         // Terminator: four trailing NUL u16s (already zero-initialized above).
         result.truncate(i + 4);
         result
-    }
-
-    #[inline]
-    pub(crate) fn init() -> Map {
-        Map {
-            map: HashTable::default(),
-        }
     }
 
     #[inline]
@@ -1485,28 +1533,3 @@ impl Map {
 }
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
-
-// Global singleton. Installed and used under a single-thread (CLI-init)
-// invariant. We store a raw `*mut` in an AtomicPtr (overwritable) and hand the
-// raw pointer back to callers so the no-alias `&mut` proof obligation lives at
-// the *call site*, not here — manufacturing `&'static mut` inside an accessor
-// is aliased-&mut UB the moment two callers hold results simultaneously
-// (PORTING.md §Forbidden: lifetime-extension via `unsafe { &*(p as *const _) }`).
-pub static INSTANCE: AtomicPtr<Loader> = AtomicPtr::new(core::ptr::null_mut());
-
-/// Read the global singleton as a raw pointer — `Some(ptr)` once `set_instance` has been called.
-/// Callers must `unsafe { &mut *ptr }` at point of use under the single-thread
-/// CLI-init invariant: the loader is only installed and dereferenced on the
-/// main thread, so no two `&mut` borrows can be live at once.
-#[inline]
-pub fn instance() -> Option<*mut Loader> {
-    let ptr = INSTANCE.load(Ordering::Acquire);
-    if ptr.is_null() { None } else { Some(ptr) }
-}
-
-/// Install the global singleton. Overwrites any previous value (test harnesses
-/// / worker re-init may call this more than once).
-#[inline]
-pub fn set_instance(loader: *mut Loader) {
-    INSTANCE.store(loader, Ordering::Release);
-}

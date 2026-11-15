@@ -1589,8 +1589,8 @@ impl JSValkeyClient {
         // queue off is rejected the way get() is: connecting, not never
         // connected.
         self.ensure_dialing();
-        if let Some(message) = self.client.get().send_rejection() {
-            let error = valkey::ValkeyClient::send_rejection_error(global, message);
+        if let Some(message) = self.send_rejection() {
+            let error = Self::send_rejection_error(global, message);
             return Ok(JSPromise::rejected_promise(global, error).to_js());
         }
 
@@ -1830,14 +1830,9 @@ impl JSValkeyClient {
             ._subscription_ctx
             .set(SubscriptionCtx::init(new_client)?);
         // If the original client is already connected and not manually closed, start connecting the new client.
-        if self.client.get().status == valkey::Status::Connected
-            && !self.client.get().flags.is_manually_closed
-        {
+        if self.status.get() == valkey::Status::Connected && !self.flags.is_manually_closed.get() {
             // Use strong reference during connection to prevent premature GC
-            new_client
-                .client_mut()
-                .flags
-                .connection_promise_returns_client = true;
+            new_client.flags.connection_promise_returns_client.set(true);
             return new_client.do_connect(global, new_client_js);
         }
 

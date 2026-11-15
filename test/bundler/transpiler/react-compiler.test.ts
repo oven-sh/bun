@@ -4447,6 +4447,179 @@ describe("bundler", () => {
     run: { stdout: Array(4).fill(`[[0,1,2],2,"6"]`).join("\n") },
   });
 
+  // An unlabeled `break` in a `switch` leaves the `switch`. The compiler printed a `break` that leaves a loop without
+  // a label when only a `switch` stood between the two, so the loop went on. babel-plugin-react-compiler 1.0.0 prints
+  // the same. Each body fills `out`, with `n` as 4.
+  {
+    const inCase = "switch (i) { case 2: break loop; }";
+    const rest = "if (i >= n) break; out.push(i); i++;";
+    const inAFunction = (n: string) => `
+      const seen = [];
+      let j = 0;
+      loop: while (true) { switch (j) { case 2: break loop; } if (j >= ${n}) break; seen.push(j); j++; }
+      return seen;
+    `;
+    const bodies: Record<string, [body: string, out: string]> = {
+      While: [`loop: while (true) { ${inCase} ${rest} }`, "0,1"],
+      DoWhile: [`loop: do { ${inCase} ${rest} } while (i < 9);`, "0,1"],
+      For: [`loop: for (;;) { ${inCase} ${rest} }`, "0,1"],
+      ForWithAnUpdate: [`loop: for (; i < 9; i++) { ${inCase} if (i >= n) break; out.push(i); }`, "0,1"],
+      ForOf: [`loop: for (const v of [0, 1, 2, 3]) { switch (v) { case 2: break loop; } out.push(v); }`, "0,1"],
+      ForIn: [
+        `loop: for (const k in { a: 1, b: 1, c: 1, d: 1 }) { switch (k) { case "c": break loop; } out.push(k); }`,
+        "a,b",
+      ],
+      InDefault: [`loop: while (true) { switch (i) { case 0: case 1: break; default: break loop; } ${rest} }`, "0,1"],
+      InAnIf: [`loop: while (true) { switch (i) { case 2: if (n > 0) break loop; } ${rest} }`, "0,1"],
+      InASwitchInTheSwitch: [
+        `loop: while (true) { switch (i) { case 2: switch (n) { case 4: break loop; } } ${rest} }`,
+        "0,1",
+      ],
+      AfterASwitchInTheCase: [
+        `loop: while (true) { switch (i) { case 2: switch (n) { case 4: out.push("in"); } break loop; } ${rest} }`,
+        "0,1,in",
+      ],
+      // The `break` of the loop in the case stays with that loop.
+      AfterALoopInTheCase: [
+        `loop: while (true) {
+           switch (i) { case 2: for (const v of [7, 8, 9]) { if (v === 8) break; out.push(v); } break loop; }
+           ${rest}
+         }`,
+        "0,1,7",
+      ],
+      // The `return` in a memo block is a `break` with a label of its own.
+      BesideAReturn: [
+        `loop: while (true) { switch (i) { case 3: return <ul>{["returned"]}</ul>; case 2: break loop; } ${rest} }`,
+        "0,1",
+      ],
+      InnerOfTwoLoops: [`for (let r = 0; r < 2; r++) { i = 0; loop: while (true) { ${inCase} ${rest} } }`, "0,1,0,1"],
+      // Nothing falls out of the `switch` in these two: the loop ends at that `break`, or after 9 turns without it.
+      InTheLastCaseOfASwitchThatNothingFallsOutOf: [
+        `let turns = 0;
+         loop: while (turns++ < 9) {
+           switch (i) { case 0: case 1: out.push(i); i++; continue loop; default: break loop; }
+         }
+         out.push("turns: " + turns);`,
+        "0,1,turns: 3",
+      ],
+      InTheFirstCaseOfASwitchThatNothingFallsOutOf: [
+        `let turns = 0;
+         loop: while (turns++ < 9) {
+           switch (i) { case 2: break loop; default: out.push(i); i++; continue loop; }
+         }
+         out.push("turns: " + turns);`,
+        "0,1,turns: 3",
+      ],
+      // The source has a loop between the two, which the compiler removes: its test is never reached.
+      InADoWhileThatNeverTurns: [
+        `loop: while (true) { switch (i) { case 2: do { break loop; } while (n > 100); } ${rest} }`,
+        "0,1",
+      ],
+      // The source has no label: the compiler puts what follows the call into the case that returns.
+      AfterACallThatTheCompilerInlines: [
+        `for (const x of [0, 1, 2, 0, 1]) {
+           const v = (() => { switch (x) { default: return x; } })();
+           if (v >= 2) break;
+           out.push(v);
+         }`,
+        "0,1",
+      ],
+      InAnArrowFunction: [`const fill = () => {${inAFunction("n")}}; out.push(...fill());`, "0,1"],
+      InAFunctionThatIsMovedOutOfTheComponent: [
+        `const fill = () => {${inAFunction("4")}}; out.push(...fill());`,
+        "0,1",
+      ],
+      InAMethod: [`const filler = { fill() {${inAFunction("n")}} }; out.push(...filler.fill());`, "0,1"],
+      // These were right: a label past another loop, a label on a block, and `continue`, which no `switch` takes.
+      OuterOfTwoLoops: [`loop: for (let r = 0; r < 2; r++) { i = 0; while (true) { ${inCase} ${rest} } }`, "0,1"],
+      LabelOnABlock: [`loop: { while (true) { ${inCase} ${rest} } }`, "0,1"],
+      Continue: [`loop: while (i < n) { i++; switch (i) { case 2: continue loop; } out.push(i); }`, "1,3,4"],
+    };
+    const modes: Record<string, Pick<BundlerTestInput, "target" | "backend">> = {
+      Client: { target: "browser", backend: "cli" },
+      // No memo cache, and through `Bun.build()`.
+      Ssr: { target: "bun", backend: "api" },
+    };
+    for (const [mode, options] of Object.entries(modes)) {
+      itBundled(`react-compiler/BreakOutOfALoopFromASwitch-${mode}`, {
+        files: {
+          "/entry.jsx": /* jsx */ `
+            ${Object.entries(bodies)
+              .map(
+                ([name, [body]]) => `
+                  function ${name}({ n }) {
+                    const out = [];
+                    let i = 0;
+                    ${body}
+                    return <ul>{out}</ul>;
+                  }
+                `,
+              )
+              .join("")}
+            for (const [name, component] of Object.entries({ ${Object.keys(bodies).join(", ")} })) {
+              // A compiled component takes its props as \`t0\`.
+              const compiled = String(component).startsWith("function " + name + "(t0)");
+              console.log(name + ": " + component({ n: 4 }).props.children.join() + (compiled ? "" : " (not compiled)"));
+            }
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = (type, props) => ({ type, props }); exports.jsxs = exports.jsx;`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+          "/node_modules/react/compiler-runtime.js": `exports.c = n => new Array(n).fill(Symbol.for("react.memo_cache_sentinel"));`,
+        },
+        reactCompiler: true,
+        ...options,
+        run: {
+          stdout: Object.entries(bodies)
+            .map(([name, [, out]]) => `${name}: ${out}`)
+            .join("\n"),
+        },
+      });
+    }
+
+    // Only the `break` in the case gets a label. A `switch` that is closed, or one around the loop, is not between
+    // a `break` and its loop.
+    itBundled("react-compiler/BreakOutOfALoopFromASwitch-Labels", {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          export function InTheCase({ n }) {
+            const out = [];
+            let i = 0;
+            loop: while (true) { ${inCase} ${rest} }
+            return <ul>{out}</ul>;
+          }
+          export function AfterTheSwitch({ n }) {
+            const out = [];
+            let i = 0;
+            while (true) { switch (i) { case 1: out.push("one"); } ${rest} }
+            return <ul>{out}</ul>;
+          }
+          export function OfALoopInTheLastCase({ n }) {
+            const out = [];
+            switch (n) {
+              case 0:
+                out.push("none");
+              default:
+                for (const v of [7, 8, 9]) { if (v === 8) break; out.push(v); }
+            }
+            return <ul>{out}</ul>;
+          }
+        `,
+      },
+      reactCompiler: true,
+      backend: "cli",
+      external: ["react", "react/compiler-runtime", "react/jsx-runtime", "react/jsx-dev-runtime"],
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out.match(/\b_c\(\d+\)/g)).toHaveLength(3);
+        expect(out).toMatch(
+          /(bb\d+):\s*while \(true\) \{\s*switch \(i\) \{\s*case 2: \{\s*break \1;\s*\}\s*\}\s*if \(i >= n\) \{\s*break;\s*\}/,
+        );
+        expect(out.match(/\bbb\d+\b/g)).toHaveLength(2);
+      },
+    });
+  }
+
   // The parser inlines a spread object literal into the props.
   itBundled("react-compiler/JsxSpreadWithAComputedKey", {
     files: {

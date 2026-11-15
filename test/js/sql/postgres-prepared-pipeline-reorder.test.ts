@@ -377,4 +377,36 @@ describe.concurrent("postgres mock", () => {
       mock.server.close();
     }
   });
+
+  // After the second ReadyForQuery `parsed` counts as unwritten, so cancel() takes it out of the queue, and `next` gets
+  // the answer to its Describe first.
+  test("a statement that got the description of another one is not used again", async () => {
+    let parsing = "";
+    const mock = await echoServer((type, body) => {
+      if (type === "P") parsing = body.toString();
+      if (parsing.includes("rejected by the pooler")) {
+        if (type !== "S") return [];
+        parsing = "";
+        const error = pgErrorResponse({ S: "ERROR", C: "42601", M: "syntax error" });
+        return [Buffer.concat([error, pgReadyForQuery(), pgReadyForQuery()])];
+      }
+      if (type === "D" && parsing.includes("as other")) {
+        return [pgParameterDescription([25]), pgRowDescription([{ name: "other", typeOid: 25 }])];
+      }
+    });
+    try {
+      await using sql = new SQL({ url: `postgres://u@127.0.0.1:${mock.port}/db`, max: 1 });
+      const echo = (text: string) => sql`select ${text} as v`;
+      await sql.connect();
+
+      const rejected = sql`select 1 as v -- rejected by the pooler`.execute();
+      const parsed = sql`select ${"parsed"} as other`.execute();
+      const next = echo("next").execute();
+      await Promise.allSettled([rejected.catch(() => parsed.cancel()), parsed, next]);
+
+      expect(await settle([echo("again")])).toEqual([[{ v: "again" }]]);
+    } finally {
+      mock.server.close();
+    }
+  });
 });

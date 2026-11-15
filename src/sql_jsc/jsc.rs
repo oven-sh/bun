@@ -22,8 +22,8 @@ use core::ptr::NonNull;
 
 pub use bun_jsc::{
     ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef, JSArrayIterator, JSGlobalObject,
-    JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    Strong, StrongCell, StrongOptional, bun_string_jsc,
+    JSObject, JSType, JSValue, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, Strong,
+    StrongCell, StrongOptional, bun_string_jsc,
 };
 
 pub use bun_jsc::IntegerRange;

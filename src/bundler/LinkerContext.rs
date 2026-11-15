@@ -705,8 +705,8 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         use crate::bun_renamer::ChunkRenamer;
         match &chunk.renamer {
             ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
-            ChunkRenamer::Number(r) => r.to_renamer(&self.graph.symbols, &self.cross_chunk_names),
-            ChunkRenamer::Minify(r) => r.to_renamer(&self.graph.symbols),
+            ChunkRenamer::Number(r) => r.as_renamer(&self.graph.symbols, &self.cross_chunk_names),
+            ChunkRenamer::Minify(r) => r.as_renamer(&self.graph.symbols),
         }
     }
 
@@ -1757,7 +1757,7 @@ impl<'a> LinkerContext<'_, 'a> {
             js_printer::BufferWriter::init(),
         ));
 
-        let printer_ast = ast.for_printer();
+        let printer_ast = ast.as_printer_view();
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();

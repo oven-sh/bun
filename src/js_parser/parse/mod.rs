@@ -278,7 +278,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             class_name: name,
             extends,
             close_brace_loc,
-            // A copy: the visit pass writes to it, and the options only share their list.
+            // `class_opts` holds a shared slice; the visit pass writes to this one.
             ts_decorators: ExprNodeList::from_arena_slice(class_opts.ts_decorators)
                 .leak()
                 .into(),

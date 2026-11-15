@@ -38,6 +38,13 @@ impl<T> core::ops::Deref for AliasableBox<T> {
     }
 }
 
+impl<T> core::ops::DerefMut for AliasableBox<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        // SAFETY: as above; code that dereferences `as_ptr()` must not overlap this borrow.
+        unsafe { self.0.as_mut() }
+    }
+}
+
 impl<T> From<Box<T>> for AliasableBox<T> {
     fn from(value: Box<T>) -> Self {
         Self(Box::into_non_null(value))
@@ -61,11 +68,12 @@ mod tests {
         let dropped = Rc::new(());
         let owner = AliasableBox::new((1u32, Rc::clone(&dropped)));
         let ptr = owner.as_ptr();
-        let moved = vec![owner];
+        let mut moved = vec![owner];
+        (*moved[0]).0 += 1;
         // SAFETY: `moved` keeps the allocation alive, and nothing else borrows it.
         unsafe { (*ptr).0 += 1 };
         // SAFETY: as above.
-        assert_eq!(unsafe { (*moved[0].as_ptr()).0 }, 2);
+        assert_eq!(unsafe { (*moved[0].as_ptr()).0 }, 3);
         drop(moved);
         assert_eq!(Rc::strong_count(&dropped), 1);
     }

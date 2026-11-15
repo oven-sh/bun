@@ -111,8 +111,11 @@
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
     "unsafe impl Send": [
-      "GlobalCache",
-      "SendPtr<T>"
+      "DNSRequestOwner",
+      "ResultEntry"
+    ],
+    "unsafe impl Sync": [
+      "ResultEntry"
     ]
   },
   "src/runtime/image/Image.rs": {

@@ -709,7 +709,7 @@ impl TranspilerJob {
         });
 
         // The whole Transpiler is copied by value here.
-        // `Transpiler<'static>` is not `Clone` (it holds raw self-referential pointers); we do
+        // `Transpiler<'static>` is not `Clone`; we do
         // a bytewise copy. SAFETY: `vm.transpiler` is read via
         // a raw pointer; every internal raw pointer in the copy
         // still targets memory owned by `vm.transpiler` (resolver caches, define, env) which
@@ -728,8 +728,7 @@ impl TranspilerJob {
         if this.has_plugins {
             transpiler.options.no_macros = true;
         }
-        // The one in the copy is the VM's.
-        let mut macro_context = None;
+        let macro_load_states = transpiler::MacroLoadStates::default();
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -795,7 +794,7 @@ impl TranspilerJob {
             opened_file: Some(&mut input_file),
             macro_remappings,
             macro_js_ctx: transpiler::default_macro_js_value(),
-            macro_context: Some(&mut macro_context),
+            macro_load_states: &macro_load_states,
             jsx: transpiler.options.jsx.clone(),
             emit_decorator_metadata: transpiler.options.emit_decorator_metadata,
             experimental_decorators: transpiler.options.experimental_decorators,

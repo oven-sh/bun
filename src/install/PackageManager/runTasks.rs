@@ -496,18 +496,17 @@ pub(crate) fn run_tasks(
                     return_network_task(task_ptr);
                     continue;
                 };
-                let response = &metadata.response;
 
-                if response.status_code > 399 {
-                    if response.status_code == 404
+                if metadata.status_code() > 399 {
+                    if metadata.status_code() == 404
                         && let Some(entry) = manager.network_dedupe_map.get_mut(&task.task_id)
                     {
-                        entry.missing_until = npm::Registry::manifest_expiry(&response.headers);
+                        entry.missing_until = npm::Registry::manifest_expiry(metadata);
                     }
 
                     // A dist-tag on the name of an unpublished workspace links the workspace, once
                     // `get_or_put_resolved_package` sees that the task has failed.
-                    if response.status_code == 404
+                    if metadata.status_code() == 404
                         && !matches!(caller, Caller::ManifestCache)
                         && enqueue::has_linkable_workspace(
                             manager,
@@ -532,9 +531,9 @@ pub(crate) fn run_tasks(
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
-                            response.status_code,
+                            metadata.status_code(),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -543,13 +542,13 @@ pub(crate) fn run_tasks(
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
-                            response.status_code,
+                            metadata.status_code(),
                         );
                     }
                     let failure = ManifestFailure {
-                        is_missing: response.status_code == 404,
+                        is_missing: metadata.status_code() == 404,
                         is_unanswered: retry,
                         ..Default::default()
                     };
@@ -581,7 +580,7 @@ pub(crate) fn run_tasks(
                     Output::flush();
                 }
 
-                if response.status_code == 304 {
+                if metadata.status_code() == 304 {
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
@@ -589,8 +588,7 @@ pub(crate) fn run_tasks(
                             !is_extended_manifest || manifest.pkg.has_extended_manifest()
                         );
 
-                        manifest.pkg.public_max_age =
-                            npm::Registry::manifest_expiry(&response.headers);
+                        manifest.pkg.public_max_age = npm::Registry::manifest_expiry(metadata);
 
                         // reshaped for borrowck —
                         // `bun_collections::HashMap` lacks `get_or_put` for
@@ -762,16 +760,14 @@ pub(crate) fn run_tasks(
                     continue;
                 };
 
-                let response = &metadata.response;
-
-                if response.status_code > 399 {
+                if metadata.status_code() > 399 {
                     let Some(is_required) = caller.dispatch_tarball_error(
                         manager,
                         task.task_id,
                         extract.dependency_id,
                         extract.name.slice(),
                         &extract.resolution,
-                        match response.status_code {
+                        match metadata.status_code() {
                             400 => crate::Error::TarballHTTP400,
                             401 => crate::Error::TarballHTTP401,
                             402 => crate::Error::TarballHTTP402,
@@ -792,9 +788,9 @@ pub(crate) fn run_tasks(
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
-                            response.status_code,
+                            metadata.status_code(),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -803,9 +799,9 @@ pub(crate) fn run_tasks(
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
-                            response.status_code,
+                            metadata.status_code(),
                         );
                     }
                     fail_update_requests(
@@ -1301,15 +1297,15 @@ pub(crate) fn download_outcome(
     let proxy_status = response
         .proxy_connect_response
         .as_ref()
-        .map(|reply| reply.response.status_code);
+        .map(|reply| reply.status_code());
     let failed = match &response.metadata {
         None => proxy_status.is_none(),
-        Some(m) => response.fail.is_some() && m.response.status_code < 400,
+        Some(m) => response.fail.is_some() && m.status_code() < 400,
     };
     let status = response
         .metadata
         .as_ref()
-        .map(|m| m.response.status_code)
+        .map(|m| m.status_code())
         .or(proxy_status);
     // Another attempt would fail in the same way.
     let is_final = matches!(
@@ -1341,7 +1337,7 @@ impl core::fmt::Display for DownloadFailure<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.0)?;
         match &self.1.proxy_connect_response {
-            Some(reply) => write!(f, " ({})", reply.response.status_code),
+            Some(reply) => write!(f, " ({})", reply.status_code()),
             None => Ok(()),
         }
     }

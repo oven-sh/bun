@@ -31,19 +31,25 @@ mod preallocate {
     }
 }
 
+const ENTRY_OVERFLOW_COUNT: usize = 256;
+
 static FILENAME_STORE: Once<BSSStringList> = Once::new();
-static ENTRY_STORE: Once<Guarded<BSSList<Entry, 256>>> = Once::new();
+static ENTRY_STORE: Once<Guarded<BSSList<Entry, ENTRY_OVERFLOW_COUNT>>> = Once::new();
 
 #[inline]
 pub(crate) fn filename_store() -> &'static BSSStringList {
     FILENAME_STORE.get_or_init(|| BSSStringList::new(preallocate::counts::FILES * 2 * (64 + 1)))
 }
 
-fn entry_store() -> &'static Guarded<BSSList<Entry, 256>> {
-    ENTRY_STORE.get_or_init(|| Guarded::new(BSSList::new(preallocate::counts::FILES * 2 + 256)))
+fn entry_store() -> &'static Guarded<BSSList<Entry, ENTRY_OVERFLOW_COUNT>> {
+    ENTRY_STORE.get_or_init(|| {
+        Guarded::new(BSSList::new(
+            preallocate::counts::FILES * 2 + ENTRY_OVERFLOW_COUNT,
+        ))
+    })
 }
 
-/// Checks that `FILENAME_STORE` is initialized once per `readdir` instead of once per entry.
+/// Holds the store, so that its `Once` is read per `readdir` and not per entry.
 pub struct FilenameStoreAppender(&'static BSSStringList);
 impl FilenameStoreAppender {
     #[inline]
@@ -199,8 +205,7 @@ impl Entry {
     }
 
     /// Stat-on-first-use.
-    // The lazy-stat rewrite
-    // of `need_stat` / `cache` is serialized on the per-entry `mutex` here
+    // The lazy-stat rewrite of `need_stat` / `cache` is serialized on the per-entry `mutex` here
     // (double-checked: the cached fast path stays lock-free).
     // Generic over `R: EntryKindResolver` so this block is independent of
     // which `RealFS` copy `fs` points at (see file-top comment).
@@ -407,9 +412,8 @@ impl DirEntry {
         };
 
         let key = stored.base_lowercase();
-        // `key` equals `name_lc` byte-for-byte (a fresh
-        // entry interned `name_lc`; a recycled one matched it exactly above), so
-        // `name_hash` is its hash too — insert without re-hashing.
+        // `key` equals `name_lc` byte-for-byte (a fresh entry interned `name_lc`; a recycled one
+        // matched it exactly above), so `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
         Ok(Some(stored))

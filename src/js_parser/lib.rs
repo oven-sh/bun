@@ -152,7 +152,7 @@ pub mod Macro {
     /// Sweep this thread's bundler-macro VM so JS-wrapper-owned native boxes
     /// (e.g. a `new Bun.Transpiler()` constructed inside a macro body) are
     /// finalized before the worker thread's TLS root vanishes. Only call from
-    /// `bun_bundler::ThreadPool::Worker::deinit` after both per-worker
+    /// `bun_bundler::ThreadPool::Worker::drop` after both per-worker
     /// `MacroContext` boxes are freed, not inside JS execution or a GC sweep, where
     /// re-entering `run_gc(true)` is unsound.
     #[inline]

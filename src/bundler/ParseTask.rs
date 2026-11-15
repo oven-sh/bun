@@ -36,7 +36,8 @@ use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
-use bun_resolver::fs::PathResolverExt as _;
+use bun_resolver::cache::SourceFile;
+use bun_resolver::fs::{ByteOrderMark, PathResolverExt as _};
 use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
@@ -65,17 +66,9 @@ mod EventLoop {
 // ContentsOrFd
 // ───────────────────────────────────────────────────────────────────────────
 
-#[derive(bun_core::EnumTag)]
-#[enum_tag(existing = ContentsOrFdTag)]
 pub enum ContentsOrFd<'a> {
     Fd { dir: Fd, file: Fd },
     Contents(&'a [u8]),
-}
-
-#[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
-pub(crate) enum ContentsOrFdTag {
-    Fd,
-    Contents,
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -87,8 +80,6 @@ pub struct ParseTask<'a> {
     pub(crate) path: Fs::Path<'a>,
     pub(crate) secondary_path_for_commonjs_interop: Option<Fs::Path<'a>>,
     pub(crate) contents_or_fd: ContentsOrFd<'a>,
-    /// True if this task opened `contents_or_fd`'s file. False if the resolver's entry cache owns it.
-    pub(crate) opened_own_fd: bool,
     pub(crate) external_free_function: ExternalFreeFunction,
     pub(crate) side_effects: bun_ast::SideEffects,
     pub(crate) loader: Option<Loader>,
@@ -101,7 +92,7 @@ pub struct ParseTask<'a> {
     pub(crate) io_task: ThreadPoolLib::Task,
 
     // Used for splitting up the work between the io and parse steps.
-    pub(crate) stage: ParseTaskStage,
+    pub(crate) stage: ParseTaskStage<'a>,
 
     pub(crate) known_target: options::Target,
     pub(crate) module_type: options::ModuleType,
@@ -116,9 +107,9 @@ pub struct ParseTask<'a> {
     pub(crate) is_entry_point: bool,
 }
 
-pub enum ParseTaskStage {
+pub enum ParseTaskStage<'a> {
     NeedsSourceCode,
-    NeedsParse(CacheEntry),
+    NeedsParse(CacheEntry<'a>),
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -140,7 +131,7 @@ impl bun_event_loop::Taskable for Result<'static> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
     /// The VM that runs the bundle is going: the result goes to nobody.
     unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box `run_from_thread_pool_impl` (or
+        // SAFETY: fn contract — the box `run_from_thread_pool` (or
         // `ServerComponentParseTask`) leaked.
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -149,9 +140,7 @@ impl bun_event_loop::Taskable for Result<'static> {
         bun_event_loop::ContextId::NONE
     }
 }
-// `Result` lives in a bump arena (no Drop on free); boxing the large arm
-// would leak the heap allocation. The size diff is acceptable.
-#[allow(clippy::large_enum_variant)]
+#[expect(clippy::large_enum_variant, reason = "`Result` is boxed")]
 pub(crate) enum ResultValue<'a> {
     Success(Success<'a>),
     Err(ResultError),
@@ -169,23 +158,21 @@ impl ResultValue<'_> {
 }
 
 pub(crate) struct WatcherData {
-    pub(crate) fd: Fd,
+    pub(crate) file: Option<SourceFile>,
     pub(crate) dir_fd: Fd,
-    /// True if the receiver must close `fd` when the watcher doesn't take it.
-    pub(crate) owns_fd: bool,
 }
 
 impl WatcherData {
     /// When no files to watch, this encoding is used.
     pub(crate) const NONE: WatcherData = WatcherData {
-        fd: Fd::INVALID,
+        file: None,
         dir_fd: Fd::INVALID,
-        owns_fd: false,
     };
 }
 
 pub(crate) struct Success<'a> {
     pub(crate) ast: JSAst<'a>,
+    pub(crate) stylesheet: Option<Box<bun_css::BundlerStyleSheet<'a>>>,
     pub(crate) source: Source<'a>,
     pub(crate) log: Log,
     pub(crate) use_directive: UseDirective,
@@ -283,7 +270,6 @@ impl<'a> ParseTask<'a> {
             known_target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
-            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task {
@@ -314,7 +300,6 @@ impl Default for ParseTask<'_> {
             path: Fs::Path::init(b""),
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
-            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
@@ -347,28 +332,13 @@ impl Default for ParseTask<'_> {
 // sites); bodies dispatch to `parse_worker::run_from_thread_pool`.
 // ───────────────────────────────────────────────────────────────────────────
 
-// CONCURRENCY: thread-pool callback — runs on worker (or IO-pool) threads,
-// one task per `ParseTask`. Each `ParseTask` is a heap node owned by the
-// bundle graph; the `&mut ParseTask` recovered here is unique per task (no
-// two callbacks fire for the same `ParseTask` concurrently — the IO→worker
-// hand-off in `run_from_thread_pool_impl` reschedules sequentially). Writes:
-// `ParseTask.{stage, source_index, ...}` (own fields); result is sent via
-// `ctx.loop_.enqueue_task_concurrent` (MPSC queue). Reads `ctx: &BundleV2`
-// shared (`Worker::get`, `ctx.graph.pool`, `ctx.transpiler.options`).
-// `ParseTask` is `Send` because its non-auto-`Send` fields are bundle-
-// lifetime arena slices / backref pointers (`ctx`, `path`, `contents`).
 /// # Safety
-/// `task` must point at the `io_task` intrusive field of a live `ParseTask`
-/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+/// `task` is the `io_task` field of the box that `ThreadPool::schedule` gave to the pool.
 unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: `task` points to `ParseTask.io_task` (intrusive field) — only
-    // ever invoked by the thread pool against a `ParseTask` it scheduled, so
-    // provenance covers the full `ParseTask` and the `&mut` is unique per the
-    // CONCURRENCY note above. `'static`: see `task_callback`.
-    let parse_task: &mut ParseTask<'static> =
-        unsafe { &mut *bun_core::from_field_ptr!(ParseTask<'static>, io_task, task) };
-    // Read the pool first. `run_from_thread_pool` can reschedule `*parse_task` onto a worker
-    // thread, which then owns it.
+    // SAFETY: fn contract. `'static`: see `task_callback`.
+    let parse_task = unsafe {
+        bun_core::heap::take(bun_core::from_field_ptr!(ParseTask<'static>, io_task, task))
+    };
     // Teardown waits for this callback (`wait_for_io_tasks`), so the bundle is live.
     let ctx = parse_task.ctx.expect("ParseTask.ctx unset");
     let pool: *const crate::ThreadPool = ctx.graph.pool();
@@ -377,18 +347,14 @@ unsafe fn io_task_callback(task: *mut ThreadPoolLib::Task) {
     unsafe { crate::ThreadPool::finish_io_task(pool) };
 }
 
-// CONCURRENCY: see `io_task_callback` — same task, different intrusive field.
 /// # Safety
-/// `task` must point at the `task` intrusive field of a live `ParseTask`
-/// scheduled by the thread pool, with provenance over the full `ParseTask`.
+/// `task` is the `task` field of the box that `ThreadPool::schedule` gave to the pool.
 unsafe fn task_callback(task: *mut ThreadPoolLib::Task) {
-    // SAFETY: `task` points to `ParseTask.task` (intrusive field) — see
-    // `io_task_callback` for the dispatch invariant.
-    // SAFETY: erasing the bundle's `'a` to `'static` is sound because the bundle
+    // SAFETY: fn contract. Erasing the bundle's `'a` to `'static` is sound because the bundle
     // waits for every task it scheduled (`pending_items`) before it frees anything
     // `'a` covers, and the result goes back to that same bundle.
-    let parse_task: &mut ParseTask<'static> =
-        unsafe { &mut *bun_core::from_field_ptr!(ParseTask<'static>, task, task) };
+    let parse_task =
+        unsafe { bun_core::heap::take(bun_core::from_field_ptr!(ParseTask<'static>, task, task)) };
     parse_worker::run_from_thread_pool(parse_task);
 }
 
@@ -611,7 +577,6 @@ pub mod parse_worker {
             known_target: target,
             // defaults:
             secondary_path_for_commonjs_interop: None,
-            opened_own_fd: false,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
@@ -671,14 +636,10 @@ pub mod parse_worker {
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
         // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
-        let mut ast = JSAst::init(
+        Ok(JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
                 .ok_or(AnyError::ParserError)?,
-        );
-        ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(
-            bump.alloc(bun_css::BundlerStyleSheet::empty()),
-        ));
-        Ok(ast)
+        ))
     }
 
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
@@ -821,6 +782,7 @@ pub mod parse_worker {
         unique_key_prefix: u64,
         unique_key_for_additional_file: &mut FileLoaderHash,
         has_any_css_locals: &AtomicU32,
+        stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         use core::fmt::Write as _;
 
@@ -1346,8 +1308,7 @@ pub mod parse_worker {
                 );
                 temp_log.append_to(log);
                 let mut ast = JSAst::init(lazy?.ok_or(AnyError::ParserError)?);
-                let css_ast_heap = crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css_ast));
-                ast.css = Some(css_ast_heap);
+                *stylesheet = Some(Box::new(css_ast));
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
@@ -1432,14 +1393,13 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    fn get_code_for_parse_task_without_plugins(
+    fn get_code_for_parse_task_without_plugins<'b>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        fs_cache: &mut bun_resolver::cache::Fs,
-        bump: &Bump,
+        bump: &'b Bump,
         file_path: &mut Fs::Path,
         loader: Loader,
-    ) -> core::result::Result<CacheEntry, AnyError> {
+    ) -> core::result::Result<CacheEntry<'b>, AnyError> {
         match &task.contents_or_fd {
             ContentsOrFd::Fd { dir, file } => 'brk: {
                 let contents_dir = *dir;
@@ -1451,14 +1411,10 @@ pub mod parse_worker {
 
                 // Check FileMap for in-memory files first
                 if let Some(file_map) = ctx.file_map {
-                    if let Some(file_contents) = file_map.get(file_path.text) {
+                    if let Some(contents) = file_map.get(file_path.text) {
                         break 'brk Ok(CacheEntry {
-                            contents: crate::cache::Contents::SharedBuffer {
-                                ptr: file_contents.as_ptr(),
-                                len: file_contents.len(),
-                            },
-                            fd: Fd::INVALID,
-                            ..Default::default()
+                            contents,
+                            file: None,
                         });
                     }
                 }
@@ -1470,12 +1426,8 @@ pub mod parse_worker {
                                 match file {
                                     crate::bake_types::BuiltInModule::Code(code) => {
                                         break 'brk Ok(CacheEntry {
-                                            contents: crate::cache::Contents::SharedBuffer {
-                                                ptr: code.as_ptr(),
-                                                len: code.len(),
-                                            },
-                                            fd: Fd::INVALID,
-                                            ..Default::default()
+                                            contents: code,
+                                            file: None,
                                         });
                                     }
                                     crate::bake_types::BuiltInModule::Import(path) => {
@@ -1486,15 +1438,10 @@ pub mod parse_worker {
                             }
                         }
 
-                        let fallback =
-                            NodeFallbackModules::contents_from_path(file_path.text).unwrap_or(b"");
                         break 'brk Ok(CacheEntry {
-                            contents: crate::cache::Contents::SharedBuffer {
-                                ptr: fallback.as_ptr(),
-                                len: fallback.len(),
-                            },
-                            fd: Fd::INVALID,
-                            ..Default::default()
+                            contents: NodeFallbackModules::contents_from_path(file_path.text)
+                                .unwrap_or(b""),
+                            file: None,
                         });
                     }
                 }
@@ -1515,39 +1462,17 @@ pub mod parse_worker {
                         | Loader::Sqlite
                         | Loader::SqliteEmbedded
                 );
-                let (path, file) = (file_path.text, contents_file.unwrap_valid());
-                break 'brk match match is_carried_unparsed {
-                    true => fs_cache.read_bytes_into_arena(path, contents_dir, file, bump),
-                    false => fs_cache.read_file_with_allocator(
-                        path,
-                        contents_dir,
-                        false,
-                        file,
-                        Some(bump),
-                    ),
-                } {
-                    Ok(e) => {
-                        // `bun_resolver::cache::Entry` ↔ `crate::cache::Entry`
-                        // are structurally identical twins; convert
-                        // by-variant so ownership of `Owned(Vec<u8>)` transfers.
-                        use bun_resolver::cache::Contents as RC;
-                        let contents = match e.contents {
-                            RC::Empty => crate::cache::Contents::Empty,
-                            RC::Owned(v) => crate::cache::Contents::Owned(v),
-                            RC::Arena { ptr, len } => crate::cache::Contents::Arena { ptr, len },
-                            RC::SharedBuffer { ptr, len } => {
-                                crate::cache::Contents::SharedBuffer { ptr, len }
-                            }
-                            RC::External { ptr, len } => {
-                                crate::cache::Contents::External { ptr, len }
-                            }
-                        };
-                        Ok(CacheEntry {
-                            contents,
-                            fd: e.fd,
-                            ..Default::default()
-                        })
-                    }
+                break 'brk match bun_resolver::cache::Fs::read_file_into_arena(
+                    file_path.text,
+                    contents_dir,
+                    contents_file.unwrap_valid(),
+                    bump,
+                    match is_carried_unparsed {
+                        true => ByteOrderMark::Kept,
+                        false => ByteOrderMark::Converted,
+                    },
+                ) {
+                    Ok(entry) => Ok(entry),
                     Err(e) => {
                         let source = Source::init_empty_file(
                             // `file_path.text`
@@ -1584,12 +1509,8 @@ pub mod parse_worker {
                 };
             }
             ContentsOrFd::Contents(contents) => Ok(CacheEntry {
-                contents: crate::cache::Contents::SharedBuffer {
-                    ptr: contents.as_ptr(),
-                    len: contents.len(),
-                },
-                fd: Fd::INVALID,
-                ..Default::default()
+                contents,
+                file: None,
             }),
         }
     }
@@ -1598,15 +1519,14 @@ pub mod parse_worker {
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub(crate) fn get_code_for_parse_task(
+    pub(crate) fn get_code_for_parse_task<'a>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        fs_cache: &mut bun_resolver::cache::Fs,
-        bump: &Bump,
+        bump: &'a Bump,
         file_path: &mut Fs::Path,
         loader: &mut Loader,
         from_plugin: &mut bool,
-    ) -> core::result::Result<CacheEntry, AnyError> {
+    ) -> core::result::Result<CacheEntry<'a>, AnyError> {
         let might_have_on_parse_plugins = 'brk: {
             if task.source_index.is_runtime() {
                 break 'brk false;
@@ -1626,10 +1546,7 @@ pub mod parse_worker {
         };
 
         if !might_have_on_parse_plugins {
-            let loader = *loader;
-            return get_code_for_parse_task_without_plugins(
-                task, log, fs_cache, bump, file_path, loader,
-            );
+            return get_code_for_parse_task_without_plugins(task, log, bump, file_path, *loader);
         }
 
         let should_continue_running = core::cell::Cell::new(1i32);
@@ -1637,14 +1554,13 @@ pub mod parse_worker {
         let mut ctx = OnBeforeParsePlugin {
             task,
             log,
-            fs_cache,
             bump,
             file_path,
             loader,
             deferred_error: None,
             should_continue_running: &should_continue_running,
             result: core::ptr::null_mut(),
-            original_contents: None,
+            original_file: None,
         };
 
         let bundle = ctx.task.ctx.expect("ParseTask.ctx unset");
@@ -1656,11 +1572,10 @@ pub mod parse_worker {
     // OnBeforeParsePlugin
     // ───────────────────────────────────────────────────────────────────────────
 
-    pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
+    pub struct OnBeforeParsePlugin<'a, 'b: 'a, 'bump> {
         task: &'a mut ParseTask<'static>,
         log: &'a mut Log,
-        fs_cache: &'a mut bun_resolver::cache::Fs,
-        bump: &'a Bump,
+        bump: &'bump Bump,
         file_path: &'a mut Fs::Path<'b>,
         loader: &'a mut Loader,
         deferred_error: Option<AnyError>,
@@ -1676,17 +1591,13 @@ pub mod parse_worker {
         // the parent via offset_of; a `&mut` here would (a) shrink provenance to
         // the inner field and (b) alias with any `&`/`&mut` to the wrapper.
         result: *mut OnBeforeParseResult,
-        // Owns the `Contents` fetched by `fetch_source_code` so the buffer the
-        // native plugin reads through `wrapper.original_source` stays alive for
-        // the duration of `run`. Returned to the caller when the plugin keeps
-        // the original source, dropped otherwise.
-        original_contents: Option<crate::cache::Contents>,
+        original_file: Option<SourceFile>,
     }
 
     #[repr(C)]
     pub struct OnBeforeParseArguments {
         pub(crate) struct_size: usize,
-        pub(crate) context: *mut OnBeforeParsePlugin<'static, 'static>, // FFI (LIFETIMES.tsv)
+        pub(crate) context: *mut OnBeforeParsePlugin<'static, 'static, 'static>, // FFI (LIFETIMES.tsv)
         pub(crate) path_ptr: *const u8,
         pub(crate) path_len: usize,
         pub(crate) namespace_ptr: *const u8,
@@ -1854,7 +1765,6 @@ pub mod parse_worker {
     struct OnBeforeParseResultWrapper {
         pub original_source: *const u8,
         pub original_source_len: usize,
-        pub original_source_fd: Fd,
         pub loader: Loader,
         #[cfg(debug_assertions)]
         pub check: u32, // Value to ensure OnBeforeParseResult is wrapped in this struct
@@ -1933,10 +1843,9 @@ pub mod parse_worker {
                 return 0;
             }
 
-            let mut entry = match get_code_for_parse_task_without_plugins(
+            let entry = match get_code_for_parse_task_without_plugins(
                 this.task,
                 this.log,
-                this.fs_cache,
                 this.bump,
                 this.file_path,
                 *this.loader,
@@ -1948,23 +1857,9 @@ pub mod parse_worker {
                     return 1;
                 }
             };
-            // `Contents::Owned(Vec<u8>)` (the file-read path — see
-            // `.rs:1287` / `resolver/lib.rs:2285`) frees on drop, which would
-            // leave `result.source_ptr` / `wrapper.original_source` dangling for
-            // the native plugin and `OnBeforeParsePlugin::run` to read through.
-            // Stash ownership on `this.original_contents` so the bytes outlive
-            // the wrapper; `OnBeforeParsePlugin::run` returns it when the
-            // plugin keeps the original source, or drops it when the plugin
-            // replaces the source.
-            let fd = entry.fd;
-            this.original_contents = Some(core::mem::take(&mut entry.contents));
-            let contents_slice = this
-                .original_contents
-                .as_ref()
-                .expect("just set")
-                .as_slice();
-            let source_ptr = contents_slice.as_ptr();
-            let source_len = contents_slice.len();
+            this.original_file = entry.file;
+            let source_ptr = entry.contents.as_ptr();
+            let source_len = entry.contents.len();
             result.source_ptr = source_ptr;
             result.source_len = source_len;
             result.free_user_context = None;
@@ -1978,7 +1873,6 @@ pub mod parse_worker {
             unsafe {
                 (*wrapper).original_source = source_ptr;
                 (*wrapper).original_source_len = source_len;
-                (*wrapper).original_source_fd = fd;
             }
         }
         0
@@ -2014,7 +1908,7 @@ pub mod parse_worker {
     /// `OnBeforeParsePlugin::run` (called from C++ with that pointer).
     #[unsafe(no_mangle)]
     unsafe extern "C" fn OnBeforeParsePlugin__isDone(
-        this: *mut OnBeforeParsePlugin<'_, '_>,
+        this: *mut OnBeforeParsePlugin<'_, '_, '_>,
     ) -> i32 {
         // SAFETY: called from C++ with valid ptr. Read via raw pointers
         // — `wrapper.result` aliases `*result`, so forming
@@ -2042,12 +1936,12 @@ pub mod parse_worker {
         0
     }
 
-    impl<'a, 'b: 'a> OnBeforeParsePlugin<'a, 'b> {
+    impl<'a, 'b: 'a, 'bump> OnBeforeParsePlugin<'a, 'b, 'bump> {
         pub(crate) fn run(
             &mut self,
             plugin: &bundler::JSBundlerPlugin,
             from_plugin: &mut bool,
-        ) -> core::result::Result<CacheEntry, AnyError> {
+        ) -> core::result::Result<CacheEntry<'bump>, AnyError> {
             let mut args = OnBeforeParseArguments {
                 // `context` is filled in immediately before the FFI call below —
                 // deriving it here would create a raw from `&mut self` that gets
@@ -2065,7 +1959,6 @@ pub mod parse_worker {
             let mut wrapper = OnBeforeParseResultWrapper {
                 original_source: core::ptr::null(),
                 original_source_len: 0,
-                original_source_fd: Fd::INVALID,
                 loader: *self.loader,
                 #[cfg(debug_assertions)]
                 check: 42069,
@@ -2104,7 +1997,8 @@ pub mod parse_worker {
             // no parent-`&mut` use pops its SharedRW tag before the FFI callbacks
             // (`fetch_source_code` / `log_fn`) dereference it. Reuse the same raw
             // for the `ctx` argument instead of re-deriving from `&mut self`.
-            let self_ptr = std::ptr::from_mut(self).cast::<OnBeforeParsePlugin<'static, 'static>>();
+            let self_ptr =
+                std::ptr::from_mut(self).cast::<OnBeforeParsePlugin<'static, 'static, 'static>>();
             args.context = self_ptr;
             let count = plugin.call_on_before_parse_plugins(
                 self_ptr.cast(),
@@ -2156,28 +2050,16 @@ pub mod parse_worker {
                     self.task.external_free_function = user_context;
                     *from_plugin = true;
                     *self.loader = wrapper.result.loader;
-                    // If the plugin called `fetch_source_code` and left the
-                    // source unchanged, hand the original `Contents` back to
-                    // the caller so the buffer is reclaimed instead of leaked.
-                    // Otherwise the plugin replaced the source; the original
-                    // (if any) drops with `self`.
-                    let contents =
-                        if !wrapper.original_source.is_null() && ptr == wrapper.original_source {
-                            self.original_contents
-                                .take()
-                                .expect("original_contents set alongside original_source")
-                        } else {
-                            crate::cache::Contents::External {
-                                ptr,
-                                len: wrapper.result.source_len,
-                            }
-                        };
-                    // The plugin buffer has exactly one owner:
-                    // `self.task.external_free_function` (set above),
-                    // released via `BundleV2.finalizers`.
+                    let len = if ptr == wrapper.original_source {
+                        wrapper.original_source_len
+                    } else {
+                        wrapper.result.source_len
+                    };
                     return Ok(CacheEntry {
-                        contents,
-                        fd: wrapper.original_source_fd,
+                        // SAFETY: what `fetch_source_code` read, or the plugin's buffer, which
+                        // `external_free_function` frees after the last read.
+                        contents: unsafe { core::slice::from_raw_parts(ptr, len) },
+                        file: self.original_file.take(),
                     });
                 }
             }
@@ -2185,7 +2067,6 @@ pub mod parse_worker {
             get_code_for_parse_task_without_plugins(
                 self.task,
                 self.log,
-                self.fs_cache,
                 self.bump,
                 self.file_path,
                 *self.loader,
@@ -2201,18 +2082,10 @@ pub mod parse_worker {
         task: &mut ParseTask<'static>,
         this: &mut crate::Worker,
         log: &mut Log,
-    ) -> core::result::Result<CacheEntry, AnyError> {
-        // `Worker.arena` is a `BackRef` to `Worker.heap` once `has_created` (see
-        // `ThreadPool::Worker::create`); the worker is pinned for the bundle pass.
-        // Disjoint-field borrow vs `this.data` below.
-        let bump: &Bump = this.arena.get();
+    ) -> core::result::Result<CacheEntry<'static>, AnyError> {
+        let bump = this.arena();
 
-        // `has_created` ⇒ `data`/`transpiler` were initialized in `create()`.
-        let transpiler = &mut this
-            .data
-            .as_mut()
-            .expect("Worker.data set in create()")
-            .transpiler;
+        let transpiler = &this.transpiler;
         let mut file_path = task.path;
         let mut loader = task
             .loader
@@ -2223,7 +2096,6 @@ pub mod parse_worker {
         let result = get_code_for_parse_task(
             task,
             log,
-            &mut transpiler.resolver.caches.fs,
             bump,
             &mut file_path,
             &mut loader,
@@ -2244,7 +2116,8 @@ pub mod parse_worker {
         this: &mut crate::Worker,
         step: &mut Step,
         log: &mut Log,
-        entry: &mut CacheEntry,
+        bump: &'static Bump,
+        entry_contents: &'static [u8],
     ) -> core::result::Result<Success<'static>, AnyError> {
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
         // mutably; we may need to call it again below (server-components branch),
@@ -2261,20 +2134,10 @@ pub mod parse_worker {
         // both calls' `&mut self` must be children of the same raw so neither pops
         // the other's tag chain.
         let worker_raw: *mut crate::Worker = this;
-        // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
-        // reads through the returned ASTs. `arena` is a `*const Bump` field; the
-        // deref points outside `*worker_raw`.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.
         let mut transpiler: *mut Transpiler<'static> =
             std::ptr::from_mut(unsafe { (*worker_raw).transpiler_for_target(task.known_target) });
-        // Error-path cleanup (`transpiler.reset_store()` and
-        // `if (.fd) entry.deinit(arena)`) is reshaped into the
-        // explicit `match ast_result { Err(e) => ... }` cleanup below — scopeguard
-        // would alias the `&mut Transpiler` / `&mut CacheEntry` borrows that
-        // follow. There are no other fallible `?` between here and that match.
         // `resolver` is a field of
         // `*transpiler`. Keep raw — never materialize `&mut Transpiler`
         // while a `&mut` derived from `resolver` is live. `resolver` is
@@ -2289,49 +2152,14 @@ pub mod parse_worker {
             .or_else(|| file_path.loader(unsafe { &(*transpiler).options.loaders }))
             .unwrap_or(Loader::File);
 
-        // WARNING: Do not change the variant of `task.contents_or_fd` from
-        // `.fd` to `.contents` (or back) after this point!
-        //
-        // When `task.contents_or_fd == .fd`, `entry.contents` is an owned string.
-        // When `task.contents_or_fd == .contents`, `entry.contents` is NOT owned! Freeing it here will cause a double free!
-        //
-        // Changing from `.contents` to `.fd` will cause a double free.
-        // This was the case in the situation where the ParseTask receives its `.contents` from an onLoad plugin, which caused it to be
-        // allocated by `bun.default_allocator` and then freed in `BundleV2::drop` (and also by `entry.deinit(arena)` below).
-        #[cfg(debug_assertions)]
-        let debug_original_variant_check: ContentsOrFdTag = task.contents_or_fd.tag();
-
         // SAFETY: `worker_raw` derived from the live `this: &mut Worker` above.
         // Read the `BackRef` field via `worker_raw` (not `this`) so no
         // parent-`&mut` access pops the `transpiler`/`resolver` tag chain derived
         // above. `BackRef` is `Copy`; the deref to `&BundleV2` is safe.
         let worker_ctx = unsafe { (*worker_raw).ctx };
 
-        // Only close a descriptor this task opened. A valid `file` was borrowed
-        // from the resolver's entry cache (symlink-resolved files cache their fd
-        // there); closing it leaves a stale fd for the next in-process build.
-        let opened_own_fd =
-            matches!(task.contents_or_fd, ContentsOrFd::Fd { file, .. } if !file.is_valid());
-        let will_close_file_descriptor = opened_own_fd
-            && entry.fd.is_valid()
-            && entry.fd.stdio_tag().is_none()
-            && worker_ctx.bun_watcher.is_none();
-        if will_close_file_descriptor {
-            let _ = entry.close_fd();
-            task.contents_or_fd = ContentsOrFd::Fd {
-                file: Fd::INVALID,
-                dir: Fd::INVALID,
-            };
-        } else if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
-            task.contents_or_fd = ContentsOrFd::Fd {
-                file: entry.fd,
-                dir: Fd::INVALID,
-            };
-            task.opened_own_fd = opened_own_fd && entry.fd.stdio_tag().is_none();
-        }
         *step = Step::Parse;
 
-        let entry_contents: &[u8] = entry.contents.as_slice();
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
@@ -2381,12 +2209,7 @@ pub mod parse_worker {
         let source: &'static Source<'static> = bump.alloc(Source {
             path: *file_path,
             index: bun_ast::Index(task.source_index.get()),
-            // `entry.contents` is owned by `task.stage` (written back by
-            // the caller after parse — see `ParseTask::run`). `Source` is stored in
-            // `Success` which lives no longer than the `ParseTask` itself, so this
-            // borrow is sound. Routed through the audited `StoreStr` arena-erasure
-            // path (single `from_raw_parts` in `StoreStr::slice`).
-            contents: std::borrow::Cow::Borrowed(ast::StoreStr::new(entry_contents).slice()),
+            contents: std::borrow::Cow::Borrowed(entry_contents),
             contents_is_recycled: false,
             ..Default::default()
         });
@@ -2639,6 +2462,7 @@ pub mod parse_worker {
             key: ast::StoreStr::EMPTY,
             content_hash: 0,
         };
+        let mut stylesheet = None;
         let task_ctx = task.ctx.expect("ParseTask.ctx unset");
         let module_type = opts.module_type;
         // `topts` (a `&BundleOptions`) is dead past this point; the callees take
@@ -2659,8 +2483,10 @@ pub mod parse_worker {
                     task_ctx.unique_key,
                     &mut unique_key_for_additional_file,
                     &task_ctx.has_any_css_locals,
+                    &mut stylesheet,
                 )
             } else if loader.is_css() {
+                stylesheet = Some(Box::new(bun_css::BundlerStyleSheet::empty()));
                 get_empty_css_ast(log, transpiler, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
                 get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
@@ -2670,23 +2496,8 @@ pub mod parse_worker {
         let mut ast = match ast_result {
             Ok(a) => a,
             Err(e) => {
-                // Error-path cleanup: reset the AST store
-                // unconditionally, and free the owned `entry.contents` only when
-                // it was sourced from `.fd` (the `.contents` variant is borrowed —
-                // freeing it would double-free in `BundleV2::drop`).
-                #[cfg(debug_assertions)]
-                if task.contents_or_fd.tag() != debug_original_variant_check {
-                    panic!(
-                        "BUG: `task.contents_or_fd` changed in a way that will cause a double free or memory to leak!\n\n    Original = {}\n    New = {}\n",
-                        <&'static str>::from(debug_original_variant_check),
-                        <&'static str>::from(task.contents_or_fd.tag()),
-                    );
-                }
                 // SAFETY: `transpiler` is live; no other borrow of it is held here.
                 unsafe { (*transpiler).reset_store() };
-                if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
-                    entry.deinit();
-                }
                 return Err(e);
             }
         };
@@ -2694,7 +2505,7 @@ pub mod parse_worker {
         ast.target = target;
         ast.module_type = task.module_type;
         if ast.parts.len() <= 1
-            && ast.css.is_none()
+            && stylesheet.is_none()
             && (task.loader.is_none() || task.loader.unwrap() != Loader::Html)
         {
             task.side_effects = bun_ast::SideEffects::NoSideEffectsEmptyAst;
@@ -2706,6 +2517,7 @@ pub mod parse_worker {
 
         Ok(Success {
             ast,
+            stylesheet,
             source: source.clone(),
             log: core::mem::take(log),
             use_directive,
@@ -2723,24 +2535,13 @@ pub mod parse_worker {
     // runFromThreadPool
     // ───────────────────────────────────────────────────────────────────────────
 
-    /// Live entry point for `task_callback` / `io_task_callback` (hoisted to
-    /// `super::*`). Thin shim over `run_from_thread_pool_impl` so the public
-    /// symbol stays stable while the body lives in a private fn for borrowck
-    /// reshaping.
-    // CONCURRENCY: see `task_callback` — `&mut ParseTask` is unique per callback
-    // invocation; all shared state is accessed via `&BundleV2` (read-only) or
-    // the per-OS-thread `Worker` arena.
-    pub(crate) fn run_from_thread_pool(this: &mut ParseTask<'static>) {
-        run_from_thread_pool_impl(this);
-    }
-
-    fn run_from_thread_pool_impl(this: &mut ParseTask<'static>) {
+    pub(crate) fn run_from_thread_pool(mut this: Box<ParseTask<'static>>) {
         let ctx = this.ctx.expect("ParseTask.ctx unset");
         let mut worker = crate::Worker::get(ctx.get());
         scoped_log!(
             ParseTask,
             "ParseTask(0x{:x}, {}) callback",
-            std::ptr::from_mut(this) as usize,
+            &raw const *this as usize,
             bstr::BStr::new(this.path.text)
         );
 
@@ -2748,52 +2549,59 @@ pub mod parse_worker {
         let mut log = Log::init();
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
+        let mut watcher_data = match this.contents_or_fd {
+            ContentsOrFd::Fd { file, dir } => WatcherData {
+                file: file.unwrap_valid().map(SourceFile::Lent),
+                dir_fd: dir,
+            },
+            ContentsOrFd::Contents(_) => WatcherData::NONE,
+        };
+
         let value: ResultValue = 'value: {
-            if matches!(this.stage, ParseTaskStage::NeedsSourceCode) {
-                match get_source_code(this, &mut worker, &mut log) {
-                    Ok(entry) => this.stage = ParseTaskStage::NeedsParse(entry),
-                    Err(e) => {
+            let stage = core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode);
+            let entry = match stage {
+                ParseTaskStage::NeedsParse(entry) => entry,
+                ParseTaskStage::NeedsSourceCode => {
+                    let entry = match get_source_code(&mut this, &mut worker, &mut log) {
+                        Ok(entry) => entry,
+                        Err(e) => {
+                            break 'value ResultValue::Err(ResultError {
+                                err: e,
+                                step,
+                                log,
+                                source_index: this.source_index,
+                                target: this.known_target,
+                            });
+                        }
+                    };
+
+                    if log.has_errors() {
                         break 'value ResultValue::Err(ResultError {
-                            err: e,
+                            err: crate::Error::SyntaxError,
                             step,
                             log,
                             source_index: this.source_index,
                             target: this.known_target,
                         });
                     }
-                }
 
-                if log.has_errors() {
-                    break 'value ResultValue::Err(ResultError {
-                        err: crate::Error::SyntaxError,
-                        step,
-                        log,
-                        source_index: this.source_index,
-                        target: this.known_target,
-                    });
+                    if crate::ThreadPool::uses_io_pool() {
+                        this.stage = ParseTaskStage::NeedsParse(entry);
+                        ctx.graph.pool().schedule_inside_thread_pool(this);
+                        return;
+                    }
+                    entry
                 }
+            };
 
-                if crate::ThreadPool::uses_io_pool() {
-                    ctx.graph.pool().schedule_inside_thread_pool(this);
-                    return;
-                }
-            }
+            watcher_data = WatcherData {
+                file: entry.file.filter(|_| ctx.bun_watcher.is_some()),
+                dir_fd: Fd::INVALID,
+            };
 
-            // reshaped for borrowck — `this` and `this.stage.needs_parse`
-            // both borrowed mutably. The entry must live
-            // in-place so its `Contents::Owned` buffer survives in
-            // `task.stage` for the bundle's lifetime (Success.source.contents
-            // borrows it via the arena-erased `StoreStr` path). Take it out, parse, then *write it
-            // back* on every path before `break 'value` so dropping the local
-            // can't free the buffer underneath the borrowed source.
-            let mut entry =
-                match core::mem::replace(&mut this.stage, ParseTaskStage::NeedsSourceCode) {
-                    ParseTaskStage::NeedsParse(e) => e,
-                    ParseTaskStage::NeedsSourceCode => unreachable!(),
-                };
-            let parsed = run_with_source_code(this, &mut worker, &mut step, &mut log, &mut entry);
-            this.stage = ParseTaskStage::NeedsParse(entry);
-            match parsed {
+            let (bump, contents) = (worker.arena(), entry.contents);
+            match run_with_source_code(&mut this, &mut worker, &mut step, &mut log, bump, contents)
+            {
                 Ok(ast) => {
                     // When using HMR, always flag asts with errors as parse failures.
                     // Not done outside of the dev server out of fear of breaking existing code.
@@ -2835,19 +2643,10 @@ pub mod parse_worker {
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
-            watcher_data: match this.contents_or_fd {
-                ContentsOrFd::Fd { file, dir } => WatcherData {
-                    fd: file,
-                    dir_fd: dir,
-                    owns_fd: this.opened_own_fd,
-                },
-                ContentsOrFd::Contents(_) => WatcherData::NONE,
-            },
+            watcher_data,
         });
+        drop(this);
         let result = bun_core::heap::into_raw(result);
-
-        // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
-        drop(core::mem::take(&mut this.jsx));
 
         // Running `on_complete` inline on the worker thread would violate
         // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
@@ -2883,55 +2682,20 @@ pub mod parse_worker {
         }
     }
 
-    // The struct-only `dealloc` below skips field Drop; the `Log` is the only
-    // heap-owning field `on_parse_task_complete` doesn't move out, so take it here.
-    fn drop_result_owned_fields(result: &mut Result) {
-        match &mut result.value {
-            ResultValue::Success(s) => drop(core::mem::take(&mut s.log)),
-            ResultValue::Err(e) => drop(core::mem::take(&mut e.log)),
-            ResultValue::Empty { .. } => {}
-        }
-    }
-
     fn on_complete_mini(result: *mut Result<'static>, ctx: *mut BundleV2<'static>) {
-        // SAFETY: callback contract — `result` was heap-allocated above; `ctx` is
-        // the BACKREF stashed in `result.ctx`.
-        BundleV2::on_parse_task_complete(unsafe { &mut *result }, unsafe { &mut *ctx });
-        // SAFETY: `result` is uniquely owned (callback contract).
-        drop_result_owned_fields(unsafe { &mut *result });
-        // `drop(heap::take(result))` would run full Drop glue:
-        // `on_parse_task_complete` SWAPS `result.value.Success.source` with the
-        // graph's placeholder and moves `result.ast` out, so post-swap
-        // `result.value` holds the *placeholder* `Source` whose
-        // `contents: Cow::Borrowed` may alias plugin-/loader-provided bytes the
-        // graph's swapped-in Source still references (asan use-after-poison at
-        // process_files_to_copy:4241 in bundler_loader/_plugin tests). So:
-        // dealloc the box without running Drop.
-        // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+        // SAFETY: callback contract — the box queued above, and the bundle that ticks the loop.
+        let (result, ctx) = unsafe { (bun_core::heap::take(result), &mut *ctx) };
+        BundleV2::on_parse_task_complete(result, ctx);
     }
 
     /// # Safety
-    /// `result` must be a live, uniquely-owned heap allocation produced by
-    /// `bun_core::heap::into_raw(Box<Result>)` in `run_from_thread_pool_impl`
-    /// (or `ServerComponentParseTask`'s equivalent). Ownership transfers to
-    /// this fn, which deallocates `result` before returning. Must run on the
-    /// main/bundler thread (it dereferences `result.ctx` mutably).
+    /// `result` is a queued box, on the thread of its bundle, which is not otherwise borrowed.
     pub unsafe fn on_complete(result: *mut Result<'static>) {
-        // SAFETY: result allocated via heap::alloc above; uniquely owned here.
-        let r = unsafe { &mut *result };
-        let ctx = r.ctx;
-        // SAFETY: `ctx` is a ParentRef<BundleV2> stored with write provenance
-        // (`from_ref_mut` in `ParseTask::init`); the BundleV2 outlives the bundle
-        // pass and no other `&mut BundleV2` is live on this (main) thread when the
-        // event-loop callback fires. `r` and `*ctx` are disjoint allocations.
-        BundleV2::on_parse_task_complete(r, unsafe { ctx.assume_mut() });
-        drop_result_owned_fields(r);
-        // See `on_complete_mini` for why this is `dealloc`, not `drop(take(_))`.
-        // SAFETY: `result` came from `bun_core::heap::into_raw(Box<Result>)`
-        // above; uniquely owned. Dealloc with the same layout, no field Drop.
-        unsafe { std::alloc::dealloc(result.cast::<u8>(), std::alloc::Layout::new::<Result>()) };
+        // SAFETY: fn contract.
+        let result = unsafe { bun_core::heap::take(result) };
+        let ctx = result.ctx;
+        // SAFETY: fn contract; `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`).
+        BundleV2::on_parse_task_complete(result, unsafe { ctx.assume_mut() });
     }
 } // end mod parse_worker
 

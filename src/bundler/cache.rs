@@ -46,16 +46,10 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// `Entry`/`Contents`/`ExternalFreeFunction` are defined
-// canonically in `bun_resolver::cache` (lower tier) because `Resolver.caches`
-// is typed by them and the resolver crate cannot depend on the bundler.
-// Re-export here so `crate::cache::Entry` and `bun_resolver::cache::Entry`
-// are the SAME nominal type — `ParseTask::get_code_for_parse_task_*` receives
-// a resolver-produced `Entry` and hands it to bundler-typed consumers without
-// a structural shim. See src/resolver/lib.rs `pub mod cache`.
-// ══════════════════════════════════════════════════════════════════════════
-pub use bun_resolver::cache::{Contents, Entry, ExternalFreeFunction};
+pub use bun_resolver::cache::ExternalFreeFunction;
+
+/// What a parse task parses. A worker's arena, the bundle or a plugin owns the bytes.
+pub type Entry<'a> = bun_resolver::cache::Entry<&'a [u8]>;
 
 pub struct JavaScript {}
 

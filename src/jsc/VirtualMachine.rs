@@ -1842,7 +1842,7 @@ impl VirtualMachine {
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
         // `__bun_macro_context_deinit` runs per-job (RuntimeTranspilerStore
-        // job, JSTranspiler TransformTask, bundler `Worker::deinit`) and
+        // job, JSTranspiler TransformTask, bundler `Worker::drop`) and
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
         // and panic at `SOURCE_CODE_PRINTER.get().expect(...)`.
@@ -4037,7 +4037,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 /// outlive the worker thread's TLS root and be reported by LSan once the
 /// `leak:bun_js_parser_jsc::Macro` suppression is gone.
 ///
-/// Only invoked from `bun_bundler::ThreadPool::Worker::deinit` (the call site
+/// Only invoked from `bun_bundler::ThreadPool::Worker::drop` (the call site
 /// is the discriminant — JS `Worker` threads never reach it), after both
 /// per-worker `MacroContext` boxes are freed. Not called from
 /// `__bun_macro_context_deinit`: that path is reached from

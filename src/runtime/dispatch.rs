@@ -253,9 +253,8 @@ pub(crate) fn run_task(
             ) -> JsResult<()> {
                 // `bun_bundler` is JSC-free; the C++ hop it calls answers the request itself when the plugin throws, but can return early with an exception pending (argument conversion), so check the scope here.
                 bun_jsc::call_check_slow(global, || {
-                    // SAFETY: tag identifies pointee — a live `Resolve` owned by the
-                    // plugin dispatch chain.
-                    unsafe { &mut *resolve }.run_on_js_thread()
+                    // SAFETY: boxed in `Resolve::dispatch`; the arm consumes it.
+                    unsafe { bun_core::heap::take(resolve) }.run_on_js_thread()
                 })?;
                 Ok(())
             }
@@ -269,9 +268,8 @@ pub(crate) fn run_task(
             ) -> JsResult<()> {
                 // As `BundleV2PluginResolve`.
                 bun_jsc::call_check_slow(global, || {
-                    // SAFETY: tag identifies pointee — a live `Load` owned by the plugin
-                    // dispatch chain.
-                    unsafe { &mut *load }.run_on_js_thread()
+                    // SAFETY: boxed in `Load::dispatch`; the arm consumes it.
+                    unsafe { bun_core::heap::take(load) }.run_on_js_thread()
                 })?;
                 Ok(())
             }
@@ -365,15 +363,15 @@ pub(crate) fn run_task(
         task_tag::BundleV2PluginResolveAnswered => feature_arm!(
             [Bundler],
             |answered: bun_bundler::bundle_v2::api::JSBundler::ResolveAnswered| {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *answered }.run();
+                // SAFETY: the boxed request; the arm consumes it.
+                unsafe { bun_core::heap::take(answered) }.run();
             }
         ),
         task_tag::BundleV2PluginLoadAnswered => feature_arm!(
             [Bundler],
             |answered: bun_bundler::bundle_v2::api::JSBundler::LoadAnswered| {
-                // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *answered }.run();
+                // SAFETY: the boxed request; the arm consumes it.
+                unsafe { bun_core::heap::take(answered) }.run();
             }
         ),
         task_tag::BundleV2PluginLoadDeferred => {

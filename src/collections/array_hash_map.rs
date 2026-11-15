@@ -1630,6 +1630,15 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringH
     }
 }
 
+impl<V, A: Allocator + HashbrownAllocator + Clone + Default> IntoIterator for StringHashMap<V, A> {
+    type Item = (StringHashMapKey<A>, V);
+    type IntoIter = hashbrown::hash_map::IntoIter<StringHashMapKey<A>, V, A>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.inner.into_iter()
+    }
+}
+
 impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Deref for StringHashMap<V, A> {
     type Target = StringHashMapInner<V, A>;
     fn deref(&self) -> &Self::Target {

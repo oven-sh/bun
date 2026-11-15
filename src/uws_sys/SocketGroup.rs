@@ -11,6 +11,8 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
+use bun_core::ZStr;
+
 use crate::{
     ConnectingSocket, LIBUS_SOCKET_DESCRIPTOR, ListenSocket, Loop, OwnedListenSocket, SocketKind,
     SslCtx, us_bun_verify_error_t, us_socket_t,
@@ -145,7 +147,7 @@ impl SocketGroup {
         &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
-        host: Option<&core::ffi::CStr>,
+        host: Option<&ZStr>,
         port: c_int,
         options: c_int,
         socket_ext_size: c_int,
@@ -219,9 +221,9 @@ impl SocketGroup {
         &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
-        host: &core::ffi::CStr,
+        host: &ZStr,
         port: c_int,
-        local_binding: Option<(&core::ffi::CStr, u16)>,
+        local_binding: Option<(&ZStr, u16)>,
         options: c_int,
         socket_ext_size: c_int,
     ) -> ConnectResult {

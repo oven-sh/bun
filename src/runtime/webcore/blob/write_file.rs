@@ -145,13 +145,8 @@ impl FileOpener for WriteFile {
             .as_file()
             .pathlike
     }
-    fn try_mkdirp(
-        &mut self,
-        err: bun_sys::Error,
-        path: &bun_core::ZStr,
-        display_path: &[u8],
-    ) -> Retry {
-        mkdir_if_not_exists(self, &err, path, display_path)
+    fn try_mkdirp(&mut self, err: bun_sys::Error, path: &bun_core::ZStr) -> Retry {
+        mkdir_if_not_exists(self, &err, path)
     }
 }
 

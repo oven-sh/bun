@@ -831,10 +831,13 @@ pub fn copy<'a>(buf: &'a mut [u8], src: &[u8]) -> &'a [u8] {
 }
 
 /// Copies `src` into `buf` to NUL-terminate it. `None` if it does not fit.
+#[inline]
 pub fn copy_z<'a>(buf: &'a mut [u8], src: &[u8]) -> Option<&'a crate::ZStr> {
-    *buf.get_mut(src.len())? = 0;
+    if src.len() >= buf.len() {
+        return None;
+    }
     buf[..src.len()].copy_from_slice(src);
-    Some(crate::ZStr::from_buf(buf, src.len()))
+    Some(crate::ZStr::nul_terminate(buf, src.len()))
 }
 
 /// startsWith except it checks for non-empty strings

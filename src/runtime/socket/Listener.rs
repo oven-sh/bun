@@ -454,11 +454,10 @@ impl Listener {
         let listen_socket = match &mut connection {
             UnixOrHost::Host { host, port } => {
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
-                let host_cstr = hostz.as_zstr().as_cstr();
                 let ls = this_ref.group.listen(
                     kind,
                     secure_ctx_ptr,
-                    Some(host_cstr),
+                    Some(&hostz),
                     *port as c_int,
                     socket_flags,
                     size_of::<*mut c_void>() as c_int,
@@ -713,8 +712,7 @@ impl Listener {
         if bun_core::strings::contains_char(server_name_bytes, 0) {
             return Ok(());
         }
-        let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
-        let server_name = server_name_z.as_zstr().as_cstr();
+        let server_name = bun_core::ZBox::from_bytes(server_name_bytes);
 
         let ListenerType::Uws(ls) = this.listener.get() else {
             return Ok(());
@@ -757,7 +755,7 @@ impl Listener {
 
         // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(ls).add_server_name(server_name, sni_ctx.as_ptr());
+        bun_opaque::opaque_deref_mut(ls).add_server_name(&server_name, sni_ctx.as_ptr());
 
         Ok(())
     }

@@ -3079,13 +3079,9 @@ mod draft {
                 hStdError: core::ptr::null_mut(),
             };
             let mut sysdir = [0u16; 300];
-            // SAFETY: `sysdir` is valid for `sysdir.len()` u16 writes.
-            let sysdir_len = unsafe {
-                windows::kernel32::GetSystemDirectoryW(sysdir.as_mut_ptr(), sysdir.len() as u32)
-            } as usize;
-            if sysdir_len == 0 || sysdir_len >= sysdir.len() {
+            let Ok(sysdir_len) = windows::GetSystemDirectoryW(&mut sysdir) else {
                 return;
-            }
+            };
             let mut cmd_line = BoundedArray::<u16, 4096>::default();
             if cmd_line.append(u16::from(b'"')).is_err()
                 || cmd_line.append_slice(&sysdir[..sysdir_len]).is_err()

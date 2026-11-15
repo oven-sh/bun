@@ -206,45 +206,25 @@ unsafe impl<T: Sync> Send for RawSlice<T> {}
 // SAFETY: same reasoning as the `Send` impl above — `&[T]: Sync ⇔ T: Sync`.
 unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
-/// Process-global envp slice. On Windows the
-/// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
-/// with a WTF-8-encoded envp slice; `getenvZ` then reads it via
-/// `os::environ()`. POSIX builds leave it empty and use libc's `environ`.
+/// The WTF-8 envp that `bun_sys::windows::env::convert_env_to_wtf8` sets at startup.
 #[cfg(windows)]
 pub mod os {
-    use core::ffi::c_char;
+    use crate::{CStrList, Once};
 
-    // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
-    // hands out a shared `&[_]`) never aliases a live `&mut`. A `&'static mut`
-    // global would be UB the moment a reader
-    // borrows while a writer holds the swapped-out `&mut`.
-    static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
+    static ENVIRON: Once<CStrList<'static>> = Once::new();
 
-    /// Swap in a new envp slice; returns the previous (ptr, len) pair.
-    /// SAFETY: single-threaded startup only.
-    pub unsafe fn take_environ() -> (*mut *mut c_char, usize) {
-        // `&raw mut` (no intermediate `&mut`) — `static_mut_refs` is hard-denied
-        // under rust_2024_compatibility, and we never need a borrow here.
-        unsafe { core::ptr::replace(&raw mut ENVIRON, (core::ptr::null_mut(), 0)) }
+    pub fn set_environ(environ: CStrList<'static>) {
+        assert!(
+            ENVIRON.set(environ).is_ok(),
+            "set_environ may only be called once"
+        );
     }
-    /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`
-    /// elements for the process lifetime (leaked allocation).
-    pub unsafe fn set_environ(ptr: *mut *mut c_char, len: usize) {
-        unsafe {
-            core::ptr::write(&raw mut ENVIRON, (ptr, len));
-        }
-    }
-    /// Borrowed view of the current envp slice (read side of the `ENVIRON` global).
-    /// SAFETY: caller must not race with `set_environ`.
-    pub unsafe fn environ() -> &'static [*mut c_char] {
-        unsafe {
-            let (p, n) = core::ptr::read(&raw const ENVIRON);
-            if p.is_null() {
-                &[]
-            } else {
-                core::slice::from_raw_parts(p, n)
-            }
-        }
+    /// Empty until [`set_environ`] is called.
+    pub fn environ() -> CStrList<'static> {
+        ENVIRON
+            .get()
+            .copied()
+            .unwrap_or_else(|| CStrList::new(&[None]))
     }
 }
 

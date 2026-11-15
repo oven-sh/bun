@@ -73,7 +73,7 @@ impl PackageManager {
             Output::err_generic("{}", (why,));
             Global::exit(1);
         }
-        self.log_mut()
+        self.log()
             .add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("{why}"));
     }
 }

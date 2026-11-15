@@ -147,7 +147,7 @@ impl DevServer {
         }
 
         // Theoretically, it shouldn't be possible for errors to leak into dev.log
-        if self.log.has_errors() && !self.log.msgs.is_empty() {
+        if self.log.has_errors() && self.log.msgs_len() > 0 {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
@@ -338,7 +338,7 @@ impl DevServer {
             err.name(),
             <&'static str>::from(graph),
             bun_core::fmt::quote(abs_path),
-            log.msgs.len(),
+            log.msgs_len(),
         );
 
         let mut watch_for_route_file = false;
@@ -396,7 +396,7 @@ impl DevServer {
         &mut self,
         abs_path: &[u8],
         graph: bake::Graph,
-    ) -> crate::Result<&mut Log> {
+    ) -> crate::Result<&Log> {
         debug_assert!(self.current_bundle.is_some());
 
         let _g = self.graph_safety_lock.guard();

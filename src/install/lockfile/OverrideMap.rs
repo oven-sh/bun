@@ -209,7 +209,7 @@ struct ParseContext<'a, 'b> {
     pm: &'a mut PackageManager,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
-    log: &'a mut bun_ast::Log,
+    log: &'a bun_ast::Log,
     source: &'a bun_ast::Source<'a>,
     workspace_names: &'a WorkspaceMap,
     builder: &'a mut StringBuilder<'b>,
@@ -469,7 +469,7 @@ impl OverrideMap {
         &self,
         catalogs: &CatalogMap,
         buf: &[u8],
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         source: &bun_ast::Source,
         root: &Expr,
         has_workspaces: bool,
@@ -673,7 +673,7 @@ impl OverrideMap {
         target: PackageSelector<'_>,
         value: &[u8],
         buf: &mut bun_semver::string::Buf<'_>,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
     ) -> Result<bool, Error> {
         let name_hash = SemverBuilder::string_hash(target.name);
         let name = buf.append_with_hash(target.name, name_hash)?;
@@ -741,7 +741,7 @@ impl OverrideMap {
     pub(crate) fn parse_count(
         &mut self,
         pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
         expr: Expr,
@@ -803,7 +803,7 @@ impl OverrideMap {
         pm: &mut PackageManager,
         lockfile_dependencies: &[Dependency],
         root_package: &Package,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
         expr: Expr,
@@ -1091,7 +1091,7 @@ fn lockfile_range(
     range: &[u8],
     is_target: bool,
     buf: &mut bun_semver::string::Buf<'_>,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> Result<Option<dependency::Version>, Error> {
     if range.is_empty() {
         return Ok(Some(dependency::Version::default()));
@@ -1222,7 +1222,7 @@ fn parse_range(
         name_hash,
         sliced.slice,
         &sliced,
-        &mut *ctx.log,
+        ctx.log,
         None::<&mut PackageManager>,
     ) {
         Some(version) if is_selector_range(&version, is_target) => Some(version),
@@ -1346,7 +1346,7 @@ fn parse_override_value(
         name_hash,
         sliced.slice,
         &sliced,
-        &mut *ctx.log,
+        ctx.log,
         alias_registry,
     ) else {
         ctx.log.add_warning_fmt(
@@ -1380,7 +1380,7 @@ fn declared_dependency(root: &Expr, name: &[u8]) -> Option<Expr> {
 
 fn count_ref_value(
     pm: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
     root_json: &Expr,
@@ -1403,7 +1403,7 @@ fn count_ref_value(
 
 fn workspace_ref_literal(
     pm: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
     ref_name: &[u8],

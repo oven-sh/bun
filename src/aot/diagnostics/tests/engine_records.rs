@@ -143,9 +143,10 @@ fn engine_warning_prints_number_and_compiled_line() {
         describe(&log),
         [format!("/p/a.ts:2:1 Warn TS{number}: runs slowly")]
     );
-    let location = log.msgs[0].data.location.as_ref().expect("a location");
+    let msgs = log.msgs.take();
+    let location = msgs[0].data.location.as_ref().expect("a location");
     assert_eq!(location.line_text.as_deref(), Some(&b"second;"[..]));
-    assert_eq!((log.errors, log.warnings), (0, 1));
+    assert_eq!((log.errors.get(), log.warnings.get()), (0, 1));
 }
 
 #[test]
@@ -211,10 +212,10 @@ fn engine_error_in_dependency_stops_build() {
 
 #[test]
 fn engine_record_without_location_has_none() {
-    let log = written_record(ERROR, NO_LOCATION);
-    assert_eq!(log.msgs.len(), 1);
-    assert_eq!(log.msgs[0].kind, Kind::Err);
-    assert!(log.msgs[0].data.location.is_none());
+    let msgs = written_record(ERROR, NO_LOCATION).msgs.take();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].kind, Kind::Err);
+    assert!(msgs[0].data.location.is_none());
 }
 
 #[test]
@@ -235,7 +236,7 @@ fn engine_error_in_runtime_module_is_internal() {
 fn engine_warning_in_runtime_module_is_dropped() {
     let diagnostics = add_all(&[(user_diagnostic(WARNING, at(RUNTIME, 0)), "runs slowly")]);
     assert!(!diagnostics.has_errors());
-    assert!(written(diagnostics).msgs.is_empty());
+    assert_eq!(written(diagnostics).msgs_len(), 0);
 }
 
 #[test]
@@ -265,11 +266,7 @@ fn origin_of_source_decides_whose_error_it_is() {
 fn module_without_source_counts_as_runtime() {
     let texts = SourceTexts::new(vec![None]);
     let warning = user_diagnostic(WARNING, at(0, 3));
-    assert!(
-        written(add_all_in(&texts, &[(warning, "x")]))
-            .msgs
-            .is_empty()
-    );
+    assert_eq!(written(add_all_in(&texts, &[(warning, "x")])).msgs_len(), 0);
     let error = user_diagnostic(ERROR, at(0, 3));
     let stage = ERROR.stage().name();
     assert_eq!(
@@ -280,7 +277,7 @@ fn module_without_source_counts_as_runtime() {
 
 #[test]
 fn module_beyond_program_counts_as_runtime() {
-    assert!(written_record(WARNING, at(9, 0)).msgs.is_empty());
+    assert_eq!(written_record(WARNING, at(9, 0)).msgs_len(), 0);
     let diagnostics = add_all(&[(user_diagnostic(ERROR, at(9, 0)), "cannot be compiled")]);
     assert!(diagnostics.has_internal_errors());
 }
@@ -296,14 +293,14 @@ fn empty_engine_text_uses_template_of_kind() {
 fn equal_engine_records_print_once() {
     let record = user_diagnostic(WARNING, at(PROGRAM, 7));
     let log = written(add_all(&[(record, "runs slowly"), (record, "runs slowly")]));
-    assert_eq!((log.msgs.len(), log.warnings), (1, 1));
+    assert_eq!((log.msgs_len(), log.warnings.get()), (1, 1));
 
     let elsewhere = user_diagnostic(WARNING, at(PROGRAM, 0));
     let log = written(add_all(&[
         (record, "runs slowly"),
         (elsewhere, "runs slowly"),
     ]));
-    assert_eq!((log.msgs.len(), log.warnings), (2, 2));
+    assert_eq!((log.msgs_len(), log.warnings.get()), (2, 2));
 }
 
 #[test]
@@ -336,9 +333,10 @@ fn warning_at_witness_prints_number_arguments_and_compiled_line() {
     let sentence = sentence_of(code, arguments);
     assert!(sentence.contains("./worker.ts"));
     assert_eq!(describe(&log), [format!("/p/a.ts:2:1 Warn {sentence}")]);
-    let location = log.msgs[0].data.location.as_ref().expect("a location");
+    let msgs = log.msgs.take();
+    let location = msgs[0].data.location.as_ref().expect("a location");
     assert_eq!(location.line_text.as_deref(), Some(&b"second;"[..]));
-    assert_eq!((log.errors, log.warnings), (0, 1));
+    assert_eq!((log.errors.get(), log.warnings.get()), (0, 1));
 }
 
 #[test]
@@ -351,7 +349,7 @@ fn warning_at_witness_without_location_has_none() {
         kinds_and_texts(&log),
         [(Kind::Warn, sentence_of(code, &[]))]
     );
-    assert!(log.msgs[0].data.location.is_none());
+    assert!(log.msgs.take()[0].data.location.is_none());
 }
 
 #[test]
@@ -364,7 +362,8 @@ fn warning_at_witness_in_runtime_module_is_printed() {
         kinds_and_texts(&log),
         [(Kind::Warn, sentence_of(code, &[]))]
     );
-    let location = log.msgs[0].data.location.as_ref().expect("a location");
+    let msgs = log.msgs.take();
+    let location = msgs[0].data.location.as_ref().expect("a location");
     assert_eq!(location.line_text.as_deref(), Some(&b"runtime;"[..]));
 }
 
@@ -376,14 +375,14 @@ fn warning_at_witness_in_module_without_source_has_no_location() {
         kinds_and_texts(&log),
         [(Kind::Warn, sentence_of(code, &[]))]
     );
-    assert!(log.msgs[0].data.location.is_none());
+    assert!(log.msgs.take()[0].data.location.is_none());
 }
 
 #[test]
 fn worker_start_of_no_place_warns_nobody() {
     let mut diagnostics = Diagnostics::new();
     diagnostics.add_worker_start_without_name(&witness(NO_LOCATION), b"", &texts());
-    assert!(written(diagnostics).msgs.is_empty());
+    assert_eq!(written(diagnostics).msgs_len(), 0);
 }
 
 #[test]

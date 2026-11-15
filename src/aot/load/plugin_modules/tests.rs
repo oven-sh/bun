@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 
 struct TestProvider {
     resolve_answer: fn(&ResolveRequest<'_>) -> Result<Resolution, Failed>,
-    load_answer: fn(&LoadRequest<'_>, &mut Log) -> Result<Loaded, Failed>,
+    load_answer: fn(&LoadRequest<'_>, &Log) -> Result<Loaded, Failed>,
     has_load_plugin_answer: fn(ModuleName<'_>) -> bool,
     deferred_answers: Guarded<Vec<DeferredLoad>>,
     resolve_count: AtomicUsize,
@@ -40,17 +40,17 @@ impl SourceProvider for TestProvider {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         WithoutServices.fold_options(arena, atoms, log)
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, _log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, _log: &Log) -> Result<Resolution, Failed> {
         self.resolve_count.fetch_add(1, Relaxed);
         (self.resolve_answer)(request)
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         self.load_count.fetch_add(1, Relaxed);
         (self.load_answer)(request, log)
     }
@@ -59,7 +59,7 @@ impl SourceProvider for TestProvider {
         (self.has_load_plugin_answer)(module)
     }
 
-    fn finish_deferred_loads(&self, _log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, _log: &Log) -> Vec<DeferredLoad> {
         self.finish_count.fetch_add(1, Relaxed);
         std::mem::take(&mut *self.deferred_answers.lock())
     }
@@ -69,12 +69,12 @@ impl SourceProvider for TestProvider {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         WithoutServices.parse_data(file, arena, atoms, log)
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         WithoutServices.check_embedded_files(log)
     }
 }

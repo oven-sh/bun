@@ -188,7 +188,7 @@ fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
 pub(super) fn migrate_packages(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     packages_properties: &[E::PropertyJSON],
     workspace_map: Option<&WorkspaceMap>,
@@ -1145,7 +1145,7 @@ impl<'a> Migrator<'a> {
 pub(super) fn apply_root_overrides(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     dir: Fd,
     workspace_map: Option<&WorkspaceMap>,
     abs_lockfile_path: &[u8],

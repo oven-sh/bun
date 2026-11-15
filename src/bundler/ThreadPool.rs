@@ -361,7 +361,7 @@ impl Worker {
         let heap = AliasableBox::new(ThreadLocalArena::new());
         // SAFETY: `heap` is the last field to drop.
         let arena: &'static ThreadLocalArena = unsafe { &*heap.as_ptr() };
-        let log: *mut bun_ast::Log = arena.alloc(bun_ast::Log::init());
+        let log: *const bun_ast::Log = arena.alloc(bun_ast::Log::init());
 
         // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         let ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

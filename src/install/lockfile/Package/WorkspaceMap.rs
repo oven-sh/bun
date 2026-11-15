@@ -48,7 +48,7 @@ impl WorkspaceMap {
         }
     }
 
-    pub(crate) fn warn_skipped(&self, log: &mut bun_ast::Log) {
+    pub(crate) fn warn_skipped(&self, log: &bun_ast::Log) {
         for dir in &self.skipped_with_dependencies {
             log.add_warning_fmt(
                 None,
@@ -184,7 +184,7 @@ fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &[u8],
     dir: &[u8],
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     missing_workspace: MissingWorkspace<'_>,
 ) -> crate::Result<Option<Entry>> {
     let workspace_json = json_cache
@@ -306,7 +306,7 @@ pub(crate) fn package_json_dir<'a>(source: &bun_ast::Source<'a>) -> &'a [u8] {
 /// `err.path` is relative to `root_dir`, or absolute when the pattern is.
 #[cold]
 fn add_glob_error(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     loc: bun_ast::Loc,
     user_pattern: &[u8],
@@ -356,7 +356,7 @@ impl WorkspaceMap {
     pub(crate) fn process_manifest(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         manifest: &js_ast::Expr,
         source: &bun_ast::Source,
         missing_workspace: MissingWorkspace<'_>,
@@ -378,7 +378,7 @@ impl WorkspaceMap {
     pub(crate) fn process_names_array(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
-        log: &mut bun_ast::Log,
+        log: &bun_ast::Log,
         arr: NamesArray<'_>,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
@@ -391,7 +391,7 @@ impl WorkspaceMap {
             return Ok(0);
         }
 
-        let orig_msgs_len = log.msgs.len();
+        let orig_msgs_len = log.msgs_len();
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
         let mut negated = NegatedWorkspaces::default();
@@ -659,7 +659,7 @@ impl WorkspaceMap {
             }
         }
 
-        if orig_msgs_len != log.msgs.len() {
+        if orig_msgs_len != log.msgs_len() {
             return Err(crate::Error::InstallFailed);
         }
 

@@ -455,11 +455,11 @@ fn put_npm_package_env(
     };
     let json_src =
         bun_ast::Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
 
     initialize_store();
 
-    let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &mut log) else {
+    let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &log) else {
         return Ok(());
     };
     let own: [(&[u8], &[u8]); 2] = [

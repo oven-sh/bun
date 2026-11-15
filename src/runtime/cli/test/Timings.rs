@@ -88,8 +88,8 @@ impl Timings {
         }
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(path, &contents[..]);
-        let mut log = bun_ast::Log::init();
-        let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+        let log = bun_ast::Log::init();
+        let parsed = match bun_json::ParsedJson::parse_json(&source, &log) {
             Ok(p) => p,
             Err(_) => {
                 let _ = log.print(Output::error_writer());

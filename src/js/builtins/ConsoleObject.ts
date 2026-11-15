@@ -26,6 +26,8 @@ export function asyncIterator(this: Console) {
           last = i + 1;
           i = indexOf(actualChunk, last);
         }
+        // What follows the last newline of the chunk is the start of the next line.
+        if (last < actualChunk.length) pendingChunk = actualChunk.subarray(last);
 
         for (idx++; idx < value_len; idx++) {
           actualChunk = value[idx];

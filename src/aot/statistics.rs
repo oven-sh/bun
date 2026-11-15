@@ -118,47 +118,14 @@ struct Instructions {
 
 #[cfg(target_os = "linux")]
 mod instructions {
-    use core::ffi::{c_int, c_long, c_void};
+    use core::ffi::c_int;
     use std::sync::OnceLock;
+
+    use bun_core::perf::InstructionCounter;
 
     use super::Instructions;
 
-    unsafe extern "C" {
-        fn syscall(number: c_long, ...) -> c_long;
-        fn read(file: c_int, buffer: *mut c_void, count: usize) -> isize;
-    }
-
-    #[cfg(target_arch = "x86_64")]
-    const PERF_EVENT_OPEN: c_long = 298;
-    #[cfg(target_arch = "aarch64")]
-    const PERF_EVENT_OPEN: c_long = 241;
-    const CLOSE_ON_EXEC: c_long = 8;
-    const INHERIT: u64 = 1 << 1;
-    const INHERIT_IN_THREADS_ALONE: u64 = 1 << 35;
-
-    fn open_counter(thread: c_int, inherit: u64) -> Option<c_int> {
-        const HARDWARE: u64 = 0;
-        const SIZE: u64 = 64;
-        const INSTRUCTIONS: u64 = 1;
-        const EXCLUDE_KERNEL: u64 = 1 << 5;
-        const EXCLUDE_HYPERVISOR: u64 = 1 << 6;
-        let flags = inherit | EXCLUDE_KERNEL | EXCLUDE_HYPERVISOR;
-        let attributes: [u64; 8] = [HARDWARE | SIZE << 32, INSTRUCTIONS, 0, 0, 0, flags, 0, 0];
-        // SAFETY: the kernel reads the 64 bytes that the size names and keeps no pointer.
-        let file = unsafe {
-            syscall(
-                PERF_EVENT_OPEN,
-                attributes.as_ptr(),
-                thread as c_long,
-                -1 as c_long,
-                -1 as c_long,
-                CLOSE_ON_EXEC,
-            )
-        };
-        (file >= 0).then_some(file as c_int)
-    }
-
-    fn open_counters(inherit: u64) -> Vec<c_int> {
+    fn open_counters(inherit: u64) -> Vec<InstructionCounter> {
         let Ok(folder) = bun_sys::Dir::open(b"/proc/self/task") else {
             return Vec::new();
         };
@@ -166,7 +133,7 @@ mod instructions {
         let mut counters = Vec::new();
         while let Ok(Some(entry)) = entries.next() {
             let thread = bun_core::fmt::parse_int::<c_int>(entry.name.slice_u8(), 10).ok();
-            match thread.map(|thread| open_counter(thread, inherit)) {
+            match thread.map(|thread| InstructionCounter::open(thread, inherit)) {
                 Some(Some(counter)) => counters.push(counter),
                 Some(None) if counters.is_empty() => return Vec::new(),
                 _ => {}
@@ -176,11 +143,11 @@ mod instructions {
     }
 
     pub(super) fn so_far() -> Option<Instructions> {
-        static COUNTERS: OnceLock<[Vec<c_int>; 2]> = OnceLock::new();
+        static COUNTERS: OnceLock<[Vec<InstructionCounter>; 2]> = OnceLock::new();
         let [with_child_processes, of_this_process] = COUNTERS.get_or_init(|| {
             [
-                open_counters(INHERIT),
-                open_counters(INHERIT | INHERIT_IN_THREADS_ALONE),
+                open_counters(InstructionCounter::INHERIT),
+                open_counters(InstructionCounter::INHERIT | InstructionCounter::INHERIT_THREAD),
             ]
         });
         Some(Instructions {
@@ -189,20 +156,11 @@ mod instructions {
         })
     }
 
-    fn sum_of(counters: &[c_int]) -> Option<u64> {
+    fn sum_of(counters: &[InstructionCounter]) -> Option<u64> {
         if counters.is_empty() {
             return None;
         }
-        let mut sum = 0u64;
-        for &counter in counters {
-            let mut count = 0u64;
-            // SAFETY: it writes at most the eight bytes of `count`.
-            let size = unsafe { read(counter, (&raw mut count).cast(), size_of::<u64>()) };
-            if size == size_of::<u64>() as isize {
-                sum += count;
-            }
-        }
-        Some(sum)
+        Some(counters.iter().filter_map(InstructionCounter::read).sum())
     }
 }
 

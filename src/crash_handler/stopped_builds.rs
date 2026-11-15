@@ -144,11 +144,9 @@ const INTERRUPTIONS: [c_int; 5] = [
 
 #[cfg(unix)]
 fn raise_with_default_action(signal: c_int) {
-    // SAFETY: both are async-signal-safe. The signal is delivered when the handler returns.
-    unsafe {
-        libc::signal(signal, libc::SIG_DFL);
-        libc::raise(signal);
-    }
+    bun_core::signal::set_default_action(signal);
+    // SAFETY: async-signal-safe. The signal is delivered when the handler returns.
+    unsafe { libc::raise(signal) };
 }
 
 #[cfg(unix)]
@@ -167,11 +165,7 @@ fn set_reports_interruptions(reports: bool) {
         (ours, libc::SIG_DFL)
     };
     for signal in INTERRUPTIONS {
-        let mut current: libc::sigaction = bun_core::ffi::zeroed();
-        // SAFETY: a null new action only reads the current one into valid memory.
-        if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0
-            || current.sa_sigaction != from
-        {
+        if bun_core::signal::current_action(signal) != Some(from) {
             continue;
         }
         let mut action: libc::sigaction = bun_core::ffi::zeroed();
@@ -219,8 +213,7 @@ fn report_what_the_sanitizer_leaves() {
         let code = info.si_code;
         // SAFETY: both are words of the record. Which of them holds goes by the code.
         let (address, sender) = unsafe { (info.si_addr() as usize, info.si_pid()) };
-        // SAFETY: it has no conditions.
-        let this_process = unsafe { libc::getpid() };
+        let this_process = std::process::id().cast_signed();
         let is_raised_by_instruction = (1..0x10000).contains(&code);
         let _ = if is_raised_by_instruction {
             write!(
@@ -256,11 +249,7 @@ fn report_what_the_sanitizer_leaves() {
         unsafe { __sanitizer_set_death_callback(Some(write_at_death)) };
     }
     for signal in [libc::SIGABRT, libc::SIGILL, libc::SIGTRAP] {
-        let mut current: libc::sigaction = bun_core::ffi::zeroed();
-        // SAFETY: a null new action only reads the current one into valid memory.
-        if unsafe { libc::sigaction(signal, core::ptr::null(), &raw mut current) } != 0
-            || current.sa_sigaction != libc::SIG_DFL
-        {
+        if bun_core::signal::current_action(signal) != Some(libc::SIG_DFL) {
             continue;
         }
         let mut action: libc::sigaction = bun_core::ffi::zeroed();

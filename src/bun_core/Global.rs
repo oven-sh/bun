@@ -705,7 +705,7 @@ unsafe extern "C" {
     #[link_name = "exit"]
     safe fn libc_exit(code: c_int) -> !;
     #[cfg(not(windows))]
-    safe fn _exit(code: c_int) -> !;
+    pub safe fn _exit(code: c_int) -> !;
     #[cfg(all(unix, not(target_os = "macos")))]
     safe fn quick_exit(code: c_int) -> !;
 }
@@ -766,14 +766,8 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
     // signals (we never installed over them); on Windows remove the VEH.
     #[cfg(unix)]
     if CRASH_HANDLER_INSTALLED.load(Ordering::Relaxed) && !crate::env::ENABLE_ASAN {
-        // SAFETY: zeroed sigaction with SIG_DFL is a valid disposition.
-        unsafe {
-            let mut act: libc::sigaction = crate::ffi::zeroed();
-            act.sa_sigaction = libc::SIG_DFL;
-            libc::sigemptyset(&raw mut act.sa_mask);
-            for s in CRASH_HANDLER_SIGNALS {
-                let _ = libc::sigaction(s, &raw const act, core::ptr::null_mut());
-            }
+        for s in CRASH_HANDLER_SIGNALS {
+            crate::signal::set_default_action(s);
         }
     }
     #[cfg(windows)]
@@ -811,23 +805,10 @@ pub fn raise_ignoring_panic_handler_raw(sig: c_int) -> ! {
 /// the signal (PID 1 in a pid namespace). Async-signal-safe.
 #[cfg(not(windows))]
 pub fn raise_default_action(sig: c_int) -> ! {
-    // SAFETY: zeroed sigset + SIG_DFL handler is a valid Sigaction.
-    unsafe {
-        let mut sa: libc::sigaction = crate::ffi::zeroed();
-        sa.sa_sigaction = libc::SIG_DFL;
-        libc::sigemptyset(&raw mut sa.sa_mask);
-        sa.sa_flags = libc::SA_RESETHAND;
-        let _ = libc::sigaction(sig, &raw const sa, core::ptr::null_mut());
-    }
+    crate::signal::set_default_action(sig);
 
     // raise() only makes a blocked signal pending, and `sig` is blocked inside its own handler.
-    // SAFETY: zeroed sigset is valid; sigemptyset/sigaddset initialize it.
-    unsafe {
-        let mut set: libc::sigset_t = crate::ffi::zeroed();
-        libc::sigemptyset(&raw mut set);
-        libc::sigaddset(&raw mut set, sig);
-        let _ = libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
-    }
+    crate::signal::unblock(sig);
 
     // kill self; `raise` has no preconditions (see the `safe fn` decl above).
     let _ = libc_raise(sig);

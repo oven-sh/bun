@@ -1292,6 +1292,12 @@ impl Tag {
     pub const epoll_create1: Tag = Tag(112);
     pub const pthread_create: Tag = Tag(113);
     pub const _open_osfhandle: Tag = Tag(114);
+    #[cfg(not(windows))]
+    pub(crate) const getsockname: Tag = Tag(115);
+    #[cfg(not(windows))]
+    pub(crate) const getsockopt: Tag = Tag(116);
+    #[cfg(not(windows))]
+    pub(crate) const getifaddrs: Tag = Tag(117);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1299,7 +1305,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 115] = [
+        const NAMES: [&str; 118] = [
             "TODO",
             "dup",
             "access",
@@ -1416,6 +1422,9 @@ impl Tag {
             "epoll_create1",
             "pthread_create",
             "_open_osfhandle",
+            "getsockname",
+            "getsockopt",
+            "getifaddrs",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -2595,6 +2604,15 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    pub fn truncate(path: &ZStr, len: i64) -> Maybe<()> {
+        check_p!(
+            // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+            unsafe { libc::truncate(path.as_ptr(), len) },
+            Tag::truncate,
+            path
+        );
+        Ok(())
+    }
     /// `Ok(false)` when `nonblocking` and the lock is held elsewhere.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
         let op = match mode {
@@ -2620,8 +2638,7 @@ mod posix_impl {
         if p.is_null() {
             return Err(err_with(Tag::getcwd));
         }
-        // SAFETY: on success `getcwd` returns `buf`'s pointer NUL-terminated.
-        Ok(unsafe { libc::strlen(p) })
+        Ok(bun_core::slice_to_nul(buf).len())
     }
 
     // ── link/perm/time/access group ──
@@ -2973,10 +2990,7 @@ mod posix_impl {
         if p.is_null() {
             return Err(err_with_path(Tag::realpath, path));
         }
-        // SAFETY: on success `realpath` returned `buf`'s pointer with a
-        // NUL-terminated absolute path written into it.
-        let len = unsafe { libc::strlen(p) };
-        Ok(&buf.0[..len])
+        Ok(bun_core::slice_to_nul(&buf.0))
     }
     /// The canonical path of `path`, as `open` followed by `get_fd_path` reports it, but normally in one system call that opens nothing.
     #[cfg(target_os = "macos")]
@@ -3213,41 +3227,16 @@ mod posix_impl {
             // case bump RCVBUF/SNDBUF instead.
             #[cfg(target_os = "macos")]
             {
+                let setsockopt = |fd, name, value| {
+                    net::setsockopt_int(Fd::from_native(fd), libc::SOL_SOCKET, name, value)
+                };
                 if for_shell {
-                    let so_recvbuf: libc::c_int = 1024 * 128;
-                    let so_sendbuf: libc::c_int = 1024 * 128;
-                    // SAFETY: setsockopt on freshly-created socketpair fds.
-                    unsafe {
-                        libc::setsockopt(
-                            fds[1],
-                            libc::SOL_SOCKET,
-                            libc::SO_RCVBUF,
-                            core::ptr::from_ref::<i32>(&so_recvbuf).cast(),
-                            core::mem::size_of::<i32>() as u32,
-                        );
-                        libc::setsockopt(
-                            fds[0],
-                            libc::SOL_SOCKET,
-                            libc::SO_SNDBUF,
-                            core::ptr::from_ref::<i32>(&so_sendbuf).cast(),
-                            core::mem::size_of::<i32>() as u32,
-                        );
-                    }
+                    let _ = setsockopt(fds[1], libc::SO_RCVBUF, 1024 * 128);
+                    let _ = setsockopt(fds[0], libc::SO_SNDBUF, 1024 * 128);
                 } else {
-                    let on: libc::c_int = 1;
                     for &fd in &fds {
-                        // SAFETY: setsockopt on freshly-created socketpair fds.
-                        if unsafe {
-                            libc::setsockopt(
-                                fd,
-                                libc::SOL_SOCKET,
-                                libc::SO_NOSIGPIPE,
-                                core::ptr::from_ref::<i32>(&on).cast(),
-                                core::mem::size_of::<i32>() as u32,
-                            )
-                        } < 0
-                        {
-                            return close_both(Error::from_code_int(last_errno(), Tag::setsockopt));
+                        if let Err(e) = setsockopt(fd, libc::SO_NOSIGPIPE, 1) {
+                            return close_both(e);
                         }
                     }
                 }
@@ -3255,13 +3244,8 @@ mod posix_impl {
             // O_NONBLOCK via GETFL→OR→SETFL (don't clobber existing flags).
             if nonblock {
                 for &fd in &fds {
-                    // SAFETY: `fd` is a live descriptor just returned by `socketpair`.
-                    let fl = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-                    if fl < 0
-                        // SAFETY: same `fd`; F_SETFL takes an integer arg, no pointers.
-                        || unsafe { libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK) } < 0
-                    {
-                        return close_both(Error::from_code_int(last_errno(), Tag::fcntl));
+                    if let Err(e) = set_nonblocking(Fd::from_native(fd)) {
+                        return close_both(e);
                     }
                 }
             }
@@ -5048,7 +5032,7 @@ pub mod c {
         target_os = "netbsd",
         target_os = "openbsd"
     ))]
-    pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
+    pub use libc::{getloadavg, sysctlbyname};
 
     /// libc `dlsym` (RTLD_DEFAULT when `handle` is null).
     #[cfg(unix)]
@@ -5126,9 +5110,7 @@ pub mod c {
         // <sys/sysctl.h> — `sysctlbyname` already re-exported above for all BSDs.
         sysctl,
         sysctlnametomib,
-        // <net/if_dl.h> — `sockaddr_dl` already re-exported above for all BSDs.
         // misc libc
-        truncate,
         vm_deallocate,
         vm_size_t,
         vm_statistics64,
@@ -5508,6 +5490,23 @@ pub mod linux {
         // SAFETY: `fds` is writable for `fds.len()` entries; `timeout` and `sigmask` are null or live.
         unsafe { libc::ppoll(fds.as_mut_ptr(), fds.len() as _, timeout, sigmask) }
     }
+    /// `prctl(2)` operations (`PR_*`) that take at most one integer argument.
+    #[derive(Clone, Copy)]
+    #[repr(i32)]
+    pub enum PrctlOp {
+        SET_PDEATHSIG = libc::PR_SET_PDEATHSIG,
+        SET_CHILD_SUBREAPER = libc::PR_SET_CHILD_SUBREAPER,
+        SET_NO_NEW_PRIVS = libc::PR_SET_NO_NEW_PRIVS,
+        GET_NO_NEW_PRIVS = libc::PR_GET_NO_NEW_PRIVS,
+        SET_MDWE = 65,
+        GET_MDWE = 66,
+    }
+    /// `prctl(op, arg, 0, 0, 0)` — libc-convention return.
+    pub fn prctl(op: PrctlOp, arg: libc::c_ulong) -> c_int {
+        const UNUSED: libc::c_ulong = 0;
+        // SAFETY: no `PrctlOp` takes a pointer, and each argument is the `unsigned long` that libc reads.
+        unsafe { libc::prctl(op as c_int, arg, UNUSED, UNUSED, UNUSED) }
+    }
     /// `EPOLL_CTL_DEL` takes no `event`.
     ///
     /// # Safety
@@ -5679,10 +5678,6 @@ pub mod darwin {
     /// Re-export of the platform errno enum so `bun_threading::Futex` can
     /// match `c::E::INTR` etc. against `__ulock_*` return codes.
     pub use bun_errno::E;
-
-    /// Thin re-exports so `bun.darwin.ftruncate`/`bun.darwin.truncate` call
-    /// sites (blob/copy_file.rs) resolve without a direct `libc` dep.
-    pub use libc::{ftruncate, truncate};
 
     /// `bun.darwin.COPYFILE` — packed-u32 set of <copyfile.h> flags.
     /// Kept as a plain struct + `.bits()` so call sites can use field-init
@@ -7112,8 +7107,7 @@ pub fn exists_os_path(path: &bun_paths::OSPathSliceZ, file_only: bool) -> bool {
     #[cfg(not(windows))]
     {
         let _ = file_only;
-        // SAFETY: path is NUL-terminated.
-        unsafe { libc::access(path.as_ptr().cast(), libc::F_OK) == 0 }
+        exists_z(path)
     }
     #[cfg(windows)]
     {
@@ -7294,6 +7288,11 @@ pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
     Err(Error::from_code_int(libc::ENOSYS, Tag::fcntl))
 }
+/// `fcntl(fd, F_SETFL, flags)`.
+#[cfg(unix)]
+pub fn set_fcntl_flags(fd: Fd, flags: i32) -> Maybe<()> {
+    fcntl(fd, libc::F_SETFL, flags as isize).map(drop)
+}
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
     update_nonblocking(fd, true)
@@ -7309,7 +7308,7 @@ pub fn update_nonblocking(fd: Fd, nonblocking: bool) -> Maybe<()> {
             cur & !O::NONBLOCK
         };
         if new != cur {
-            fcntl(fd, libc::F_SETFL, new as isize)?;
+            set_fcntl_flags(fd, new)?;
         }
         Ok(())
     }
@@ -7539,6 +7538,17 @@ fn get_fd_path_freebsd_linuxulator<'a>(
     Ok(&mut out.0[..len])
 }
 
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+fn get_fd_path_fcntl(fd: Fd, out: &mut bun_paths::PathBuffer) -> Maybe<usize> {
+    loop {
+        match bun_core::fd_path_fcntl(fd, &mut out.0) {
+            Ok(len) => return Ok(len),
+            Err(libc::EINTR) => {}
+            Err(e) => return Err(Error::from_code_int(e, Tag::fcntl).with_fd(fd)),
+        }
+    }
+}
+
 /// fd → absolute path. Linux: readlink `/proc/self/fd/N`;
 /// macOS: `fcntl(F_GETPATH)`; Windows: `GetFinalPathNameByHandle`.
 pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a mut [u8]> {
@@ -7565,15 +7575,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     #[cfg(target_os = "macos")]
     {
         out.0.fill(0);
-        if let Err(mut err) = fcntl(fd, libc::F_GETPATH, out.0.as_mut_ptr() as isize) {
+        let len = get_fd_path_fcntl(fd, out).map_err(|mut err| {
             // `F_GETPATH` reports a path longer than `MAXPATHLEN` as `ENOSPC`.
             if err.get_errno() == E::ENOSPC {
                 err.errno = E::ENAMETOOLONG as _;
             }
-            return Err(err);
-        }
-        // SAFETY: F_GETPATH writes a NUL-terminated string into `out`.
-        let len = unsafe { libc::strlen(out.0.as_ptr().cast()) };
+            err
+        })?;
         return Ok(&mut out.0[..len]);
     }
     #[cfg(windows)]
@@ -7598,25 +7606,13 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         // FreeBSD: F_KINFO returns a `struct kinfo_file`
         // with `kf_path`. The /dev/fd readlink trick used for the Linuxulator
         // path doesn't resolve to an absolute path on native FreeBSD, so go
-        // via fcntl. Mirrors `bun_core::util::fd_path_raw` (T0 sibling).
-        use core::ptr::{addr_of, addr_of_mut};
-        let mut kif = core::mem::MaybeUninit::<libc::kinfo_file>::zeroed();
-        // SAFETY: kif is zeroed; kf_structsize is a c_int at a valid offset.
-        unsafe {
-            addr_of_mut!((*kif.as_mut_ptr()).kf_structsize)
-                .write(core::mem::size_of::<libc::kinfo_file>() as c_int);
-        }
-        fcntl(fd, libc::F_KINFO, kif.as_mut_ptr() as isize)?;
-        // SAFETY: kernel wrote a NUL-terminated path into kf_path.
-        let path_ptr = unsafe { addr_of!((*kif.as_ptr()).kf_path) } as *const u8;
-        let len = unsafe { libc::strlen(path_ptr.cast()) };
+        // via fcntl.
+        let len = get_fd_path_fcntl(fd, out)?;
         // The kernel fills kf_path from the namecache and leaves it empty when it
         // has no name for the vnode (seen for a just-created file on UFS).
         if len == 0 {
             return Err(Error::from_code_int(libc::ENOENT, Tag::fcntl).with_fd(fd));
         }
-        // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
-        out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
         return Ok(&mut out.0[..len]);
     }
     #[cfg(not(any(
@@ -7716,10 +7712,7 @@ pub fn move_file_z_with_handle(
         Ok(()) => Ok(()),
         Err(e) if e.get_errno() == E::EISDIR => {
             #[cfg(unix)]
-            // SAFETY: destination is NUL-terminated.
-            let _ = unsafe {
-                libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
-            };
+            let _ = rmdirat(to_dir, destination);
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {
@@ -7996,15 +7989,8 @@ pub mod posix {
     }
 
     // ── poll ──
-    /// `struct pollfd`.
     #[cfg(unix)]
-    #[repr(C)]
-    #[derive(Clone, Copy)]
-    pub struct PollFd {
-        pub fd: c_int,
-        pub events: i16,
-        pub revents: i16,
-    }
+    pub use libc::pollfd as PollFd;
     #[cfg(unix)]
     pub const POLL_IN: i16 = libc::POLLIN;
     #[cfg(unix)]
@@ -8017,15 +8003,11 @@ pub mod posix {
         timeout_ms: c_int,
     ) -> core::result::Result<c_int, super::Error> {
         loop {
-            // SAFETY: PollFd is layout-identical to libc::pollfd.
+            // SAFETY: the kernel reads and writes `fds.len()` entries.
             #[cfg(target_os = "macos")]
-            let rc = unsafe {
-                super::nocancel::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms)
-            };
-            // SAFETY: `PollFd` is `repr(C)` and layout-identical to
-            // `libc::pollfd`; `fds` is a valid exclusive slice.
+            let rc = unsafe { super::nocancel::poll(fds.as_mut_ptr(), fds.len() as _, timeout_ms) };
             #[cfg(not(target_os = "macos"))]
-            let rc = unsafe { libc::poll(fds.as_mut_ptr().cast(), fds.len() as _, timeout_ms) };
+            let rc = bun_core::poll_once(fds, timeout_ms);
             if rc < 0 {
                 let e = super::last_errno();
                 if e == libc::EINTR {
@@ -8088,6 +8070,8 @@ pub mod posix {
         NOFILE = libc::RLIMIT_NOFILE as _,
         STACK = libc::RLIMIT_STACK as _,
         CORE = libc::RLIMIT_CORE as _,
+        CPU = libc::RLIMIT_CPU as _,
+        FSIZE = libc::RLIMIT_FSIZE as _,
     }
     #[cfg(unix)]
     pub fn getrlimit(res: RlimitResource) -> core::result::Result<Rlimit, super::Error> {
@@ -8119,9 +8103,7 @@ pub mod posix {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Socket address
-// (just the sockaddr union + a couple of constructors; full resolver lives in
-// `bun_dns`). Dependents only need the data shape + Display.
+// Socket addresses and socket calls. The resolver is in `bun_dns`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod net {
     use core::fmt;
@@ -8130,16 +8112,14 @@ pub mod net {
     // both through a private `sock` shim so the body below is target-agnostic.
     #[cfg(unix)]
     mod sock {
-        pub(super) use libc::{
-            AF_INET, AF_INET6, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
-        };
+        pub(super) use libc::{AF_INET, AF_INET6, sockaddr, sockaddr_storage};
     }
     #[cfg(windows)]
     mod sock {
         // Same nominal types as `bun_sys::posix::sockaddr*` (see comment there)
         // so `Address::init_posix` accepts pointers callers cast through that
         // path. AF_* values come from ws2def.h.
-        pub(super) use bun_libuv_sys::{sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage};
+        pub(super) use bun_libuv_sys::{sockaddr, sockaddr_storage};
         pub(super) use bun_windows_sys::ws2_32::{AF_INET, AF_INET6};
     }
     use sock::*;
@@ -8215,6 +8195,7 @@ pub mod net {
             scope_id: 0,
         };
     }
+    bun_core::impl_pod!(sockaddr_in, sockaddr_in6);
     const _: () = assert!(
         core::mem::size_of::<sockaddr_in>() == core::mem::size_of::<crate::posix::sockaddr_in>()
     );
@@ -8229,17 +8210,17 @@ pub mod net {
             == core::mem::align_of::<crate::posix::sockaddr_in6>()
     );
 
-    /// Tagged union over sockaddr_in/in6/un.
+    /// A `sockaddr_storage` that is read by its family.
+    #[repr(transparent)]
     #[derive(Clone, Copy)]
     pub struct Address {
         /// Generic storage; `family()` discriminates.
-        pub(crate) any: sockaddr_storage,
+        any: sockaddr_storage,
     }
     impl Address {
         /// Construct from a borrowed `*const sockaddr`.
         /// SAFETY: `addr` must point at a valid sockaddr of the family it declares.
         pub unsafe fn init_posix(addr: *const sockaddr) -> Self {
-            let mut storage: sockaddr_storage = bun_core::ffi::zeroed();
             // SAFETY: caller contract — `addr` points to a valid `sockaddr`
             // header, so `sa_family` is readable.
             let len = match unsafe { (*addr).sa_family } as i32 {
@@ -8247,82 +8228,76 @@ pub mod net {
                 AF_INET6 => core::mem::size_of::<sockaddr_in6>(),
                 _ => core::mem::size_of::<sockaddr>(),
             };
-            // SAFETY: `len` is sized from `sa_family` and never exceeds
-            // `size_of::<sockaddr_storage>()`; caller guarantees `addr` spans
-            // `len` bytes; `storage` is fresh stack so the ranges cannot overlap.
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    addr.cast::<u8>(),
-                    (&raw mut storage).cast::<u8>(),
-                    len,
-                );
+            // SAFETY: caller guarantees `addr` spans the struct of its family.
+            Self::from_bytes(unsafe { core::slice::from_raw_parts(addr.cast::<u8>(), len) })
+        }
+        /// Truncates or zero-pads `bytes` to the size of a `sockaddr_storage`.
+        pub fn from_bytes(bytes: &[u8]) -> Self {
+            let mut padded = [0; size_of::<sockaddr_storage>()];
+            let len = bytes.len().min(padded.len());
+            padded[..len].copy_from_slice(&bytes[..len]);
+            Self {
+                any: bun_core::read_prefix(&padded).expect("infallible: size matches"),
             }
-            Self { any: storage }
+        }
+        pub fn from_ref(any: &sockaddr_storage) -> &Self {
+            // SAFETY: `Address` is `#[repr(transparent)]` over `sockaddr_storage`.
+            unsafe { &*core::ptr::from_ref(any).cast::<Self>() }
         }
         #[inline]
         pub fn family(&self) -> i32 {
             self.any.ss_family as i32
         }
-        #[inline]
-        pub fn as_sockaddr(&self) -> *const sockaddr {
-            (&raw const self.any).cast()
-        }
 
         /// Lay out `ip`:`port` as a sockaddr — the one place an in/in6 struct is written over the storage, so callers never cast.
         pub fn from_ip(ip: core::net::IpAddr, port: u16) -> Self {
-            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
             match ip {
-                core::net::IpAddr::V4(v4) => {
-                    let inner = sockaddr_in {
-                        family: AF_INET as sa_family_t,
-                        port: port.to_be(),
-                        addr: u32::from_ne_bytes(v4.octets()),
-                        ..sockaddr_in::ZEROED
-                    };
-                    // SAFETY: `sockaddr_storage` holds a POD `sockaddr_in`; they cannot overlap.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            (&raw const inner).cast::<u8>(),
-                            (&raw mut any).cast::<u8>(),
-                            core::mem::size_of::<sockaddr_in>(),
-                        );
-                    }
-                }
-                core::net::IpAddr::V6(v6) => {
-                    let inner = sockaddr_in6 {
-                        family: AF_INET6 as sa_family_t,
-                        port: port.to_be(),
-                        addr: v6.octets(),
-                        ..sockaddr_in6::ZEROED
-                    };
-                    // SAFETY: as above, for `sockaddr_in6`.
-                    unsafe {
-                        core::ptr::copy_nonoverlapping(
-                            (&raw const inner).cast::<u8>(),
-                            (&raw mut any).cast::<u8>(),
-                            core::mem::size_of::<sockaddr_in6>(),
-                        );
-                    }
-                }
+                core::net::IpAddr::V4(v4) => Self::from_bytes(bun_core::bytes_of(&sockaddr_in {
+                    family: AF_INET as sa_family_t,
+                    port: port.to_be(),
+                    addr: u32::from_ne_bytes(v4.octets()),
+                    ..sockaddr_in::ZEROED
+                })),
+                core::net::IpAddr::V6(v6) => Self::from_bytes(bun_core::bytes_of(&sockaddr_in6 {
+                    family: AF_INET6 as sa_family_t,
+                    port: port.to_be(),
+                    addr: v6.octets(),
+                    ..sockaddr_in6::ZEROED
+                })),
             }
-            Self { any }
+        }
+
+        /// `None` unless the family is `AF_INET` or `AF_INET6`.
+        pub fn port(&self) -> Option<u16> {
+            let port = match self.as_in4() {
+                Some(v4) => v4.port,
+                None => self.as_in6()?.port,
+            };
+            Some(u16::from_be(port))
+        }
+
+        /// Ignored unless the family is `AF_INET` or `AF_INET6`.
+        pub fn set_port(&mut self, port: u16) {
+            if let Some(v4) = self.as_in4_mut() {
+                v4.port = port.to_be();
+            } else if let Some(v6) = self.as_in6_mut() {
+                v6.port = port.to_be();
+            }
         }
 
         /// The IPv6 zone index (`fe80::1%en0`); ignored for IPv4.
         pub fn set_scope_id(&mut self, scope_id: u32) {
-            if self.family() == AF_INET6 {
-                // SAFETY: `family() == AF_INET6` ⇒ the storage holds a `sockaddr_in6`.
-                unsafe { (*(&raw mut self.any).cast::<sockaddr_in6>()).scope_id = scope_id };
+            if let Some(v6) = self.as_in6_mut() {
+                v6.scope_id = scope_id;
             }
         }
 
-        /// Bytes of `sockaddr_storage` this address actually occupies.
-        pub fn socklen(&self) -> u32 {
-            (if self.family() == AF_INET6 {
-                core::mem::size_of::<sockaddr_in6>()
-            } else {
-                core::mem::size_of::<sockaddr_in>()
-            }) as u32
+        /// The bytes of the `sockaddr_in` or `sockaddr_in6`; empty for any other family.
+        pub fn as_bytes(&self) -> &[u8] {
+            if let Some(v4) = self.as_in4() {
+                return bun_core::bytes_of(v4);
+            }
+            self.as_in6().map_or(&[], bun_core::bytes_of)
         }
 
         /// The raw storage, for FFI that takes `sockaddr_storage` by value.
@@ -8332,14 +8307,22 @@ pub mod net {
         /// Tag-checked borrow of the IPv4 payload. `None` unless
         /// `family() == AF_INET`.
         #[inline]
-        pub fn as_in4(&self) -> Option<&sock::sockaddr_in> {
+        pub fn as_in4(&self) -> Option<&sockaddr_in> {
             if self.family() == AF_INET {
                 // SAFETY: `ss_family == AF_INET` ⇒ `any` was written as a
                 // `sockaddr_in`; `sockaddr_storage` is guaranteed by POSIX/
                 // ws2def.h to have size and alignment >= `sockaddr_in`, and
                 // the family field overlays at offset 0. Reborrowing the
                 // storage at the narrower type is the canonical sockaddr view.
-                Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in>() })
+                Some(unsafe { &*(&raw const self.any).cast::<sockaddr_in>() })
+            } else {
+                None
+            }
+        }
+        fn as_in4_mut(&mut self) -> Option<&mut sockaddr_in> {
+            if self.family() == AF_INET {
+                // SAFETY: see `as_in4`; any bytes are valid in a `sockaddr_storage`.
+                Some(unsafe { &mut *(&raw mut self.any).cast::<sockaddr_in>() })
             } else {
                 None
             }
@@ -8347,12 +8330,20 @@ pub mod net {
         /// Tag-checked borrow of the IPv6 payload. `None` unless
         /// `family() == AF_INET6`.
         #[inline]
-        pub fn as_in6(&self) -> Option<&sock::sockaddr_in6> {
+        pub fn as_in6(&self) -> Option<&sockaddr_in6> {
             if self.family() == AF_INET6 {
                 // SAFETY: `ss_family == AF_INET6` ⇒ `any` was written as a
                 // `sockaddr_in6`; `sockaddr_storage` has size/alignment >=
                 // `sockaddr_in6` on every supported target. See `as_in4`.
-                Some(unsafe { &*(&raw const self.any).cast::<sock::sockaddr_in6>() })
+                Some(unsafe { &*(&raw const self.any).cast::<sockaddr_in6>() })
+            } else {
+                None
+            }
+        }
+        fn as_in6_mut(&mut self) -> Option<&mut sockaddr_in6> {
+            if self.family() == AF_INET6 {
+                // SAFETY: see `as_in6`; any bytes are valid in a `sockaddr_storage`.
+                Some(unsafe { &mut *(&raw mut self.any).cast::<sockaddr_in6>() })
             } else {
                 None
             }
@@ -8366,12 +8357,7 @@ pub mod net {
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             if let Some(v4) = self.as_in4() {
-                // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
-                // `[u8; 4]` in `bun_libuv_sys::sockaddr_in`; reinterpret as
-                // raw octets so both shapes resolve.
-                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-                let octets: [u8; 4] =
-                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                let octets = v4.addr.to_ne_bytes();
                 write!(
                     f,
                     "{}.{}.{}.{}:{}",
@@ -8379,30 +8365,192 @@ pub mod net {
                     octets[1],
                     octets[2],
                     octets[3],
-                    u16::from_be(v4.sin_port)
+                    u16::from_be(v4.port)
                 )
             } else if let Some(v6) = self.as_in6() {
-                // `sin6_addr` is `in6_addr { s6_addr: [u8; 16] }` on every
-                // target; reinterpret as raw octets to stay independent of the
-                // wrapper struct name.
-                // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
-                let octets: [u8; 16] =
-                    unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
                 // `SocketAddrV6`'s Display emits `[addr]:port` (with `%scope`
                 // when nonzero), matching Zig's `std.net.Ip6Address.format` —
                 // the shape `bun_core::fmt::format_ip` expects to strip.
                 fmt::Display::fmt(
                     &std::net::SocketAddrV6::new(
-                        std::net::Ipv6Addr::from(octets),
-                        u16::from_be(v6.sin6_port),
-                        u32::from_be(v6.sin6_flowinfo),
-                        v6.sin6_scope_id,
+                        std::net::Ipv6Addr::from(v6.addr),
+                        u16::from_be(v6.port),
+                        u32::from_be(v6.flowinfo),
+                        v6.scope_id,
                     ),
                     f,
                 )
             } else {
                 write!(f, "<addr family={}>", self.family())
             }
+        }
+    }
+
+    #[cfg(unix)]
+    pub use posix_impl::*;
+    #[cfg(unix)]
+    mod posix_impl {
+        use super::{Address, sockaddr, sockaddr_storage};
+        use crate::{Fd, Maybe, Tag, err_with};
+        use bun_core::ZStr;
+        use core::ffi::{c_int, c_uint};
+        use core::mem::offset_of;
+        use libc::socklen_t;
+
+        pub fn getsockname(fd: Fd) -> Maybe<Address> {
+            let mut any: sockaddr_storage = bun_core::ffi::zeroed();
+            let mut len = size_of::<sockaddr_storage>() as socklen_t;
+            // SAFETY: getsockname(2) writes at most `len` bytes into `any`.
+            if unsafe { libc::getsockname(fd.native(), (&raw mut any).cast(), &raw mut len) } != 0 {
+                return Err(err_with(Tag::getsockname));
+            }
+            Ok(Address { any })
+        }
+
+        /// `getsockopt(fd, SOL_SOCKET, SO_TYPE)`.
+        pub fn get_socket_type(fd: Fd) -> Maybe<c_int> {
+            let mut sock_type: c_int = 0;
+            let mut len = size_of::<c_int>() as socklen_t;
+            // SAFETY: getsockopt(2) writes an `int` for `SO_TYPE`.
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd.native(),
+                    libc::SOL_SOCKET,
+                    libc::SO_TYPE,
+                    (&raw mut sock_type).cast(),
+                    &raw mut len,
+                )
+            };
+            if rc != 0 {
+                return Err(err_with(Tag::getsockopt));
+            }
+            Ok(sock_type)
+        }
+
+        pub fn setsockopt_int(fd: Fd, level: c_int, name: c_int, value: c_int) -> Maybe<()> {
+            let len = size_of::<c_int>() as socklen_t;
+            // SAFETY: setsockopt(2) reads at most `len` bytes, too few for an option that holds a pointer.
+            let rc = unsafe {
+                libc::setsockopt(fd.native(), level, name, (&raw const value).cast(), len)
+            };
+            if rc != 0 {
+                return Err(err_with(Tag::setsockopt));
+            }
+            Ok(())
+        }
+
+        /// `None` if no interface has that name.
+        pub fn if_nametoindex(name: &ZStr) -> Option<u32> {
+            // SAFETY: `name` is NUL-terminated.
+            let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+            (index != 0).then_some(index)
+        }
+
+        pub fn getifaddrs() -> Maybe<IfAddrList> {
+            let mut list = core::ptr::null_mut();
+            // SAFETY: valid out-pointer
+            if unsafe { libc::getifaddrs(&raw mut list) } != 0 {
+                return Err(err_with(Tag::getifaddrs));
+            }
+            Ok(IfAddrList(list))
+        }
+
+        /// The list that `getifaddrs` returns.
+        pub struct IfAddrList(*mut libc::ifaddrs);
+
+        impl IfAddrList {
+            pub fn iter(&self) -> impl Iterator<Item = IfAddr<'_>> {
+                // SAFETY: each link is null or an entry that lives until `drop`.
+                core::iter::successors(unsafe { self.0.as_ref() }, |it| unsafe {
+                    it.ifa_next.as_ref()
+                })
+                .map(IfAddr)
+            }
+        }
+
+        impl Drop for IfAddrList {
+            fn drop(&mut self) {
+                // SAFETY: returned by getifaddrs
+                unsafe { libc::freeifaddrs(self.0) };
+            }
+        }
+
+        /// An entry of an [`IfAddrList`].
+        #[derive(Clone, Copy)]
+        pub struct IfAddr<'a>(&'a libc::ifaddrs);
+
+        impl<'a> IfAddr<'a> {
+            pub fn name(self) -> &'a [u8] {
+                // SAFETY: `ifa_name` is a NUL-terminated C string that lives as long as the list.
+                unsafe { bun_core::ffi::cstr(self.0.ifa_name) }.to_bytes()
+            }
+
+            pub fn flags(self) -> c_uint {
+                self.0.ifa_flags
+            }
+
+            fn address_bytes(self) -> Option<&'a [u8]> {
+                // SAFETY: `ifa_addr` is null or points into the list.
+                unsafe { sockaddr_bytes(self.0.ifa_addr) }
+            }
+
+            /// The netmask gets the family of the address (BSD can leave it unset). A null `ifa_netmask` reads as all zeros.
+            pub fn address_and_netmask(self) -> Option<(Address, Address)> {
+                let address = Address::from_bytes(self.address_bytes()?);
+                // SAFETY: `ifa_netmask` is null or points into the list.
+                let netmask = unsafe { sockaddr_bytes(self.0.ifa_netmask) };
+                let mut netmask = Address::from_bytes(netmask.unwrap_or_default());
+                netmask.any.ss_family = address.any.ss_family;
+                Some((address, netmask))
+            }
+
+            /// The bytes from `sll_addr` / `LLADDR()` on. `None` unless the family is `AF_PACKET` / `AF_LINK`.
+            pub fn link_layer_address(self) -> Option<&'a [u8]> {
+                let bytes = self.address_bytes()?;
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                {
+                    let family: libc::sa_family_t = bun_core::read_prefix(bytes)?;
+                    (c_int::from(family) == libc::AF_PACKET)
+                        .then(|| &bytes[offset_of!(libc::sockaddr_ll, sll_addr)..])
+                }
+                #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+                {
+                    use libc::sockaddr_dl;
+                    let family = *bytes.get(offset_of!(sockaddr_dl, sdl_family))?;
+                    if c_int::from(family) != libc::AF_LINK {
+                        return None;
+                    }
+                    // The name and the address can extend past the declared size of `sdl_data`.
+                    let after_name =
+                        bytes
+                            .get(offset_of!(sockaddr_dl, sdl_nlen))
+                            .and_then(|&len| {
+                                bytes.get(offset_of!(sockaddr_dl, sdl_data) + usize::from(len)..)
+                            });
+                    Some(after_name.unwrap_or_default())
+                }
+            }
+        }
+
+        /// # Safety
+        /// `addr` is null, or points into a `getifaddrs` list that lives for `'a`.
+        unsafe fn sockaddr_bytes<'a>(addr: *const sockaddr) -> Option<&'a [u8]> {
+            if addr.is_null() {
+                return None;
+            }
+            // SAFETY: every sockaddr starts with `sa_family`.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            let len = match c_int::from(unsafe { (*addr).sa_family }) {
+                libc::AF_INET => size_of::<libc::sockaddr_in>(),
+                libc::AF_INET6 => size_of::<libc::sockaddr_in6>(),
+                libc::AF_PACKET => size_of::<libc::sockaddr_ll>(),
+                _ => size_of::<sockaddr>(),
+            };
+            // SAFETY: every sockaddr starts with `sa_len`. A netmask can be shorter than the struct of its family.
+            #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+            let len = usize::from(unsafe { (*addr).sa_len });
+            // SAFETY: `getifaddrs` initialized `len` bytes at `addr`.
+            Some(unsafe { core::slice::from_raw_parts(addr.cast::<u8>(), len) })
         }
     }
 }
@@ -8905,10 +9053,7 @@ pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
             #[cfg(unix)]
-            // SAFETY: destination is NUL-terminated.
-            let _ = unsafe {
-                libc::unlinkat(to_dir.native(), destination.as_ptr(), libc::AT_REMOVEDIR)
-            };
+            let _ = rmdirat(to_dir, destination);
             renameat(from_dir, filename, to_dir, destination)
         }
         Err(e) if e.get_errno() == E::EXDEV => {

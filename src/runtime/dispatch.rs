@@ -1433,7 +1433,8 @@ pub(crate) unsafe fn fire_timer(
                 c: *mut crate::node::quic::QuicEndpoint =
                     owner!(crate::node::quic::QuicEndpoint, event_loop_timer),
             ) -> JsResult<()> {
-                crate::node::quic::QuicEndpoint::on_timer_fire(c);
+                // SAFETY: an `OwnedTimer` leaves the heap before its owner is freed.
+                unsafe { &*c }.on_timer_fire();
                 Ok(())
             }
         ),

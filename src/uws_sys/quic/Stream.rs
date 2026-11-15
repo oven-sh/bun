@@ -1,8 +1,8 @@
 //! `us_quic_stream_t` — one bidirectional HTTP/3 request stream. Valid
 //! until its `on_stream_close` callback returns.
 
-use core::ffi::{c_int, c_uint, c_void};
-use core::ptr::NonNull;
+use core::cell::Cell;
+use core::ffi::{c_int, c_uint};
 
 use super::{Header, Socket};
 
@@ -16,7 +16,7 @@ bun_opaque::opaque_ffi! {
 // attribute. Shims taking only the handle + value types are `safe fn`; the
 // (ptr,len) writers keep raw signatures.
 unsafe extern "C" {
-    safe fn us_quic_stream_socket(s: &mut Stream) -> *mut Socket;
+    safe fn us_quic_stream_socket(s: &mut Stream) -> Option<&mut Socket>;
     safe fn us_quic_stream_shutdown(s: &mut Stream);
     safe fn us_quic_stream_close(s: &mut Stream);
     safe fn us_quic_stream_reset(s: &mut Stream);
@@ -25,7 +25,8 @@ unsafe extern "C" {
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
     safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_headers_too_large(s: &mut Stream) -> c_int;
-    safe fn us_quic_stream_ext(s: &mut Stream) -> *mut c_void;
+    /// `Context::create_client` asks for these bytes.
+    safe fn us_quic_stream_ext(s: &Stream) -> &Cell<u64>;
     fn us_quic_stream_write(s: *mut Stream, data: *const u8, len: c_uint) -> c_int;
     safe fn us_quic_stream_want_write(s: &mut Stream, want: c_int);
     safe fn us_quic_stream_want_read(s: &mut Stream, want: c_int);
@@ -38,13 +39,8 @@ unsafe extern "C" {
 }
 
 impl Stream {
-    pub fn socket(&mut self) -> Option<NonNull<Socket>> {
-        // Returned as a raw pointer (not &mut) because the Socket is the *parent
-        // connection shared by every stream on it* — two live &mut Stream on the
-        // same conn calling .socket() (or a conn-level callback already holding
-        // &mut Socket) would otherwise yield aliasing &mut Socket, which is UB.
-        // Callers reborrow locally under their own SAFETY proof.
-        NonNull::new(us_quic_stream_socket(self))
+    pub fn socket(&mut self) -> Option<&mut Socket> {
+        us_quic_stream_socket(self)
     }
 
     pub fn shutdown(&mut self) {
@@ -82,13 +78,9 @@ impl Stream {
         us_quic_stream_headers_too_large(self) != 0
     }
 
-    pub fn ext<T>(&mut self) -> &mut Option<NonNull<T>> {
-        // SAFETY: self is a valid us_quic_stream_t; ext slot is pointer-sized & pointer-aligned,
-        // and Option<NonNull<T>> has nullable-pointer layout.
-        // Aliasing: the ext slot is disjoint storage returned by C (not overlapping the
-        // zero-sized opaque `Stream` handle), and the returned &mut borrows from &mut self
-        // so no second &mut to the slot can be obtained while this one is live.
-        unsafe { &mut *us_quic_stream_ext(self).cast::<Option<NonNull<T>>>() }
+    /// Caller storage co-allocated with the stream, 0 until the caller writes to it.
+    pub fn ext(&self) -> &Cell<u64> {
+        us_quic_stream_ext(self)
     }
 
     pub fn write(&mut self, data: &[u8]) -> c_int {

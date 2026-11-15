@@ -7,19 +7,21 @@ use bun_uws::quic;
 use bun_uws::quic::Qpack;
 use bun_uws::quic::header::Class as QpackClass;
 
-use super::client_session::ClientSession;
 use super::stream::Stream;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
-use crate::{HTTPVerboseLevel, Protocol};
+use crate::{HTTPThread, HTTPVerboseLevel, Protocol, RequestHeaders};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
 /// body transmission. Called from the first `callbacks.on_stream_writable`
-/// for this stream (not `on_stream_open`; see the comment there for why no
+/// for this stream (not `bind_stream`; see the comment there for why no
 /// `lsquic_stream_write` may happen before lsquic's priority iterator has
 /// served the HSK crypto stream).
+// Keeps the array of headers out of the frame of `on_stream_writable`.
+#[inline(never)]
 pub(crate) fn write_request(
-    session: &ClientSession,
+    thread: &mut HTTPThread,
+    session_hostname: &[u8],
     stream: &mut Stream,
     qs: &mut quic::Stream,
 ) -> crate::Result<()> {
@@ -32,7 +34,7 @@ pub(crate) fn write_request(
     let reject_unauthorized = client.flags.reject_unauthorized;
     // h3 body bytes flow into lsquic's send buffer asynchronously — compress
     // into the Vec so the cursor stays valid across event-loop ticks.
-    client.compress_body_for_send(false)?;
+    client.compress_body_for_send(thread, false)?;
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
@@ -41,7 +43,8 @@ pub(crate) fn write_request(
         HTTPRequestBody::Bytes(_)
     );
 
-    let request = client.build_request(body_len);
+    let mut request_headers = RequestHeaders::new();
+    let request = client.build_request(body_len, &mut request_headers);
     if verbose != HTTPVerboseLevel::None {
         let body = req_body.slice();
         crate::print_request(
@@ -97,7 +100,7 @@ pub(crate) fn write_request(
         }
     }
     if authority.is_empty() {
-        authority = session.hostname.as_slice();
+        authority = session_hostname;
     }
     headers[2] = quic::Header::init(b":authority", authority, Some(Qpack::Authority));
 

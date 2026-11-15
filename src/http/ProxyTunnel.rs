@@ -10,7 +10,7 @@ use crate::http_context::{HTTPSocket, PeerVerification};
 use crate::internal_state::HTTPStage;
 use crate::ssl_config::SSLConfig;
 use crate::ssl_wrapper::{Handler as SSLWrapperHandler, InitError, SSLWrapper};
-use crate::{AlpnOffer, HTTPClient, NextStep};
+use crate::{AlpnOffer, HTTPClient, HTTPThread, NextStep};
 
 bun_core::declare_scope!(http_proxy_tunnel, visible);
 
@@ -38,6 +38,7 @@ pub(crate) struct TunnelClosed;
 /// The handler for a call that feeds the wrapper.
 struct ClientHandler<'a, 'c, const IS_SSL: bool> {
     client: &'a mut HTTPClient<'c>,
+    thread: &'a mut HTTPThread,
     socket: HTTPSocket<IS_SSL>,
     wrapper: &'a SSLWrapper,
     next_step: ControlFlow<NextStep>,
@@ -55,7 +56,7 @@ impl<const IS_SSL: bool> ClientHandler<'_, '_, IS_SSL> {
 
     fn close(&mut self, err: Error) {
         self.wrapper.stop();
-        self.next_step = self.client.on_proxy_tunnel_close(err, self.socket);
+        self.next_step = (self.client).on_proxy_tunnel_close(self.thread, err, self.socket);
     }
 }
 
@@ -88,22 +89,20 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
             return self.close(crate::Error::UnexpectedData);
         }
-        // The context that owns the outer socket: its pool is the one that the next request searches.
-        let hctx = client.get_ssl_ctx::<IS_SSL>();
         let report_progress = match client.state.response_stage {
             HTTPStage::Body => {
                 scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body");
-                client.handle_response_body(decoded_data, false)
+                client.handle_response_body(self.thread, decoded_data, false)
             }
             HTTPStage::BodyChunk => {
                 scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body_chunk");
-                client.handle_response_body_chunked_encoding(decoded_data)
+                client.handle_response_body_chunked_encoding(self.thread, decoded_data)
             }
             HTTPStage::ProxyHeaders => {
                 scoped_log!(http_proxy_tunnel, "ProxyTunnel onData proxy_headers");
                 let flow = client.handle_on_data_headers(
+                    self.thread,
                     decoded_data,
-                    hctx,
                     self.socket,
                     Some(self.wrapper),
                 );
@@ -116,7 +115,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
         };
         match report_progress {
             Ok(true) => {
-                let flow = client.progress_update(hctx, self.socket);
+                let flow = client.progress_update(self.thread, self.socket);
                 self.stop_on_break(flow);
             }
             Ok(false) => {}
@@ -153,7 +152,7 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
                 let Some(ssl) = self.wrapper.ssl() else {
                     return;
                 };
-                let flow = client.check_server_identity(self.socket, ssl, false);
+                let flow = client.check_server_identity(self.thread, self.socket, ssl, false);
                 if flow.is_break() {
                     scoped_log!(
                         http_proxy_tunnel,
@@ -163,7 +162,8 @@ impl<const IS_SSL: bool> SSLWrapperHandler for ClientHandler<'_, '_, IS_SSL> {
                 }
             }
 
-            let flow = client.on_writable::<true, IS_SSL>(self.socket, Some(self.wrapper));
+            let flow =
+                client.on_writable::<true, IS_SSL>(self.thread, self.socket, Some(self.wrapper));
             self.stop_on_break(flow);
         } else {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake failed");
@@ -266,6 +266,7 @@ impl HTTPClient<'_> {
     /// [`ProxyTunnel::write`] for data that does not borrow `self`.
     pub(crate) fn write_to_proxy_tunnel<const IS_SSL: bool>(
         &mut self,
+        thread: &mut HTTPThread,
         socket: HTTPSocket<IS_SSL>,
         lent_wrapper: Option<&SSLWrapper>,
         buf: &[u8],
@@ -276,13 +277,14 @@ impl HTTPClient<'_> {
         match tunnel.write(socket, lent_wrapper, buf) {
             Ok(written) => Continue(written),
             Err(TunnelClosed) => self
-                .on_proxy_tunnel_close(Error::ConnectionClosed, socket)
+                .on_proxy_tunnel_close(thread, Error::ConnectionClosed, socket)
                 .map_continue(|()| None),
         }
     }
 
     pub(crate) fn on_proxy_tunnel_close<const IS_SSL: bool>(
         &mut self,
+        thread: &mut HTTPThread,
         mut err: Error,
         socket: HTTPSocket<IS_SSL>,
     ) -> ControlFlow<NextStep> {
@@ -290,8 +292,11 @@ impl HTTPClient<'_> {
         // Mirror `HTTPClient::on_close`:
         // treat connection close as end-of-body for identity transfer when no content-length.
         if !self.state.flags.is_redirect_pending && self.state.is_body_complete_on_close() {
-            match self.state.finalize_body_on_eof() {
-                Ok(()) => return self.progress_update(self.get_ssl_ctx::<IS_SSL>(), socket),
+            match self
+                .state
+                .finalize_body_on_eof(&mut thread.lazy_libdeflater)
+            {
+                Ok(()) => return self.progress_update(thread, socket),
                 Err(e) => err = e,
             }
         }
@@ -306,6 +311,7 @@ impl HTTPClient<'_> {
 impl ProxyTunnel {
     pub(crate) fn start<const IS_SSL: bool>(
         this: &mut HTTPClient,
+        thread: &mut HTTPThread,
         socket: HTTPSocket<IS_SSL>,
         ssl_options: Option<&SSLConfig>,
         start_payload: &[u8],
@@ -317,7 +323,7 @@ impl ProxyTunnel {
                 .as_usockets_for_client_verification()
                 .create_ssl_context(&mut err),
             // The context a direct connection uses: it holds the thread's CA options (`bun install --ca`).
-            None => Some(crate::http_thread().default_ssl_ctx()),
+            None => Some(thread.default_ssl_ctx()),
         };
         let Some(ssl_ctx) = ssl_ctx else {
             // Invalid TLS options; the errors a direct request reports for them.
@@ -348,7 +354,7 @@ impl ProxyTunnel {
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
         }));
-        Self::run_wrapper(this, socket, wrapper, |wrapper, handler| {
+        Self::run_wrapper(this, thread, socket, wrapper, |wrapper, handler| {
             if !start_payload.is_empty() {
                 scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
                 wrapper.start_with_payload(handler, start_payload);
@@ -362,12 +368,14 @@ impl ProxyTunnel {
     /// Gives `wrapper` back to the tunnel of `client` afterwards, if it still has one.
     fn run_wrapper<const IS_SSL: bool>(
         client: &mut HTTPClient,
+        thread: &mut HTTPThread,
         socket: HTTPSocket<IS_SSL>,
         wrapper: SSLWrapper,
         call: impl FnOnce(&SSLWrapper, &mut dyn SSLWrapperHandler),
     ) -> ControlFlow<NextStep> {
         let mut handler = ClientHandler {
             client,
+            thread,
             socket,
             wrapper: &wrapper,
             next_step: Continue(()),
@@ -420,12 +428,13 @@ impl ProxyTunnel {
     /// Encrypted bytes arrived on the outer socket of `client`, which has a tunnel.
     pub(crate) fn receive<const IS_SSL: bool>(
         client: &mut HTTPClient,
+        thread: &mut HTTPThread,
         socket: HTTPSocket<IS_SSL>,
         buf: &[u8],
     ) -> ControlFlow<NextStep> {
         let wrapper = (client.proxy_tunnel.as_mut()).and_then(|tunnel| tunnel.wrapper.take());
         let wrapper = wrapper.expect("given back by run_wrapper");
-        Self::run_wrapper(client, socket, wrapper, |wrapper, handler| {
+        Self::run_wrapper(client, thread, socket, wrapper, |wrapper, handler| {
             wrapper.receive_data(handler, buf);
         })
     }

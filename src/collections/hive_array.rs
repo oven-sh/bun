@@ -134,7 +134,7 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// The pointers are intended to be stable
 /// Sorta related to https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2021/p0447r15.html
 ///
-/// All slot operations take `&self` and the buffer is `UnsafeCell` — slot
+/// The operations on slot pointers take `&self` and the buffer is `UnsafeCell` — slot
 /// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
 /// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
 pub struct HiveArray<T, const CAPACITY: usize> {
@@ -206,12 +206,37 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         &self.used
     }
 
-    /// Moves `value` into a free slot, or returns it if the hive is full.
-    pub fn try_get_init(&self, value: T) -> Result<NonNull<T>, T> {
-        match self.claim() {
-            Some(slot) => Ok(slot.write(value)),
-            None => Err(value),
+    /// Moves `value` into a free slot and returns its index, or returns `value` if the hive is full.
+    pub fn try_insert(&mut self, value: T) -> Result<usize, T> {
+        let Some(index) = self.used.find_first_unset() else {
+            return Err(value);
+        };
+        self.used.set(index);
+        let slot = &mut self.buffer.get_mut()[index];
+        asan::unpoison(slot.as_mut_ptr().cast(), size_of::<T>());
+        slot.write(value);
+        Ok(index)
+    }
+
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        let slot = self.buffer.get_mut().get_mut(index)?;
+        // SAFETY: under `&mut self` every used slot is initialized, see `Drop`.
+        (self.used.is_set(index)).then(|| unsafe { slot.assume_init_mut() })
+    }
+
+    /// Drops the value in place. Returns whether there was one.
+    pub fn remove(&mut self, index: usize) -> bool {
+        let Some(slot) = self.buffer.get_mut().get_mut(index) else {
+            return false;
+        };
+        if !self.used.is_set(index) {
+            return false;
         }
+        self.used.unset(index);
+        // SAFETY: as in `get_mut`, and the slot is no longer in use.
+        unsafe { slot.assume_init_drop() };
+        asan::poison(slot.as_mut_ptr().cast(), size_of::<T>());
+        true
     }
 
     /// Reserves a slot to [`write`](HiveSlot::write). `None` if the hive is full.
@@ -227,13 +252,6 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
             slot,
             owner: Some(self),
         })
-    }
-
-    pub fn at(&self, index: u16) -> *mut T {
-        debug_assert!((index as usize) < CAPACITY);
-        let ret = self.ptr_at(index as usize);
-        asan::assert_unpoisoned(ret.cast::<u8>());
-        ret
     }
 
     fn index_of(&self, value: *const T) -> Option<u32> {
@@ -262,7 +280,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     /// If `value` points into this hive, it must point to a fully-initialized
     /// `T` previously handed out by this hive. The slot is dropped in place; passing a moved-from or
     /// uninitialized slot is UB for `T` with drop glue.
-    pub unsafe fn put(&self, value: *mut T) -> bool {
+    unsafe fn put(&self, value: *mut T) -> bool {
         let Some(index) = self.index_of(value) else {
             return false;
         };
@@ -658,25 +676,29 @@ mod tests {
     }
 
     #[test]
-    fn try_get_init_returns_value_when_full() {
-        let a = HiveArray::<Box<u8>, 1>::init();
-        assert!(a.try_get_init(Box::new(1)).is_ok());
-        assert_eq!(a.try_get_init(Box::new(2)), Err(Box::new(2)));
+    fn try_insert_get_mut_remove() {
+        let mut a = HiveArray::<Box<u8>, 1>::init();
+        assert_eq!(a.get_mut(0), None);
+        assert_eq!(a.try_insert(Box::new(1)), Ok(0));
+        assert_eq!(a.try_insert(Box::new(2)), Err(Box::new(2)));
+        assert_eq!(a.get_mut(0), Some(&mut Box::new(1)));
+        assert_eq!(a.get_mut(1), None);
+        assert!(!a.remove(1));
+        assert!(a.remove(0));
+        assert!(!a.remove(0));
     }
 
     #[test]
-    fn at_returns_claimed_slot() {
+    fn ptr_at_returns_claimed_slot() {
         let a = HiveArray::<u64, 4>::init();
         let p0 = a.claim().unwrap().write(100);
         let p1 = a.claim().unwrap().write(200);
-        assert_eq!(a.at(0), p0.as_ptr());
-        assert_eq!(a.at(1), p1.as_ptr());
         assert_eq!(a.ptr_at(0), p0.as_ptr());
         assert_eq!(a.ptr_at(1), p1.as_ptr());
         // SAFETY: both slots are initialized.
         unsafe {
-            assert_eq!(*a.at(0), 100);
-            assert_eq!(*a.at(1), 200);
+            assert_eq!(*a.ptr_at(0), 100);
+            assert_eq!(*a.ptr_at(1), 200);
         }
         // SAFETY: only token for its slot.
         assert!(unsafe { a.put(p0.as_ptr()) });

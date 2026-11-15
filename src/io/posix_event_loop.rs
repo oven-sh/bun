@@ -1360,12 +1360,6 @@ impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `Pollable` is a single-variant tagged-pointer union over `FilePoll`.
-//
-// Note: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
-// instantiated here — `impl_tagged_ptr_union!` would generate
-// `impl TypeList for (FilePoll,)`, which trips the orphan rule (foreign trait
-// on a tuple). Since the union has exactly one variant, wrap the raw
-// `TaggedPtr` directly with the same tag scheme (`1024 - index`).
 #[cfg(not(windows))]
 #[derive(Copy, Clone)]
 pub(crate) struct Pollable {

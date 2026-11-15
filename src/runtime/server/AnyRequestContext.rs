@@ -24,12 +24,6 @@ type HttpsMuxCtx = RequestContext<HTTPSServer, true, false, true>;
 type DebugHttpMuxCtx = RequestContext<DebugHTTPServer, false, true, true>;
 type DebugHttpsMuxCtx = RequestContext<DebugHTTPSServer, true, true, true>;
 
-// The `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from
-// outside `bun_ptr`, so store `(tag: u8, ptr: *mut ())` as two fields.
-// A tagged-pointer pack would be 8 bytes instead of 16. AnyRequestContext is
-// stored inside `webcore::Request` (one per in-flight request); if profiling
-// flags the extra 8 bytes, move the impl_tagged_ptr_union! invocation into
-// `bun_ptr` for these eight types.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CtxTag {
@@ -61,7 +55,7 @@ impl AnyRequestContext {
 pub(crate) struct AnyRequestContextRef(AnyRequestContext);
 
 /// Internal: maps each `RequestContext` monomorphization to its tag so
-/// `AnyRequestContext::init` is generic over the eight types without `TypeList`.
+/// `AnyRequestContext::init` is generic over the eight types.
 pub trait CtxKind {
     const TAG: CtxTag;
 }

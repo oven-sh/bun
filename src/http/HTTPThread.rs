@@ -1,4 +1,8 @@
+use core::any::Any;
+use core::cell::Cell;
+use core::num::NonZeroU32;
 use core::ptr::NonNull;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
 
@@ -6,14 +10,18 @@ use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 use bun_errno::SystemErrno;
-use bun_ptr::{AliasableBox, RefCount, RefPtr};
+use bun_ptr::RefPtr;
 use bun_threading::{Guarded, OwnedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
-use crate::http_context::ActiveSocketExt;
+use crate::http_context::{ActiveSocket, HTTPSocket, HttpContextId};
+use crate::registry::Registry;
 use crate::ssl_config::{self, SSLConfig};
-use crate::{AsyncHttp, HTTPContext, InFlightRequest, InitError, NewHttpContext, h2, h3};
+use crate::{
+    AsyncHttp, HTTPClient, HTTPContext, InFlightRequest, InitError, NewHttpContext, Reconnect, h2,
+    h3,
+};
 
 // The scope registry keys on name, so the two visibilities (.hidden +
 // .visible) are split into two scope names.
@@ -24,40 +32,15 @@ bun_core::declare_scope!(HTTPThread_log, visible); // log
 /// Since configs are interned via `ssl_config::global_registry`, pointer
 /// equality is sufficient for lookup. Each entry holds a ref on its SSLConfig.
 struct SslContextCacheEntry {
-    ctx: RefPtr<NewHttpContext<true>>,
+    /// In `HttpThread::custom_ssl_contexts`.
+    index: u32,
     last_used_ns: u64,
     /// Strong ref held by the cache entry (released on eviction).
     _config_ref: ssl_config::SharedPtr,
 }
 
-impl SslContextCacheEntry {
-    /// Mutable access to the cached `NewHttpContext`. The map and all callers
-    /// are HTTP-thread-only, so the returned `&mut` is the sole live borrow.
-    #[inline]
-    fn ctx_mut<'a>(&self) -> &'a mut NewHttpContext<true> {
-        // SAFETY: see above.
-        unsafe { &mut *self.ctx.as_ptr() }
-    }
-}
 const SSL_CONTEXT_CACHE_MAX_SIZE: usize = 60;
 const SSL_CONTEXT_CACHE_TTL_NS: u64 = 30 * (60 * 1_000_000_000); // 30 minutes
-
-// PORTING.md §Global mutable state: only ever accessed from the single HTTP
-// client thread after `on_start`. RacyCell — thread affinity is the contract.
-static CUSTOM_SSL_CONTEXT_MAP: bun_core::RacyCell<
-    Option<ArrayHashMap<*const SSLConfig, SslContextCacheEntry>>,
-> = bun_core::RacyCell::new(None);
-/// Borrow the (lazily-initialized) SSL-context cache. PORTING.md §Global
-/// mutable state: only ever accessed from the single HTTP client thread after
-/// `on_start`, so the `&'static mut` is the unique live borrow at every call
-/// site (callers must not hold the result across a call that re-enters this
-/// accessor; the prior `*mut` API enforced the same per-statement reborrow
-/// shape).
-fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslContextCacheEntry> {
-    // SAFETY: HTTP-thread-only; initialized on first call. Every call site is
-    // a per-statement reborrow (audited in r3), so no two `&mut` overlap.
-    unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
-}
 
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
@@ -88,9 +71,31 @@ static INBOX: Inbox = Inbox {
     has_pool_closes: AtomicBool::new(false),
 };
 
+thread_local! {
+    /// Set while the HTTP thread is in `tick`, except under [`HttpThread::enter`].
+    static HTTP_THREAD: Cell<Option<&'static mut HttpThread>> = const { Cell::new(None) };
+}
+
+/// Where a message from another thread finds its request.
+#[derive(Clone, Copy)]
+pub(crate) struct TrackedSocket {
+    pub(crate) socket: uws::AnySocket,
+    pub(crate) h2_stream_id: Option<NonZeroU32>,
+}
+
 pub struct HttpThread {
-    pub(crate) http_context: NewHttpContext<false>,
-    pub(crate) https_context: NewHttpContext<true>,
+    http_context: NewHttpContext<false>,
+    https_context: NewHttpContext<true>,
+    custom_ssl_contexts: Registry<NewHttpContext<true>>,
+    custom_ssl_context_map: ArrayHashMap<*const SSLConfig, SslContextCacheEntry>,
+    /// The entries of `custom_ssl_contexts` that have left `custom_ssl_context_map`.
+    evicted_ssl_contexts: Vec<u32>,
+    pub(crate) h3_context: Option<h3::ClientContext>,
+    pub(crate) alt_svc: h3::alt_svc::Cache,
+    /// By `async_http_id`.
+    pub(crate) abort_tracker: ArrayHashMap<u32, TrackedSocket>,
+    /// Requests that wait for the session they left to be back in its registry, where they may pick it again.
+    pub(crate) reconnects: VecDeque<(InFlightRequest, Reconnect)>,
     /// Stashed `InitOpts` for the default HTTPS context. When the user passed
     /// no explicit CA config, `on_start` defers
     /// `https_context.init_with_thread_opts` (which calls
@@ -112,18 +117,17 @@ pub struct HttpThread {
     #[expect(clippy::vec_box)]
     deferred_tasks: Vec<Box<AsyncHttp<'static>>>,
     /// Set by `drainQueuedShutdowns` when a shutdown's `async_http_id` wasn't in
-    /// `socket_async_http_abort_tracker` — the request is either not yet started
+    /// `abort_tracker` — the request is either not yet started
     /// (still in `INBOX.tasks`/`deferred_tasks`) or already done. `drainEvents`
     /// uses this to decide whether it must scan the queued/deferred lists for
     /// aborted tasks when `active >= max`; without it the common at-capacity
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
 
-    /// Custom TLS contexts with no ref left, see `HTTPContext::destroy`.
-    pub(crate) dead_ssl_contexts: Vec<AliasableBox<NewHttpContext<true>>>,
-
-    pub(crate) timer: Instant,
-    pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
+    timer: Instant,
+    pub(crate) lazy_libdeflater: LazyLibdeflater,
+    /// Where a small packet of a chunked body is decoded, to avoid an allocation.
+    pub(crate) single_packet_small_buffer: [u8; 16 * 1024],
 
     /// What each `InFlightRequest` owns, for `dealloc_in_flight_for_exit`.
     pub(crate) in_flight: Vec<NonNull<AsyncHttp<'static>>>,
@@ -132,36 +136,31 @@ pub struct HttpThread {
 impl HttpThread {
     fn new() -> Self {
         Self {
-            http_context: NewHttpContext::<false> {
-                ref_count: RefCount::init(),
-                pending_sockets: crate::http_context::LazyPool::new(),
-                pending_unix_sockets: crate::http_context::LazyPool::new(),
-                park_seq: 0,
-                group: uws::SocketGroup::default(),
-                secure: None,
-                active_h2_sessions: Vec::new(),
-                pending_h2_connects: Vec::new(),
-                session_cache: crate::session_cache::SessionCache::new(),
-            },
-            https_context: NewHttpContext::<true> {
-                ref_count: RefCount::init(),
-                pending_sockets: crate::http_context::LazyPool::new(),
-                pending_unix_sockets: crate::http_context::LazyPool::new(),
-                park_seq: 0,
-                group: uws::SocketGroup::default(),
-                secure: None,
-                active_h2_sessions: Vec::new(),
-                pending_h2_connects: Vec::new(),
-                session_cache: crate::session_cache::SessionCache::new(),
-            },
+            http_context: NewHttpContext::new(HttpContextId::DEFAULT),
+            https_context: NewHttpContext::new(HttpContextId::DEFAULT),
+            custom_ssl_contexts: Registry::new(),
+            custom_ssl_context_map: ArrayHashMap::new(),
+            evicted_ssl_contexts: Vec::new(),
+            h3_context: None,
+            alt_svc: h3::alt_svc::Cache::default(),
+            abort_tracker: ArrayHashMap::new(),
+            reconnects: VecDeque::new(),
             lazy_https_init: None,
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            dead_ssl_contexts: Vec::new(),
             timer: Instant::now(),
-            lazy_libdeflater: None,
+            lazy_libdeflater: LazyLibdeflater(None),
+            single_packet_small_buffer: [0; _],
             in_flight: Vec::new(),
         }
+    }
+
+    /// For a callback of the event loop. Panics under another one, and on another thread.
+    pub(crate) fn enter<R>(body: impl FnOnce(&mut HttpThread) -> R) -> R {
+        let thread = HTTP_THREAD.take().expect("dispatched by tick");
+        let result = body(thread);
+        HTTP_THREAD.set(Some(thread));
+        result
     }
 }
 
@@ -216,13 +215,27 @@ unsafe impl bun_core::Zeroable for LibdeflateState {}
 impl LibdeflateState {
     /// The libdeflate decompressor handle.
     ///
-    /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
+    /// `decompressor` is set once in [`LazyLibdeflater::get_or_init`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
     pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::OwnedDecompressor {
         self.decompressor
             .as_ref()
-            .expect("set in HttpThread::deflater()")
+            .expect("set in LazyLibdeflater::get_or_init()")
+    }
+}
+
+pub(crate) struct LazyLibdeflater(Option<Box<LibdeflateState>>);
+
+impl LazyLibdeflater {
+    pub(crate) fn get_or_init(&mut self) -> &mut LibdeflateState {
+        self.0.get_or_insert_with(|| {
+            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+                .unwrap_or_else(|| bun_core::out_of_memory());
+            let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
+            state.decompressor = Some(decompressor);
+            state
+        })
     }
 }
 
@@ -287,33 +300,34 @@ impl HttpThread {
     /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
     /// overflows only after ~584 years of process uptime.
     #[inline]
-    fn timer_read(&self) -> u64 {
+    pub(crate) fn timer_read(&self) -> u64 {
         u64::try_from(self.timer.elapsed().as_nanos()).expect("int cast")
     }
 
-    pub(crate) fn deflater(&mut self) -> &mut LibdeflateState {
-        if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
-                .unwrap_or_else(|| bun_core::out_of_memory());
-            let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
-            state.decompressor = Some(decompressor);
-            self.lazy_libdeflater = Some(state);
-        }
-
-        self.lazy_libdeflater.as_deref_mut().unwrap()
+    pub(crate) fn context<const IS_SSL: bool>(
+        &mut self,
+        id: HttpContextId,
+    ) -> &mut NewHttpContext<IS_SSL> {
+        let ctx: &mut dyn Any = if IS_SSL {
+            match id.custom_index() {
+                None => &mut self.https_context,
+                Some(index) => (self.custom_ssl_contexts.get_mut(index)).expect("in use"),
+            }
+        } else {
+            &mut self.http_context
+        };
+        ctx.downcast_mut().expect("chosen by `IS_SSL`")
     }
 
-    pub(crate) fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
-        // Note: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
-        // and `NewHttpContext<IS_SSL>` are the same type when IS_SSL, just spelled
-        // differently. Route through a raw-pointer `.cast()` (identity).
-        if IS_SSL {
-            // SAFETY: identical type when IS_SSL == true; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.https_context).cast::<NewHttpContext<IS_SSL>>() }
-        } else {
-            // SAFETY: identical type when IS_SSL == false; pointer is to a live `&mut self` field.
-            unsafe { &mut *(&raw mut self.http_context).cast::<NewHttpContext<IS_SSL>>() }
-        }
+    /// The custom context of `client` (for mTLS/custom TLS), or the default one.
+    pub(crate) fn context_of<const IS_SSL: bool>(
+        &mut self,
+        client: &HTTPClient<'_>,
+    ) -> &mut NewHttpContext<IS_SSL> {
+        self.context(match &client.custom_ssl_ctx {
+            Some(ctx) if IS_SSL => ctx.id,
+            _ => HttpContextId::DEFAULT,
+        })
     }
 
     /// One-shot lazy init of the default HTTPS context. See
@@ -348,7 +362,7 @@ impl HttpThread {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
             // SSL socket — including unix-socket and proxy paths below —
-            // funnels through here before touching `https_context.{group,secure}`.
+            // funnels through here before touching `https_context.{shared,secure}`.
             self.ensure_https_context_init();
 
             'custom_ctx: {
@@ -361,50 +375,42 @@ impl HttpThread {
                 let requested_config: *const SSLConfig = tls.get();
 
                 // Evict stale entries from the cache
-                self.evict_stale_ssl_contexts();
+                let now = self.timer_read();
+                self.evict_stale_ssl_contexts(now);
 
                 // Look up by pointer equality (configs are interned)
-                if let Some(entry) = custom_ssl_context_map().get_mut(&requested_config) {
+                if let Some(entry) = self.custom_ssl_context_map.get_mut(&requested_config) {
                     // Cache hit - reuse existing SSL context
-                    entry.last_used_ns = self.timer_read();
-                    client.set_custom_ssl_ctx(entry.ctx.clone());
-                    return Self::dial(entry.ctx_mut(), client);
+                    entry.last_used_ns = now;
+                    let id = HttpContextId::custom(entry.index);
+                    client.custom_ssl_ctx = Some(self.context::<true>(id).shared.clone());
+                    break 'custom_ctx;
                 }
 
                 // Cache miss - create new SSL context
-                let ctx = RefPtr::new(NewHttpContext::<true> {
-                    ref_count: RefCount::init(),
-                    pending_sockets: crate::http_context::LazyPool::new(),
-                    pending_unix_sockets: crate::http_context::LazyPool::new(),
-                    park_seq: 0,
-                    group: uws::SocketGroup::default(),
-                    secure: None,
-                    active_h2_sessions: Vec::new(),
-                    pending_h2_connects: Vec::new(),
-                    session_cache: crate::session_cache::SessionCache::new(),
-                });
-                // SAFETY: fresh allocation; HTTP-thread-only.
-                let custom_context = unsafe { &mut *ctx.as_ptr() };
+                let index = self.custom_ssl_contexts.vacant_index();
+                let mut custom_context =
+                    Box::new(NewHttpContext::new(HttpContextId::custom(index)));
                 if let Err(err) = custom_context.init_with_client_config(&mut client) {
                     // `init_with_client_config` fails before `group.init()` runs.
                     // `impl Drop for HTTPContext` tolerates an uninitialized
                     // group (skips close_all when `group.loop_` is
-                    // null), so dropping `ctx` here is safe.
-                    return client.fail(match err {
+                    // null), so dropping `custom_context` here is safe.
+                    let err = match err {
                         InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile
                         | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
-                    });
+                    };
+                    return client.fail(self, err);
                 }
 
-                let now = self.timer_read();
-                client.set_custom_ssl_ctx(ctx.clone());
-                let _ = custom_ssl_context_map().put(
+                client.custom_ssl_ctx = Some(custom_context.shared.clone());
+                let _ = self.custom_ssl_context_map.put(
                     requested_config,
                     SslContextCacheEntry {
-                        ctx,
+                        index: self.custom_ssl_contexts.insert(custom_context),
                         last_used_ns: now,
                         // Strong ref for the cache entry; client.tls_props keeps its own.
                         _config_ref: tls,
@@ -412,69 +418,92 @@ impl HttpThread {
                 );
 
                 // Enforce max cache size - evict oldest entry
-                if custom_ssl_context_map().count() > SSL_CONTEXT_CACHE_MAX_SIZE {
-                    evict_oldest_ssl_context();
+                if self.custom_ssl_context_map.count() > SSL_CONTEXT_CACHE_MAX_SIZE {
+                    self.evict_oldest_ssl_context();
                 }
-
-                return Self::dial(custom_context, client);
             }
         }
-        Self::dial(self.context::<IS_SSL>(), client)
+        self.dial::<IS_SSL>(client)
     }
 
-    /// Open the connection for `client` on `ctx`: unix path, HTTP proxy, or direct.
-    fn dial<const IS_SSL: bool>(ctx: &mut NewHttpContext<IS_SSL>, mut client: InFlightRequest) {
+    /// Open the connection for `client`: unix path, HTTP proxy, or direct.
+    fn dial<const IS_SSL: bool>(&mut self, mut client: InFlightRequest) {
         client.connected_url = client
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
         if !client.unix_socket_path.is_empty() {
-            return ctx.connect_socket(client);
+            return HTTPContext::<IS_SSL>::connect_socket(self, client);
         }
         if let Some(url) = &client.http_proxy {
             if !url.href.is_empty() {
                 // https://github.com/oven-sh/bun/issues/11343
                 if url.protocol.is_empty() || url.has_http_like_protocol() {
                     let port = url.get_port_auto();
-                    return ctx.connect(client, port);
+                    return HTTPContext::<IS_SSL>::connect(self, client, port);
                 }
-                return client.fail(crate::Error::UnsupportedProxyProtocol);
+                return client.fail(self, crate::Error::UnsupportedProxyProtocol);
             }
         }
         // The hostname is passed to the socket layer as a C string, so it must not contain a NUL.
         if let Err(err) = crate::validate_request_target(client.url.hostname) {
-            return client.fail(err);
+            return client.fail(self, err);
         }
         client.connected_url.hostname = client.url.hostname;
         let port = client.url.get_port_auto();
-        ctx.connect(client, port);
+        HTTPContext::<IS_SSL>::connect(self, client, port);
     }
 
     /// Evict SSL context cache entries that haven't been used for ssl_context_cache_ttl_ns.
-    fn evict_stale_ssl_contexts(&mut self) {
-        let now = self.timer_read();
-        let map = custom_ssl_context_map();
+    fn evict_stale_ssl_contexts(&mut self, now: u64) {
+        let map = &mut self.custom_ssl_context_map;
         let mut i: usize = 0;
         while i < map.count() {
             let entry_last_used = map.values()[i].last_used_ns;
             if now.saturating_sub(entry_last_used) > SSL_CONTEXT_CACHE_TTL_NS {
-                map.swap_remove_at(i);
+                (self.evicted_ssl_contexts).push(map.swap_remove_at(i).1.index);
             } else {
                 i += 1;
             }
         }
     }
 
-    fn abort_pending_h2_waiter(&mut self, async_http_id: u32) -> bool {
-        if self.https_context.abort_pending_h2_waiter(async_http_id) {
-            return true;
-        }
-        for entry in custom_ssl_context_map().values_mut() {
-            if entry.ctx_mut().abort_pending_h2_waiter(async_http_id) {
-                return true;
+    fn take_pending_h2_waiter(&mut self, async_http_id: u32) -> Option<InFlightRequest> {
+        let custom = self.custom_ssl_contexts.iter_mut().map(|(_, ctx)| ctx);
+        (core::iter::once(&mut self.https_context).chain(custom))
+            .find_map(|ctx| ctx.take_pending_h2_waiter(async_http_id))
+    }
+
+    pub(crate) fn run_reconnects(&mut self) {
+        while let Some((client, how)) = self.reconnects.pop_front() {
+            match how {
+                Reconnect::Redirect => client.do_redirect_multiplexed(self),
+                Reconnect::RetryH2 => client.retry_from_h2(self),
+                Reconnect::RetryH3 { port, err } => {
+                    let ctx = self.h3_context.as_mut().expect("had a session");
+                    if let Err(client) = ctx.connect(client, port) {
+                        client.fail(self, err);
+                    }
+                }
             }
         }
-        false
+    }
+
+    fn abort_on_socket<const IS_SSL: bool>(
+        &mut self,
+        socket: HTTPSocket<IS_SSL>,
+        async_http_id: u32,
+        h2_stream_id: Option<NonZeroU32>,
+    ) {
+        // If we only call socket.close(), then it won't
+        // call `onClose` if this happens before `onOpen` is
+        // called.
+        let tagged = HTTPContext::enter_client(self, socket, |c, _| c.close_and_abort(socket));
+        let Some(tagged) = tagged else { return };
+        if let Some(session) = tagged.session() {
+            return h2::ClientSession::abort(self, session, async_http_id, h2_stream_id);
+        }
+        HTTPContext::terminate_tagged_socket(self, socket, tagged);
     }
 
     fn drain_queued_shutdowns(&mut self) {
@@ -484,33 +513,16 @@ impl HttpThread {
             let queued_shutdowns = core::mem::take(&mut *INBOX.shutdowns.lock());
 
             for http in &queued_shutdowns {
-                let tracker = abort_tracker();
+                let tracker = &mut self.abort_tracker;
                 let found_idx = tracker.keys().iter().position(|&k| k == http.async_http_id);
                 if let Some(idx) = found_idx {
-                    let (_k, socket_ptr) = tracker.swap_remove_at(idx);
-                    match socket_ptr {
+                    let (id, tracked) = tracker.swap_remove_at(idx);
+                    match tracked.socket {
                         uws::AnySocket::SocketTls(socket) => {
-                            // If we only call socket.close(), then it won't
-                            // call `onClose` if this happens before `onOpen` is
-                            // called.
-                            let tagged =
-                                HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
-                            let Some(tagged) = tagged else { continue };
-                            if let Some(session) = tagged.session() {
-                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
-                                continue;
-                            }
-                            socket.close(uws::CloseKind::Failure);
+                            self.abort_on_socket(socket, id, tracked.h2_stream_id);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
-                            let tagged =
-                                HTTPContext::enter_client(socket, |c| c.close_and_abort(socket));
-                            let Some(tagged) = tagged else { continue };
-                            if let Some(session) = tagged.session() {
-                                h2::ClientSession::abort_by_http_id(session, http.async_http_id);
-                                continue;
-                            }
-                            socket.close(uws::CloseKind::Failure);
+                            self.abort_on_socket(socket, id, tracked.h2_stream_id);
                         }
                     }
                 } else {
@@ -518,12 +530,13 @@ impl HttpThread {
                     // leader's in-flight h2 TLS connect (parked in `pc.waiters`
                     // with no abort-tracker entry); scan those first so the abort
                     // doesn't wait for the leader's connect to resolve.
-                    if self.abort_pending_h2_waiter(http.async_http_id) {
+                    if let Some(waiter) = self.take_pending_h2_waiter(http.async_http_id) {
+                        waiter.fail(self, crate::Error::Aborted);
                         continue;
                     }
                     // Or it's on an HTTP/3 session, which has no TCP socket to
                     // register in the tracker.
-                    if h3::ClientContext::abort_by_http_id(http.async_http_id) {
+                    if h3::ClientContext::abort_by_http_id(self, http.async_http_id) {
                         continue;
                     }
                     // Otherwise the request either hasn't started yet (still in
@@ -543,47 +556,42 @@ impl HttpThread {
         }
     }
 
+    fn stream_body_on_socket<const IS_SSL: bool>(
+        &mut self,
+        socket: HTTPSocket<IS_SSL>,
+        h2_stream_id: Option<NonZeroU32>,
+        message: WriteMessageType,
+    ) {
+        if socket.is_closed() || socket.is_shutdown() {
+            return;
+        }
+        let tagged = HTTPContext::enter_client(self, socket, |client, thread| {
+            client.on_request_stream_message(thread, message, socket)
+        });
+        if let Some(session) = tagged.and_then(ActiveSocket::session)
+            && let Some(stream_id) = h2_stream_id
+        {
+            h2::ClientSession::stream_body(self, session, stream_id.get(), message);
+        }
+    }
+
     fn drain_queued_writes(&mut self) {
         loop {
             let queued_writes = core::mem::take(&mut *INBOX.writes.lock());
             for write in &queued_writes {
                 let message = write.kind;
 
-                if let Some(socket_ptr) = abort_tracker().get(&write.async_http_id) {
-                    match *socket_ptr {
+                if let Some(&tracked) = self.abort_tracker.get(&write.async_http_id) {
+                    match tracked.socket {
                         uws::AnySocket::SocketTls(socket) => {
-                            if socket.is_closed() || socket.is_shutdown() {
-                                continue;
-                            }
-                            let tagged = HTTPContext::enter_client(socket, |client| {
-                                client.on_request_stream_message::<true>(message, socket)
-                            });
-                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    message,
-                                );
-                            }
+                            self.stream_body_on_socket(socket, tracked.h2_stream_id, message);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
-                            if socket.is_closed() || socket.is_shutdown() {
-                                continue;
-                            }
-                            let tagged = HTTPContext::enter_client(socket, |client| {
-                                client.on_request_stream_message::<false>(message, socket)
-                            });
-                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                h2::ClientSession::stream_body_by_http_id(
-                                    session,
-                                    write.async_http_id,
-                                    message,
-                                );
-                            }
+                            self.stream_body_on_socket(socket, tracked.h2_stream_id, message);
                         }
                     }
                 } else {
-                    h3::ClientContext::stream_body_by_http_id(write.async_http_id, message);
+                    h3::ClientContext::stream_body_by_http_id(self, write.async_http_id, message);
                 }
             }
             let len = queued_writes.len();
@@ -601,22 +609,22 @@ impl HttpThread {
             for resume in &queued_cert_check_resumes {
                 // Both arms are required: an HTTPS target behind a plaintext
                 // proxy parks behind a SocketTcp tracker entry.
-                if let Some(socket_ptr) = abort_tracker().get(&resume.async_http_id) {
-                    match *socket_ptr {
+                if let Some(&tracked) = self.abort_tracker.get(&resume.async_http_id) {
+                    match tracked.socket {
                         uws::AnySocket::SocketTls(socket) => {
                             if socket.is_closed() || socket.is_shutdown() {
                                 continue;
                             }
-                            HTTPContext::enter_client(socket, |client| {
-                                client.resume_after_cert_check::<true>(socket)
+                            HTTPContext::enter_client(self, socket, |client, thread| {
+                                client.resume_after_cert_check::<true>(thread, socket)
                             });
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             if socket.is_closed() || socket.is_shutdown() {
                                 continue;
                             }
-                            HTTPContext::enter_client(socket, |client| {
-                                client.resume_after_cert_check::<false>(socket)
+                            HTTPContext::enter_client(self, socket, |client, thread| {
+                                client.resume_after_cert_check::<false>(thread, socket)
                             });
                         }
                     }
@@ -642,11 +650,29 @@ impl HttpThread {
             for pool_id in queued {
                 self.http_context.close_idle_sockets(pool_id);
                 self.https_context.close_idle_sockets(pool_id);
-                for entry in custom_ssl_context_map().values_mut() {
-                    entry.ctx_mut().close_idle_sockets(pool_id);
+                for (_, ctx) in self.custom_ssl_contexts.iter_mut() {
+                    ctx.close_idle_sockets(pool_id);
                 }
-                h3::ClientContext::close_idle_sessions(pool_id);
+                if let Some(ctx) = &mut self.h3_context {
+                    ctx.close_idle_sessions(pool_id);
+                }
             }
+        }
+    }
+
+    fn resume_receive_on_socket<const IS_SSL: bool>(
+        &mut self,
+        socket: HTTPSocket<IS_SSL>,
+        h2_stream_id: Option<NonZeroU32>,
+    ) {
+        let tagged = HTTPContext::enter_client(self, socket, |client, thread| {
+            client.resume_receive(socket);
+            client.drain_response_body(thread, socket)
+        });
+        if let Some(session) = tagged.and_then(ActiveSocket::session)
+            && let Some(stream_id) = h2_stream_id
+        {
+            h2::ClientSession::resume_response(self, session, stream_id.get());
         }
     }
 
@@ -657,37 +683,17 @@ impl HttpThread {
                 return;
             }
             for id in queued {
-                if let Some(socket_ptr) = abort_tracker().get(&id) {
-                    match *socket_ptr {
+                if let Some(&tracked) = self.abort_tracker.get(&id) {
+                    match tracked.socket {
                         uws::AnySocket::SocketTls(socket) => {
-                            let tagged = HTTPContext::enter_client(socket, |client| {
-                                client.resume_receive::<true>(socket);
-                                client.drain_response_body::<true>(socket)
-                            });
-                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                // The resume may tear the session down and
-                                // release its last ref; hold one across
-                                // the second call.
-                                let _guard = RefPtr::from_this(session);
-                                h2::ClientSession::resume_receive_by_http_id(session, id);
-                                h2::ClientSession::drain_response_body_by_http_id(session, id);
-                            }
+                            self.resume_receive_on_socket(socket, tracked.h2_stream_id);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
-                            let tagged = HTTPContext::enter_client(socket, |client| {
-                                client.resume_receive::<false>(socket);
-                                client.drain_response_body::<false>(socket)
-                            });
-                            if let Some(session) = tagged.and_then(ActiveSocketExt::session) {
-                                // See the Tls arm.
-                                let _guard = RefPtr::from_this(session);
-                                h2::ClientSession::resume_receive_by_http_id(session, id);
-                                h2::ClientSession::drain_response_body_by_http_id(session, id);
-                            }
+                            self.resume_receive_on_socket(socket, tracked.h2_stream_id);
                         }
                     }
-                } else {
-                    h3::ClientContext::resume_receive_by_http_id(id);
+                } else if let Some(ctx) = &mut self.h3_context {
+                    ctx.resume_receive_by_http_id(id);
                 }
             }
         }
@@ -718,7 +724,7 @@ impl HttpThread {
         // no-op and the request is never transmitted after a same-tick abort.
         self.drain_queued_cert_check_resumes();
         self.drain_queued_pool_closes();
-        h3::PendingConnect::drain_resolved();
+        h3::PendingConnect::drain_resolved(self);
 
         let mut count: usize = 0;
         let mut active = ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
@@ -760,7 +766,7 @@ impl HttpThread {
             for http in pending {
                 let aborted = http.client.signals.get(crate::signals::Field::Aborted);
                 if aborted || active < max {
-                    InFlightRequest::start(http);
+                    InFlightRequest::start(self, http);
                     if cfg!(debug_assertions) {
                         count += 1;
                     }
@@ -780,7 +786,7 @@ impl HttpThread {
                 self.defer(http);
                 continue;
             }
-            InFlightRequest::start(http);
+            InFlightRequest::start(self, http);
             if cfg!(debug_assertions) {
                 count += 1;
             }
@@ -840,14 +846,17 @@ impl HttpThread {
         Self::wakeup();
     }
 
-    /// Everything this thread runs is inside `drain_events` or `tick`, and
-    /// this runs between the two, so no socket callback is on the stack.
-    fn free_dead_ssl_contexts(&mut self) {
-        // One at a time: a context's `Drop` closes its sockets, and a close
-        // handler is free to drop the last ref of another context.
-        while let Some(ctx) = self.dead_ssl_contexts.pop() {
-            drop(ctx);
-        }
+    /// Runs between `drain_events` and `tick`: uSockets reads `s->group` again when a socket callback returns.
+    fn free_unused_ssl_contexts(&mut self) {
+        let contexts = &mut self.custom_ssl_contexts;
+        self.evicted_ssl_contexts.retain(|&index| {
+            let ctx = contexts.get_mut(index).expect("freed only here");
+            let unused = RefPtr::has_one_ref(&ctx.shared);
+            if unused {
+                contexts.remove(index);
+            }
+            !unused
+        });
     }
 
     /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
@@ -897,44 +906,37 @@ impl HttpThread {
             Self::wakeup();
         }
     }
-}
 
-/// Evict the least-recently-used SSL context cache entry.
-fn evict_oldest_ssl_context() {
-    let map = custom_ssl_context_map();
-    if map.count() == 0 {
-        return;
-    }
-    let mut oldest_idx: usize = 0;
-    let mut oldest_time: u64 = u64::MAX;
-    for (i, entry) in map.values().iter().enumerate() {
-        if entry.last_used_ns < oldest_time {
-            oldest_time = entry.last_used_ns;
-            oldest_idx = i;
+    /// Evict the least-recently-used SSL context cache entry.
+    fn evict_oldest_ssl_context(&mut self) {
+        let map = &mut self.custom_ssl_context_map;
+        if map.count() == 0 {
+            return;
         }
+        let mut oldest_idx: usize = 0;
+        let mut oldest_time: u64 = u64::MAX;
+        for (i, entry) in map.values().iter().enumerate() {
+            if entry.last_used_ns < oldest_time {
+                oldest_time = entry.last_used_ns;
+                oldest_idx = i;
+            }
+        }
+        (self.evicted_ssl_contexts).push(map.swap_remove_at(oldest_idx).1.index);
     }
-    map.swap_remove_at(oldest_idx);
-}
 
-/// Borrow the HTTP-thread abort tracker. PORTING.md §Global mutable state:
-/// HTTP-thread-only, per-statement reborrow.
-#[inline]
-fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
-    crate::abort_tracker()
-}
-
-/// Debug+ASAN invariant check: every socket pointer in the abort tracker must
-/// point at live (unfreed) memory. A stale entry here means some socket-close
-/// path forgot `unregister_abort_tracker`, which later manifests as a
-/// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
-/// JS thread aborts that request id. Runs before and after each loop tick so
-/// the report fires at the tick that leaked, not at the eventual abort.
-#[inline]
-fn assert_abort_tracker_sockets_alive() {
-    if cfg!(debug_assertions) {
-        for socket in abort_tracker().values() {
-            if let Some(usocket) = socket.socket().get() {
-                bun_core::asan::assert_unpoisoned(usocket);
+    /// Debug+ASAN invariant check: every socket pointer in the abort tracker must
+    /// point at live (unfreed) memory. A stale entry here means some socket-close
+    /// path forgot `unregister_abort_tracker`, which later manifests as a
+    /// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
+    /// JS thread aborts that request id. Runs before and after each loop tick so
+    /// the report fires at the tick that leaked, not at the eventual abort.
+    #[inline]
+    fn assert_abort_tracker_sockets_alive(&self) {
+        if cfg!(debug_assertions) {
+            for tracked in self.abort_tracker.values() {
+                if let Some(usocket) = tracked.socket.socket().get() {
+                    bun_core::asan::assert_unpoisoned(usocket);
+                }
             }
         }
     }
@@ -951,11 +953,11 @@ mod _event_loop_draft {
     use super::*;
     use std::sync::Once;
 
-    static INIT_ONCE: Once = Once::new();
+    pub(super) static INIT_ONCE: Once = Once::new();
     // Note: `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned
-    // thread's TLS, which LSAN does not scan as a root — so when the main
+    // thread's TLS — so when the main
     // thread reaches `Global::exit` *before* the HTTP thread has installed
     // that TLS slot, LSAN reports the Arc as a direct leak and (with CI's
     // `abort_on_error=1`) the process SIGABRTs (exit 134). Park the handle in
@@ -969,15 +971,6 @@ mod _event_loop_draft {
     }
 
     fn init_once(opts: &InitOpts) {
-        // Initialize the global (with timer
-        // started on the calling thread) BEFORE spawning, so `on_start`'s
-        // `crate::http_thread()` finds it initialized and can fill in the contexts.
-        // SAFETY: `init_once` runs under `Once`; only the thread spawned below
-        // reads `HTTP_THREAD`.
-        unsafe {
-            (*crate::HTTP_THREAD.get()).write(HttpThread::new());
-        }
-        crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
         let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()
             .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
@@ -1045,8 +1038,7 @@ mod _event_loop_draft {
             }
         }
 
-        crate::HTTP_THREAD.claim();
-        let thread = crate::http_thread();
+        let thread = Box::leak(Box::new(HttpThread::new()));
         thread.http_context.init();
         // `https_context.init_with_thread_opts` eagerly builds the BoringSSL
         // `SSL_CTX` and the default root-CA store (`us_get_default_ca_store`),
@@ -1077,7 +1069,7 @@ mod _event_loop_draft {
     }
 
     impl HttpThread {
-        fn process_events(&mut self, loop_: &MiniEventLoop) -> ! {
+        fn process_events(mut self: &'static mut Self, loop_: &MiniEventLoop) -> ! {
             let uws_loop = loop_.loop_;
             #[cfg(unix)]
             {
@@ -1091,6 +1083,8 @@ mod _event_loop_draft {
             loop {
                 if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
                     self.dealloc_in_flight_for_exit();
+                    // LSAN scans thread-locals, and no frame needs `self` any more.
+                    HTTP_THREAD.set(Some(self));
                     {
                         let mut done = SHUTDOWN_DONE.0.lock();
                         *done = true;
@@ -1104,18 +1098,20 @@ mod _event_loop_draft {
                     }
                 }
                 self.drain_events();
-                self.free_dead_ssl_contexts();
-                assert_abort_tracker_sockets_alive();
+                self.free_unused_ssl_contexts();
+                self.assert_abort_tracker_sockets_alive();
                 Output::flush();
 
                 uws_loop.inc();
+                HTTP_THREAD.set(Some(self));
                 uws_loop.tick();
+                self = HTTP_THREAD.take().expect("given back by enter");
                 uws_loop.dec();
                 // Run the deferred-free thunk (`Store::process_deferred_frees`)
                 // like `MiniEventLoop::tick_once` does after its raw tick; the
                 // FilePoll hive slots freed during this tick are reclaimed here.
                 loop_.on_after_event_loop();
-                assert_abort_tracker_sockets_alive();
+                self.assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
                     Output::flush();
@@ -1131,9 +1127,9 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
     bun_threading::Condvar::new(),
 );
 
-/// Whether [`init`] has run; [`crate::http_thread`] panics before that.
+/// Whether [`init`] has run.
 pub fn is_initialized() -> bool {
-    crate::HTTP_THREAD_INIT.load(Ordering::Acquire)
+    _event_loop_draft::INIT_ONCE.is_completed()
 }
 
 /// Called from `bun_jsc::VirtualMachine::global_exit()` on the JS thread,

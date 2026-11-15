@@ -10,7 +10,7 @@
 //! Layout mirrors `h2_client/`:
 //!   - `Stream`         — one in-flight request
 //!   - `ClientSession`  — one QUIC connection (pooled per origin)
-//!   - `ClientContext`  — process-global lsquic engine + session registry
+//!   - `ClientContext`  — lsquic engine + session registry
 //!   - `encode`         — request header/body framing onto a quic.Stream
 //!   - `callbacks`      — lsquic → Rust glue (on_hsk_done / on_stream_* / …)
 //!   - `PendingConnect` — DNS-pending connect resolution

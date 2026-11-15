@@ -3347,11 +3347,6 @@ pub(crate) type DebugHTTPServer = NewServer<false, true>;
 pub(crate) type DebugHTTPSServer = NewServer<true, true>;
 
 // ─── AnyServer ───────────────────────────────────────────────────────────────
-// §Dispatch: the
-// `bun_ptr::impl_tagged_ptr_union!` macro would impl a foreign trait for a
-// foreign tuple type (orphan rule), so it can only be invoked from inside
-// `bun_ptr`. Per §Dispatch ("store `(tag: u8, ptr: *mut ())` as two fields"),
-// hand-roll the tag here. AnyServer is cold-path (per-request, not per-tick).
 // Two fields cost 16 bytes vs 8 for a packed tagged pointer; ~handful of instances.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

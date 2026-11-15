@@ -11,8 +11,8 @@
 //! The `ptr` module contains smart pointer types that are used throughout Bun.
 //!
 //! Per PORTING.md §Pointers, most consumers of `bun.ptr.*` map directly to std
-//! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`,
-//! `TaggedPtrUnion`). This crate hosts the intrusive/FFI-crossing variants.
+//! types (`Box`, `Rc`, `Arc`, `Cow`) and `bun_collections` (`TaggedPtr`).
+//! This crate hosts the intrusive/FFI-crossing variants.
 
 mod cell_ext;
 pub use cell_ext::{

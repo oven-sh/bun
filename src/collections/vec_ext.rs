@@ -264,7 +264,7 @@ pub trait ByteVecExt {
     fn write_latin1(&mut self, str: &[u8]) -> Result<u32, AllocError>;
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError>;
 
-    /// `suggested` bytes of spare capacity for libuv to read to.
+    /// `suggested` bytes of spare capacity for libuv to read into.
     fn uv_alloc_spare(&mut self, suggested: usize) -> *mut [u8];
     /// Commit `nread` bytes that the FFI/syscall just wrote into the slice
     /// returned by [`uv_alloc_spare`]: bumps `len` by `nread`. Debug-asserts `len + nread <= capacity`.

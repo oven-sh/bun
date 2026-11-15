@@ -1106,7 +1106,7 @@ impl LinkBatch {
                     wake_main_thread();
                 }
             },
-            &mut vec![(); threads],
+            &vec![(); threads],
             || {
                 // The threads spend much of their time waiting on the disk, so when there are only
                 // a few of them, this thread links packages too.

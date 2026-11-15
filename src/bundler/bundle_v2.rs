@@ -276,6 +276,7 @@ pub mod bv2_impl {
     use super::ResolveQueue;
     use crate::IndexInt;
     use crate::mal_prelude::*;
+    use bun_collections::string_hash_map::EntryRef;
     // This is Bun's JavaScript/TypeScript bundler
     //
     // A lot of the implementation is based on the Go implementation of esbuild. Thank you Evan Wallace.
@@ -6216,12 +6217,12 @@ pub mod bv2_impl {
                             continue;
                         }
 
-                        let enqueue = match resolve_queue.get_or_vacant(path_primary.text) {
-                            Ok(task) => {
+                        let entry = match resolve_queue.entry_ref(path_primary.text) {
+                            EntryRef::Occupied(task) => {
                                 import_record.path = task.path;
                                 continue;
                             }
-                            Err(enqueue) => enqueue,
+                            EntryRef::Vacant(entry) => entry,
                         };
 
                         // For virtual files, use the path text as-is (no relative path computation needed).
@@ -6248,7 +6249,7 @@ pub mod bv2_impl {
                         resolve_task.jsx = jsx;
                         resolve_task.loader = Some(import_record_loader);
                         resolve_task.side_effects = bun_ast::SideEffects::HasSideEffects;
-                        enqueue(resolve_task);
+                        entry.insert(resolve_task);
                         continue;
                     }
                 }
@@ -6602,12 +6603,12 @@ pub mod bv2_impl {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
 
-                let enqueue = match resolve_queue.get_or_vacant(path.text) {
-                    Ok(task) => {
+                let entry = match resolve_queue.entry_ref(path.text) {
+                    EntryRef::Occupied(task) => {
                         import_record.path = task.path;
                         continue;
                     }
-                    Err(enqueue) => enqueue,
+                    EntryRef::Vacant(entry) => entry,
                 };
 
                 let jsx_development = transpiler.options.forced_jsx_development();
@@ -6643,7 +6644,7 @@ pub mod bv2_impl {
                     }
                 }
 
-                enqueue(resolve_task);
+                entry.insert(resolve_task);
 
                 if is_html_entrypoint {
                     let path = import_record.path;

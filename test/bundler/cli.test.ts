@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, forEachLine, isLinux, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -537,13 +537,11 @@ describe.concurrent("--no-bundle with --outdir", () => {
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    let stdout = "";
-    for await (const chunk of proc.stdout) {
-      stdout += Buffer.from(chunk).toString();
-      if (stdout.includes("b.css")) break;
-    }
+    // A build that fails keeps watching, so wait for whichever stream prints first.
+    const first = await Promise.race([forEachLine(proc.stdout).next(), forEachLine(proc.stderr).next()]);
+    expect(first.value).toStartWith("Transpiled");
     const open = fs.readdirSync(`/proc/${proc.pid}/fd`).flatMap(fd => {
       try {
         return fs.readlinkSync(`/proc/${proc.pid}/fd/${fd}`);

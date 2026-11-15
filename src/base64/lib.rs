@@ -128,7 +128,9 @@ pub use bun_core::base64::encode;
 pub fn encode_append(out: &mut Vec<u8>, source: &[u8]) -> usize {
     let len = simdutf::base64::encode_len(source.len(), false);
     out.reserve(len);
-    bun_core::vec::append_with(out, |spare| simdutf::base64::encode(source, spare, false));
+    bun_core::vec::fill_spare_with_cursor(out, |spare| {
+        simdutf::base64::encode(source, spare, false)
+    });
     len
 }
 

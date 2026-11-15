@@ -2175,11 +2175,6 @@ JSC::EncodedJSValue jsBufferToString(JSC::JSGlobalObject* lexicalGlobalObject, T
     }
 
     auto bytes = castedThis->span().subspan(offset, length);
-    if (castedThis->isShared() && encoding == BufferEncodingType::utf8) [[unlikely]] {
-        auto copy = Bun::copySharedBytes(lexicalGlobalObject, scope, bytes);
-        RETURN_IF_EXCEPTION(scope, {});
-        return jsBufferToStringFromBytes(lexicalGlobalObject, scope, copy.span(), encoding);
-    }
     return jsBufferToStringFromBytes(lexicalGlobalObject, scope, bytes, encoding);
 }
 

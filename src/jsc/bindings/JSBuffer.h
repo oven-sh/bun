@@ -35,6 +35,8 @@ extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* l
 extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
 extern "C" JSC::EncodedJSValue Bun__encoding__toString(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
 extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+// No other thread or process may write to `input` during the call.
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringImmutableUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
 extern "C" bool Bun__Buffer_fill(EncodedSlice*, void*, size_t, WebCore::BufferEncodingType);
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
@@ -47,8 +49,7 @@ std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexica
 // RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
-// Copies bytes out of a SharedArrayBuffer. Another thread can write to it between the UTF-8 decoders'
-// two passes, so they decode the copy. Throws OutOfMemoryError if the copy fails.
+// Copies bytes out of a SharedArrayBuffer, which another thread can write to. Throws OutOfMemoryError if the copy fails.
 WTF::MallocSpan<uint8_t> copySharedBytes(JSC::JSGlobalObject*, JSC::ThrowScope&, std::span<const uint8_t> bytes);
 
 namespace Buffer {

@@ -1003,21 +1003,6 @@ unsafe extern "C" fn simdutf__validate_utf8(p: *const u8, len: usize) -> bool {
     core::str::from_utf8(unsafe { bytes(p, len) }).is_ok()
 }
 #[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__validate_utf8_with_errors(p: *const u8, len: usize) -> SimdutfResult {
-    // SAFETY: the caller passes a slice, as a pointer and a length.
-    match core::str::from_utf8(unsafe { bytes(p, len) }) {
-        Ok(_) => SimdutfResult {
-            status: 0,
-            count: len,
-        },
-        // simdutf's HEADER_BITS
-        Err(error) => SimdutfResult {
-            status: 1,
-            count: error.valid_up_to(),
-        },
-    }
-}
-#[unsafe(no_mangle)]
 unsafe extern "C" fn simdutf__convert_utf8_to_utf16le(
     p: *const u8,
     len: usize,

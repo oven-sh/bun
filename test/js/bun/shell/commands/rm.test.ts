@@ -145,12 +145,8 @@ foo/
     }
   });
 
-  // The DirTask parent/child hand-off had a lost-wakeup window between
-  // `subtask_count.load() > 1` and `need_to_wait.store(true)`: the last
-  // child could decrement and read `need_to_wait == false` in between,
-  // stranding the parent DirTask forever. A directory with exactly one
-  // subdirectory is the minimal trigger; the window is a few instructions
-  // so this is a stress probe rather than a deterministic repro.
+  // The last child may finish while its parent hands off. A directory with one subdirectory
+  // is the minimal trigger. The window is short, so this is a stress probe.
   test("recursive rm never hangs on the DirTask hand-off", async () => {
     using base = tempDir("rm-handoff", {});
     const fixture = /* ts */ `

@@ -147,6 +147,12 @@ const ROWS: Row[] = [
   },
   // ── thread pool: Bun.$ builtins (interpreter state a JS wrapper owns) ────
   {
+    name: "$ mkdir",
+    worker: `Bun.$\`mkdir \${workerData.dir}/new\`.quiet().catch(() => {});`,
+    ticket: "interpreter.rs",
+    files: {},
+  },
+  {
     // Subtasks created on the pool inherit the parent's ticket (new_child).
     name: "$ ls -R",
     worker: `Bun.$\`ls -R \${workerData.dir}\`.quiet().catch(() => {});`,
@@ -164,7 +170,14 @@ const ROWS: Row[] = [
     env: { BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" },
   },
   {
+    // Subtasks hold no ticket: the root's task comes back after them.
     name: "$ rm -rf",
+    worker: `Bun.$\`rm -rf \${workerData.dir}/gone\`.quiet().catch(() => {});`,
+    ticket: "rm.rs",
+    files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "gone/e/f/g.txt": "z" },
+  },
+  {
+    name: "$ rm -rfv",
     worker: `Bun.$\`rm -rfv \${workerData.dir}/gone\`.quiet().catch(() => {});`,
     ticket: "rm.rs",
     files: { "gone/a/b/c.txt": "x", "gone/d.txt": "y", "gone/e/f/g.txt": "z" },

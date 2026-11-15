@@ -1289,7 +1289,8 @@ impl Log {
 
     /// Moves the messages and the counts of `self` to the end of `other`.
     pub fn append_to(&self, other: &Log) {
-        self.with_msgs(|msgs| other.with_msgs(|other| other.append(msgs)));
+        let mut msgs = self.msgs.take();
+        other.msgs.with_taken(|other| other.append(&mut msgs));
         let (warnings, errors) = (self.warnings.take(), self.errors.take());
         other.warnings.update(|n| n + warnings);
         other.errors.update(|n| n + errors);

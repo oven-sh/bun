@@ -1089,7 +1089,7 @@ mod _event_loop_draft {
         // (`dns::getaddrinfo` → `(*loop).internal_loop_data.get_parent()`)
         // panics with `Parent loop not set - pointer is null`, which aborts
         // the process — `bun install` SIGABRT on the first uncached lookup.
-        let loop_ = mini_event_loop::init_global(None);
+        let loop_ = mini_event_loop::init_global();
 
         #[cfg(windows)]
         {

@@ -2289,7 +2289,7 @@ describe.concurrent("NO_PROXY with explicit proxy option", () => {
             endpoint: endpoint.url.href,
           });
 
-          // Thrash HTTP_PROXY so the original RefCountedEnvValue is freed
+          // Thrash HTTP_PROXY so the original value is freed
           // and its bytes reallocated before the HTTP thread reads them.
           for (let i = 0; i < 64; i++) {
             process.env.HTTP_PROXY = "http://" + Buffer.alloc(32 + i, "z").toString() + ".invalid:1/";
@@ -2739,7 +2739,7 @@ describe.concurrent("proxy environment", () => {
   // answers every request itself with "proxy", whatever the host, so only a
   // host that is expected to be reached directly has to resolve: `localhost`,
   // 127.0.0.1 and [::1], where an origin answers "origin".
-  async function run(env: (deadProxy: string) => Record<string, string | undefined>, body: string) {
+  async function run(env: (deadProxy: string) => Record<string, string | undefined>, body: string, cwd?: string) {
     using origin = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("origin") });
     using origin6 = isIPv6() ? Bun.serve({ port: 0, hostname: "::1", fetch: () => new Response("origin") }) : undefined;
     using proxy = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("proxy") });
@@ -2765,6 +2765,7 @@ describe.concurrent("proxy environment", () => {
         `,
       ],
       env: { ...bunEnv, ...proxyFreeEnv, ...env(deadProxy) },
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -3005,10 +3006,19 @@ describe.concurrent("proxy environment", () => {
     expect(results).toEqual(["proxy"]);
   });
 
-  test("a worker starts from the proxy environment its parent has at that moment", async () => {
-    const results = await run(
-      () => ({}),
-      `
+  test.each([
+    { inProcess: false, inEnvFile: false },
+    { inProcess: true, inEnvFile: false },
+    { inProcess: false, inEnvFile: true },
+    { inProcess: true, inEnvFile: true },
+  ])(
+    "a worker starts from the proxy environment its parent has at that moment (set at startup: %j)",
+    async ({ inProcess, inEnvFile }) => {
+      using dead = await deadPort();
+      using dir = tempDir("worker-proxy-env", inEnvFile ? { ".env": `ALL_PROXY=http://127.0.0.1:${dead.port}` } : {});
+      const results = await run(
+        deadProxy => ({ ALL_PROXY: inProcess ? deadProxy : undefined }),
+        `
       const { Worker } = require("node:worker_threads");
       const inWorker = () =>
         new Promise((resolve, reject) => {
@@ -3026,10 +3036,13 @@ describe.concurrent("proxy environment", () => {
       out.push(await inWorker(), await via("localhost"));
       console.log(JSON.stringify(out));
       `,
-    );
-    expect(results).toEqual(["proxy", "origin", "origin"]);
-    // Two worker boots in a subprocess: seconds on a debug or ASAN build.
-  }, 30_000);
+        String(dir),
+      );
+      expect(results).toEqual(["proxy", "origin", "origin"]);
+      // Two worker boots in a subprocess: seconds on a debug or ASAN build.
+    },
+    30_000,
+  );
 
   test("assigning and deleting process.env proxy variables takes effect on the next fetch", async () => {
     const script = `

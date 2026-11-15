@@ -912,7 +912,7 @@ pub(crate) fn defines_from_transform_options(
     // drops the redundant outer `keys.clone() + values.clone()`.
     maybe_input_define: Option<&api::StringMap>,
     target: Target,
-    env_loader: Option<&mut DotEnv::Loader>,
+    env_loader: Option<&DotEnv::Loader>,
     framework_env: Option<&Env>,
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
@@ -1705,7 +1705,7 @@ impl<'a> BundleOptions<'a> {
         &mut self,
         log: &bun_ast::Log,
         arena: &bun_ast::AstArena,
-        loader_: Option<&mut DotEnv::Loader>,
+        loader_: Option<&DotEnv::Loader>,
     ) -> Result<(), crate::Error> {
         // Forwarding the env as an `Option<&Env>` parameter forced the
         // caller into an aliased-`&mut` UB
@@ -1720,27 +1720,11 @@ impl<'a> BundleOptions<'a> {
         if self.defines_loaded {
             return Ok(());
         }
-        // PERF: borrowed static literals for the three
-        // constant cases; only the env-loader case needs an owned copy (it has
-        // to outlive the `&mut loader_` we pass below, so it can't stay a borrow
-        // into the loader). `Cow` keeps the literals zero-alloc — matters because
-        // every VM with no `NODE_ENV` in its env hits the `"development"` arm.
-        let node_env: Option<Cow<[u8]>> = 'node_env: {
-            if let Some(e) = loader_.as_deref() {
-                if let Some(env_) = e.get_node_env() {
-                    break 'node_env Some(Cow::Owned(env_.to_vec()));
-                }
-            }
-
-            if self.is_test() {
-                break 'node_env Some(Cow::Borrowed(b"\"test\"".as_slice()));
-            }
-
-            if self.production {
-                break 'node_env Some(Cow::Borrowed(b"\"production\"".as_slice()));
-            }
-
-            Some(Cow::Borrowed(b"\"development\"".as_slice()))
+        let node_env: &[u8] = match loader_.and_then(DotEnv::Loader::get_node_env) {
+            Some(node_env) => node_env,
+            None if self.is_test() => b"\"test\"",
+            None if self.production => b"\"production\"",
+            None => b"\"development\"",
         };
         self.define = defines_from_transform_options(
             log,
@@ -1748,7 +1732,7 @@ impl<'a> BundleOptions<'a> {
             self.target,
             loader_,
             Some(&self.env),
-            node_env.as_deref(),
+            Some(node_env),
             // `&self.drop` is `Box<[Box<[u8]>]>`; the callee wants `&[&[u8]]`,
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),

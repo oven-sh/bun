@@ -1129,6 +1129,29 @@ console.log(dynamic().NODE_ENV);
   expect((await bunRun(path.join(tmp, "index.ts"), {})).stdout).toBe("undefined\nundefined\nproduction");
 });
 
+test.concurrent("a worker has the PATH that bun run gave its parent", async () => {
+  using dir = tempDir("worker-path", {
+    "index.ts": `
+      const worker = new Worker(new URL("./worker.ts", import.meta.url));
+      worker.onmessage = ({ data }) => {
+        console.log(data === process.env.PATH);
+        worker.terminate();
+      };
+    `,
+    "worker.ts": `postMessage(process.env.PATH);`,
+  });
+  // Without the extension, `bun run` looks for a script first, and adds node_modules/.bin to PATH for it.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "index"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});
+
 test("NODE_ENV default is not propogated in bun run", () => {
   const getenv =
     process.platform !== "win32"

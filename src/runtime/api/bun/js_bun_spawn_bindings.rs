@@ -370,8 +370,6 @@ fn spawn_maybe_sync(
     let mut lazy = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
-    // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
-    // (process-lifetime; centralised non-null deref in `VirtualMachine`).
     let mut path: &[u8] = jsc_vm.env_loader().get(b"PATH").unwrap_or(b"");
     let argv: Argv;
     let cmd_value: JSValue;
@@ -875,7 +873,7 @@ fn spawn_maybe_sync(
     let mut env_array = match &env_override {
         Some(lines) => borrow_c_strings(lines),
         None => {
-            inherited_env = jsc_vm.env_loader().map.to_envp();
+            inherited_env = jsc_vm.env_loader().snapshot().map.to_envp();
             let entries = inherited_env.unterminated();
             let mut env_array = Vec::with_capacity(entries.len() + SPARE_SLOTS);
             env_array.extend_from_slice(entries);

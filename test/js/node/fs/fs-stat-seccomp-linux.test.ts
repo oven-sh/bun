@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isLinux, tempDir, tempDirWithFiles } from "harness";
 import { spawnSync } from "node:child_process";
 import { existsSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -602,4 +602,42 @@ describe.skipIf(!isLinux)("node:fs errno outside the SystemErrno table", () => {
       message: "EACCES: permission denied, fsync",
     });
   });
+
+  for (const [syscall, blocked, name] of [
+    ["rmdir", "__NR_unlinkat", "dir"],
+    ["truncate", "__NR_truncate", "file.txt"],
+    ["unlink", isArm64 ? "__NR_unlinkat" : "__NR_unlink", "file.txt"],
+  ]) {
+    const helperBin = tryBuildHelper(blocked);
+
+    test.concurrent(`fs.${syscall}Sync reports EUNKNOWN for a code above the table`, async () => {
+      if (helperBin == null) {
+        console.warn(`SKIP ${syscall} seccomp: cc or seccomp headers not available`);
+        return;
+      }
+      using dir = tempDir(`${syscall}-seccomp-target`, { "file.txt": "hello", dir: {} });
+      const path = join(String(dir), name);
+      const snippet = `
+        try {
+          require("node:fs").${syscall}Sync(process.argv[1]);
+        } catch (e) {
+          console.log(JSON.stringify({ code: e.code, syscall: e.syscall, path: e.path, message: e.message }));
+        }
+      `;
+      const out = await runUnderSeccomp(helperBin, ENOTSUPP, snippet, [path]);
+      if (out == null) {
+        console.warn(`SKIP ${syscall} seccomp: seccomp not permitted in this environment`);
+        return;
+      }
+      expect({ stdout: out.stdout.trim(), exitCode: out.exitCode }).toEqual({
+        stdout: JSON.stringify({
+          code: "EUNKNOWN",
+          syscall,
+          path,
+          message: `EUNKNOWN: unknown error, ${syscall} '${path}'`,
+        }),
+        exitCode: 0,
+      });
+    });
+  }
 });

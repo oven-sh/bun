@@ -91,27 +91,17 @@ pub(crate) fn hostent_with_ttls_to_js_response(
             if addr.is_null() {
                 break;
             }
-            // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
-            // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
                 #[allow(clippy::useless_conversion)]
                 let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
                     let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
-                    let mut sa6: super::netc::sockaddr_in6 = bun_core::ffi::zeroed();
-                    sa6.sin6_family = super::netc::AF_INET6 as _;
-                    sa6.sin6_addr.s6_addr = bytes;
-                    // SAFETY: &sa6 is a valid sockaddr_in6.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa6).cast()) }
+                    bun_dns::Address::from_ip(bytes.into(), 0)
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
                     let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
-                    let mut sa4: super::netc::sockaddr_in = bun_core::ffi::zeroed();
-                    sa4.sin_family = super::netc::AF_INET as _;
-                    sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
-                    // SAFETY: &sa4 is a valid sockaddr_in.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa4).cast()) }
+                    bun_dns::Address::from_ip(bytes.into(), 0)
                 };
                 match address_to_js(&address, global_this) {
                     Ok(v) => v,
@@ -174,44 +164,16 @@ pub(crate) fn nameinfo_to_js_response(
 
 // ── AddrInfo ───────────────────────────────────────────────────────────────
 pub(crate) fn addr_info_to_js_array(
-    addr_info: &mut c_ares::AddrInfo,
+    addr_info: &c_ares::AddrInfo,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // LIFETIMES.tsv rows 254/256: AddrInfo.node / AddrInfo_node.next are FFI → *mut AddrInfo_node.
-    if addr_info.node.is_null() {
-        return JSValue::create_empty_array(global_this, 0);
-    }
-    // SAFETY: node is non-null (checked above); c-ares owns the linked list.
-    let array =
-        JSValue::create_empty_array(global_this, unsafe { (*addr_info.node).count() } as usize)?;
-
-    {
-        let mut j: u32 = 0;
-        let mut current: *mut c_ares::AddrInfo_node = addr_info.node;
-        while !current.is_null() {
-            // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
-            let this_node = unsafe { &*current };
-            // bun_dns::Address::init_posix copies from the raw sockaddr by family,
-            // so we hand it `this_node.addr` directly after asserting a known family.
-            debug_assert!(
-                this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
-            );
-            // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
-            let address = unsafe { bun_dns::Address::init_posix(this_node.addr.cast()) };
-            array.put_index(
-                global_this,
-                j,
-                result_to_js(
-                    &bun_dns::GetAddrInfoResult {
-                        address,
-                        ttl: this_node.ttl,
-                    },
-                    global_this,
-                )?,
-            )?;
-            j += 1;
-            current = this_node.next;
-        }
+    let array = JSValue::create_empty_array(global_this, addr_info.nodes().count())?;
+    for (index, node) in (0..).zip(addr_info.nodes()) {
+        let result = bun_dns::GetAddrInfoResult {
+            address: bun_dns::Address::from_bytes(node.address_bytes()),
+            ttl: node.ttl,
+        };
+        array.put_index(global_this, index, result_to_js(&result, global_this)?)?;
     }
 
     Ok(array)

@@ -1,20 +1,19 @@
-use bun_ptr::AliasableBox;
-
 use crate::shell::ExitCode;
 use crate::shell::ast;
-use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnvId, ShellExecEnvKind, log};
 use crate::shell::io::IO;
 use crate::shell::states::base::{Base, Env};
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct Subshell {
+pub(crate) struct Subshell<'a> {
     pub(crate) base: Base,
-    pub node: bun_ptr::BackRef<ast::Subshell>,
+    pub node: &'a ast::Subshell<'a>,
     pub(crate) io: IO,
     pub(crate) state: SubshellState,
     pub(crate) exit_code: ExitCode,
-    shell: AliasableBox<ShellExecEnv>,
+    /// `Interpreter::free_node` removes it.
+    pub(crate) shell: ShellExecEnvId,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -25,18 +24,18 @@ pub enum SubshellState {
     Done,
 }
 
-impl Subshell {
+impl<'a> Subshell<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
-        shell: AliasableBox<ShellExecEnv>,
-        node: &ast::Subshell,
+        interp: &mut Interpreter<'a>,
+        shell: ShellExecEnvId,
+        node: &'a ast::Subshell<'a>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
             base: Base::new(parent),
             shell,
-            node: bun_ptr::BackRef::new(node),
+            node,
             io,
             state: SubshellState::Idle,
             exit_code: 0,
@@ -46,31 +45,24 @@ impl Subshell {
     /// Runs in a dupe of the parent env.
     /// Called by Stmt/Binary via `Interpreter::spawn_expr`. Pipeline does
     /// NOT use this (it dupes per-child itself and calls `init` directly).
-    ///
-    /// # Safety
-    /// `parent_shell` must point to a live `ShellExecEnv` owned by the parent
-    /// state for the duration of this call.
-    // Caller (Interpreter::spawn_expr) holds the parent env as a raw pointer;
-    // the safety contract is documented above and at the call site.
     pub(crate) fn init_dupe_shell_state(
-        interp: &Interpreter,
-        parent_shell: *mut ShellExecEnv,
-        node: &ast::Subshell,
+        interp: &mut Interpreter<'a>,
+        parent_shell: ShellExecEnvId,
+        node: &'a ast::Subshell<'a>,
         parent: NodeId,
         io: IO,
     ) -> bun_sys::Result<NodeId> {
-        // SAFETY: caller guarantees `parent_shell` points to a live
-        // `ShellExecEnv` owned by the parent state for the duration of this
-        // call (see `# Safety` above).
-        let env = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
+        let env = interp
+            .shells
+            .dupe_for_subshell(parent_shell, io, ShellExecEnvKind::Subshell)?;
         Ok(Self::init(interp, env, node, parent, io))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         let (state_tag, parent) = {
             let me = interp.as_subshell(this);
             (<&'static str>::from(&me.state), me.base.parent)
@@ -84,13 +76,13 @@ impl Subshell {
                 // again here.
                 let (shell, io, node) = {
                     let me = interp.as_subshell(this);
-                    (me.shell.as_ptr(), me.io.clone(), me.node)
+                    (me.shell, me.io, me.node)
                 };
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // `node.redirect` is always `None` here: the parser rejects
                 // subshells with redirections ("Subshells with redirections
                 // are currently not supported", shell_parser/parse.rs).
-                let script = Script::init(interp, Env::inherited(shell), &node.script, this, io);
+                let script = Script::init(interp, Env::Inherited(shell), node.script, this, io);
                 Script::start(interp, script)
             }
             SubshellState::Exec => Yield::suspended(),
@@ -102,7 +94,7 @@ impl Subshell {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,

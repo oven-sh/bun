@@ -11,12 +11,10 @@ use bun_paths::SEP;
 use bun_paths::resolve_path::fmt_relative;
 #[cfg(not(windows))]
 use bun_paths::strings;
-#[cfg(not(windows))]
-use bun_ptr::BackRef;
 use bun_resolver::Resolver;
+use bun_resolver::fs::FileSystem;
 #[cfg(not(windows))]
-use bun_resolver::fs::PathName;
-use bun_resolver::fs::{self as Fs, FileSystem};
+use bun_resolver::fs::{self as Fs, PathName};
 use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{Op as WatchOp, Watcher};
@@ -116,7 +114,7 @@ struct HotReloader {
     main: MainFile,
 
     #[cfg(not(windows))]
-    tombstones: StringHashMap<BackRef<Fs::DirEntry>>,
+    tombstones: StringHashMap<Fs::DirEntryIndex>,
 
     /// `None` for `bun build --watch`, which replaces the process before it would post a task.
     reload_handle: Option<crate::VmHandle>,
@@ -345,27 +343,23 @@ impl HotReloader {
     }
 
     #[cfg(not(windows))]
-    fn put_tombstone(&mut self, key: &[u8], value: BackRef<Fs::DirEntry>) {
+    fn put_tombstone(&mut self, key: &[u8], value: Fs::DirEntryIndex) {
         self.tombstones.put(key, value).expect("unreachable");
     }
 
     #[cfg(not(windows))]
-    fn get_tombstone(&mut self, key: &[u8]) -> Option<BackRef<Fs::DirEntry>> {
+    fn get_tombstone(&mut self, key: &[u8]) -> Option<Fs::DirEntryIndex> {
         self.tombstones.get(key).copied()
     }
 
-    /// Returns `key`'s cached listing, or `None` if it isn't cached or the cached result is a read error.
-    /// Resolver threads rewrite the cache under `entries_mutex`. The `DirEntry` is never freed.
+    /// The index of `key`'s cached listing, or `None` if it isn't cached or the cached result is a read error.
     #[cfg(not(windows))]
-    fn cached_dir_entry(
-        rfs: &mut Fs::file_system::RealFS,
+    fn cached_dir_entry_index(
+        rfs: &Fs::file_system::RealFS,
         key: &[u8],
-    ) -> Option<BackRef<Fs::DirEntry>> {
-        let _entries_lock = rfs.entries_mutex.lock_guard();
-        match rfs.entries.get(key) {
-            Some(Fs::EntriesOption::Entries(existing)) => Some(BackRef::new(*existing)),
-            _ => None,
-        }
+    ) -> Option<Fs::DirEntryIndex> {
+        let entries_map = rfs.entries.lock();
+        (entries_map.index_of(key)).filter(|&index| entries_map.at_index(index).is_some())
     }
 }
 
@@ -391,9 +385,9 @@ impl bun_watcher::WatcherContext for HotReloader {
         let parents = watchlist.items_parent_hash();
         let file_descriptors = watchlist.items_fd();
         let mut changed = false;
-        let fs: &mut FileSystem = FileSystem::instance();
+        let fs = FileSystem::get();
         let top_level_dir = fs.top_level_dir();
-        let rfs: &mut Fs::file_system::RealFS = &mut fs.fs;
+        let rfs = &fs.fs;
         #[cfg(windows)]
         let _ = (changed_files, parents, file_descriptors);
         let mut _on_file_update_path_buf = bun_paths::path_buffer_pool::get();
@@ -466,15 +460,16 @@ impl bun_watcher::WatcherContext for HotReloader {
                     #[cfg(not(windows))]
                     {
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
-                        let mut entries_option: Option<BackRef<Fs::DirEntry>> = None;
+                        let mut dir_entry_index: Option<Fs::DirEntryIndex> = None;
 
                         let affected: &[&[u8]] = 'brk: {
                             if IS_KQUEUE {
-                                if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
+                                if let Some(existing) = Self::cached_dir_entry_index(rfs, file_path)
+                                {
                                     self.put_tombstone(file_path, existing);
-                                    entries_option = Some(existing);
+                                    dir_entry_index = Some(existing);
                                 } else if let Some(existing) = self.get_tombstone(file_path) {
-                                    entries_option = Some(existing);
+                                    dir_entry_index = Some(existing);
                                 }
 
                                 if event.op.contains(WatchOp::WRITE) {
@@ -511,7 +506,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                                 let mut affected_i: usize = 0;
 
                                 // if a file descriptor is stale, we need to close it
-                                if event.op.contains(WatchOp::DELETE) && entries_option.is_some() {
+                                if event.op.contains(WatchOp::DELETE) && dir_entry_index.is_some() {
                                     for (entry_id, parent_hash) in parents.iter().enumerate() {
                                         if *parent_hash == current_hash {
                                             let affected_path: &[u8] = &file_paths[entry_id];
@@ -545,11 +540,11 @@ impl bun_watcher::WatcherContext for HotReloader {
                         };
 
                         if !affected.is_empty() && !IS_KQUEUE {
-                            if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
+                            if let Some(existing) = Self::cached_dir_entry_index(rfs, file_path) {
                                 self.put_tombstone(file_path, existing);
-                                entries_option = Some(existing);
+                                dir_entry_index = Some(existing);
                             } else if let Some(existing) = self.get_tombstone(file_path) {
-                                entries_option = Some(existing);
+                                dir_entry_index = Some(existing);
                             }
                         }
 
@@ -591,7 +586,7 @@ impl bun_watcher::WatcherContext for HotReloader {
                             }
                         }
 
-                        if let Some(dir_ent) = entries_option {
+                        if let Some(index) = dir_entry_index {
                             let mut last_file_hash: bun_watcher::HashType =
                                 bun_watcher::HashType::MAX;
 
@@ -617,25 +612,8 @@ impl bun_watcher::WatcherContext for HotReloader {
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
-                                        // Probe `.data` under `entries_mutex`; a
-                                        // resolver at a newer generation rewrites
-                                        // the map in place under that lock.
-                                        let looked_up = {
-                                            let _entries_lock = rfs.entries_mutex.lock_guard();
-                                            Fs::DirEntry::get(&dir_ent, changed_name)
-                                        };
-                                        if let Some(ent) = looked_up {
-                                            // reset the file descriptor
-                                            {
-                                                // Every cached-`Entry` rewrite takes
-                                                // the per-entry mutex.
-                                                let _entry_guard = ent.mutex.lock_guard();
-                                                ent.set_cache_fd(Fd::INVALID);
-                                                ent.need_stat.store(
-                                                    true,
-                                                    core::sync::atomic::Ordering::Release,
-                                                );
-                                            }
+                                        if let Some(ent) = rfs.lookup(index, changed_name).0 {
+                                            ent.bust_cache();
                                             path_string = ent.abs_path();
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {

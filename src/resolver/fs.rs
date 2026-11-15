@@ -1,10 +1,11 @@
 use core::mem::MaybeUninit;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering};
 use std::borrow::Cow;
 use std::io::Write as _;
 use std::sync::OnceLock;
 
 use bun_alloc::{AllocError, BSSList, BSSStringList};
+use bun_core::AtomicFd;
 use bun_core::Generation;
 use bun_core::MutableString;
 use bun_core::Once;
@@ -14,6 +15,8 @@ use bun_paths::strings;
 use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::{Guarded, Mutex};
+
+use crate::fs::RealFS;
 
 // scope tag renamed `fs` → `Fs` so it doesn't collide with `fs:` fn
 // params (the `declare_scope!` macro emits a `static` with the tag name, and
@@ -73,27 +76,10 @@ impl strings::Appender for FilenameStoreAppender {
 // This is the SINGLE definition. The inline `pub mod fs { … }` block in
 // `lib.rs` re-exports these via `pub use crate::fs_full::{…}` and deletes its
 // own copies.
-//
-// `Entry::kind`/`symlink` are decoupled from the concrete `RealFS` type via the
-// `EntryKindResolver` trait so this block does not depend on `crate::fs::RealFS`.
 // ══════════════════════════════════════════════════════════════════════════
 
-/// Decouples `Entry::kind`/`symlink` (the lazy-stat path) from the concrete
-/// `RealFS` type; the inline-`fs::RealFS` in `lib.rs` impls this by forwarding
-/// to `RealFS::kind`.
-pub trait EntryKindResolver {
-    /// Runs with the entry's `mutex` held, so it must not ask for that entry's kind or symlink.
-    fn resolve_kind(
-        &self,
-        dir: &[u8],
-        base: &[u8],
-        existing_fd: Fd,
-        store_fd: bool,
-    ) -> crate::CrateResult<EntryCache>;
-}
-
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, strum::FromRepr)]
 pub enum EntryKind {
     Dir,
     File,
@@ -102,26 +88,50 @@ pub enum EntryKind {
     Dangling,
 }
 
-#[derive(Clone, Copy)]
-pub struct EntryCache {
-    pub(crate) symlink: Interned,
-    /// Too much code expects this to be 0
-    /// don't make it bun.invalid_fd
-    pub fd: Fd,
+/// What a stat found out about an [`Entry`].
+pub(crate) struct EntryStat<'a> {
+    pub(crate) symlink: &'a [u8],
+    pub(crate) fd: Fd,
     pub(crate) kind: EntryKind,
 }
 
-// `cache` / `need_stat` are lazily populated by `Entry::kind` /
-// `Entry::symlink` while callers hold a shared
-// `&Entry`. `EntryCache` is `Copy`, so `Cell` gives us safe
-// `.get()/.set()` through `&self` — the per-entry `mutex` serializes every
-// rewrite of these fields across threads (the `unsafe impl Sync for Entry`
-// below opts back in under that external-locking discipline). `need_stat`
-// is atomic because the `kind()`/`symlink()` fast path reads it without the
-// mutex: the Release store after the `cache` write paired with the Acquire
-// load is what publishes `cache` to those lock-free readers.
+/// Null, or the address in a string store of a `u32` length and then the bytes of a path.
+#[derive(Default)]
+struct AtomicPath(AtomicPtr<u8>);
+
+impl AtomicPath {
+    #[inline]
+    fn load(&self) -> &'static [u8] {
+        let ptr = self.0.load(Ordering::Acquire);
+        if ptr.is_null() {
+            return b"";
+        }
+        // SAFETY: `intern` is the only writer. It publishes, with Release, the start of a slice that
+        // holds `len` and then `len` bytes, and that is never freed or written again.
+        unsafe {
+            let len = ptr.cast::<u32>().read_unaligned();
+            core::slice::from_raw_parts(ptr.add(size_of::<u32>()), len as usize)
+        }
+    }
+
+    /// Returns the stored copy of `path`.
+    fn intern(&self, store: &BSSStringList, path: &[u8]) -> Result<&'static [u8], AllocError> {
+        if path.is_empty() {
+            self.0.store(core::ptr::null_mut(), Ordering::Release);
+            return Ok(b"");
+        }
+        let len = u32::try_from(path.len()).map_err(|_| AllocError)?;
+        let stored = store.append_parts(&[&len.to_ne_bytes(), path])?;
+        self.0.store(stored.as_ptr().cast_mut(), Ordering::Release);
+        Ok(&stored[size_of::<u32>()..])
+    }
+}
+
 pub struct Entry {
-    pub(crate) cache: core::cell::Cell<EntryCache>,
+    symlink: AtomicPath,
+    // Relaxed: `fd` and `kind` publish no other memory, and `need_stat` orders them after a stat.
+    fd: AtomicFd,
+    kind: AtomicU8,
     pub dir: &'static [u8],
 
     pub base_: strings::StringOrTinyString,
@@ -129,35 +139,54 @@ pub struct Entry {
     // Necessary because the hash table uses it as a key
     pub(crate) base_lowercase_: strings::StringOrTinyString,
 
-    pub mutex: Mutex,
-    pub need_stat: AtomicBool,
+    /// Held by writers, so that a stat in progress cannot overwrite a newer value.
+    mutex: Mutex,
+    need_stat: AtomicBool,
 
     abs_path: OnceLock<Interned>,
 }
 
 impl Entry {
-    /// Snapshot of the lazily-populated stat cache. `EntryCache` is `Copy`
-    /// (3 word-sized fields), so by-value return is free and avoids the
-    /// `&self → &interior` aliasing hazard the old `UnsafeCell` accessor had.
-    #[inline(always)]
-    pub fn cache(&self) -> EntryCache {
-        self.cache.get()
+    #[inline]
+    pub fn cached_fd(&self) -> Fd {
+        Fd(self.fd.load(Ordering::Relaxed))
     }
 
-    /// Update a single cache field. Read-modify-write is fine: callers hold
-    /// the per-entry `mutex` so no torn writes; `EntryCache` is `Copy`.
-    #[inline(always)]
-    pub fn set_cache_fd(&self, fd: Fd) {
-        let mut c = self.cache.get();
-        c.fd = fd;
-        self.cache.set(c);
+    pub(crate) fn set_cached_fd(&self, fd: Fd) {
+        let _guard = self.mutex.lock_guard();
+        self.fd.store(fd.0, Ordering::Relaxed);
     }
 
-    #[inline(always)]
-    pub(crate) fn set_cache_symlink(&self, symlink: Interned) {
-        let mut c = self.cache.get();
-        c.symlink = symlink;
-        self.cache.set(c);
+    pub(crate) fn take_cached_fd(&self) -> Fd {
+        let _guard = self.mutex.lock_guard();
+        Fd(self.fd.swap(Fd::INVALID.0, Ordering::Relaxed))
+    }
+
+    #[inline]
+    pub(crate) fn cached_symlink(&self) -> &'static [u8] {
+        self.symlink.load()
+    }
+
+    /// Returns the stored copy of `symlink`.
+    pub(crate) fn intern_symlink(
+        &self,
+        store: &BSSStringList,
+        symlink: &[u8],
+    ) -> Result<&'static [u8], AllocError> {
+        let _guard = self.mutex.lock_guard();
+        self.symlink.intern(store, symlink)
+    }
+
+    #[inline]
+    fn cached_kind(&self) -> EntryKind {
+        EntryKind::from_repr(self.kind.load(Ordering::Relaxed)).unwrap_or(EntryKind::Dangling)
+    }
+
+    /// Forgets the fd without closing it, and makes the next `kind` or `symlink` stat again.
+    pub fn bust_cache(&self) {
+        let _guard = self.mutex.lock_guard();
+        self.fd.store(Fd::INVALID.0, Ordering::Relaxed);
+        self.need_stat.store(true, Ordering::Release);
     }
 
     #[inline]
@@ -205,82 +234,61 @@ impl Entry {
     }
 
     /// Stat-on-first-use.
-    // The lazy-stat rewrite of `need_stat` / `cache` is serialized on the per-entry `mutex` here
-    // (double-checked: the cached fast path stays lock-free).
-    // Generic over `R: EntryKindResolver` so this block is independent of
-    // which `RealFS` copy `fs` points at (see file-top comment).
-    pub fn kind<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> EntryKind {
+    pub fn kind(&self, fs: &RealFS, store_fd: bool) -> EntryKind {
         if self.need_stat.load(Ordering::Acquire) {
-            let _guard = self.mutex.lock_guard();
-            // Relaxed: every write happens under `mutex`, which we hold.
-            if self.need_stat.load(Ordering::Relaxed) {
-                // This is technically incorrect, but we are choosing not to handle errors here
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
-                    Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
-                        return self.cache().kind;
-                    }
-                }
-                // Clear the flag only after the `cache` write: lock-free readers
-                // that observe `false` skip the mutex, so this Release store is
-                // what publishes `cache` to them.
-                self.need_stat.store(false, Ordering::Release);
-            }
+            // This is technically incorrect, but we are choosing not to handle errors here
+            let _ = self.stat(fs, store_fd);
         }
-        self.cache().kind
+        self.cached_kind()
     }
 
     /// See [`Entry::kind`].
-    pub(crate) fn symlink<R: EntryKindResolver>(&self, fs: &R, store_fd: bool) -> &'static [u8] {
-        if self.need_stat.load(Ordering::Acquire) {
-            let _guard = self.mutex.lock_guard();
-            // Relaxed: every write happens under `mutex`, which we hold.
-            if self.need_stat.load(Ordering::Relaxed) {
-                // This error can happen if the file was deleted between the time the directory
-                // was scanned and the time it was read
-                match fs.resolve_kind(self.dir, self.base(), self.cache().fd, store_fd) {
-                    Ok(c) => self.cache.set(c),
-                    Err(_) => {
-                        self.need_stat.store(false, Ordering::Release);
-                        return b"";
-                    }
-                }
-                // See `Entry::kind`: Release-publish `cache` before the flag clear.
-                self.need_stat.store(false, Ordering::Release);
-            }
+    pub(crate) fn symlink(&self, fs: &RealFS, store_fd: bool) -> &'static [u8] {
+        // The file can be deleted between the scan of the directory and the stat.
+        if self.need_stat.load(Ordering::Acquire) && self.stat(fs, store_fd).is_err() {
+            return b"";
         }
-        self.cache().symlink.as_bytes()
+        self.cached_symlink()
+    }
+
+    fn stat(&self, fs: &RealFS, store_fd: bool) -> crate::CrateResult<()> {
+        let _guard = self.mutex.lock_guard();
+        // Relaxed: every write happens under `mutex`, which we hold.
+        if !self.need_stat.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let result = fs
+            .kind(self.dir, self.base(), self.cached_fd(), store_fd, &mut buf)
+            .and_then(|stat| {
+                self.symlink.intern(filename_store(), stat.symlink)?;
+                self.fd.store(stat.fd.0, Ordering::Relaxed);
+                self.kind.store(stat.kind as u8, Ordering::Relaxed);
+                Ok(())
+            });
+        self.need_stat.store(false, Ordering::Release);
+        result
     }
 }
 
-/// `DirEntry` companion items: the entry map and the error pair type.
-pub mod dir_entry {
+pub(crate) mod dir_entry {
     /// Lowercased-basename → entry map backing `DirEntry::data`.
     pub(crate) type EntryMap = bun_collections::StringHashMap<&'static super::Entry>;
-
-    /// Directory-read failure: the original error plus the error for the
-    /// canonicalized path.
-    #[derive(Clone, Copy)]
-    pub struct Err {
-        pub original_err: crate::Error,
-        pub canonical_error: crate::Error,
-    }
 }
 
-/// Per-entry hook invoked by `readdir`, which lends it the filesystem it is running on.
+/// Per-entry hook invoked by `readdir`, with `RealFS::entries` locked.
 pub trait DirEntryIterator {
-    fn next<R: EntryKindResolver>(&mut self, fs: &R, entry: &Entry);
+    fn next(&mut self, entry: &Entry);
 }
 
 impl DirEntryIterator for () {
-    fn next<R: EntryKindResolver>(&mut self, _fs: &R, _entry: &Entry) {}
+    fn next(&mut self, _entry: &Entry) {}
 }
 
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
-    pub dir: &'static [u8],
+    pub(crate) dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
     pub data: dir_entry::EntryMap,
@@ -304,7 +312,7 @@ impl DirEntry {
     /// Returns the stored entry, or `None` for a kind that is not kept (a device, a socket, ...).
     pub(crate) fn add_entry_with_store(
         &mut self,
-        prev_map: Option<&mut dir_entry::EntryMap>,
+        prev_map: Option<&dir_entry::EntryMap>,
         entry: &bun_sys::dir_iterator::IteratorResult<'_>,
         filename_store: &mut FilenameStoreAppender,
     ) -> crate::CrateResult<Option<&Entry>> {
@@ -364,21 +372,12 @@ impl DirEntry {
                     let _guard = existing.mutex.lock_guard();
                     // `dir` stays: `self` has the `dir` of the `DirEntry` that owns `map`.
 
-                    // No cache rewrite here, even when the kind changed: a
-                    // lock-free `kind()`/`symlink()` reader that already
-                    // observed `need_stat == false` reads `cache` without the
-                    // per-entry mutex, so overwriting it would race that read
-                    // (a torn 16-byte `Interned` faults in `as_bytes`).
-                    // Publishing `need_stat = true` instead routes every later
-                    // reader through the mutex, where the lazy stat writes the
-                    // fresh cache; a reader that raced the flag sees the old
-                    // cache, stale but untorn.
                     // Relaxed load: writes are serialized on the per-entry
                     // mutex held above.
                     existing.need_stat.store(
                         existing.need_stat.load(Ordering::Relaxed)
                             || found_kind.is_none()
-                            || Some(existing.cache().kind) != found_kind,
+                            || Some(existing.cached_kind()) != found_kind,
                         Ordering::Release,
                     );
                     break 'brk existing;
@@ -395,12 +394,10 @@ impl DirEntry {
             };
             let slot = entry_store().lock().append_uninit();
             slot.write(Entry {
-                cache: core::cell::Cell::new(EntryCache {
-                    symlink: Interned::EMPTY,
-                    // Arbitrary while `need_stat` is set.
-                    kind: found_kind.unwrap_or(EntryKind::File),
-                    fd: Fd::INVALID,
-                }),
+                symlink: AtomicPath::default(),
+                fd: AtomicFd::new(Fd::INVALID.0),
+                // Arbitrary while `need_stat` is set.
+                kind: AtomicU8::new(found_kind.unwrap_or(EntryKind::File) as u8),
                 dir: self.dir,
                 base_,
                 base_lowercase_,
@@ -419,30 +416,11 @@ impl DirEntry {
         Ok(Some(stored))
     }
 
-    /// Debug-only contract check: every `.data` probe must run under
-    /// `entries_mutex`, because a stale-generation re-read
-    /// (`RealFS::entries_at_locked`) rewrites the `DirEntry` in place under
-    /// that lock and frees the old map's buckets. This assert turns the next
-    /// unlocked probe into a deterministic debug-build failure instead of a
-    /// rare segfault.
-    #[inline]
-    fn debug_assert_entries_mutex_held() {
-        debug_assert!(
-            crate::fs::FileSystem::get()
-                .fs
-                .entries_mutex
-                .is_held_by_current_thread(),
-            "DirEntry.data probed without entries_mutex; a concurrent \
-             stale-generation re-read frees the map's buckets in place"
-        );
-    }
-
     // `query_` borrow is detached from the returned `Entry` lifetime so callers
     // can pass a slice into the same buffer they then mutate. The
     // lookup key is the lowercased basename; a case-mismatched query still
     // returns the stored entry.
-    pub fn get(&self, query_: &[u8]) -> Option<&'static Entry> {
-        Self::debug_assert_entries_mutex_held();
+    pub(crate) fn get(&self, query_: &[u8]) -> Option<&'static Entry> {
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
         }
@@ -455,13 +433,11 @@ impl DirEntry {
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
     pub(crate) fn get_comptime_query(&self, query_lower: &'static [u8]) -> Option<&'static Entry> {
-        Self::debug_assert_entries_mutex_held();
         self.data.get(query_lower).copied()
     }
 
     /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
-        Self::debug_assert_entries_mutex_held();
         self.data.contains_key(query_lower)
     }
 }
@@ -516,10 +492,6 @@ impl ModKey {
         bun_wyhash::hash(&hash_bytes)
     }
 }
-
-// SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
-// `mutex` discipline described on `Entry`.
-unsafe impl Sync for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL: read-file-with-handle (stat → grow → read loop → BOM-strip)
@@ -797,3 +769,117 @@ pub struct PathContentsPair<'buf> {
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ROUNDS: usize = if cfg!(miri) { 30 } else { 30_000 };
+
+    fn entry(dir: &'static [u8]) -> Entry {
+        let store = &mut FilenameStoreAppender::new();
+        let mut base = || strings::StringOrTinyString::init_append_if_needed(b"link", store);
+        Entry {
+            symlink: AtomicPath::default(),
+            fd: AtomicFd::new(Fd::INVALID.0),
+            kind: AtomicU8::new(EntryKind::File as u8),
+            dir,
+            base_: base().unwrap(),
+            base_lowercase_: base().unwrap(),
+            mutex: Mutex::default(),
+            need_stat: AtomicBool::new(false),
+            abs_path: OnceLock::new(),
+        }
+    }
+
+    /// Calls `read` on two other threads until `write` has returned.
+    fn read_during(read: impl Fn() + Sync, write: impl FnOnce()) {
+        let done = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            for _ in 0..2 {
+                scope.spawn(|| {
+                    while !done.load(Ordering::Relaxed) {
+                        read();
+                    }
+                });
+            }
+            scopeguard::defer! { done.store(true, Ordering::Relaxed) }
+            write();
+        });
+    }
+
+    #[test]
+    fn symlink_is_empty_or_whole_while_it_is_filled() {
+        let entries: Vec<Entry> = (0..ROUNDS).map(|_| entry(b"/")).collect();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                for entry in &entries {
+                    let path = loop {
+                        match entry.cached_symlink() {
+                            b"" => core::hint::spin_loop(),
+                            path => break path,
+                        }
+                    };
+                    assert_eq!(path, b"/real/link");
+                }
+            });
+            for entry in &entries {
+                (entry.intern_symlink(filename_store(), b"/real/link")).unwrap();
+            }
+        });
+    }
+
+    #[test]
+    fn symlink_is_whole_while_it_is_replaced() {
+        let paths: [&[u8]; 3] = [b"/a", b"", b"/a/longer/path"];
+        let entry = entry(b"/");
+        read_during(
+            || assert!(paths.contains(&entry.cached_symlink())),
+            || {
+                for path in paths.into_iter().cycle().take(ROUNDS) {
+                    assert_eq!(entry.intern_symlink(filename_store(), path), Ok(path));
+                }
+            },
+        );
+    }
+
+    #[test]
+    #[cfg(all(unix, not(miri)))]
+    fn symlink_is_whole_while_a_stat_replaces_it() {
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let dir = std::env::temp_dir().join(format!("bun-entry-stat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        scopeguard::defer! { let _ = std::fs::remove_dir_all(&dir); }
+        let real_dir = dir.canonicalize().unwrap();
+        let targets = [real_dir.join("a"), real_dir.join("a-longer-name")];
+        for target in &targets {
+            std::fs::write(target, b"").unwrap();
+        }
+        let fs = &crate::fs::FileSystem::init(None).unwrap().fs;
+        let entry = entry(real_dir.as_os_str().as_bytes().to_vec().leak());
+        let paths: [&[u8]; 3] = [
+            targets[0].as_os_str().as_bytes(),
+            b"",
+            targets[1].as_os_str().as_bytes(),
+        ];
+        read_during(
+            || assert!(paths.contains(&entry.symlink(fs, false))),
+            || {
+                for path in paths.into_iter().cycle().take(600) {
+                    match path {
+                        b"" => std::fs::write(dir.join("next"), b""),
+                        _ => std::os::unix::fs::symlink(
+                            std::ffi::OsStr::from_bytes(path),
+                            dir.join("next"),
+                        ),
+                    }
+                    .unwrap();
+                    std::fs::rename(dir.join("next"), dir.join("link")).unwrap();
+                    entry.bust_cache();
+                    assert_eq!(entry.symlink(fs, false), path);
+                }
+            },
+        );
+    }
+}

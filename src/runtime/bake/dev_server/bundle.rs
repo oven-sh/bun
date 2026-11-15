@@ -387,7 +387,7 @@ impl DevServer {
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(
             server_transpiler,
             Some(bundler::bundle_v2::BakeOptions {
-                framework: framework.expect("set by init_transpiler"),
+                framework: framework.expect("set by DevServer::init"),
                 client_transpiler,
                 ssr_transpiler,
                 plugins: self.plugins.as_ref().map(Plugins::as_non_null),

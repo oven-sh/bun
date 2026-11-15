@@ -993,7 +993,7 @@ impl AsyncModule {
                     // `parse_result.ast` (handed to the queue via
                     // `InitOpts::arena` after the original parse). The
                     // printer's rope-flattening scratch belongs in it, not
-                    // in the per-VM `transpiler_arena`.
+                    // in the arena of the VM's transpiler.
                     &self.arena,
                     parse_result,
                     printer,

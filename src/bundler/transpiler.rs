@@ -156,9 +156,7 @@ impl<'a> Transpiler<'a> {
     /// once the `Transpiler` is at its final address.
     ///
     /// # Safety
-    /// `from` must outlive the returned `Transpiler<'a>`. The two
-    /// lifetime-carrying borrows in `BundleOptions<'_>` (`framework`,
-    /// `optimize_imports`) are widened from `from`'s lifetime to `'a` via a
+    /// `from` must outlive the result. The borrows in `BundleOptions<'_>` are widened to `'a` via a
     /// layout-preserving transmute. What they and `resolver.env_loader`
     /// point to must outlive `'a`.
     pub(crate) unsafe fn for_worker(
@@ -1031,8 +1029,7 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        // Caller contract: `log` is the freshly-boxed per-VM `Log` from
-        // `VirtualMachine::init` and is never null. Validate up front so the
+        // Caller contract: `log` is never null. Validate up front so the
         // deref sites below go through `NonNull` rather than the raw argument.
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::init: log is non-null");
         bun_ast::expr::data::Store::create();
@@ -1089,8 +1086,8 @@ impl<'a> Transpiler<'a> {
         }
 
         // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
-        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
+        // SAFETY: caller contract — `log` is caller-owned,
+        // `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
         unsafe {
             (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
@@ -2222,7 +2219,7 @@ impl<'a> Transpiler<'a> {
         //
         // `print_arena` is the same per-call arena that built `ast` (the one
         // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
-        // runtime per-import path that aliases the per-VM `transpiler_arena`
+        // runtime per-import path that is the VM's handle on the main heap
         // (`Arena::borrowing_default()` → `mi_heap_main()`, never freed), so the
         // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
         // would strand its bytes in `mi_heap_main` on every print.

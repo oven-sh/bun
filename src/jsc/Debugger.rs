@@ -431,7 +431,7 @@ impl Debugger {
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
-    fn start(init: DebuggerThreadInit) {
+    fn start(init: DebuggerThreadInit) -> ! {
         jsc::mark_binding();
 
         let this: &VirtualMachine = VirtualMachine::get();

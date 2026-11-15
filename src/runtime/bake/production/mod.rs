@@ -137,7 +137,7 @@ pub(crate) fn build_command(ctx: Context) -> crate::Result<()> {
         // as `NonNull` (not `&Loader`) because `configure_defines()` below
         // reborrows the same allocation as `&mut Loader` via `run_env_loader()`,
         // which would alias a live `&Loader` here. The Loader outlives the
-        // resolver (process-lifetime singleton or VM-owned).
+        // resolver (process-lifetime singleton).
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;

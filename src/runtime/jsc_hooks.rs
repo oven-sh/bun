@@ -551,6 +551,15 @@ unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
         debug_assert!(state.cron_jobs.get().is_empty());
         drop(state);
     }
+    // Free the thread-local AST stores allocated by `Transpiler::init`
+    // (via `Store::create()`). They live in TLS without a Drop, so each worker
+    // thread strands a `Box<Store>` plus its lazily-allocated block chain when
+    // the thread exits. `deinit()` is a no-op if a bundler arena currently owns
+    // the allocator (`memory_allocator()` non-null) or the store was never
+    // created. After the `RuntimeState` drop above nothing on this thread
+    // touches the stores again.
+    bun_ast::expr::data::Store::deinit();
+    bun_ast::stmt::data::Store::deinit();
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
@@ -613,7 +622,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
                 ResolveResultUnion::Success(r) => r,
                 ResolveResultUnion::Failure(e) => {
                     if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        // SAFETY: `log` outlives what the VM runs.
                         let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -628,7 +637,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
                 }
                 ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
                     if let Some(log) = vm.log.get() {
-                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        // SAFETY: `log` outlives what the VM runs.
                         let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
@@ -2638,7 +2647,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             // Same per-call arena that `parse_options.arena`
                             // built `parse_result.ast` from — the printer's
                             // rope-flattening scratch belongs in it, not in
-                            // the per-VM `transpiler_arena`.
+                            // the arena of the VM's transpiler.
                             &arena_guard.1,
                             parse_result,
                             &mut *extra.source_code_printer,

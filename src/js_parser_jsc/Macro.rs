@@ -419,7 +419,7 @@ impl Macro {
                 ..Default::default()
             };
             let vm = VirtualMachine::init(log, options)?;
-            // This VM is never freed.
+            // This VM stays until the process exits.
             let _ = env_loader.map(AliasableBox::into_raw);
             (vm, true)
         };

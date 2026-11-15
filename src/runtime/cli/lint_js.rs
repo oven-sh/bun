@@ -853,6 +853,9 @@ impl Crew {
                 }
             }
         }
+        if !VirtualMachine::is_loaded() {
+            drop(log);
+        }
         let (nothing, never) = (Guarded::new(()), Condition::new());
         let mut nothing = nothing.lock();
         loop {

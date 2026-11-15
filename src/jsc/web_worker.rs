@@ -13,7 +13,7 @@
 //! wants to tell the parent goes through it by context id; nothing here ever
 //! touches the parent's `Worker` object or a thread-affine ref.
 //!
-//! Thread lifecycle (`thread_main`):
+//! Thread lifecycle (`thread_main` → `run`):
 //!   1. `start_vm()`  — env snapshot, `VirtualMachine`, publish its handle (`vm_handle`).
 //!   2. `spin()`      — 'online', load the entry point, `workerGlobalScopeStarted`, run the
 //!                      event loop until it drains or termination is requested,

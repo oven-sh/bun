@@ -2315,9 +2315,6 @@ impl VirtualMachine {
             bun_core::heap::destroy(this);
         }
         VMHolder::set_vm(None);
-        // A `#[thread_local]` is not dropped with its thread.
-        bun_ast::expr::data::Store::deinit();
-        bun_ast::stmt::data::Store::deinit();
         exit_code
     }
 
@@ -3057,7 +3054,7 @@ impl VirtualMachine {
     /// Note: every step that names a `bun_runtime` / `bun_webcore` type
     /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`) is
     /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
-    /// not name those types directly. `log` outlives the VM.
+    /// not name those types directly. `log` outlives what the VM runs.
     pub fn init(
         log: *mut bun_ast::Log,
         mut opts: InitOptions,
@@ -3087,8 +3084,11 @@ impl VirtualMachine {
         let preserve_symlinks = args.preserve_symlinks.unwrap_or(false);
         args.write = Some(false);
         args.target = Some(bun_options_types::schema::api::Target::Bun);
-        let transpiler =
-            Transpiler::init(&MAIN_HEAP, log, args, opts.env_loader.map(NonNull::as_ptr))?;
+        let env_loader = opts.env_loader.map(NonNull::as_ptr);
+        let transpiler = Transpiler::init(&MAIN_HEAP, log, args, env_loader).inspect_err(|_| {
+            bun_ast::expr::data::Store::deinit();
+            bun_ast::stmt::data::Store::deinit();
+        })?;
 
         let this = Box::into_non_null(Box::<VirtualMachine>::new_uninit()).cast::<VirtualMachine>();
         let mut regular_event_loop = EventLoop::new(this);
@@ -3182,7 +3182,6 @@ impl VirtualMachine {
             unhandled_error_counter: Cell::new(0),
             is_running_vitest_entry: Cell::new(false),
             on_print_error_zig_exception: Cell::new(None),
-            on_print_error_zig_exception_ctx: Cell::new(core::ptr::null_mut()),
             is_handling_uncaught_exception: Cell::new(false),
             exit_on_uncaught_exception: Cell::new(false),
             hot_run_failed: Cell::new(false),

@@ -36,9 +36,7 @@ fn dump_build_error(vm: &VirtualMachine) {
     // `defer Output.flush()` — RAII guard flushes buffered stderr on every exit path.
     let _flush = Output::flush_guard();
 
-    if let Some(log) = vm.log() {
-        let _ = log.print(writer);
-    }
+    let _ = vm.log.print(writer);
 }
 
 #[cold]

@@ -161,7 +161,9 @@ fn resolve_or_null(r: &mut bun_resolver::Resolver, path: &[u8]) -> Option<Utf8By
     match resolve_path(r, path) {
         Ok(resolved) => Some(resolved),
         Err(_) => {
-            r.log().reset();
+            if let Some(log) = r.log() {
+                log.reset();
+            }
             None
         }
     }

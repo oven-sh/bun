@@ -2029,7 +2029,7 @@ impl Package<u64> {
     }
 
     /// Borrow-splitting bridge for `processDependencyList`, with `Features::NPM`. Borrowck
-    /// rejects passing `manager.lockfile`, `manager`, `manager.log` as three separate args
+    /// rejects passing `manager.lockfile` and `manager` as separate args
     /// overlapping `&mut self`, so split via raw pointer here.
     pub(crate) fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
@@ -2040,8 +2040,7 @@ impl Package<u64> {
         let log = manager.log();
         let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
         // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`. `parse_with_json`
-        // derefs `pm.lockfile` only under `Features::workspaces`, which `NPM` does not set,
-        // and never `pm.log`.
+        // derefs `pm.lockfile` only under `Features::workspaces`, which `NPM` does not set.
         let lockfile = unsafe { &mut *lockfile };
         self.parse(lockfile, manager, log, source, resolver, Features::NPM)
     }

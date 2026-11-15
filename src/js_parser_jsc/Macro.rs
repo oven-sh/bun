@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use bun_ast::DisableStoreReset;
 use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
@@ -152,6 +151,7 @@ fn call_macro(
             };
             load_macro(
                 vm,
+                log,
                 is_new_vm,
                 input_specifier,
                 function_name,
@@ -169,19 +169,32 @@ fn call_macro(
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
 
-    let ret = vm.run_with_api_lock(|| {
-        Runner::run(
-            vm,
-            log,
-            bump,
-            function_name,
-            caller,
-            source,
-            hash,
-            JSValue::from_encoded(ctx.javascript_object.0 as usize),
-        )
+    let ret = with_vm_logging_to(vm, log, || {
+        vm.run_with_api_lock(|| {
+            Runner::run(
+                vm,
+                log,
+                bump,
+                function_name,
+                caller,
+                source,
+                hash,
+                JSValue::from_encoded(ctx.javascript_object.0 as usize),
+            )
+        })
     });
     Ok(ret?)
+}
+
+/// Runs `f`, and moves what `vm` logs meanwhile to `log`.
+fn with_vm_logging_to<R>(vm: &VirtualMachine, log: &Log, f: impl FnOnce() -> R) -> R {
+    let mut logged = Log::init();
+    logged.level.set(vm.log.level.get());
+    let redirect = vm.log.redirect(&mut logged);
+    let result = f();
+    drop(redirect);
+    logged.append_to(log);
+    result
 }
 
 // `bun_js_parser` cannot name `Transpiler` or JSC types, so it calls these, which are resolved at link time.
@@ -258,17 +271,23 @@ fn init_macro_vm(
         None => None,
     };
 
-    Ok(VirtualMachine::init(VirtualMachineInitOptions {
+    let vm = VirtualMachine::init(VirtualMachineInitOptions {
         transform_options,
-        log: Some(NonNull::from(log)),
+        own_log: Log {
+            level: log.level.clone(),
+            ..Default::default()
+        },
         owned_env_loader,
         is_main_thread: false,
         ..Default::default()
-    })?)
+    })?;
+    vm.log.append_to(log);
+    Ok(vm)
 }
 
 fn load_macro(
     vm: &VirtualMachine,
+    log: &Log,
     is_new_vm: bool,
     input_specifier: &[u8],
     function_name: &[u8],
@@ -278,12 +297,12 @@ fn load_macro(
     // Covers `configure_defines` and the macro module's top-level code.
     let _mode_guard = MacroModeGuard::new(vm);
     vm.event_loop().ensure_waker();
-    if is_new_vm {
-        vm.transpiler.with_mut(|t| t.configure_defines())?;
-    }
-
-    let loaded_result =
-        vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+    let loaded_result = with_vm_logging_to(vm, log, || -> crate::Result<_> {
+        if is_new_vm {
+            vm.transpiler.with_mut(|t| t.configure_defines())?;
+        }
+        Ok(vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?)
+    })?;
 
     // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
     // returned by `loadAndEvaluateModule`.

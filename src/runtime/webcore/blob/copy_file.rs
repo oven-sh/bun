@@ -2,8 +2,9 @@
 
 use crate::node::fs as node_fs;
 use crate::node::types::PathLikeExt as _;
+use crate::webcore::blob::write_file::note_written;
 #[cfg(not(windows))]
-use crate::webcore::blob::{self, MkdirpTarget, Retry, store};
+use crate::webcore::blob::{self, MkdirpTarget, Retry};
 use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
@@ -40,13 +41,13 @@ use core::marker::ConstParamTy;
 
 #[cfg(not(windows))]
 pub(crate) struct CopyFile {
-    pub(crate) destination_file_store: store::File,
-    pub(crate) source_file_store: store::File,
-    // `RefPtr<Store>` is the thread-safe refcounted handle;
-    // it keeps the stores — and the path slices the `File` clones borrow — alive
-    // while this task is on the work pool.
-    pub(crate) store: Option<RefPtr<Store>>,
-    pub(crate) source_store: Option<RefPtr<Store>>,
+    pub(crate) destination_file_store: RefPtr<Store>,
+    pub(crate) source_file_store: RefPtr<Store>,
+    /// What the destination's store had cached when the copy was asked for.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    cached_destination_mode: Mode,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    cached_destination_is_atty: bool,
     pub offset: SizeType,
     pub(crate) max_length: SizeType,
     pub(crate) destination_fd: Fd,
@@ -72,10 +73,6 @@ impl MkdirpTarget for CopyFile {
         self.system_error = Some(e);
     }
 }
-
-// SAFETY: file stores/paths and blob store refs (atomic counts); nothing thread-affine.
-#[cfg(not(windows))]
-unsafe impl Send for CopyFile {}
 
 #[cfg(not(windows))]
 impl jsc::JobContext for CopyFile {
@@ -107,10 +104,12 @@ impl CopyFile {
         destination_mode: Option<Mode>,
     ) -> JSValue {
         let copy = CopyFile {
-            destination_file_store: store.data.as_file().clone(),
-            source_file_store: source_store.data.as_file().clone(),
-            store: Some(store),
-            source_store: Some(source_store),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            cached_destination_mode: store.data.as_file().mode(),
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            cached_destination_is_atty: store.data.as_file().is_atty(),
+            destination_file_store: store,
+            source_file_store: source_store,
             offset: off,
             max_length: max_len,
             mkdirp_if_not_exists,
@@ -133,13 +132,10 @@ impl CopyFile {
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
-        if matches!(
-            self.source_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        ) && system_error.path.is_empty()
+        if let Some(path) = self.source_file_store.get_path()
+            && system_error.path.is_empty()
         {
-            system_error.path =
-                bun_core::String::clone_utf8(self.source_file_store.pathlike.path().slice());
+            system_error.path = bun_core::String::clone_utf8(path);
         }
 
         if system_error.message.is_empty() {
@@ -148,9 +144,6 @@ impl CopyFile {
 
         let instance = jsc::SystemError::from(system_error)
             .to_error_instance_with_async_stack(global_this, promise);
-        if let Some(store) = self.store.take() {
-            drop(store); // deref()
-        }
         promise.reject(global_this, Ok(instance))
     }
 
@@ -159,19 +152,23 @@ impl CopyFile {
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
-        drop(self.source_store.take()); // source_store.?.deref()
-
         if self.system_error.is_some() {
             return self.reject(promise, global_this);
         }
-        if let PathOrFileDescriptor::Path(path) = &self.destination_file_store.pathlike {
-            crate::node::fs::note_opened_for_write(path.slice(), true);
-        }
+        note_written(&self.destination_file_store);
 
         promise.resolve(
             global_this,
             JSValue::js_number_from_uint64(self.read_len as u64),
         )
+    }
+
+    fn source_pathlike(&self) -> PathOrFileDescriptor<'_> {
+        self.source_file_store.data.as_file().pathlike()
+    }
+
+    fn destination_pathlike(&self) -> PathOrFileDescriptor<'_> {
+        self.destination_file_store.data.as_file().pathlike()
     }
 
     fn apply_destination_mode(&mut self) {
@@ -192,8 +189,12 @@ impl CopyFile {
     }
 
     fn open_source(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
-        let path = self.source_file_store.pathlike.path().slice_z(path_buf);
-        match File::open(path, OPEN_SOURCE_FLAGS, 0) {
+        let opened = File::open(
+            self.source_pathlike().path().slice_z(path_buf),
+            OPEN_SOURCE_FLAGS,
+            0,
+        );
+        match opened {
             Ok(file) => Some(file),
             Err(errno) => {
                 self.system_error = Some(errno.to_system_error());
@@ -204,11 +205,7 @@ impl CopyFile {
 
     fn open_destination(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
         loop {
-            let dest = self
-                .destination_file_store
-                .pathlike
-                .path()
-                .slice_z(path_buf);
+            let dest = self.destination_pathlike().path().slice_z(path_buf);
             let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             let errno = match File::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                 Ok(file) => return Some(file),
@@ -220,11 +217,8 @@ impl CopyFile {
                 Retry::No => {}
             }
 
-            self.system_error = Some(
-                errno
-                    .with_path(self.destination_file_store.pathlike.path().slice())
-                    .to_system_error(),
-            );
+            let errno = errno.with_path(self.destination_pathlike().path().slice());
+            self.system_error = Some(errno.to_system_error());
             return None;
         }
     }
@@ -239,10 +233,7 @@ impl CopyFile {
         unknown_size: bool,
         total_written: &mut u64,
     ) -> Result<(), crate::Error> {
-        let bun_opened_dest = matches!(
-            self.destination_file_store.pathlike,
-            PathOrFileDescriptor::Path(_)
-        );
+        let bun_opened_dest = self.destination_pathlike().is_path();
         let cap = if unknown_size {
             MAX_SIZE
         } else {
@@ -477,18 +468,8 @@ impl CopyFile {
         let mut dest_buf = bun_paths::path_buffer_pool::get();
 
         loop {
-            let dest = self
-                .destination_file_store
-                .pathlike
-                .path()
-                .slice_z(&mut dest_buf);
-            match bun_sys::clonefile(
-                self.source_file_store
-                    .pathlike
-                    .path()
-                    .slice_z(&mut source_buf),
-                dest,
-            ) {
+            let dest = self.destination_pathlike().path().slice_z(&mut dest_buf);
+            match bun_sys::clonefile(self.source_pathlike().path().slice_z(&mut source_buf), dest) {
                 bun_sys::Result::Err(errno) => {
                     match blob::mkdir_if_not_exists(self, &errno, dest) {
                         Retry::Continue => continue,
@@ -511,35 +492,24 @@ impl CopyFile {
         #[cfg(not(target_os = "macos"))]
         let stat_: Option<Stat> = None;
 
-        if let PathOrFileDescriptor::Fd(fd) = &self.destination_file_store.pathlike {
-            self.destination_fd = *fd;
+        if let Some(fd) = self.destination_file_store.data.as_file().fd() {
+            self.destination_fd = fd;
         }
 
-        if let PathOrFileDescriptor::Fd(fd) = &self.source_file_store.pathlike {
-            self.source_fd = *fd;
+        if let Some(fd) = self.source_file_store.data.as_file().fd() {
+            self.source_fd = fd;
         }
 
         // clonefile() is the fastest way to copy a file, so it goes first.
         #[cfg(target_os = "macos")]
         if self.offset == 0
-            && matches!(
-                self.source_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            )
-            && matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            )
+            && self.source_pathlike().is_path()
+            && self.destination_pathlike().is_path()
         {
             'do_clonefile: {
                 let mut path_buf = bun_paths::path_buffer_pool::get();
 
-                match bun_sys::stat(
-                    self.source_file_store
-                        .pathlike
-                        .path()
-                        .slice_z(&mut path_buf),
-                ) {
+                match bun_sys::stat(self.source_pathlike().path().slice_z(&mut path_buf)) {
                     bun_sys::Result::Ok(result) => {
                         stat_ = Some(result);
 
@@ -567,10 +537,7 @@ impl CopyFile {
                         {
                             // If this fails...well, there's not much we can do about it.
                             let _ = bun_sys::truncate(
-                                self.destination_file_store
-                                    .pathlike
-                                    .path()
-                                    .slice_z(&mut path_buf),
+                                self.destination_pathlike().path().slice_z(&mut path_buf),
                                 i64::try_from(self.max_length).expect("int cast"),
                             );
                             self.read_len = SizeType::try_from(self.max_length).expect("int cast");
@@ -580,10 +547,7 @@ impl CopyFile {
                         // Apply destination mode if specified (clonefile copies source permissions)
                         if let Some(mode) = self.destination_mode {
                             match bun_sys::chmod(
-                                self.destination_file_store
-                                    .pathlike
-                                    .path()
-                                    .slice_z(&mut path_buf),
+                                self.destination_pathlike().path().slice_z(&mut path_buf),
                                 mode,
                             ) {
                                 bun_sys::Result::Err(err) => {
@@ -657,10 +621,7 @@ impl CopyFile {
             }
 
             if PREALLOCATE_SUPPORTED
-                && matches!(
-                    self.destination_file_store.pathlike,
-                    PathOrFileDescriptor::Path(_)
-                )
+                && self.destination_pathlike().is_path()
                 && self.max_length > PREALLOCATE_LENGTH
                 && self.max_length != MAX_SIZE
             {
@@ -676,10 +637,10 @@ impl CopyFile {
         {
             // Bun.write(Bun.file("a"), Bun.file("b"))
             if bun_sys::S::ISREG(stat.st_mode as _)
-                && (bun_sys::S::ISREG(self.destination_file_store.mode as _)
-                    || self.destination_file_store.mode == 0)
+                && (bun_sys::S::ISREG(self.cached_destination_mode as _)
+                    || self.cached_destination_mode == 0)
             {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
+                if self.cached_destination_is_atty {
                     let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, true>();
                 } else {
                     let _ = self.do_copy_file_range::<{ TryWith::CopyFileRange }, false>();
@@ -690,9 +651,9 @@ impl CopyFile {
 
             // $ bun run foo.js | bun run bar.js
             if bun_sys::S::ISFIFO(stat.st_mode as _)
-                && bun_sys::S::ISFIFO(self.destination_file_store.mode as _)
+                && bun_sys::S::ISFIFO(self.cached_destination_mode as _)
             {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
+                if self.cached_destination_is_atty {
                     let _ = self.do_copy_file_range::<{ TryWith::Splice }, true>();
                 } else {
                     let _ = self.do_copy_file_range::<{ TryWith::Splice }, false>();
@@ -705,7 +666,7 @@ impl CopyFile {
                 || bun_sys::S::ISCHR(stat.st_mode as _)
                 || bun_sys::S::ISSOCK(stat.st_mode as _)
             {
-                if self.destination_file_store.is_atty.unwrap_or(false) {
+                if self.cached_destination_is_atty {
                     let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, true>();
                 } else {
                     let _ = self.do_copy_file_range::<{ TryWith::Sendfile }, false>();
@@ -722,10 +683,7 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.destination_pathlike().is_path() {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {
@@ -752,10 +710,7 @@ impl CopyFile {
 
         #[cfg(target_os = "freebsd")]
         {
-            if matches!(
-                self.destination_file_store.pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.destination_pathlike().is_path() {
                 let mut total_written: u64 = 0;
                 match node_fs::NodeFS::copy_file_using_read_write_loop(
                     bun_core::ZStr::EMPTY,
@@ -856,15 +811,6 @@ fn read_write_loop_capped(
     }
     Ok(())
 }
-
-// Ownership is encoded in the types, so cleanup is all field `Drop`:
-// `source_file_store.pathlike` is a `PathLike` clone that is independently
-// droppable — `PathLike::clone` dupes owned string buffers (freed by the
-// clone's own drop), bumps refs for WTF-backed slices, and only
-// shares the backing for borrowed-string/Buffer variants (whose owner is kept
-// alive by the `source_store` `RefPtr<Store>`). Each clone's field `Drop` frees
-// exactly what it owns; the `RefPtr<Store>`s release just their Store refcounts on
-// drop. No explicit `Drop` impl is needed.
 
 // Kept local until bun_sys exports these; values match crate::node::fs.
 #[cfg(not(windows))]
@@ -1182,7 +1128,7 @@ impl CopyFileWindows {
     }
 
     fn prepare_pathlike(
-        pathlike: &mut PathOrFileDescriptor,
+        pathlike: &PathOrFileDescriptor,
         must_close: &mut bool,
         is_reading: bool,
     ) -> bun_sys::Result<Fd> {
@@ -1226,9 +1172,7 @@ impl CopyFileWindows {
         // mkdirp(), we don't spend extra time opening the file handle for
         // the source.
         self.read_write_loop.destination_fd = match Self::prepare_pathlike(
-            &mut Store::data_mut(&self.destination_file_store)
-                .as_file_mut()
-                .pathlike,
+            &self.destination_file_store.data.as_file().pathlike(),
             &mut self.read_write_loop.must_close_destination_fd,
             false,
         ) {
@@ -1245,9 +1189,7 @@ impl CopyFileWindows {
         };
 
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
-            &mut Store::data_mut(&self.source_file_store)
-                .as_file_mut()
-                .pathlike,
+            &self.source_file_store.data.as_file().pathlike(),
             &mut self.read_write_loop.must_close_source_fd,
             true,
         ) {
@@ -1279,10 +1221,10 @@ impl CopyFileWindows {
         let source_file_store = &mut self.source_file_store.data.as_file();
 
         let new_path: &bun_core::ZStr = 'brk: {
-            match &destination_file_store.pathlike {
+            match &destination_file_store.pathlike() {
                 PathOrFileDescriptor::Path(_) => {
                     break 'brk destination_file_store
-                        .pathlike
+                        .pathlike()
                         .path()
                         .slice_z(&mut pathbuf1);
                 }
@@ -1325,7 +1267,7 @@ impl CopyFileWindows {
             }
         };
         let old_path: &bun_core::ZStr = 'brk: {
-            match &source_file_store.pathlike {
+            match &source_file_store.pathlike() {
                 PathOrFileDescriptor::Path(path) => break 'brk path.slice_z(&mut pathbuf2),
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
@@ -1413,17 +1355,14 @@ impl CopyFileWindows {
 
         // Apply destination mode if specified (async)
         if let Some(mode) = self.destination_mode {
-            if matches!(
-                self.destination_file_store.data.as_file().pathlike,
-                PathOrFileDescriptor::Path(_)
-            ) {
+            if self.destination_file_store.data.as_file().path().is_some() {
                 self.written_bytes = written;
                 let mut pathbuf = bun_paths::path_buffer_pool::get();
                 let path_ptr = self
                     .destination_file_store
                     .data
                     .as_file()
-                    .pathlike
+                    .pathlike()
                     .path()
                     .slice_z(&mut pathbuf)
                     .as_ptr();
@@ -1449,7 +1388,7 @@ impl CopyFileWindows {
                     // SAFETY: libuv keeps nothing of a request that it refuses.
                     let this = unsafe { bun_core::heap::take(this) };
                     let destination = &this.destination_file_store.data.as_file();
-                    if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
+                    if let PathOrFileDescriptor::Path(p) = &destination.pathlike() {
                         err = err.with_path(p.slice());
                     }
                     this.throw(err);
@@ -1462,11 +1401,7 @@ impl CopyFileWindows {
     }
 
     fn resolve_promise(mut self: Box<Self>, written: usize) {
-        if let PathOrFileDescriptor::Path(path) =
-            &self.destination_file_store.data.as_file().pathlike
-        {
-            crate::node::fs::note_opened_for_write(path.slice(), true);
-        }
+        note_written(&self.destination_file_store);
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
         // A GC cell: not tied to `self`, which is dropped before it is settled.
@@ -1487,7 +1422,7 @@ impl CopyFileWindows {
         let mut node_fs_ = node_fs::NodeFS::default();
         let _ = node_fs_.truncate(
             &node_fs::args::Truncate {
-                path: self.destination_file_store.data.as_file().pathlike.clone(),
+                path: self.destination_file_store.data.as_file().pathlike(),
                 len: u64::try_from(self.size).expect("int cast"),
                 flags: 0,
             },
@@ -1499,7 +1434,7 @@ impl CopyFileWindows {
         bun_sys::syslog!("mkdirp");
         self.mkdirp_if_not_exists = false;
         let destination = self.destination_file_store.data.as_file();
-        if !matches!(destination.pathlike, PathOrFileDescriptor::Path(_)) {
+        if destination.path().is_none() {
             self.throw(bun_sys::Error {
                 errno: bun_sys::SystemErrno::EINVAL as u16,
                 syscall: bun_sys::Tag::mkdir,
@@ -1545,7 +1480,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         // ENOENT from the probe counts as "missing"; any other error leaves
         // the mkdirp+retry path available.
         let source_missing = errno == bun_sys::E::ENOENT
-            && match &this.source_file_store.data.as_file().pathlike {
+            && match &this.source_file_store.data.as_file().pathlike() {
                 PathOrFileDescriptor::Path(p) => {
                     let mut buf = bun_paths::path_buffer_pool::get();
                     matches!(
@@ -1576,7 +1511,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
         } else {
             &this.destination_file_store
         };
-        match &store.data.as_file().pathlike {
+        match &store.data.as_file().pathlike() {
             PathOrFileDescriptor::Path(p) => {
                 err = err.with_path(p.slice());
             }
@@ -1590,7 +1525,7 @@ extern "C" fn on_copy_file(req: *mut libuv::fs_t) {
     }
 
     // uv_fs_copyfile leaves `statbuf` empty.
-    let size = match &this.destination_file_store.data.as_file().pathlike {
+    let size = match &this.destination_file_store.data.as_file().pathlike() {
         PathOrFileDescriptor::Path(p) => {
             let mut buf = bun_paths::path_buffer_pool::get();
             bun_sys::stat(p.slice_z(&mut buf)).map(|stat| stat.size())
@@ -1615,7 +1550,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
     let rc = this.io_request.result;
     if let Some(mut err) = rc.to_error(bun_sys::Tag::chmod) {
         let destination = &this.destination_file_store.data.as_file();
-        if let PathOrFileDescriptor::Path(p) = &destination.pathlike {
+        if let PathOrFileDescriptor::Path(p) = &destination.pathlike() {
             err = err.with_path(p.slice());
         }
         this.throw(err);
@@ -1631,7 +1566,7 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 unsafe impl node_fs::async_::AsyncMkdirpTarget for CopyFileWindows {
     fn directory(&self) -> &[u8] {
         let destination = self.destination_file_store.data.as_file();
-        let path = destination.pathlike.path().slice();
+        let path = destination.path().unwrap();
         bun_paths::dirname(path).unwrap_or(path)
     }
     fn set_error(&mut self, err: bun_sys::Error) {

@@ -1986,7 +1986,6 @@ pub(crate) mod JSZstd {
 // LazyProperty initializers for stdin/stderr/stdout
 mod stdio_stores {
     use super::*;
-    use crate::node::types::PathOrFileDescriptor;
     use crate::webcore::blob::store::{Data, File as FileStore};
     use crate::webcore::blob::{Blob, BlobExt as _, Store};
     use bun_ptr::RefPtr;
@@ -2004,12 +2003,7 @@ mod stdio_stores {
             Err(_) => 0,
         };
         RefPtr::new(Store::new(
-            Data::File(FileStore {
-                pathlike: PathOrFileDescriptor::Fd(fd),
-                is_atty: Some(is_atty),
-                mode,
-                ..Default::default()
-            }),
+            Data::File(FileStore::init_stdio(fd, is_atty, mode)),
             bun_http_types::MimeType::NONE,
         ))
     }

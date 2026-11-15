@@ -106,7 +106,7 @@ unsafe extern "C" {
 }
 
 impl Lazy {
-    pub(crate) fn open_file_blob(file: &mut blob::store::File) -> sys::Result<OpenedFileBlob> {
+    pub(crate) fn open_file_blob(file: &blob::store::File) -> sys::Result<OpenedFileBlob> {
         let mut this = OpenedFileBlob {
             fd: Fd::INVALID,
             ..Default::default()
@@ -115,7 +115,7 @@ impl Lazy {
         #[cfg(unix)]
         let mut is_nonblocking = false;
 
-        let fd: Fd = match &file.pathlike {
+        let fd: Fd = match &file.pathlike() {
             PathOrFileDescriptor::Fd(pl_fd) => {
                 if pl_fd.stdio_tag().is_some() {
                     'brk: {
@@ -124,7 +124,7 @@ impl Lazy {
                             let rc = open_as_nonblocking_tty(pl_fd.native(), sys::O::RDONLY);
                             if rc > -1 {
                                 is_nonblocking = true;
-                                file.is_atty = Some(true);
+                                file.set_is_atty(true);
                                 break 'brk Fd::from_native(rc);
                             }
                         }
@@ -177,12 +177,13 @@ impl Lazy {
 
         #[cfg(unix)]
         {
-            if file.is_atty.unwrap_or(false)
+            if file.is_atty()
                 || (fd.stdio_tag().is_some() && sys::isatty(fd))
-                || (matches!(&file.pathlike, PathOrFileDescriptor::Fd(pl_fd)
-                        if pl_fd.stdio_tag().is_some() && sys::isatty(*pl_fd)))
+                || file
+                    .fd()
+                    .is_some_and(|pl_fd| pl_fd.stdio_tag().is_some() && sys::isatty(pl_fd))
             {
-                file.is_atty = Some(true);
+                file.set_is_atty(true);
             }
 
             let stat = sys::fstat(fd)?;
@@ -197,9 +198,8 @@ impl Lazy {
             }
 
             // pollable: `S.ISFIFO(mode) or S.ISSOCK(mode)`
-            this.pollable = (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode))
-                || is_nonblocking
-                || file.is_atty.unwrap_or(false);
+            this.pollable =
+                (sys::S::ISFIFO(mode) || sys::S::ISSOCK(mode)) || is_nonblocking || file.is_atty();
             this.file_type = if sys::S::ISFIFO(mode) {
                 FileType::Pipe
             } else if sys::S::ISSOCK(mode) {
@@ -214,9 +214,7 @@ impl Lazy {
             }
 
             this.nonblocking = is_nonblocking
-                || (this.pollable
-                    && !file.is_atty.unwrap_or(false)
-                    && this.file_type != FileType::Pipe);
+                || (this.pollable && !file.is_atty() && this.file_type != FileType::Pipe);
 
             if this.nonblocking && this.file_type == FileType::Pipe {
                 this.file_type = FileType::NonblockingPipe;
@@ -274,8 +272,7 @@ impl FileReader {
         // on every path through the original `if let` body) so the `RefPtr<Store>`
         // is owned locally and the cell borrow is released immediately.
         if let Lazy::Blob(store) = self.lazy.replace(Lazy::None) {
-            // Single-threaded JS event loop; we hold the only mutating handle.
-            match blob::Store::data_mut(&store) {
+            match &store.data {
                 blob::store::Data::S3(_) | blob::store::Data::Bytes(_) => {
                     panic!("Invalid state in FileReader: expected file ")
                 }

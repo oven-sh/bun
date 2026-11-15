@@ -975,7 +975,7 @@ impl TaskContext for FilesContext {
         match &mut self.result {
             FilesResult::Success(entries) => {
                 let map = JSMap::create(global);
-                let Some(mut map_ptr) = JSMap::from_js(map) else {
+                let Some(map_ptr) = JSMap::from_js(map) else {
                     return Ok(PromiseResult::Reject(
                         global.create_error_instance(format_args!("Failed to create Map")),
                     ));
@@ -990,8 +990,7 @@ impl TaskContext for FilesContext {
 
                     let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.into_js(global);
-                    // SAFETY: map_ptr came from JSMap::from_js on a live value.
-                    unsafe { map_ptr.as_mut() }.set(global, name_js, blob_js)?;
+                    JSMap::opaque_ref(map_ptr.as_ptr()).set(global, name_js, blob_js)?;
                 }
 
                 Ok(PromiseResult::Resolve(map))

@@ -1,6 +1,6 @@
 import type { BunRequest, ServeOptions, Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, bunRun } from "harness";
 import net from "node:net";
 
 describe("path parameters", () => {
@@ -741,6 +741,28 @@ it("throws a validation error when a route parameter name is duplicated", () => 
       },
     });
   }).toThrow("Support for duplicate route parameter names is not yet implemented.");
+});
+
+it.concurrent.each([
+  ["/:a/:x:a", "/1/2", [["a", "1"]]],
+  ["/:x:a/:y:a", "/1/2", [["a", "1"]]],
+  ["/:a:0", "/1", [["0", "1"]]],
+  ["/:a:/:b:", "/1/2", []],
+  ["/urn:isbn:1", "/urn:isbn:1", [["1", ""]]],
+  ["/urn:isbn:123456", "/urn:isbn:123456", [["123456", ""]]],
+  ["/urn:isbn:0451450523", "/urn:isbn:0451450523", [["0451450523", ""]]],
+])("serves %s, which has two colons in a segment", async (route, path, params) => {
+  const src = `
+    using server = Bun.serve({
+      port: 0,
+      routes: {
+        ${JSON.stringify(route)}: ({ params }) =>
+          Response.json(Object.keys(params).map(key => [key, Object.getOwnPropertyDescriptor(params, key)?.value])),
+      },
+    });
+    console.log(await (await fetch(new URL(${JSON.stringify(path)}, server.url))).text());
+  `;
+  expect(await bunRun(["-e", src], { BUN_JSC_validateExceptionChecks: "1" })).toSpawn(JSON.stringify(params));
 });
 
 it("fetch() is optional when routes are specified", async () => {

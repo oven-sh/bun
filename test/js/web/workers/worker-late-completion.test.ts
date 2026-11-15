@@ -271,7 +271,7 @@ describe.skipIf(!isDebug && !isASAN)("work that comes back after its worker bega
 });
 
 const cc = isWindows ? null : process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
-test.concurrent.skipIf(!cc)("an addon cannot queue work in a finalizer during a worker's final GC", async () => {
+async function finalizeInFinalGC(makeExternal: string) {
   using dir = tempDir("worker-late-napi", {});
   const addon = path.join(String(dir), "addon.node");
   await using build = Bun.spawn({
@@ -296,7 +296,7 @@ test.concurrent.skipIf(!cc)("an addon cannot queue work in a finalizer during a 
       bunExe(),
       "-e",
       `new (require("node:worker_threads").Worker)(
-        "globalThis.keep = require(" + JSON.stringify(process.argv[1]) + ").queueFromFinalizer();",
+        "globalThis.keep = require(" + JSON.stringify(process.argv[1]) + ").${makeExternal}();",
         { eval: true },
       );`,
       addon,
@@ -306,9 +306,21 @@ test.concurrent.skipIf(!cc)("an addon cannot queue work in a finalizer during a 
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+test.concurrent.skipIf(!cc)("napi_queue_async_work fails in a finalizer during a worker's final GC", async () => {
   // 23 is napi_cannot_run_js.
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "queued from finalizer: 23\nuv_queue_work is cancelled: 1\n",
+  expect(await finalizeInFinalGC("queueFromFinalizer")).toEqual({
+    stdout: "queued from finalizer: 23\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+test.concurrent.skipIf(!cc)("uv_queue_work fails in a finalizer during a worker's final GC", async () => {
+  expect(await finalizeInFinalGC("uvQueueFromFinalizer")).toEqual({
+    stdout: "cancelled: 1\n",
     stderr: "",
     exitCode: 0,
   });

@@ -555,6 +555,8 @@ public:
     WriteBarrier<JSObject> originalExportsOfEvictedModule;
     // Patches are undone newest first: two modules can export one variable (`export *`), and each patch saved what it found there.
     unsigned patchOrder { 0 };
+    // Counts the mocks with a `requirePath` as they are registered. Of the mocks of the preloads that share such a path, the one laid last has it again when a test file ends.
+    unsigned layOrder { 0 };
     State state { State::NotCalled };
     // Moments (OnLoad::moduleMockSequenceNumber) of the factory call and of the import() that led to it. Kept after the factory has settled.
     uint32_t calledAt { 0 };
@@ -6055,19 +6057,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 #endif
     }
 
-    // The later mock of a path has it. A mock that stands under the path that require() resolves the name to ends as by jest.unmock() of it, and a preload's comes back
-    // when the test file ends. What build.module() put there is gone, as where a mock takes its own key from build.module().
-    if (requirePath) {
-        String path = requirePath->tryGetValue().data;
-        if (auto* standing = registeredModuleMock(globalObject, path)) {
-            if (standing->isFromPreload && !mock->isFromPreload)
-                globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, standing });
-            unmockModule(globalObject, standing, path);
-            RETURN_IF_EXCEPTION(scope, {});
-        } else if (auto* virtualModules = globalObject->onLoadPlugins.virtualModules)
-            virtualModules->remove(path);
-    }
-
 #if ENABLE(AOT)
     if (globalObject->vm().hasCompiledCode())
         JSC::AOT::evictLoadedModules(globalObject);
@@ -6593,6 +6582,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
         // That file is loaded here, as require() loads it, so this call patches the loaded module and require() of the name finds a mock that has settled.
         // The mock stands for the name while the file loads, as it does where a require() behind this call loads it. Then the table and the side map name what they named before,
         // unless the file has ended the mock or laid another: a file that throws leaves the earlier mock standing.
+        // A mock of the path that require() resolves the name to stands until this mock is registered, and answers require() of that path meanwhile: the file of that path is loaded as its original.
         JSValue madeOf = mock->factory.get();
         bool loadsRequireFileAtOnce = mock->requirePath && (!madeOf || madeOf.isString());
         JSC::Strong<JSC::JSObject> stoodUnderKey;
@@ -6735,6 +6725,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
 
     auto& plugins = globalObject->onLoadPlugins;
     if (isCurrent) {
+        if (requirePath) {
+            static std::atomic<unsigned> lays { 0 };
+            mock->layOrder = ++lays;
+        }
         plugins.addModuleMock(vm, specifier, mock);
 #if ENABLE(AOT)
         for (auto& factory : plugins.compiledMockFactories.span().subspan(plugins.stashedFactoryCount)) {
@@ -6834,6 +6828,23 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
             }
         }
 #endif
+        // The later mock of a path has it. A mock that stands under the path that require() resolves the name to ends as by jest.unmock() of it, and a preload's comes back
+        // when the test file ends. What build.module() put there is gone, as where a mock takes its own key from build.module().
+        // Not before here: a call that throws, or whose factory ends the mock, leaves what stood under that path. And the end of a mock evicts what imports its path, which
+        // in a package whose ES file imports its CommonJS file is the module under this mock's own key: a factory that has settled has patched it by now, and the eviction
+        // finds this mock registered.
+        if (requirePath) {
+            String path = requirePath->tryGetValue().data;
+            if (auto* standing = registeredModuleMock(globalObject, path)) {
+                if (standing->isFromPreload && !mock->isFromPreload)
+                    plugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, standing });
+                unmockModule(globalObject, standing, path);
+                RETURN_IF_EXCEPTION(scope, {});
+            } else
+                plugins.virtualModules->remove(path);
+            // addModuleMock() wrote nothing for the path while something stood under it.
+            letModuleMockAnswerRequirePath(globalObject, specifier, mock);
+        }
     }
 
     JSObject* returned = nullptr;
@@ -7423,6 +7434,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue resetModules(JSC::JSGlobalOb
             again->patchedNamespace.setMayBeNull(vm, again, mock->patchedNamespace.get());
             again->originalExportsOfEvictedModule.setMayBeNull(vm, again, mock->originalExportsOfEvictedModule.get());
             again->patchOrder = mock->patchOrder;
+            again->layOrder = mock->layOrder;
 #if ENABLE(AOT)
             again->lostCommonJSExportsToReset = true;
             for (auto& waiting : globalObject->onLoadPlugins.pendingCompiledMocks) {
@@ -7869,6 +7881,23 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
             overrideLoadedModuleExports(globalObject, mock, loaded);
         if (scope.exception()) [[unlikely]]
             (void)scope.tryClearException();
+    }
+
+    // The mocks of the test file have ended, and one of them may have had the path that require() resolves a name to which a preload mocks. The mocks of the preloads answer
+    // require() of their paths again: the one laid last where several share a path, whichever addModuleMock() wrote for above, and none while something stands under the path itself.
+    if (plugins.virtualModules) {
+        Vector<JSModuleMock*> inOrderOfLay;
+        for (auto& value : plugins.virtualModules->values()) {
+            auto* mock = dynamicDowncast<JSModuleMock>(value.get());
+            if (!mock || !mock->isFromPreload || !mock->requirePath)
+                continue;
+            size_t index = inOrderOfLay.size();
+            while (index && inOrderOfLay[index - 1]->layOrder > mock->layOrder)
+                --index;
+            inOrderOfLay.insert(index, mock);
+        }
+        for (auto* mock : inOrderOfLay)
+            letModuleMockAnswerRequirePath(globalObject, mock->specifier->tryGetValue().data, mock);
     }
 
     for (auto& module : plugins.moduleMocksBeingLoaded.keys())

@@ -4050,47 +4050,42 @@ impl TestCommand {
 
             'blk: {
                 // Check if bun_test is available and has tests to run
-                let Some(buntest_strong) = bun_test_root.clone_active_file() else {
+                let Some(buntest) = bun_test_root.clone_active_file() else {
                     debug_assert!(false);
                     break 'blk;
                 };
-                let buntest = buntest_strong.get();
-                buntest.is_loading = false;
+                buntest.is_loading.set(false);
                 // Skips this file's tests, but preload hooks due with this file still run.
                 if failed_to_load {
                     buntest.scope(bun_test::ScopeId::ROOT).failed.set(true);
                 }
 
                 // Automatically execute bun_test tests
-                if buntest.result_queue.readable_length() == 0 {
+                if !buntest.has_results() {
                     buntest.add_result(bun_test::ResultMsg::Start);
                 }
-                // `BunTestPtr` is `Rc<BunTestCell>`; clone (refcount++) so the
-                // local `buntest_strong` survives for the post-run drain loop and
-                // the explicit `drop` below.
-                bun_test::BunTest::run(&buntest_strong, vm.global())?;
+                bun_test::BunTest::run(&buntest, vm.global())?;
 
                 // Process event loop while bun_test tests are running
                 vm.event_loop().tick();
 
                 let mut prev_unhandled_count = vm.unhandled_error_counter.get();
-                while buntest.phase != bun_test::Phase::Done {
+                while buntest.phase.get() != bun_test::Phase::Done {
                     // `RunTestsTask` leaves results queued when it fires in an event loop nested under JS.
-                    if buntest.result_queue.readable_length() > 0 {
+                    if buntest.has_results() {
                         bun_test::BunTest::run_next_tick(
-                            &std::rc::Rc::downgrade(&buntest_strong),
+                            &std::rc::Rc::downgrade(&buntest),
                             global,
                             bun_test::ResultMsg::Start,
                         );
                     }
-                    if buntest.wants_wakeup {
-                        buntest.wants_wakeup = false;
+                    if buntest.wants_wakeup.take() {
                         vm.wakeup();
                     }
                     if buntest.timer.state.get() != crate::timer::EventLoopTimerState::ACTIVE
                         && !vm.has_work_left()
                     {
-                        let (what, waits_for) = Self::what_runner_waits_for(buntest);
+                        let (what, waits_for) = Self::what_runner_waits_for(&buntest);
                         let p = jsc::JSPromise::opaque_mut(Self::never_settled(
                             global, what, file_path,
                         ));
@@ -4098,14 +4093,14 @@ impl TestCommand {
                         vm.event_loop().tick();
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.
                         if waits_for.is_none()
-                            || waits_for == Self::what_runner_waits_for(buntest).1
+                            || waits_for == Self::what_runner_waits_for(&buntest).1
                         {
                             break;
                         }
                         continue;
                     }
                     vm.event_loop().auto_tick_asleep();
-                    if buntest.phase == bun_test::Phase::Done {
+                    if buntest.phase.get() == bun_test::Phase::Done {
                         break;
                     }
                     vm.event_loop().tick();
@@ -4138,8 +4133,7 @@ impl TestCommand {
                 if should_drain_event_loop() {
                     vm.on_before_exit();
                 }
-                (reporter.jest).with_snapshots(|snapshots| snapshots.remove_obsolete(buntest));
-                drop(buntest_strong);
+                (reporter.jest).with_snapshots(|snapshots| snapshots.remove_obsolete(&buntest));
             }
 
             if failed_to_load {

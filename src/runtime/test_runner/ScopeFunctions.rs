@@ -188,14 +188,14 @@ impl ScopeFunctions {
             return Err(global.throw(format_args!("{} cannot be called on {}", signature, self)));
         }
         let buntest = bun_test::clone_active_strong();
-        let collecting = buntest.as_ref().filter(|buntest| buntest.phase == bun_test::Phase::Collection);
+        let collecting = buntest.as_deref().filter(|buntest| buntest.phase.get() == bun_test::Phase::Collection);
         if is_override && buntest.is_some() && collecting.is_none() {
             return Err(global.throw(format_args!(
                 "Cannot call {} inside a test. Call it inside describe() instead.",
                 signature
             )));
         }
-        TestFixtures::define(global, arguments, signature, self.fixtures, collecting.map(|buntest| &***buntest), is_override)
+        TestFixtures::define(global, arguments, signature, self.fixtures, collecting, is_override)
     }
 
     fn hook(&self, global: &JSGlobalObject, tag: GenericHookTag) -> JsResult<JSValue> {
@@ -518,7 +518,7 @@ impl ScopeFunctions {
         let _g = group_log::begin();
 
         // only allow in collection phase
-        match bun_test.phase {
+        match bun_test.phase.get() {
             bun_test::Phase::Collection => {} // ok
             bun_test::Phase::Execution => {
                 return Err(global.throw(format_args!(

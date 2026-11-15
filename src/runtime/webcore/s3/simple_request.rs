@@ -56,7 +56,7 @@ pub(crate) enum S3DownloadResult<'a> {
     Failure(S3Error<'a>),
 }
 
-pub enum S3UploadResult<'a> {
+pub(crate) enum S3UploadResult<'a> {
     Success,
     /// failure error is not owned and need to be copied if used after this callback
     Failure(S3Error<'a>),
@@ -384,15 +384,14 @@ impl S3HttpSimpleTask {
             return this.error_with_body(callback, ErrorType::Failure);
         }
         debug_assert!(this.result.metadata.is_some());
-        let response = &this.result.metadata.as_ref().unwrap().response;
-        match (callback, response.status_code) {
+        let response = this.result.metadata.as_ref().unwrap();
+        match (callback, response.status_code()) {
             (Callback::Stat(callback), 200) => callback(S3StatResult::Success(S3StatSuccess {
-                etag: response.headers.get(b"etag").unwrap_or(b""),
-                last_modified: response.headers.get(b"last-modified").unwrap_or(b""),
-                content_type: response.headers.get(b"content-type").unwrap_or(b""),
+                etag: response.header(b"etag").unwrap_or(b""),
+                last_modified: response.header(b"last-modified").unwrap_or(b""),
+                content_type: response.header(b"content-type").unwrap_or(b""),
                 size: response
-                    .headers
-                    .get(b"content-length")
+                    .header(b"content-length")
                     .map(bun_http_types::parse_content_length)
                     .unwrap_or(0),
             })),
@@ -441,7 +440,7 @@ impl S3HttpSimpleTask {
                 let parsed = xml_response::parse_error(&this.response_buffer.list);
                 if let Some(err) = this.contained_error(status, &parsed) {
                     UploadPart::on_part_response(&upload, index, S3PartResult::Failure(err))
-                } else if let Some(etag) = response.headers.get(b"etag") {
+                } else if let Some(etag) = response.header(b"etag") {
                     UploadPart::on_part_response(&upload, index, S3PartResult::Etag(etag))
                 } else {
                     this.error_with_body(Callback::Part(upload, index), ErrorType::Failure)

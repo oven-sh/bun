@@ -4,8 +4,7 @@
 //!
 //! `Worker::create` builds the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the self-referential `macro_context` is wired by
-//! `Transpiler::wire_after_move` once the value is at its final address.
+//! bitwise struct copy).
 
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -468,6 +467,7 @@ pub struct WorkerData {
     // per-worker `options`/`resolver.caches`/etc. without touching the parent.
     pub(crate) transpiler: Transpiler<'static>,
     pub(crate) other_transpiler: Option<Box<Transpiler<'static>>>,
+    pub(crate) macro_load_states: js_ast::Macro::MacroLoadStates,
 }
 
 impl Worker {
@@ -564,14 +564,12 @@ impl Worker {
         // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
-        let data = self.data.insert(WorkerData {
+        self.data = Some(WorkerData {
             log,
             transpiler: Transpiler::for_worker(self.ctx.transpiler(), arena_ref, log),
             other_transpiler: None,
+            macro_load_states: Default::default(),
         });
-        // Wire the self-referential `macro_context` now that `transpiler`
-        // is at its final address inside `WorkerData`.
-        data.transpiler.wire_after_move();
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
@@ -589,10 +587,9 @@ impl Worker {
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
                     unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
-                let mut boxed = Box::new(Transpiler::for_worker(client, arena_ref, data.log));
-                // Wire self-refs after the value reached its final (heap) address.
-                boxed.wire_after_move();
-                data.other_transpiler = Some(boxed);
+                data.other_transpiler = Some(Box::new(Transpiler::for_worker(
+                    client, arena_ref, data.log,
+                )));
             }
             // Just populated above (or on a prior call) — `expect` is
             // unreachable. No `unsafe` needed for a set-once `Option<Box<_>>`.

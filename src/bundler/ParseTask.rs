@@ -37,7 +37,7 @@ use crate::bundle_v2::{self as bundler, BundleV2};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
-use crate::transpiler::Transpiler;
+use crate::transpiler::{MacroJSCtx, Transpiler};
 use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
@@ -810,7 +810,7 @@ pub mod parse_worker {
     fn get_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions<'static>,
+        mut opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
         source: &'static Source<'static>,
@@ -829,7 +829,6 @@ pub mod parse_worker {
         match loader {
             Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
                 let _trace = perf::trace("Bundler.ParseJS");
-                // `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
                 // The empty-AST fallback needs the same options; since `opts`
                 // moves into `.parse()`,
                 // snapshot a faithful field-by-field copy via
@@ -837,6 +836,8 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
+                // Borrowed here: `topts` is a `&mut` that ends earlier borrows of the options.
+                opts.macro_remap = Some(&topts.macro_remap);
                 return if let Some(res) =
                     (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
                 {
@@ -2423,17 +2424,13 @@ pub mod parse_worker {
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
-        // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
-        // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
-        // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
-        // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` is
-        // sound — caller (`BundleV2::init`) guarantees
-        // it is set before any ParseTask runs.
-        // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
-        // `'static` erasure: the context outlives the parse.
+        // SAFETY: the worker owns `transpiler` and the table and outlives the parse; a macro cannot reach the worker.
         opts.macro_context = unsafe {
-            Some(&mut *std::ptr::from_mut(
-                (*transpiler).macro_context.as_mut().unwrap(),
+            let data = (*worker_raw).data.as_ref();
+            Some(Transpiler::macro_context(
+                transpiler,
+                &data.expect("Worker.data set in create()").macro_load_states,
+                MacroJSCtx::ZERO,
             ))
         };
         opts.package_version = task.package_version.slice();

@@ -22,10 +22,10 @@ use crate::diagnostics::CompilerDiagnostic;
 use crate::hir::environment::Environment;
 use crate::hir::visitors::{ScopeBlockInfo, ScopeBlockTraversal};
 use crate::hir::{
-    AstAlloc, BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
-    GotoVariant, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind, InstructionValue,
-    MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral, ReactFunctionType,
-    ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
+    BasicBlock, BlockId, DeclarationId, DependencyPathEntry, EvaluationOrder, FunctionId,
+    GotoVariant, HirAlloc, HirFunction, HirVec, IdentifierId, Instruction, InstructionKind,
+    InstructionValue, MutableRange, ParamPattern, Phi, Place, PlaceOrSpread, PropertyLiteral,
+    ReactFunctionType, ReactiveScopeDependency, ScopeId, Terminal, Type, hir_vec, visitors,
 };
 use crate::optimization::dead_code_elimination::find_semantic_only_caught_instructions;
 
@@ -1298,7 +1298,7 @@ fn collect_non_nulls_in_blocks(
                                 let sub_dep = ReactiveScopeDependency {
                                     identifier: val.identifier,
                                     reactive: val.reactive,
-                                    path: AstAlloc::vec_from_slice(&dep.path[..i]),
+                                    path: HirAlloc::vec_from_slice(&dep.path[..i]),
                                     loc: dep.loc,
                                 };
                                 let node_idx = registry.get_or_create_property(&sub_dep);
@@ -1812,7 +1812,7 @@ fn collect_minimal_deps_in_subtree(
         results.push(ReactiveScopeDependency {
             identifier: root_id,
             reactive,
-            path: AstAlloc::vec_from_slice(path),
+            path: HirAlloc::vec_from_slice(path),
             loc: node.loc,
         });
     } else {

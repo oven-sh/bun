@@ -1,11 +1,9 @@
-use bun_collections::VecExt;
-
 use crate::base::Ref;
 use crate::binding::Binding as BindingNodeIndex;
 use crate::expr::Expr as ExprNodeIndex;
 use crate::stmt::Stmt;
 use crate::ts as TypeScript;
-use crate::{ExprData, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
+use crate::{AstVec, ExprData, LocRef, StmtNodeList, StoreSlice, StoreStr, flags};
 
 /// Downstream crates address the flag enum via `G::FnFlags::IsExport` etc.;
 /// re-export the enum + set type here.
@@ -22,7 +20,7 @@ pub struct Decl {
 }
 
 // Inherent assoc types are nightly; free alias.
-pub type DeclList = Vec<Decl, bun_alloc::AstAlloc>;
+pub type DeclList = AstVec<Decl>;
 
 pub struct NamespaceAlias {
     pub namespace_ref: Ref,
@@ -139,7 +137,7 @@ pub(crate) fn deep_clone_decorators(
 ) -> crate::Result<StoreSlice<ExprNodeIndex>> {
     let mut clones = bun_alloc::ArenaVec::with_capacity_in(decorators.len(), bump);
     for decorator in decorators {
-        clones.push(decorator.deep_clone_no_detach(bump, stack_check)?);
+        clones.push(decorator.deep_clone_with_check(bump, stack_check)?);
     }
     Ok(clones.into())
 }
@@ -151,7 +149,7 @@ pub struct Comment {
 }
 
 pub struct ClassStaticBlock {
-    pub stmts: Vec<Stmt, bun_alloc::AstAlloc>,
+    pub stmts: AstVec<Stmt>,
     pub loc: crate::Loc,
 }
 
@@ -183,7 +181,7 @@ pub struct Property {
     pub ts_metadata: TypeScript::Metadata,
 }
 
-pub type PropertyList = Vec<Property, bun_alloc::AstAlloc>;
+pub type PropertyList = AstVec<Property>;
 
 impl Default for Property {
     fn default() -> Self {
@@ -227,12 +225,12 @@ impl Property {
         if let Some(csb_ref) = self.class_static_block_ref() {
             class_static_block = Some(bump.alloc_node(ClassStaticBlock {
                 loc: csb_ref.loc,
-                stmts: bun_alloc::AstAlloc::vec_from_slice(csb_ref.stmts.slice()),
+                stmts: AstVec::from_slice_in(csb_ref.stmts.slice(), bump),
             }));
         }
         Ok(Property {
             initializer: match self.initializer {
-                Some(init) => Some(init.deep_clone_no_detach(bump, stack_check)?),
+                Some(init) => Some(init.deep_clone_with_check(bump, stack_check)?),
                 None => None,
             },
             kind: self.kind,
@@ -240,11 +238,11 @@ impl Property {
             class_static_block,
             ts_decorators: deep_clone_decorators(&self.ts_decorators, bump, stack_check)?,
             key: match self.key {
-                Some(key) => Some(key.deep_clone_no_detach(bump, stack_check)?),
+                Some(key) => Some(key.deep_clone_with_check(bump, stack_check)?),
                 None => None,
             },
             value: match self.value {
-                Some(value) => Some(value.deep_clone_no_detach(bump, stack_check)?),
+                Some(value) => Some(value.deep_clone_with_check(bump, stack_check)?),
                 None => None,
             },
             ts_metadata: self.ts_metadata,
@@ -274,11 +272,11 @@ pub struct FnBody {
 
 impl FnBody {
     pub fn init_return_expr(
-        bump: &bun_alloc::Arena,
+        bump: &crate::AstArena,
         expr: ExprNodeIndex,
     ) -> core::result::Result<FnBody, bun_alloc::AllocError> {
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
-            Stmt::alloc(crate::s::Return { value: Some(expr) }, expr.loc)
+            Stmt::allocate(bump, crate::s::Return { value: Some(expr) }, expr.loc)
         });
         Ok(FnBody {
             stmts: StoreSlice::new_mut(stmts),
@@ -376,7 +374,7 @@ impl Arg {
             ts_decorators: deep_clone_decorators(&self.ts_decorators, bump, stack_check)?,
             binding: self.binding,
             default: match self.default {
-                Some(d) => Some(d.deep_clone_no_detach(bump, stack_check)?),
+                Some(d) => Some(d.deep_clone_with_check(bump, stack_check)?),
                 None => None,
             },
             is_typescript_ctor_field: self.is_typescript_ctor_field,

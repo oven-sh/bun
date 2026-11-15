@@ -33,9 +33,7 @@ pub struct UpdateRequest {
     pub(crate) package_id: PackageID,
     pub(crate) is_aliased: bool,
     pub failed: bool,
-    /// This must be cloned to handle when the AST store resets.
-    /// ARENA-owned (AST `Expr.Data` store);
-    /// only valid while the store that allocated it is alive.
+    /// Points into the package.json AST being edited, which lives as long as the `PackageManager`.
     pub(crate) e_string: Option<bun_ast::StoreRef<js_ast::E::String>>,
 }
 

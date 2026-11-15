@@ -365,7 +365,7 @@ strum = { version = "0.26", features = ["derive"] }
 # "cannot specialize on trait `Copy`". And we can't enable `allocator-api2`'s
 # `nightly` re-export either — that makes hashbrown name `core::alloc::Allocator`
 # without `#![feature(allocator_api)]`. So: use the polyfill trait, and bridge
-# `bun_alloc::{AstAlloc, DefaultAlloc}` to it (see `bun_alloc/hashbrown_bridge.rs`).
+# `bun_alloc::DefaultAlloc` to it (see `bun_alloc/hashbrown_bridge.rs`).
 hashbrown = { version = "0.15", default-features = false, features = ["inline-more", "allocator-api2"] }
 allocator-api2 = { version = "0.2", default-features = false, features = ["alloc"] }
 bstr = { version = "1", default-features = false, features = ["alloc"] }

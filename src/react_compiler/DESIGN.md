@@ -104,17 +104,16 @@ only for diagnostic span width).
 | upstream emits                             | Bun port emits                                                                     |
 | ------------------------------------------ | ---------------------------------------------------------------------------------- |
 | `Expression::Identifier(Identifier{name})` | `Expr::init_identifier(ref_, loc)` — `ref_` from `Builder.declare_temporary(name)` |
-| `Statement::VariableDeclaration`           | `Stmt::alloc(S::Local { kind, decls, .. }, loc)`                                   |
-| `Statement::ExpressionStatement`           | `Stmt::alloc(S::SExpr { value, .. }, loc)`                                         |
+| `Statement::VariableDeclaration`           | `Stmt::allocate(arena, S::Local { kind, decls, .. }, loc)`                         |
+| `Statement::ExpressionStatement`           | `Stmt::allocate(arena, S::SExpr { value, .. }, loc)`                               |
 | `BlockStatement { body }`                  | `G::FnBody { stmts: StoreSlice<Stmt>, loc }`                                       |
-| `Expression::CallExpression`               | `Expr::init(E::Call { target, args, .. }, loc)`                                    |
-| `Expression::ArrayExpression`              | `Expr::init(E::Array { items, .. }, loc)`                                          |
-| `Expression::JSXElement`                   | `Expr::init(E::JSXElement { tag, properties, children, .. }, loc)`                 |
+| `Expression::CallExpression`               | `Expr::allocate(arena, E::Call { target, args, .. }, loc)`                         |
+| `Expression::ArrayExpression`              | `Expr::allocate(arena, E::Array { items, .. }, loc)`                               |
+| `Expression::JSXElement`                   | `Expr::allocate(arena, E::JSXElement { tag, properties, children, .. }, loc)`      |
 | `PatternLike::ArrayPattern`                | `Binding::alloc(arena, b::Array { items, .. }, loc)`                               |
 
-Node allocation uses the thread-local store (`Expr::init`, `Stmt::alloc`) so
-nodes land in the parser's arena. `Binding` and slice/string copies need an
-explicit `&Arena` (the `Codegen` context carries one).
+Nodes are allocated in the parser's `AstArena`, which the `Codegen` context
+carries.
 
 New symbols (`$`, `t0`, `c`, `_c`) are minted via the `Host` trait
 implemented by the parser's `P`; the import of `react/compiler-runtime` is

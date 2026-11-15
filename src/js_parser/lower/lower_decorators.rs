@@ -2,13 +2,13 @@
 
 use bun_alloc::ArenaVecExt as _;
 
-use bun_collections::{HashMap, VecExt};
+use bun_collections::HashMap;
 
 use crate::lexer as js_lexer;
 use crate::p::{BinaryExpressionSimplifyVisitor, P};
 use crate::parser::{ARGUMENTS_STR as arguments_str, Ref, TempRef};
 use bun_ast::g::{DeclList, Property, PropertyKind};
-use bun_ast::{self as js_ast, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
+use bun_ast::{self as js_ast, AstVec, B, E, Expr, ExprNodeList, Flags, G, S, Stmt};
 
 type BumpVec<'a, T> = bun_alloc::ArenaVec<'a, T>;
 
@@ -149,20 +149,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn call_rt(&mut self, l: bun_ast::Loc, name: &'static [u8], args: &[Expr]) -> Expr {
         let bump = self.arena;
         let a = bump.alloc_slice_copy(args);
-        let list = ExprNodeList::from_arena_slice(a);
+        let list = ExprNodeList::from_slice_in(a, self.ast_arena);
         self.call_runtime(l, name, list)
     }
 
     /// newSymbol + scope.generated.append in one call.
     fn new_sym(&mut self, kind: js_ast::symbol::Kind, name: &'a [u8]) -> Ref {
         let ref_ = self.new_symbol(kind, name);
-        VecExt::append(&mut self.current_scope_mut().generated, ref_);
+        self.current_scope.generated.push(self.ast_arena, ref_);
         ref_
     }
 
     /// recordUsage + Expr.assign.
     fn assign_to(&mut self, ref_: Ref, value: Expr, l: bun_ast::Loc) -> Expr {
-        Expr::assign(self.use_ref(ref_, l), value)
+        Expr::assign(self.ast_arena, self.use_ref(ref_, l), value)
     }
 
     /// `new WeakMap` / `new WeakSet`
@@ -172,7 +172,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.new_expr(
             E::New {
                 target,
-                args: bun_alloc::AstAlloc::vec(),
+                args: AstVec::new(),
                 close_parens_loc: l,
                 ..Default::default()
             },
@@ -183,14 +183,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     /// `static { a; b; }`
     fn make_static_block(&mut self, exprs: &[Expr], l: bun_ast::Loc) -> Property {
         let stmts = self.effect_stmts(exprs, l);
-        let stmts_list = bun_alloc::AstVec::<Stmt>::from_arena_slice(stmts.into_bump_slice_mut());
-        let sb = self.arena.alloc(G::ClassStaticBlock {
+        let stmts_list = AstVec::from_slice_in(&stmts, self.ast_arena);
+        let sb = self.ast_arena.alloc_node(G::ClassStaticBlock {
             loc: l,
             stmts: stmts_list,
         });
         Property {
             kind: PropertyKind::ClassStaticBlock,
-            class_static_block: Some(js_ast::StoreRef::from_bump(sb)),
+            class_static_block: Some(sb),
             ..Default::default()
         }
     }
@@ -386,7 +386,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                 new_args.push(*arg);
                             }
                             e.target = call_target;
-                            e.args = ExprNodeList::from_bump_vec(new_args);
+                            e.args = ExprNodeList::from_slice_in(&new_args, self.ast_arena);
                             return;
                         }
                     }
@@ -559,7 +559,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.temp_refs_to_declare.truncate(baseline);
         Some(self.s(
             S::Local {
-                decls: DeclList::from_bump_vec(capture_decls),
+                decls: DeclList::from_slice_in(&capture_decls, self.ast_arena),
                 ..Default::default()
             },
             loc,
@@ -790,12 +790,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             return expr;
         };
         let decorated = self.use_ref(decorators.decorated, expr.loc);
-        let value = Expr::join_all_with_comma(&[
-            decorators.evaluate,
-            expr,
-            decorators.run_extra_initializers,
-            decorated,
-        ]);
+        let value = Expr::join_all_with_comma(
+            self.ast_arena,
+            &[
+                decorators.evaluate,
+                expr,
+                decorators.run_extra_initializers,
+                decorated,
+            ],
+        );
         if has_own_stmt_list || !class.inner_class_ref.is_symbol() {
             return value;
         }
@@ -963,7 +966,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let dec = p.declared_temp(b"_dec");
                 let list = p.new_expr(
                     E::Array {
-                        items: ExprNodeList::from_arena_slice(&decorators),
+                        items: ExprNodeList::from_slice_in(&decorators, p.ast_arena),
                         ..Default::default()
                     },
                     loc,
@@ -1180,7 +1183,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if !is_method && !is_static {
                 if !instance_effects.is_empty() {
                     instance_effects.push(p.hosted_initializer(prop.initializer, field_name, loc));
-                    prop.initializer = Some(Expr::join_all_with_comma(&instance_effects));
+                    prop.initializer =
+                        Some(Expr::join_all_with_comma(p.ast_arena, &instance_effects));
                     instance_effects.clear();
                 }
                 first_instance_host.get_or_insert((members.len(), field_name));
@@ -1209,7 +1213,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 flags.insert(Flags::Property::IsStatic);
                 flags.insert(Flags::Property::IsComputed);
                 members.push(Property {
-                    key: Some(Expr::join_all_with_comma(&key_effects)),
+                    key: Some(Expr::join_all_with_comma(p.ast_arena, &key_effects)),
                     value: Some(p.new_expr(
                         E::Function {
                             func: G::Fn::default(),
@@ -1260,7 +1264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 let dec = p.declared_temp(b"_dec");
                 let list = p.new_expr(
                     E::Array {
-                        items: ExprNodeList::from_arena_slice(&class_decorators),
+                        items: ExprNodeList::from_slice_in(&class_decorators, p.ast_arena),
                         ..Default::default()
                     },
                     loc,
@@ -1313,7 +1317,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             if !instance_prologue.is_empty() {
                 let host = &mut members[host];
                 instance_prologue.push(p.hosted_initializer(host.initializer, field_name, loc));
-                host.initializer = Some(Expr::join_all_with_comma(&instance_prologue));
+                host.initializer = Some(Expr::join_all_with_comma(p.ast_arena, &instance_prologue));
             }
         } else {
             constructor_effects.extend_from_slice(&instance_prologue);
@@ -1362,10 +1366,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             p.s(
                 S::Local {
                     kind: js_ast::s::Kind::KLet,
-                    decls: DeclList::init_one(G::Decl {
-                        binding,
-                        value: None,
-                    }),
+                    decls: DeclList::from_slice_in(
+                        &[G::Decl {
+                            binding,
+                            value: None,
+                        }],
+                        p.ast_arena,
+                    ),
                     ..Default::default()
                 },
                 loc,
@@ -1404,7 +1411,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         args.push(self.use_ref(dec, loc));
         args.push(target);
         args.extend(extra);
-        self.call_runtime(loc, b"__decorateElement", ExprNodeList::from_bump_vec(args))
+        self.call_runtime(
+            loc,
+            b"__decorateElement",
+            ExprNodeList::from_slice_in(&args, self.ast_arena),
+        )
     }
 
     /// `__runInitializers(_init, flags, target)`
@@ -1438,14 +1449,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         if !is_constant && reuse_key {
             let key_ref = self.declared_temp(b"_computedKey");
             effects.push(self.assign_to(key_ref, key, key.loc));
-            prop.key = Some(Expr::join_all_with_comma(effects));
+            prop.key = Some(Expr::join_all_with_comma(self.ast_arena, effects));
             effects.clear();
             let key_temp = self.use_ref(key_ref, key.loc);
             return (key_temp, Some(key_temp));
         }
         if !effects.is_empty() {
             effects.push(self.key_as_value(prop, key));
-            prop.key = Some(Expr::join_all_with_comma(effects));
+            prop.key = Some(Expr::join_all_with_comma(self.ast_arena, effects));
             prop.flags.insert(Flags::Property::IsComputed);
             effects.clear();
         }
@@ -1496,7 +1507,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             parts.extend_from_slice(effects);
             parts.push(self.use_ref(key_ref, key.loc));
         }
-        prop.key = Some(Expr::join_all_with_comma(&parts));
+        prop.key = Some(Expr::join_all_with_comma(self.ast_arena, &parts));
         prop.flags.insert(Flags::Property::IsComputed);
     }
 
@@ -1524,9 +1535,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 {
                     flags.insert(Flags::Property::IsComputed);
                 }
-                let mut properties = bun_alloc::AstAlloc::vec();
-                VecExt::append(
-                    &mut properties,
+                let mut properties = AstVec::new();
+                properties.push(
+                    self.ast_arena,
                     Property {
                         key: Some(key),
                         value: Some(value),
@@ -1570,7 +1581,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         args.push(self.new_expr(E::Number::new(((4 + 2 * index) << 1) as f64), loc));
         args.push(self.new_expr(E::This {}, loc));
         args.extend(initializer);
-        let value = self.call_runtime(loc, b"__runInitializers", ExprNodeList::from_bump_vec(args));
+        let value = self.call_runtime(
+            loc,
+            b"__runInitializers",
+            ExprNodeList::from_slice_in(&args, self.ast_arena),
+        );
         let this = self.new_expr(E::This {}, loc);
         let extra = self.run_initializers(init_ref, (((5 + 2 * index) << 1) | 1) as f64, this, loc);
         DecoratedInitializer { value, extra }
@@ -1684,7 +1699,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             let call = self.new_expr(
                 E::Call {
                     target,
-                    args: ExprNodeList::init_one(spread),
+                    args: ExprNodeList::from_slice_in(&[spread], self.ast_arena),
                     ..Default::default()
                 },
                 loc,

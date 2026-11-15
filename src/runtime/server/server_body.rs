@@ -492,7 +492,7 @@ pub(crate) mod BunInfo {
     use bun_analytics::{OperatingSystem, Platform};
     use bun_ast::Loc;
     use bun_ast::e::EString;
-    use bun_ast::{AstArena, E, Expr, G};
+    use bun_ast::{AstArena, AstVec, E, Expr, G};
     use bun_core::Environment::Architecture;
     use bun_core::Global;
 
@@ -541,15 +541,18 @@ pub(crate) mod BunInfo {
         };
 
         // `JSON.toAST(allocator, BunInfo, info)` — hand-expanded:
-        let platform_props = bun_alloc::AstAlloc::vec_from_iter([
-            prop(arena, b"os", str_expr(arena, os_tag_name(info.platform.os))),
-            prop(
-                arena,
-                b"arch",
-                str_expr(arena, arch_tag_name(bun_core::Environment::ARCH)),
-            ),
-            prop(arena, b"version", str_expr(arena, info.platform.version)),
-        ]);
+        let platform_props = AstVec::from_iter_in(
+            [
+                prop(arena, b"os", str_expr(arena, os_tag_name(info.platform.os))),
+                prop(
+                    arena,
+                    b"arch",
+                    str_expr(arena, arch_tag_name(bun_core::Environment::ARCH)),
+                ),
+                prop(arena, b"version", str_expr(arena, info.platform.version)),
+            ],
+            arena,
+        );
         let platform_expr = Expr::allocate(
             arena,
             E::Object {
@@ -560,10 +563,13 @@ pub(crate) mod BunInfo {
             Loc::EMPTY,
         );
 
-        let root_props = bun_alloc::AstAlloc::vec_from_iter([
-            prop(arena, b"bun_version", str_expr(arena, info.bun_version)),
-            prop(arena, b"platform", platform_expr),
-        ]);
+        let root_props = AstVec::from_iter_in(
+            [
+                prop(arena, b"bun_version", str_expr(arena, info.bun_version)),
+                prop(arena, b"platform", platform_expr),
+            ],
+            arena,
+        );
         Ok(Expr::allocate(
             arena,
             E::Object {

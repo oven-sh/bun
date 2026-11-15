@@ -1134,10 +1134,8 @@ impl JSBundleCompletionTask {
 
     fn run(mut self: Box<Self>, ticket: jsc::Ticket, generation: bun_core::Generation) {
         let ast_arena = AstArena::new();
-        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::default();
         // Declared here so that it drops after `ticket.post`.
         let mut transpiler = None;
-        let _ast_scope = ast_memory_store.enter();
 
         self.result = self.build(&mut transpiler, &ast_arena, &ticket, generation);
 

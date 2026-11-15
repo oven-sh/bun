@@ -1,10 +1,6 @@
-use crate::{Loc, StoreSlice};
-use bun_alloc::AstAlloc;
-use bun_collections::StringArrayHashMap;
-use bun_collections::array_hash_map::StringContext;
-
 use crate::base::Ref;
 use crate::e::String as EString;
+use crate::{AstStringArrayHashMap, Loc, StoreSlice};
 
 /// This is for TypeScript "enum" and "namespace" blocks. Each block can
 /// potentially be instantiated multiple times. The exported members of each
@@ -37,7 +33,7 @@ use crate::e::String as EString;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// The `EnumString` payload is a `StoreRef<EString>` (AST-store back-pointer)
+// The `EnumString` payload is a `StoreRef<EString>` (AST back-pointer)
 // rather than an arena-borrowed reference, matching the rest of the AST crate.
 pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
@@ -83,7 +79,7 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    pub property_accesses: StringArrayHashMap<Ref, StringContext, AstAlloc>,
+    pub property_accesses: AstStringArrayHashMap<Ref>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -113,7 +109,7 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember, StringContext, AstAlloc>;
+pub type TSNamespaceMemberMap = AstStringArrayHashMap<TSNamespaceMember>;
 
 pub struct TSNamespaceMember {
     pub loc: Loc,
@@ -130,7 +126,7 @@ pub enum Data {
     /// "enum ns { it }"
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
-    // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store).
+    // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload.
     EnumString(crate::nodes::StoreRef<EString>),
     /// "enum ns { it = something() }"
     EnumProperty,

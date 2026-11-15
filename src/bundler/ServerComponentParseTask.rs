@@ -4,13 +4,11 @@
 
 use std::fmt::Write as _;
 
-use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
-use bun_collections::VecExt;
+use bun_alloc::AllocError as OOM;
 
-use bun_ast::{Loc, Log, Source};
+use bun_ast::{AstArena, AstVec, Loc, Log, Source};
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
-use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
@@ -45,7 +43,7 @@ pub enum Data<'a> {
 
 pub struct ReferenceProxy<'a> {
     pub(crate) other_source: Source<'a>,
-    pub(crate) named_exports: NamedExports,
+    pub(crate) export_names: AstVec<bun_ast::StoreStr>,
 }
 
 pub struct ClientEntryWrapper {
@@ -79,7 +77,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     let worker = Worker::get(ctx.get());
     let mut log = Log::new();
 
-    let arena: &Arena = worker.arena();
+    let arena: &AstArena = worker.arena();
 
     let value = match task_callback(&mut task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
@@ -105,7 +103,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
 fn task_callback(
     task: &mut ServerComponentParseTask<'static>,
     log: &mut Log,
-    bump: &'static Arena,
+    bump: &'static AstArena,
 ) -> Result<Success<'static>, OOM> {
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
     let ctx: &BundleV2 = task
@@ -197,8 +195,6 @@ fn generate_client_reference_proxy(
         // config must be non-null to enter this function
         .unwrap_or_else(|| unreachable!());
 
-    let client_named_exports = &data.named_exports;
-
     // `add_import_stmt` stores the slices raw in `ImportRecord`/`ClauseItem`s;
     // the framework config outlives the bundle pass. Route through `StoreStr`
     // so the lifetime erasure goes through one audited unsafe.
@@ -232,7 +228,7 @@ fn generate_client_reference_proxy(
         },
     ));
 
-    for key in client_named_exports.keys() {
+    for key in &data.export_names {
         let key: &[u8] = b.bump.alloc_slice_copy(key);
         let is_default = key == b"default";
 
@@ -276,7 +272,10 @@ fn generate_client_reference_proxy(
                 ref_: error_ref,
                 ..Default::default()
             }),
-            args: bun_ast::ExprNodeList::from_slice(&[b.new_expr(E::String::init(err_msg_string))]),
+            args: bun_ast::ExprNodeList::from_slice_in(
+                &[b.new_expr(E::String::init(err_msg_string))],
+                b.bump,
+            ),
             close_parens_loc: Loc::EMPTY,
             ..Default::default()
         });
@@ -290,17 +289,20 @@ fn generate_client_reference_proxy(
         let arrow_body_stmts: &mut [Stmt] = b.bump.alloc_slice_copy(&[throw_stmt]);
         let value = b.new_expr(E::Call {
             target: register_client_reference,
-            args: ExprNodeList::from_slice(&[
-                b.new_expr(E::Arrow {
-                    body: G::FnBody {
-                        stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
-                        loc: Loc::EMPTY,
-                    },
-                    ..Default::default()
-                }),
-                module_path,
-                b.new_expr(E::String::init(key)),
-            ]),
+            args: ExprNodeList::from_slice_in(
+                &[
+                    b.new_expr(E::Arrow {
+                        body: G::FnBody {
+                            stmts: bun_ast::StoreSlice::new_mut(arrow_body_stmts),
+                            loc: Loc::EMPTY,
+                        },
+                        ..Default::default()
+                    }),
+                    module_path,
+                    b.new_expr(E::String::init(key)),
+                ],
+                b.bump,
+            ),
             ..Default::default()
         });
 
@@ -318,14 +320,17 @@ fn generate_client_reference_proxy(
             // export const Component = registerClientReference(...);
             let export_ref = b.new_symbol(symbol::Kind::Other, key)?;
             b.append_stmt(S::Local {
-                decls: G::DeclList::from_slice(&[G::Decl {
-                    binding: Binding::alloc(
-                        b.bump,
-                        B::Identifier { r#ref: export_ref },
-                        Loc::EMPTY,
-                    ),
-                    value: Some(value),
-                }]),
+                decls: G::DeclList::from_slice_in(
+                    &[G::Decl {
+                        binding: Binding::alloc(
+                            b.bump,
+                            B::Identifier { r#ref: export_ref },
+                            Loc::EMPTY,
+                        ),
+                        value: Some(value),
+                    }],
+                    b.bump,
+                ),
                 is_export: true,
                 kind: S::Kind::KConst,
                 ..Default::default()

@@ -19,11 +19,11 @@ use crate::collections::FxHashSet as HashSet;
 
 use crate::collections::IdMap;
 use crate::collections::sort_slice_by;
-use bun_alloc::{Arena, ArenaVec, AstAlloc, AstVec};
+use bun_alloc::ArenaVec;
 use bun_ast::{
-    self as ast, ArrayBinding, Binding, Case, Catch, E, Expr, ExprData, ExprNodeList, Finally, G,
-    Loc, LocRef, OpCode, OptionalChain, Ref, S, Stmt, StmtData, StmtNodeList, StoreSlice, StoreStr,
-    b, flags,
+    self as ast, ArrayBinding, AstArena, AstVec, Binding, Case, Catch, E, Expr, ExprData,
+    ExprNodeList, Finally, G, Loc, LocRef, OpCode, OptionalChain, Ref, S, Stmt, StmtData,
+    StmtNodeList, StoreSlice, StoreStr, b, flags,
 };
 
 use crate::diagnostics::{
@@ -107,7 +107,7 @@ impl WellKnown {
 /// component.
 pub(crate) struct Codegen<'h> {
     pub(crate) host: &'h mut dyn Host,
-    pub(crate) arena: &'h Arena,
+    pub(crate) arena: &'h AstArena,
     id_to_ref: IdMap<IdentifierId, Ref>,
     well_known: [Option<Ref>; WellKnown::COUNT],
     name_to_ref: HashMap<StoreStr, Ref>,
@@ -115,7 +115,7 @@ pub(crate) struct Codegen<'h> {
 }
 
 impl<'h> Codegen<'h> {
-    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h Arena) -> Self {
+    pub(crate) fn new(host: &'h mut dyn Host, arena: &'h AstArena) -> Self {
         Codegen {
             host,
             arena,
@@ -243,7 +243,13 @@ pub(crate) fn codegen_function(
         if cx.env.output_mode == crate::hir::environment::OutputMode::Client {
             let guard_ref = cx.cg.ref_for_name(hook_guard_name);
             let body_stmts = std::mem::take(&mut compiled.body);
-            compiled.body = vec![create_function_body_hook_guard(guard_ref, body_stmts, 0, 1)];
+            compiled.body = vec![create_function_body_hook_guard(
+                cx.cg.arena,
+                guard_ref,
+                body_stmts,
+                0,
+                1,
+            )];
         }
     }
 
@@ -261,13 +267,14 @@ pub(crate) fn codegen_function(
         // Synthesized AST is never re-visited by the parser's `EIdentifier→EImportIdentifier`
         // promotion, so emit `EImportIdentifier` directly.
         let use_memo_cache = Expr::init(E::ImportIdentifier::new(use_memo_cache_ref, true), loc);
-        let call = Expr::init(
+        let call = Expr::allocate(
+            cx.cg.arena,
             E::Call {
                 target: use_memo_cache,
-                args: AstAlloc::vec_from_iter([Expr::init(
-                    E::Number::new(cache_count as f64),
-                    loc,
-                )]),
+                args: AstVec::from_iter_in(
+                    [Expr::init(E::Number::new(cache_count as f64), loc)],
+                    cx.cg.arena,
+                ),
                 ..Default::default()
             },
             loc,
@@ -275,13 +282,21 @@ pub(crate) fn codegen_function(
         let cache_ref = cx
             .cg
             .well_known(WellKnown::MemoCache, cache_name.as_bytes());
-        preface.push(Stmt::alloc(
+        preface.push(Stmt::allocate(
+            cx.cg.arena,
             S::Local {
                 kind: S::Kind::KLet,
-                decls: decl_list([G::Decl {
-                    binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: cache_ref }, loc),
-                    value: Some(call),
-                }]),
+                decls: decl_list(
+                    cx.cg.arena,
+                    [G::Decl {
+                        binding: Binding::alloc(
+                            cx.cg.arena,
+                            b::Identifier { r#ref: cache_ref },
+                            loc,
+                        ),
+                        value: Some(call),
+                    }],
+                ),
                 ..Default::default()
             },
             loc,
@@ -299,7 +314,9 @@ pub(crate) fn codegen_function(
     if let Some(instrument_config) = cx.env.config.enable_emit_instrument_forget.as_ref() {
         if func.id.is_some() && cx.env.output_mode == crate::hir::environment::OutputMode::Client {
             let instrument_fn_local = cx.env.instrument_fn_name.unwrap_or_else(|| {
-                store_str(instrument_config.fn_.import_specifier_name.as_bytes())
+                cx.cg
+                    .arena
+                    .dupe_str(instrument_config.fn_.import_specifier_name.as_bytes())
             });
             let target = cx.cg.ident_expr(instrument_fn_local, Loc::EMPTY);
 
@@ -307,13 +324,15 @@ pub(crate) fn codegen_function(
                 .env
                 .instrument_gating_name
                 .map(|name| cx.cg.ident_expr(name, Loc::EMPTY));
-            let global_gating_expr: Option<Expr> = instrument_config
-                .global_gating
-                .as_deref()
-                .map(|g| cx.cg.ident_expr(store_str(g.as_bytes()), Loc::EMPTY));
+            let global_gating_expr: Option<Expr> =
+                instrument_config.global_gating.as_deref().map(|g| {
+                    cx.cg
+                        .ident_expr(cx.cg.arena.dupe_str(g.as_bytes()), Loc::EMPTY)
+                });
 
             let if_test = match (gating_expr, global_gating_expr) {
-                (Some(gating), Some(global)) => Expr::init(
+                (Some(gating), Some(global)) => Expr::allocate(
+                    cx.cg.arena,
                     E::Binary {
                         op: OpCode::BinLogicalAnd,
                         left: global,
@@ -330,24 +349,30 @@ pub(crate) fn codegen_function(
 
             let fn_name_str = func.id.as_deref().unwrap_or("");
             let filename_str = cx.env.filename.as_deref().unwrap_or(b"");
-            let call = Expr::init(
+            let call = Expr::allocate(
+                cx.cg.arena,
                 E::Call {
                     target,
-                    args: AstAlloc::vec_from_iter([
-                        string_expr(fn_name_str, Loc::EMPTY),
-                        Expr::init(
-                            E::EString::init(store_str(filename_str).slice()),
-                            Loc::EMPTY,
-                        ),
-                    ]),
+                    args: AstVec::from_iter_in(
+                        [
+                            string_expr(cx.cg.arena, fn_name_str, Loc::EMPTY),
+                            Expr::allocate(
+                                cx.cg.arena,
+                                E::EString::init(cx.cg.arena.dupe_str(filename_str).slice()),
+                                Loc::EMPTY,
+                            ),
+                        ],
+                        cx.cg.arena,
+                    ),
                     ..Default::default()
                 },
                 Loc::EMPTY,
             );
-            let instrument_call = Stmt::alloc(
+            let instrument_call = Stmt::allocate(
+                cx.cg.arena,
                 S::If {
                     test: if_test,
-                    yes: expr_stmt(call, Loc::EMPTY),
+                    yes: expr_stmt(cx.cg.arena, call, Loc::EMPTY),
                     no: None,
                     else_loc: Loc::EMPTY,
                 },
@@ -373,7 +398,7 @@ pub(crate) fn codegen_function(
         // Module level. `name_to_ref` gives the `Ref` the use site's `LoadGlobal` printed.
         codegen.id = reactive_fn_mut.id.as_ref().map(|name| LocRef {
             loc: convert_loc(reactive_fn_mut.loc),
-            ref_: cx.cg.ref_for_name(store_str(name.as_bytes())),
+            ref_: cx.cg.ref_for_name(cx.cg.arena.dupe_str(name.as_bytes())),
         });
         outlined.push(OutlinedFunction {
             func: codegen,
@@ -498,9 +523,10 @@ fn codegen_reactive_function(
 
     let mut directives: Vec<Stmt> = Vec::with_capacity(func.directives.len());
     for d in &func.directives {
-        directives.push(Stmt::alloc(
+        directives.push(Stmt::allocate(
+            cx.cg.arena,
             S::Directive {
-                value: store_str(d.as_bytes()),
+                value: cx.cg.arena.dupe_str(d.as_bytes()),
             },
             Loc::EMPTY,
         ));
@@ -617,7 +643,8 @@ fn codegen_block_no_reset(
                             stmt
                         };
                         let label_ref = cx.cg.ref_for_label(label.id);
-                        statements.push(Stmt::alloc(
+                        statements.push(Stmt::allocate(
+                            cx.cg.arena,
                             S::Label {
                                 name: LocRef {
                                     loc: Loc::EMPTY,
@@ -673,7 +700,8 @@ fn codegen_reactive_scope(
         .well_known(WellKnown::MemoCache, cache_name.as_bytes());
     let cache_ident = || Expr::init_identifier(cache_ref, loc);
     let cache_slot = |index: u32| {
-        Expr::init(
+        Expr::allocate(
+            cx.cg.arena,
             E::Index {
                 target: cache_ident(),
                 index: Expr::init(E::Number::new(index as f64), loc),
@@ -686,7 +714,8 @@ fn codegen_reactive_scope(
 
     for dep in &deps {
         let index = cx.alloc_cache_index();
-        let comparison = Expr::init(
+        let comparison = Expr::allocate(
+            cx.cg.arena,
             E::Binary {
                 op: OpCode::BinStrictNe,
                 left: cache_slot(index),
@@ -704,7 +733,8 @@ fn codegen_reactive_scope(
             .any(|id| cx.env.identifiers[id.0 as usize].declaration_id == declaration)
         {
             let before = cx.alloc_cache_index();
-            values_before.push(Expr::init(
+            values_before.push(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
                     left: cache_slot(before),
@@ -714,7 +744,8 @@ fn codegen_reactive_scope(
             ));
             dep_value = cache_slot(before);
         }
-        cache_store_exprs.push(Expr::init(
+        cache_store_exprs.push(Expr::allocate(
+            cx.cg.arena,
             E::Binary {
                 op: OpCode::BinAssign,
                 left: cache_slot(index),
@@ -761,10 +792,11 @@ fn codegen_reactive_scope(
     }
     if !output_declarators.is_empty() {
         // Synthesized body is spliced post-visitor; mangleStmts won't merge these.
-        statements.push(Stmt::alloc(
+        statements.push(Stmt::allocate(
+            cx.cg.arena,
             S::Local {
                 kind: S::Kind::KLet,
-                decls: decl_list(output_declarators),
+                decls: decl_list(cx.cg.arena, output_declarators),
                 ..Default::default()
             },
             loc,
@@ -784,7 +816,8 @@ fn codegen_reactive_scope(
         let first_idx = first_output_index.ok_or_else(|| {
             invariant_err("Expected scope to have at least one declaration", None)
         })?;
-        Expr::init(
+        Expr::allocate(
+            cx.cg.arena,
             E::Binary {
                 op: OpCode::BinStrictEq,
                 left: cache_slot(first_idx),
@@ -796,7 +829,8 @@ fn codegen_reactive_scope(
         change_exprs
             .into_iter()
             .reduce(|acc, expr| {
-                Expr::init(
+                Expr::allocate(
+                    cx.cg.arena,
                     E::Binary {
                         op: OpCode::BinLogicalOr,
                         left: acc,
@@ -810,11 +844,15 @@ fn codegen_reactive_scope(
 
     let mut computation_block = codegen_block(cx, block)?;
     if !values_before.is_empty() {
-        computation_block.insert(0, expr_stmt(comma_seq(values_before, loc), loc));
+        computation_block.insert(
+            0,
+            expr_stmt(cx.cg.arena, comma_seq(cx.cg.arena, values_before, loc), loc),
+        );
     }
 
     for (name_ref, index, value) in &cache_loads {
-        cache_store_exprs.push(Expr::init(
+        cache_store_exprs.push(Expr::allocate(
+            cx.cg.arena,
             E::Binary {
                 op: OpCode::BinAssign,
                 left: cache_slot(*index),
@@ -822,7 +860,8 @@ fn codegen_reactive_scope(
             },
             loc,
         ));
-        cache_load_exprs.push(Expr::init(
+        cache_load_exprs.push(Expr::allocate(
+            cx.cg.arena,
             E::Binary {
                 op: OpCode::BinAssign,
                 left: Expr::init_identifier(*name_ref, loc),
@@ -833,7 +872,11 @@ fn codegen_reactive_scope(
     }
 
     if !cache_store_exprs.is_empty() {
-        computation_block.push(expr_stmt(comma_seq(cache_store_exprs, loc), loc));
+        computation_block.push(expr_stmt(
+            cx.cg.arena,
+            comma_seq(cx.cg.arena, cache_store_exprs, loc),
+            loc,
+        ));
     }
 
     let yes = if computation_block
@@ -850,19 +893,24 @@ fn codegen_reactive_scope(
         if exprs.is_empty() {
             empty_stmt()
         } else {
-            expr_stmt(comma_seq(exprs, loc), loc)
+            expr_stmt(cx.cg.arena, comma_seq(cx.cg.arena, exprs, loc), loc)
         }
     } else {
-        block_stmt(computation_block, loc)
+        block_stmt(cx.cg.arena, computation_block, loc)
     };
 
     let no = if cache_load_exprs.is_empty() {
         None
     } else {
-        Some(expr_stmt(comma_seq(cache_load_exprs, loc), loc))
+        Some(expr_stmt(
+            cx.cg.arena,
+            comma_seq(cx.cg.arena, cache_load_exprs, loc),
+            loc,
+        ))
     };
 
-    let memo_stmt = Stmt::alloc(
+    let memo_stmt = Stmt::allocate(
+        cx.cg.arena,
         S::If {
             test: test_condition,
             yes,
@@ -886,9 +934,11 @@ fn codegen_reactive_scope(
         };
         let _ = name;
         let name_expr = Expr::init_identifier(cx.ref_for_id(early_return.value)?, loc);
-        statements.push(Stmt::alloc(
+        statements.push(Stmt::allocate(
+            cx.cg.arena,
             S::If {
-                test: Expr::init(
+                test: Expr::allocate(
+                    cx.cg.arena,
                     E::Binary {
                         op: OpCode::BinStrictNe,
                         left: name_expr,
@@ -896,7 +946,8 @@ fn codegen_reactive_scope(
                     },
                     loc,
                 ),
-                yes: Stmt::alloc(
+                yes: Stmt::allocate(
+                    cx.cg.arena,
                     S::Return {
                         value: Some(name_expr),
                     },
@@ -939,7 +990,11 @@ fn codegen_terminal(
             } else {
                 None
             };
-            Ok(Some(Stmt::alloc(S::Break { label }, convert_loc(*loc))))
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
+                S::Break { label },
+                convert_loc(*loc),
+            )))
         }
         ReactiveTerminal::Continue {
             target,
@@ -959,19 +1014,32 @@ fn codegen_terminal(
             } else {
                 None
             };
-            Ok(Some(Stmt::alloc(S::Continue { label }, convert_loc(*loc))))
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
+                S::Continue { label },
+                convert_loc(*loc),
+            )))
         }
         ReactiveTerminal::Return { value, loc, .. } => {
             let expr = codegen_place_to_expression(cx, value)?;
             let stmt_loc = convert_loc(*loc);
             if matches!(expr.data, ExprData::EUndefined(_)) {
-                return Ok(Some(Stmt::alloc(S::Return { value: None }, stmt_loc)));
+                return Ok(Some(Stmt::allocate(
+                    cx.cg.arena,
+                    S::Return { value: None },
+                    stmt_loc,
+                )));
             }
-            Ok(Some(Stmt::alloc(S::Return { value: Some(expr) }, stmt_loc)))
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
+                S::Return { value: Some(expr) },
+                stmt_loc,
+            )))
         }
         ReactiveTerminal::Throw { value, loc, .. } => {
             let expr = codegen_place_to_expression(cx, value)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::Throw { value: expr },
                 convert_loc(*loc),
             )))
@@ -993,15 +1061,16 @@ fn codegen_terminal(
                 } else if block.len() == 1 && matches!(block[0].data, StmtData::SIf(_)) {
                     Some(block.pop().unwrap())
                 } else {
-                    Some(body_stmt(block, stmt_loc))
+                    Some(body_stmt(cx.cg.arena, block, stmt_loc))
                 }
             } else {
                 None
             };
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::If {
                     test: test_expr,
-                    yes: body_stmt(consequent_block, stmt_loc),
+                    yes: body_stmt(cx.cg.arena, consequent_block, stmt_loc),
                     no: alternate_stmt,
                     else_loc: Loc::EMPTY,
                 },
@@ -1013,7 +1082,7 @@ fn codegen_terminal(
         } => {
             let test_expr = codegen_place_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
-            let mut switch_cases: AstVec<Case> = AstAlloc::vec_with_capacity(cases.len());
+            let mut switch_cases: AstVec<Case> = AstVec::with_capacity_in(cases.len(), cx.cg.arena);
             for case in cases {
                 let test = case
                     .test
@@ -1027,20 +1096,27 @@ fn codegen_terminal(
                     .transpose()?;
                 let consequent = match block {
                     Some(b) if b.is_empty() => StmtNodeList::EMPTY,
-                    Some(b) => leak_stmts(vec![block_stmt(b, stmt_loc)]),
+                    Some(b) => StoreSlice::from_iter_in(
+                        [block_stmt(cx.cg.arena, b, stmt_loc)],
+                        cx.cg.arena,
+                    ),
                     None => StmtNodeList::EMPTY,
                 };
-                switch_cases.push(Case {
-                    loc: convert_loc(case.loc),
-                    value: test,
-                    body: consequent,
-                });
+                switch_cases.push(
+                    cx.cg.arena,
+                    Case {
+                        loc: convert_loc(case.loc),
+                        value: test,
+                        body: consequent,
+                    },
+                );
             }
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::Switch {
                     test: test_expr,
                     body_loc: stmt_loc,
-                    cases: StoreSlice::new_mut(switch_cases.leak()),
+                    cases: switch_cases.into_store_slice(),
                 },
                 stmt_loc,
             )))
@@ -1054,9 +1130,10 @@ fn codegen_terminal(
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
             let body = codegen_block(cx, loop_block)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::DoWhile {
-                    body: body_stmt(body, stmt_loc),
+                    body: body_stmt(cx.cg.arena, body, stmt_loc),
                     test: test_expr,
                 },
                 stmt_loc,
@@ -1071,10 +1148,11 @@ fn codegen_terminal(
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let stmt_loc = convert_loc(*loc);
             let body = codegen_block(cx, loop_block)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::While {
                     test: test_expr,
-                    body: body_stmt(body, stmt_loc),
+                    body: body_stmt(cx.cg.arena, body, stmt_loc),
                 },
                 stmt_loc,
             )))
@@ -1095,12 +1173,13 @@ fn codegen_terminal(
                 .transpose()?;
             let stmt_loc = convert_loc(*loc);
             let body = codegen_block(cx, loop_block)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::For {
                     init: init_val,
                     test: Some(test_expr),
                     update: update_expr,
-                    body: body_stmt(body, stmt_loc),
+                    body: body_stmt(cx.cg.arena, body, stmt_loc),
                 },
                 stmt_loc,
             )))
@@ -1120,7 +1199,7 @@ fn codegen_terminal(
         } => codegen_for_of(cx, init, test, loop_block, *loc),
         ReactiveTerminal::Label { block, .. } => {
             let body = codegen_block(cx, block)?;
-            Ok(Some(block_stmt(body, Loc::EMPTY)))
+            Ok(Some(block_stmt(cx.cg.arena, body, Loc::EMPTY)))
         }
         ReactiveTerminal::Try {
             block,
@@ -1143,14 +1222,15 @@ fn codegen_terminal(
             };
             let try_block = codegen_block(cx, block)?;
             let handler_block = codegen_block(cx, handler)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::Try {
                     body_loc: stmt_loc,
-                    body: leak_stmts(try_block),
+                    body: StoreSlice::from_iter_in(try_block, cx.cg.arena),
                     catch: Some(Catch {
                         loc: convert_loc(*handler_loc),
                         binding: catch_param,
-                        body: leak_stmts(handler_block),
+                        body: StoreSlice::from_iter_in(handler_block, cx.cg.arena),
                         body_loc: convert_loc(*handler_body_loc),
                     }),
                     finally: None,
@@ -1190,21 +1270,26 @@ fn codegen_for_in(
     let right = codegen_instruction_value_to_expression(cx, &iterable_collection.value)?;
     let stmt_loc = convert_loc(loc);
     let body = codegen_block(cx, loop_block)?;
-    Ok(Some(Stmt::alloc(
+    Ok(Some(Stmt::allocate(
+        cx.cg.arena,
         S::ForIn {
-            init: Stmt::alloc(
+            init: Stmt::allocate(
+                cx.cg.arena,
                 S::Local {
                     kind: var_decl_kind,
-                    decls: decl_list([G::Decl {
-                        binding: lval,
-                        value: None,
-                    }]),
+                    decls: decl_list(
+                        cx.cg.arena,
+                        [G::Decl {
+                            binding: lval,
+                            value: None,
+                        }],
+                    ),
                     ..Default::default()
                 },
                 stmt_loc,
             ),
             value: right,
-            body: body_stmt(body, stmt_loc),
+            body: body_stmt(cx.cg.arena, body, stmt_loc),
         },
         stmt_loc,
     )))
@@ -1265,22 +1350,27 @@ fn codegen_for_of(
     let right = codegen_place_to_expression(cx, collection)?;
     let stmt_loc = convert_loc(loc);
     let body = codegen_block(cx, loop_block)?;
-    Ok(Some(Stmt::alloc(
+    Ok(Some(Stmt::allocate(
+        cx.cg.arena,
         S::ForOf {
             is_await: false,
-            init: Stmt::alloc(
+            init: Stmt::allocate(
+                cx.cg.arena,
                 S::Local {
                     kind: var_decl_kind,
-                    decls: decl_list([G::Decl {
-                        binding: lval,
-                        value: None,
-                    }]),
+                    decls: decl_list(
+                        cx.cg.arena,
+                        [G::Decl {
+                            binding: lval,
+                            value: None,
+                        }],
+                    ),
                     ..Default::default()
                 },
                 stmt_loc,
             ),
             value: right,
-            body: body_stmt(body, stmt_loc),
+            body: body_stmt(cx.cg.arena, body, stmt_loc),
         },
         stmt_loc,
     )))
@@ -1345,7 +1435,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
             .map(|i| ReactiveStatement::Instruction(i.clone()))
             .collect();
         let body = codegen_block(cx, &block_items)?;
-        let mut declarators: G::DeclList = AstAlloc::vec();
+        let mut declarators: G::DeclList = AstVec::new();
         let mut kind = S::Kind::KConst;
         for instr in body {
             // `for (;;)`: what is left of the `undefined` that lowering puts in place of an initializer. Upstream refuses it.
@@ -1385,10 +1475,13 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
                     kind = S::Kind::KLet;
                 }
                 for d in var_decl.decls.iter() {
-                    declarators.push(G::Decl {
-                        binding: d.binding,
-                        value: d.value,
-                    });
+                    declarators.push(
+                        cx.cg.arena,
+                        G::Decl {
+                            binding: d.binding,
+                            value: d.value,
+                        },
+                    );
                 }
             } else {
                 return Err(for_init_decl_err(<&str>::from(instr.data.tag())));
@@ -1397,7 +1490,8 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
         if declarators.is_empty() {
             return Ok(None);
         }
-        Ok(Some(Stmt::alloc(
+        Ok(Some(Stmt::allocate(
+            cx.cg.arena,
             S::Local {
                 kind,
                 decls: declarators,
@@ -1407,7 +1501,7 @@ fn codegen_for_init(cx: &mut Context, init: &ReactiveValue) -> Result<Option<Stm
         )))
     } else {
         let expr = codegen_instruction_value_to_expression(cx, init)?;
-        Ok(Some(expr_stmt(expr, expr.loc)))
+        Ok(Some(expr_stmt(cx.cg.arena, expr, expr.loc)))
     }
 }
 
@@ -1558,13 +1652,17 @@ fn emit_store(
                 ));
             }
             let lval = codegen_lvalue(cx, lvalue)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::Local {
                     kind: S::Kind::KLet,
-                    decls: decl_list([G::Decl {
-                        binding: lval,
-                        value,
-                    }]),
+                    decls: decl_list(
+                        cx.cg.arena,
+                        [G::Decl {
+                            binding: lval,
+                            value,
+                        }],
+                    ),
                     ..Default::default()
                 },
                 stmt_loc,
@@ -1601,7 +1699,11 @@ fn emit_store(
                         ..Default::default()
                     };
                     func.flags &= !flags::FunctionSet::from(flags::Function::IsExport);
-                    Ok(Some(Stmt::alloc(S::Function { func }, stmt_loc)))
+                    Ok(Some(Stmt::allocate(
+                        cx.cg.arena,
+                        S::Function { func },
+                        stmt_loc,
+                    )))
                 }
                 _ => Err(invariant_err(
                     "Expected a function expression for function declaration",
@@ -1618,13 +1720,17 @@ fn emit_store(
                 ));
             }
             let lval = codegen_lvalue(cx, lvalue)?;
-            Ok(Some(Stmt::alloc(
+            Ok(Some(Stmt::allocate(
+                cx.cg.arena,
                 S::Local {
                     kind: S::Kind::KLet,
-                    decls: decl_list([G::Decl {
-                        binding: lval,
-                        value,
-                    }]),
+                    decls: decl_list(
+                        cx.cg.arena,
+                        [G::Decl {
+                            binding: lval,
+                            value,
+                        }],
+                    ),
                     ..Default::default()
                 },
                 stmt_loc,
@@ -1635,7 +1741,8 @@ fn emit_store(
                 return Err(invariant_err("Expected a value for reassignment", None));
             };
             let lval = codegen_assignment_target(cx, lvalue)?;
-            let expr = Expr::init(
+            let expr = Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
                     left: lval,
@@ -1651,7 +1758,7 @@ fn emit_store(
                 }
                 return Ok(Some(stmt));
             }
-            Ok(Some(expr_stmt(expr, stmt_loc)))
+            Ok(Some(expr_stmt(cx.cg.arena, expr, stmt_loc)))
         }
         InstructionKind::Catch => Ok(Some(empty_stmt())),
         InstructionKind::HoistedLet
@@ -1670,7 +1777,7 @@ fn codegen_instruction(
 ) -> Result<Stmt, CompilerError> {
     let stmt_loc = convert_loc(instr.loc);
     let Some(ref lvalue) = instr.lvalue else {
-        return Ok(expr_stmt(value, stmt_loc));
+        return Ok(expr_stmt(cx.cg.arena, value, stmt_loc));
     };
     let ident = &cx.env.identifiers[lvalue.identifier.0 as usize];
     if ident.name.is_none() {
@@ -1680,7 +1787,9 @@ fn codegen_instruction(
     let (r, l) = convert_identifier(cx, lvalue.identifier)?;
     if cx.has_declared(lvalue.identifier) {
         Ok(expr_stmt(
-            Expr::init(
+            cx.cg.arena,
+            Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
                     left: Expr::init_identifier(r, l),
@@ -1691,13 +1800,17 @@ fn codegen_instruction(
             stmt_loc,
         ))
     } else {
-        Ok(Stmt::alloc(
+        Ok(Stmt::allocate(
+            cx.cg.arena,
             S::Local {
                 kind: S::Kind::KConst,
-                decls: decl_list([G::Decl {
-                    binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, l),
-                    value: Some(value),
-                }]),
+                decls: decl_list(
+                    cx.cg.arena,
+                    [G::Decl {
+                        binding: Binding::alloc(cx.cg.arena, b::Identifier { r#ref: r }, l),
+                        value: Some(value),
+                    }],
+                ),
                 ..Default::default()
             },
             stmt_loc,
@@ -1736,7 +1849,8 @@ fn codegen_instruction_value(
         } => {
             let left_expr = codegen_instruction_value_to_expression(cx, left)?;
             let right_expr = codegen_instruction_value_to_expression(cx, right)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: convert_logical_operator(*operator),
                     left: left_expr,
@@ -1754,7 +1868,8 @@ fn codegen_instruction_value(
             let test_expr = codegen_instruction_value_to_expression(cx, test)?;
             let cons_expr = codegen_instruction_value_to_expression(cx, consequent)?;
             let alt_expr = codegen_instruction_value_to_expression(cx, alternate)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::If {
                     test: test_expr,
                     yes: cons_expr,
@@ -1788,7 +1903,11 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions.push(string_expr("TODO handle declaration", Loc::EMPTY));
+                        expressions.push(string_expr(
+                            cx.cg.arena,
+                            "TODO handle declaration",
+                            Loc::EMPTY,
+                        ));
                     }
                     _ => {
                         cx.record_error(CompilerErrorDetail {
@@ -1798,7 +1917,11 @@ fn codegen_instruction_value(
                             loc: None,
                             suggestions: None,
                         })?;
-                        expressions.push(string_expr("TODO handle statement", Loc::EMPTY));
+                        expressions.push(string_expr(
+                            cx.cg.arena,
+                            "TODO handle statement",
+                            Loc::EMPTY,
+                        ));
                     }
                 }
             }
@@ -1810,7 +1933,8 @@ fn codegen_instruction_value(
                 let mut it = expressions.into_iter();
                 let first = it.next().unwrap();
                 Ok(it.fold(first, |acc, next| {
-                    Expr::init(
+                    Expr::allocate(
+                        cx.cg.arena,
                         E::Binary {
                             op: OpCode::BinComma,
                             left: acc,
@@ -1872,7 +1996,8 @@ fn codegen_base_instruction_value(
         } => {
             let left_expr = codegen_place_to_expression(cx, left)?;
             let right_expr = codegen_place_to_expression(cx, right)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: convert_binary_operator(*operator),
                     left: left_expr,
@@ -1888,7 +2013,8 @@ fn codegen_base_instruction_value(
             ..
         } => {
             let arg = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Unary {
                     op: convert_unary_operator(*operator),
                     value: arg,
@@ -1918,8 +2044,9 @@ fn codegen_base_instruction_value(
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
             if let ExprData::EImport(orig) = callee_expr.data {
-                let mut it = arguments.into_iter();
-                return Ok(Expr::init(
+                let mut it = arguments.iter().copied();
+                return Ok(Expr::allocate(
+                    cx.cg.arena,
                     E::Import {
                         expr: it.next().unwrap_or(orig.expr),
                         options: it.next().unwrap_or(Expr::EMPTY),
@@ -1929,7 +2056,8 @@ fn codegen_base_instruction_value(
                     loc,
                 ));
             }
-            let call_expr = Expr::init(
+            let call_expr = Expr::allocate(
+                cx.cg.arena,
                 E::Call {
                     target: callee_expr,
                     args: arguments,
@@ -1950,7 +2078,8 @@ fn codegen_base_instruction_value(
                 return Err(method_call_property_err(property.loc, member_expr));
             }
             let arguments = codegen_arguments(cx, args)?;
-            let call_expr = Expr::init(
+            let call_expr = Expr::allocate(
+                cx.cg.arena,
                 E::Call {
                     target: member_expr,
                     args: arguments,
@@ -1963,7 +2092,8 @@ fn codegen_base_instruction_value(
         InstructionValue::NewExpression { callee, args, .. } => {
             let callee_expr = codegen_place_to_expression(cx, callee)?;
             let arguments = codegen_arguments(cx, args)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::New {
                     target: callee_expr,
                     args: arguments,
@@ -1973,20 +2103,24 @@ fn codegen_base_instruction_value(
             ))
         }
         InstructionValue::ArrayExpression { elements, .. } => {
-            let mut elems: ExprNodeList = AstAlloc::vec_with_capacity(elements.len());
+            let mut elems: ExprNodeList = AstVec::with_capacity_in(elements.len(), cx.cg.arena);
             for el in elements {
                 match el {
                     ArrayElement::Place(place) => {
-                        elems.push(codegen_place_to_expression(cx, place)?)
+                        elems.push(cx.cg.arena, codegen_place_to_expression(cx, place)?)
                     }
                     ArrayElement::Spread(spread) => {
                         let arg = codegen_place_to_expression(cx, &spread.place)?;
-                        elems.push(Expr::init(E::Spread { value: arg }, loc));
+                        elems.push(
+                            cx.cg.arena,
+                            Expr::allocate(cx.cg.arena, E::Spread { value: arg }, loc),
+                        );
                     }
-                    ArrayElement::Hole => elems.push(Expr::init(E::Missing {}, loc)),
+                    ArrayElement::Hole => elems.push(cx.cg.arena, Expr::init(E::Missing {}, loc)),
                 }
             }
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Array {
                     items: elems,
                     ..Default::default()
@@ -2001,7 +2135,7 @@ fn codegen_base_instruction_value(
             object, property, ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
-            Ok(property_access_expr(obj, property, loc, None))
+            Ok(property_access_expr(cx.cg.arena, obj, property, loc, None))
         }
         InstructionValue::PropertyStore {
             object,
@@ -2011,10 +2145,11 @@ fn codegen_base_instruction_value(
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let val = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
-                    left: property_access_expr(obj, property, loc, None),
+                    left: property_access_expr(cx.cg.arena, obj, property, loc, None),
                     right: val,
                 },
                 loc,
@@ -2024,10 +2159,11 @@ fn codegen_base_instruction_value(
             object, property, ..
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Unary {
                     op: OpCode::UnDelete,
-                    value: property_access_expr(obj, property, loc, None),
+                    value: property_access_expr(cx.cg.arena, obj, property, loc, None),
                     // `lower_unary` only creates PropertyDelete when this flag was set.
                     flags: E::UnaryFlags::WAS_ORIGINALLY_DELETE_OF_IDENTIFIER_OR_PROPERTY_ACCESS,
                 },
@@ -2039,7 +2175,8 @@ fn codegen_base_instruction_value(
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Index {
                     target: obj,
                     index: prop,
@@ -2058,10 +2195,12 @@ fn codegen_base_instruction_value(
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
             let val = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
-                    left: Expr::init(
+                    left: Expr::allocate(
+                        cx.cg.arena,
                         E::Index {
                             target: obj,
                             index: prop,
@@ -2080,10 +2219,12 @@ fn codegen_base_instruction_value(
         } => {
             let obj = codegen_place_to_expression(cx, object)?;
             let prop = codegen_place_to_expression(cx, property)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Unary {
                     op: OpCode::UnDelete,
-                    value: Expr::init(
+                    value: Expr::allocate(
+                        cx.cg.arena,
                         E::Index {
                             target: obj,
                             index: prop,
@@ -2111,9 +2252,10 @@ fn codegen_base_instruction_value(
                     })?)
                 };
             raw.extend_from_slice(flags.slice());
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::RegExp {
-                    value: store_str(&raw),
+                    value: cx.cg.arena.dupe_str(&raw),
                     flags_offset,
                 },
                 loc,
@@ -2134,7 +2276,7 @@ fn codegen_base_instruction_value(
         },
         InstructionValue::Await { value, .. } => {
             let arg = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(E::Await { value: arg }, loc))
+            Ok(Expr::allocate(cx.cg.arena, E::Await { value: arg }, loc))
         }
         InstructionValue::GetIterator { collection, .. } => {
             codegen_place_to_expression(cx, collection)
@@ -2147,7 +2289,8 @@ fn codegen_base_instruction_value(
             operation, lvalue, ..
         } => {
             let arg = codegen_place_to_expression(cx, lvalue)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Unary {
                     op: convert_update_operator(*operation, false),
                     value: arg,
@@ -2160,7 +2303,8 @@ fn codegen_base_instruction_value(
             operation, lvalue, ..
         } => {
             let arg = codegen_place_to_expression(cx, lvalue)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Unary {
                     op: convert_update_operator(*operation, true),
                     value: arg,
@@ -2177,7 +2321,8 @@ fn codegen_base_instruction_value(
             )?;
             let lval = codegen_assignment_target(cx, &LvalueRef::Place(&lvalue.place))?;
             let rhs = codegen_place_to_expression(cx, value)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
                     left: lval,
@@ -2195,7 +2340,8 @@ fn codegen_base_instruction_value(
             } else {
                 cx.cg.ident_expr(*name, loc)
             };
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Binary {
                     op: OpCode::BinAssign,
                     left,
@@ -2213,7 +2359,8 @@ fn codegen_base_instruction_value(
         } => codegen_function_expression(cx, name, name_hint, lowered_func, *expr_type, loc),
         InstructionValue::TaggedTemplateExpression { tag, value, .. } => {
             let tag_expr = codegen_place_to_expression(cx, tag)?;
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Template {
                     tag: Some(tag_expr),
                     head: E::TemplateContents::Raw(value.raw),
@@ -2230,19 +2377,24 @@ fn codegen_base_instruction_value(
                 .next()
                 .ok_or_else(|| invariant_err("TemplateLiteral with no quasis", None))?;
             let head = template_contents(head_q);
-            let mut parts: AstVec<E::TemplatePart> = AstAlloc::vec_with_capacity(subexprs.len());
+            let mut parts: AstVec<E::TemplatePart> =
+                AstVec::with_capacity_in(subexprs.len(), cx.cg.arena);
             for (value, tail) in subexprs.iter().zip(quasis_it) {
-                parts.push(E::TemplatePart {
-                    value: codegen_place_to_expression(cx, value)?,
-                    tail_loc: loc,
-                    tail: template_contents(tail),
-                });
+                parts.push(
+                    cx.cg.arena,
+                    E::TemplatePart {
+                        value: codegen_place_to_expression(cx, value)?,
+                        tail_loc: loc,
+                        tail: template_contents(tail),
+                    },
+                );
             }
-            Ok(Expr::init(
+            Ok(Expr::allocate(
+                cx.cg.arena,
                 E::Template {
                     tag: None,
                     head,
-                    parts: StoreSlice::new_mut(parts.leak()),
+                    parts: parts.into_store_slice(),
                 },
                 loc,
             ))
@@ -2251,7 +2403,8 @@ fn codegen_base_instruction_value(
             // Bun emits type-stripped output; the cast is a passthrough.
             codegen_place_to_expression(cx, value)
         }
-        InstructionValue::JSXText { value, loc } => Ok(Expr::init(
+        InstructionValue::JSXText { value, loc } => Ok(Expr::allocate(
+            cx.cg.arena,
             E::EString::init(value.slice()),
             convert_loc(*loc),
         )),
@@ -2267,9 +2420,10 @@ fn codegen_base_instruction_value(
             // Lowering only makes a `JsxFragment` of the automatic runtime's
             // `Fragment` import; the classic `React.Fragment` is a plain tag.
             debug_assert!(!cx.cg.host.is_jsx_classic());
-            let mut child_elems: ExprNodeList = AstAlloc::vec_with_capacity(children.len());
+            let mut child_elems: ExprNodeList =
+                AstVec::with_capacity_in(children.len(), cx.cg.arena);
             for child in children {
-                child_elems.push(codegen_jsx_element(cx, child)?);
+                child_elems.push(cx.cg.arena, codegen_jsx_element(cx, child)?);
             }
             let fragment_ref = cx.cg.host.jsx_import(JsxImportKind::Fragment);
             cx.cg.host.record_usage(fragment_ref);
@@ -2277,7 +2431,7 @@ fn codegen_base_instruction_value(
             Ok(codegen_jsx_call(
                 cx,
                 tag_value,
-                AstAlloc::vec(),
+                AstVec::new(),
                 child_elems,
                 None,
                 loc,
@@ -2337,20 +2491,20 @@ fn codegen_function_expression(
     inner_cx.temp.clone_from(&cx.temp);
 
     let fn_result = codegen_reactive_function(&mut inner_cx, &reactive_fn_mut)?;
-    let arena = cx.cg.arena;
 
     let body = G::FnBody {
         loc,
-        stmts: leak_stmts(fn_result.body),
+        stmts: StoreSlice::from_iter_in(fn_result.body, cx.cg.arena),
     };
-    let args = leak_args(fn_result.params);
+    let args = StoreSlice::from_iter_in(fn_result.params, cx.cg.arena);
 
     let value = match expr_type {
         FunctionExpressionType::ArrowFunctionExpression => {
             let single_return = body.stmts.len() == 1
                 && reactive_fn_mut.directives.is_empty()
                 && matches!(body.stmts.slice()[0].data, StmtData::SReturn(ret) if ret.value.is_some());
-            Expr::init(
+            Expr::allocate(
+                cx.cg.arena,
                 E::Arrow {
                     args,
                     body,
@@ -2377,7 +2531,8 @@ fn codegen_function_expression(
                 let r = cx.cg.ref_for_local(*n);
                 LocRef { loc, ref_: r }
             });
-            Expr::init(
+            Expr::allocate(
+                cx.cg.arena,
                 E::Function {
                     func: G::Fn {
                         name: fn_name,
@@ -2395,24 +2550,28 @@ fn codegen_function_expression(
 
     if cx.env.config.enable_name_anonymous_functions && name.is_none() && name_hint.is_some() {
         let hint = name_hint.unwrap();
-        let key = Expr::init(E::EString::init(hint.slice()), loc);
-        let mut props: G::PropertyList = AstAlloc::vec_with_capacity(1);
-        props.push(G::Property {
-            kind: G::PropertyKind::Normal,
-            key: Some(key),
-            value: Some(value),
-            ..Default::default()
-        });
-        let wrapped = Expr::init(
+        let key = Expr::allocate(cx.cg.arena, E::EString::init(hint.slice()), loc);
+        let props = G::PropertyList::from_slice_in(
+            &[G::Property {
+                kind: G::PropertyKind::Normal,
+                key: Some(key),
+                value: Some(value),
+                ..Default::default()
+            }],
+            cx.cg.arena,
+        );
+        let wrapped = Expr::allocate(
+            cx.cg.arena,
             E::Index {
-                target: Expr::init(
+                target: Expr::allocate(
+                    cx.cg.arena,
                     E::Object {
                         properties: props,
                         ..Default::default()
                     },
                     loc,
                 ),
-                index: Expr::init(E::EString::init(hint.slice()), loc),
+                index: Expr::allocate(cx.cg.arena, E::EString::init(hint.slice()), loc),
                 optional_chain: None,
                 is_import_property_use: false,
             },
@@ -2420,7 +2579,6 @@ fn codegen_function_expression(
         );
         return Ok(wrapped);
     }
-    let _ = arena;
 
     Ok(value)
 }
@@ -2434,7 +2592,8 @@ fn codegen_object_expression(
     properties: &[ObjectPropertyOrSpread],
     loc: Loc,
 ) -> Result<Expr, CompilerError> {
-    let mut ast_properties: G::PropertyList = AstAlloc::vec_with_capacity(properties.len());
+    let mut ast_properties: G::PropertyList =
+        AstVec::with_capacity_in(properties.len(), cx.cg.arena);
     for prop in properties {
         match prop {
             ObjectPropertyOrSpread::Property(obj_prop) => {
@@ -2457,13 +2616,16 @@ fn codegen_object_expression(
                         if is_shorthand {
                             prop_flags |= flags::Property::WasShorthand;
                         }
-                        ast_properties.push(G::Property {
-                            kind: G::PropertyKind::Normal,
-                            flags: prop_flags,
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        });
+                        ast_properties.push(
+                            cx.cg.arena,
+                            G::Property {
+                                kind: G::PropertyKind::Normal,
+                                flags: prop_flags,
+                                key: Some(key),
+                                value: Some(value),
+                                ..Default::default()
+                            },
+                        );
                     }
                     ObjectPropertyType::Method => {
                         let method_data = cx.object_methods.get(obj_prop.place.identifier).cloned();
@@ -2495,15 +2657,19 @@ fn codegen_object_expression(
                         if fn_result.has_rest_arg {
                             fn_flags |= flags::Function::HasRestArg;
                         }
-                        let value = Expr::init(
+                        let value = Expr::allocate(
+                            cx.cg.arena,
                             E::Function {
                                 func: G::Fn {
                                     name: None,
                                     open_parens_loc: loc,
-                                    args: leak_args(fn_result.params),
+                                    args: StoreSlice::from_iter_in(fn_result.params, cx.cg.arena),
                                     body: G::FnBody {
                                         loc,
-                                        stmts: leak_stmts(fn_result.body),
+                                        stmts: StoreSlice::from_iter_in(
+                                            fn_result.body,
+                                            cx.cg.arena,
+                                        ),
                                     },
                                     flags: fn_flags,
                                     ..Default::default()
@@ -2515,28 +2681,35 @@ fn codegen_object_expression(
                         if computed {
                             prop_flags |= flags::Property::IsComputed;
                         }
-                        ast_properties.push(G::Property {
-                            kind: G::PropertyKind::Normal,
-                            flags: prop_flags,
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        });
+                        ast_properties.push(
+                            cx.cg.arena,
+                            G::Property {
+                                kind: G::PropertyKind::Normal,
+                                flags: prop_flags,
+                                key: Some(key),
+                                value: Some(value),
+                                ..Default::default()
+                            },
+                        );
                     }
                 }
             }
             ObjectPropertyOrSpread::Spread(spread) => {
                 let arg = codegen_place_to_expression(cx, &spread.place)?;
-                ast_properties.push(G::Property {
-                    kind: G::PropertyKind::Spread,
-                    flags: flags::Property::IsSpread.into(),
-                    value: Some(arg),
-                    ..Default::default()
-                });
+                ast_properties.push(
+                    cx.cg.arena,
+                    G::Property {
+                        kind: G::PropertyKind::Spread,
+                        flags: flags::Property::IsSpread.into(),
+                        value: Some(arg),
+                        ..Default::default()
+                    },
+                );
             }
         }
     }
-    Ok(Expr::init(
+    Ok(Expr::allocate(
+        cx.cg.arena,
         E::Object {
             properties: ast_properties,
             ..Default::default()
@@ -2564,12 +2737,16 @@ fn codegen_object_property_key(
     key: &ObjectPropertyKey,
 ) -> Result<Expr, CompilerError> {
     match key {
-        ObjectPropertyKey::String { name } => {
-            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
-        }
-        ObjectPropertyKey::Identifier { name } => {
-            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
-        }
+        ObjectPropertyKey::String { name } => Ok(Expr::allocate(
+            cx.cg.arena,
+            E::EString::init(name.slice()),
+            Loc::EMPTY,
+        )),
+        ObjectPropertyKey::Identifier { name } => Ok(Expr::allocate(
+            cx.cg.arena,
+            E::EString::init(name.slice()),
+            Loc::EMPTY,
+        )),
         ObjectPropertyKey::Computed { name } => codegen_place_to_expression(cx, name),
         ObjectPropertyKey::Number { name } => {
             Ok(Expr::init(E::Number::new(name.value()), Loc::EMPTY))
@@ -2594,17 +2771,18 @@ fn codegen_jsx_expression(
 
     let tag_value = match tag {
         JsxTag::Place(place) => codegen_place_to_expression(cx, place)?,
-        JsxTag::Builtin(builtin) => Expr::init(
+        JsxTag::Builtin(builtin) => Expr::allocate(
+            cx.cg.arena,
             E::EString::init(builtin.name.slice()),
             convert_loc(builtin.loc),
         ),
     };
 
-    let mut child_nodes: ExprNodeList = AstAlloc::vec();
+    let mut child_nodes: ExprNodeList = AstVec::new();
     if let Some(c) = children {
-        child_nodes = AstAlloc::vec_with_capacity(c.len());
+        child_nodes = AstVec::with_capacity_in(c.len(), cx.cg.arena);
         for child in c {
-            child_nodes.push(codegen_jsx_element(cx, child)?);
+            child_nodes.push(cx.cg.arena, codegen_jsx_element(cx, child)?);
         }
     }
 
@@ -2619,21 +2797,21 @@ fn codegen_jsx_expression(
             JsxAttribute::SpreadAttribute { .. } => false,
         });
     if cx.cg.host.is_jsx_classic() || is_key_after_spread {
-        let mut properties: G::PropertyList = AstAlloc::vec_with_capacity(props.len());
+        let mut properties: G::PropertyList = AstVec::with_capacity_in(props.len(), cx.cg.arena);
         for attr in props {
-            properties.push(codegen_jsx_attribute(cx, attr)?);
+            properties.push(cx.cg.arena, codegen_jsx_attribute(cx, attr)?);
         }
         return Ok(codegen_create_element_call(
             cx,
             tag_value,
             properties,
-            child_nodes,
+            &child_nodes,
             elem_loc,
             close_loc,
         ));
     }
 
-    let mut properties: G::PropertyList = AstAlloc::vec_with_capacity(props.len() + 1);
+    let mut properties: G::PropertyList = AstVec::with_capacity_in(props.len() + 1, cx.cg.arena);
     let mut key_value: Option<Expr> = None;
     for attr in props {
         if let JsxAttribute::Attribute { name, place } = attr
@@ -2642,7 +2820,7 @@ fn codegen_jsx_expression(
             key_value = Some(codegen_place_to_expression(cx, place)?);
             continue;
         }
-        properties.push(codegen_jsx_attribute(cx, attr)?);
+        properties.push(cx.cg.arena, codegen_jsx_attribute(cx, attr)?);
     }
 
     Ok(codegen_jsx_call(
@@ -2664,7 +2842,7 @@ fn codegen_create_element_call(
     cx: &mut Context,
     tag_value: Expr,
     properties: G::PropertyList,
-    children: ExprNodeList,
+    children: &[Expr],
     loc: Loc,
     close_loc: Loc,
 ) -> Expr {
@@ -2676,22 +2854,27 @@ fn codegen_create_element_call(
         Expr::init(E::ImportIdentifier::new(target_ref, true), loc)
     };
 
-    let mut args: ExprNodeList = AstAlloc::vec_with_capacity(2 + children.len());
-    args.push(tag_value);
-    args.push(if properties.is_empty() {
-        Expr::init(E::Null {}, loc)
-    } else {
-        Expr::init(
-            E::Object {
-                properties,
-                ..Default::default()
-            },
-            loc,
-        )
-    });
-    args.extend(children);
+    let mut args: ExprNodeList = AstVec::with_capacity_in(2 + children.len(), cx.cg.arena);
+    args.push(cx.cg.arena, tag_value);
+    args.push(
+        cx.cg.arena,
+        if properties.is_empty() {
+            Expr::init(E::Null {}, loc)
+        } else {
+            Expr::allocate(
+                cx.cg.arena,
+                E::Object {
+                    properties,
+                    ..Default::default()
+                },
+                loc,
+            )
+        },
+    );
+    args.extend_from_slice(cx.cg.arena, children);
 
-    Expr::init(
+    Expr::allocate(
+        cx.cg.arena,
         E::Call {
             target,
             args,
@@ -2722,27 +2905,34 @@ fn codegen_jsx_call(
     let is_static_jsx = children.len() > 1
         || (children.len() == 1 && matches!(children[0].data, ExprData::ESpread(..)));
 
-    let children_key = string_expr("children", close_loc);
+    let children_key = string_expr(cx.cg.arena, "children", close_loc);
     if is_static_jsx {
         let is_single_line = children.len() < 2;
-        properties.push(G::Property {
-            key: Some(children_key),
-            value: Some(Expr::init(
-                E::Array {
-                    items: children,
-                    is_single_line,
-                    ..Default::default()
-                },
-                close_loc,
-            )),
-            ..Default::default()
-        });
+        properties.push(
+            cx.cg.arena,
+            G::Property {
+                key: Some(children_key),
+                value: Some(Expr::allocate(
+                    cx.cg.arena,
+                    E::Array {
+                        items: children,
+                        is_single_line,
+                        ..Default::default()
+                    },
+                    close_loc,
+                )),
+                ..Default::default()
+            },
+        );
     } else if children.len() == 1 {
-        properties.push(G::Property {
-            key: Some(children_key),
-            value: Some(children[0]),
-            ..Default::default()
-        });
+        properties.push(
+            cx.cg.arena,
+            G::Property {
+                key: Some(children_key),
+                value: Some(children[0]),
+                ..Default::default()
+            },
+        );
     }
 
     let args_len = if is_dev {
@@ -2750,31 +2940,38 @@ fn codegen_jsx_call(
     } else {
         2 + usize::from(key_value.is_some())
     };
-    let mut args: ExprNodeList = AstAlloc::vec_with_capacity(args_len);
-    args.push(tag_value);
-    args.push(Expr::init(
-        E::Object {
-            properties,
-            ..Default::default()
-        },
-        loc,
-    ));
+    let mut args: ExprNodeList = AstVec::with_capacity_in(args_len, cx.cg.arena);
+    args.push(cx.cg.arena, tag_value);
+    args.push(
+        cx.cg.arena,
+        Expr::allocate(
+            cx.cg.arena,
+            E::Object {
+                properties,
+                ..Default::default()
+            },
+            loc,
+        ),
+    );
 
     if let Some(key) = key_value {
-        args.push(key);
+        args.push(cx.cg.arena, key);
     } else if is_dev {
-        args.push(Expr::init(E::Undefined {}, loc));
+        args.push(cx.cg.arena, Expr::init(E::Undefined {}, loc));
     }
 
     if is_dev {
-        args.push(Expr::init(
-            E::Boolean {
-                value: is_static_jsx,
-            },
-            loc,
-        ));
-        args.push(Expr::init(E::Undefined {}, loc));
-        args.push(Expr::init(E::This {}, loc));
+        args.push(
+            cx.cg.arena,
+            Expr::init(
+                E::Boolean {
+                    value: is_static_jsx,
+                },
+                loc,
+            ),
+        );
+        args.push(cx.cg.arena, Expr::init(E::Undefined {}, loc));
+        args.push(cx.cg.arena, Expr::init(E::This {}, loc));
     }
 
     let kind = if is_dev {
@@ -2787,7 +2984,8 @@ fn codegen_jsx_call(
     let target_ref = cx.cg.host.jsx_import(kind);
     cx.cg.host.record_usage(target_ref);
 
-    Expr::init(
+    Expr::allocate(
+        cx.cg.arena,
         E::Call {
             target: Expr::init(E::ImportIdentifier::new(target_ref, true), loc),
             args,
@@ -2807,7 +3005,7 @@ fn codegen_jsx_attribute(
     match attr {
         JsxAttribute::Attribute { name, place } => {
             let loc = convert_loc(place.loc);
-            let key = Expr::init(E::EString::init(name.slice()), loc);
+            let key = Expr::allocate(cx.cg.arena, E::EString::init(name.slice()), loc);
             let inner_value = codegen_place_to_expression(cx, place)?;
             Ok(G::Property {
                 kind: G::PropertyKind::Normal,
@@ -2863,21 +3061,28 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
         LvalueRef::Pattern(pat) => match pat {
             Pattern::Array(arr) => {
                 let loc = convert_loc(arr.loc);
-                let mut items: ExprNodeList = AstAlloc::vec_with_capacity(arr.items.len());
+                let mut items: ExprNodeList =
+                    AstVec::with_capacity_in(arr.items.len(), cx.cg.arena);
                 for item in &arr.items {
-                    items.push(match item {
-                        crate::hir::ArrayPatternElement::Place(place) => {
-                            codegen_assignment_target(cx, &LvalueRef::Place(place))?
-                        }
-                        crate::hir::ArrayPatternElement::Spread(spread) => {
-                            let inner =
-                                codegen_assignment_target(cx, &LvalueRef::Place(&spread.place))?;
-                            Expr::init(E::Spread { value: inner }, loc)
-                        }
-                        crate::hir::ArrayPatternElement::Hole => Expr::init(E::Missing {}, loc),
-                    });
+                    items.push(
+                        cx.cg.arena,
+                        match item {
+                            crate::hir::ArrayPatternElement::Place(place) => {
+                                codegen_assignment_target(cx, &LvalueRef::Place(place))?
+                            }
+                            crate::hir::ArrayPatternElement::Spread(spread) => {
+                                let inner = codegen_assignment_target(
+                                    cx,
+                                    &LvalueRef::Place(&spread.place),
+                                )?;
+                                Expr::allocate(cx.cg.arena, E::Spread { value: inner }, loc)
+                            }
+                            crate::hir::ArrayPatternElement::Hole => Expr::init(E::Missing {}, loc),
+                        },
+                    );
                 }
-                Ok(Expr::init(
+                Ok(Expr::allocate(
+                    cx.cg.arena,
                     E::Array {
                         items,
                         ..Default::default()
@@ -2888,41 +3093,47 @@ fn codegen_assignment_target(cx: &mut Context, pattern: &LvalueRef) -> Result<Ex
             Pattern::Object(obj) => {
                 let loc = convert_loc(obj.loc);
                 let mut properties: G::PropertyList =
-                    AstAlloc::vec_with_capacity(obj.properties.len());
+                    AstVec::with_capacity_in(obj.properties.len(), cx.cg.arena);
                 for prop in &obj.properties {
-                    properties.push(match prop {
-                        ObjectPropertyOrSpread::Property(obj_prop) => {
-                            let key = codegen_object_property_key(cx, &obj_prop.key)?;
-                            let value =
-                                codegen_assignment_target(cx, &LvalueRef::Place(&obj_prop.place))?;
-                            let mut prop_flags = flags::PROPERTY_NONE;
-                            if matches!(obj_prop.key, ObjectPropertyKey::Computed { .. }) {
-                                prop_flags |= flags::Property::IsComputed;
+                    properties.push(
+                        cx.cg.arena,
+                        match prop {
+                            ObjectPropertyOrSpread::Property(obj_prop) => {
+                                let key = codegen_object_property_key(cx, &obj_prop.key)?;
+                                let value = codegen_assignment_target(
+                                    cx,
+                                    &LvalueRef::Place(&obj_prop.place),
+                                )?;
+                                let mut prop_flags = flags::PROPERTY_NONE;
+                                if matches!(obj_prop.key, ObjectPropertyKey::Computed { .. }) {
+                                    prop_flags |= flags::Property::IsComputed;
+                                }
+                                G::Property {
+                                    kind: G::PropertyKind::Normal,
+                                    flags: prop_flags,
+                                    key: Some(key),
+                                    value: Some(value),
+                                    ..Default::default()
+                                }
                             }
-                            G::Property {
-                                kind: G::PropertyKind::Normal,
-                                flags: prop_flags,
-                                key: Some(key),
-                                value: Some(value),
-                                ..Default::default()
+                            ObjectPropertyOrSpread::Spread(spread) => {
+                                let inner = codegen_assignment_target(
+                                    cx,
+                                    &LvalueRef::Place(&spread.place),
+                                )?;
+                                // `PropertyKind::Spread` prints `...`, so `inner` is not wrapped in `E::Spread`.
+                                G::Property {
+                                    kind: G::PropertyKind::Spread,
+                                    flags: flags::Property::IsSpread.into(),
+                                    value: Some(inner),
+                                    ..Default::default()
+                                }
                             }
-                        }
-                        ObjectPropertyOrSpread::Spread(spread) => {
-                            let inner =
-                                codegen_assignment_target(cx, &LvalueRef::Place(&spread.place))?;
-                            // PropertyKind::Spread already makes the printer emit `...`;
-                            // wrapping `inner` in E::Spread here double-prints (`......rest`).
-                            // Matches codegen_object_pattern below which passes the value unwrapped.
-                            G::Property {
-                                kind: G::PropertyKind::Spread,
-                                flags: flags::Property::IsSpread.into(),
-                                value: Some(inner),
-                                ..Default::default()
-                            }
-                        }
-                    });
+                        },
+                    );
                 }
-                Ok(Expr::init(
+                Ok(Expr::allocate(
+                    cx.cg.arena,
                     E::Object {
                         properties,
                         ..Default::default()
@@ -2941,7 +3152,7 @@ fn codegen_array_pattern(
     let loc = convert_loc(pattern.loc);
     let mut has_spread = false;
     let mut items: ArenaVec<ArrayBinding> =
-        ArenaVec::with_capacity_in(pattern.items.len(), cx.cg.arena);
+        ArenaVec::with_capacity_in(pattern.items.len(), cx.cg.arena.heap());
     for item in &pattern.items {
         match item {
             crate::hir::ArrayPatternElement::Place(place) => {
@@ -2985,7 +3196,7 @@ fn codegen_object_pattern(
 ) -> Result<Binding, CompilerError> {
     let loc = convert_loc(pattern.loc);
     let mut properties: ArenaVec<b::Property> =
-        ArenaVec::with_capacity_in(pattern.properties.len(), cx.cg.arena);
+        ArenaVec::with_capacity_in(pattern.properties.len(), cx.cg.arena.heap());
     for prop in &pattern.properties {
         match prop {
             ObjectPropertyOrSpread::Property(obj_prop) => {
@@ -3060,9 +3271,9 @@ fn codegen_arguments(
     cx: &mut Context,
     args: &[PlaceOrSpread],
 ) -> Result<ExprNodeList, CompilerError> {
-    let mut out: ExprNodeList = AstAlloc::vec_with_capacity(args.len());
+    let mut out: ExprNodeList = AstVec::with_capacity_in(args.len(), cx.cg.arena);
     for arg in args {
-        out.push(codegen_argument(cx, arg)?);
+        out.push(cx.cg.arena, codegen_argument(cx, arg)?);
     }
     Ok(out)
 }
@@ -3072,7 +3283,11 @@ fn codegen_argument(cx: &mut Context, arg: &PlaceOrSpread) -> Result<Expr, Compi
         PlaceOrSpread::Place(place) => codegen_place_to_expression(cx, place),
         PlaceOrSpread::Spread(spread) => {
             let expr = codegen_place_to_expression(cx, &spread.place)?;
-            Ok(Expr::init(E::Spread { value: expr }, expr.loc))
+            Ok(Expr::allocate(
+                cx.cg.arena,
+                E::Spread { value: expr },
+                expr.loc,
+            ))
         }
     }
 }
@@ -3099,7 +3314,7 @@ fn codegen_dependency(
             } else {
                 None
             };
-            object = property_access_expr(object, &path_entry.property, loc, chain);
+            object = property_access_expr(cx.cg.arena, object, &path_entry.property, loc, chain);
         }
     }
     Ok(object)
@@ -3236,31 +3451,26 @@ fn convert_loc(loc: Option<DiagSourceLocation>) -> Loc {
     }
 }
 
-#[inline]
-fn store_str(bytes: &[u8]) -> StoreStr {
-    StoreStr::new(ast::data_store_dupe_str(bytes))
-}
-
-fn estring_utf8(s: &str) -> E::EString {
+fn estring_utf8(arena: &AstArena, s: &str) -> E::EString {
     if s.is_ascii() {
-        E::EString::init(store_str(s.as_bytes()).slice())
+        E::EString::init(&arena.dupe_str(s.as_bytes()))
     } else {
-        let units: AstVec<u16> = AstAlloc::vec_from_iter(s.encode_utf16());
-        E::EString::init_utf16(units.leak())
+        E::EString::init_utf16(&AstVec::from_iter_in(s.encode_utf16(), arena))
     }
 }
 
 #[inline]
-fn string_expr(s: &str, loc: Loc) -> Expr {
-    Expr::init(estring_utf8(s), loc)
+fn string_expr(arena: &AstArena, s: &str, loc: Loc) -> Expr {
+    Expr::allocate(arena, estring_utf8(arena, s), loc)
 }
 
 #[inline]
-fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
+fn comma_seq(arena: &AstArena, exprs: Vec<Expr>, loc: Loc) -> Expr {
     let mut it = exprs.into_iter();
     let first = it.next().expect("comma_seq: nonempty");
     it.fold(first, |acc, next| {
-        Expr::init(
+        Expr::allocate(
+            arena,
             E::Binary {
                 op: OpCode::BinComma,
                 left: acc,
@@ -3272,8 +3482,9 @@ fn comma_seq(exprs: Vec<Expr>, loc: Loc) -> Expr {
 }
 
 #[inline]
-fn expr_stmt(value: Expr, loc: Loc) -> Stmt {
-    Stmt::alloc(
+fn expr_stmt(arena: &AstArena, value: Expr, loc: Loc) -> Stmt {
+    Stmt::allocate(
+        arena,
         S::SExpr {
             value,
             does_not_affect_tree_shaking: false,
@@ -3290,10 +3501,11 @@ fn empty_stmt() -> Stmt {
     }
 }
 
-fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
-    Stmt::alloc(
+fn block_stmt(arena: &AstArena, body: Vec<Stmt>, loc: Loc) -> Stmt {
+    Stmt::allocate(
+        arena,
         S::Block {
-            stmts: leak_stmts(body),
+            stmts: StoreSlice::from_iter_in(body, arena),
             close_brace_loc: Loc::EMPTY,
         },
         loc,
@@ -3301,25 +3513,15 @@ fn block_stmt(body: Vec<Stmt>, loc: Loc) -> Stmt {
 }
 
 /// Unwrap only `SExpr` to avoid dangling-else and lexical-declaration-as-body.
-fn body_stmt(mut body: Vec<Stmt>, loc: Loc) -> Stmt {
+fn body_stmt(arena: &AstArena, mut body: Vec<Stmt>, loc: Loc) -> Stmt {
     if body.len() == 1 && matches!(body[0].data, StmtData::SExpr(_)) {
         return body.pop().unwrap();
     }
-    block_stmt(body, loc)
+    block_stmt(arena, body, loc)
 }
 
-fn leak_stmts(body: Vec<Stmt>) -> StmtNodeList {
-    let v: AstVec<Stmt> = AstAlloc::vec_from_iter(body);
-    StoreSlice::new_mut(v.leak())
-}
-
-fn leak_args(args: Vec<G::Arg>) -> StoreSlice<G::Arg> {
-    let v: AstVec<G::Arg> = AstAlloc::vec_from_iter(args);
-    StoreSlice::new_mut(v.leak())
-}
-
-fn decl_list(iter: impl IntoIterator<Item = G::Decl>) -> G::DeclList {
-    AstAlloc::vec_from_iter(iter)
+fn decl_list(arena: &AstArena, iter: impl IntoIterator<Item = G::Decl>) -> G::DeclList {
+    AstVec::from_iter_in(iter, arena)
 }
 
 fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
@@ -3330,13 +3532,15 @@ fn template_contents(q: &crate::hir::TemplateQuasi) -> E::TemplateContents {
 }
 
 fn property_access_expr(
+    arena: &AstArena,
     target: Expr,
     prop: &PropertyLiteral,
     loc: Loc,
     optional_chain: Option<OptionalChain>,
 ) -> Expr {
     match prop {
-        PropertyLiteral::String(s) => Expr::init(
+        PropertyLiteral::String(s) => Expr::allocate(
+            arena,
             E::Dot {
                 target,
                 name: *s,
@@ -3346,7 +3550,8 @@ fn property_access_expr(
             },
             loc,
         ),
-        PropertyLiteral::Number(n) => Expr::init(
+        PropertyLiteral::Number(n) => Expr::allocate(
+            arena,
             E::Index {
                 target,
                 index: Expr::init(E::Number::new(n.value()), loc),
@@ -3372,7 +3577,8 @@ fn codegen_primitive_value(cx: &mut Context, value: &PrimitiveValue, loc: Loc) -
                 if f > 0.0 {
                     inf
                 } else {
-                    Expr::init(
+                    Expr::allocate(
+                        cx.cg.arena,
                         E::Unary {
                             op: OpCode::UnNeg,
                             value: inf,
@@ -3572,7 +3778,7 @@ fn maybe_wrap_hook_call(cx: &mut Context, call_expr: Expr, callee_id: Identifier
             && is_hook_identifier(cx, callee_id)
         {
             let guard_ref = cx.cg.ref_for_name(hook_guard_name);
-            return wrap_hook_call_with_guard(guard_ref, call_expr, 2, 3);
+            return wrap_hook_call_with_guard(cx.cg.arena, guard_ref, call_expr, 2, 3);
         }
     }
     call_expr
@@ -3588,14 +3794,25 @@ fn is_hook_identifier(cx: &Context, identifier_id: IdentifierId) -> bool {
         .is_some()
 }
 
-fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after: u32) -> Expr {
+fn wrap_hook_call_with_guard(
+    arena: &AstArena,
+    guard_ref: Ref,
+    call_expr: Expr,
+    before: u32,
+    after: u32,
+) -> Expr {
     let loc = Loc::EMPTY;
     let guard_call = |kind: u32| -> Stmt {
         expr_stmt(
-            Expr::init(
+            arena,
+            Expr::allocate(
+                arena,
                 E::Call {
                     target: Expr::init_identifier(guard_ref, loc),
-                    args: AstAlloc::vec_from_iter([Expr::init(E::Number::new(kind as f64), loc)]),
+                    args: AstVec::from_iter_in(
+                        [Expr::init(E::Number::new(kind as f64), loc)],
+                        arena,
+                    ),
                     ..Default::default()
                 },
                 loc,
@@ -3604,34 +3821,40 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
         )
     };
 
-    let try_stmt = Stmt::alloc(
+    let try_stmt = Stmt::allocate(
+        arena,
         S::Try {
             body_loc: loc,
-            body: leak_stmts(vec![
-                guard_call(before),
-                Stmt::alloc(
-                    S::Return {
-                        value: Some(call_expr),
-                    },
-                    loc,
-                ),
-            ]),
+            body: StoreSlice::from_iter_in(
+                [
+                    guard_call(before),
+                    Stmt::allocate(
+                        arena,
+                        S::Return {
+                            value: Some(call_expr),
+                        },
+                        loc,
+                    ),
+                ],
+                arena,
+            ),
             catch: None,
             finally: Some(Finally {
                 loc,
-                stmts: leak_stmts(vec![guard_call(after)]),
+                stmts: StoreSlice::from_iter_in([guard_call(after)], arena),
                 body_loc: loc,
             }),
         },
         loc,
     );
 
-    let iife = Expr::init(
+    let iife = Expr::allocate(
+        arena,
         E::Function {
             func: G::Fn {
                 body: G::FnBody {
                     loc,
-                    stmts: leak_stmts(vec![try_stmt]),
+                    stmts: StoreSlice::from_iter_in([try_stmt], arena),
                 },
                 ..Default::default()
             },
@@ -3639,10 +3862,11 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
         loc,
     );
 
-    Expr::init(
+    Expr::allocate(
+        arena,
         E::Call {
             target: iife,
-            args: AstAlloc::vec(),
+            args: AstVec::new(),
             ..Default::default()
         },
         loc,
@@ -3650,6 +3874,7 @@ fn wrap_hook_call_with_guard(guard_ref: Ref, call_expr: Expr, before: u32, after
 }
 
 fn create_function_body_hook_guard(
+    arena: &AstArena,
     guard_ref: Ref,
     body_stmts: Vec<Stmt>,
     before: u32,
@@ -3658,10 +3883,15 @@ fn create_function_body_hook_guard(
     let loc = Loc::EMPTY;
     let guard_call = |kind: u32| -> Stmt {
         expr_stmt(
-            Expr::init(
+            arena,
+            Expr::allocate(
+                arena,
                 E::Call {
                     target: Expr::init_identifier(guard_ref, loc),
-                    args: AstAlloc::vec_from_iter([Expr::init(E::Number::new(kind as f64), loc)]),
+                    args: AstVec::from_iter_in(
+                        [Expr::init(E::Number::new(kind as f64), loc)],
+                        arena,
+                    ),
                     ..Default::default()
                 },
                 loc,
@@ -3673,14 +3903,15 @@ fn create_function_body_hook_guard(
     let mut try_body = vec![guard_call(before)];
     try_body.extend(body_stmts);
 
-    Stmt::alloc(
+    Stmt::allocate(
+        arena,
         S::Try {
             body_loc: loc,
-            body: leak_stmts(try_body),
+            body: StoreSlice::from_iter_in(try_body, arena),
             catch: None,
             finally: Some(Finally {
                 loc,
-                stmts: leak_stmts(vec![guard_call(after)]),
+                stmts: StoreSlice::from_iter_in([guard_call(after)], arena),
                 body_loc: loc,
             }),
         },

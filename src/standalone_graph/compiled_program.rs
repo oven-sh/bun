@@ -2846,7 +2846,7 @@ pub(crate) mod tests {
     }
 
     fn image_bytes(program: &CompiledProgram) -> &[u8] {
-        // SAFETY: no test uses an image.
+        // SAFETY: no test passes an image to JavaScriptCore, so nothing writes to it.
         unsafe { &*program.image.as_ptr() }
     }
 
@@ -3426,10 +3426,10 @@ pub(crate) mod tests {
             ("image offset past the end", record, length),
             ("image length past the end", record + 4, length),
             ("empty image", record + 4, 0),
-            ("image over the records", record + 4, length - image.offset),
-            ("source path into the image", entry(0) + 8, image.offset - 1),
-            ("source path in the image", entry(0) + 8, image.offset),
-            ("source path out of the image", entry(0) + 8, image_end - 1),
+            ("image overlaps records", record + 4, length - image.offset),
+            ("path ends in the image", entry(0) + 8, image.offset - 1),
+            ("path lies in the image", entry(0) + 8, image.offset),
+            ("path starts in the image", entry(0) + 8, image_end - 1),
             ("file index out of range", entry(2), file_count),
             ("repeated file index", entry(1), 0),
             ("descending file indices", entry(0), 2),

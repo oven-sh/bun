@@ -100,10 +100,7 @@ pub(super) fn scan_statements(
             kind,
             specifier: ImportSpecifier::Constant(spec),
             specifier_node: ExprId::NONE,
-            attributes: match kind {
-                ImportSiteKind::Import(_) => attributes,
-                _ => ExprId::NONE,
-            },
+            attributes,
             consults_resolver: true,
             is_host_value: false,
         });

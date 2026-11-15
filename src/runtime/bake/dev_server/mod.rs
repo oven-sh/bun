@@ -12,6 +12,7 @@
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
 use std::io::Write as _;
+use std::sync::Arc;
 use std::time::Instant;
 
 use bun_alloc::{AllocError, Arena};
@@ -492,9 +493,10 @@ pub(crate) struct DevServer {
     pub(crate) server_fetch_function_callback: jsc::StrongOptional,
     pub(crate) server_register_update_callback: jsc::StrongOptional,
 
-    pub(crate) bun_watcher: std::sync::Arc<Watcher>,
+    // Watching
+    pub(crate) bun_watcher: Arc<Watcher>,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    pub(crate) pending_reload_event: std::sync::Arc<PendingReloadEvent>,
+    pub(crate) pending_reload_event: Arc<PendingReloadEvent>,
     /// Empty. Swapped with the one in `pending_reload_event` to reuse its memory.
     pub(crate) spare_reload_event: HotReloadEvent,
     pub(crate) testing_batch_events: TestingBatchEvents,

@@ -1,4 +1,4 @@
-use core::sync::atomic::Ordering;
+use core::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
 use bun_bundler::Transpiler;
@@ -42,7 +42,6 @@ pub fn enable_hot_module_reloading(
     }
     let reloader = HotReloader {
         reload_immediately: vm.hot_reload.get() == HotReload::Watch,
-        // `Level.atLeast` is `self <= other`, so this is true for Verbose/Debug/Info.
         verbose: (vm.log_ref()).is_some_and(|l| l.level.at_least(bun_ast::Level::Info)),
         main: MainFile::init(entry_path.unwrap_or(b"")),
         reload_handle: Some(vm.handle()),
@@ -52,7 +51,10 @@ pub fn enable_hot_module_reloading(
         },
         ..HotReloader::new(vm.transpiler.get())
     };
-    let watcher = reloader.start(vm.env_loader(), vm.top_level_dir());
+    let _ = vm
+        .pending_reloads
+        .set(Arc::clone(&reloader.pending_reloads));
+    let watcher = reloader.start();
     vm.transpiler
         .with_mut(|t| t.resolver.watcher = Some(Arc::clone(&watcher)));
     vm.bun_watcher.set(Some(watcher));
@@ -60,9 +62,7 @@ pub fn enable_hot_module_reloading(
 
 /// `bun build --watch`.
 pub fn enable_hot_module_reloading_for_bundler(transpiler: &mut Transpiler<'_>) {
-    let top_level_dir = FileSystem::get().top_level_dir();
-    let watcher = HotReloader::new(transpiler).start(transpiler.env(), top_level_dir);
-    transpiler.resolver.watcher = Some(watcher);
+    transpiler.resolver.watcher = Some(HotReloader::new(transpiler).start());
 }
 
 /// `bun test --changed --watch` reruns for these only, not for every change git knows of.
@@ -85,7 +85,7 @@ impl ChangedPaths {
         let Some(trigger_file) = &self.trigger_file else {
             return;
         };
-        if self.paths.count() == 0 {
+        if self.paths.is_empty() {
             return;
         }
 
@@ -105,11 +105,10 @@ unsafe extern "C" {
     safe fn BunDebugger__willHotReload();
 }
 
-static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-
 struct HotReloader {
     /// Replace the process instead of evaluating the entry point again.
     reload_immediately: bool,
+    clear_screen: bool,
     /// A copy for the watcher thread: the transpiler belongs to another one.
     #[cfg(not(windows))]
     loaders: bun_ast::LoaderHashTable,
@@ -122,13 +121,14 @@ struct HotReloader {
 
     /// `None` for `bun build --watch`, which replaces the process before it would post a task.
     reload_handle: Option<crate::VmHandle>,
+    pending_reloads: Arc<AtomicU32>,
 
     changed_paths: ChangedPaths,
 }
 
 #[derive(Default)]
 struct MainFile {
-    /// Of the directory with a trailing "/"
+    /// Hash of the directory path, with its trailing `/`.
     dir_hash: bun_watcher::HashType,
 
     #[cfg(not(windows))]
@@ -185,6 +185,7 @@ impl bun_event_loop::BoxedTask for HotReloadTask {
 
 impl HotReloadTask {
     pub fn run(vm: &VirtualMachine) {
+        let pending_reloads = (vm.pending_reloads.get()).expect("set before the watcher starts");
         // Since we rely on the event loop for hot reloads, there can be
         // a delay before the next reload begins. In the time between the
         // last reload and the next one, we shouldn't schedule any more
@@ -194,7 +195,7 @@ impl HotReloadTask {
         // Note that we set the count _before_ we reload, so that if we
         // get another hot reload request while we're reloading, we'll
         // still enqueue it.
-        while vm.handle_ref().pending_reloads().swap(0, Ordering::Relaxed) > 0 {
+        while pending_reloads.swap(0, Ordering::Relaxed) > 0 {
             vm.reload();
         }
     }
@@ -213,16 +214,13 @@ impl HotReloader {
             Output::flush();
             self.changed_paths.write_trigger_file();
             bun_removable_features::removable_body!(HotReload, Abort, {
-                bun_core::reload_process(
-                    CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                    false,
-                );
+                bun_core::reload_process(self.clear_screen, false);
             });
             unreachable!();
         }
 
         let handle = (self.reload_handle.as_ref()).expect("set for a reloader that posts");
-        handle.pending_reloads().fetch_add(1, Ordering::Relaxed);
+        self.pending_reloads.fetch_add(1, Ordering::Relaxed);
 
         BunDebugger__willHotReload();
         let task = ConcurrentTask::create(JscTask::from_boxed(Box::new(HotReloadTask)));
@@ -232,7 +230,7 @@ impl HotReloader {
         // never drains the posted task. Arm a one-shot timer that forces the reload after a
         // bounded window (node's watcher SIGKILLs an unresponsive child after its grace period).
         if self.reload_immediately {
-            arm_watch_reload_grace_timer();
+            arm_watch_reload_grace_timer(self.clear_screen);
         }
     }
 }
@@ -240,23 +238,20 @@ impl HotReloader {
 static WATCH_RELOAD_GRACE_ARMED: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
-fn arm_watch_reload_grace_timer() {
+fn arm_watch_reload_grace_timer(clear_screen: bool) {
     if WATCH_RELOAD_GRACE_ARMED.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
     let reload_started = bun_core::is_process_reload_in_progress_on_another_thread;
     let handler_running = crate::posix_signal_handle::is_emitting_watch_kill_signal;
-    let force = || -> ! {
+    let force = move || -> ! {
         // Same as the sibling reload paths: execve never reaches on_exit, so
         // flush the compile cache first (safe off the JS thread; generation
         // runs on its own worker VM).
         crate::node_compile_cache::persist_now();
         Output::flush();
         bun_removable_features::removable_body!(HotReload, Abort, {
-            bun_core::reload_process(
-                CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
-                false,
-            );
+            bun_core::reload_process(clear_screen, false);
         });
         unreachable!();
     };
@@ -307,9 +302,12 @@ impl HotReloader {
         bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
     }
 
-    fn new(#[cfg_attr(windows, expect(unused_variables))] transpiler: &Transpiler<'_>) -> Self {
+    fn new(transpiler: &Transpiler<'_>) -> Self {
         Self {
             reload_immediately: true,
+            clear_screen: !transpiler
+                .env()
+                .has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout()),
             #[cfg(not(windows))]
             loaders: bun_core::handle_oom(transpiler.options.loaders.clone()),
             verbose: false,
@@ -317,12 +315,13 @@ impl HotReloader {
             #[cfg(not(windows))]
             tombstones: StringHashMap::default(),
             reload_handle: None,
+            pending_reloads: Arc::default(),
             changed_paths: ChangedPaths::default(),
         }
     }
 
-    fn start(self, env: &bun_dotenv::Loader, top_level_dir: &'static [u8]) -> Arc<Watcher> {
-        let watcher = match Watcher::init(Box::new(self), top_level_dir) {
+    fn start(self) -> Arc<Watcher> {
+        let watcher = match Watcher::init(Box::new(self), FileSystem::get().top_level_dir()) {
             Ok(w) => w,
             Err(err) => {
                 bun_core::pretty_errorln!(
@@ -333,11 +332,6 @@ impl HotReloader {
                 bun_core::Global::exit(1);
             }
         };
-
-        CLEAR_SCREEN.store(
-            !env.has_set_no_clear_terminal_on_reload(!Output::enable_ansi_colors_stdout()),
-            Ordering::Relaxed,
-        );
 
         if let Err(err) = watcher.start() {
             bun_core::handle_error_return_trace(&err);

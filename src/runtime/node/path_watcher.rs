@@ -46,6 +46,8 @@ use bun_sys::{self as sys, E, Tag};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::{Fd, FdExt};
 use bun_threading::{Guarded, Mutex};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use bun_watcher::inotify_watcher::EventIterator as InotifyEventIterator;
 use bun_wyhash::hash;
 
 use bun_jsc::VirtualMachineRef as VirtualMachine;
@@ -70,7 +72,7 @@ static DEFAULT_MANAGER_MUTEX: Mutex = Mutex::new();
 // ────────────────────────────────────────────────────────────────────────────────
 
 pub(crate) struct PathWatcherManager {
-    /// Dedup map: dedup key → PathWatcher. The key is the resolved path with a one-byte
+    /// Dedup map: dedup key → `WatcherId`. The key is the resolved path with a one-byte
     /// suffix encoding `recursive` (so `fs.watch(p)` and `fs.watch(p, {recursive:true})`
     /// don't share — they want different OS registrations on every platform).
     by_path: StringArrayHashMap<WatcherId>,
@@ -131,6 +133,7 @@ impl Watchers {
     fn remove(&mut self, id: WatcherId) -> Option<PathWatcher> {
         let watcher = self.slots[id.0 as usize].take();
         if self.free_list.len() + 1 == self.slots.len() {
+            // The last watcher: free both lists.
             *self = Self::default();
         } else {
             self.free_list.push(id);
@@ -174,7 +177,7 @@ pub(crate) struct PathWatcher {
 }
 
 // SAFETY: a handler is an `FSWatcher`, which detaches under the manager's lock before it is freed.
-// While it is attached, that lock serializes the writes to its `current_task`.
+// While it is attached, that lock serializes the writes to its `pending_events`.
 unsafe impl Send for PathWatcher {}
 
 /// What a handler holds until it detaches.
@@ -286,7 +289,7 @@ impl PathWatcher {
 
         let watcher = &mut manager.watchers[id];
         watcher.handlers.swap_remove(&ctx);
-        if watcher.handlers.len() > 0 {
+        if !watcher.handlers.is_empty() {
             return;
         }
 
@@ -952,18 +955,12 @@ impl Linux {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_watcher::inotify_watcher::EventIterator as InotifyEventIterator;
-
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin
 // ────────────────────────────────────────────────────────────────────────────────
 
 /// macOS: delegate to `fs_events.rs`, which already runs one CFRunLoop thread with
 /// one FSEventStream covering every watched path.
-///
-/// Unlike the old design, FSEvents is used for both files and directories (same as
-/// libuv), so `fs.watch()` no longer spins up a second kqueue thread.
 #[cfg(target_os = "macos")]
 fn start_fsevents() -> sys::Result<()> {
     fsevents::start().map_err(|e| {
@@ -980,7 +977,7 @@ fn start_fsevents() -> sys::Result<()> {
 
 #[cfg(target_os = "macos")]
 impl PathWatcherManager {
-    /// For the CF thread, which may hold the FSEvents loop's lock: never take them the other way.
+    /// Lock order: `FSEventsLoop::mutex`, then this.
     pub(super) fn lock() -> bun_threading::guarded::GuardedLock<'static, Self, Mutex> {
         DEFAULT_MANAGER.wait().lock()
     }

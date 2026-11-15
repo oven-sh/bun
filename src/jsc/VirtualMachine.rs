@@ -347,6 +347,8 @@ pub struct VirtualMachine {
     pending_internal_promise: JsCell<crate::strong::Optional>,
     pub pending_internal_promise_reported_at: Cell<u32>,
     pub hot_reload_deferred: Cell<bool>,
+    /// File changes that no hot reload has started for. Shared with the watcher thread.
+    pub(crate) pending_reloads: OnceCell<std::sync::Arc<core::sync::atomic::AtomicU32>>,
     pub entry_point_result: EntryPointResult,
 
     pub on_unhandled_rejection: Cell<OnUnhandledRejection>,
@@ -1432,7 +1434,7 @@ impl VirtualMachine {
 
     /// Waits for the watcher thread to finish the current change and prevents new ones.
     fn stop_watcher(&self) {
-        if let Some(watcher) = self.bun_watcher.replace(None) {
+        if let Some(watcher) = self.bun_watcher.take() {
             watcher.shutdown(false);
             self.transpiler.with_mut(|t| t.resolver.watcher = None);
         }
@@ -1546,7 +1548,6 @@ impl VirtualMachine {
         SourceMapHandlerGetter::new(&self.source_mappings, self.wants_inline_source_map())
     }
 
-    /// `.connect` (VSCode extension) clients do not read inline source maps.
     pub(crate) fn wants_inline_source_map(&self) -> bool {
         self.debugger
             .get()
@@ -3095,6 +3096,7 @@ impl VirtualMachine {
             // `log` is a fresh leaked Box; outlives the VM.
             addr_of_mut!((*vm).log).write(Cell::new(NonNull::new(log)));
             addr_of_mut!((*vm).bun_watcher).write(JsCell::new(None));
+            addr_of_mut!((*vm).pending_reloads).write(OnceCell::new());
             addr_of_mut!((*vm).main).write(JsCell::new(None));
             addr_of_mut!((*vm).main_entry_point).write(Cell::new(MainEntryPoint::File));
             addr_of_mut!((*vm).main_resolved_path).write(JsCell::new(bun_core::String::EMPTY));
@@ -5362,6 +5364,7 @@ impl VirtualMachine {
             drop((*this).bake_config_plugin_names.take());
             drop((*this).bake_framework.take());
             drop((*this).pending_internal_promise.take());
+            drop((*this).pending_reloads.take());
 
             if let Some(hooks) = runtime_hooks() {
                 let state = (*this).runtime_state.replace(core::ptr::null_mut());

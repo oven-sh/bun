@@ -692,7 +692,8 @@ pub(crate) fn watching(vm: &bun_jsc::virtual_machine::VirtualMachine) -> Option<
     Some(Box::new(move |path| {
         if !bun_core::strings::contains(path, b"/node_modules/") {
             // The watcher keys files by their native path.
-            watcher.add_file_by_path_slow(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
+            let _ =
+                watcher.add_file_by_path_slow(join_abs_string::<Auto>(&cwd, &[to_native(path)]));
         }
     }))
 }

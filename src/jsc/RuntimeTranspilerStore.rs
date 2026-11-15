@@ -404,7 +404,7 @@ pub struct TranspilerJob {
     _keep_alive: JsKeepAlive,
     /// Macros load through `Bun.plugin()` callbacks, which the pool thread's VM lacks, so the JS thread must run them.
     has_plugins: bool,
-    // Read on the JS thread, which also writes them.
+    // Copied from the VM in `transpile`: the JS thread may write them meanwhile.
     has_any_macro_remappings: bool,
     use_isolation_source_provider_cache: bool,
     wants_inline_source_map: bool,
@@ -711,6 +711,7 @@ impl TranspilerJob {
             allow_commonjs: true,
             inject_jest_globals: transpiler.options.rewrite_jest_for_tests,
             is_test_entry_point: false,
+            // `transpile_file` schedules no job for the entry point.
             set_breakpoint_on_first_line: false,
             runtime_transpiler_cache: if !RuntimeTranspilerCache::is_disabled() {
                 Some(&mut cache)

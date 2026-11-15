@@ -85,6 +85,29 @@ describe.skipIf(!isDebug)("a WTF string whose allocation fails is reported as a 
       "1 MiB toString(hex)": 2 * MiB,
     });
   });
+
+  test("YAML.parse, TOML.parse and JSON5.parse", async () => {
+    const results = await resultsUnderCap(
+      { ...bunEnv, BUN_JSC_maxSingleAllocationSize: String(4 * MiB) },
+      `
+      const quote = (before, value, after) => Buffer.concat([Buffer.from(before), value, Buffer.from(after)]);
+      for (const fill of ["a", "é"]) {
+        const value = Buffer.alloc(${6 * MiB}, fill);
+        await run("YAML " + fill, () => Bun.YAML.parse(quote('a: "', value, '"')));
+        await run("TOML " + fill, () => Bun.TOML.parse(quote('a = "', value, '"')));
+        await run("JSON5 " + fill, () => Bun.JSON5.parse(quote('{ a: "', value, '" }')));
+      }
+      `,
+    );
+    expect(results).toEqual({
+      "YAML a": allocationFailed,
+      "TOML a": allocationFailed,
+      "JSON5 a": allocationFailed,
+      "YAML é": allocationFailed,
+      "TOML é": allocationFailed,
+      "JSON5 é": allocationFailed,
+    });
+  });
 });
 
 // Every allocation that a TextDecoder makes for 64 MiB of input is that long or

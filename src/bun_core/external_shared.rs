@@ -103,8 +103,8 @@ unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
         unsafe { (*this).r#ref() }
     }
     unsafe fn ext_deref(this: *mut Self) {
-        // SAFETY: caller guarantees `this` is a live WTFStringImpl.
-        unsafe { (*this).deref() }
+        // SAFETY: the caller gives up its ref.
+        unsafe { Self::deref(this) }
     }
 }
 

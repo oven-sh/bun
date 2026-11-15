@@ -1193,12 +1193,8 @@ unsafe fn apply_standalone_runtime_flags(
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the
 /// CLI parser, the scan stops at the first positional.
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_flags(
-    exec_argv: &[bun_core::WTFStringImpl],
+fn parse_worker_exec_argv_flags(
+    exec_argv: &[Option<&bun_core::WTFStringImplStruct>],
 ) -> Option<WorkerExecArgvFlags> {
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
@@ -1206,21 +1202,16 @@ unsafe fn parse_worker_exec_argv_flags(
         invalid: None,
     };
     if crate::cli::startup_options::may_refuse_options() {
-        // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
-        let words = exec_argv
-            .iter()
-            .filter(|arg| !arg.is_null())
-            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
+        let words = exec_argv.iter().flatten().map(|arg| arg.to_owned_slice_z());
         let words: Vec<_> = words.collect();
         let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
     for (index, &arg) in exec_argv.iter().enumerate() {
-        if arg.is_null() {
+        let Some(arg) = arg else {
             continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
+        };
+        let owned = arg.to_owned_slice_z();
         let bytes = owned.as_bytes();
         if bytes.first() != Some(&b'-') {
             break;

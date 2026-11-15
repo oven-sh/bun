@@ -438,7 +438,9 @@ static BunString uninitializedStringFailure(size_t length)
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(size_t length)
 {
-    ASSERT(length > 0);
+    if (!length) [[unlikely]] {
+        return Zig::BunStringEmpty;
+    }
     std::span<char16_t> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {
@@ -449,7 +451,9 @@ extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromUTF16Unitialized(siz
 
 extern "C" [[ZIG_EXPORT(nothrow)]] BunString BunString__fromLatin1Unitialized(size_t length)
 {
-    ASSERT(length > 0);
+    if (!length) [[unlikely]] {
+        return Zig::BunStringEmpty;
+    }
     std::span<Latin1Character> ptr;
     auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
     if (!impl) [[unlikely]] {

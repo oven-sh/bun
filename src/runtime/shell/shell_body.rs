@@ -6,11 +6,11 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::EncodedSlice;
 use bun_core::String as BunString;
 #[cfg(windows)]
 use bun_core::ZStr;
 use bun_core::strings;
+use bun_core::{EncodedSlice, EncodedUnits};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
     self as jsc, JSArrayIterator, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
@@ -534,8 +534,11 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         bunstr: BunString,
     ) -> Result<bool, bun_alloc::AllocError> {
-        let invalid = (bunstr.is_utf16() && !simdutf::validate::utf16le(bunstr.utf16()))
-            || (bunstr.is_utf8() && !simdutf::validate::utf8(bunstr.byte_slice()));
+        let invalid = match bunstr.encoded_units() {
+            EncodedUnits::Utf16(units) => !simdutf::validate::utf16le(units),
+            EncodedUnits::Utf8(bytes) => !simdutf::validate::utf8(bytes),
+            EncodedUnits::Latin1(_) => false,
+        };
         if invalid {
             return Ok(false);
         }
@@ -551,15 +554,13 @@ impl<'a> ShellSrcBuilder<'a> {
                 return Ok(true);
             }
         }
-        if bunstr.is_utf16() {
-            self.append_utf16_impl(bunstr.utf16())?;
-            return Ok(true);
+        match bunstr.encoded_units() {
+            EncodedUnits::Utf16(units) => self.append_utf16_impl(units)?,
+            EncodedUnits::Latin1(latin1) if !strings::is_all_ascii(latin1) => {
+                self.append_latin1_impl(latin1)?
+            }
+            EncodedUnits::Latin1(utf8) | EncodedUnits::Utf8(utf8) => self.append_utf8_impl(utf8)?,
         }
-        if bunstr.is_utf8() || strings::is_all_ascii(bunstr.byte_slice()) {
-            self.append_utf8_impl(bunstr.byte_slice())?;
-            return Ok(true);
-        }
-        self.append_latin1_impl(bunstr.byte_slice())?;
         Ok(true)
     }
 

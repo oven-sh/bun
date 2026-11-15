@@ -4,7 +4,7 @@ use core::ffi::c_char;
 
 use bun_core::EncodedSlice;
 use bun_core::env_var;
-use bun_core::{self, Environment, Global};
+use bun_core::{self, Environment, Global, WTFStringImplStruct};
 use bun_jsc::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsResult};
 
 // Both materialize the array on first access through `Bun__Process__createArgv`
@@ -45,15 +45,13 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
 /// `WorkerOptions`; the worker thread gets its own copy (the parent may
 /// atomize its impls), and an empty one is spelled as `BunString::EMPTY`.
-pub(crate) fn worker_option_string(wtf: bun_core::WTFStringImpl) -> bun_core::String {
-    // SAFETY: non-null impl borrowed from the live `WorkerOptions`.
-    let imp = unsafe { &*wtf };
-    if imp.length() == 0 {
-        bun_core::String::EMPTY
-    } else if imp.is_8bit() {
-        bun_core::String::clone_latin1(imp.latin1_slice())
-    } else {
-        bun_core::String::clone_utf16(imp.utf16_slice())
+pub(crate) fn worker_option_string(wtf: Option<&WTFStringImplStruct>) -> bun_core::String {
+    let Some(imp) = wtf else {
+        return bun_core::String::EMPTY;
+    };
+    match imp.as_utf16() {
+        Some(units) => bun_core::String::clone_utf16(units),
+        None => bun_core::String::clone_latin1(imp.latin1_slice()),
     }
 }
 
@@ -664,35 +662,16 @@ mod _impl {
         if k.tag() == bun_core::Tag::Empty {
             return;
         }
-        // `String::{is_8bit,latin1,utf16,length}` dispatch to the WTF impl when
-        // `tag == WTFStringImpl` (guaranteed here: C++ caller passes WTF-backed
-        // strings and we've already returned on `Empty`).
         let mut buf1: Vec<u16> = vec![0u16; k.utf16_byte_length() + 1];
         let mut buf2: Vec<u16> = vec![0u16; v.utf16_byte_length() + 1];
-        let len1: usize = if k.is_8bit() {
-            strings::copy_latin1_into_utf16(&mut buf1, k.latin1()).written
-        } else {
-            buf1[0..k.length()].copy_from_slice(k.utf16());
-            k.length()
-        };
-        let str1 = WStr::nul_terminate(&mut buf1, len1);
+        let len1 = k
+            .encode_into_utf16_buf_z(&mut buf1)
+            .expect("infallible: size matches");
+        let len2 = v
+            .encode_into_utf16_buf_z(&mut buf2)
+            .expect("infallible: size matches");
 
-        let str2: Option<&WStr> = if v.tag() != bun_core::Tag::Dead {
-            Some('str_: {
-                if v.tag() == bun_core::Tag::Empty {
-                    break 'str_ WStr::EMPTY;
-                }
-                let len2: usize = if v.is_8bit() {
-                    strings::copy_latin1_into_utf16(&mut buf2, v.latin1()).written
-                } else {
-                    buf2[0..v.length()].copy_from_slice(v.utf16());
-                    v.length()
-                };
-                WStr::nul_terminate(&mut buf2, len2)
-            })
-        } else {
-            None
-        };
-        let _ = bun_sys::windows::SetEnvironmentVariableW(str1, str2);
+        let str2 = (v.tag() != bun_core::Tag::Dead).then(|| WStr::from_buf(&buf2, len2));
+        let _ = bun_sys::windows::SetEnvironmentVariableW(WStr::from_buf(&buf1, len1), str2);
     }
 } // mod _impl

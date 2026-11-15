@@ -30,6 +30,7 @@ use bun_jsc::AbortSignalRef;
 use bun_jsc::HeadersRef;
 use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
+use bun_jsc::host_fn::host_call_error_value;
 use bun_ptr::weak_ptr::WeakPtrData;
 use bun_ptr::{RefCount, RefPtr};
 
@@ -284,7 +285,10 @@ impl Request {
         self.throw_if_body_unusable(global_this).ok()?;
         // `BunRequest.prototype.clone`, a C++ host function, calls this.
         let cx = global_this.js_thread_of_caller();
-        self.clone(&cx).ok().map(RefPtr::new)
+        self.clone(&cx)
+            .map_err(|err| host_call_error_value(global_this, err))
+            .ok()
+            .map(RefPtr::new)
     }
 
     /// `JSBunRequest::clone` tail: mirror [`Self::do_clone`]'s cache sync so a
@@ -449,7 +453,8 @@ impl Request {
             formatter.write_indent(writer)?;
             writer
                 .write_str(Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> ").as_ref())?;
-            self.ensure_url().map_err(|_| core::fmt::Error)?;
+            // A dead string prints as "".
+            let _ = self.ensure_url();
             write!(
                 writer,
                 "{}",
@@ -615,7 +620,8 @@ impl Request {
     }
 
     pub(crate) fn get_url(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        self.ensure_url()?;
+        // `to_js` throws for a dead string.
+        let _ = self.ensure_url();
         self.url.get().to_js(cx.global())
     }
 
@@ -717,6 +723,15 @@ impl Request {
             return Ok(());
         }
 
+        self.set_url_from_request_context();
+        if self.url.get().is_dead() {
+            return Err(AllocError);
+        }
+        Ok(())
+    }
+
+    /// Stores a dead string if the URL cannot be allocated.
+    fn set_url_from_request_context(&self) {
         if let Some(req) = self.request_context.get().get_request() {
             // S008: `uws::Request` is an `opaque_ffi!` ZST handle — safe deref.
             let req = bun_opaque::opaque_deref(req);
@@ -762,19 +777,17 @@ impl Request {
                             self.url.set(BunString::clone_utf8(url));
                         }
 
-                        return Ok(());
+                        return;
                     }
 
                     if strings::is_all_ascii(host) && strings::is_all_ascii(&req_url) {
-                        let (new_url, bytes) =
-                            BunString::create_uninitialized_latin1(url_bytelength);
-                        self.url.set(new_url);
                         // exact space was counted above
-                        let (a, rest) = bytes.split_at_mut(protocol.len());
-                        let (b, c) = rest.split_at_mut(host.len());
-                        a.copy_from_slice(protocol);
-                        b.copy_from_slice(host);
-                        c.copy_from_slice(&req_url);
+                        let new_url = BunString::create_latin1_with(url_bytelength, |mut bytes| {
+                            bytes.append(protocol);
+                            bytes.append(host);
+                            bytes.append(&req_url);
+                        });
+                        self.url.set(new_url);
                     } else {
                         // slow path
                         let mut temp_url: Vec<u8> = Vec::with_capacity(url_bytelength);
@@ -791,14 +804,13 @@ impl Request {
                         self.url.set(href);
                     }
 
-                    return Ok(());
+                    return;
                 }
             }
 
             debug_assert!(self.size_of_url() == req_url.len());
             self.url.set(BunString::clone_utf8(&req_url));
         }
-        Ok(())
     }
 }
 
@@ -1198,7 +1210,9 @@ impl Request {
         cx: &bun_jsc::JsThread<'_>,
         url: Option<BunString>,
     ) -> JsResult<Request> {
-        let _ = self.ensure_url();
+        if url.is_none() {
+            self.ensure_url()?;
+        }
         let body = body::hive_alloc(self.clone_body_value_via_cached_stream(cx)?);
         let headers = self.clone_headers(cx.global())?;
         Ok(Request {

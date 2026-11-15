@@ -3,7 +3,7 @@
 //! only the JS-materialization lives here.
 
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
-use bun_core::{StackCheck, String as BunString, strings};
+use bun_core::{StackCheck, String as BunString, slice_as_bytes, strings};
 use bun_jsc::{JSGlobalObject, JSValue, JsError, StringJsc as _};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
@@ -243,14 +243,18 @@ fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, To
         return Ok(JSValue::js_empty_string(global));
     }
     if let Some(utf16) = strings::wtf8_to_utf16_alloc(bytes) {
-        let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-        chars.copy_from_slice(&utf16);
-        out.into_js(global).map_err(js_err)
+        utf16_to_js(&utf16, global)
     } else {
-        let (out, chars) = BunString::create_uninitialized_latin1(bytes.len());
-        chars.copy_from_slice(bytes);
-        out.into_js(global).map_err(js_err)
+        BunString::clone_latin1(bytes)
+            .into_js(global)
+            .map_err(js_err)
     }
+}
+
+fn utf16_to_js(utf16: &[u16], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
+    BunString::create_utf16_with(utf16.len(), |mut bytes| bytes.append(slice_as_bytes(utf16)))
+        .into_js(global)
+        .map_err(js_err)
 }
 
 /// `E.String` → JS string conversion.
@@ -286,10 +290,7 @@ macro_rules! impl_string_to_js {
             if s.is_utf8() {
                 utf8_bytes_to_js(s.slice8(), global)
             } else {
-                let utf16 = s.slice16();
-                let (out, chars) = BunString::create_uninitialized_utf16(utf16.len());
-                chars.copy_from_slice(utf16);
-                out.into_js(global).map_err(js_err)
+                utf16_to_js(s.slice16(), global)
             }
         }
     };

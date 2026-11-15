@@ -10,7 +10,7 @@ use core::mem::{self, MaybeUninit};
 use core::net::Ipv4Addr;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{String as BunString, ZStr, strings};
+use bun_core::{EncodedUnits, String as BunString, ZStr, slice_as_bytes, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
@@ -159,21 +159,19 @@ impl SocketAddress {
     /// Returns `undefined` if the input is invalid.
     pub(crate) fn parse<'a>(heap: &JsHeap<'a>, input: &BunString) -> Option<JsWrapper<'a, Self>> {
         const PREFIX: &str = "http://";
-        let url_str: BunString = if input.is_8bit() {
-            let from_chars = input.latin1();
-            let (str, to_chars) =
-                BunString::create_uninitialized_latin1(from_chars.len() + PREFIX.len());
-            to_chars[..PREFIX.len()].copy_from_slice(PREFIX.as_bytes());
-            to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
-        } else {
-            let from_chars = input.utf16();
-            let (str, to_chars) =
-                BunString::create_uninitialized_utf16(from_chars.len() + PREFIX.len());
-            // bun.strings.literal(u16, "http://")
-            to_chars[..PREFIX.len()].copy_from_slice(bun_core::w!("http://"));
-            to_chars[PREFIX.len()..].copy_from_slice(from_chars);
-            str
+        let url_str: BunString = match input.encoded_units() {
+            EncodedUnits::Latin1(from_chars) | EncodedUnits::Utf8(from_chars) => {
+                BunString::create_latin1_with(from_chars.len() + PREFIX.len(), |mut to_chars| {
+                    to_chars.append(PREFIX.as_bytes());
+                    to_chars.append(from_chars);
+                })
+            }
+            EncodedUnits::Utf16(from_chars) => {
+                BunString::create_utf16_with(from_chars.len() + PREFIX.len(), |mut to_bytes| {
+                    to_bytes.append(slice_as_bytes(bun_core::w!("http://")));
+                    to_bytes.append(slice_as_bytes(from_chars));
+                })
+            }
         };
 
         let url = bun_jsc::url::Parsed::from_string(&url_str)?;
@@ -191,7 +189,7 @@ impl SocketAddress {
         // NOTE: parsed host cannot be used as presentation string. e.g.
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
-        let paddr = host.latin1(); // presentation address
+        let paddr = host.to_utf8(); // presentation address
         let mut buf = [0; inet::INET6_ADDRSTRLEN + 1];
         // A `%scope` suffix populates `scope_id`, but
         // `ares_inet_pton` does not accept it, so we strip and parse it here.
@@ -210,7 +208,7 @@ impl SocketAddress {
             let octets = bun_cares_sys::pton(strings::copy_z(&mut buf, inner)?)?;
             Self::init_ipv6(octets, port_, 0, scope_id)
         } else {
-            let octets = bun_cares_sys::pton(strings::copy_z(&mut buf, paddr)?)?;
+            let octets = bun_cares_sys::pton(strings::copy_z(&mut buf, &paddr)?)?;
             Self::init_ipv4(octets, port_)
         };
 
@@ -622,8 +620,8 @@ impl AF {
                 ));
             }
 
-            if fam_str.is_8bit() {
-                let slice = fam_str.latin1();
+            if let EncodedUnits::Latin1(slice) | EncodedUnits::Utf8(slice) = fam_str.encoded_units()
+            {
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(slice, b"ipv4") {
                     return Ok(AF::INET);
                 }

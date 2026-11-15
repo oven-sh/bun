@@ -146,12 +146,11 @@ fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
     let tail = &input[first_non_ascii..];
     if strings::is_valid_utf8(tail) {
         let len = first_non_ascii + strings::element_length_utf8_into_utf16(tail);
-        let (string, units) = BunString::create_uninitialized_utf16(len);
+        let string =
+            BunString::create_utf16_with(len, |bytes| strings::write_wtf8_as_utf16le(input, bytes));
         if string.is_dead() {
             bun_alloc::out_of_memory();
         }
-        let converted = strings::try_convert_utf8_to_utf16_exact(units.into(), input);
-        assert!(converted);
         return string;
     }
     // A lone surrogate or an invalid byte: the scalar path decides the length.

@@ -176,7 +176,6 @@ pub(crate) fn generate_code_for_file_in_chunk_js(
                 source_storage = bun_ast::Source {
                     path: new_path,
                     contents: std::borrow::Cow::Borrowed(&source_ref.contents),
-                    contents_is_recycled: source_ref.contents_is_recycled,
                     identifier_name: std::borrow::Cow::Borrowed(&source_ref.identifier_name),
                     index: source_ref.index,
                 };

@@ -589,16 +589,6 @@ impl Location {
         Ok(())
     }
 
-    pub(crate) fn memory_cost(&self) -> usize {
-        let mut cost: usize = 0;
-        cost += self.file.len();
-        cost += self.namespace.len();
-        if let Some(text) = &self.line_text {
-            cost += text.len();
-        }
-        cost
-    }
-
     pub fn init_or_null(_source: Option<&Source>, r: Range) -> Option<Location> {
         Self::init_or_null_impl(_source, r, None)
     }
@@ -696,15 +686,6 @@ impl Default for Data {
 }
 
 impl Data {
-    pub(crate) fn memory_cost(&self) -> usize {
-        let mut cost: usize = 0;
-        cost += self.text.len();
-        if let Some(loc) = &self.location {
-            cost += loc.memory_cost();
-        }
-        cost
-    }
-
     pub(crate) fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
         to: &mut impl fmt::Write,
@@ -945,15 +926,6 @@ impl Default for Msg {
 }
 
 impl Msg {
-    pub fn memory_cost(&self) -> usize {
-        let mut cost: usize = 0;
-        cost += self.data.memory_cost();
-        for note in self.notes.iter() {
-            cost += note.memory_cost();
-        }
-        cost
-    }
-
     // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
 
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
@@ -1143,9 +1115,7 @@ pub struct Log {
     /// Incremental line/column scanner for the messages this log creates, so
     /// a flood of diagnostics against one source doesn't rescan it from byte
     /// 0 for every message; see [`LineColumnTracker`]. Boxed and allocated
-    /// lazily by the first located diagnostic: most logs never report
-    /// anything, and `Log` is embedded by value in types that are sensitive
-    /// to its size (e.g. `TaskError` in the isolated installer).
+    /// lazily by the first located diagnostic: most logs never report anything.
     pub line_column_tracker: Cell<Option<Box<LineColumnTracker>>>,
 }
 

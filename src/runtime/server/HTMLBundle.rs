@@ -7,7 +7,7 @@ use core::mem;
 use core::ptr::NonNull;
 
 use bun_ast::Loader;
-use bun_ast::{Log, Msg};
+use bun_ast::Log;
 use bun_bundler::bundle_v2::BuildResult;
 use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
@@ -125,8 +125,7 @@ pub(crate) enum State {
     Pending,
     /// The plugin load or the `JSBundleCompletionTask` holds a [`PendingBuild`].
     Building,
-    /// Not a `Log`: a heap snapshot measures this on a marking thread.
-    Err(Vec<Msg>),
+    Err,
     Html(RefPtr<StaticRoute>),
 }
 
@@ -135,7 +134,7 @@ impl State {
         match self {
             State::Pending => 0,
             State::Building => 0,
-            State::Err(msgs) => msgs.iter().map(Msg::memory_cost).sum(),
+            State::Err => 0,
             State::Html(html) => html.memory_cost(),
         }
     }
@@ -206,7 +205,7 @@ impl Route {
             }
 
             // Simpler development workflow which rebundles on every request.
-            if matches!(route.state.get(), State::Html(_) | State::Err(_)) {
+            if matches!(route.state.get(), State::Html(_) | State::Err) {
                 route.state.set(State::Pending);
             }
         }
@@ -251,7 +250,7 @@ impl Route {
                     resp.on_aborted_this(Self::on_pending_response_aborted, this);
                     req.set_yield(false);
                 }
-                State::Err(_msgs) => {
+                State::Err => {
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_output::scoped_log!(
                             debug,
@@ -285,7 +284,7 @@ impl Route {
     fn schedule_bundle(this: ThisPtr<Self>, server: AnyServer) -> Result<(), crate::Error> {
         match server.get_or_load_plugins(ServePluginsCallback::HtmlBundleRoute(this)) {
             GetOrStartLoadResult::Err => {
-                this.state.set(State::Err(Vec::new()));
+                this.state.set(State::Err);
             }
             GetOrStartLoadResult::Ready(plugins) => {
                 let plugins = plugins.map(NonNull::from);
@@ -301,17 +300,17 @@ impl Route {
     /// The build task will not deliver (the context that started it stopped, or the VM is going):
     /// what waits for the page is answered as for a failed build.
     pub(crate) fn on_build_abandoned(&self) {
-        self.state.set(State::Err(Vec::new()));
+        self.state.set(State::Err);
         self.resume_pending_responses();
     }
 
     /// Production keeps the reason to itself, see `resume_pending_responses`.
-    fn set_build_error(&self, server: AnyServer, log: Log) {
+    fn set_build_error(&self, server: AnyServer, log: &Log) {
         if server.config().is_development() {
             let _ = log.print(bun_output::error_writer_buffered());
             bun_output::flush();
         }
-        self.state.set(State::Err(log.msgs.into_inner()));
+        self.state.set(State::Err);
     }
 
     pub(crate) fn on_plugins_resolved(
@@ -437,7 +436,7 @@ impl Route {
             "HTMLBundleRoute(0x{:x}) plugins rejected",
             std::ptr::from_ref(self) as usize
         );
-        self.state.set(State::Err(Vec::new()));
+        self.state.set(State::Err);
         self.resume_pending_responses();
         Ok(())
     }
@@ -446,7 +445,7 @@ impl Route {
     pub(crate) fn on_complete(
         &self,
         result: bun_bundler::Result<BuildResult>,
-        log: Log,
+        log: &Log,
         started_at_ns: u64,
     ) {
         let server = self.server.get().expect("server set");
@@ -491,7 +490,7 @@ impl Route {
                     output_file.output_kind == bundler_options::OutputKind::EntryPoint
                         && output_file.loader == Loader::Html
                 }) else {
-                    self.set_build_error(server, self.bundle.no_html_page_log());
+                    self.set_build_error(server, &self.bundle.no_html_page_log());
                     break 'bundle;
                 };
 
@@ -621,7 +620,7 @@ impl Route {
                         StaticRoute::on(html.this_ptr(), resp);
                     }
                 }
-                State::Err(_msgs) => {
+                State::Err => {
                     if self
                         .server
                         .get()

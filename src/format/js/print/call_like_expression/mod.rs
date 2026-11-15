@@ -17,15 +17,16 @@ use crate::{format_args, write};
 
 pub(crate) fn write_call_expression<'a>(e: Expr<'a>, call: Call<'a>, f: &mut Formatter<'a>) {
     let context = context_of_function(call.callee(), f);
-    // Inside a class list, the strings in a call to some other function aren't classes:
-    // `cn(a.includes("b c") && "d e")`.
-    let was_disabled = match context {
-        Some(_) => None,
-        None => f.context_mut().disable_tailwind_context(true),
-    };
+    // Inside a class list, nothing in a call to some other function is a class, strings and templates alike:
+    // `cn(a.includes("b c") && "d e")`. Under the plugin's rules it is: see `collapse_by_plugin`.
+    let hides_context = context.is_none()
+        && (f.context().tailwind_context()).is_some_and(|it| !it.follows_plugin);
+    if hides_context {
+        f.context_mut().hide_tailwind_context();
+    }
     write_call(e, call, context, f);
-    if let Some(was_disabled) = was_disabled {
-        f.context_mut().disable_tailwind_context(was_disabled);
+    if hides_context {
+        f.context_mut().pop_tailwind_context();
     }
 }
 

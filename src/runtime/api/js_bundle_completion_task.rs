@@ -1449,7 +1449,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
 
         // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
-        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
+        let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump);
 
         bv2.plugins = self.plugins();
         bv2.plugin_context = self.context;
@@ -1470,13 +1470,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             .map(|b| &**b)
             .collect();
 
-        let run = bv2
-            .run_from_js_in_new_thread(&entry_points)
-            .map(|build| self.set_result(BundleV2Result::Value(build)));
-
         // The AST-allocator pop lives in `generate_in_new_thread`.
-        bv2.deinit_without_freeing_arena();
-        run
+        bv2.run_from_js_in_new_thread(&entry_points)
+            .map(|build| self.set_result(BundleV2Result::Value(build)))
     }
 }
 

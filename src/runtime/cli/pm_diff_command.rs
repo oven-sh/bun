@@ -550,16 +550,11 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         }
         let perm = (entry.perm() & 0o777) as bun_sys::Mode;
         let size = usize::try_from(entry.size().max(0)).expect("int cast");
-        let path = bun_archive::display_path(entry)?;
-        // npm tarballs root everything under one folder (usually `package/`). What is beside it is not installed.
-        let Some((_, rel)) = strings::split_once_char(&path, b'/') else {
-            continue;
-        };
-        let rel = strings::trim_leading_char(rel, b'/');
-        let mut normalized = vec![0; rel.len() + 1];
-        let rel = bun_archive::normalize_npm_entry_path(rel, &mut normalized);
+        let mut normalized = vec![0; entry.path().len() + 1];
+        let rel =
+            bun_archive::normalize_npm_entry_path(entry, &mut normalized)?.unwrap_or_default();
         bun_paths::resolve_path::platform_to_posix_in_place(rel);
-        if matches!(&*rel, b"" | b".") {
+        if rel.is_empty() {
             continue;
         }
         let rel = rel.to_vec();

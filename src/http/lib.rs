@@ -2138,7 +2138,7 @@ impl<'a> HTTPClient<'a> {
                 // unified here, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
-                // `create` hands back the ref the socket ext owns from here on;
+                // The context's registry holds the session's ref from here on;
                 // `attach_leader` may release it (a failed first flush tears the
                 // session down), so `session` is not used after that call.
                 let session = h2::ClientSession::create(ctx, tls_socket, self);

@@ -57,9 +57,6 @@ impl LinkerContext<'_, '_> {
         }
 
         let worker = ThreadPool::Worker::get(c.bundle);
-        // `Worker::get` returns the thread-local worker
-        // (not RAII), so balance with `unget` explicitly via scopeguard.
-        let worker = scopeguard::guard(worker, |w| w.unget());
 
         // we must use this arena here
         // SAFETY: `Worker::create` initializes `arena` to point at

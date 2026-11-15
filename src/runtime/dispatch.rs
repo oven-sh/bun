@@ -989,9 +989,8 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         }),
         poll_tag::PROCESS => {
             in_features!([ChildProcess], (proc: *mut Process = owner.ptr.cast::<Process>()) {
-                // SAFETY: adopts the ref taken when the poll was registered.
-                let process = unsafe { bun_ptr::RefPtr::from_raw(proc) };
-                Process::wait(process.this_ptr(), false);
+                // SAFETY: a process frees its poll before it is freed, and `wait` ends with the exit handler.
+                Process::wait(unsafe { bun_ptr::ThisPtr::new(proc) }, false);
             })
         }
         poll_tag::MEMORY_PRESSURE => {

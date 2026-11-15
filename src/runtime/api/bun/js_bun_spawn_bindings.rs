@@ -8,9 +8,9 @@ use crate::ipc as IPC;
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
-use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::spawn_sync_event_loop::TickState;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
@@ -1055,21 +1055,19 @@ fn spawn_maybe_sync(
         let Some(sync_loop) = jsc_vm.rare_data().spawn_sync_event_loop(jsc_vm) else {
             return Err(throw_spawn_sync_loop_init_failed(cx.global()));
         };
-        Some(sync_loop.prepare(core::ptr::from_ref(jsc_vm).cast_mut().cast()))
+        Some(sync_loop.prepare())
     } else {
         None
     };
     // For is_sync, use the isolated loop's `event_loop` (created by
     // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
     // instead of the main loop.
-    let event_loop_ptr = match &sync_loop {
-        Some(sync_loop) => sync_loop.event_loop_ptr(),
-        None => jsc_vm.event_loop_ptr(),
+    let event_loop = match &sync_loop {
+        Some(sync_loop) => sync_loop.event_loop(),
+        None => jsc_vm.event_loop(),
     };
-    // SAFETY: both erase a `jsc::EventLoop` that the VM owns (bun_event_loop is below bun_jsc).
-    let event_loop = unsafe { &*event_loop_ptr.cast::<jsc::event_loop::EventLoop>() };
 
-    let loop_handle = EventLoopHandle::init(event_loop_ptr);
+    let loop_handle = EventLoopHandle::init(event_loop.as_erased_ptr());
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
@@ -1582,7 +1580,10 @@ fn spawn_maybe_sync(
     }
 
     let mut setup_err = match subprocess.stdin.get() {
-        Writable::Buffer(buffer) => Writable::buffer_writer_mut(buffer).start().err(),
+        Writable::Buffer(buffer) => {
+            let start_ref = buffer.clone();
+            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+        }
         _ => None,
     };
     if let Some(err) = &setup_err {
@@ -1664,7 +1665,6 @@ fn spawn_maybe_sync(
         // Not `kill_signal`, which the child may ignore: nothing else bounds the wait.
         if subprocess.try_kill(SignalCode::SIGKILL).is_err() {
             // Nor can anything end it: give it up, as `Process::kill_and_reap` does.
-            process.close();
             Process::on_exit(
                 process,
                 bun_spawn::Status::Err(err.clone()),

@@ -1815,29 +1815,23 @@ impl SendQueue {
 /// callbacks. The three fns are baked
 /// into the trait impl so the `extern "C"` trampoline is monomorphised over
 /// `SendQueue` with zero per-handle storage.
+// SAFETY: nothing touches `incoming` between `on_read_alloc` and the report of the read.
 #[cfg(windows)]
-impl uv::StreamReader for SendQueue {
+unsafe impl uv::StreamReader for SendQueue {
     #[inline]
-    fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8] {
+    fn on_read_alloc(this: &Self, suggested_size: usize) -> *mut [u8] {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         // Map the raw libuv errno
         // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
         IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        // `data` points into `(*this).incoming` (it was returned from
-        // `on_read_alloc`); the callee re-derives the written tail from
-        // `incoming` itself, so only the length is forwarded and only a shared
-        // view of `*this` is formed.
-        let nread = data.len();
-        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
-        // `read_start_ctx`; a shared reborrow only, and `data` is not used after.
-        IPCHandlers::WindowsNamedPipe::on_read(unsafe { &*this }, nread);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        IPCHandlers::WindowsNamedPipe::on_read(this, nread);
     }
 }
 
@@ -2389,24 +2383,12 @@ pub(crate) mod IPCHandlers {
     pub(crate) mod WindowsNamedPipe {
         use super::*;
 
-        pub(crate) fn on_read_alloc(send_queue: &SendQueue, suggested_size: usize) -> &mut [u8] {
+        pub(crate) fn on_read_alloc(send_queue: &SendQueue, suggested_size: usize) -> *mut [u8] {
             log!("NewNamedPipeIPCHandler#onReadAlloc {}", suggested_size);
-            // SAFETY: the returned region is the buffer's spare capacity,
-            // handed to libuv for the pending read; nothing else touches
-            // `incoming` until `on_read` commits the byte count.
-            let inc = unsafe { &mut *send_queue.incoming.as_ptr() };
-            match inc {
-                IncomingBuffer::Json(json_buf) => {
-                    // SAFETY: libuv writes into this region before notify_written reads.
-                    let spare = unsafe { json_buf.data.uv_alloc_spare_u8(suggested_size) };
-                    &mut spare[..suggested_size]
-                }
-                IncomingBuffer::Advanced(adv_buf) => {
-                    // SAFETY: libuv writes into this region before on_read commits.
-                    let spare = unsafe { adv_buf.uv_alloc_spare_u8(suggested_size) };
-                    &mut spare[..suggested_size]
-                }
-            }
+            send_queue.incoming.with_mut(|inc| match inc {
+                IncomingBuffer::Json(json_buf) => json_buf.data.uv_alloc_spare(suggested_size),
+                IncomingBuffer::Advanced(adv_buf) => adv_buf.uv_alloc_spare(suggested_size),
+            })
         }
 
         pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {

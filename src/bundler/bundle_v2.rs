@@ -79,7 +79,7 @@ pub struct BundleV2<'a> {
     /// by `initialize_client_transpiler` (browser-target request from a
     /// server-side build). Stays `None` when `client_transpiler` is borrowed
     /// from `BakeOptions` (DevServer owns that one). Dropped in
-    /// `deinit_without_freeing_arena` so the deep-cloned `BundleOptions` /
+    /// `BundleV2::drop` so the deep-cloned `BundleOptions` /
     /// `Resolver` global-heap fields are released — `arena.alloc` would leak
     /// them since bumpalo never runs `Drop`.
     pub(crate) owned_client_transpiler: Option<Box<Transpiler<'a>>>,
@@ -271,9 +271,6 @@ impl<'a> BundleV2<'a> {
             }
         }
     }
-
-    // draft `on_parse_task_complete` / `deinit_without_freeing_arena`
-    // removed — canonical bodies live in the later impl blocks below.
 }
 // ══════════════════════════════════════════════════════════════════════════
 // `BundleV2` method bodies + supporting types.
@@ -1601,8 +1598,7 @@ pub mod bv2_impl {
             /// reloader generic (T6), so this is a definer-prefixed extern hook.
             /// `'static` matches the impl-side signature; the sole caller
             /// (`bun build --watch`) leaks the `Box<BundleV2>` via
-            /// `Box::into_raw` once `generate_from_cli` returns. The watcher is
-            /// installed after the last fallible step in `BundleV2::init`, so the
+            /// `Box::into_raw` once `generate_from_cli` returns, so the
             /// box is never dropped while the watcher holds a pointer to it.
             fn __bun_jsc_enable_hot_module_reloading_for_bundler(
                 bv2: core::ptr::NonNull<super::BundleV2<'static>>,
@@ -1953,8 +1949,7 @@ pub mod bv2_impl {
             // (NOT the bump arena — the clone holds `Box`/`Vec`/`MimallocArena`
             // fields that need `Drop` to run) and wires the self-referential
             // `macro_context`. The box is parked on
-            // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
-            // releases it.
+            // `self.owned_client_transpiler`.
 
             // `arena` is only the scratch param for `Transpiler::for_worker`; the
             // returned `Transpiler` itself is NOT placed in it.
@@ -3137,7 +3132,7 @@ pub mod bv2_impl {
             Ok(Some(source_index.get()))
         }
 
-        /// `heap` is not freed when `deinit`ing the BundleV2
+        /// `heap` is not freed when the BundleV2 drops
         pub fn init(
             transpiler: &'a mut Transpiler<'a>,
             bake_options: Option<BakeOptions<'a>>,
@@ -3146,7 +3141,7 @@ pub mod bv2_impl {
             cli_watch_flag: bool,
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
-        ) -> Result<Box<BundleV2<'a>>, Error> {
+        ) -> Box<BundleV2<'a>> {
             let this = Self::init_without_starting_threads(
                 transpiler,
                 bake_options,
@@ -3155,10 +3150,10 @@ pub mod bv2_impl {
                 cli_watch_flag,
                 thread_pool,
                 heap,
-            )?;
+            );
             // `Graph::pool` wraps the `BackRef` deref; `start()` takes `&self`.
             this.graph.pool().start();
-            Ok(this)
+            this
         }
 
         /// Like `init`, for a bundle that may have nothing to parse: the pool starts each thread when there is a task for it.
@@ -3174,7 +3169,7 @@ pub mod bv2_impl {
             // `&mut` along the way would violate Stacked Borrows.
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
-        ) -> Result<Box<BundleV2<'a>>, Error> {
+        ) -> Box<BundleV2<'a>> {
             // The Box is heap-owned and dropped by the caller.
             transpiler.options.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
@@ -3318,20 +3313,16 @@ pub mod bv2_impl {
                 }
             }
 
-            let tp = ThreadPool::init(&*this, thread_pool)?;
-            // errdefer this.graph.heap.deinit() — Drop handles arena teardown.
+            let tp = ThreadPool::init(&*this, thread_pool);
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
-            // Install the watcher only after `ThreadPool::init()` has succeeded —
-            // the `?` above is the last early-return in this fn, so the watcher's
-            // raw `*mut BundleV2` can't outlive the box it points at (the caller
-            // drops the box on every error path until `generate_from_cli` leaks it).
+            // The watcher keeps a raw `*mut BundleV2`: `generate_from_cli` leaks the box.
             if cli_watch_flag {
                 // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
                 // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
                 // via this extern hook and writes `bun_watcher`.
                 dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
             }
-            Ok(this)
+            this
         }
 
         pub(crate) fn arena(&self) -> &'a bun_alloc::Arena {
@@ -4200,10 +4191,10 @@ pub mod bv2_impl {
                 enable_reloading,
                 None,
                 alloc,
-            )?;
+            );
             this.unique_key = generate_unique_key();
 
-            // Wrap so every exit path (incl. `?`) hits the cleanup below.
+            // Wrap so every exit path (incl. `?`) reaches the leak below.
             let result = (|| -> Result<BuildResult, Error> {
                 if this.transpiler.log().has_errors() {
                     return Err(crate::Error::BuildFailed);
@@ -4295,8 +4286,6 @@ pub mod bv2_impl {
             // Bounded leak: the next file change `execve()`s the process anyway.
             if enable_reloading {
                 let _ = Box::into_raw(this);
-            } else {
-                this.deinit_without_freeing_arena();
             }
 
             result
@@ -4308,7 +4297,7 @@ pub mod bv2_impl {
         /// test entry points transitively depend on a given set of source files.
         ///
         /// The caller owns the returned BundleV2. Dupe anything needed out of
-        /// the graph and then call `deinit_without_freeing_arena()` — the
+        /// the graph and then drop it — the
         /// AST columns (`Vec<Symbol>` / `Vec<Part>` / …) live on
         /// the global heap, not in `graph.heap`, so leaving the bundle alive is
         /// not a bounded arena leak. The
@@ -4320,7 +4309,7 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc);
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -4358,55 +4347,47 @@ pub mod bv2_impl {
                 false,
                 None,
                 alloc,
-            )?;
+            );
             this.unique_key = generate_unique_key();
 
-            // Wrap so every exit path hits the cleanup below; `chunks` must drop
-            // inside the closure, before `deinit_without_freeing_arena()`.
-            let result = (|| -> Result<Vec<options::OutputFile>, Error> {
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
+            }
 
-                this.enqueue_entry_points_bake_production(entry_points)?;
+            this.enqueue_entry_points_bake_production(entry_points)?;
 
-                // Drain the pool, then report entry point errors (as `generate_from_cli` does).
-                this.wait_for_parse();
+            // Drain the pool, then report entry point errors (as `generate_from_cli` does).
+            this.wait_for_parse();
 
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
+            }
 
-                this.scan_for_secondary_paths();
+            this.scan_for_secondary_paths();
 
-                this.process_server_component_manifest_files()?;
+            this.process_server_component_manifest_files()?;
 
-                let reachable_files = this.find_reachable_files()?;
+            let reachable_files = this.find_reachable_files()?;
 
-                let additional_output_files = this.process_files_to_copy(&reachable_files)?;
+            let additional_output_files = this.process_files_to_copy(&reachable_files)?;
 
-                this.add_server_component_boundaries_as_extra_entry_points()?;
+            this.add_server_component_boundaries_as_extra_entry_points()?;
 
-                let mut linker_graph = this.clone_ast()?;
-                linker_graph.additional_output_files = additional_output_files;
+            let mut linker_graph = this.clone_ast()?;
+            linker_graph.additional_output_files = additional_output_files;
 
-                let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
-                let mut chunks = linker.link(this.transpiler.log_mut())?;
+            let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
+            let mut chunks = linker.link(this.transpiler.log_mut())?;
 
-                if chunks.is_empty() {
-                    return Ok(Vec::new());
-                }
+            if chunks.is_empty() {
+                return Ok(Vec::new());
+            }
 
-                crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                    &mut linker,
-                    this.transpiler.log_mut(),
-                    &mut chunks,
-                )
-            })();
-
-            this.deinit_without_freeing_arena();
-
-            result
+            crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                &mut linker,
+                this.transpiler.log_mut(),
+                &mut chunks,
+            )
         }
 
         pub(crate) fn add_server_component_boundaries_as_extra_entry_points(
@@ -4834,7 +4815,7 @@ pub mod bv2_impl {
                     // so `process_files_to_copy` can `mem::take` them zero-copy
                     // (it would otherwise clone the whole asset). For everything
                     // else, park them in `free_list` (drained at the very end of
-                    // `deinit_without_freeing_arena`) and borrow, so the per-file
+                    // the bundle's drop) and borrow, so the per-file
                     // teardown loop is a no-op for the common no-plugin path.
                     // SAFETY: the boxed slice is heap-stable under either owner
                     // for as long as the parser holds the borrow.
@@ -4861,37 +4842,29 @@ pub mod bv2_impl {
                             // TODO: support explicit watchFiles array. this is not done
                             // right now because DevServer requires a table to map
                             // watched files and dirs to their respective dependants.
-                            let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                            let file = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
                                 let mut buf = bun_paths::path_buffer_pool::get();
                                 // On kqueue platforms paths are already
                                 // posix-separated so `z()` alone suffices.
-                                match bun_sys::open(
+                                match bun_sys::File::open(
                                     bun_paths::resolve_path::z(load.path.as_ref(), &mut *buf),
                                     bun_watcher::WATCH_OPEN_FLAGS,
                                     0,
                                 ) {
-                                    bun_sys::Result::Ok(fd) => fd,
+                                    bun_sys::Result::Ok(file) => Some(file),
                                     bun_sys::Result::Err(_) => break 'add_watchers,
                                 }
                             } else {
-                                bun_sys::Fd::INVALID
+                                None
                             };
 
                             // Failures to watch are intentionally ignored.
-                            if !matches!(
-                                this.bun_watcher_mut().unwrap().add_file::<true>(
-                                    fd,
-                                    &load.path,
-                                    bun_wyhash::hash(load.path.as_ref()) as u32,
-                                    bun_sys::Fd::INVALID,
-                                    None,
-                                ),
-                                Ok(bun_watcher::FdOwnership::Watcher)
-                            ) && fd.is_valid()
-                            {
-                                // Not adopted; close the fd opened above.
-                                let _ = bun_sys::close(fd);
-                            }
+                            let _ = this.bun_watcher_mut().unwrap().add_owned_file(
+                                file,
+                                &load.path,
+                                bun_wyhash::hash(load.path.as_ref()) as u32,
+                                None,
+                            );
                         }
                     }
                 }
@@ -5252,22 +5225,18 @@ pub mod bv2_impl {
             }
             // resolve is dropped here (defer resolve.deinit())
         }
+    }
 
-        pub fn deinit_without_freeing_arena(&mut self) {
+    impl Drop for BundleV2<'_> {
+        fn drop(&mut self) {
             // Dropping the linker waits too, but leaking it does not.
             self.line_offset_wait_group.wait();
             self.quoted_contents_wait_group.wait();
             // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
             self.graph.pool().wait_for_io_tasks();
 
-            {
-                // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
-                let on_parse_finalizers = core::mem::take(&mut self.finalizers);
-                for finalizer in &on_parse_finalizers {
-                    finalizer.call();
-                }
-                drop(on_parse_finalizers);
-            }
+            // We do this before the rest to make it harder for any dangling pointers to data to be used in there.
+            self.finalizers.clear();
 
             // Plugin file/asset-loader bytes that `process_files_to_copy` will
             // `mem::take` are stored as `Cow::Owned` so that handoff is zero-copy.
@@ -5314,26 +5283,16 @@ pub mod bv2_impl {
             // alias first so it never dangles past the Box drop; in the
             // `BakeOptions`-borrowed path `owned_client_transpiler` is `None` and
             // the DevServer-owned pointer is left untouched.
-            if let Some(ct) = self.owned_client_transpiler.as_deref_mut() {
-                // `wire_after_move` boxed a higher-tier
-                // `bun_js_parser_jsc::Macro::MacroContext` behind
-                // `macro_context.data`; the parser-level struct has no `Drop`
-                // (and can't — `RuntimeTranspilerStore` bytewise-clones it),
-                // so the `Box<Transpiler>` drop below would strand it.
-                if let Some(ctx) = ct.macro_context.take() {
-                    ctx.deinit();
-                }
+            if self.owned_client_transpiler.is_some() {
                 self.client_transpiler = None;
                 self.owned_client_transpiler = None;
             }
 
             self.graph.pool_mut().deinit();
-
-            for free in self.free_list.drain(..) {
-                drop(free);
-            }
         }
+    }
 
+    impl<'a> BundleV2<'a> {
         pub fn run_from_js_in_new_thread(
             &mut self,
             entry_points: &[&[u8]],
@@ -6000,7 +5959,7 @@ pub mod bv2_impl {
                 // bundle's lifetime; `ParseTask` is strictly shorter-lived, so the
                 // raw-slice borrow is sound. No clone, no leak.
                 self.free_list.push(maybe_decoded.into_boxed_slice());
-                // SAFETY: `free_list` is append-only until `deinit_without_freeing_arena`
+                // SAFETY: `free_list` is append-only until `BundleV2::drop`
                 // (after all ParseTasks have completed); the `Box<[u8]>` is heap-stable.
                 let decoded: &'static [u8] =
                     unsafe { bun_ptr::detach_lifetime_ref::<[u8]>(self.free_list.last().unwrap()) };

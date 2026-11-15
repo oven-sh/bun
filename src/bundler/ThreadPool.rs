@@ -8,6 +8,7 @@
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::ManuallyDrop;
+use core::ops::{Deref, DerefMut};
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -98,7 +99,7 @@ impl ThreadPool {
         // pool is stored as `*mut` in the struct anyway, so keep it raw
         // end-to-end.
         worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
-    ) -> Result<ThreadPool, bun_alloc::AllocError> {
+    ) -> ThreadPool {
         // The pool is `heap::alloc`'d (global
         // heap), so `deinit()` must `heap::take` it back; record ownership.
         let owned = worker_pool.is_none();
@@ -118,7 +119,7 @@ impl ThreadPool {
         };
         let mut this = Self::init_with_pool(v2, pool);
         this.worker_pool_is_owned = owned;
-        Ok(this)
+        this
     }
 
     pub(crate) fn init_with_pool(
@@ -383,7 +384,7 @@ impl ThreadPool {
         // SAFETY: `worker` is freshly heap-allocated and exclusive on this
         // thread until published via the map (already inserted above, but no
         // other thread looks it up under a different `id`).
-        // `deinit_without_freeing_arena` reads every entry, so it must not run
+        // `BundleV2::drop` reads every entry, so it must not run
         // while a task is in here. It waits for the source map tasks itself. Its
         // callers `wait_for_parse` first, except when `enqueue_entry_points_*`
         // returns an error, which only a failed allocation makes it do.
@@ -447,7 +448,7 @@ pub struct Worker {
     pub(crate) arena: bun_ptr::BackRef<ThreadLocalArena>,
 
     /// BACKREF (LIFETIMES.tsv): the owning `BundleV2` strictly outlives every
-    /// `Worker` it creates (workers are torn down in `deinit_without_freeing_arena`
+    /// `Worker` it creates (workers are torn down in `BundleV2::drop`
     /// before the bundle is dropped). `BackRef` so call sites read
     /// `worker.ctx.field` via safe `Deref` instead of open-coding a raw deref.
     pub(crate) ctx: bun_ptr::BackRef<BundleV2<'static>>,
@@ -490,6 +491,28 @@ impl Worker {
         // before `ThreadPool::deinit` tears the worker down, so the arena outlives
         // every reference handed out here.
         unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) }
+    }
+}
+
+/// This thread's [`Worker`], whose AST store is the active one until the drop.
+pub(crate) struct WorkerGuard(&'static mut Worker);
+
+impl Deref for WorkerGuard {
+    type Target = Worker;
+    fn deref(&self) -> &Worker {
+        self.0
+    }
+}
+
+impl DerefMut for WorkerGuard {
+    fn deref_mut(&mut self) -> &mut Worker {
+        self.0
+    }
+}
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.0.ast_memory_store.pop();
     }
 }
 
@@ -543,26 +566,10 @@ impl Worker {
         // `Drop`-carrying fields.
         let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
-            // `wire_after_move` boxed a `bun_js_parser_jsc::Macro::MacroContext`
-            // behind `macro_context.data` (raw `*mut`, no `Drop` glue);
-            // `Transpiler` has no `Drop` impl, so `worker.data = None` below
-            // would strand it. Free both transpilers' boxes explicitly — the
-            // box only owns a `MacroMap` and a lazy `bun_alloc::Arena`, no JSC
-            // handles, so the worker thread tearing it down is safe.
-            if let Some(data) = worker.data.as_mut() {
-                if let Some(ctx) = data.transpiler.macro_context.take() {
-                    ctx.deinit();
-                }
-                if let Some(other) = data.other_transpiler.as_deref_mut() {
-                    if let Some(ctx) = other.macro_context.take() {
-                        ctx.deinit();
-                    }
-                }
-                js_ast::Macro::collect_vm_garbage();
-            }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
             // first, then the arenas it references.
             worker.data = None;
+            js_ast::Macro::collect_vm_garbage();
             worker.temporary_arena = None;
             worker.stmt_list = None;
         }
@@ -581,11 +588,11 @@ impl Worker {
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 
-    // returns `&'static mut` (detached) — the `Worker` is
+    // holds `&'static mut` (detached) — the `Worker` is
     // heap-pinned (heap::alloc in `get_worker`) and outlives any `ctx`
     // borrow. Tying it to `ctx`'s lifetime would
     // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
-    pub(crate) fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
+    pub(crate) fn get(ctx: &BundleV2<'_>) -> WorkerGuard {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
         // pointing at the bundle-owned pool that outlives every worker. We only
         // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
@@ -599,11 +606,7 @@ impl Worker {
 
         worker.ast_memory_store.push();
 
-        worker
-    }
-
-    pub(crate) fn unget(&mut self) {
-        self.ast_memory_store.pop();
+        WorkerGuard(worker)
     }
 
     pub(crate) fn init(&mut self, v2: &BundleV2<'_>) {

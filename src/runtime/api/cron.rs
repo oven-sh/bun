@@ -1473,12 +1473,13 @@ impl CronJob {
 
     /// May free `this`.
     fn remove_from_list(this: ThisPtr<Self>) {
-        let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
+        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
             return;
         };
-        if let Some(i) = jobs.iter().position(|j| j.as_ptr() == this.as_ptr()) {
-            drop(jobs.swap_remove(i));
-        }
+        drop(state.cron_jobs.with_mut(|jobs| {
+            let i = jobs.iter().position(|j| j.as_ptr() == this.as_ptr())?;
+            Some(jobs.swap_remove(i))
+        }));
     }
 
     /// `.reload`: --hot — promises in flight will still settle on this VM, so
@@ -1488,10 +1489,10 @@ impl CronJob {
     pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the list borrow.
-        let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
+        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
             return;
         };
-        for job in core::mem::take(jobs) {
+        for job in state.cron_jobs.take() {
             let this = job.this_ptr();
             this.stop_internal(vm);
             if MODE == ClearMode::Teardown {
@@ -1718,8 +1719,8 @@ impl CronJob {
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
         if vm.hot_reload.get() == HotReload::Hot || vm.worker.get().is_some() {
-            if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
-                jobs.push(job.clone());
+            if let Some(state) = crate::jsc_hooks::try_runtime_state() {
+                state.cron_jobs.with_mut(|jobs| jobs.push(job.clone()));
             }
         }
 

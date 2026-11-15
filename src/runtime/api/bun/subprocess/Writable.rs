@@ -137,11 +137,7 @@ impl<'a> Writable<'a> {
         // the vtable-backed handle once and reuse for all arms (both platforms).
         // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
         // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
-        let evtloop = bun_event_loop::EventLoopHandle::init(
-            std::ptr::from_ref::<EventLoop>(event_loop)
-                .cast_mut()
-                .cast::<()>(),
-        );
+        let evtloop = bun_event_loop::EventLoopHandle::init(event_loop.as_erased_ptr());
 
         #[cfg(windows)]
         {
@@ -192,7 +188,7 @@ impl<'a> Writable<'a> {
                         evtloop,
                         subprocess as *mut Subprocess<'a>,
                         result,
-                        super::source_from_blob(blob),
+                        blob,
                     )));
                 }
                 Stdio::Fd(fd) => {
@@ -277,7 +273,7 @@ impl<'a> Writable<'a> {
                     evtloop,
                     std::ptr::from_mut::<Subprocess<'a>>(subprocess),
                     result,
-                    super::source_from_blob(blob),
+                    blob,
                 )))
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]

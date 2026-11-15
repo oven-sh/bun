@@ -45,7 +45,7 @@ use bun_jsc::AbortSignalRef;
 
 use http::signals::BODY_HIGH_WATER_MARK;
 
-use boringssl::c::{X509_free, d2i_X509};
+use boringssl::c::OwnedX509;
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
@@ -1154,25 +1154,9 @@ impl FetchTasklet {
         if certificate_info.cert.is_empty() {
             return Err(None);
         }
-        let cert = &certificate_info.cert;
-        let mut cert_ptr = cert.as_ptr();
-        // SAFETY: cert is a valid DER buffer; d2i_X509 reads up to cert.len() bytes
-        let x509 = unsafe {
-            d2i_X509(
-                core::ptr::null_mut(),
-                &raw mut cert_ptr,
-                core::ffi::c_long::try_from(cert.len()).expect("int cast"),
-            )
-        };
-        if x509.is_null() {
-            return Err(None);
-        }
+        let mut x509 = OwnedX509::from_der(&certificate_info.cert).ok_or(None)?;
         let global_object = self.global_this;
-        // SAFETY: `x` is the non-null `X509*` returned by `d2i_X509` above; this
-        // guard is its sole owner and frees it exactly once on scope exit.
-        let _x509_guard = scopeguard::guard(x509, |x| unsafe { X509_free(x) });
-        // SAFETY: x509 is non-null, freshly parsed; freed by guard above.
-        let js_cert = X509::to_js(unsafe { &mut *x509 }, &global_object)
+        let js_cert = X509::to_js(&mut x509, &global_object)
             .map_err(|e| Some(global_object.take_exception(e)))?;
         let js_hostname: JSValue =
             bun_string_jsc::create_utf8_for_js(&global_object, &certificate_info.hostname)

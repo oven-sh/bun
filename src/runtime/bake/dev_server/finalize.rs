@@ -66,7 +66,7 @@ impl<'a> HotUpdateContext<'a> {
     }
 }
 
-fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {
+fn finalize_bundle_cleanup(dev: &mut DevServer, had_sent_hmr_event: bool) {
     let script_requests = match &mut dev.current_bundle {
         Some(current_bundle) => {
             drain_current_bundle_requests(current_bundle);
@@ -74,8 +74,7 @@ fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr
         }
         None => Vec::new(),
     };
-    bv2.deinit_without_freeing_arena();
-    // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
+    // Drops the bundle, then the arena it borrows.
     dev.current_bundle = None;
     dev.log.clear_and_free();
 
@@ -159,7 +158,7 @@ pub(super) fn finalize_bundle(
     debug_assert!(dev.magic == Magic::Valid);
     let mut had_sent_hmr_event = false;
     let finalized = finalize_bundle_inner(dev, bv2, result, &mut had_sent_hmr_event);
-    finalize_bundle_cleanup(dev, bv2, had_sent_hmr_event);
+    finalize_bundle_cleanup(dev, had_sent_hmr_event);
     finalized
 }
 

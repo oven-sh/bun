@@ -1278,30 +1278,11 @@ impl BlobExt for Blob {
                     }
                 };
 
-                let is_stdout_or_stderr = 'brk: {
-                    if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
-                        break 'brk false;
-                    }
-
-                    if let Some(rare) = cx.vm().rare_data.get() {
-                        // `RareData::std{out,err}_store` is `Option<NonNull<c_void>>`
-                        // (type-erased `*Blob.Store`); compare on raw pointer
-                        // identity exactly like the POSIX arm below.
-                        let store_ptr = store.as_ptr().cast::<c_void>();
-                        if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                        if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                            break 'brk true;
-                        }
-                    }
-
-                    if let Some(tag) = fd.stdio_tag() {
-                        matches!(tag, bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
-                    } else {
-                        false
-                    }
-                };
+                let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
+                    && matches!(
+                        fd.stdio_tag(),
+                        Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
+                    );
                 let sink = webcore::FileSink::init(
                     fd,
                     jsc::EventLoopHandle::init(
@@ -1465,7 +1446,6 @@ impl BlobExt for Blob {
             use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
             let pathlike = &store.data.as_file().pathlike;
-            let vm = global_this.bun_vm();
             let fd: Fd = match pathlike {
                 PathOrFileDescriptor::Fd(fd) => *fd,
                 PathOrFileDescriptor::Path(p) => {
@@ -1487,24 +1467,11 @@ impl BlobExt for Blob {
                 }
             };
 
-            let is_stdout_or_stderr = 'brk: {
-                if !matches!(pathlike, PathOrFileDescriptor::Fd(_)) {
-                    break 'brk false;
-                }
-                if let Some(rare) = vm.rare_data.get() {
-                    let store_ptr = store.as_ptr().cast::<c_void>();
-                    if rare.stdout_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                    if rare.stderr_store.get().map(|p| p.as_ptr()) == Some(store_ptr) {
-                        break 'brk true;
-                    }
-                }
-                matches!(
+            let is_stdout_or_stderr = matches!(pathlike, PathOrFileDescriptor::Fd(_))
+                && matches!(
                     fd.stdio_tag(),
-                    Some(bun_core::Stdio::StdOut) | Some(bun_core::Stdio::StdErr)
-                )
-            };
+                    Some(bun_sys::Stdio::StdOut | bun_sys::Stdio::StdErr)
+                );
 
             let sink = webcore::FileSink::init(
                 fd,
@@ -2876,19 +2843,7 @@ impl BlobExt for Blob {
             PathOrFileDescriptor::Fd(fd) => {
                 if let Some(tag) = fd.stdio_tag() {
                     let vm = global_this.bun_vm();
-                    // `RareData::{stdin,stdout,stderr}()` return the cached
-                    // `webcore::blob::Store` erased to `*mut c_void` (the
-                    // low-tier crate cannot name the high-tier type — see
-                    // `STDIO_BLOB_STORE_CTOR`). Cast back and take a counted ref.
-                    let erased = match tag {
-                        bun_sys::Stdio::StdIn => vm.rare_data().stdin(),
-                        bun_sys::Stdio::StdErr => vm.rare_data().stderr(),
-                        bun_sys::Stdio::StdOut => vm.rare_data().stdout(),
-                    };
-                    // SAFETY: the ctor hook (`__bun_stdio_blob_store_new`)
-                    // returns `Box::<Store>::into_raw` — non-null, live for the
-                    // process lifetime, and laid out as `Store`.
-                    let store = unsafe { RefPtr::init_ref(erased.cast::<Store>()) };
+                    let store = vm.rare_data().stdio_store(tag).clone();
                     return Blob::init_with_store(store, global_this);
                 }
                 PathOrFileDescriptor::Fd(*fd)
@@ -3533,10 +3488,6 @@ fn write_file_with_empty_source_to_destination(
     match &destination_store.data {
         store::Data::File(file) => {
             // TODO: make this async
-            // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
-            // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
-            // `NodeFS` (it carries no per-call state for
-            // `truncate`/`mkdir_recursive`).
             let mut node_fs = node::fs::NodeFS::default();
             let mut result = node_fs.truncate(
                 &node::fs::args::Truncate {

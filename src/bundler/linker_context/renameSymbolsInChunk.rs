@@ -466,7 +466,7 @@ pub(crate) fn run_nested_rename_task(
         &c.graph.parts_live[source_index as usize],
         &c.graph.symbols,
     );
-    let worker = scopeguard::guard(ThreadPool::Worker::get(c.bundle), |w| w.unget());
+    let worker = ThreadPool::Worker::get(c.bundle);
     // Made-up names go in this thread's worker arena, which lives until the
     // bundle is done.
     let mut nested = NestedRenamer::new(root, &uses, source_index, &worker.arena);

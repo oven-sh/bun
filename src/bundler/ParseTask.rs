@@ -836,6 +836,7 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
+                // Borrowed here: `topts` is a `&mut` that ends earlier borrows of the options.
                 opts.macro_remap = Some(&topts.macro_remap);
                 return if let Some(res) =
                     (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
@@ -2422,12 +2423,12 @@ pub mod parse_worker {
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
-        // SAFETY: the worker owns both and outlives the parse, whose macros cannot reach them.
+        // SAFETY: the worker owns `transpiler` and the table and outlives the parse; a macro cannot reach the worker.
         opts.macro_context = unsafe {
             let data = (*worker_raw).data.as_ref();
             Some(js_parser::Macro::MacroContext::new(
                 transpiler.cast(),
-                &data.expect("Worker.data set in create()").loaded_macros,
+                &data.expect("Worker.data set in create()").macro_load_states,
                 crate::transpiler::default_macro_js_value(),
             ))
         };

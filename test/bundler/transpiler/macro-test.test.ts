@@ -272,9 +272,9 @@ test("destructuring a macro result keeps what another binding reads", async () =
 });
 
 test.concurrent.each(["{ 0: zero, key }", "{ key, 0: zero }"])(
-  "destructuring a macro result with %s inlines what has a known key",
+  "destructuring a macro result with %s inlines the binding with a string key",
   async pattern => {
-    using dir = tempDir("macro-destructure-unknown-key", {
+    using dir = tempDir("macro-destructure-numeric-key", {
       "m.ts": `export const object = () => ({ 0: "zero", key: "value" });`,
       "index.ts": `
         import { object } from "./m.ts" with { type: "macro" };

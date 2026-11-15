@@ -467,7 +467,7 @@ pub struct WorkerData {
     // per-worker `options`/`resolver.caches`/etc. without touching the parent.
     pub(crate) transpiler: Transpiler<'static>,
     pub(crate) other_transpiler: Option<Box<Transpiler<'static>>>,
-    pub(crate) loaded_macros: js_ast::Macro::LoadedMacros,
+    pub(crate) macro_load_states: js_ast::Macro::MacroLoadStates,
 }
 
 impl Worker {
@@ -568,7 +568,7 @@ impl Worker {
             log,
             transpiler: Transpiler::for_worker(self.ctx.transpiler(), arena_ref, log),
             other_transpiler: None,
-            loaded_macros: Default::default(),
+            macro_load_states: Default::default(),
         });
 
         bun_core::scoped_log!(ThreadPool, "Worker.create()");

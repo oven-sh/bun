@@ -2152,11 +2152,12 @@ impl<'a> Repl<'a> {
 
         let define = &vm.transpiler.get().options.define;
         opts.macro_remap = Some(&vm.transpiler.get().options.macro_remap);
-        // SAFETY: JS thread, where nothing that is on the stack here borrows the resolver.
+        // SAFETY: JS thread; the VM outlives the parse. Does not hold for a macro: `enable_macro_mode`
+        // borrows the transpiler mutably while the parser holds `define` and `macro_remap`.
         opts.macro_context = Some(unsafe {
             bun_js_parser::Macro::MacroContext::new(
                 vm.transpiler.as_ptr().cast(),
-                &vm.module_loader.loaded_macros,
+                &vm.module_loader.macro_load_states,
                 Default::default(),
             )
         });

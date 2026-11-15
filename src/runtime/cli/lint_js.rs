@@ -410,8 +410,7 @@ impl Start {
             if !self.is_for_few.load(Ordering::Relaxed) {
                 jsc::expect_vm_per_thread();
             }
-            // The first VM also creates process-wide singletons like `FileSystem::instance()`, which isn't safe from
-            // several threads at once. So the others wait here until it's up.
+            // The other threads wait here until the first VM is up.
             first = Some(start_vm().and_then(|()| {
                 let vm = VirtualMachine::get();
                 vm.run_with_api_lock(|| program_of(vm).map(|_| ()))

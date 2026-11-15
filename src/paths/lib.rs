@@ -508,7 +508,7 @@ pub mod fs {
                 .expect("FileSystem.instance accessed before init")
         }
 
-        /// Higher-tier `bun_resolver::fs` calls this during its own `initWithForce` after it
+        /// Higher-tier `bun_resolver::fs` calls this during its own `init` after it
         /// resolves the cwd. Takes raw bytes — POSIX cwd is not guaranteed UTF-8.
         pub fn init(top_level_dir: &[u8]) -> &'static FileSystem {
             let _ = INSTANCE.set(FileSystem {

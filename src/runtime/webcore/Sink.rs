@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ops::Deref;
 use core::ptr::NonNull;
 
 use crate::api::bun_subprocess::Subprocess;
@@ -30,27 +31,33 @@ pub(crate) use crate::webcore::array_buffer_sink::ArrayBufferSink;
 /// Invoke inside the `impl JsSinkType for T` block; `Self::name` resolves to
 /// the inherent method ahead of the trait item being defined, so the forward
 /// does not recurse. `end_from_js` differs per sink and stays hand-written.
+/// The arm without arguments also emits `Entered` and `enter`.
 #[macro_export]
 macro_rules! impl_js_sink_forwarders {
     // `start` also wants the context of the script that starts the sink.
     (start_takes_context) => {
         $crate::impl_js_sink_forwarders!(@common);
         fn start(
-            &mut self,
+            this: &mut Self::Entered<'_>,
             config: $crate::webcore::streams::Start,
             context: &::bun_jsc::ScriptExecutionContext,
         ) -> ::bun_sys::Result<()> {
-            Self::start(self, &config, context)
+            Self::start(this, &config, context)
         }
     };
     () => {
         $crate::impl_js_sink_forwarders!(@common);
+        type Entered<'a> = &'a mut Self;
+        unsafe fn enter<'a>(mut this: ::core::ptr::NonNull<Self>) -> &'a mut Self {
+            // SAFETY: trait contract.
+            unsafe { this.as_mut() }
+        }
         fn start(
-            &mut self,
+            this: &mut Self::Entered<'_>,
             config: $crate::webcore::streams::Start,
             _context: &::bun_jsc::ScriptExecutionContext,
         ) -> ::bun_sys::Result<()> {
-            Self::start(self, &config)
+            Self::start(this, &config)
         }
     };
     (@common) => {
@@ -58,29 +65,35 @@ macro_rules! impl_js_sink_forwarders {
             Self::memory_cost(self)
         }
         fn write_bytes(
-            &mut self,
+            this: &mut Self::Entered<'_>,
             data: &$crate::webcore::streams::Result<'_>,
         ) -> $crate::webcore::streams::result::Writable {
-            Self::write(self, data)
+            Self::write(this, data)
         }
-        fn write_utf16(&mut self, text: &[u16]) -> $crate::webcore::streams::result::Writable {
-            Self::write_utf16(self, text)
+        fn write_utf16(
+            this: &mut Self::Entered<'_>,
+            text: &[u16],
+        ) -> $crate::webcore::streams::result::Writable {
+            Self::write_utf16(this, text)
         }
         fn write_latin1(
-            &mut self,
+            this: &mut Self::Entered<'_>,
             data: &$crate::webcore::streams::Result<'_>,
         ) -> $crate::webcore::streams::result::Writable {
-            Self::write_latin1(self, data)
+            Self::write_latin1(this, data)
         }
-        fn end(&mut self, err: ::core::option::Option<::bun_sys::Error>) -> ::bun_sys::Result<()> {
-            Self::end(self, err)
+        fn end(
+            this: &mut Self::Entered<'_>,
+            err: ::core::option::Option<::bun_sys::Error>,
+        ) -> ::bun_sys::Result<()> {
+            Self::end(this, err)
         }
         fn flush_from_js(
-            &mut self,
+            this: &mut Self::Entered<'_>,
             cx: &::bun_jsc::JsThread<'_>,
             wait: bool,
         ) -> ::bun_sys::Result<::bun_jsc::JSValue> {
-            Self::flush_from_js(self, cx, wait)
+            Self::flush_from_js(this, cx, wait)
         }
     };
 }
@@ -89,23 +102,39 @@ macro_rules! impl_js_sink_forwarders {
 pub(crate) trait JsSinkType: Sized + 'static {
     const NAME: &'static str;
 
+    /// A borrow, or a ref on a sink that the JS it runs can reach and free.
+    type Entered<'a>: Deref<Target = Self>;
+    /// # Safety
+    /// `this` is live. A `&mut Self` is the only borrow, and ends before `this` is freed.
+    unsafe fn enter<'a>(this: NonNull<Self>) -> Self::Entered<'a>;
+
     fn memory_cost(&self) -> usize;
-    fn write_bytes(&mut self, data: &streams::Result<'_>) -> streams::result::Writable;
-    fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable;
-    fn write_latin1(&mut self, data: &streams::Result<'_>) -> streams::result::Writable;
-    fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
-    fn end_from_js(&mut self, cx: &JsThread<'_>) -> sys::Result<JSValue>;
-    fn flush_from_js(&mut self, cx: &JsThread<'_>, wait: bool) -> sys::Result<JSValue>;
+    fn write_bytes(
+        this: &mut Self::Entered<'_>,
+        data: &streams::Result<'_>,
+    ) -> streams::result::Writable;
+    fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> streams::result::Writable;
+    fn write_latin1(
+        this: &mut Self::Entered<'_>,
+        data: &streams::Result<'_>,
+    ) -> streams::result::Writable;
+    fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> sys::Result<()>;
+    fn end_from_js(this: &mut Self::Entered<'_>, cx: &JsThread<'_>) -> sys::Result<JSValue>;
+    fn flush_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &JsThread<'_>,
+        wait: bool,
+    ) -> sys::Result<JSValue>;
     fn start(
-        &mut self,
+        this: &mut Self::Entered<'_>,
         config: streams::Start,
         context: &bun_jsc::ScriptExecutionContext,
     ) -> sys::Result<()>;
     fn pending_state_is_pending(&self) -> bool {
         false
     }
-    fn protect_js_wrapper(&mut self, _global: &JSGlobalObject, _this_value: JSValue) {}
-    fn update_ref(&mut self, _value: bool) {}
+    fn protect_js_wrapper(&self, _global: &JSGlobalObject, _this_value: JSValue) {}
+    fn update_ref(&self, _value: bool) {}
     fn get_fd(&self) -> Option<i32> {
         None
     }
@@ -123,7 +152,12 @@ pub(crate) trait ControlledSink: JsSinkType {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink;
 
     /// `assign_to_stream` made `controller` for this sink: a sink that keeps JS values roots it and puts them on it.
-    fn controller_created(&mut self, _controller: JSValue, _global: &JSGlobalObject) {}
+    fn controller_created(
+        _this: &mut Self::Entered<'_>,
+        _controller: JSValue,
+        _global: &JSGlobalObject,
+    ) {
+    }
 
     /// Once per controller, on every detach path including its `Drop`. A sink
     /// co-owned by another GC cell releases the controller's claim here (sweep
@@ -155,18 +189,19 @@ pub(crate) trait ControlledSink: JsSinkType {
         _global: &JSGlobalObject,
         _reason: JSValue,
     ) -> sys::Result<()> {
-        // SAFETY: caller contract; `end` does not free the sink.
-        unsafe { (*this).end(None) }
+        // SAFETY: caller contract.
+        let mut this = unsafe { Self::enter(NonNull::new_unchecked(this)) };
+        Self::end(&mut this, None)
     }
 
-    fn source(&mut self) -> &mut SourceHandle;
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle>;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
 // What a sink's JS object and a controller both do
 //
 // `sink` is live, and host functions are synchronous on one thread, so the
-// `&mut T` each of these forms is the only one for as long as it lasts.
+// `&mut T` that `enter` may form is the only one for as long as it lasts.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cold]
@@ -195,18 +230,18 @@ fn write_chunk<'a, T: JsSinkType>(
     chunk: SinkChunk<'a>,
 ) -> JsResult<JSValue> {
     // SAFETY: see the section comment.
-    let sink = unsafe { &mut *sink.as_ptr() };
+    let mut sink = unsafe { T::enter(sink) };
     // The chunk's argument slot holds the bytes for the call, and the sink copies what it keeps.
     let written = match chunk {
         SinkChunk::Bytes(buffer) => buffer.with_bytes(&cx.heap, |bytes| {
             if bytes.is_empty() {
                 return streams::Writable::Owned(0);
             }
-            sink.write_bytes(&Temporary(bytes))
+            T::write_bytes(&mut sink, &Temporary(bytes))
         }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
-        SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(text.utf16()),
-        SinkChunk::Text(text) => sink.write_latin1(&Temporary(text.latin1())),
+        SinkChunk::Text(text) if text.is_utf16() => T::write_utf16(&mut sink, text.utf16()),
+        SinkChunk::Text(text) => T::write_latin1(&mut sink, &Temporary(text.latin1())),
         SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };
     Ok(written.to_js(&cx.js_thread()))
@@ -218,9 +253,8 @@ fn flush_sink<T: JsSinkType>(
     wait: Option<bool>,
 ) -> JsResult<JSValue> {
     // SAFETY: see the section comment.
-    unsafe { &mut *sink.as_ptr() }
-        .flush_from_js(cx, wait == Some(true))
-        .map_err(|error| error.throw(cx.global()))
+    let result = T::flush_from_js(&mut unsafe { T::enter(sink) }, cx, wait == Some(true));
+    result.map_err(|error| error.throw(cx.global()))
 }
 
 fn start_sink<T: JsSinkType>(
@@ -229,9 +263,8 @@ fn start_sink<T: JsSinkType>(
     config: streams::Start,
 ) -> JsResult<()> {
     // SAFETY: see the section comment.
-    unsafe { &mut *sink.as_ptr() }
-        .start(config, cx.context())
-        .map_err(|error| error.throw(cx.global()))
+    let result = T::start(&mut unsafe { T::enter(sink) }, config, cx.context());
+    result.map_err(|error| error.throw(cx.global()))
 }
 
 /// A sink can leave an exception pending and return no error. A termination stays pending: `BunStreamSource.cpp` stops on it.
@@ -244,7 +277,7 @@ fn pending_exception_or<R>(global: &JSGlobalObject, result: sys::Result<R>) -> J
 
 fn end_sink<T: JsSinkType>(sink: NonNull<T>, cx: &JsThread<'_>) -> JsResult<JSValue> {
     // SAFETY: see the section comment.
-    let result = unsafe { &mut *sink.as_ptr() }.end_from_js(cx);
+    let result = T::end_from_js(&mut unsafe { T::enter(sink) }, cx);
     pending_exception_or(cx.global(), result)
 }
 
@@ -254,12 +287,11 @@ fn close_sink<T: ControlledSink>(
     global: &JSGlobalObject,
     reason: Option<JSValue>,
 ) -> JsResult<()> {
-    let sink = sink.as_ptr();
     let result = match reason {
-        // SAFETY: see the section comment; `end` does not free the sink.
-        None => unsafe { (*sink).end(None) },
         // SAFETY: see the section comment.
-        Some(reason) => unsafe { T::close_with_error(sink, global, reason) },
+        None => T::end(&mut unsafe { T::enter(sink) }, None),
+        // SAFETY: see the section comment.
+        Some(reason) => unsafe { T::close_with_error(sink.as_ptr(), global, reason) },
     };
     pending_exception_or(global, result)
 }
@@ -267,10 +299,10 @@ fn close_sink<T: ControlledSink>(
 /// `SourceHandle::JSController` does not root the controller, so once it detaches the source must not fire. A sink that was assigned to another stream since holds the newer controller.
 fn controller_detached<T: ControlledSink>(sink: NonNull<T>, controller: JSValue) {
     // SAFETY: see the section comment.
-    let sink = unsafe { &mut *sink.as_ptr() };
-    let source = sink.source();
-    if matches!(*source, SourceHandle::JSController(held) if held == controller) {
-        source.clear();
+    let mut sink = unsafe { T::enter(sink) };
+    let source = T::source(&mut sink);
+    if matches!(source.get(), SourceHandle::JSController(held) if held == controller) {
+        source.set(SourceHandle::None);
     }
     sink.controller_detached();
 }
@@ -336,7 +368,7 @@ impl<T: WrappedSink> JSSink<T> {
             return Ok(());
         };
         // SAFETY: the object's live sink.
-        let ended = unsafe { T::as_non_null(&sink).as_mut() }.end(None);
+        let ended = T::end(&mut unsafe { T::enter(T::as_non_null(&sink)) }, None);
         let result = pending_exception_or(cx.global(), ended);
         // Before `sink` drops: the subprocess clears `weak_file_sink_stdin_ptr`.
         self.notify_subprocess();
@@ -352,11 +384,10 @@ impl<T: WrappedSink> JSSink<T> {
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> JsResult<JSValue> {
-        // SAFETY: the object's live sink, which `end_from_js` does not free.
-        let sink = unsafe { &mut *self.sink_or_throw(cx.global())?.as_ptr() };
-        let result = sink
-            .end_from_js(&cx.js_thread())
-            .map_err(|error| error.throw(cx.global()));
+        // SAFETY: the object's live sink.
+        let mut sink = unsafe { T::enter(self.sink_or_throw(cx.global())?) };
+        let result =
+            T::end_from_js(&mut sink, &cx.js_thread()).map_err(|error| error.throw(cx.global()));
         // The object stays attached and alive so that the pending write can resolve its promise.
         if sink.pending_state_is_pending() {
             sink.protect_js_wrapper(cx.global(), this_value.to_js());
@@ -381,7 +412,7 @@ impl<T: WrappedSink> JSSink<T> {
         self.ref_count.set(self.ref_count.get() + 1);
         if self.ref_count.get() == 1 {
             // SAFETY: the object's live sink.
-            unsafe { &mut *sink.as_ptr() }.update_ref(true);
+            unsafe { sink.as_ref() }.update_ref(true);
         }
     }
 
@@ -390,7 +421,7 @@ impl<T: WrappedSink> JSSink<T> {
         self.ref_count.set((self.ref_count.get() - 1).max(0));
         if self.ref_count.get() == 0 {
             // SAFETY: the object's live sink.
-            unsafe { &mut *sink.as_ptr() }.update_ref(false);
+            unsafe { sink.as_ref() }.update_ref(false);
         }
     }
 
@@ -559,17 +590,27 @@ impl ReadableSinkController {
         global: &JSGlobalObject,
         stream: JSValue,
         controller: JSValue,
-        mut sink: NonNull<T>,
+        sink: NonNull<T>,
     ) -> JSValue {
         // SAFETY: `sink` is a live sink owned by the caller for this synchronous call.
-        let sink = unsafe { sink.as_mut() };
-        sink.controller_created(controller, global);
-        *sink.source() = SourceHandle::JSController(controller);
+        let mut sink = unsafe { T::enter(sink) };
+        T::controller_created(&mut sink, controller, global);
+        T::source(&mut sink).set(SourceHandle::JSController(controller));
         start_pump(global, stream, controller)
     }
 
     pub(crate) fn detach(controller: JSValue, global: &JSGlobalObject) -> JsResult<()> {
         let this: &Self = controller.as_class_ref().expect("a ReadableSinkController");
+        this.detach_with_reason(global, None)
+    }
+
+    /// [`detach`](Self::detach) for the `Drop` of the sink, which is not entered again.
+    pub(crate) fn detach_dropped_sink(
+        controller: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
+        let this: &Self = controller.as_class_ref().expect("a ReadableSinkController");
+        this.is_detached.set(true);
         this.detach_with_reason(global, None)
     }
 

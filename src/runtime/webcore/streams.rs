@@ -1872,8 +1872,11 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -1902,11 +1905,15 @@ impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritabl
         unsafe { (*this).fail() };
         bun_sys::Result::Ok(())
     }
-    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
-        self.pipe = PipeCell::root(controller, global);
+    fn controller_created(
+        this: &mut Self::Entered<'_>,
+        controller: JSValue,
+        global: &JSGlobalObject,
+    ) {
+        this.pipe = PipeCell::root(controller, global);
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }
 
@@ -2363,8 +2370,11 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
 
     crate::impl_js_sink_forwarders!();
 
-    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, cx)
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(this, cx)
     }
 }
 
@@ -2386,8 +2396,8 @@ impl crate::webcore::sink::ControlledSink for NetworkSink {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())
     }
-    fn source(&mut self) -> &mut SourceHandle {
-        &mut self.source
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        Cell::from_mut(&mut this.source)
     }
 }
 

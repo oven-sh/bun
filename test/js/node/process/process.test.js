@@ -4,6 +4,7 @@ import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import { Worker } from "node:worker_threads";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -2994,13 +2995,11 @@ it("process.memoryUsage.arrayBuffers", () => {
 
 // A typed array of more than 1000 elements owns its bytes without an ArrayBuffer until .buffer is read.
 // Node counts those bytes in arrayBuffers and external as soon as they are allocated.
-describe.each([
-  ["Buffer.alloc(SIZE, 7)", 1],
-  ["new Uint8Array(SIZE).fill(7)", 1],
-  ["new Float64Array(SIZE / 8).fill(7)", 8],
-])("process.memoryUsage counts the bytes of %s", (expression, bytesPerElement) => {
-  it.concurrent("at once, once, and until the typed array is collected", async () => {
-    const script = `
+describe.each(["Buffer.alloc(SIZE, 7)", "new Uint8Array(SIZE).fill(7)", "new Float64Array(SIZE / 8).fill(7)"])(
+  "process.memoryUsage counts the bytes of %s",
+  expression => {
+    it.concurrent("at once, once, and until the typed array is collected", async () => {
+      const script = `
       const { heapStats } = require("bun:jsc");
       const { getHeapStatistics } = require("node:v8");
       const SIZE = 4 * 1024 * 1024;
@@ -3029,60 +3028,59 @@ describe.each([
       samples.afterRelease = sample();
       console.log(JSON.stringify(samples));
     `;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const { before, immediate, afterGC, afterBuffer, afterBufferGC, afterRelease } = JSON.parse(stdout);
+
+      const SIZE = 4 * 1024 * 1024;
+      const COUNT = 8;
+      const payload = SIZE * COUNT;
+      // Room for the small objects the script itself allocates. Well below one 4 MiB payload.
+      const slack = 1024 * 1024;
+      const near = (a, b) => expect(Math.abs(a - b)).toBeLessThanOrEqual(slack);
+
+      // Counted as soon as the typed arrays exist, and arrayBuffers is part of external, as in Node.
+      expect(immediate.arrayBuffers).toBeGreaterThanOrEqual(before.arrayBuffers + payload);
+      expect(immediate.external).toBeGreaterThanOrEqual(before.external + payload);
+      expect(immediate.arrayBuffers).toBeLessThanOrEqual(immediate.external);
+
+      // A collection changes nothing: the bytes were counted already.
+      near(afterGC.arrayBuffers, immediate.arrayBuffers);
+      near(afterGC.external, immediate.external);
+
+      // Reading .buffer moves the bytes into an ArrayBuffer. They must not be counted twice, before or after the next
+      // collection.
+      near(afterBuffer.arrayBuffers, afterGC.arrayBuffers);
+      near(afterBuffer.external, afterGC.external);
+      near(afterBufferGC.arrayBuffers, afterBuffer.arrayBuffers);
+      near(afterBufferGC.external, afterBuffer.external);
+
+      // Dropping the typed arrays gives the bytes back, through the ArrayBuffer for the ones that have one and through
+      // the typed array's own finalizer for the others.
+      expect(afterRelease.arrayBuffers).toBeLessThanOrEqual(before.arrayBuffers + slack);
+      expect(afterRelease.external).toBeLessThanOrEqual(before.external + slack);
+
+      // v8.getHeapStatistics().external_memory is the same number, as in Node.
+      for (const step of [before, immediate, afterGC, afterBuffer, afterBufferGC, afterRelease]) {
+        near(step.v8External, step.external);
+      }
+
+      // The number that paces collections counts the vectors from the collection that visits them, and never twice.
+      expect(afterGC.paced).toBeGreaterThanOrEqual(before.paced + payload - slack);
+      near(afterBufferGC.paced, afterGC.paced);
+      expect(afterRelease.paced).toBeLessThanOrEqual(before.paced + slack);
     });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-    const { before, immediate, afterGC, afterBuffer, afterBufferGC, afterRelease } = JSON.parse(stdout);
-
-    const SIZE = 4 * 1024 * 1024;
-    const COUNT = 8;
-    const payload = SIZE * COUNT;
-    // Room for the small objects the script itself allocates. Well below one 4 MiB payload.
-    const slack = 1024 * 1024;
-    const near = (a, b) => expect(Math.abs(a - b)).toBeLessThanOrEqual(slack);
-    expect(bytesPerElement).toBeGreaterThan(0);
-
-    // Counted as soon as the typed arrays exist, and arrayBuffers is part of external, as in Node.
-    expect(immediate.arrayBuffers).toBeGreaterThanOrEqual(before.arrayBuffers + payload);
-    expect(immediate.external).toBeGreaterThanOrEqual(before.external + payload);
-    expect(immediate.arrayBuffers).toBeLessThanOrEqual(immediate.external);
-
-    // A collection changes nothing: the bytes were counted already.
-    near(afterGC.arrayBuffers, immediate.arrayBuffers);
-    near(afterGC.external, immediate.external);
-
-    // Reading .buffer moves the bytes into an ArrayBuffer. They must not be counted twice, before or after the next
-    // collection.
-    near(afterBuffer.arrayBuffers, afterGC.arrayBuffers);
-    near(afterBuffer.external, afterGC.external);
-    near(afterBufferGC.arrayBuffers, afterBuffer.arrayBuffers);
-    near(afterBufferGC.external, afterBuffer.external);
-
-    // Dropping the typed arrays gives the bytes back, through the ArrayBuffer for the ones that have one and through
-    // the typed array's own finalizer for the others.
-    expect(afterRelease.arrayBuffers).toBeLessThanOrEqual(before.arrayBuffers + slack);
-    expect(afterRelease.external).toBeLessThanOrEqual(before.external + slack);
-
-    // v8.getHeapStatistics().external_memory is the same number, as in Node.
-    for (const step of [before, immediate, afterGC, afterBuffer, afterBufferGC, afterRelease]) {
-      near(step.v8External, step.external);
-    }
-
-    // The number that paces collections counts the vectors from the collection that visits them, and never twice.
-    expect(afterGC.paced).toBeGreaterThanOrEqual(before.paced + payload - slack);
-    near(afterBufferGC.paced, afterGC.paced);
-    expect(afterRelease.paced).toBeLessThanOrEqual(before.paced + slack);
-  });
-});
+  },
+);
 
 it("worker.getHeapStatistics().external_memory counts a Buffer the worker holds", async () => {
-  const { Worker } = require("node:worker_threads");
   const worker = new Worker(
     `
       const { parentPort } = require("node:worker_threads");

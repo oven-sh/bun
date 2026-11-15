@@ -61,7 +61,7 @@ public:
         auto& heap = m_vm->heap;
         m_collectionStart = WTF::MonotonicTime::now();
         m_capacityBefore = heap.capacity();
-        m_externalBefore = heap.extraMemorySize();
+        m_externalBefore = Bun::externalMemorySize(heap);
         // Only sessions that existed at this prologue receive the record; a
         // profiler started during the concurrent phase has no honest start time
         // for this collection.
@@ -93,7 +93,7 @@ public:
             record.usedAfter = heap.sizeAfterLastEdenCollection();
         }
         record.capacityAfter = heap.capacity();
-        record.externalAfter = heap.extraMemorySize();
+        record.externalAfter = Bun::externalMemorySize(heap);
         // For a full collection Heap::willStartCollection() zeroes m_extraMemorySize
         // before notifying observers, so the prologue sample under-reports; reuse the
         // epilogue value so external memory doesn't appear to grow across a sweep.

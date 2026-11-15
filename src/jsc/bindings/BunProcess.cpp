@@ -2863,7 +2863,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         putDirectNamed(vm, heap, "usedMemory"_s, jsNumber(0));
         putDirectNamed(vm, heap, "memoryLimit"_s, jsNumber(0));
         putDirectNamed(vm, heap, "mallocedMemory"_s, jsNumber(0));
-        putDirectNamed(vm, heap, "externalMemory"_s, JSC::jsNumber(vm.heap.externalMemorySize()));
+        putDirectNamed(vm, heap, "externalMemory"_s, JSC::jsNumber(Bun::externalMemorySize(vm.heap)));
         putDirectNamed(vm, heap, "peakMallocedMemory"_s, jsNumber(0));
         putDirectNamed(vm, heap, "nativeContextCount"_s, JSC::jsNumber(1));
         putDirectNamed(vm, heap, "detachedContextCount"_s, JSC::jsNumber(0));

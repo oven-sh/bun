@@ -219,7 +219,7 @@ impl Histogram {
         let global = cx.global();
         let value = JSMap::create(global);
         if let Some(map) = JSMap::from_js(value) {
-            let map = JSMap::opaque_mut(map.as_ptr());
+            let map = JSMap::opaque_ref(map.as_ptr());
             for (percentile, at) in percentiles {
                 map.set(
                     global,

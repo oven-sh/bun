@@ -182,6 +182,20 @@ impl<T: RefCounted> RefPtrDequeCellExt<T> for Cell<VecDeque<RefPtr<T>>> {
     }
 }
 
+pub trait PairDequeCellExt<A: Copy> {
+    /// As `get(index).map(|&(first, _)| first)`.
+    fn get_first(&self, index: usize) -> Option<A>;
+}
+
+impl<A: Copy, B> PairDequeCellExt<A> for Cell<VecDeque<(A, B)>> {
+    fn get_first(&self, index: usize) -> Option<A> {
+        // SAFETY: a shared `Cell` lends no reference to its value, and copying an `A` runs no code.
+        unsafe { &*self.as_ptr() }
+            .get(index)
+            .map(|&(first, _)| first)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -259,6 +273,14 @@ mod tests {
         let item = queue.get_cloned(0).unwrap();
         assert!(RefPtr::has_one_ref(&item));
         assert!(queue.is_empty());
+    }
+
+    #[test]
+    fn get_first_leaves_the_pair() {
+        let cell = Cell::new(VecDeque::from([(1, Box::new(2))]));
+        assert_eq!(cell.get_first(0), Some(1));
+        assert_eq!(cell.get_first(1), None);
+        assert_eq!(cell.pop_front(), Some((1, Box::new(2))));
     }
 
     #[test]

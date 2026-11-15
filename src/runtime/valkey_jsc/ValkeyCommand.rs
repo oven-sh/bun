@@ -88,26 +88,41 @@ impl<'a> Command<'a> {
 /// Command stored in offline queue when disconnected
 pub(crate) struct Entry {
     pub(crate) serialized_data: Box<[u8]>, // Pre-serialized RESP protocol bytes
-    pub(crate) meta: Meta,
     pub(crate) promise: Promise,
+}
+
+/// What is read of an `Entry` while it stays in the queue.
+#[derive(Clone, Copy)]
+pub(crate) struct EntryInfo {
+    pub(crate) meta: Meta,
+    /// Of `serialized_data`.
+    pub(crate) len: usize,
 }
 
 // Inherent associated
 // types are unstable on stable Rust, so expose as a sibling module alias instead.
 pub(crate) mod entry {
-    pub(crate) type Queue = std::collections::VecDeque<super::Entry>;
+    pub(crate) type Queue = std::collections::VecDeque<(super::EntryInfo, super::Entry)>;
 }
 
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
-    pub(crate) fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, crate::Error> {
-        Ok(Entry {
-            serialized_data: command.serialize()?,
+    pub(crate) fn create(
+        command: &Command<'_>,
+        promise: Promise,
+    ) -> Result<(EntryInfo, Entry), crate::Error> {
+        let serialized_data = command.serialize()?;
+        let info = EntryInfo {
             // We should be calling .check against command here but due
             // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             meta: command.meta,
+            len: serialized_data.len(),
+        };
+        let entry = Entry {
+            serialized_data,
             promise,
-        })
+        };
+        Ok((info, entry))
     }
 }
 

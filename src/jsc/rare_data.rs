@@ -724,7 +724,8 @@ impl RareData {
         self.default_client_ssl_ctx.set(None);
     }
 
-    /// SAFETY: `func` takes `ctx`, once, when the VM exits.
+    /// # Safety
+    /// `func` takes `ctx`, once, when the VM exits.
     pub unsafe fn push_cleanup_hook(
         &self,
         global_this: &JSGlobalObject,
@@ -735,7 +736,8 @@ impl RareData {
             .with_mut(|hooks| hooks.push(CleanupHook::from(global_this, ctx, func)));
     }
 
-    /// SAFETY: as [`Self::push_cleanup_hook`].
+    /// # Safety
+    /// As [`Self::push_cleanup_hook`].
     pub unsafe fn push_cleanup_hook_after_teardown_wait(
         &self,
         global_this: &JSGlobalObject,

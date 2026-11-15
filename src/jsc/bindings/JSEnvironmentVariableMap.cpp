@@ -164,15 +164,25 @@ static void applyTLSRejectEnvValue(JSGlobalObject* globalObject, JSC::JSString* 
     applyTLSRejectFromString(globalObject, view->toString());
 }
 
-enum class EnvWrite : bool {
-    Set,
-    Define,
-};
-
-static bool writeEnvValue(JSObject* thisObject, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, bool isStrictMode, EnvWrite write)
+bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // A write to an object that merely inherits from process.env is that
+    // object's: an ordinary set, with the value as given, that changes nothing
+    // about the process. The accessors process.env keeps for TZ and
+    // NODE_TLS_REJECT_UNAUTHORIZED act on the process, so past those the value
+    // is defined on the receiver directly.
+    if (slot.thisValue() != cell) [[unlikely]] {
+        unsigned attributes = 0;
+        bool isProcessAccessor = !parseIndex(propertyName)
+            && isValidOffset(cell->structure()->get(vm, propertyName, attributes))
+            && (attributes & PropertyAttribute::CustomAccessor);
+        if (isProcessAccessor)
+            RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    }
 
     auto* uid = propertyName.uid();
     if (uid && uid->isSymbol()) {
@@ -185,11 +195,15 @@ static bool writeEnvValue(JSObject* thisObject, JSGlobalObject* globalObject, Pr
     if (propertyName.publicName() && propertyName.publicName()->isEmpty())
         return true;
 
+    // A cached put would store the raw value and skip this function. Inline caches also can't handle a toString() that adds or deletes a key.
+    slot.disableCaching();
+
     JSString* string = coerceEnvValue(globalObject, scope, value);
     RETURN_IF_EXCEPTION(scope, false);
 
     // PutById: a dictionary after 512 properties, not 128.
-    PutPropertySlot ownSlot(thisObject, isStrictMode, PutPropertySlot::PutById);
+    PutPropertySlot ownSlot(cell, slot.isStrictMode(), PutPropertySlot::PutById);
+    auto* thisObject = static_cast<JSEnvironmentVariableMap*>(cell);
 
     // Node's RealEnvStore::Set name-matches TZ on every write, so delete-then-set still
     // updates Date caches. putDirect bypasses the accessor so the side effect fires once.
@@ -213,7 +227,7 @@ static bool writeEnvValue(JSObject* thisObject, JSGlobalObject* globalObject, Pr
         return true;
     }
     // No write is cached, so skip the prototype chain walk when the variable is already a plain property.
-    Structure* structure = thisObject->structure();
+    Structure* structure = cell->structure();
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, propertyName, attributes);
     if (isValidOffset(offset) && !attributes) [[likely]] {
@@ -221,36 +235,7 @@ static bool writeEnvValue(JSObject* thisObject, JSGlobalObject* globalObject, Pr
         thisObject->putDirectOffset(vm, offset, string);
         return true;
     }
-    if (write == EnvWrite::Define && !isValidOffset(offset)) {
-        PropertyDescriptor descriptor(string, 0);
-        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, isStrictMode));
-    }
-    RELEASE_AND_RETURN(scope, JSObject::put(thisObject, globalObject, propertyName, string, ownSlot));
-}
-
-bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // A write to an object that merely inherits from process.env is that
-    // object's: an ordinary set, with the value as given, that changes nothing
-    // about the process. The accessors process.env keeps for TZ and
-    // NODE_TLS_REJECT_UNAUTHORIZED act on the process, so past those the value
-    // is defined on the receiver directly.
-    if (slot.thisValue() != cell) [[unlikely]] {
-        unsigned attributes = 0;
-        bool isProcessAccessor = !parseIndex(propertyName)
-            && isValidOffset(cell->structure()->get(vm, propertyName, attributes))
-            && (attributes & PropertyAttribute::CustomAccessor);
-        if (isProcessAccessor)
-            RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, propertyName, value, slot));
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
-    }
-
-    // A cached put would store the raw value and skip this function. Inline caches also can't handle a toString() that adds or deletes a key.
-    slot.disableCaching();
-    RELEASE_AND_RETURN(scope, writeEnvValue(asObject(cell), globalObject, propertyName, value, slot.isStrictMode(), EnvWrite::Set));
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, ownSlot));
 }
 
 void JSEnvironmentVariableMap::putInitialValue(JSGlobalObject* globalObject, const Identifier& name, JSValue value)
@@ -298,7 +283,8 @@ bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObjec
 
     // Node's EnvDefiner delegates to EnvSetter (plain assignment). put() keeps TZ/proxy
     // CustomAccessors intact; Base::defineOwnProperty would replace them.
-    RELEASE_AND_RETURN(scope, writeEnvValue(object, globalObject, propertyName, descriptor.value(), shouldThrow, EnvWrite::Define));
+    PutPropertySlot slot(object, shouldThrow);
+    RELEASE_AND_RETURN(scope, put(object, globalObject, propertyName, descriptor.value(), slot));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))

@@ -558,7 +558,7 @@ impl ReadableStream {
                 reader.to_readable_stream(cx)
             }
             webcore::blob::store::Data::S3(s3) => {
-                let credentials = s3.get_credentials();
+                let credentials = &s3.credentials;
                 let path = s3.path();
                 crate::webcore::s3::client::readable_stream(
                     credentials,

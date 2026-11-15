@@ -508,6 +508,8 @@ unsafe extern "C" fn Blob__deref(this: *mut Blob) {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod store {
+    use std::sync::Arc;
+
     use super::*;
 
     /// Intrusively-refcounted; always
@@ -742,7 +744,7 @@ pub mod store {
     pub struct S3 {
         pub pathlike: PathLike<'static>,
         pub(crate) mime_type: MimeType,
-        pub(crate) credentials: Option<RefPtr<bun_s3_signing::S3Credentials>>,
+        pub credentials: Arc<bun_s3_signing::S3Credentials>,
         pub options: bun_s3_signing::MultiPartUploadOptions,
         pub acl: Option<bun_s3_signing::ACL>,
         pub storage_class: Option<bun_s3_signing::StorageClass>,
@@ -750,18 +752,8 @@ pub mod store {
     }
 
     impl S3 {
-        pub fn get_credentials(&self) -> &RefPtr<bun_s3_signing::S3Credentials> {
-            debug_assert!(self.credentials.is_some());
-            self.credentials.as_ref().unwrap()
-        }
-
         pub fn estimated_size(&self) -> usize {
-            self.pathlike.estimated_size()
-                + self
-                    .credentials
-                    .as_ref()
-                    .map(|c| c.estimated_size())
-                    .unwrap_or(0)
+            self.pathlike.estimated_size() + self.credentials.estimated_size()
         }
 
         pub fn path(&self) -> &[u8] {
@@ -783,22 +775,19 @@ pub mod store {
         pub fn init(
             pathlike: PathLike<'static>,
             mime_type: Option<MimeType>,
-            credentials: bun_s3_signing::S3Credentials,
+            aws_options: bun_s3_signing::S3CredentialsWithOptions,
         ) -> S3 {
             S3 {
-                credentials: Some(RefPtr::new(credentials)),
+                credentials: Arc::new(aws_options.credentials),
                 pathlike,
                 mime_type: mime_type.unwrap_or(bun_http_types::MimeType::OTHER),
-                options: bun_s3_signing::MultiPartUploadOptions::default(),
-                acl: None,
-                storage_class: None,
-                request_payer: false,
+                options: aws_options.options,
+                acl: aws_options.acl,
+                storage_class: aws_options.storage_class,
+                request_payer: aws_options.request_payer,
             }
         }
     }
-
-    // No explicit `Drop`: the owned fields (`pathlike`, `credentials`) are
-    // all released by `PathLike::drop` / `Option<Arc<_>>::drop`.
 
     // ────────────────────────────────────────────────────────────────────
     // Store impl

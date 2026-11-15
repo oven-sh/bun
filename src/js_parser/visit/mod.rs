@@ -654,9 +654,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ),
                     ..*object
                 };
+                let mut reads_unknown_key = false;
                 for property in bound_properties {
                     let Some(name) = property.key.as_string_literal(self.arena) else {
-                        return expr;
+                        reads_unknown_key = true;
+                        continue;
                     };
                     let Some(query) = object.as_property(name) else {
                         continue;
@@ -672,6 +674,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             ..object.properties[query.i as usize]
                         }),
                     }
+                }
+                if reads_unknown_key {
+                    return expr;
                 }
                 self.new_expr(kept, expr.loc)
             }

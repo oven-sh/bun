@@ -3571,6 +3571,26 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           withPeer,
         ),
         ...inFolder(
+          "import-cycle",
+          `
+          import { expect, mock, test, vi } from "bun:test";
+          // import() loads app.mjs, which imports the library and routes.mjs, and routes.mjs imports app.mjs. Two
+          // modules that import one another are no sign that the original has loaded them.
+          test("a library that modules importing one another have loaded keeps the mock, though the original imports it too", async () => {
+            mock.module("with-peer", () => ({ which: "mock" }));
+            const { read } = await import("./app.mjs");
+            expect(read()).toBe("mock");
+            const actual = await vi.importActual("with-peer");
+            expect([actual.which, read(), actual.viaPeer()]).toEqual(["real esm", "mock", "mock"]);
+          });
+        `,
+          {
+            ...withPeer,
+            "app.mjs": `import "./routes.mjs"; import peer from "peer-lib"; export const read = () => peer.read();`,
+            "routes.mjs": `import "./app.mjs";`,
+          },
+        ),
+        ...inFolder(
           "loaded-first",
           `
           import { expect, jest, mock, test, vi } from "bun:test";
@@ -3655,7 +3675,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           usesWrapB,
         ),
       },
-      30,
+      31,
       args,
     );
   });

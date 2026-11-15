@@ -70,18 +70,9 @@ fn describe_or_end_process(addresses: &[usize], buffer: &mut [u8]) -> usize {
     unsafe extern "C" {
         safe fn alarm(seconds: core::ffi::c_uint) -> core::ffi::c_uint;
     }
-    // SAFETY: none of them has preconditions. Whatever the program listens for, SIGALRM ends the process.
-    unsafe {
-        libc::signal(libc::SIGALRM, libc::SIG_DFL);
-        let mut only_alarm: libc::sigset_t = bun_core::ffi::zeroed();
-        libc::sigemptyset(&raw mut only_alarm);
-        libc::sigaddset(&raw mut only_alarm, libc::SIGALRM);
-        libc::pthread_sigmask(
-            libc::SIG_UNBLOCK,
-            &raw const only_alarm,
-            core::ptr::null_mut(),
-        );
-    }
+    // Whatever the program listens for, SIGALRM ends the process.
+    bun_core::signal::set_default_action(libc::SIGALRM);
+    bun_core::signal::unblock(libc::SIGALRM);
     alarm(SECONDS_TO_DESCRIBE_FRAMES);
     let length = describe(addresses, buffer);
     alarm(0);

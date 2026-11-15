@@ -35,6 +35,7 @@
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::os::unix::process::parent_id;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
@@ -144,15 +145,11 @@ unsafe extern "C" {
     safe fn Bun__noOrphans_killTracked();
 }
 
+#[cfg(any(target_os = "linux", target_os = "android"))]
 unsafe extern "C" {
-    // safe: no args; read process IDs — no preconditions, never fail.
-    safe fn getpid() -> libc::pid_t;
-    #[cfg(target_os = "macos")]
-    safe fn getppid() -> libc::pid_t;
     // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
     // writes the slot and reports failure via the return value — bad pid →
     // `ECHILD`, never UB. Async-signal-safe.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
@@ -191,61 +188,60 @@ pub fn install() {
 #[cold]
 #[inline(never)]
 pub fn enable() {
+    if ENABLED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    // Let `bun_spawn_sys::spawn_process_posix` default `linux_pdeathsig`
+    // for children spawned from this thread. Storage lives in spawn_sys
+    // (lowest tier that reads it); we just flip the flag.
+    bun_spawn_sys::pdeathsig::set_default(true);
+    // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
+    // nested bun) inherits no-orphans mode without the parent having to thread
+    // the flag through. No-op if we got here via the env var.
     // SAFETY: called only on the main thread during startup, before any
     // concurrent reader exists; idempotent guard prevents double-init.
-    unsafe {
-        if ENABLED.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        // Let `bun_spawn_sys::spawn_process_posix` default `linux_pdeathsig`
-        // for children spawned from this thread. Storage lives in spawn_sys
-        // (lowest tier that reads it); we just flip the flag.
-        bun_spawn_sys::pdeathsig::set_default(true);
-        // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
-        // nested bun) inherits no-orphans mode without the parent having to thread
-        // the flag through. No-op if we got here via the env var.
-        let _ = libc::setenv(c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr(), c"1".as_ptr(), 1);
+    let _ = unsafe { libc::setenv(c"BUN_FEATURE_FLAG_NO_ORPHANS".as_ptr(), c"1".as_ptr(), 1) };
 
-        // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
-        // make every orphaned grandchild reparent to us, but only the spawnSync
-        // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
-        // `--filter` / `bun test` would accumulate zombies. Subreaper is armed
-        // per-script in `spawnPosix` (just before the spawn) and cleared on return.
-        // Descendant cleanup runs on every clean exit regardless of whether we end
-        // up watching a parent (Bun may have been spawned directly by launchd/init).
-        bun_core::add_exit_callback(on_process_exit);
+    // PR_SET_CHILD_SUBREAPER is NOT armed here — it's process-wide and would
+    // make every orphaned grandchild reparent to us, but only the spawnSync
+    // wait loop has a `wait4(-1, WNOHANG)` to reap them. `bun foo.js` /
+    // `--filter` / `bun test` would accumulate zombies. Subreaper is armed
+    // per-script in `spawnPosix` (just before the spawn) and cleared on return.
+    // Descendant cleanup runs on every clean exit regardless of whether we end
+    // up watching a parent (Bun may have been spawned directly by launchd/init).
+    bun_core::add_exit_callback(on_process_exit);
 
-        let ppid = libc::getppid();
-        ORIGINAL_PPID.store(ppid, Ordering::Relaxed);
-        // Already orphaned (parent died before we got here, or launchd/init
-        // spawned us directly) — nothing to watch.
-        if ppid <= 1 {
-            return;
-        }
-
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            // PR_SET_PDEATHSIG: kernel sends SIGKILL when the thread that forked
-            // us exits. Persists across exec; cleared on fork (Bun's own children
-            // do not inherit it). SIGKILL is uncatchable so user code can't
-            // swallow it. The macOS path goes through Global.exit instead and so
-            // also runs the descendant reaper; on Linux the SIGKILL case relies on
-            // env-var inheritance — Bun-spawning-Bun chains self-reap because each
-            // link sets its own PDEATHSIG.
-            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
-                return;
-            }
-            // Race: parent may have died between getppid() above and prctl()
-            // taking effect. If so we've already been reparented and the kernel
-            // will never deliver the signal — exit now.
-            if libc::getppid() != ppid {
-                kill_descendants();
-                libc::_exit(EXIT_CODE as c_int);
-            }
-        }
-        // macOS: parent watch installs lazily via install_on_event_loop() once the
-        // event loop's kqueue exists.
+    let ppid = parent_id().cast_signed();
+    ORIGINAL_PPID.store(ppid, Ordering::Relaxed);
+    // Already orphaned (parent died before we got here, or launchd/init
+    // spawned us directly) — nothing to watch.
+    if ppid <= 1 {
+        return;
     }
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        use bun_sys::linux::{PrctlOp, prctl};
+        // PR_SET_PDEATHSIG: kernel sends SIGKILL when the thread that forked
+        // us exits. Persists across exec; cleared on fork (Bun's own children
+        // do not inherit it). SIGKILL is uncatchable so user code can't
+        // swallow it. The macOS path goes through Global.exit instead and so
+        // also runs the descendant reaper; on Linux the SIGKILL case relies on
+        // env-var inheritance — Bun-spawning-Bun chains self-reap because each
+        // link sets its own PDEATHSIG.
+        if prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong) != 0 {
+            return;
+        }
+        // Race: parent may have died between getppid() above and prctl()
+        // taking effect. If so we've already been reparented and the kernel
+        // will never deliver the signal — exit now.
+        if parent_id().cast_signed() != ppid {
+            kill_descendants();
+            bun_core::Global::_exit(EXIT_CODE as c_int);
+        }
+    }
+    // macOS: parent watch installs lazily via install_on_event_loop() once the
+    // event loop's kqueue exists.
 }
 
 /// Windows-only primitive; POSIX cleanup is the exit-time tree walk above.
@@ -275,7 +271,7 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 
         // Race: parent may have died between install() and now (before the event
         // loop existed). We've been reparented; kqueue would ESRCH — exit now.
-        if getppid() != original_ppid {
+        if parent_id().cast_signed() != original_ppid {
             bun_core::exit(EXIT_CODE as u32);
         }
 
@@ -337,7 +333,7 @@ extern "C" fn on_process_exit() {
 /// verify step sufficient. The only forking process is `self`, and we're in
 /// the exit handler — not forking.
 fn kill_descendants() {
-    let self_pid = getpid();
+    let self_pid = std::process::id().cast_signed();
 
     let mut to_visit: Vec<libc::pid_t> = Vec::new();
     let mut to_kill: Vec<libc::pid_t> = Vec::new();
@@ -393,7 +389,7 @@ fn kill_descendants() {
 /// enumeration failure.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
-    let self_pid = getpid();
+    let self_pid = std::process::id().cast_signed();
     let n = list_child_pids(self_pid, out).unwrap_or(0);
     &out[..n]
 }
@@ -412,7 +408,7 @@ pub fn snapshot_children(out: &mut [libc::pid_t]) -> &[libc::pid_t] {
 /// and would kill it at process-exit via `kill_descendants()` anyway.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn kill_subreaper_adoptees(siblings: &[libc::pid_t]) {
-    let self_pid = getpid();
+    let self_pid = std::process::id().cast_signed();
     let mut buf: [libc::pid_t; 4096] = [0; 4096];
 
     // Iterate: kill non-sibling direct children's subtrees, reap, re-read.

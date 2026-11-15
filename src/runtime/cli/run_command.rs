@@ -3363,11 +3363,9 @@ impl RunCommand {
         }
         #[cfg(unix)]
         {
-            let mut size: libc::winsize = bun_core::ffi::zeroed();
-            // SAFETY: ioctl with valid winsize ptr
-            if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
-                if size.ws_col > 0 {
-                    return size.ws_col;
+            if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
+                if size.col > 0 {
+                    return size.col;
                 }
             }
         }

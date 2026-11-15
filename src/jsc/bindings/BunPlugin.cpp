@@ -9273,16 +9273,16 @@ __attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalOb
     String dependency = Zig::dependencyKeyOfModuleMock(globalObject, mock);
     RETURN_IF_EXCEPTION(scope, nullptr);
     JSValue factory = mock->factory.get();
-    // A factory that takes its original from the file at `requirePath` reads nothing of this module's `original`. Were that file `original`, a mock that ends while this
-    // module loads would leave it the exports of that file, under the key of the other one. So the evaluator, which exports no name, stands in, and evaluateModuleMock()
-    // loads the original of this module's own key then. The file is imported only to run ahead of the factory, which finds it loaded.
-    // Not ahead of an async factory that nothing has called: until then require() of the name loads the file at `requirePath` itself (see keyOfModuleMockAtRequirePath()),
-    // and the factory takes that module. A copy imported ahead would run the file twice.
-    String loadedAhead;
+    // A factory that takes its original from the file at `requirePath` gets it from jest.requireActual(), so this module only exports from that file, which runs it ahead
+    // of the factory. The file is not `original`: evaluateModuleMock() makes the module of what `original` is if the mock ends while this module loads, and that file
+    // would then be under the key of the other one. The evaluator, which exports no name, is `original` instead, and the original of this module's own key is loaded then.
+    // Nor does the file run ahead of an async factory that nothing has called: until then require() of the name loads the file at `requirePath` itself (see
+    // keyOfModuleMockAtRequirePath()), and the factory takes that module. A copy imported ahead would run the file twice.
+    String original = dependency;
     if (Zig::takesOriginalOfRequirePath(globalObject, mock)) {
-        if (dependency == mock->requirePath->tryGetValue().data || !hasUncalledAsyncFactory(mock))
-            loadedAhead = dependency;
-        dependency = makeString('\0', Zig::moduleMockEvaluatorName);
+        original = makeString('\0', Zig::moduleMockEvaluatorName);
+        if (dependency != mock->requirePath->tryGetValue().data && hasUncalledAsyncFactory(mock))
+            dependency = original;
     }
 
     // GlobalObject::moduleLoaderResolve() takes a specifier that starts with NUL as a registry key.
@@ -9300,12 +9300,8 @@ __attribute__((minsize)) JSC::JSSourceCode* sourceCodeOfModuleMock(Zig::GlobalOb
     appendKey(key);
     bool isUnwaited = !Zig::specifierOfUnwaitedModuleMockKey(key).isNull();
     if (!isUnwaited) {
-        if (!loadedAhead.isNull()) {
-            text.append(";import "_s);
-            appendKey(loadedAhead);
-        }
         text.append(";import * as original from "_s);
-        appendKey(dependency);
+        appendKey(original);
         text.append(";export * from "_s);
         appendKey(dependency);
     }

@@ -1094,7 +1094,8 @@ describe.concurrent("errors", () => {
   // The `error:` and `note:` lines of a run whose test file does not load, with the folder cut off each path.
   async function loadError(files: Record<string, string>) {
     const { stderr, exitCode } = await run(files);
-    expect(exitCode).toBe(1);
+    expect(stderr).toContain("never finished loading");
+    expect(exitCode, stderr).toBe(1);
     return stderr
       .split("\n")
       .filter(line => /^(error|note): /.test(line))

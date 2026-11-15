@@ -7,16 +7,13 @@ pub struct Describe<'a> {
 }
 
 impl<'a> Describe<'a> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
+    pub fn write_internal(&self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
         let message = self.p.slice();
         writer.write(b"D")?;
         let length = writer.length()?;
         writer.write(&[self.p.tag()])?;
         writer.string(message)?;
-        length.write()?;
+        length.write(writer)?;
         Ok(())
     }
 }

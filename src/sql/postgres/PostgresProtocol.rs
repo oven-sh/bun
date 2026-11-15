@@ -22,9 +22,9 @@ pub const PARSE_COMPLETE: [u8; 5] = tag_len(b'1', 4);
 pub const SYNC: [u8; 5] = tag_len(b'S', 4);
 pub const NO_DATA: [u8; 5] = tag_len(b'n', 4);
 
-pub fn write_query<Context: WriterContext>(
+pub fn write_query(
     query: &[u8],
-    writer: &mut NewWriter<Context>,
+    writer: &mut NewWriter<'_>,
 ) -> Result<(), crate::postgres::AnyPostgresError> {
     let count: usize = core::mem::size_of::<u32>() + query.len() + 1;
     let header: [u8; 5] = {
@@ -46,7 +46,7 @@ pub use crate::postgres::protocol::error_response::ErrorResponse;
 pub use crate::postgres::protocol::execute::Execute;
 pub use crate::postgres::protocol::field_description::FieldDescription;
 pub use crate::postgres::protocol::new_reader::NewReader;
-pub use crate::postgres::protocol::new_writer::{NewWriter, WriterContext};
+pub use crate::postgres::protocol::new_writer::NewWriter;
 pub use crate::postgres::protocol::notice_response::NoticeResponse;
 pub use crate::postgres::protocol::notification_response::NotificationResponse;
 pub use crate::postgres::protocol::parameter_description::ParameterDescription;

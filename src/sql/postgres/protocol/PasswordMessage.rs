@@ -7,10 +7,7 @@ pub struct PasswordMessage<'a> {
 }
 
 impl PasswordMessage<'_> {
-    pub fn write_internal<Context: super::new_writer::WriterContext>(
-        &self,
-        writer: &mut NewWriter<Context>,
-    ) -> Result<(), AnyPostgresError> {
+    pub fn write_internal(&self, writer: &mut NewWriter<'_>) -> Result<(), AnyPostgresError> {
         let password = self.password;
         let count: usize = core::mem::size_of::<u32>() + password.len() + 1;
         let mut header = [0u8; 5];

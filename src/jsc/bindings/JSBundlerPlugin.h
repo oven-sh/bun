@@ -137,20 +137,30 @@ public:
     // is dropped), or, once the VM that runs the plugins is shutting down, by tombstone(). JS thread only.
     enum class RequestKind : uint8_t { Resolve = 0,
         Load = 1 };
-    void holdRequest(RequestKind kind, void* context) { held.add(context, kind); }
-    bool holdsRequest(RequestKind kind, void* context) const
+    struct Request {
+        void* context { nullptr };
+        RequestKind kind { RequestKind::Resolve };
+    };
+    // A counter: a later request can get the address of an answered one.
+    using RequestID = uint64_t;
+    RequestID holdRequest(RequestKind kind, void* context)
     {
-        auto it = held.find(context);
-        return it != held.end() && it->value == kind;
+        held.add(++lastRequestID, Request { context, kind });
+        return lastRequestID;
+    }
+    void* heldRequest(RequestKind kind, RequestID id) const
+    {
+        auto it = held.find(id);
+        return it != held.end() && it->value.kind == kind ? it->value.context : nullptr;
     }
     // The request was still held (and no longer is): the caller produces its answer.
-    std::optional<RequestKind> takeRequest(void* context) { return held.takeOptional(context); }
-    bool takeRequest(RequestKind kind, void* context)
+    std::optional<Request> takeRequest(RequestID id) { return held.takeOptional(id); }
+    void* takeRequest(RequestKind kind, RequestID id)
     {
-        if (!holdsRequest(kind, context))
-            return false;
-        held.remove(context);
-        return true;
+        void* context = heldRequest(kind, id);
+        if (context)
+            held.remove(id);
+        return context;
     }
     // From here the plugin object answers nothing itself: what it still holds is answered as cancelled now,
     // and whatever its JS side delivers later is dropped.
@@ -182,7 +192,8 @@ public:
     bool filtersFrozen { false };
 
 private:
-    WTF::HashMap<void*, RequestKind> held;
+    WTF::HashMap<RequestID, Request> held;
+    RequestID lastRequestID { 0 };
 };
 
 } // namespace Zig

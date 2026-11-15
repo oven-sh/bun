@@ -55,6 +55,7 @@ pub(crate) fn scan_imports_and_exports(
     let loaders: &[Loader] = this.parse_graph().input_files.items_loader();
 
     {
+        let css_asts = &this.parse_graph().css_asts;
         let ast = this.graph.ast.split_mut();
         let meta = this.graph.meta.split_mut();
         let dyn_ref_aliases = meta.dynamic_import_referenced_aliases;
@@ -72,12 +73,12 @@ pub(crate) fn scan_imports_and_exports(
             }
 
             // Is it CSS?
-            if ast.css[id].is_some() {
+            if css_asts[id].is_some() {
                 // Inline URLs for non-CSS files into the CSS file
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
                     ast.import_records[id].as_slice(),
-                    ast.css,
+                    css_asts,
                     input_files,
                     loaders,
                     log,
@@ -89,7 +90,7 @@ pub(crate) fn scan_imports_and_exports(
                     &this.graph.symbols,
                     log,
                     id,
-                    ast.css,
+                    css_asts,
                     ast.import_records,
                     input_files,
                 );
@@ -1627,18 +1628,17 @@ impl ExportStarContext {
 // ──────────────────────────────────────────────────────────────────────────
 mod __css_validation {
     use super::*;
+    use crate::Graph::CssAsts;
     use crate::bun_css::css_properties::css_modules::Specifier;
     use crate::bun_css::{BundlerStyleSheet, PropertyIdTag};
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
-    use crate::bundled_ast::CssCol;
-
     pub(super) fn validate_css_import_composes<'bump>(
         symbols: &symbol::Map,
         log: &mut Log,
         id: usize,
-        css_asts: &[CssCol<'bump>],
+        css_asts: &CssAsts<'bump>,
         import_records_list: &[ImportRecordList<'bump>],
         input_files: &[Source],
     ) {
@@ -1728,7 +1728,7 @@ mod __css_validation {
         index: IndexInt,
         root_css_ast: &BundlerStyleSheet,
         all_import_records: &[ImportRecordList<'bump>],
-        all_css_asts: &[CssCol<'bump>],
+        all_css_asts: &CssAsts<'bump>,
         all_sources: &[Source],
     ) {
         #[derive(Default)]
@@ -1749,7 +1749,7 @@ mod __css_validation {
             properties: StringArrayHashMap<PropertyInFile>,
             stack: Vec<Frame>,
             all_import_records: &'a [ImportRecordList<'bump>],
-            all_css_asts: &'a [CssCol<'bump>],
+            all_css_asts: &'a CssAsts<'bump>,
             all_symbols: &'a symbol::Map,
             all_sources: &'a [Source<'a>],
             log: &'a mut Log,

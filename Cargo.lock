@@ -961,7 +961,6 @@ dependencies = [
  "criterion",
  "enumset",
  "regex",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",

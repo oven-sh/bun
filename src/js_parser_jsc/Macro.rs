@@ -191,7 +191,7 @@ fn __bun_macro_drop_source_code_printer() {
     bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
 
-/// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
+/// Exposed for `bun_bundler::ThreadPool::Worker::drop` (which has no
 /// `bun_jsc` dependency) to sweep the per-worker macro VM. See [`collect_macro_vm_garbage`].
 ///
 /// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage

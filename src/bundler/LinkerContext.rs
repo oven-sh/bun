@@ -34,7 +34,7 @@ use crate::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
-use crate::Graph::Graph;
+use crate::Graph::{CssAsts, Graph};
 use crate::linker_graph::{is_external_dynamic_import, top_level_symbol_to_parts};
 use crate::options::{BundleOptions, CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
@@ -203,7 +203,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     /// parts use. A CSS or HTML file has no parts; every record counts.
     pub(crate) fn for_each_file_loaded_by(&self, source_index: u32, mut each: impl FnMut(u32)) {
         let records = &self.graph.ast.items_import_records()[source_index as usize];
-        if self.graph.ast.items_css()[source_index as usize].is_some()
+        if self.parse_graph().css_asts[source_index as usize].is_some()
             || self.parse_graph().input_files.items_loader()[source_index as usize] == Loader::Html
         {
             for record in records.iter() {
@@ -509,8 +509,9 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
         // Validate top-level await for all files first.
         if self.bundle.has_any_top_level_await_modules {
             let input_files = self.parse_graph().input_files.items_source();
+            let css_asts = &self.parse_graph().css_asts;
             let ast = self.graph.ast.split_mut();
-            let (import_records_list, css_asts) = (&*ast.import_records, &*ast.css);
+            let import_records_list = &*ast.import_records;
             let flags = self.graph.meta.items_flags_mut();
             let files_len = self.graph.files.len();
             let import_records_len = import_records_list.len();
@@ -1797,7 +1798,7 @@ impl<'a> LinkerContext<'_, 'a> {
             return;
         }
 
-        let all_css_asts = self.graph.ast.items_css();
+        let all_css_asts = &self.parse_graph().css_asts;
         let all_symbols: &[bun_ast::symbol::List<'a>] = self.graph.ast.items_symbols();
         let all_sources: &[Source] = self.parse_graph().input_files.items_source();
 
@@ -2288,7 +2289,7 @@ impl LinkerContext<'_, '_> {
             return;
         }
 
-        if self.graph.ast.items_css()[source_index as usize].is_some() {
+        if self.parse_graph().css_asts[source_index as usize].is_some() {
             for record in self.graph.ast.items_import_records()[source_index as usize].iter() {
                 if record.source_index.is_valid() {
                     let other = record.source_index.get();
@@ -2562,7 +2563,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
-        css_asts: &[crate::bundled_ast::CssCol],
+        css_asts: &CssAsts,
         sources: &[Source],
         loaders: &[Loader],
         log: &mut Log,

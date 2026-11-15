@@ -199,17 +199,6 @@ impl Drop for ReportedLog<'_> {
     }
 }
 
-/// Invariant: what `TSXParser::init` returned, the value in a slot that does not drop it.
-struct InitializedParser<'s, 'a>(&'s mut js_parser::TSXParser<'a>);
-
-impl Drop for InitializedParser<'_, '_> {
-    #[optimize(size)]
-    fn drop(&mut self) {
-        // SAFETY: this holds the only reference to the value, so it is dropped once and not used afterwards.
-        unsafe { core::ptr::drop_in_place(self.0) };
-    }
-}
-
 pub(crate) struct File {
     test_file: TestFile,
     format: Format,
@@ -899,15 +888,7 @@ impl Snapshots {
                         vm.transpiler.get().options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
-                    // `P::init` takes an out-param
-                    // since 9a98701c980c — `P` is ~5 KiB and the previous
-                    // `let p = P::init(..)?` shape forced 2-3 by-value moves.
-                    // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
-                    // (that macro is crate-local).
-                    let mut __parser_slot =
-                        core::mem::MaybeUninit::<js_parser::TSXParser<'_>>::uninit();
-                    let __parser = js_parser::TSXParser::init(
-                        &mut __parser_slot,
+                    let mut parser = js_parser::TSXParser::init(
                         &arena,
                         core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
                         &source,
@@ -915,8 +896,6 @@ impl Snapshots {
                         lexer,
                         opts,
                     );
-                    let __parser_guard = InitializedParser(__parser);
-                    let parser: &mut js_parser::TSXParser<'_> = &mut *__parser_guard.0;
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;

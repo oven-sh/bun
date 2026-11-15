@@ -65,8 +65,6 @@ impl<'a> Transpiler<'a> {
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
         self.log = log;
         self.linker.log = log;
-        // SAFETY: caller (`ThreadPool::Worker::create`) passes the per-worker
-        // arena-allocated `Log`, which outlives this `Transpiler<'a>`.
         self.resolver.log = core::ptr::NonNull::new(log).expect("set_log: log is non-null");
     }
 
@@ -694,7 +692,7 @@ pub struct ParseResult<'a> {
     /// decoded `data:` URL. That borrow is erased, so the backing must live at least as long as
     /// the `ParseResult`; threading it here means it drops when the result is
     /// recycled instead of leaking via `mem::forget` (PORTING.md §Forbidden).
-    /// `Contents::Empty`/`SharedBuffer` for the virtual-source / shared-buffer
+    /// `Contents::Empty`/`Borrowed` for the virtual-source / shared-buffer
     /// paths (no-op on drop).
     pub source_contents_backing: resolver::cache::Contents,
 }
@@ -1206,7 +1204,7 @@ impl<'a> Transpiler<'a> {
             // `RuntimeTranspilerStore`) so the source bytes land in the
             // job-scoped heap that `TranspilerJob::run` `mi_heap_destroy`s on
             // return — not the worker thread's default mimalloc heap.
-            let mut entry = match self.resolver.caches.fs.read_file_with_allocator(
+            let entry = match self.resolver.caches.fs.read_file_with_allocator(
                 path.text,
                 dirname_fd,
                 USE_SHARED_BUFFER,
@@ -1228,20 +1226,18 @@ impl<'a> Transpiler<'a> {
                 }
             };
             if let Some(opened_file) = this_parse.opened_file
-                && entry.fd.is_valid()
+                && let Some(resolver::cache::SourceFd::Owned(file)) = entry.file
             {
-                debug_assert!(file_descriptor.is_none());
-                *opened_file = Some(bun_sys::File::from_fd(entry.fd));
+                *opened_file = Some(file);
             }
             // The bytes live either in the per-thread shared
-            // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
-            // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
+            // buffer (`USE_SHARED_BUFFER`) or in `this_parse.arena` (no-op drop —
             // bulk-freed by `mi_heap_destroy` when the per-call arena is
             // recycled). Thread the
             // provenance-tagged backing alongside the `ParseResult` so it
             // drops when the result is recycled — no `mem::forget`
             // (PORTING.md §Forbidden patterns).
-            source_backing = core::mem::take(&mut entry.contents);
+            source_backing = entry.contents;
             // SAFETY: `source_backing` outlives every read through
             // `source.contents` (it is moved into the returned `ParseResult`,
             // and the only consumers are the parser/printer which run before

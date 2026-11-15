@@ -10,7 +10,8 @@ use bun_core::{Global, Output};
 #[cfg(unix)]
 use bun_io::PosixFlags;
 use bun_io::heap as io_heap;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus};
+use bun_io::max_buf::Kind;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 
 use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
@@ -494,11 +495,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     /// `true` if the reader has ended.
-    fn note_read_status(&mut self, status: ReadStatus) -> bool {
-        match status {
-            ReadStatus::Pending => return false,
-            ReadStatus::Done => {}
-            ReadStatus::Failed(err) => {
+    fn note_read_result(&mut self, result: ReadResult) -> bool {
+        match result {
+            ReadResult::Pending => return false,
+            ReadResult::Done => {}
+            ReadResult::Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
                     bstr::BStr::new(self.script_name()),
@@ -514,22 +515,25 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         true
     }
 
-    fn output(&self, key: u32) -> &OutputReader {
-        if key == 0 { &self.stdout } else { &self.stderr }
+    fn reader(&self, kind: Kind) -> &OutputReader {
+        match kind {
+            Kind::Stdout => &self.stdout,
+            Kind::Stderr => &self.stderr,
+        }
     }
 
     /// `true` if the reader has ended.
-    fn read(&mut self, key: u32, event: IoEvent) -> bool {
+    fn read(&mut self, kind: Kind, event: IoEvent) -> bool {
         let event_loop = self.event_loop().as_event_loop_ctx();
-        let status = self.output(key).read(event_loop, Some(event));
-        self.note_read_status(status)
+        let result = self.reader(kind).read(event_loop, Some(event));
+        self.note_read_result(result)
     }
 
     /// SAFETY: `this` is what [`Self::watch`] handed out. It may be freed.
-    pub unsafe fn on_io(this: *mut Self, key: u32, event: IoEvent) {
+    pub unsafe fn on_io(this: *mut Self, kind: Kind, event: IoEvent) {
         // SAFETY: fn contract. Nothing else runs until `maybe_finished`.
         unsafe {
-            if (*this).read(key, event) {
+            if (*this).read(kind, event) {
                 Self::maybe_finished(this);
             }
         }
@@ -561,11 +565,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
     #[cfg(unix)]
     fn reset_output_flags(output: &OutputReader, fd: Fd) {
-        output.set_flags(PosixFlags::NONBLOCKING | PosixFlags::SOCKET, true);
-        output.set_flags(
-            PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
-            false,
-        );
+        output.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
+        output.update_flags(|f| {
+            f.remove(
+                PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
+            )
+        });
 
         #[cfg(debug_assertions)]
         {
@@ -693,27 +698,30 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     }
 
     fn start_readers(&mut self, spawned: &mut SpawnProcessResult) {
-        for (key, stdio) in [(0, spawned.stdout.take()), (1, spawned.stderr.take())] {
+        for (kind, stdio) in [
+            (Kind::Stdout, spawned.stdout.take()),
+            (Kind::Stderr, spawned.stderr.take()),
+        ] {
             #[cfg(unix)]
             if let Some(fd) = stdio.map(bun_sys::File::into_raw) {
-                if spawned.memfds[key as usize + 1] {
-                    self.output(key).start_memfd(fd);
+                if spawned.memfds[kind as usize + 1] {
+                    self.reader(kind).start_memfd(fd);
                     continue;
                 }
                 let _ = bun_sys::set_nonblocking(fd);
                 self.remaining_fds += 1;
 
-                Self::reset_output_flags(self.output(key), fd);
+                Self::reset_output_flags(self.reader(kind), fd);
                 let event_loop = self.event_loop().as_event_loop_ctx();
-                match self.output(key).start(event_loop, fd, true) {
-                    Ok(status) => _ = self.note_read_status(status),
+                match self.reader(kind).start(event_loop, fd, true) {
+                    Ok(result) => _ = self.note_read_result(result),
                     Err(err) => self.exit_with_error(err.into()),
                 }
             }
             #[cfg(windows)]
             if let bun_spawn::SpawnedStdio::Buffer(pipe) = stdio {
                 self.remaining_fds += 1;
-                if let Err(err) = self.output(key).start_with_pipe(pipe) {
+                if let Err(err) = self.reader(kind).start_with_pipe(pipe) {
                     self.exit_with_error(err.into());
                 }
             }
@@ -727,9 +735,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: `this` is live until the process has reported, which only the last statement can
         // cause. Only fields are borrowed across it. The readers are fields of `this`.
         unsafe {
-            for key in [0, 1] {
-                let owner = Owner::with_key(PollTag::LifecycleScript, key, this.cast());
-                (*this).output(key).set_owner(owner);
+            for kind in [Kind::Stdout, Kind::Stderr] {
+                let owner = Owner::with_kind(PollTag::LifecycleScript, kind, this.cast());
+                (*this).reader(kind).set_owner(owner);
             }
             let active = &(*this).manager.get().active_lifecycle_scripts;
             active.insert(this.cast());

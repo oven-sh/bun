@@ -589,7 +589,7 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        source.context.own_reader();
+        source.context.set_reader_owner();
         source.context.reader.from(buffered_reader);
 
         let stream = source.to_readable_stream(cx)?;

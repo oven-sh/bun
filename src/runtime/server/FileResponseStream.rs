@@ -12,8 +12,8 @@ use core::cell::Cell;
 use core::ffi::c_void;
 
 use bun_io::Closer;
-use bun_io::pipe_reader::Flags as ReaderFlags;
-use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadState, ReadStatus};
+use bun_io::pipe_reader::ReaderFlags;
+use bun_io::{BufferedReader, FileType, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, File};
@@ -243,11 +243,11 @@ impl FileResponseStream {
 
         // BufferedReader path
         let reader = &this_ref.reader;
-        reader.set_flags(ReaderFlags::CLOSE_HANDLE, false); // `self.fd` closes it
-        reader.set_flags(ReaderFlags::POLLABLE, opts.pollable);
-        reader.set_flags(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
+        reader.update_flags(|f| f.remove(ReaderFlags::CLOSE_HANDLE)); // `self.fd` closes it
+        reader.update_flags(|f| f.set(ReaderFlags::POLLABLE, opts.pollable));
+        reader.update_flags(|f| f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File));
         #[cfg(unix)]
-        reader.set_flags(ReaderFlags::SOCKET, opts.file_type == FileType::Socket);
+        reader.update_flags(|f| f.set(ReaderFlags::SOCKET, opts.file_type == FileType::Socket));
         // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
         reader.set_limit(opts.length.map(|len| len as usize));
         // SAFETY: a field of its owner.
@@ -259,7 +259,7 @@ impl FileResponseStream {
         } else {
             reader.start(event_loop, fd, opts.pollable)
         };
-        if let Err(err) | Ok(ReadStatus::Failed(err)) = start_result {
+        if let Err(err) | Ok(ReadResult::Err(err)) = start_result {
             this_ref.fail_with(err);
             return;
         }
@@ -303,10 +303,10 @@ impl FileResponseStream {
     // ───────────────────────── reader backend ─────────────────────────
 
     pub(crate) fn read(&self, event: Option<IoEvent>) {
-        let status = (self.reader).read_chunks(self.event_loop, event, |chunk, state| {
+        let result = (self.reader).read_chunks(self.event_loop, event, |chunk, state| {
             self.on_read_chunk(&chunk, state)
         });
-        self.on_read_status(status);
+        self.on_read_result(result);
     }
 
     fn on_read_chunk(&self, chunk: &[u8], state: ReadState) -> bool {
@@ -338,11 +338,11 @@ impl FileResponseStream {
         }
     }
 
-    fn on_read_status(&self, status: ReadStatus) {
-        match status {
-            ReadStatus::Pending => return,
-            ReadStatus::Done => self.finish(),
-            ReadStatus::Failed(err) => self.fail_with(err),
+    fn on_read_result(&self, result: ReadResult) {
+        match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => self.finish(),
+            ReadResult::Err(err) => self.fail_with(err),
         }
         #[cfg(windows)]
         self.read_ref.set(None);
@@ -370,7 +370,7 @@ impl FileResponseStream {
         #[cfg(windows)]
         self.hold_read_ref();
         // A paused POSIX reader ignores `read()`.
-        self.on_read_status(self.reader.unpause());
+        self.on_read_result(self.reader.unpause());
         self.read(None);
         true
     }

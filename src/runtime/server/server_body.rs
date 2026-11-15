@@ -2699,9 +2699,7 @@ where
     ) {
         jsc::mark_binding!();
         if id == 1 {
-            // SAFETY: for `id == 1` the registered user-data IS
-            // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`).
-            // It is read before the handler runs, which can free it with `reload()`.
+            // SAFETY: `app.ws(path, ud, 1, ..)` registered a `UserRoute`, which lives until the handler reloads.
             let user_route = unsafe { ThisPtr::new(this.cast::<UserRoute<SSL, DEBUG>>()) };
             Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;

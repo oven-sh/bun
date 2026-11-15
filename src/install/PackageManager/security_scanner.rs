@@ -1115,9 +1115,9 @@ impl<'a> SecurityScanSubprocess<'a> {
         let json_source =
             bun_ast::Source::init_path_string("ipc-message.json", self.ipc_data.as_slice());
 
-        let mut temp_log = bun_ast::Log::init();
+        let temp_log = bun_ast::Log::init();
 
-        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &mut temp_log) {
+        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &temp_log) {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));

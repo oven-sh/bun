@@ -117,10 +117,10 @@ impl FileFinder {
             CodeImportKind::Import => bun_ast::ImportKind::Stmt,
             CodeImportKind::Require => bun_ast::ImportKind::Require,
         };
-        let mut unread_log = Log::init();
+        let unread_log = Log::init();
         // SAFETY: the resolver and `unread_log` outlive the guard.
         let _log_scope =
-            unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&mut unread_log)) };
+            unsafe { Resolver::scoped_log(&raw mut *resolver, NonNull::from(&unread_log)) };
         resolver.prefer_module_field = search.prefers_module_field;
         resolver.esm_failure = None;
         let mut directory = to_native(search.directory).to_vec();
@@ -187,7 +187,7 @@ pub(crate) fn with_test_context<R>(
 ) -> R {
     static OUTPUT: std::sync::Once = std::sync::Once::new();
     OUTPUT.call_once(bun_core::output::stdio::init);
-    let mut log = Log::init();
+    let log = Log::init();
     let event_loop = bun_event_loop::AnyEventLoop::default();
     let arena = Arena::new();
     let transform_options = crate::options::TransformOptions {
@@ -196,7 +196,7 @@ pub(crate) fn with_test_context<R>(
         ..Default::default()
     };
     let transpiler = arena.alloc(
-        Transpiler::init(&arena, &raw mut log, transform_options, None)
+        Transpiler::init(&arena, &raw const log, transform_options, None)
             .expect("default options are valid"),
     );
     configure(&mut transpiler.options);
@@ -766,7 +766,7 @@ impl SourceProvider for BundlerServices {
         &self,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> FoldOptions<'s> {
         let options = self.context.options();
         defines::fold_options(options, &self.user_defined_names, arena, atoms, log)
@@ -781,7 +781,7 @@ impl SourceProvider for BundlerServices {
         resolver.outfile_of_build()
     }
 
-    fn resolve(&self, request: &ResolveRequest<'_>, log: &mut Log) -> Result<Resolution, Failed> {
+    fn resolve(&self, request: &ResolveRequest<'_>, log: &Log) -> Result<Resolution, Failed> {
         match &self.plugins {
             Some(plugins) => plugins.resolve(request, log),
             None => Ok(Resolution::NotHandled),
@@ -817,7 +817,7 @@ impl SourceProvider for BundlerServices {
         found
     }
 
-    fn load(&self, request: &LoadRequest<'_>, log: &mut Log) -> Result<Loaded, Failed> {
+    fn load(&self, request: &LoadRequest<'_>, log: &Log) -> Result<Loaded, Failed> {
         let loaded = match &self.plugins {
             Some(plugins) => plugins.load(request, log)?,
             None => WithoutServices.load(request, log)?,
@@ -832,7 +832,7 @@ impl SourceProvider for BundlerServices {
             || native_plugins::has_before_parse_plugins(&self.context)
     }
 
-    fn finish_deferred_loads(&self, log: &mut Log) -> Vec<DeferredLoad> {
+    fn finish_deferred_loads(&self, log: &Log) -> Vec<DeferredLoad> {
         let Some(plugins) = &self.plugins else {
             return Vec::new();
         };
@@ -902,7 +902,7 @@ impl SourceProvider for BundlerServices {
         assets::asset_paths_ignore_contents(&self.context)
     }
 
-    fn set_embedded_contents(&self, file: &SourceFile<'_>, log: &mut Log) -> Result<(), Failed> {
+    fn set_embedded_contents(&self, file: &SourceFile<'_>, log: &Log) -> Result<(), Failed> {
         self.embedded.set_contents(&self.context, file, log)
     }
 
@@ -1163,12 +1163,12 @@ impl SourceProvider for BundlerServices {
         file: &SourceFile<'_>,
         arena: &'s Arena,
         atoms: &Interner<'s>,
-        log: &mut Log,
+        log: &Log,
     ) -> Result<DataModule<'s>, DataFailure> {
         data_loaders::parse_data(&self.context, &self.embedded, file, arena, atoms, log)
     }
 
-    fn bundle_pages(&self, pages: &[&[u8]], log: &mut Log) -> Result<Vec<Vec<u8>>, Failed> {
+    fn bundle_pages(&self, pages: &[&[u8]], log: &Log) -> Result<Vec<Vec<u8>>, Failed> {
         page_bundles::bundle_pages(&self.context, &self.embedded, pages, log)
     }
 
@@ -1180,7 +1180,7 @@ impl SourceProvider for BundlerServices {
         components::expand_globs(&self.context, file, &mut Log::init())
     }
 
-    fn check_embedded_files(&self, log: &mut Log) -> Result<(), Failed> {
+    fn check_embedded_files(&self, log: &Log) -> Result<(), Failed> {
         self.embedded.check_names(log)
     }
 }

@@ -280,7 +280,7 @@ impl CatalogMap {
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
-        log: &mut Log,
+        log: &Log,
         source: &Source,
         expr: Expr,
         builder: &mut StringBuilder,
@@ -339,7 +339,7 @@ impl CatalogMap {
     fn parse_append_group(
         group: &mut Map,
         pm: &mut PackageManager,
-        log: &mut Log,
+        log: &Log,
         source: &Source,
         catalog: &Expr,
         builder: &mut StringBuilder,
@@ -360,7 +360,7 @@ impl CatalogMap {
                 dep_name_hash,
                 version_sliced.slice,
                 &version_sliced,
-                &mut *log,
+                log,
                 Some(&mut *pm),
             ) else {
                 log.add_error(
@@ -392,7 +392,7 @@ impl CatalogMap {
 
     pub(crate) fn from_pnpm_lockfile(
         catalogs: &mut CatalogMap,
-        log: &mut Log,
+        log: &Log,
         catalogs_obj: &mut E::Object,
         string_buf: &mut StringBuf,
     ) -> Result<(), FromPnpmLockfileError> {
@@ -556,7 +556,7 @@ bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,
-    log: &mut Log,
+    log: &Log,
     entries_obj: &E::Object,
     string_buf: &mut StringBuf,
 ) -> Result<(), FromPnpmLockfileError> {
@@ -575,13 +575,7 @@ fn put_entries_from_pnpm_lockfile(
         let Some(version_str) = specifier.as_utf8_string_literal() else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
-        let Some(dep) = parse_entry(
-            dep_name,
-            dep_name_hash,
-            version_str,
-            Some(&mut *log),
-            string_buf,
-        )?
+        let Some(dep) = parse_entry(dep_name, dep_name_hash, version_str, Some(log), string_buf)?
         else {
             return Err(FromPnpmLockfileError::InvalidPnpmLockfile);
         };
@@ -646,7 +640,7 @@ fn parse_entry(
     dep_name: String,
     dep_name_hash: PackageNameHash,
     specifier: &[u8],
-    log: Option<&mut Log>,
+    log: Option<&Log>,
     string_buf: &mut StringBuf,
 ) -> Result<Option<Dependency>, AllocError> {
     let version = string_buf.append(specifier)?;

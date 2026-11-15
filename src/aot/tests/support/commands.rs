@@ -109,19 +109,20 @@ pub fn parse_option_words<'a>(
 }
 
 fn create_command_result(log: &Log, statistics: &Statistics) -> CommandResult {
-    let diagnostics = log
-        .msgs
-        .iter()
-        .map(|message| {
-            let name = match message.metadata {
-                Metadata::TypeScript { code, .. } => DiagnosticName::FrontEnd(code),
-                Metadata::Build => DiagnosticName::Build,
-                Metadata::Resolve(_) => DiagnosticName::Resolve,
-            };
-            let text = String::from_utf8_lossy(&message.data.text).into_owned();
-            (name, text)
-        })
-        .collect();
+    let diagnostics = log.with_msgs(|messages| {
+        messages
+            .iter()
+            .map(|message| {
+                let name = match message.metadata {
+                    Metadata::TypeScript { code, .. } => DiagnosticName::FrontEnd(code),
+                    Metadata::Build => DiagnosticName::Build,
+                    Metadata::Resolve(_) => DiagnosticName::Resolve,
+                };
+                let text = String::from_utf8_lossy(&message.data.text).into_owned();
+                (name, text)
+            })
+            .collect()
+    });
     let counted = StatisticId::ALL
         .into_iter()
         .map(|id| (id, statistics.get(id)))
@@ -145,18 +146,20 @@ fn failed_build_outcome(log: &Log, failed: &BuildFailed) -> CommandOutcome {
 }
 
 fn find_places(log: &Log, root: &Path) -> Vec<Option<Place>> {
-    let messages = log.msgs.iter();
-    messages
-        .map(|message| {
-            let location = message.data.location.as_ref()?;
-            let file = String::from_utf8_lossy(&location.file).into_owned();
-            let below_root = Path::new(&file).strip_prefix(root).ok()?;
-            Some(Place {
-                file: below_root.to_string_lossy().replace('\\', "/"),
-                line: u32::try_from(location.line).ok()?,
+    log.with_msgs(|messages| {
+        messages
+            .iter()
+            .map(|message| {
+                let location = message.data.location.as_ref()?;
+                let file = String::from_utf8_lossy(&location.file).into_owned();
+                let below_root = Path::new(&file).strip_prefix(root).ok()?;
+                Some(Place {
+                    file: below_root.to_string_lossy().replace('\\', "/"),
+                    line: u32::try_from(location.line).ok()?,
+                })
             })
-        })
-        .collect()
+            .collect()
+    })
 }
 
 pub fn run_command(command: Command, path: &Path, aot: &AotOptions) -> CommandOutcome {
@@ -206,8 +209,8 @@ fn build(
         options: aot,
         typescript_libs: Libs::Bundled(bun_sema_standalone::TYPESCRIPT_LIBS),
     };
-    let mut log = Log::init();
-    let linked = with_front_end_inputs(&inputs, &mut log, |options, services, log| {
+    let log = Log::init();
+    let linked = with_front_end_inputs(&inputs, &log, |options, services, log| {
         link_program(options, services, log)
     });
     let Some(linked) = linked else {
@@ -517,7 +520,7 @@ mod tests {
             (b"no entry", Metadata::Build),
             (b"not found", resolve_error),
         ];
-        let mut log = Log::init();
+        let log = Log::init();
         for (text, metadata) in messages {
             log.add_msg(Msg {
                 data: Data {

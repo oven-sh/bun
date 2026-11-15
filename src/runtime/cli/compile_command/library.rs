@@ -97,8 +97,8 @@ impl Project {
         };
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(&file.path[..], &file.contents[..]);
-        let mut log = bun_ast::Log::init();
-        match bun_parsers::json::parse_package_json_utf8(&source, &mut log, arena) {
+        let log = bun_ast::Log::init();
+        match bun_parsers::json::parse_package_json_utf8(&source, &log, arena) {
             Ok(root) => Ok(Some(root)),
             Err(_) => Err(LibraryError::UnparsablePackageJson {
                 path: file.path.clone(),

@@ -631,7 +631,7 @@ pub(crate) fn steer_used_catalogs_to_latest(
 ) -> Result<(), bun_alloc::AllocError> {
     // see note in `edit_update_no_args` — always avoid the store
     let _guard = ExprDisabler::scope();
-    let log = manager.log_mut();
+    let log = manager.log();
     let package_json_cache = &mut manager.workspace_package_json_cache;
     let lockfile = parsed.unwrap_or(&mut *manager.lockfile);
 

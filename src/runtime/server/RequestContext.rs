@@ -1160,13 +1160,15 @@ where
             return;
         }
 
-        let bb = DevErrorPage {
-            message,
-            cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
-            exceptions,
-            log: Some(log),
-        }
-        .render();
+        let bb = log.with_msgs(|msgs| {
+            DevErrorPage {
+                message,
+                cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
+                exceptions,
+                msgs,
+            }
+            .render()
+        });
         if resp.try_end(&bb, bb.len(), self.should_close_connection()) {
             drop(bb);
             let _base_ref = self.detach_response();
@@ -2885,7 +2887,7 @@ where
             message: b"Stream error during server-side rendering",
             cwd: bun_resolver::fs::FileSystem::get().top_level_dir(),
             exceptions: &exception_list,
-            log: None,
+            msgs: &[],
         }
         .render();
 
@@ -3482,7 +3484,7 @@ where
             vm.on_unhandled_rejection_exception_list
                 .set(prev_exception_list);
 
-            let log = vm.log_mut().unwrap();
+            let log = vm.log().unwrap();
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
@@ -3497,7 +3499,7 @@ where
             report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
-        vm.log_mut().unwrap().reset();
+        vm.log().unwrap().reset();
     }
 
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(

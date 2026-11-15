@@ -188,16 +188,10 @@ impl core::ops::Deref for ReportedLog<'_> {
     }
 }
 
-impl core::ops::DerefMut for ReportedLog<'_> {
-    fn deref_mut(&mut self) -> &mut bun_ast::Log {
-        &mut self.log
-    }
-}
-
 impl Drop for ReportedLog<'_> {
     #[optimize(size)]
     fn drop(&mut self) {
-        if self.log.errors > 0 {
+        if self.log.errors.get() > 0 {
             let _ = self.log.print(bun_output::error_writer());
             self.success.set(false);
         }
@@ -459,13 +453,13 @@ impl Snapshots {
         opts.features.no_macros = true;
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
-        let mut temp_log = bun_ast::Log::init();
+        let temp_log = bun_ast::Log::init();
 
         let source = bun_ast::Source::init_path_string(snapshot_file_path, self.file_buf.as_slice());
 
         let parser = js_parser::Parser::init(
             opts,
-            &mut temp_log,
+            &temp_log,
             &source,
             &vm.transpiler.get().options.define,
             &arena,
@@ -748,7 +742,7 @@ impl Snapshots {
         for InlineSnapshotsOfFile { path: test_file_path, snapshots: ils_info } in self.inline_snapshots_to_write.values_mut() {
             arena.reset();
 
-            let mut log = ReportedLog { log: bun_ast::Log::init(), success: &success };
+            let log = ReportedLog { log: bun_ast::Log::init(), success: &success };
 
             // 1. sort ils_info by row, col
             index_sort::sort_slice_by(ils_info, |a, b| {
@@ -876,12 +870,12 @@ impl Snapshots {
                     // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
                     // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
                     // discussion.
-                    let log_ptr: *mut bun_ast::Log = &raw mut *log;
+                    let log_ptr: *const bun_ast::Log = &raw const *log;
                     let mut lexer = js_lexer::Lexer::init_without_reading(
-                        // SAFETY: `log_ptr` derived from `&raw mut *log` just above; `log`
+                        // SAFETY: `log_ptr` derived from `&raw const *log` just above; `log`
                         // outlives `'blk` and no other `&mut Log` is live until `lexer` is
                         // moved into `parser` below.
-                        unsafe { &mut *log_ptr },
+                        unsafe { &*log_ptr },
                         &source,
                         &arena,
                     );
@@ -898,7 +892,7 @@ impl Snapshots {
                     );
                     let mut parser = js_parser::TSXParser::init(
                         &arena,
-                        core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
+                        core::ptr::NonNull::new(log_ptr.cast_mut()).expect("log_ptr derived from &*log"),
                         &source,
                         &vm.transpiler.get().options.define,
                         lexer,
@@ -1110,7 +1104,7 @@ impl Snapshots {
             // commit the last segment
             result_text.extend_from_slice(&file_text[uncommitted_segment_end..]);
 
-            if log.errors > 0 {
+            if log.errors.get() > 0 {
                 // skip writing the file if there were errors — `log` guard prints on drop.
                 continue;
             }

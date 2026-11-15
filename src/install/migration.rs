@@ -142,7 +142,7 @@ pub fn detect_and_load_other_lockfile(
     this: &mut Lockfile,
     dir: Fd,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
 ) -> LoadResult {
     // check for npm-shrinkwrap.json, package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
@@ -204,7 +204,7 @@ pub fn detect_and_load_other_lockfile(
 fn migrate_pnpm_lockfile(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     data: &[u8],
 ) -> Result<LoadResult, Error> {
     match pnpm::migrate_pnpm_lockfile(this, manager, log, data) {
@@ -250,7 +250,7 @@ fn finish_migration(
     migrate_result: Result<LoadResult, Error>,
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     timer: &std::time::Instant,
     lockfile_name: &'static ZStr,
 ) -> Result<LoadResultOk, LoadResultErr> {
@@ -283,7 +283,7 @@ fn finish_migration(
     Ok(ok)
 }
 
-fn print_errors_and_reset(manager: &PackageManager, log: &mut bun_ast::Log) {
+fn print_errors_and_reset(manager: &PackageManager, log: &bun_ast::Log) {
     if !manager.options.log_level.is_silent() && log.has_errors() {
         let _ = log.print(Output::error_writer());
         Output::flush();
@@ -295,7 +295,7 @@ fn print_errors_and_reset(manager: &PackageManager, log: &mut bun_ast::Log) {
 pub(crate) fn parse_root_overrides(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     source: &bun_ast::Source,
     json: bun_ast::Expr,
     workspace_names: &WorkspaceMap,
@@ -396,7 +396,7 @@ fn pnpm_lockfile_version(data: &[u8]) -> &[u8] {
 
 fn report_migrated(
     manager: &PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     timer: &std::time::Instant,
     lockfile_name: &ZStr,
 ) {
@@ -404,7 +404,7 @@ fn report_migrated(
         log.reset();
         return;
     }
-    if log.warnings > 0 && !log.has_errors() {
+    if log.warnings.get() > 0 && !log.has_errors() {
         Output::flush();
         let _ = log.print(Output::error_writer());
         log.reset();
@@ -418,7 +418,7 @@ fn report_migrated(
 fn migrate_npm_lockfile(
     this: &mut Lockfile,
     manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     data: &[u8],
     abs_path: &[u8],
     dir: Fd,

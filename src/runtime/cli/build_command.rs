@@ -51,7 +51,7 @@ impl BuildCommand {
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
-        let log_ref: &mut bun_ast::Log = unsafe { &mut *log };
+        let log_ref: &bun_ast::Log = unsafe { &*log };
         let user_requested_browser_target =
             ctx.args.target.is_some() && ctx.args.target.unwrap() == api::Target::Browser;
         if ctx.bundler_options.compile || ctx.bundler_options.bytecode {
@@ -682,7 +682,7 @@ impl BuildCommand {
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    if !log_ref.msgs.is_empty() {
+                    if log_ref.msgs_len() > 0 {
                         log_ref.print(Output::error_writer())?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
@@ -1160,7 +1160,7 @@ impl BuildCommand {
                 break 'dump;
             }
 
-            if log_ref.errors == 0 {
+            if log_ref.errors.get() == 0 {
                 if opt_transform_only {
                     bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",

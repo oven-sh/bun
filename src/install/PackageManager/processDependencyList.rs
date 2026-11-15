@@ -183,7 +183,7 @@ impl PackageManager {
             }
             if existing.resolution.tag.is_tarball() && existing.meta.integrity.tag.is_supported() {
                 let name = self.lockfile.str(&existing.name).to_vec();
-                self.log_mut().add_warning_fmt(
+                self.log().add_warning_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!(
@@ -292,7 +292,7 @@ impl PackageManager {
                 Ok(json) => json,
                 Err(err) => {
                     if row.behavior.is_required() {
-                        self.log_mut().add_error_fmt(
+                        self.log().add_error_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -387,7 +387,7 @@ impl PackageManager {
             sliced.slice,
             VersionTag::infer(sliced.slice),
             &sliced,
-            Some(self.log_mut()),
+            Some(self.log()),
             None,
         )
         .unwrap_or_default();
@@ -521,7 +521,7 @@ impl PackageManager {
             let parsed = listed.package.parse(
                 &mut listed.lockfile,
                 self,
-                &mut bun_ast::Log::init(),
+                &bun_ast::Log::init(),
                 &source,
                 &mut OnlyDependencies,
                 Features::NPM,
@@ -676,7 +676,7 @@ impl PackageManager {
     pub(crate) fn is_ready_for_peers(&self) -> bool {
         self.has_peers_to_process()
             // An error ends the install, so the peers are not worth their requests.
-            && !self.log_mut().has_errors()
+            && !self.log().has_errors()
     }
 
     /// Queues the deferred peers for `drain_dependency_list`, in `peer_batch_order`. The first

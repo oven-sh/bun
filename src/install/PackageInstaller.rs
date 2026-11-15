@@ -730,7 +730,7 @@ impl<'a> PackageInstaller<'a> {
             crate::prune::remove_planted_link(&self.root_node_modules_folder, bin_dir)
         {
             bun_ast::add_error_pretty!(
-                manager.log_mut(),
+                manager.log(),
                 None,
                 bun_ast::Loc::EMPTY,
                 "failed to link into <b>{}<r>: {}",
@@ -902,7 +902,7 @@ impl<'a> PackageInstaller<'a> {
                         }
                     } else {
                         bun_ast::add_error_pretty!(
-                            manager.log_mut(),
+                            manager.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "failed to link <b>{}<r>: {}",
@@ -1633,7 +1633,7 @@ impl<'a> PackageInstaller<'a> {
             let mut temp_lockfile = Lockfile::default();
             temp_lockfile.init_empty();
             let mut string_builder = temp_lockfile.string_builder();
-            let log = self.manager().log_mut();
+            let log = self.manager().log();
             match temp.fill_from_package_json(&mut string_builder, log, folder_path) {
                 Ok(gypfile) => break 'brk (temp, Some(gypfile)),
                 Err(err) => {
@@ -2305,7 +2305,7 @@ impl<'a> PackageInstaller<'a> {
                 && let Ok(dest) = destination_dir.open_at(installer.destination_dir_subpath)
             {
                 for text in package_install::lay_folder_links(installer.cache_dir_subpath, &dest) {
-                    self.manager().log_mut().add_warning_fmt(
+                    self.manager().log().add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!("{}", bun_core::fmt::escape_control_chars(&text)),
@@ -2679,7 +2679,7 @@ impl<'a> PackageInstaller<'a> {
                 folder_name,
                 resolution,
             );
-        let log = self.manager().log_mut();
+        let log = self.manager().log();
         let scripts_list =
             match scripts.get_list(log, package_path, folder_name, resolution, trusted) {
                 Ok(Some(list)) => list,

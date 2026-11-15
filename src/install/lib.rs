@@ -1,5 +1,6 @@
 #![allow(nonstandard_style)]
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 
 // ──────────────────────────────────────────────────────────────────────────
 // Crate aliases — Phase-A drafts use the porting-doc crate names; map them
@@ -35,26 +36,8 @@ pub(crate) mod bun_fs {
     pub(crate) use bun_resolver::fs::*;
 }
 
-/// `bun_progress` → re-export of the real `bun_core::Progress` (snapshot of
-/// pre-0.13 `std.Progress`). The earlier value-type counter shim was dropped
-/// once `ProgressStrings.rs`, `hoisted_install.rs`, `runTasks.rs` etc. started
-/// touching the full surface (`supports_ansi_escape_codes`, public `root`,
-/// `unprotected_*` atomics, `&mut Node` from `start()`); keeping a parallel
-/// type here just bifurcated `Node` identity across the crate.
 pub(crate) mod bun_progress {
-    pub(crate) use bun_core::Progress::{Node, Progress};
-}
-
-/// `bun_bunfig` → config-loading entrypoint. The real `bun_bunfig` crate now
-/// hosts `Arguments::loadConfig` (MOVE_DOWN b0); this local shim only adds the
-/// legacy `Arguments` alias (= `bun_options_types::context`) that
-/// `hoisted_install` / `isolated_install` import for `Transpiler::init`
-/// plumbing. Kept as a local module so those callers don't need updating; the
-/// crate-root `bun_bunfig` name shadows the extern crate, so callers needing
-/// the real crate spell it `::bun_bunfig`.
-pub(crate) mod bun_bunfig {
-
-    pub(crate) use bun_options_types::context as Arguments;
+    pub(crate) use bun_core::Progress::{NodeId, Progress};
 }
 
 use core::cell::Cell;
@@ -769,62 +752,6 @@ impl RunCommand {
             Ok(())
         }
     }
-}
-
-/// Process-lifetime arena for the install-tier `Transpiler` constructed in
-/// `RunCommand::configure_env_for_run`. Mirrors `runner_arena()` in
-/// `runtime/cli/run_command.rs` — `bun_alloc::Arena` is `!Sync`, so guard a
-/// a raw `MaybeUninit` global with `Once` (PORTING.md §Forbidden bars
-/// `Box::leak`).
-fn install_runner_arena() -> &'static bun_alloc::Arena {
-    static ONCE: std::sync::Once = std::sync::Once::new();
-    // PORTING.md §Global mutable state: `Once`-guarded init; RacyCell because
-    // `Bump` is `!Sync` so `OnceLock<Arena>` can't be used.
-    static ARENA: bun_core::RacyCell<::core::mem::MaybeUninit<bun_alloc::Arena>> =
-        bun_core::RacyCell::new(::core::mem::MaybeUninit::uninit());
-    ONCE.call_once(|| {
-        // SAFETY: one-time init under `Once`; no concurrent writer.
-        unsafe { (*ARENA.get()).write(bun_alloc::Arena::new()) };
-    });
-    // SAFETY: initialized exactly once above. `configure_env_for_run` is only
-    // ever called from the single CLI dispatch thread, so the `!Sync` Bump is
-    // never observed concurrently.
-    unsafe { (*ARENA.get()).assume_init_ref() }
-}
-
-impl RunCommand {
-    /// The half of `bun_runtime`'s `RunCommand::configure_env_for_run` that needs no `DirInfo`.
-    pub(crate) fn configure_env_for_run(
-        ctx: &mut bun_options_types::context::ContextData,
-        env: Option<*mut bun_dotenv::Loader>,
-    ) -> Result<bun_transpiler::Transpiler<'static>, crate::Error> {
-        let mut this_transpiler = bun_transpiler::Transpiler::init(
-            install_runner_arena(),
-            ctx.log,
-            ctx.args.clone(),
-            env,
-        )?;
-        this_transpiler.options.env.behavior =
-            bun_options_types::schema::api::DotEnvBehavior::load_all;
-        this_transpiler.resolver.care_about_bin_folder = true;
-        this_transpiler.resolver.care_about_scripts = true;
-        this_transpiler.resolver.store_fd = false;
-
-        // Re-derive per-use rather than holding a long-lived `&mut` (avoids
-        // Stacked-Borrows overlap with `run_env_loader`).
-        let env_loader = this_transpiler.env_mut();
-        Self::seed_script_env(env_loader);
-
-        // Overwrite it like npm does, because an outer `bun run` in another project may have left a
-        // stale value.
-        env_loader.map.put(
-            b"npm_config_local_prefix",
-            bun_fs::FileSystem::get().top_level_dir(),
-        )?;
-
-        // `npm_package_*` is set per package. See `spawn_package_lifecycle_scripts`.
-        Ok(this_transpiler)
-    }
 
     /// Sets the variables that both `bun run` and lifecycle scripts have in their environment.
     pub fn seed_script_env(env_loader: &mut bun_dotenv::Loader) {
@@ -1066,16 +993,3 @@ const _: () = assert!(core::mem::size_of::<TaskCallbackContext>() == 32);
 // The easy way would be:
 // 1. Download all packages, parsing their dependencies and enqueuing all dependencies for resolution
 // 2.
-
-#[derive(strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
-pub enum PackageManifestError {
-    PackageManifestHTTP400,
-    PackageManifestHTTP401,
-    PackageManifestHTTP402,
-    PackageManifestHTTP403,
-    PackageManifestHTTP404,
-    PackageManifestHTTP4xx,
-    PackageManifestHTTP5xx,
-}
-
-bun_core::impl_tag_error!(PackageManifestError);

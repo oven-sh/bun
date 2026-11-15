@@ -251,41 +251,26 @@ impl Debugger {
             // delay (Windows lacks a working `tickWithTimeout`). TODO: remove
             // this when tickWithTimeout actually works properly on Windows.
             use bun_sys::windows::libuv as uv;
-            use bun_sys::windows::libuv::UvHandle as _;
             if wait == Wait::Shortly {
                 let uv_loop = this.uv_loop();
                 // SAFETY: `uv_loop` is a live initialized `uv_loop_t`.
                 unsafe { uv::uv_update_time(uv_loop) };
-                let timer: *mut uv::Timer =
-                    bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed()));
-                // SAFETY: `timer` freshly allocated; `uv_loop` valid.
-                unsafe { (*timer).init(uv_loop) };
+                let mut timer = uv::Owned::<uv::Timer>::zeroed();
+                timer.init(uv_loop);
 
                 extern "C" fn on_debugger_timer(handle: *mut uv::Timer) {
                     if let Some(d) = VirtualMachine::get().debugger.get() {
                         d.poll_ref.unref(get_vm_ctx(AllocatorType::Js));
                     }
-                    // SAFETY: `handle` is a live `uv_timer_t` (`uv_handle_t`
-                    // at offset 0); `deinit_timer` matches `uv_close_cb`.
-                    unsafe {
-                        uv::uv_close(handle.cast(), Some(deinit_timer));
-                    }
+                    // SAFETY: the timer given up below, which fires once.
+                    drop(unsafe { uv::Owned::from_raw(handle) });
                 }
-                extern "C" fn deinit_timer(handle: *mut uv::uv_handle_t) {
-                    // SAFETY: `handle` is the `Box<Timer>` allocated above
-                    // (cast through `uv_handle_t` at offset 0); this is the
-                    // sole owner reclaiming it after `uv_close` completes.
-                    drop(unsafe { bun_core::heap::take(handle.cast::<uv::Timer>()) });
-                }
-                // SAFETY: `timer` initialized above.
-                unsafe {
-                    (*timer).start(
-                        WAIT_FOR_CONNECTION_DELAY_MS as u64,
-                        0,
-                        Some(on_debugger_timer),
-                    );
-                    (*timer).ref_();
-                }
+                timer.start(
+                    WAIT_FOR_CONNECTION_DELAY_MS as u64,
+                    0,
+                    Some(on_debugger_timer),
+                );
+                let _ = timer.into_raw();
             }
         }
 
@@ -419,15 +404,15 @@ impl Debugger {
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let vm = VirtualMachine::init(crate::virtual_machine::InitOptions {
-            // Lives as long as the VM, which this thread never tears down.
-            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
-                env_map,
-            ))),
+        let mut log = bun_ast::Log::default();
+        let mut env_loader = bun_dotenv::Loader::init_with_map(env_map);
+        let options = crate::virtual_machine::InitOptions {
+            env_loader: Some(core::ptr::NonNull::from(&mut env_loader)),
             is_main_thread: false,
             ..Default::default()
-        })
-        .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
+        };
+        let vm = VirtualMachine::init(&raw mut log, options)
+            .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.event_loop().ensure_waker();
 
         extern "C" fn start_trampoline(ctx: *mut c_void) {
@@ -446,7 +431,7 @@ impl Debugger {
     /// Runs inside `holdAPILock` on the debugger thread. Publishes the
     /// inspector URL(s), wakes the futex the debuggee VM is blocked on, then
     /// spins this thread's event loop forever.
-    fn start(init: DebuggerThreadInit) {
+    fn start(init: DebuggerThreadInit) -> ! {
         jsc::mark_binding();
 
         let this: &VirtualMachine = VirtualMachine::get();
@@ -476,9 +461,7 @@ impl Debugger {
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    bun_core::Output::error_writer(),
-                ));
+                let _ = log.print(bun_core::Output::error_writer());
                 bun_core::pretty_errorln!("\n");
                 bun_core::Output::flush();
             }

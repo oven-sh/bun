@@ -23,12 +23,12 @@ use bun_spawn::{self, ProcessHandle};
 #[cfg(target_os = "macos")]
 use {
     crate::Error,
+    bun_core::CStrList,
     bun_jsc::virtual_machine::VirtualMachine,
     bun_spawn::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },
     bun_sys::{self, Fd},
-    core::ffi::c_char,
 };
 
 declare_scope!(WebViewHost, hidden);
@@ -157,22 +157,11 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
     // Child sees fd 3 (first extra_fd → 3+0). The env var is the only
     // signal; no argv changes so `ps` shows a normal `bun` invocation.
     // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
-    // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
-    let base = unsafe {
-        (*vm.transpiler.get().env)
-            .map
-            .create_null_delimited_env_map()
-    }?;
-    let base_slice = base.as_slice();
-    // base_slice already has a trailing None sentinel; drop it, append our
-    // var, then re-terminate.
-    let base_entries = &base_slice[..base_slice.len().saturating_sub(1)];
-    let mut env: Vec<*const c_char> = Vec::with_capacity(base_entries.len() + 2);
-    env.extend(base_entries.iter().copied());
-    env.push(c"BUN_INTERNAL_WEBVIEW_HOST=3".as_ptr());
-    env.push(ptr::null());
+    let base = vm.env_loader().map.create_null_delimited_env_map()?;
+    let host = [Some(c"BUN_INTERNAL_WEBVIEW_HOST=3".into()), None];
+    let env = [base.entries(), &host].concat();
 
-    let argv: [*const c_char; 2] = [exe.as_ptr(), ptr::null()];
+    let argv = [Some(exe.into()), None];
 
     let opts = SpawnOptions {
         stdin: Stdio::Ignore,
@@ -190,26 +179,24 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
             Stdio::Ignore
         },
         extra_fds: vec![Stdio::Pipe(fds[1])].into_boxed_slice(),
-        argv0: Some(exe.as_ptr()),
+        argv0: Some(exe.into()),
         ..SpawnOptions::default()
     };
 
-    // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
-    // argv[0] non-null; valid for this call.
-    let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
+    let (argv, env) = (CStrList::new(&argv), CStrList::new(&env));
+    let spawned = bun_spawn::spawn_process(&opts, argv, Some(env))??;
 
     let event_loop = EventLoopHandle::init(vm.event_loop_ptr());
-    let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
+    let host = bun_ptr::AliasableBox::new(HostProcess {
         process: spawned.to_process_handle(event_loop),
         retired: false,
-    }));
-    // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
-    // and outlives it.
+    });
+    // SAFETY: `host` owns `process` and outlives it.
     let process = unsafe {
-        let process = &(*self_ptr).process;
+        let process = &(*host.as_ptr()).process;
         bun_spawn::Process::set_exit_handler(
             process,
-            ProcessExit::new(ProcessExitKind::HostProcess, self_ptr),
+            ProcessExit::new(ProcessExitKind::HostProcess, host.as_ptr()),
         );
         process
     };
@@ -224,12 +211,10 @@ fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Res
         }
         Err(e) => {
             scoped_log!(WebViewHost, "watch failed: {}", e);
-            // SAFETY: reclaim the Box (drops our process ref).
-            drop(unsafe { bun_core::heap::take(self_ptr) });
             return Err(crate::Error::WatchFailed);
         }
     }
-    INSTANCE.store(self_ptr, core::sync::atomic::Ordering::Relaxed);
+    INSTANCE.store(host.into_raw(), core::sync::atomic::Ordering::Relaxed);
     // fd handed to C++ which adopts it into usockets. Not stored here —
     // usockets owns the socket; Rust only owns process lifetime.
     Ok(parent_end.into_raw())

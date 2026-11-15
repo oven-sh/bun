@@ -79,7 +79,7 @@ pub(crate) struct BundlerInputs<'a> {
     pub(crate) arena: &'a bun_alloc::Arena,
     pub(crate) event_loop: EventLoop,
     pub(crate) worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
-    pub(crate) plugins: Option<PluginSetup>,
+    pub(crate) plugins: Option<PluginSetup<'a>>,
     pub(crate) file_map: Option<&'a FileMap>,
 }
 

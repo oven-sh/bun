@@ -12,9 +12,7 @@ use bun_standalone_graph::StandaloneModuleGraph::ExecutableDetails;
 use super::{CompileFailure, CompileOutcome, RequestOrigin};
 
 pub(crate) fn print_log(log: &bun_ast::Log) {
-    let _ = log.print(core::ptr::from_mut::<bun_core::io::Writer>(
-        Output::error_writer(),
-    ));
+    let _ = log.print(Output::error_writer());
 }
 
 /// A report names a file of the program as the lines around it do: from the working directory.

@@ -1,4 +1,7 @@
+use core::mem::MaybeUninit;
 use core::ptr::NonNull;
+
+use crate::{AnyRefCounted, RefPtr};
 
 /// Bit layout:
 ///   bits 0..=30 → reference_count
@@ -38,7 +41,7 @@ impl WeakPtrData {
         }
     }
 
-    pub fn on_finalize(&mut self) -> bool {
+    fn on_finalize(&mut self) -> bool {
         debug_assert!(!self.finalized());
         self.set_finalized(true);
         self.reference_count() == 0
@@ -50,7 +53,10 @@ impl WeakPtrData {
 ///
 /// The field projection is a trait method (typically implemented via
 /// `core::mem::offset_of!`).
-pub trait HasWeakPtrData {
+///
+/// # Safety
+/// Only [`destroy`] frees a heap `Self`, and dropping it touches no `WeakPtr<Self>`.
+pub unsafe trait HasWeakPtrData {
     /// Return a pointer to the embedded `WeakPtrData` field on `this`.
     ///
     /// # Safety
@@ -58,6 +64,20 @@ pub trait HasWeakPtrData {
     /// may already be finalized, but the allocation itself must not yet be
     /// freed).
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData;
+}
+
+/// `#[ref_count(destroy = …)]` of a type `WeakPtr`s point to: the last of them frees the allocation.
+///
+/// # Safety
+/// `this` is a `Box` allocation, and its last strong reference is gone.
+pub unsafe fn destroy<T: HasWeakPtrData>(this: *mut T) {
+    // SAFETY: fn contract. `WeakPtrData` has no drop glue, so it outlives `drop_in_place`.
+    unsafe {
+        core::ptr::drop_in_place(this);
+        if (*T::weak_ptr_data(this)).on_finalize() {
+            bun_core::heap::destroy(this.cast::<MaybeUninit<T>>());
+        }
+    }
 }
 
 /// Allow a type to be weakly referenced. This keeps a reference count of how
@@ -83,6 +103,14 @@ pub struct WeakPtr<T: HasWeakPtrData> {
 impl<T: HasWeakPtrData> WeakPtr<T> {
     pub const EMPTY: Self = Self { raw_ptr: None };
 
+    pub fn new(strong: &RefPtr<T>) -> Self
+    where
+        T: AnyRefCounted,
+    {
+        // SAFETY: a strong reference, with the allocation's provenance.
+        unsafe { Self::init_ref(strong.as_ptr()) }
+    }
+
     /// Take a weak reference to `this`, incrementing its weak count.
     ///
     /// # Safety
@@ -104,18 +132,13 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         }
     }
 
-    /// Borrow the pointee, or `None` once the owner has finalized it (which
-    /// also releases this handle's weak ref).
-    ///
-    /// The returned `&mut T` is a fresh reborrow of the allocation pointer, so
-    /// it must not overlap any other borrow of the same object — including one
-    /// handed out by a second `WeakPtr`. Finish with it before the next `get`.
-    pub fn get(&mut self) -> Option<&mut T> {
+    /// The pointee, valid until its last strong reference goes. `None` after that.
+    pub fn get(&mut self) -> Option<NonNull<T>> {
         if let Some(value) = self.raw_ptr {
             // SAFETY: allocation is live while any WeakPtr holds it (see above).
             unsafe {
                 if !(*T::weak_ptr_data(value.as_ptr())).finalized() {
-                    return Some(&mut *value.as_ptr());
+                    return Some(value);
                 }
                 self.deref_internal(value);
             }
@@ -135,11 +158,10 @@ impl<T: HasWeakPtrData> WeakPtr<T> {
         weak_data.set_reference_count(count);
         let finalized = weak_data.finalized();
         if finalized && count == 0 {
-            // The allocation came from `heap::alloc` (via `Box::new`).
-            // SAFETY: this is the last reference and the owner has finalized,
-            // so we hold the only pointer to a `Box`-allocated `T`. `weak_data`
+            // SAFETY: this is the last reference and `destroy` dropped the value,
+            // so we hold the only pointer to its `Box` allocation. `weak_data`
             // is dead here, so freeing through `value` disturbs no live borrow.
-            drop(unsafe { bun_core::heap::take(value.as_ptr()) });
+            unsafe { bun_core::heap::destroy(value.cast::<MaybeUninit<T>>().as_ptr()) };
         }
     }
 }
@@ -195,7 +217,8 @@ mod tests {
         }
     }
 
-    impl HasWeakPtrData for Owner {
+    // SAFETY: every test ends its `Owner` with `destroy`.
+    unsafe impl HasWeakPtrData for Owner {
         unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
             // SAFETY: caller contract — pure field projection, no read.
             unsafe { &raw mut (*this).weak }
@@ -208,6 +231,11 @@ mod tests {
             payload,
             _heap: Box::new(payload),
         }))
+    }
+
+    fn payload(weak: &mut WeakPtr<Owner>) -> Option<u32> {
+        // SAFETY: `get` just reported the value live.
+        weak.get().map(|owner| unsafe { owner.as_ref() }.payload)
     }
 
     #[test]
@@ -251,12 +279,11 @@ mod tests {
         let raw = new_owner(4);
         // SAFETY: `raw` is a freshly leaked Box; live and not finalized.
         let mut weak = unsafe { WeakPtr::init_ref(raw) };
-        assert_eq!(weak.get().map(|o| o.payload), Some(4));
+        assert_eq!(payload(&mut weak), Some(4));
 
-        // Owner finalizes its contents: not the last ref, so the allocation stays.
-        // SAFETY: `raw` is live.
-        assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
-        assert_eq!(drops(), before);
+        // SAFETY: `raw` is live, and its owner is done with it.
+        unsafe { destroy(raw) };
+        assert_eq!(drops(), before + 1);
 
         // `get` on a finalized owner releases the ref and reports `None`, which
         // is the last ref, so `deref_internal` frees the allocation.
@@ -277,8 +304,8 @@ mod tests {
         let weak = unsafe { WeakPtr::init_ref(raw) };
         drop(weak);
         assert_eq!(drops(), before);
-        // SAFETY: no weak refs remain; the owner frees its own allocation.
-        drop(unsafe { bun_core::heap::take(raw) });
+        // SAFETY: `raw` is live, and its owner is done with it.
+        unsafe { destroy(raw) };
         assert_eq!(drops(), before + 1);
     }
 
@@ -298,12 +325,12 @@ mod tests {
             // SAFETY: `raw` is live; the owner writes through its own pointer.
             // This is a foreign write for any handle built from a reborrow.
             unsafe { (*raw).payload = i };
-            assert_eq!(weak.get().map(|o| o.payload), Some(i));
+            assert_eq!(payload(&mut weak), Some(i));
         }
 
         drop(weak);
-        // SAFETY: no weak refs remain.
-        drop(unsafe { bun_core::heap::take(raw) });
+        // SAFETY: `raw` is live, and its owner is done with it.
+        unsafe { destroy(raw) };
         assert_eq!(drops(), before + 1);
     }
 
@@ -321,14 +348,14 @@ mod tests {
         let mut b = unsafe { WeakPtr::init_ref(raw) };
         // SAFETY: `raw` is live.
         assert_eq!(unsafe { (*Owner::weak_ptr_data(raw)).reference_count() }, 2);
-        assert_eq!(a.get().map(|o| o.payload), Some(2));
-        assert_eq!(b.get().map(|o| o.payload), Some(2));
+        assert_eq!(payload(&mut a), Some(2));
+        assert_eq!(payload(&mut b), Some(2));
 
-        // SAFETY: `raw` is live.
-        assert!(!unsafe { (*Owner::weak_ptr_data(raw)).on_finalize() });
+        // SAFETY: `raw` is live, and its owner is done with it.
+        unsafe { destroy(raw) };
+        assert_eq!(drops(), before + 1);
         drop(a);
-        assert_eq!(drops(), before);
-        drop(b);
+        assert!(b.get().is_none());
         assert_eq!(drops(), before + 1);
     }
 }

@@ -1578,16 +1578,7 @@ impl<'f, 's> Binder<'f, 's> {
     fn file(&mut self) {
         // `setCommonJSModuleIndicator`: not in a file that imports or exports.
         if self.f.is_js && (!self.f.has_module_syntax || self.f.is_forced_module) {
-            self.b.commonjs_indicator = (0..self.f.exprs.len() as u32).map(ExprId).find(|&e| {
-                matches!(self.f[e].kind, ExprKind::Call(_) | ExprKind::Assign { .. })
-                    && (require_argument(self.f, e).is_some()
-                        || matches!(
-                            assignment_declaration_kind(self.f, e),
-                            JsDeclarationKind::ModuleExports
-                                | JsDeclarationKind::ExportsProperty(_)
-                                | JsDeclarationKind::ObjectDefinePropertyExports
-                        ))
-            });
+            self.b.commonjs_indicator = find_commonjs_indicator(self.f);
         }
         let is_module = self.f.has_module_syntax || self.b.commonjs_indicator.is_some();
         // `bindSourceFileAsExternalModule`

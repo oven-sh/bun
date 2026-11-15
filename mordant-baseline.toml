@@ -6,7 +6,6 @@
 [bun_bundler]
 "bound_checked_only_in_debug:src/bundler/Chunk.rs" = 3
 "defaulted_failure:src/bundler/bundle_v2.rs" = 1
-"freed_while_borrowed:src/bundler/ThreadPool.rs" = 1
 "generic_body_not_generic:src/bundler/Chunk.rs" = 3
 "generic_body_not_generic:src/bundler/ParseTask.rs" = 1
 "generic_body_not_generic:src/bundler/linker_context/generateChunksInParallel.rs" = 1
@@ -14,13 +13,13 @@
 "safe_fn_returns_shared_mut:src/bundler/ThreadPool.rs" = 2
 "safe_fn_returns_shared_mut:src/bundler/transpiler.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/bundler/Chunk.rs" = 1
+"unsafe_send_covers_more_than_pointers:src/bundler/LinkerContext.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/bundler/LinkerGraph.rs" = 1
 
 [bun_collections]
 "unused_pub:src/collections/StaticHashMap.rs" = 4
 
 [bun_core]
-"bound_checked_only_in_debug:src/bun_core/string/SmolStr.rs" = 1
 "defaulted_failure:src/bun_core/string/immutable.rs" = 1
 "generic_body_not_generic:src/bun_core/fmt.rs" = 1
 "generic_body_not_generic:src/bun_core/string/mod.rs" = 1
@@ -54,7 +53,6 @@
 "safe_fn_returns_shared_mut:src/http/h3_client/AltSvc.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientContext.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/ClientSession.rs" = 5
-"safe_fn_returns_shared_mut:src/http/h3_client/PendingConnect.rs" = 1
 "safe_fn_returns_shared_mut:src/http/h3_client/callbacks.rs" = 2
 "safe_fn_returns_shared_mut:src/http/lib.rs" = 9
 
@@ -64,7 +62,6 @@
 
 [bun_install]
 "bare_bool_args:src/install/windows-shim/BinLinkingShim.rs" = 1
-"freed_while_borrowed:src/install/lifecycle_script_runner.rs" = 2
 "generic_body_not_generic:src/install/bin.rs" = 1
 "generic_body_not_generic:src/install/extract_tarball.rs" = 1
 "generic_body_not_generic:src/install/lockfile/Tree.rs" = 1
@@ -72,7 +69,6 @@
 "generic_body_not_generic:src/install/windows-shim/bun_shim_impl.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 "safe_fn_returns_shared_mut:src/install/PackageManager.rs" = 2
-"safe_fn_returns_shared_mut:src/install/PackageManager/runTasks.rs" = 3
 "unused_pub:src/install/windows-shim/bun_shim_impl.rs" = 1
 
 [bun_io]
@@ -97,7 +93,6 @@
 
 [bun_jsc]
 "defaulted_failure:src/jsc/ConsoleObject.rs" = 4
-"freed_while_borrowed:src/jsc/webcore_types.rs" = 1
 "generic_body_not_generic:src/jsc/ConsoleObject.rs" = 5
 "generic_body_not_generic:src/jsc/JSPropertyIterator.rs" = 1
 "safe_fn_returns_shared_mut:src/jsc/RuntimeTranspilerStore.rs" = 1
@@ -126,9 +121,7 @@
 "safe_fn_returns_shared_mut:src/paths/resolve_path.rs" = 2
 
 [bun_ptr]
-"bound_checked_only_in_debug:src/ptr/CowSlice.rs" = 2
 "bound_checked_only_in_debug:src/ptr/weak_ptr.rs" = 1
-"unused_pub:src/ptr/CowSlice.rs" = 1
 "unused_pub:src/ptr/ref_count.rs" = 2
 
 [bun_react_compiler]
@@ -158,13 +151,12 @@
 "error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
 "error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 29
 "error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
+"field_valid_only_when:src/runtime/node/node_fs.rs" = 1
 "field_valid_only_when:src/runtime/node/zlib/NativeZlib.rs" = 1
 "field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
 "field_valid_only_when:src/runtime/socket/udp_socket.rs" = 1
 "freed_while_borrowed:src/runtime/api/bun/subprocess/SubprocessPipeReader.rs" = 2
 "freed_while_borrowed:src/runtime/node/node_fs.rs" = 1
-"freed_while_borrowed:src/runtime/webcore/blob/copy_file.rs" = 2
-"freed_while_borrowed:src/runtime/webcore/blob/read_file.rs" = 1
 "freed_while_borrowed:src/runtime/webcore/fetch/FetchTasklet.rs" = 3
 "generic_body_not_generic:src/runtime/api/bun/h2_frame_parser.rs" = 2
 "generic_body_not_generic:src/runtime/api/cron.rs" = 1
@@ -195,12 +187,10 @@
 "safe_fn_returns_shared_mut:src/runtime/node/node_cluster_binding.rs" = 1
 "safe_fn_returns_shared_mut:src/runtime/webcore/fetch/FetchTasklet.rs" = 1
 "same_match_twice:src/runtime/webcore/Blob.rs" = 2
-"same_match_twice:src/runtime/webcore/blob/write_file.rs" = 3
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 3
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
-"unsafe_send_covers_more_than_pointers:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/fs_events.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/node_fs.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/path_watcher.rs" = 1

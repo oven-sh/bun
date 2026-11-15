@@ -234,12 +234,9 @@ pub fn to_graph_bytes(request: &GraphRequest<'_>) -> crate::Result<Vec<u8>> {
     with_graph_slices(request, |slices| {
         let mut bytes: Vec<u8> = Vec::with_capacity(slices.iter().map(|slice| slice.len()).sum());
         for slice in slices {
-            // SAFETY: the list has room for every slice, and no slice lies in it.
-            unsafe {
-                let end = bytes.as_mut_ptr().add(bytes.len());
-                bun_core::copy_in_parallel(end, slice.as_ptr(), slice.len());
-                bytes.set_len(bytes.len() + slice.len());
-            }
+            bun_core::vec::append_with(&mut bytes, usize::MAX, |spare| {
+                bun_core::append_in_parallel(spare, slice);
+            });
         }
         bytes
     })

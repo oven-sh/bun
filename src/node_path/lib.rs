@@ -22,22 +22,22 @@ const PATH_MIN_WIDE: usize = 4096; // 4 KB
 /// `crate::node::path::PathChar` keep compiling.
 pub use bun_paths::PathChar;
 
-/// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
+/// Runtime-only extension over [`PathChar`]: adds the
 /// per-width `get_cwd` plus `Default` for zero-init. Every generic `_t`
 /// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
 pub trait PathCharCwd: PathChar + Default {
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
-    fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
+    fn get_cwd(buf: &mut [Self]) -> &mut [Self];
 }
 impl PathCharCwd for u8 {
     #[inline]
-    fn get_cwd(buf: &mut [u8]) -> bun_sys::Result<&mut [u8]> {
+    fn get_cwd(buf: &mut [u8]) -> &mut [u8] {
         get_cwd_u8(buf)
     }
 }
 impl PathCharCwd for u16 {
     #[inline]
-    fn get_cwd(buf: &mut [u16]) -> bun_sys::Result<&mut [u16]> {
+    fn get_cwd(buf: &mut [u16]) -> &mut [u16] {
         get_cwd_u16(buf)
     }
 }
@@ -81,13 +81,6 @@ fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
         a_c
     }
 }
-
-// `jsc.Node.Maybe([]T, Syscall.Error)` → bun_sys::Result<&mut [T]>
-type MaybeBuf<'a, T> = bun_sys::Result<&'a mut [T]>;
-// `jsc.Node.Maybe([:0]const T, Syscall.Error)` → bun_sys::Result<&[T]>
-// NUL termination is written into the backing buffer at `buf[len]`; the returned
-// slice itself is `&[T]` (Rust has no `[:0]T` sentinel type).
-type MaybeSlice<'a, T> = bun_sys::Result<&'a [T]>;
 
 // validatePathT is enforced at compile time by the `PathChar` trait bound.
 
@@ -145,13 +138,19 @@ fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
     dst.copy_from_slice(src);
 }
 
+/// What `resolve` answers always starts at `buf[0]`.
+fn dot<T: PathCharCwd>(buf: &mut [T]) -> &[T] {
+    buf[0] = T::from_u8(CHAR_DOT);
+    &buf[..1]
+}
+
 /// Based on Node v21.6.1 private helper posixCwd:
 /// https://github.com/nodejs/node/blob/6ae20aa63de78294b18d5015481485b7cd8fbb60/lib/path.js#L1074
-fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
-    let cwd = get_cwd_t(buf)?;
+fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> &mut [T] {
+    let cwd = get_cwd_t(buf);
     let len = cwd.len();
     if len == 0 {
-        return Ok(cwd);
+        return cwd;
     }
     #[cfg(windows)]
     {
@@ -173,14 +172,14 @@ fn posix_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
         let index = strings::index_of_scalar(normalized_cwd, T::from_u8(CHAR_FORWARD_SLASH));
         // Account for the -1 case of String#slice in JS land
         if let Some(_index) = index {
-            return Ok(&mut normalized_cwd[_index..len]);
+            return &mut normalized_cwd[_index..len];
         }
-        return Ok(&mut normalized_cwd[len - 1..len]);
+        return &mut normalized_cwd[len - 1..len];
     }
 
     // We're already on POSIX, no need for any transformations
     #[cfg(not(windows))]
-    Ok(cwd)
+    cwd
 }
 
 #[cfg(windows)]
@@ -212,19 +211,18 @@ fn working_directory() -> &'static [u8] {
     }
 }
 
-fn get_cwd_u8(buf: &mut [u8]) -> MaybeBuf<'_, u8> {
+fn get_cwd_u8(buf: &mut [u8]) -> &mut [u8] {
     let cached_cwd = working_directory();
     buf[0..cached_cwd.len()].copy_from_slice(cached_cwd);
-    Ok(&mut buf[0..cached_cwd.len()])
+    &mut buf[0..cached_cwd.len()]
 }
 
-fn get_cwd_u16(buf: &mut [u16]) -> MaybeBuf<'_, u16> {
-    let result = strings::convert_utf8_to_utf16_in_buffer(buf, working_directory());
-    Ok(result)
+fn get_cwd_u16(buf: &mut [u16]) -> &mut [u16] {
+    strings::convert_utf8_to_utf16_in_buffer(buf, working_directory())
 }
 
 #[inline]
-fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> MaybeBuf<'_, T> {
+fn get_cwd_t<T: PathCharCwd>(buf: &mut [T]) -> &mut [T] {
     T::get_cwd(buf)
 }
 
@@ -1745,36 +1743,22 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     from_buf: &mut [T],
     tmp_buf: &mut [T],
-) -> MaybeSlice<'a, T> {
+) -> &'a [T] {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
-        return Ok(&[]);
+        return &[];
     }
 
     // Trim leading forward slashes.
     // Backed by from_buf.
-    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf)?;
+    let from_orig = resolve_posix_t(&[from], from_buf, tmp_buf);
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    // Borrowck: resolve into buf, then operate via raw indices.
-    // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
-    // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
-    // resolved value.
-    let to_orig_len = {
-        let (ptr, len) = {
-            let r = resolve_posix_t(&[to], buf, tmp_buf)?;
-            (r.as_ptr(), r.len())
-        };
-        if ptr != buf.as_ptr() {
-            // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
-            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
-        }
-        len
-    };
+    let to_orig_len = resolve_posix_t(&[to], buf, tmp_buf).len();
     let to_orig = &buf[0..to_orig_len];
 
     if from_orig == to_orig {
-        return Ok(&[]);
+        return &[];
     }
 
     let from_start = 1usize;
@@ -1808,12 +1792,12 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
             if to_orig[to_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='/foo/bar'; to='/foo/bar/baz'
-                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
+                return &buf[to_start + smallest_length + 1..to_orig_len];
             }
             if smallest_length == 0 {
                 // We get here if `from` is the root
                 // For example: from='/'; to='/foo'
-                return Ok(&buf[to_start + smallest_length..to_orig_len]);
+                return &buf[to_start + smallest_length..to_orig_len];
             }
         } else if from_len > smallest_length {
             if from_orig[from_start + smallest_length] == T::from_u8(CHAR_FORWARD_SLASH) {
@@ -1880,7 +1864,7 @@ pub fn relative_posix_t<'a, T: PathCharCwd>(
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
     }
     buf[buf_size] = T::default();
-    Ok(&buf[0..buf_size])
+    &buf[0..buf_size]
 }
 
 /// Based on Node v21.6.1 path.win32.relative:
@@ -1891,34 +1875,20 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     from_buf: &mut [T],
     tmp_buf: &mut [T],
-) -> MaybeSlice<'a, T> {
+) -> &'a [T] {
     // validateString of `from` and `to` are performed in pub fn relative.
     if from == to {
-        return Ok(&[]);
+        return &[];
     }
 
     // Backed by from_buf.
-    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf)?;
+    let from_orig = resolve_windows_t(&[from], from_buf, tmp_buf);
     let from_orig_len = from_orig.len();
     // Backed by buf.
-    // Borrowck: resolve into buf, then operate via raw indices.
-    // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
-    // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
-    // resolved value.
-    let to_orig_len = {
-        let (ptr, len) = {
-            let r = resolve_windows_t(&[to], buf, tmp_buf)?;
-            (r.as_ptr(), r.len())
-        };
-        if ptr != buf.as_ptr() {
-            // SAFETY: ptr is a 'static disjoint from buf, len <= buf.len().
-            unsafe { core::ptr::copy_nonoverlapping(ptr, buf.as_mut_ptr(), len) };
-        }
-        len
-    };
+    let to_orig_len = resolve_windows_t(&[to], buf, tmp_buf).len();
 
     if from_orig == &buf[0..to_orig_len] || eql_ignore_case_t(from_orig, &buf[0..to_orig_len]) {
-        return Ok(&[]);
+        return &[];
     }
 
     // Trim leading backslashes
@@ -1974,19 +1944,19 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
     // return the original `to`.
     if !matches_all_of_smallest {
         if last_common_sep.is_none() {
-            return Ok(&buf[0..to_orig_len]);
+            return &buf[0..to_orig_len];
         }
     } else {
         if to_len > smallest_length {
             if buf[to_start + smallest_length] == T::from_u8(CHAR_BACKWARD_SLASH) {
                 // We get here if `from` is the exact base path for `to`.
                 // For example: from='C:\foo\bar'; to='C:\foo\bar\baz'
-                return Ok(&buf[to_start + smallest_length + 1..to_orig_len]);
+                return &buf[to_start + smallest_length + 1..to_orig_len];
             }
             if smallest_length == 2 {
                 // We get here if `from` is the device root.
                 // For example: from='C:\'; to='C:\foo'
-                return Ok(&buf[to_start + smallest_length..to_orig_len]);
+                return &buf[to_start + smallest_length..to_orig_len];
             }
         }
         if from_len > smallest_length {
@@ -2064,14 +2034,14 @@ pub fn relative_windows_t<'a, T: PathCharCwd>(
         }
         memmove(&mut buf[0..out_len], &tmp_buf[0..out_len]);
         buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
+        return &buf[0..buf_size];
     }
 
     // JS `charCodeAt` returns NaN past the end, which never equals '\'.
     if to_start < to_orig_len && buf[to_start] == T::from_u8(CHAR_BACKWARD_SLASH) {
         to_start += 1;
     }
-    Ok(&buf[to_start.min(to_end)..to_end])
+    &buf[to_start.min(to_end)..to_end]
 }
 
 /// Based on Node v21.6.1 path.posix.resolve:
@@ -2080,7 +2050,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
+) -> &'a [T] {
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
@@ -2104,7 +2074,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         } else {
             // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            &*posix_cwd_t(&mut tmp_buf)?
+            &*posix_cwd_t(&mut tmp_buf)
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -2138,7 +2108,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
 
     // Exit early for empty path.
     if resolved_path_len == 0 {
-        return Ok(l::<T>(CHAR_STR_DOT));
+        return dot(buf);
     }
 
     // At this point the path should be resolved to a full absolute path, but
@@ -2164,15 +2134,23 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         buf.copy_within(0..resolved_path_len, 1);
         buf[0] = T::from_u8(CHAR_FORWARD_SLASH);
         buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
+        return &buf[0..buf_size];
     }
     // Translated from the following JS code:
     //   return resolvedPath.length > 0 ? resolvedPath : '.';
-    Ok(if resolved_path_len > 0 {
+    if resolved_path_len > 0 {
         &buf[0..resolved_path_len]
     } else {
-        l::<T>(CHAR_STR_DOT)
-    })
+        dot(buf)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Device<'a, T> {
+    /// `C:`
+    Drive(T),
+    /// `\\server\share`
+    Unc(&'a [T], &'a [T]),
 }
 
 /// Based on Node v21.6.1 path.win32.resolve:
@@ -2181,23 +2159,19 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     paths: &[&[T]],
     buf: &'a mut [T],
     buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
+) -> &'a [T] {
     let is_sep_t = is_sep_windows_t::<T>;
     // Sized to the larger of the two T variants.
     let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    // Taken by the last iteration.
+    let mut cwd_buf = &mut tmp_buf[..];
 
-    // Backed by tmpBuf.
-    // Borrowck: track resolved_device length into tmp_buf.
-    let mut resolved_device_len: usize = 0;
+    let mut resolved_device: Option<Device<'_, T>> = None;
     // Backed by expandable buf2 because resolvedTail may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
     let mut resolved_tail_len: usize = 0;
     let mut resolved_absolute: bool = false;
-
-    let mut buf_offset: usize;
-    let mut buf_size: usize;
-    let mut env_path_len: Option<usize> = None;
 
     let mut i_i64: i64 = if paths.is_empty() {
         -1
@@ -2205,23 +2179,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
         i64::try_from(paths.len() - 1).expect("int cast")
     };
     while i_i64 > -2 {
-        // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
-        // because path may be long.
-        // Borrowck: `path` may alias paths[], tmp_buf, or buf2,
-        // and the loop body subsequently mutates tmp_buf/buf2 while still indexing
-        // `path`. Store as raw (ptr, len) and materialize short-lived slices at use
-        // sites; all overlapping moves go through `ptr::copy` (memmove
-        // semantics).
-        let mut path_ptr: *const T;
-        let mut path_len: usize;
-        macro_rules! path { () => {
-            // SAFETY: (path_ptr, path_len) describes a live region inside paths[]/tmp_buf/buf2;
-            // borrows are short-lived (read-only) and never held across mutation of the same range.
-            unsafe { core::slice::from_raw_parts(path_ptr, path_len) }
-        }; }
-        // Locals that must outlive `path` borrow:
-        let cwd_len: usize;
-        if i_i64 >= 0 {
+        let path: &[T] = if i_i64 >= 0 {
             let p = paths[usize::try_from(i_i64).expect("int cast")];
             // validateString of `path` is performed in pub fn resolve.
 
@@ -2230,25 +2188,15 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                 i_i64 -= 1;
                 continue;
             }
-            path_ptr = p.as_ptr();
-            path_len = p.len();
-        } else if resolved_device_len == 0 {
-            // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
-            path_ptr = tmp_buf.as_ptr();
-            path_len = cwd_len;
-        } else {
+            p
+        } else if let Some(Device::Drive(drive)) = resolved_device {
+            let cwd_buf = core::mem::take(&mut cwd_buf);
             // Translated from the following JS code:
             //   path = process.env[`=${resolvedDevice}`] || process.cwd();
+            #[cfg(not(windows))]
+            let env_path_len: Option<usize> = None;
             #[cfg(windows)]
-            {
-                let mut u16_buf = bun_paths::w_path_buffer_pool::get();
-                // Storage for the `=X:` fast-path key. Declared here (not inside the
-                // `'brk:` block) so the slice it backs stays live across `getenv_w`.
-                // 4 elements (not 3) so the wchar immediately following the 3-char
-                // key is a guaranteed NUL — `getenv_w` forwards `name.as_ptr()` to
-                // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL.
-                let fast_key: [u16; 4];
+            let env_path_len = {
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
                 // absolute path, get cwd for that drive, or the process cwd if
@@ -2257,77 +2205,31 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 
                 // Translated from the following JS code:
                 //   process.env[`=${resolvedDevice}`]
-                let key_w: &[u16] = 'brk: {
-                    if resolved_device_len == 2 && tmp_buf[1] == T::from_u8(CHAR_COLON) {
-                        // Fast path for device roots
-                        fast_key = [
-                            b'=' as u16,
-                            u16::try_from(tmp_buf[0].as_u32()).expect("int cast"),
-                            CHAR_COLON as u16,
-                            0,
-                        ];
-                        // Slice the WHOLE 4-element array (not `..3`): `getenv_w`
-                        // forwards `.as_ptr()` to `GetEnvironmentVariableW`, which
-                        // reads index 3 (the NUL). A `..3` slice would not carry
-                        // provenance over that byte under Stacked/Tree Borrows.
-                        break 'brk &fast_key[..];
-                    }
-                    buf_size = 1;
-                    // Reuse buf2 for the env key because it's used to get the path.
-                    buf2[0] = T::from_u8(b'=');
-                    buf_offset = buf_size;
-                    buf_size += resolved_device_len;
-                    memmove(
-                        &mut buf2[buf_offset..buf_size],
-                        &tmp_buf[0..resolved_device_len],
-                    );
-                    // `getenv_w` forwards `.as_ptr()` as LPCWSTR, and neither buffer is zeroed past the key.
-                    match T::units_mut(buf2) {
-                        CodeUnitsMut::U16(key) => {
-                            key[buf_size] = 0;
-                            &key[..=buf_size]
-                        }
-                        CodeUnitsMut::U8(key) => {
-                            let n = strings::convert_utf8_to_utf16_in_buffer(
-                                &mut u16_buf[..],
-                                &key[..buf_size],
-                            )
-                            .len();
-                            u16_buf[n] = 0;
-                            &u16_buf[..=n]
-                        }
-                    }
-                };
+                let key_w = [
+                    b'=' as u16,
+                    u16::try_from(drive.as_u32()).expect("int cast"),
+                    CHAR_COLON as u16,
+                    // `getenv_w` hands the pointer to `GetEnvironmentVariableW`.
+                    0,
+                ];
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
-                if let Some(r) = bun_sys::windows::getenv_w(key_w) {
-                    // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
-                    // already backs the accumulated tail, so writing there clobbers it.
-                    buf_size = match T::units_mut(&mut tmp_buf[resolved_device_len..]) {
-                        CodeUnitsMut::U16(dst) => {
-                            let n = r.len().min(dst.len());
-                            memmove(&mut dst[..n], &r[..n]);
-                            n
-                        }
-                        CodeUnitsMut::U8(dst) => {
-                            strings::convert_utf16_to_utf8_in_buffer(dst, &r).len()
-                        }
-                    };
-                    env_path_len = Some(buf_size);
-                }
-            }
-            if let Some(ep_len) = env_path_len {
-                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
-                path_len = ep_len;
-            } else {
-                // cwd is limited to MAX_PATH_BYTES. Store it AFTER the device:
-                // tmp_buf[0..resolved_device_len] backs resolvedDevice.
-                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
-                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
-                path_len = cwd_len;
-                // We must set envPath here so that it doesn't hit the null check just below.
-                env_path_len = Some(cwd_len);
-            }
+                bun_sys::windows::getenv_w(&key_w).map(|r| match T::units_mut(cwd_buf) {
+                    CodeUnitsMut::U16(dst) => {
+                        let n = r.len().min(dst.len());
+                        memmove(&mut dst[..n], &r[..n]);
+                        n
+                    }
+                    CodeUnitsMut::U8(dst) => {
+                        strings::convert_utf16_to_utf8_in_buffer(dst, &r).len()
+                    }
+                })
+            };
+            let len = match env_path_len {
+                Some(len) => len,
+                // cwd is limited to MAX_PATH_BYTES.
+                None => get_cwd_t(cwd_buf).len(),
+            };
 
             // Verify that a cwd was found and that it actually points
             // to our drive. If not, default to the drive's root.
@@ -2337,30 +2239,29 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             //     (StringPrototypeToLowerCase(StringPrototypeSlice(path, 0, 2)) !==
             //     StringPrototypeToLowerCase(resolvedDevice) &&
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
-            if env_path_len.is_none()
-                || (path!().get(2).copied() == Some(T::from_u8(CHAR_BACKWARD_SLASH))
-                    && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
+            if len > 2
+                && cwd_buf[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+                && !eql_ignore_case_t(&cwd_buf[0..2], &[drive, T::from_u8(CHAR_COLON)])
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
-                // Append to the device in tmp_buf because buf2 backs resolvedTail.
-                tmp_buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
-                path_ptr = tmp_buf.as_ptr();
-                path_len = resolved_device_len + 1;
+                cwd_buf[0] = drive;
+                cwd_buf[1] = T::from_u8(CHAR_COLON);
+                &cwd_buf[0..3]
+            } else {
+                &cwd_buf[0..len]
             }
-        }
+        } else {
+            // cwd is limited to MAX_PATH_BYTES.
+            get_cwd_t(core::mem::take(&mut cwd_buf))
+        };
 
-        let len = path_len;
+        let len = path.len();
         let mut root_end: usize = 0;
-        // Backed by tmpBuf or an anonymous buffer.
-        let device_buf: [T; 2];
-        // Same raw-ptr trick as `path` — `device` may alias tmp_buf.
-        let mut device_ptr: *const T = core::ptr::NonNull::<T>::dangling().as_ptr().cast_const();
-        let mut device_len: usize = 0;
-        let mut device_in_tmp = false;
+        let mut device: Option<Device<'_, T>> = None;
         // Prefix with _ to avoid shadowing the identifier in the outer scope.
         let mut _is_absolute: bool = false;
-        let byte0 = if len > 0 { path!()[0] } else { T::default() };
+        let byte0 = if len > 0 { path[0] } else { T::default() };
 
         // Try to match a root
         if len == 1 {
@@ -2376,92 +2277,37 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             // absolute path of some kind (UNC or otherwise)
             _is_absolute = true;
 
-            if is_sep_t(path!()[1]) {
+            if is_sep_t(path[1]) {
                 // Matched double path separator at the beginning
                 let mut j: usize = 2;
                 let mut last: usize = j;
                 // Match 1 or more non-path separators
-                while j < len && !is_sep_t(path!()[j]) {
+                while j < len && !is_sep_t(path[j]) {
                     j += 1;
                 }
                 if j < len && j != last {
-                    let first_part_start = last;
-                    let first_part_end = j;
+                    let first_part = &path[last..j];
                     // Matched!
                     last = j;
                     // Match 1 or more path separators
-                    while j < len && is_sep_t(path!()[j]) {
+                    while j < len && is_sep_t(path[j]) {
                         j += 1;
                     }
                     if j < len && j != last {
                         // Matched!
                         last = j;
                         // Match 1 or more non-path separators
-                        while j < len && !is_sep_t(path!()[j]) {
+                        while j < len && !is_sep_t(path[j]) {
                             j += 1;
                         }
                         if j == len || j != last {
                             // We matched a UNC root
 
-                            if resolved_device_len > 0 {
-                                // resolvedDevice is already set to a drive
-                                // letter (`X:`). A UNC device can never match
-                                // it, and building the UNC string below would
-                                // overwrite tmpBuf which backs resolvedDevice.
-                                i_i64 -= 1;
-                                continue;
-                            }
-
                             // Translated from the following JS code:
                             //   device =
                             //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
                             //   rootEnd = j;
-                            // path may alias tmp_buf (cwd branch); use
-                            // ptr::copy (memmove semantics).
-                            buf_size = 2;
-                            tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            buf_offset = buf_size;
-                            let first_part_len = first_part_end - first_part_start;
-                            buf_size += first_part_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
-                                core::ptr::copy(
-                                    path_ptr.add(first_part_start),
-                                    tmp_buf.as_mut_ptr().add(buf_offset),
-                                    first_part_len,
-                                );
-                            }
-                            buf_offset = buf_size;
-                            buf_size += 1;
-                            tmp_buf[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                            let slice_len = j - last;
-                            buf_offset = buf_size;
-                            buf_size += slice_len;
-                            if buf_size > tmp_buf.len() {
-                                return Err(bun_sys::Error::from_code(
-                                    bun_sys::E::ENAMETOOLONG,
-                                    bun_sys::Tag::TODO,
-                                ));
-                            }
-                            // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
-                            unsafe {
-                                core::ptr::copy(
-                                    path_ptr.add(last),
-                                    tmp_buf.as_mut_ptr().add(buf_offset),
-                                    slice_len,
-                                );
-                            }
-
-                            device_ptr = tmp_buf.as_ptr();
-                            device_len = buf_size;
-                            device_in_tmp = true;
+                            device = Some(Device::Unc(first_part, &path[last..j]));
                             root_end = j;
                         }
                     }
@@ -2469,13 +2315,11 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             } else {
                 root_end = 1;
             }
-        } else if is_windows_device_root_t(byte0) && path!()[1] == T::from_u8(CHAR_COLON) {
+        } else if is_windows_device_root_t(byte0) && path[1] == T::from_u8(CHAR_COLON) {
             // Possible device root
-            device_buf = [byte0, T::from_u8(CHAR_COLON)];
-            device_ptr = device_buf.as_ptr();
-            device_len = 2;
+            device = Some(Device::Drive(byte0));
             root_end = 2;
-            if len > 2 && is_sep_t(path!()[2]) {
+            if len > 2 && is_sep_t(path[2]) {
                 // Treat separator following the drive name as an absolute path
                 // indicator
                 _is_absolute = true;
@@ -2483,32 +2327,20 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             }
         }
 
-        if device_len > 0 {
-            // SAFETY: (device_ptr, device_len) describes a live region in tmp_buf or device_buf.
-            let device = unsafe { bun_core::ffi::slice(device_ptr, device_len) };
-            if resolved_device_len > 0 {
-                // Translated from the following JS code:
-                //   if (StringPrototypeToLowerCase(device) !==
-                //     StringPrototypeToLowerCase(resolvedDevice))
-                if !eql_ignore_case_t(device, &tmp_buf[0..resolved_device_len]) {
-                    // This path points to another device, so it is not applicable
-                    i_i64 -= 1;
-                    continue;
-                }
-            } else {
-                // Translated from the following JS code:
-                //   resolvedDevice = device;
-                buf_size = device_len;
-                // Copy device over if it's backed by an anonymous buffer.
-                if !device_in_tmp {
-                    memmove(&mut tmp_buf[0..buf_size], device);
-                }
-                resolved_device_len = buf_size;
+        match (device, resolved_device) {
+            (None, _) => {}
+            (Some(_), None) => resolved_device = device,
+            (Some(Device::Drive(a)), Some(Device::Drive(b))) if to_lower_t(a) == to_lower_t(b) => {}
+            // A UNC root ends the loop, so it is never compared with another one.
+            (Some(_), Some(_)) => {
+                // This path points to another device, so it is not applicable
+                i_i64 -= 1;
+                continue;
             }
         }
 
         if resolved_absolute {
-            if resolved_device_len > 0 {
+            if resolved_device.is_some() {
                 break;
             }
         } else {
@@ -2516,27 +2348,18 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             //   resolvedTail = `${StringPrototypeSlice(path, rootEnd)}\\${resolvedTail}`;
             let slice_len = len - root_end;
             if resolved_tail_len > 0 {
-                buf_offset = slice_len + 1;
+                let buf_offset = slice_len + 1;
                 // Move all bytes to the right by path slice.len + 1 for the separator
                 // Use copy_within because resolvedTail and buf2 overlap.
                 buf2.copy_within(0..resolved_tail_len, buf_offset);
             }
-            buf_size = slice_len;
-            if slice_len > 0 {
-                // SAFETY: path has len elements and buf2 has room for the tail.
-                unsafe {
-                    core::ptr::copy(path_ptr.add(root_end), buf2.as_mut_ptr(), slice_len);
-                }
-            }
-            buf_offset = buf_size;
-            buf_size += 1;
-            buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-            buf_size += resolved_tail_len;
+            buf2[slice_len] = T::from_u8(CHAR_BACKWARD_SLASH);
+            memmove(&mut buf2[0..slice_len], &path[root_end..]);
 
-            resolved_tail_len = buf_size;
+            resolved_tail_len += slice_len + 1;
             resolved_absolute = _is_absolute;
 
-            if _is_absolute && resolved_device_len > 0 {
+            if _is_absolute && resolved_device.is_some() {
                 break;
             }
         }
@@ -2545,7 +2368,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 
     // Exit early for empty path.
     if resolved_tail_len == 0 {
-        return Ok(l::<T>(CHAR_STR_DOT));
+        return dot(buf);
     }
 
     // At this point, the path should be resolved to a full absolute path,
@@ -2561,36 +2384,42 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     // resolvedTail is now backed by buf.
     resolved_tail_len = normalized_len;
 
+    let resolved_device_len = match resolved_device {
+        None => 0,
+        Some(Device::Drive(_)) => 2,
+        Some(Device::Unc(server, share)) => 2 + server.len() + 1 + share.len(),
+    };
+
     // Translated from the following JS code:
     //   resolvedAbsolute ? `${resolvedDevice}\\${resolvedTail}`
-    if resolved_absolute {
-        buf_offset = resolved_device_len + 1;
-        buf_size = buf_offset + resolved_tail_len;
-        // Use copy_within because resolvedTail and buf overlap.
-        buf.copy_within(0..resolved_tail_len, buf_offset);
-        buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
-        memmove(
-            &mut buf[0..resolved_device_len],
-            &tmp_buf[0..resolved_device_len],
-        );
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
-    }
-    // Translated from the following JS code:
     //   : `${resolvedDevice}${resolvedTail}` || '.'
-    if (resolved_device_len + resolved_tail_len) > 0 {
-        buf_offset = resolved_device_len;
-        buf_size = buf_offset + resolved_tail_len;
-        // Use copy_within because resolvedTail and buf overlap.
-        buf.copy_within(0..resolved_tail_len, buf_offset);
-        memmove(
-            &mut buf[0..resolved_device_len],
-            &tmp_buf[0..resolved_device_len],
-        );
-        buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
+    let buf_offset = resolved_device_len + usize::from(resolved_absolute);
+    let buf_size = buf_offset + resolved_tail_len;
+    if buf_size == 0 {
+        return dot(buf);
     }
-    Ok(l::<T>(CHAR_STR_DOT))
+    buf[buf_size] = T::default();
+    // Use copy_within because resolvedTail and buf overlap.
+    buf.copy_within(0..resolved_tail_len, buf_offset);
+    if resolved_absolute {
+        buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
+    }
+    match resolved_device {
+        None => {}
+        Some(Device::Drive(drive)) => {
+            buf[0] = drive;
+            buf[1] = T::from_u8(CHAR_COLON);
+        }
+        Some(Device::Unc(server, share)) => {
+            let server_end = 2 + server.len();
+            buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
+            buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
+            memmove(&mut buf[2..server_end], server);
+            buf[server_end] = T::from_u8(CHAR_BACKWARD_SLASH);
+            memmove(&mut buf[server_end + 1..resolved_device_len], share);
+        }
+    }
+    &buf[0..buf_size]
 }
 
 /// Based on Node v21.6.1 path.win32.toNamespacedPath:
@@ -2599,17 +2428,17 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
     path: &[T],
     buf: &'a mut [T],
     buf2: &mut [T],
-) -> MaybeSlice<'a, T> {
+) -> &'a [T] {
     // validateString of `path` is performed in pub fn toNamespacedPath.
     // Backed by buf.
     // Borrowck: capture length, then re-borrow buf.
-    let resolved_len = resolve_windows_t(&[path], buf, buf2)?.len();
+    let resolved_len = resolve_windows_t(&[path], buf, buf2).len();
 
     let len = resolved_len;
     if len <= 2 {
         buf[0..path.len()].copy_from_slice(path);
         buf[path.len()] = T::default();
-        return Ok(&buf[0..path.len()]);
+        return &buf[0..path.len()];
     }
 
     let buf_offset: usize;
@@ -2640,7 +2469,7 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
                 buf[6] = T::from_u8(b'C');
                 buf[7] = T::from_u8(CHAR_BACKWARD_SLASH);
                 buf[buf_size] = T::default();
-                return Ok(&buf[0..buf_size]);
+                return &buf[0..buf_size];
             }
         }
     } else if is_windows_device_root_t(byte0)
@@ -2661,9 +2490,9 @@ pub fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
         buf[2] = T::from_u8(CHAR_QUESTION_MARK);
         buf[3] = T::from_u8(CHAR_BACKWARD_SLASH);
         buf[buf_size] = T::default();
-        return Ok(&buf[0..buf_size]);
+        return &buf[0..buf_size];
     }
-    Ok(&buf[0..resolved_len])
+    &buf[0..resolved_len]
 }
 
 /// How long each of the two buffers of [`resolve_posix_t`] and [`resolve_windows_t`] has to be.

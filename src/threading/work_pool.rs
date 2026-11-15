@@ -71,7 +71,6 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
 /// ```ignore
 /// intrusive_work_task!(ReadFile, task);
 /// intrusive_work_task!([Ctx] CryptoJob<Ctx>, task);
-/// intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 /// ```
 #[macro_export]
 macro_rules! intrusive_work_task {

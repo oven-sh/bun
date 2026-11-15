@@ -186,6 +186,10 @@ impl<K, V, C> HashMap<K, V, C> {
             inner: self.iter_mut(),
         }
     }
+    /// Slots `0..capacity()` are in iteration order.
+    pub(crate) fn value_in_slot(&self, slot: usize) -> Option<&V> {
+        self.slots.get(slot)?.as_ref().map(|(_, v)| v)
+    }
 }
 
 impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
@@ -436,6 +440,15 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         }
     }
 
+    /// `Err` holds the stored value and the rejected one.
+    pub(crate) fn try_insert(&mut self, key: K, value: V) -> Result<&V, (&V, V)> {
+        let (idx, _) = self.get_or_put_slot(&key);
+        match &mut self.slots[idx] {
+            Some((_, existing)) => Err((existing, value)),
+            vacant => Ok(&vacant.insert((key, value)).1),
+        }
+    }
+
     /// Insert or overwrite.
     #[inline]
     pub fn put(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
@@ -663,10 +676,6 @@ impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.slots[self.idx].as_ref().unwrap().1
-    }
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut V {
-        &mut self.map.slots[self.idx].as_mut().unwrap().1
     }
     #[inline]
     pub fn into_mut(self) -> &'a mut V {

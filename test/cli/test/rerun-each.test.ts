@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, withoutAsanQuarantine } from "harness";
 
 test("--rerun-each should run tests exactly N times", async () => {
   using dir = tempDir("test-rerun-each", {
@@ -284,5 +284,74 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
 
   expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
   expect(stdout + stderr).toMatch(/3 pass/);
+  expect(exitCode).toBe(0);
+});
+
+// Without ASAN's quarantine the second run gets the memory that the first one freed, as in a release build.
+test.concurrent.each([
+  [
+    "done(error)",
+    `import { test } from "bun:test";
+     test.concurrent("late", done => {
+       if (!globalThis.done) return void (globalThis.done = done);
+       globalThis.done(new Error("from the first run"));
+       done();
+     }, globalThis.done ? 0 : 1);
+     test.concurrent("beside it", () => {});`,
+    ["(fail) late", "error: from the first run", "(pass) late"],
+  ],
+  [
+    "t.skip()",
+    `import { setDefaultTimeout } from "bun:test";
+     import { test } from "node:test";
+     setDefaultTimeout(globalThis.resume ? 0 : 1);
+     test("late", async t => {
+       if (!globalThis.resume) {
+         await new Promise(resolve => (globalThis.resume = resolve));
+         return t.skip();
+       }
+       globalThis.resume();
+       await new Promise(resolve => setImmediate(resolve));
+     });`,
+    ["(fail) late", "(pass) late"],
+  ],
+])("a late %s of a test that timed out does not decide the next run's result", async (_, source, expected) => {
+  using dir = tempDir("test-rerun-each-late", { "late.test.js": source });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "late.test.js", "--rerun-each=2"],
+    env: withoutAsanQuarantine(bunEnv),
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr.match(/^(\(\w+\) late|error: .*)/gm)).toEqual(expected);
+  expect(exitCode).toBe(1);
+});
+
+test.skipIf(!isDebug)("the debug log describes an expect() of a describe() whose run is over", async () => {
+  using dir = tempDir("test-rerun-each-debug-log", {
+    "kept.test.js": `
+      import { describe, expect, test } from "bun:test";
+      describe("outer", () => {
+        const isFirstRun = !globalThis.kept;
+        globalThis.kept = Array.from({ length: 10 }, () => expect(1));
+        test("collects", () => {
+          if (!isFirstRun) Bun.gc(true);
+        });
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "kept.test.js", "--rerun-each=2"],
+    env: { ...bunEnv, BUN_DEBUG_bun_test_group: "1" },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "ignore",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+
+  expect(stderr.match(/^\(\w+\) outer > collects/gm)).toEqual(["(pass) outer > collects", "(pass) outer > collects"]);
   expect(exitCode).toBe(0);
 });

@@ -46,11 +46,10 @@ impl Chunk {
         mutable: &mut MutableString,
         include_sources_contents: bool,
     ) -> Result<(), crate::Error> {
-        let ism = InternalSourceMap {
-            data: self.buffer.list.as_ptr(),
-        };
         let mut vlq = MutableString::init_empty();
-        ism.append_vlq_to(&mut vlq);
+        if let Some(ism) = InternalSourceMap::new(&self.buffer.list) {
+            ism.append_vlq_to(&mut vlq);
+        }
         print_source_map_contents_json::<ASCII_ONLY>(
             source,
             mutable,
@@ -673,8 +672,7 @@ impl NewBuilder<'_, VLQSourceMap> {
         let idx = original_line.max(0) as usize;
 
         // PERF: read the three columns directly instead of `list.get(idx)`.
-        // `MultiArrayList::get` builds a 272-byte `Slice` (`[*mut u8; 32]` +
-        // len/cap) and then gathers *every* field via `ptr::read`; for the
+        // `MultiArrayList::get` gathers *every* field via `ptr::read`; for the
         // hot per-token path that dominated `add_source_mapping`. Each
         // `items::<>` is a single `base + CONST*cap` pointer add.
         let mut original_column = loc.start - byte_offsets[idx] as i32;

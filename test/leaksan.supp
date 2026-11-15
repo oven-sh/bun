@@ -68,7 +68,7 @@ leak:JSC::callIntlDateTimeFormat
 leak:functionRunProfiler
 leak:JSC::JSModuleLoader::evaluateNonVirtual
 # Under --aot it serves the default export of an entry point, which plain Bun does from the evaluation of its entry
-# wrapper (the line above). NewServer::init makes a pool of request contexts once a thread, which a Worker's end does not free.
+# wrapper (the line above).
 leak:Bun::startServerFromNamespace
 leak:patch.patch.PatchFile.apply
 leak:jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
@@ -81,7 +81,6 @@ leak:sys_jsc.error_jsc.errorToShellSystemError
 leak:lazyLoadSQLite
 leak:JSC::intlAvailableLocales
 leak:getaddrinfo
-leak:runtime.api.filesystem_router.FileSystemRouter.constructor
 leak:JSC::intlSegmenterAvailableLocales
 leak:URL__getHref
 leak:runtime.dns_jsc.dns.Resolver.globalLookupService

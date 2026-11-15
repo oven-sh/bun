@@ -21,7 +21,7 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
-use bun_io::{KeepAlive, LoopRef};
+use bun_io::{JsKeepAlive, KeepAlive, LoopRef};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
@@ -70,7 +70,6 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
     fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
     fn global(&self) -> GlobalRef;
-    fn poll(&self) -> &KeepAlive;
     fn remaining_fds(&self) -> &Cell<i8>;
     fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
     fn has_called_process_exit(&self) -> &Cell<bool>;
@@ -124,11 +123,9 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     /// job's `Drop` (process detach, reader teardown) runs inside the
     /// enter/exit scope. Callers return without touching `this` again.
     fn finish(this: ThisPtr<Self>) {
-        let owner = this.owner().take().expect("cron job finished twice");
-        this.poll().unref(bun_io::js_vm_ctx());
+        let _entered = VirtualMachine::get().enter_event_loop_scope();
+        let _owner = this.owner().take().expect("cron job finished twice");
         let global = this.global();
-        let ev = VirtualMachine::get().event_loop();
-        ev.enter();
         if let Some(msg) = this.err_msg().replace(None) {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
             let _ = this
@@ -139,8 +136,6 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
                 .promise()
                 .with_mut(|p| p.resolve(&global, JSValue::UNDEFINED));
         }
-        drop(owner);
-        ev.exit();
     }
 
     fn set_err(&self, args: core::fmt::Arguments<'_>) {
@@ -223,7 +218,7 @@ struct CronRegisterJob {
     promise: JsCell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
-    poll: KeepAlive,
+    _keep_alive: JsKeepAlive,
 
     bun_exe: &'static ZStr,
     abs_path: ZString,
@@ -300,9 +295,6 @@ impl CronJobBase for CronRegisterJob {
     }
     fn global(&self) -> GlobalRef {
         self.global
-    }
-    fn poll(&self) -> &KeepAlive {
-        &self.poll
     }
     fn remaining_fds(&self) -> &Cell<i8> {
         &self.remaining_fds
@@ -788,7 +780,7 @@ pub(crate) fn register_os_job(
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: KeepAlive::default(),
+        _keep_alive: JsKeepAlive::active(),
         bun_exe,
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
@@ -807,7 +799,6 @@ pub(crate) fn register_os_job(
         tmp_path: JsCell::new(None),
         event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
-    job.poll.ref_(bun_io::js_vm_ctx());
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -933,7 +924,7 @@ struct CronRemoveJob {
     promise: JsCell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
-    poll: KeepAlive,
+    _keep_alive: JsKeepAlive,
     title: ZString,
 
     state: Cell<RemoveState>,
@@ -998,9 +989,6 @@ impl CronJobBase for CronRemoveJob {
     }
     fn global(&self) -> GlobalRef {
         self.global
-    }
-    fn poll(&self) -> &KeepAlive {
-        &self.poll
     }
     fn remaining_fds(&self) -> &Cell<i8> {
         &self.remaining_fds
@@ -1228,7 +1216,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: KeepAlive::default(),
+        _keep_alive: JsKeepAlive::active(),
         title: ZString::from_bytes(title),
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
@@ -1242,7 +1230,6 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         tmp_path: JsCell::new(None),
         event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
-    job.poll.ref_(bun_io::js_vm_ctx());
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -1355,7 +1342,7 @@ impl CronJob {
     /// Defer downgrading the JS wrapper to weak until any in-flight promise
     /// has settled, so onPromiseReject can still read pendingPromise from
     /// the wrapper and pass the real Promise to unhandledRejection.
-    fn maybe_downgrade(&self) {
+    pub(crate) fn maybe_downgrade(&self) {
         if self.stopped.get()
             && self.tick_cell.get().is_empty()
             && !matches!(self.this_value.get(), JsRef::Finalized)
@@ -1375,52 +1362,45 @@ impl CronJob {
     /// Takes one ref as the cell's claim on the job and remembers the cell.
     fn create_tick_cell(this: ThisPtr<Self>) -> JSValue {
         debug_assert!(this.tick_cell.get().is_empty());
-        bun_ptr::CellRefCounted::ref_(&*this);
-        let cell =
-            crate::api::native_promise_context::create(&this.global, this.as_ptr(), JSValue::ZERO);
+        let cell = crate::api::native_promise_context::create(
+            &this.global,
+            RefPtr::from_this(this),
+            JSValue::ZERO,
+        );
         this.tick_cell.set(cell);
         cell
     }
 
-    /// A reaction took the claim back from its cell. May free `this`.
-    fn tick_settled(this: ThisPtr<Self>) {
-        this.tick_cell.set(JSValue::ZERO);
-        this.maybe_downgrade();
-        <Self as bun_ptr::CellRefCounted>::deref_nn(bun_ptr::BackRef::from(this).into());
+    /// The claim was taken back from its cell.
+    fn tick_settled(&self) {
+        self.tick_cell.set(JSValue::ZERO);
+        self.maybe_downgrade();
     }
 
     /// The tick's promise will not settle on this VM (it is going): take the claim back, so the
     /// reactions find an empty cell. May free `this`.
     fn reclaim_tick_claim(this: ThisPtr<Self>) {
         let cell = this.tick_cell.get();
-        if !cell.is_empty() && crate::api::native_promise_context::take::<Self>(cell).is_some() {
-            Self::tick_settled(this);
+        if cell.is_empty() {
+            return;
+        }
+        // SAFETY: from `create_tick_cell`; the field is cleared when the cell is collected.
+        if let Some(job) = unsafe { crate::api::native_promise_context::take::<Self>(cell) } {
+            job.tick_settled();
         }
     }
 
     /// From the cell's destructor (GC sweep): the tick's promise was collected unsettled. The
     /// field stops pointing at the dying cell now (a plain write); the claim is released from
-    /// the event loop ([`tick_promise_collected`](Self::tick_promise_collected)).
+    /// the event loop.
     pub(crate) fn tick_cell_collected(&self) {
         self.tick_cell.set(JSValue::ZERO);
-    }
-
-    /// Releases the claim of a cell that was collected. May free `this`.
-    ///
-    /// # Safety
-    /// `this` carries the collected cell's ref.
-    pub(crate) unsafe fn tick_promise_collected(this: core::ptr::NonNull<Self>) {
-        // SAFETY: fn contract.
-        unsafe { this.as_ref() }.maybe_downgrade();
-        <Self as bun_ptr::CellRefCounted>::deref_nn(this);
     }
 
     /// Idempotent — every step checks its own state.
     fn stop_internal(&self, _vm: &VirtualMachine) {
         self.stopped.set(true);
-        if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.event_loop_timer);
-        }
+        self.event_loop_timer.disarm();
         self.poll_ref.unref(bun_io::js_vm_ctx());
         self.abort_handle.leave();
         self.maybe_downgrade();
@@ -1478,12 +1458,13 @@ impl CronJob {
 
     /// May free `this`.
     fn remove_from_list(this: ThisPtr<Self>) {
-        let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
+        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
             return;
         };
-        if let Some(i) = jobs.iter().position(|j| j.as_ptr() == this.as_ptr()) {
-            drop(jobs.swap_remove(i));
-        }
+        drop(state.cron_jobs.with_mut(|jobs| {
+            let i = jobs.iter().position(|j| j.as_ptr() == this.as_ptr())?;
+            Some(jobs.swap_remove(i))
+        }));
     }
 
     /// `.reload`: --hot — promises in flight will still settle on this VM, so
@@ -1493,10 +1474,10 @@ impl CronJob {
     pub(crate) fn clear_all_for_vm<const MODE: ClearMode>(vm: &VirtualMachine) {
         // Drain the list first so `stop_internal` (which re-enters the VM)
         // doesn't alias the list borrow.
-        let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() else {
+        let Some(state) = crate::jsc_hooks::try_runtime_state() else {
             return;
         };
-        for job in core::mem::take(jobs) {
+        for job in state.cron_jobs.take() {
             let this = job.this_ptr();
             this.stop_internal(vm);
             if MODE == ClearMode::Teardown {
@@ -1723,8 +1704,8 @@ impl CronJob {
         // stop/release jobs. Main-thread VMs without --hot never enumerate it,
         // so skip the list ref + append entirely.
         if vm.hot_reload.get() == HotReload::Hot || vm.worker.get().is_some() {
-            if let Some(jobs) = crate::jsc_hooks::cron_jobs_mut() {
-                jobs.push(job.clone());
+            if let Some(state) = crate::jsc_hooks::try_runtime_state() {
+                state.cron_jobs.with_mut(|jobs| jobs.push(job.clone()));
             }
         }
 
@@ -1751,34 +1732,31 @@ impl CronJob {
 pub(crate) fn on_promise_resolve(
     _: &mut JsScope<'_>,
     _: JsLocal<'_>,
-    context: Option<core::ptr::NonNull<CronJob>>,
+    context: Option<RefPtr<CronJob>>,
 ) {
     // The cell hands back the job's ref. None: the claim was taken back (the VM is going).
     let Some(job) = context else {
         return;
     };
-    // SAFETY: the claim the cell handed back is a ref on the live job.
-    let this = unsafe { ThisPtr::new(job.as_ptr()) };
-    let _guard = scopeguard::guard(this, CronJob::tick_settled);
+    let this = job.this_ptr();
     let vm = this.global.bun_vm();
     if let Some(js_this) = this.this_value.get().try_get() {
         js::pending_promise_set_cached(js_this, &this.global, JSValue::UNDEFINED);
     }
     CronJob::schedule_next(this, vm);
+    job.tick_settled();
 }
 
 pub(crate) fn on_promise_reject(
     _: &mut JsScope<'_>,
     reason: JsLocal<'_>,
-    context: Option<core::ptr::NonNull<CronJob>>,
+    context: Option<RefPtr<CronJob>>,
 ) {
     // As `on_promise_resolve`.
     let Some(job) = context else {
         return;
     };
-    // SAFETY: the claim the cell handed back is a ref on the live job.
-    let this = unsafe { ThisPtr::new(job.as_ptr()) };
-    let _guard = scopeguard::guard(this, CronJob::tick_settled);
+    let this = job.this_ptr();
     let vm = this.global.bun_vm();
     let err = reason.to_js();
     let mut promise_value = JSValue::UNDEFINED;
@@ -1789,6 +1767,7 @@ pub(crate) fn on_promise_reject(
     let global_ref = vm.global();
     vm.unhandled_rejection(global_ref, err, promise_value);
     CronJob::schedule_next(this, vm);
+    job.tick_settled();
 }
 
 // ============================================================================
@@ -1951,9 +1930,9 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     this.remaining_fds().set(0);
 
     #[cfg(not(windows))]
-    let resolved_argv0: Option<*const core::ffi::c_char> = None;
+    let resolved_argv0 = None;
     #[cfg(windows)]
-    let resolved_argv0: Option<*const core::ffi::c_char>;
+    let resolved_argv0;
     // Hoisted to function scope: `resolved_argv0` borrows into this buffer on
     // Windows and must outlive the spawn below.
     #[cfg(windows)]
@@ -1970,7 +1949,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             .unwrap_or(b"");
         let argv0 = argv[0].to_bytes();
         match bun_which::which(&mut path_buf, path_env, b"", argv0) {
-            Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
+            Some(p) => resolved_argv0 = Some(p.into()),
             None => {
                 this.set_err(format_args!(
                     "Could not find '{}' in PATH",
@@ -1981,24 +1960,21 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     }
     #[cfg(unix)]
-    let env = spawn::SpawnEnv::Inherit;
+    let env = None;
     #[cfg(windows)]
     let envp_owned;
-    #[cfg(windows)]
-    let env_strings: Vec<&CStr>;
     #[cfg(windows)]
     let env = {
         match VirtualMachine::get()
             .transpiler
             .get()
-            .env_mut()
+            .env()
             .map
             .create_null_delimited_env_map()
         {
             Ok(v) => {
                 envp_owned = v;
-                env_strings = envp_owned.iter().collect();
-                spawn::SpawnEnv::Strings(&env_strings)
+                Some(envp_owned.as_list())
             }
             Err(_) => {
                 this.set_err(format_args!("Failed to create environment block"));
@@ -2007,33 +1983,12 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         }
     };
 
-    // Ownership note: BOTH
-    // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
-    // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
-    // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
-    // Box in `stderr_reader.source` here (the original transliteration) would
-    // create TWO `Box<uv::Pipe>` over one allocation — UB under Stacked
-    // Borrows even with a `mem::forget` of the duplicate, because moving the
-    // first Box into `Source::Pipe` reasserts its `Unique` tag and kills the
-    // raw pointer's provenance before `spawn_process_windows` ever
-    // dereferences it. Instead hand the raw heap pointer to `Stdio::Buffer`
-    // alone (sole owner), let `spawn_process_windows` round-trip it through
-    // `heap::take`, and stash the returned Box in `stderr_reader.source`
-    // AFTER spawn — see the `#[cfg(windows)]` block below and
-    // `lifecycle_script_runner.rs` / `filter_run.rs` for the canonical
-    // pattern. On spawn error, `WindowsStdio` has no `Drop`; reclaim
-    // explicitly via `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let stderr_pipe_ptr: *mut bun_sys::windows::libuv::Pipe =
-        bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<
-            bun_sys::windows::libuv::Pipe,
-        >()));
     let cwd = FileSystem::get().top_level_dir();
     let spawn_options = SpawnOptions {
         stdin: stdin_opt,
         stdout: stdout_opt,
         #[cfg(windows)]
-        stderr: spawn::Stdio::Buffer(stderr_pipe_ptr),
+        stderr: spawn::Stdio::Buffer,
         #[cfg(not(windows))]
         stderr: spawn::Stdio::Ignore,
         cwd: cwd.into(),
@@ -2045,19 +2000,10 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
         },
         ..SpawnOptions::default()
     };
-    // `mut` only for the Windows error-path `spawn_options.stderr.deinit()`.
-    #[cfg(windows)]
-    let mut spawn_options = spawn_options;
 
-    let spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
+    let mut spawned = match spawn::spawn_process_cstr(&spawn_options, argv, env) {
         Ok(Ok(sp)) => sp,
         Ok(Err(err)) => {
-            // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`
-            // raw `*mut uv::Pipe` on the SUCCESS path; on every error return
-            // ownership stays with the caller and `WindowsStdio` has no
-            // `Drop`. Reclaim it (uv_close + free if init'd) here.
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
             this.set_err(format_args!(
                 "Failed to spawn process: {}",
                 bstr::BStr::new(err.name())
@@ -2065,18 +2011,14 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
             return Err(());
         }
         Err(e) => {
-            #[cfg(windows)]
-            spawn_options.stderr.deinit();
             this.set_err(format_args!("Failed to spawn process: {}", e.name()));
             return Err(());
         }
     };
-    #[cfg(windows)]
-    let mut spawned = spawned;
 
     #[cfg(unix)]
     {
-        if let Some(stdout) = spawned.stdout {
+        if let Some(stdout) = spawned.stdout.take().map(sys::File::into_raw) {
             if !spawned.memfds[1] {
                 this.stdout_reader().with_mut(|r| r.set_parent(this_ptr));
                 let _ = sys::set_nonblocking(stdout);
@@ -2110,17 +2052,7 @@ fn spawn_cmd_prepare<T: SpawnCmdTarget>(
     }
     #[cfg(windows)]
     {
-        // `spawn_process_windows` has `heap::take`n `stderr_pipe_ptr` out of
-        // `Stdio::Buffer` into `spawned.stderr` as
-        // `WindowsStdioResult::Buffer(Box<uv::Pipe>)`. Take that Box out
-        // *here* (sole owner — single `into_raw` → `from_raw` round-trip, no
-        // aliasing Box) and stash it in `stderr_reader.source` BEFORE
-        // `start_with_current_pipe` (which reads `source.?.pipe`) and BEFORE
-        // `spawned` drops — otherwise `WindowsSpawnResult::Drop` would
-        // `uv_close`+free the live, libuv-registered handle (UAF in the read
-        // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-            debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
             this.stderr_reader().with_mut(|r| {
                 r.set_source(bun_io::Source::Pipe(pipe));
                 r.set_parent(this_ptr);

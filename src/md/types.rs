@@ -258,7 +258,6 @@ impl Default for Line {
 }
 
 /// A verbatim line (stores beg/end offsets plus indent for indented code).
-#[repr(C)]
 #[derive(Copy, Clone)]
 pub struct VerbatimLine {
     pub beg: OFF,
@@ -266,7 +265,6 @@ pub struct VerbatimLine {
     /// The columns of white space before `beg` that belong to the block.
     pub indent: u32,
 }
-bun_core::impl_no_uninit!(VerbatimLine);
 
 /// Container types: blockquote or list item.
 #[derive(Copy, Clone, Default)]
@@ -278,7 +276,8 @@ pub struct Container {
     pub(crate) start: u32,
     pub(crate) mark_indent: u32,
     pub(crate) contents_indent: u32,
-    pub(crate) block_byte_off: u32,
+    /// Of a list: the index of its opener in `Parser.blocks`.
+    pub(crate) opener: u32,
     /// Where the marker of the container (of the current item of a list) is.
     pub(crate) mark_beg: OFF,
     pub(crate) mark_end: OFF,

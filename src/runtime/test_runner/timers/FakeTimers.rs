@@ -1,4 +1,4 @@
-use core::cell::{Cell, UnsafeCell};
+use core::cell::Cell;
 use std::collections::VecDeque;
 
 use crate::api::cron::CronJob;
@@ -6,15 +6,16 @@ use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
+    InHeap, Popped, TimerHeap, TimerObjectInternals,
 };
 use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::{
     JSFunction, JSGlobalObject, JSHostFn, JSPromiseStrong, JSValue, JsError, JsResult, Strong,
-    StrongOptional,
+    StrongCell, StrongOptional,
 };
+use bun_ptr::CellExt as _;
 
 // JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
@@ -407,6 +408,7 @@ impl Drop for ReadingGlobals {
 }
 
 /// Remaining work of an `…Async` call. Each event loop task runs at most one of its fake timers.
+#[derive(Copy, Clone)]
 enum Drive {
     /// Time left to advance. `None` until the first step aims at the last pending timer.
     Tick(Option<Timespec>),
@@ -459,6 +461,13 @@ enum Step {
 }
 
 #[derive(Copy, Clone)]
+enum Pick {
+    First,
+    FirstIfDue(Timespec),
+    FirstImmediate,
+}
+
+#[derive(Copy, Clone)]
 pub(crate) enum Stop {
     /// Thrown by a faked `process.nextTick()` or `queueMicrotask()` callback, or the loop limit error.
     Ticks(JSValue),
@@ -491,9 +500,9 @@ pub(crate) struct FakeTimers {
     loop_limit: Cell<u32>,
     replaced: Cell<Vec<Replaced>>,
     /// JS `WeakMap` from every fake ever created, installed or not, to the function it replaced.
-    originals: UnsafeCell<StrongOptional>,
+    originals: StrongCell,
     reading_globals: Cell<bool>,
-    ticks: UnsafeCell<VecDeque<Tick>>,
+    ticks: Cell<VecDeque<Tick>>,
     drives: Cell<Vec<AsyncDrive>>,
     last_drive_id: Cell<u32>,
     tick_mode: Cell<TickMode>,
@@ -516,9 +525,9 @@ impl Default for FakeTimers {
             date_now_offset: Cell::new(0.0),
             loop_limit: Cell::new(0),
             replaced: Cell::new(Vec::new()),
-            originals: UnsafeCell::new(StrongOptional::empty()),
+            originals: StrongCell::default(),
             reading_globals: Cell::new(false),
-            ticks: UnsafeCell::new(VecDeque::new()),
+            ticks: Cell::new(VecDeque::new()),
             drives: Cell::new(Vec::new()),
             last_drive_id: Cell::new(AUTO_STEP),
             tick_mode: Cell::new(TickMode::Manual),
@@ -597,10 +606,8 @@ impl FakeTimers {
 
     /// Stale after the next `useFakeTimers()`: each call creates new fake functions.
     pub(crate) fn is_installed(&self, function: JSValue) -> bool {
-        // SAFETY: JS thread; the borrow ends at this statement.
-        unsafe { &*self.replaced.as_ptr() }
-            .iter()
-            .any(|replaced| replaced.fake.get() == function)
+        self.replaced
+            .with_taken(|replaced| replaced.iter().any(|replaced| replaced.fake.get() == function))
     }
 
     /// `api` is an `Api as u8`.
@@ -634,14 +641,11 @@ impl FakeTimers {
 
     /// 1 while a fake timer's callback runs (sinon's `duringTick` rule): a zero-delay re-arm is due again in the drain that runs it.
     pub(crate) fn min_delay_ms(&self) -> u32 {
-        // SAFETY: JS thread; the borrow ends with this function, which runs no JS.
-        let drives = unsafe { &*self.drives.as_ptr() };
-        let during_tick = self.firing.get() > 0 || drives.iter().any(|drive| drive.during_tick);
-        if self.active.get() && during_tick {
-            1
-        } else {
-            0
-        }
+        u32::from(
+            self.active.get()
+                && (self.firing.get() > 0
+                    || self.drives.with_taken(|drives| drives.iter().any(|drive| drive.during_tick))),
+        )
     }
 
     fn date_now(&self) -> f64 {
@@ -707,9 +711,7 @@ impl FakeTimers {
         self.from_preload.set(false);
         self.installs.update(|installs| installs.wrapping_add(1));
         self.tick_mode.set(TickMode::Manual);
-        if self.tick_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.tick_timer);
-        }
+        self.tick_timer.disarm();
     }
 
     /// `global` won't run JS again (`--isolate` swap, VM teardown). `cancel_all_timeout_objects` drains the heap afterwards.
@@ -718,21 +720,17 @@ impl FakeTimers {
         if self.active.get() {
             self.forget_installation(global);
         }
-        // SAFETY: JS thread; releasing a `Strong` runs no JS.
-        unsafe {
-            (*self.replaced.as_ptr()).clear();
-            (*self.originals.get()).deinit();
-            (*self.ticks.get()).clear();
-            (*self.drives.as_ptr()).clear();
-        }
+        self.replaced.take();
+        self.originals.clear();
+        self.ticks.take();
+        self.drives.take();
         self.auto_step_posted.set(false);
     }
 
     /// Pop every fake timer and tell its owner. Runs no JS.
     #[optimize(size)]
     fn clear(&self, vm: &VirtualMachine) {
-        // SAFETY: JS thread; releasing a `Strong` runs no JS.
-        unsafe { (*self.ticks.get()).clear() };
+        self.ticks.with_taken(VecDeque::clear);
         while let Some(timer) = self.timers.delete_min() {
             // SAFETY: `delete_min` returned a live node, and `tag` names the owner it is a field
             // of. The owner may be freed by the call that releases it.
@@ -740,19 +738,8 @@ impl FakeTimers {
                 (*timer).in_heap.set(InHeap::None);
                 (*timer).state.set(EventLoopTimerState::CANCELLED);
                 match (*timer).tag {
-                    EventLoopTimerTag::TimeoutObject => {
-                        let parent = TimeoutObject::from_timer_ptr(timer);
-                        TimerObjectInternals::release_heap_pin(
-                            core::ptr::NonNull::new_unchecked(&raw mut (*parent).internals),
-                            vm,
-                        );
-                    }
-                    EventLoopTimerTag::ImmediateObject => {
-                        let parent = ImmediateObject::from_timer_ptr(timer);
-                        TimerObjectInternals::release_heap_pin(
-                            core::ptr::NonNull::new_unchecked(&raw mut (*parent).internals),
-                            vm,
-                        );
+                    EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                        Popped::new(timer).cancel(vm);
                     }
                     EventLoopTimerTag::AbortSignalTimeout => {
                         AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
@@ -772,32 +759,15 @@ impl FakeTimers {
     }
 
     fn count(&self) -> usize {
-        // SAFETY: JS thread; the borrow ends at this statement.
-        self.timers.count() + unsafe { &*self.ticks.get() }.len()
+        self.timers.count() + self.ticks.with_taken(|ticks| ticks.len())
     }
 
     fn is_empty(&self) -> bool {
-        // SAFETY: JS thread; the borrow ends at this statement.
-        self.timers.peek().is_none() && unsafe { &*self.ticks.get() }.is_empty()
+        self.timers.peek().is_none() && self.ticks.with_taken(|ticks| ticks.is_empty())
     }
 
-    #[optimize(size)]
-    fn first_immediate(&self) -> Option<*mut EventLoopTimer> {
-        let next = self.timers.peek()?;
-        // SAFETY: `next` is the heap root; live while linked.
-        if unsafe { (*next).tag } == EventLoopTimerTag::ImmediateObject {
-            return Some(next);
-        }
-        self.timers.first_immediate()
-    }
-
-    fn pop_due(&self, until: &Timespec) -> Option<*mut EventLoopTimer> {
-        let next = self.timers.peek()?;
-        // SAFETY: `next` is the heap root; live while linked.
-        if unsafe { (*next).next.get() }.greater(until) {
-            return None;
-        }
-        self.timers.delete_min()
+    fn first_due(&self, until: &Timespec) -> Option<Timespec> {
+        self.timers.first_deadline().filter(|at| !at.greater(until))
     }
 
     /// Runs no JS with `Restore::Always`, but settling the returned drives does.
@@ -872,13 +842,11 @@ impl FakeTimers {
     }
 
     fn originals(&self, global: &JSGlobalObject) -> JSValue {
-        // SAFETY: JS thread; creating the map runs no JS, and no finalizer reaches `originals`.
-        let slot = unsafe { &mut *self.originals.get() };
-        if let Some(originals) = slot.get() {
+        if let Some(originals) = self.originals.get() {
             return originals;
         }
         let originals = Bun__FakeTimers__createOriginals(global);
-        slot.set(global, originals);
+        self.originals.set(Strong::create(originals, global));
         originals
     }
 
@@ -893,11 +861,9 @@ impl FakeTimers {
             if !faked.contains(api) || !api.owner(global).is_object() {
                 continue;
             }
-            // SAFETY: JS thread; the borrow ends at this statement.
-            let replaced_now = unsafe { &*this.replaced.as_ptr() }
-                .iter()
-                .find(|replaced| replaced.api == api)
-                .map(|replaced| replaced.original.get());
+            let replaced_now = this.replaced.with_taken(|replaced| {
+                Some(replaced.iter().find(|replaced| replaced.api == api)?.original.get())
+            });
             let original = match replaced_now {
                 Some(original) => original,
                 None => {
@@ -942,8 +908,7 @@ impl FakeTimers {
 
     /// Swaps any stale fake that was put back on a global for its original. Runs no JS.
     fn take_off_stale_fakes(global: &JSGlobalObject) {
-        // SAFETY: JS thread; the borrow ends at this statement.
-        let Some(originals) = unsafe { &*timer_all().fake_timers.originals.get() }.get() else {
+        let Some(originals) = timer_all().fake_timers.originals.get() else {
             return;
         };
         for api in Api::FUNCTIONS {
@@ -963,26 +928,28 @@ impl FakeTimers {
 
     // Below, a returned `JSValue` is the exception a timer callback threw, or empty. A `JsError` means the VM is terminating.
 
-    fn fire(global: &JSGlobalObject, timer: *mut EventLoopTimer) -> JsResult<JSValue> {
+    /// `None` if the heap has no such timer.
+    fn fire(global: &JSGlobalObject, pick: Pick) -> JsResult<Option<JSValue>> {
+        let this = &timer_all().fake_timers;
+        let Some(timer) = (match pick {
+            Pick::FirstIfDue(until) if this.first_due(&until).is_none() => None,
+            Pick::First | Pick::FirstIfDue(_) => this.timers.delete_min(),
+            Pick::FirstImmediate => this.timers.delete_first_immediate(),
+        }) else {
+            return Ok(None);
+        };
         // SAFETY: `timer` was just popped from our heap; live until its callback completes.
         let (tag, at) = unsafe { ((*timer).tag, (*timer).next.get()) };
-        timer_all().fake_timers.advance_clock_to(global, at);
+        this.advance_clock_to(global, at);
         let _firing = Firing::begin();
         let vm = VirtualMachine::get();
         let mut thrown = JSValue::ZERO;
-        // SAFETY: `timer` is live and its tag names its owner; the callees take raw pointers (noalias re-entrancy).
+        // SAFETY: `timer` was just popped from our heap.
         unsafe {
             match tag {
-                EventLoopTimerTag::TimeoutObject => TimerObjectInternals::fire_catching(
-                    core::ptr::addr_of_mut!((*TimeoutObject::from_timer_ptr(timer)).internals),
-                    vm,
-                    &raw mut thrown,
-                ),
-                EventLoopTimerTag::ImmediateObject => TimerObjectInternals::fire_catching(
-                    core::ptr::addr_of_mut!((*ImmediateObject::from_timer_ptr(timer)).internals),
-                    vm,
-                    &raw mut thrown,
-                ),
+                EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                    TimerObjectInternals::fire_catching(Popped::new(timer), vm, &raw mut thrown)
+                }
                 // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {
                     if let Err(err) = crate::dispatch::fire_timer(timer, &at, vm) {
@@ -995,7 +962,7 @@ impl FakeTimers {
         if global.has_exception() {
             return Err(JsError::Thrown);
         }
-        Ok(thrown)
+        Ok(Some(thrown))
     }
 
     /// On `Err`, the callbacks it didn't get to stay queued.
@@ -1004,11 +971,9 @@ impl FakeTimers {
         let this = &timer_all().fake_timers;
         let limit = this.loop_limit.get();
         let mut ran: u32 = 0;
-        // SAFETY: JS thread; the borrow ends with the call.
-        while let Some(tick) = unsafe { (*this.ticks.get()).pop_front() } {
+        while let Some(tick) = this.ticks.with_taken(VecDeque::pop_front) {
             if ran == limit {
-                // SAFETY: as above.
-                unsafe { (*this.ticks.get()).push_front(tick) };
+                this.ticks.with_taken(|ticks| ticks.push_front(tick));
                 return Err(Stop::Ticks(loop_limit_error(global, limit)?));
             }
             ran += 1;
@@ -1028,11 +993,10 @@ impl FakeTimers {
     /// sinon's `next()`.
     fn run_next(global: &JSGlobalObject) -> Result<Option<JSValue>, Stop> {
         Self::run_ticks(global)?;
-        let Some(timer) = timer_all().fake_timers.timers.delete_min() else {
+        let _firing = Firing::begin();
+        let Some(thrown) = Self::fire(global, Pick::First)? else {
             return Ok(None);
         };
-        let _firing = Firing::begin();
-        let thrown = Self::fire(global, timer)?;
         if thrown.is_empty() {
             Self::run_ticks(global)?;
         }
@@ -1052,11 +1016,10 @@ impl FakeTimers {
             if this.installs() != installs {
                 break;
             }
-            let Some(timer) = this.pop_due(&until) else {
+            let Some(thrown) = Self::fire(global, Pick::FirstIfDue(until))? else {
                 this.advance_clock_to(global, until);
                 break;
             };
-            let thrown = Self::fire(global, timer)?;
             if first_thrown.is_empty() {
                 first_thrown = thrown;
             }
@@ -1066,9 +1029,8 @@ impl FakeTimers {
 
     /// sinon's `runToLast()`.
     fn run_only_pending(global: &JSGlobalObject) -> Result<JSValue, Stop> {
-        match timer_all().fake_timers.timers.find_max() {
-            // SAFETY: `last` is reachable in the heap and live while linked.
-            Some(last) => Self::run_until(global, unsafe { (*last).next.get() }),
+        match timer_all().fake_timers.timers.last_deadline() {
+            Some(last) => Self::run_until(global, last),
             None => Self::run_ticks(global).map(|()| JSValue::ZERO),
         }
     }
@@ -1108,17 +1070,14 @@ impl FakeTimers {
         let this = &timer_all().fake_timers;
         let limit = this.loop_limit.get();
         for _ in 0..limit {
-            let Some(immediate) = this.first_immediate() else {
+            let Some(thrown) = Self::fire(global, Pick::FirstImmediate)? else {
                 return Ok(JSValue::ZERO);
             };
-            // SAFETY: `immediate` is linked in this heap.
-            unsafe { this.timers.remove(immediate) };
-            let thrown = Self::fire(global, immediate)?;
             if !thrown.is_empty() {
                 return Ok(thrown);
             }
         }
-        if this.first_immediate().is_none() {
+        if !this.timers.has_immediate() {
             return Ok(JSValue::ZERO);
         }
         loop_limit_error(global, limit)
@@ -1141,10 +1100,21 @@ impl FakeTimers {
             thrown: StrongOptional::empty(),
             during_tick: false,
         };
-        // SAFETY: JS thread; the borrow ends with the call.
-        unsafe { (*this.drives.as_ptr()).push(drive) };
+        this.drives.with_taken(|drives| drives.push(drive));
         bun_jsc::cpp::Bun__FakeTimers__postStep(global, id);
         promise_value
+    }
+
+    /// `None` if `useRealTimers()` already settled the drive.
+    fn with_drive<R>(&self, id: u32, f: impl FnOnce(&mut AsyncDrive) -> R) -> Option<R> {
+        self.drives.with_taken(|drives| AsyncDrive::find(drives, id).map(f))
+    }
+
+    fn set_drive(&self, id: u32, to: Drive, during_tick: bool) {
+        self.with_drive(id, |drive| {
+            drive.drive = to;
+            drive.during_tick = during_tick;
+        });
     }
 
     /// A missing drive was already settled by `useRealTimers()`, so `thrown` is reported as uncaught.
@@ -1152,84 +1122,63 @@ impl FakeTimers {
         if thrown.is_empty() {
             return;
         }
-        let drives = timer_all().fake_timers.drives.as_ptr();
-        // SAFETY: JS thread; no finalizer reaches `drives`; the borrow ends before `uncaught_exception`.
-        match AsyncDrive::find(unsafe { &mut *drives }, id) {
-            Some(drive) => {
-                if !drive.thrown.has() {
-                    drive.thrown.set(global, thrown);
-                }
+        let kept = timer_all().fake_timers.with_drive(id, |drive| {
+            if !drive.thrown.has() {
+                drive.thrown.set(global, thrown);
             }
-            None => {
-                let _ = global
-                    .bun_vm()
-                    .uncaught_exception(global, thrown, false);
-            }
+        });
+        if kept.is_none() {
+            let _ = global
+                .bun_vm()
+                .uncaught_exception(global, thrown, false);
         }
     }
 
-    /// Must run before the drive's first `run_ticks`, to match `run_only_pending`.
-    fn aim_at_last_timer(&self, drive: &mut AsyncDrive) {
-        let now = self.now();
-        let to_last = self.timers.find_max().map_or(Timespec::EPOCH, |last| {
-            // SAFETY: `last` is reachable in the heap and live while linked.
-            unsafe { (*last).next.get() }.duration(&now)
-        });
-        drive.drive = Drive::Tick(Some(to_last));
+    fn time_to_last_timer(&self) -> Timespec {
+        self.timers
+            .last_deadline()
+            .map_or(Timespec::EPOCH, |last| last.duration(&self.now()))
     }
 
-    /// Returns `None` if the drive is gone, `Some(None)` once no timer is left in range and the clock is at its end.
-    fn next_of_tick(
-        &self,
-        global: &JSGlobalObject,
-        id: u32,
-    ) -> Option<Option<*mut EventLoopTimer>> {
+    /// Returns `None` if the drive is gone, `Finished` once no timer is left in range and the clock is at its end.
+    fn next_of_tick(&self, global: &JSGlobalObject, id: u32) -> Option<Step> {
         let now = self.now();
-        // SAFETY: JS thread; the borrow ends with this function, which runs no JS.
-        let drive = AsyncDrive::find(unsafe { &mut *self.drives.as_ptr() }, id)?;
-        let Drive::Tick(Some(remaining)) = drive.drive else {
+        let Drive::Tick(Some(remaining)) = self.with_drive(id, |drive| drive.drive)? else {
             return None;
         };
         let until = plus(now, remaining);
-        let Some(timer) = self.pop_due(&until) else {
+        let Some(at) = self.first_due(&until) else {
             self.advance_clock_to(global, until);
-            return Some(None);
+            return Some(Step::Finished);
         };
-        // SAFETY: just unlinked, live until it is fired.
-        let at = unsafe { (*timer).next.get() };
-        drive.drive = Drive::Tick(Some(until.duration(if at.greater(&now) {
-            &at
-        } else {
-            &now
-        })));
-        Some(Some(timer))
+        let remaining = until.duration(if at.greater(&now) { &at } else { &now });
+        self.set_drive(id, Drive::Tick(Some(remaining)), true);
+        Some(Step::Again)
     }
 
     /// Returns `None` if `useRealTimers()` already settled the drive.
     fn step_drive(global: &JSGlobalObject, id: u32) -> Result<Option<Step>, Stop> {
         let this = &timer_all().fake_timers;
-        // SAFETY: JS thread; each arm is done with `drive` before it calls anything that borrows `drives`.
-        let Some(drive) = AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id) else {
+        let Some((drive, threw)) = this.with_drive(id, |drive| (drive.drive, drive.thrown.has()))
+        else {
             return Ok(None);
         };
-        match drive.drive {
+        match drive {
             Drive::Tick(remaining) => {
-                drive.during_tick = true;
-                if remaining.is_none() {
-                    this.aim_at_last_timer(drive);
-                }
+                // Aims before the first `run_ticks`, to match `run_only_pending`.
+                let remaining = remaining.unwrap_or_else(|| this.time_to_last_timer());
+                this.set_drive(id, Drive::Tick(Some(remaining)), true);
                 Self::run_ticks(global)?;
-                match this.next_of_tick(global, id) {
-                    None => Ok(None),
-                    Some(None) => Ok(Some(Step::Finished)),
-                    Some(Some(timer)) => {
-                        Self::drive_threw(global, id, Self::fire(global, timer)?);
-                        Ok(Some(Step::Again))
-                    }
+                let step = this.next_of_tick(global, id);
+                if let Some(Step::Again) = step
+                    && let Some(thrown) = Self::fire(global, Pick::First)?
+                {
+                    Self::drive_threw(global, id, thrown);
                 }
+                Ok(step)
             }
             Drive::All(ran) => {
-                drive.drive = Drive::All(ran.saturating_add(1));
+                this.set_drive(id, Drive::All(ran.saturating_add(1)), false);
                 let limit = this.loop_limit.get();
                 if ran >= limit && !this.is_empty() {
                     Self::drive_threw(global, id, loop_limit_error(global, limit)?);
@@ -1246,35 +1195,31 @@ impl FakeTimers {
             }
             Drive::Next(0, _) => Ok(Some(Step::Finished)),
             Drive::Next(steps, NextStep::First) => {
-                drive.drive = Drive::Next(steps, NextStep::AfterFirst);
-                let Some(timer) = this.timers.delete_min() else {
+                this.set_drive(id, Drive::Next(steps, NextStep::AfterFirst), false);
+                let Some(thrown) = Self::fire(global, Pick::First)? else {
                     return Ok(Some(Step::Finished));
                 };
-                Self::drive_threw(global, id, Self::fire(global, timer)?);
+                Self::drive_threw(global, id, thrown);
                 Ok(Some(Step::Again))
             }
             Drive::Next(steps, step) => {
-                if step == NextStep::AfterFirst && drive.thrown.has() {
+                if step == NextStep::AfterFirst && threw {
                     return Ok(Some(Step::Finished));
                 }
-                drive.drive = Drive::Next(steps, NextStep::SameInstant);
-                drive.during_tick = true;
+                this.set_drive(id, Drive::Next(steps, NextStep::SameInstant), true);
                 Self::run_ticks(global)?;
-                let Some(timer) = this.pop_due(&this.now()) else {
+                let Some(thrown) = Self::fire(global, Pick::FirstIfDue(this.now()))? else {
                     let none_left = this.is_empty();
-                    // SAFETY: JS thread; no callback runs in this block.
-                    let Some(drive) = AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id)
-                    else {
-                        return Ok(None);
-                    };
-                    if steps == 1 || none_left || drive.thrown.has() {
-                        return Ok(Some(Step::Finished));
-                    }
-                    drive.drive = Drive::Next(steps - 1, NextStep::First);
-                    drive.during_tick = false;
-                    return Ok(Some(Step::Again));
+                    return Ok(this.with_drive(id, |drive| {
+                        if steps == 1 || none_left || drive.thrown.has() {
+                            return Step::Finished;
+                        }
+                        drive.drive = Drive::Next(steps - 1, NextStep::First);
+                        drive.during_tick = false;
+                        Step::Again
+                    }));
                 };
-                Self::drive_threw(global, id, Self::fire(global, timer)?);
+                Self::drive_threw(global, id, thrown);
                 Ok(Some(Step::Again))
             }
         }
@@ -1295,10 +1240,7 @@ impl FakeTimers {
             Err(Stop::Vm(err)) => return Err(err),
             Err(Stop::Ticks(thrown)) => {
                 // Like sinon, reject with this one even if a timer threw earlier.
-                // SAFETY: JS thread; the borrow ends at this statement.
-                if let Some(drive) = AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id) {
-                    drive.thrown.deinit();
-                }
+                this.with_drive(id, |drive| drive.thrown = Default::default());
                 Self::drive_threw(global, id, thrown);
                 Some(Step::Finished)
             }
@@ -1306,16 +1248,16 @@ impl FakeTimers {
         match step {
             None => {}
             Some(Step::Again) => {
-                // SAFETY: JS thread; the borrow ends with the condition.
-                if AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id).is_some() {
+                if this.with_drive(id, |_| ()).is_some() {
                     bun_jsc::cpp::Bun__FakeTimers__postStep(global, id);
                 }
             }
             Some(Step::Finished) => {
-                // SAFETY: JS thread; the borrow ends before `settle`.
-                let drives = unsafe { &mut *this.drives.as_ptr() };
-                if let Some(index) = drives.iter().position(|drive| drive.id == id) {
-                    drives.swap_remove(index).settle(global)?;
+                let finished = this.drives.with_taken(|drives| {
+                    Some(drives.swap_remove(drives.iter().position(|drive| drive.id == id)?))
+                });
+                if let Some(finished) = finished {
+                    finished.settle(global)?;
                 }
                 this.post_auto_step();
             }
@@ -1325,15 +1267,12 @@ impl FakeTimers {
 
     #[optimize(size)]
     fn set_tick_mode(mode: TickMode) {
-        let all = timer_all();
-        let this = &all.fake_timers;
+        let this = &timer_all().fake_timers;
         if this.tick_mode.get() == mode {
             return;
         }
         this.tick_mode.set(mode);
-        if this.tick_timer.state.get() == EventLoopTimerState::ACTIVE {
-            all.remove(&this.tick_timer);
-        }
+        this.tick_timer.disarm();
         Self::arm_tick_timer();
         this.post_auto_step();
     }
@@ -1378,8 +1317,7 @@ impl FakeTimers {
 
     /// sinon's `pauseAutoTickUntilFinished()`.
     fn is_auto_step_paused(&self) -> bool {
-        // SAFETY: JS thread; the borrow ends at this statement.
-        !unsafe { &*self.drives.as_ptr() }.is_empty()
+        self.drives.with_taken(|drives| !drives.is_empty())
     }
 
     pub(crate) fn post_auto_step(&self) {
@@ -1429,8 +1367,7 @@ impl FakeTimers {
             callback: Strong::create(callback, global),
             arguments: Strong::create(arguments, global),
         };
-        // SAFETY: JS thread; the borrow ends with the call.
-        unsafe { (*self.ticks.get()).push_back(tick) };
+        self.ticks.with_taken(|ticks| ticks.push_back(tick));
         self.post_auto_step();
     }
 }

@@ -1,7 +1,6 @@
 // Sub-modules
 
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use std::collections::VecDeque;
 
@@ -65,13 +64,9 @@ pub(crate) struct Parser<'a> {
 
     // Dynamic arrays
     pub(crate) containers: Vec<Container>,
-    // 4-byte alignment is
-    // load-bearing for the `BlockHeader` reinterpretation in
-    // `get_block_header_at`. Here the invariant rests on (a) offsets being
-    // padded to a multiple of 4 by every writer and (b) the global allocator
-    // returning >=16-byte-aligned bases; `get_block_header_at`
-    // debug-asserts it on every access.
-    pub(crate) block_bytes: Vec<u8>,
+    pub(crate) blocks: Vec<BlockHeader>,
+    // The lines of `blocks`, in their order, then those of `current_block`.
+    pub(crate) block_lines: Vec<VerbatimLine>,
     pub(crate) buffer: Vec<u8>,
     pub(crate) emph_delims: Vec<EmphDelim>,
     // Scratch storage recycled by resolve_emphasis_delimiters (inlines.rs).
@@ -99,8 +94,9 @@ pub(crate) struct Parser<'a> {
     pub(crate) container_ends: VecDeque<ContainerEnds>,
 
     // Current block being built
-    pub(crate) current_block: Option<usize>,
-    pub(crate) current_block_lines: Vec<VerbatimLine>,
+    pub(crate) current_block: Option<BlockHeader>,
+    // Where its lines start in `block_lines`.
+    pub(crate) current_block_first_line: usize,
 
     // HTML block tracking
     pub(crate) html_block_type: u8,
@@ -117,7 +113,7 @@ pub(crate) struct Parser<'a> {
     // State
     pub(crate) last_line_has_list_loosening_effect: bool,
     pub(crate) last_list_item_starts_with_two_blank_lines: bool,
-    // The last header in `block_bytes` is the opener of a list item.
+    // The last of `blocks` is the opener of a list item.
     pub(crate) last_header_opens_list_item: bool,
     // Nothing is on the last line behind the `[ ]` of its list item
     pub(crate) last_line_is_only_a_task_mark: bool,
@@ -129,14 +125,12 @@ pub(crate) struct Parser<'a> {
     // `RendererImpl::wants_source`
     pub(crate) track: bool,
     // What `container_source` is told, for each container opener and closer
-    // in `block_bytes`, in their order.
+    // in `blocks`, in their order.
     pub(crate) container_sources: Vec<(OFF, OFF, u32)>,
     // Where the line that is being analyzed starts.
     pub(crate) line_beg: OFF,
     // That line is the `:::` that ends the outermost of the containers that it ends.
     pub(crate) is_directive_end: bool,
-    // The lines of the paragraph whose reference definitions are being read.
-    pub(crate) def_lines: Vec<VerbatimLine>,
     pub(crate) extensions: Option<Extensions<'a>>,
     // Where each line of the inline content that is being processed starts in
     // it, and in the document.
@@ -151,10 +145,8 @@ pub(crate) struct Parser<'a> {
     pub(crate) footnote_labels: bun_collections::StringSet,
 }
 
-#[repr(C)]
 pub struct BlockHeader {
     pub(crate) block_type: BlockType,
-    pub(crate) _pad: [u8; 3],
     pub(crate) flags: u32,
     pub(crate) data: u32,
     pub(crate) n_lines: u32,
@@ -174,8 +166,7 @@ pub enum ParserError {
     /// The input is longer than [`MAX_INPUT_LEN`], so the parser's `u32`
     /// offset arithmetic cannot address it.
     InputTooLarge,
-    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata,
-    /// so the parser's `u32` block offsets cannot address it.
+    /// The document needs more than [`MAX_BLOCK_BYTES`] of block metadata.
     TooManyBlocks,
 }
 
@@ -201,23 +192,10 @@ pub(crate) const MAX_LOOKAHEAD: OFF = 1 + crate::line_analysis::CDATA_OPEN.len()
 /// never to wrap.
 pub const MAX_INPUT_LEN: usize = (OFF::MAX - MAX_LOOKAHEAD) as usize;
 
-/// The most bytes `block_bytes` may hold: a block's offset into the buffer
-/// is stored as a `u32` (`Container.block_byte_off` and the casts that feed
-/// it), and each new header is written at the end of `block_bytes` rounded
-/// up to its alignment, so the buffer must stop one aligned header short of
-/// `OFF::MAX`.
-const MAX_BLOCK_BYTES: usize =
-    OFF::MAX as usize - (size_of::<BlockHeader>() + align_of::<BlockHeader>());
+/// The most bytes that ended blocks and their lines may take. It keeps `Container.opener` a `u32`.
+const MAX_BLOCK_BYTES: usize = OFF::MAX as usize;
 
-// The headroom proof: a buffer filled to the cap can still be aligned up and
-// take one more header without leaving `OFF` range.
-const _: () = assert!(
-    ((MAX_BLOCK_BYTES + (align_of::<BlockHeader>() - 1)) & !(align_of::<BlockHeader>() - 1))
-        + size_of::<BlockHeader>()
-        <= OFF::MAX as usize
-);
-
-/// The runtime block-metadata cap checked by [`check_block_bytes_len`]:
+/// The runtime block-metadata cap checked by [`Parser::append_block_header`]:
 /// always [`MAX_BLOCK_BYTES`] outside of tests, shrinkable only through
 /// [`set_max_block_bytes_for_testing`].
 static BLOCK_BYTES_LIMIT: AtomicUsize = AtomicUsize::new(MAX_BLOCK_BYTES);
@@ -231,18 +209,6 @@ pub fn set_max_block_bytes_for_testing(limit: usize) -> usize {
     BLOCK_BYTES_LIMIT.swap(limit.min(MAX_BLOCK_BYTES), Ordering::Relaxed)
 }
 
-/// Rejects growing `block_bytes` to `needed` bytes once the parser's u32
-/// block offsets could no longer address it. Every site that grows the
-/// buffer (`append_block_header`, `end_current_block`) checks this before
-/// appending.
-#[inline]
-pub(crate) fn check_block_bytes_len(needed: usize) -> Result<(), ParserError> {
-    if needed > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
-        return Err(ParserError::TooManyBlocks);
-    }
-    Ok(())
-}
-
 /// Callers that size anything from the input length must reject oversized
 /// inputs with this before allocating.
 #[inline]
@@ -254,48 +220,21 @@ pub(crate) fn input_size(text: &[u8]) -> Result<OFF, ParserError> {
 }
 
 impl<'a> Parser<'a> {
-    pub(crate) fn get_block_header_at(&mut self, off: usize) -> &mut BlockHeader {
-        // SAFETY: `off` is produced by start_new_block / push_container_bytes which pad it
-        // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
-        // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
-        // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
-        unsafe {
-            let ptr = self
-                .block_bytes
-                .as_mut_ptr()
-                .add(off)
-                .cast::<c_void>()
-                .cast::<BlockHeader>();
-            debug_assert!(ptr.is_aligned());
-            &mut *ptr
+    pub(crate) fn current_block_lines(&self) -> &[VerbatimLine] {
+        &self.block_lines[self.current_block_first_line..]
+    }
+
+    /// The only way a header is added, after its lines, so that the cap counts both.
+    pub(crate) fn append_block_header(&mut self, header: BlockHeader) -> Result<(), ParserError> {
+        debug_assert!(self.current_block.is_none());
+        let needed = size_of_val(&*self.blocks) + size_of_val(&*self.block_lines);
+        if needed + size_of::<BlockHeader>() > BLOCK_BYTES_LIMIT.load(Ordering::Relaxed) {
+            return Err(ParserError::TooManyBlocks);
         }
-    }
-
-    #[inline]
-    pub(crate) fn get_block_at(&mut self, off: usize) -> &mut BlockHeader {
-        self.get_block_header_at(off)
-    }
-
-    /// Appends one aligned `BlockHeader` to `block_bytes` and returns its
-    /// byte offset. This is the only way a header is added, so the
-    /// block-metadata cap cannot be forgotten by a new caller.
-    pub(crate) fn append_block_header(
-        &mut self,
-        header: BlockHeader,
-    ) -> Result<usize, ParserError> {
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let aligned = (self.block_bytes.len() + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        check_block_bytes_len(needed)?;
         self.last_header_opens_list_item = header.block_type == BlockType::Li
             && header.flags & crate::types::BLOCK_CONTAINER_OPENER != 0;
-        self.block_bytes
-            .reserve(needed.saturating_sub(self.block_bytes.len()));
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the header write below.
-        self.block_bytes.resize(needed, 0);
-        *self.get_block_header_at(aligned) = header;
-        Ok(aligned)
+        self.blocks.push(header);
+        Ok(())
     }
 
     /// Charge one resolved reference link/image against the reference-definition
@@ -334,7 +273,8 @@ impl<'a> Parser<'a> {
             hidden: Vec::new(),
             inline_serial: 0,
             containers: Vec::new(),
-            block_bytes: Vec::new(),
+            blocks: Vec::new(),
+            block_lines: Vec::new(),
             buffer: Vec::new(),
             emph_delims: Vec::new(),
             prev_candidate: Vec::new(),
@@ -347,7 +287,7 @@ impl<'a> Parser<'a> {
             quotes: Vec::new(),
             container_ends: VecDeque::new(),
             current_block: None,
-            current_block_lines: Vec::new(),
+            current_block_first_line: 0,
             html_block_type: 0,
             fence_indent: 0,
             table_alignments: [Align::Default; TABLE_MAXCOLCOUNT as usize],
@@ -363,7 +303,6 @@ impl<'a> Parser<'a> {
             container_sources: Vec::new(),
             line_beg: 0,
             is_directive_end: false,
-            def_lines: Vec::new(),
             extensions: None,
             inline_lines: Vec::new(),
             inline_line: 0,
@@ -451,10 +390,10 @@ impl<'a> Parser<'a> {
     // blocks.rs — impl Parser:
     //   process_doc, analyze_line, process_line, start_new_block,
     //   add_line_to_current_block, end_current_block,
-    //   consume_ref_defs_from_current_block, get_block_header_at, get_block_at
+    //   consume_ref_defs_from_current_block
     //
     // containers.rs — impl Parser:
-    //   push_container, push_container_bytes, enter_child_containers,
+    //   push_container, push_container_block, enter_child_containers,
     //   leave_child_containers, is_container_compatible, process_all_blocks
     //
     // inlines.rs — impl Parser:

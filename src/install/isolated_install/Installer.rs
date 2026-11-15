@@ -13,14 +13,25 @@ use bun_threading::{UnboundedQueue, WaitGroup, thread_pool};
 
 use bun_sys::{FdDirExt as _, FdExt as _};
 
+#[cfg(target_os = "macos")]
+use super::file_cloner::FileCloner;
+use super::file_copier::FileCopier;
+use super::hardlinker::Hardlinker;
+use super::store::{self, Store};
+use super::store::{EntryColumns as _, NodeColumns as _};
+use super::symlinker::{self, Symlinker};
 use crate::bin_real;
+use crate::bun_fs;
+use crate::bun_progress::NodeId;
 use crate::cache_publish::{RenameError, RenameRetry};
 use crate::lockfile::package;
+use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_install::{
     BUN_TAG, Method as InstallMethod, Staging, StagingLock, StagingPath, Summary as InstallSummary,
     rename_staging_into_place,
 };
-use crate::package_manager_real::Command;
+use crate::package_manager_real::directories;
+use crate::package_manager_real::package_manager_options::{Do, Enable};
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
 use crate::prune::LinkedNodeModules;
@@ -29,25 +40,11 @@ use crate::{
     self as install, Lockfile, PackageID, PackageManager, Resolution, TaskCallbackContext,
     TruncatedPackageNameHash, bin, invalid_dependency_id,
 };
-// Bring `items_<field>()` column accessors into scope for
-// `MultiArrayList<Package>` / `Slice<Package>`.
-#[cfg(target_os = "macos")]
-use super::file_cloner::FileCloner;
-use super::file_copier::FileCopier;
-use super::hardlinker::Hardlinker;
-use super::store::{self, Store};
-use super::store::{EntryColumns as _, NodeColumns as _};
-use super::symlinker::{self, Symlinker};
-use crate::bun_fs;
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::directories;
-use crate::package_manager_real::package_manager_options::{Do, Enable};
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
 
 type Bitset = DynamicBitSet;
-type ProgressNode = crate::bun_progress::Node;
 
 // ── Store id aliases ───────────────────────────────────────────────────────
 type StoreEntryId = store::entry::Id;
@@ -87,7 +84,6 @@ pub struct Installer<'a> {
 
     pub(crate) summary: InstallSummary,
     pub(crate) installed: Bitset,
-    pub(crate) install_node: Option<&'a mut ProgressNode>,
     pub(crate) is_new_bun_modules: bool,
     /// Set when the project's root `node_modules` is a symlink.
     pub(crate) linked: Option<LinkedNodeModules>,
@@ -96,7 +92,6 @@ pub struct Installer<'a> {
 
     /// BACKREF, never null; not `&'a mut`: the tasks on the thread pool all read through it.
     pub(crate) manager: *mut PackageManager,
-    pub(crate) command_ctx: Command::Context<'a>,
 
     pub(crate) store: &'a Store,
 
@@ -272,7 +267,7 @@ impl<'a> Installer<'a> {
         }
         let lockfile = self.lockfile();
         let dep = &lockfile.buffers.dependencies[dep_id as usize];
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let (name, name_hash) = pkgs.items_resolution()[pkg_id as usize].trusted_name(
             (dep.name, dep.name_hash),
             (
@@ -316,7 +311,7 @@ impl<'a> Installer<'a> {
     /// Called on the main thread before the package's tasks start, because they use the integrity
     /// to name a tarball's cache entry.
     fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
-        let pkgs = self.lockfile().packages.slice();
+        let pkgs = &self.lockfile().packages;
         assert!((pkg_id as usize) < pkgs.len());
         // SAFETY: in bounds; raw column pointer, so no `&mut Lockfile` is formed. Only this
         // package's tasks read its `integrity` and none has started; other tasks' `&[Meta]`
@@ -447,9 +442,7 @@ impl<'a> Installer<'a> {
                 apply.logger.append_to(&mut log);
                 return Err(TaskError::Patching(log));
             }
-            let _ = apply
-                .logger
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = apply.logger.print(Output::error_writer());
         }
         Ok(())
     }
@@ -478,7 +471,7 @@ impl<'a> Installer<'a> {
             }
             TaskError::Patching(patch_log) => {
                 Output::err_generic("failed to patch package: {}@{}", pkg);
-                let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
+                let _ = patch_log.print(Output::error_writer());
             }
             TaskError::Binaries(err) => {
                 Output::err(*err, "failed to link binaries for package: {}@{}", pkg);
@@ -614,9 +607,9 @@ impl<'a> Installer<'a> {
         let pkg_bins = self.lockfile().packages.items_bin();
 
         let mut members: Vec<PackageID> = Vec::new();
-        for (index, scripts) in store.entries.items_scripts().iter().enumerate() {
-            let entry_id = StoreEntryId::from(index as u32);
-            if scripts.get().is_some()
+        for task in &self.tasks {
+            let entry_id = task.entry_id;
+            if task.scripts.is_some()
                 && self.is_member(entry_id)
                 && pkg_bins[store.ids(entry_id).pkg_id as usize].tag != bin::Tag::None
                 && !self.left_out_entries.contains(&entry_id)
@@ -686,8 +679,9 @@ impl<'a> Installer<'a> {
         self.manager_mut().decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
-        if let Some(node) = self.install_node.as_mut() {
-            node.complete_one();
+        let manager = self.manager();
+        if manager.options.log_level.show_progress() {
+            manager.progress.complete_one(NodeId::Install);
         }
 
         let store::Ids { dep_id, pkg_id } = self.store.ids(entry_id);
@@ -872,9 +866,9 @@ impl<'a> Installer<'a> {
         let entries = &self.store.entries;
 
         let mut names: Vec<Box<[u8]>> = Vec::new();
-        for (scripts, node_id) in entries.items_scripts().iter().zip(entries.items_node_id()) {
+        for (task, node_id) in self.tasks.iter().zip(entries.items_node_id()) {
             let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-            if scripts.get().is_none()
+            if task.scripts.is_none()
                 || !self
                     .trusted_dependencies_from_update_requests
                     .contains(&pkg_id)
@@ -1003,6 +997,8 @@ pub struct Task {
     pub(crate) newly_trusted: bool,
     /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
     pub(crate) blocked_scripts: u8,
+    /// Set by `Step::RunPreinstall`. The main thread reads it while the task isn't running.
+    pub(crate) scripts: Option<Box<package::scripts::List>>,
     /// The warnings that `lay_folder_links` returned. `Installer::warn_left_out_links` logs them.
     pub(crate) left_out_links: Vec<Box<[u8]>>,
 }
@@ -1020,7 +1016,7 @@ pub enum Result {
     None,
     Err(TaskError),
     Blocked,
-    /// Those of `store.entries.items_scripts()[entry_id]`, from its `first_index` on.
+    /// Those of `Task::scripts`, from its `first_index` on.
     RunScripts,
     Done,
 }
@@ -1135,7 +1131,7 @@ impl Task {
         let entry_id = self.entry_id;
         let pkg_id = installer.store.ids(entry_id).pkg_id;
         let pkg_res = installer.resolution(entry_id);
-        let pkgs = installer.lockfile().packages.slice();
+        let pkgs = &installer.lockfile().packages;
         let entries = &installer.store.entries;
         let entry_step = &entries.items_step()[entry_id.get() as usize];
 
@@ -1240,13 +1236,7 @@ impl Task {
                 }
 
                 Step::RunPostInstallAndPrePostPrepare => {
-                    // Written, if at all, by this same Task in `Step::RunPreinstall`.
-                    if let Some(list) = entries.items_scripts()[entry_id.get() as usize].get() {
-                        // SAFETY: single-owner — the slot holds a `*mut List` boxed per entry, and
-                        // each Task is the unique consumer of its own `entry_id`. No other
-                        // `&`/`&mut` to this allocation is live.
-                        let list = unsafe { &mut *list };
-
+                    if let Some(list) = &mut self.scripts {
                         if list.first_index == 0 {
                             for (i, item) in list.items[1..].iter().enumerate() {
                                 if item.is_some() {
@@ -1284,7 +1274,7 @@ impl Task {
             return Ok(false);
         }
 
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_metas = pkgs.items_meta();
         let mut pkg_scripts: package::scripts::Scripts = pkgs.items_scripts()[pkg_id as usize];
         let dep_name = lockfile.str(&lockfile.buffers.dependencies[dep_id as usize].name);
@@ -1343,10 +1333,7 @@ impl Task {
         };
 
         let has_preinstall = list.first_index == 0;
-        // Only this task writes the slot, and nothing reads it until the task returns
-        // `Result::RunScripts`.
-        installer.store.entries.items_scripts()[self.entry_id.get() as usize]
-            .set(Some(bun_core::heap::into_raw(Box::new(list))));
+        self.scripts = Some(Box::new(list));
         Ok(has_preinstall)
     }
 
@@ -1359,7 +1346,7 @@ impl Task {
     ) -> u8 {
         let (manager, lockfile) = (installer.manager(), installer.lockfile());
         let store::Ids { dep_id, pkg_id } = installer.store.ids(entry_id);
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         if !pkgs.items_meta()[pkg_id as usize].has_install_script() {
             return 0;
         }
@@ -1484,7 +1471,7 @@ impl<'a> Installer<'a> {
         }
 
         let string_buf = lockfile.buffers.string_bytes.as_slice();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_name = pkgs.items_name()[pkg_id as usize].slice(string_buf);
         let pkg_name_hash = pkgs.items_name_hash()[pkg_id as usize];
         let pkg_res = &pkgs.items_resolution()[pkg_id as usize];
@@ -1543,30 +1530,33 @@ impl<'a> Installer<'a> {
 
     /// Returns the name of the entry's folder in the cache. It's empty for a tarball whose
     /// integrity isn't known yet.
-    pub(crate) fn cached_folder_name(
+    pub(crate) fn cached_folder_name<'b>(
         &self,
+        buf: &'b mut [u8],
         entry_id: StoreEntryId,
         patch_hash: Option<u64>,
-    ) -> &'static ZStr {
+    ) -> &'b ZStr {
         let manager = self.manager();
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
-            ResolutionTag::Npm => directories::cached_npm_package_folder_name(
+            ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
                 manager,
+                buf,
                 self.pkg_name(entry_id),
                 pkg_res.npm().version,
                 patch_hash,
             ),
             ResolutionTag::Git => {
-                directories::cached_git_folder_name(manager, pkg_res.git(), patch_hash)
+                directories::cached_git_folder_name(manager, buf, pkg_res.git(), patch_hash)
             }
             ResolutionTag::Github => {
-                directories::cached_github_folder_name(manager, pkg_res.github(), patch_hash)
+                directories::cached_github_folder_name(manager, buf, pkg_res.github(), patch_hash)
             }
             ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
                 let pkg_id = self.store.ids(entry_id).pkg_id;
                 directories::cached_tarball_folder_name(
                     manager,
+                    buf,
                     &self.lockfile().packages.items_meta()[pkg_id as usize].integrity,
                     pkg_res,
                     patch_hash,
@@ -1583,8 +1573,7 @@ impl<'a> Installer<'a> {
         let path: &[u8] = self.lockfile().str(self.resolution(entry_id).folder());
         // The folder isn't in the cache, so whether it's on another device is checked for each
         // folder dependency.
-        let folder_dir = sys::open_dir_for_iteration(Fd::cwd(), path)?;
-        let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
+        let folder_dir = sys::Dir::open(path)?;
 
         self.remove_planted_links_in(entry_id, Self::store_path_len())?;
 
@@ -1603,7 +1592,7 @@ impl<'a> Installer<'a> {
             self.append_store_path(&mut dest, entry_id)?;
 
             let mut hardlinker =
-                bun_core::handle_oom(Hardlinker::init(folder_dir, src, dest, skip_dirnames));
+                bun_core::handle_oom(Hardlinker::init(folder_dir.fd(), src, dest, skip_dirnames));
             match hardlinker.link() {
                 Ok(()) => true,
                 Err(err) if needs_copy(&err) => false,
@@ -1622,7 +1611,7 @@ impl<'a> Installer<'a> {
         if !hardlinked {
             // rewind the dir cursor the hardlink walk consumed (Windows restarts the scan itself)
             #[cfg(not(windows))]
-            sys::set_file_offset(folder_dir, 0)?;
+            sys::set_file_offset(folder_dir.fd(), 0)?;
 
             #[cfg(windows)]
             let mut src_path = OsAutoAbsPath::init();
@@ -1639,7 +1628,7 @@ impl<'a> Installer<'a> {
                 // points into a writable WPathBuffer of `cap` elements.
                 let src_path_len = unsafe {
                     bun_sys::windows::GetFinalPathNameByHandleW(
-                        folder_dir.native(),
+                        folder_dir.fd().native(),
                         ptr,
                         u32::try_from(cap).expect("int cast"),
                         0,
@@ -1665,8 +1654,12 @@ impl<'a> Installer<'a> {
             let mut dest = OsAutoPath::init();
             self.append_store_path(&mut dest, entry_id)?;
 
-            let mut file_copier =
-                bun_core::handle_oom(FileCopier::init(folder_dir, src_path, dest, skip_dirnames));
+            let mut file_copier = bun_core::handle_oom(FileCopier::init(
+                folder_dir.fd(),
+                src_path,
+                dest,
+                skip_dirnames,
+            ));
             if let Err(err) = file_copier.copy() {
                 print_link_error(
                     "copy package",
@@ -1697,11 +1690,14 @@ impl<'a> Installer<'a> {
     /// Task thread. True: the entry had no directory before.
     fn link_cached_package(&self, entry_id: StoreEntryId) -> TaskResult<bool> {
         let patch_info = self.package_patch_info(self.store.ids(entry_id).pkg_id)?;
-        let subpath = self.cached_folder_name(entry_id, patch_info.contents_hash());
+        let subpath = AutoRelPath::from(self.cached_folder_name(
+            &mut **paths::path_buffer_pool::get(),
+            entry_id,
+            patch_info.contents_hash(),
+        ))
+        .assume_ok();
         #[cfg(target_os = "macos")]
-        let mut subpath = AutoRelPath::from(subpath).assume_ok();
-        #[cfg(not(target_os = "macos"))]
-        let subpath = AutoRelPath::from(subpath).assume_ok();
+        let mut subpath = subpath;
 
         // SAFETY: idempotent cache-dir initialization (once-init internally). The
         // `&mut PackageManager` does not outlive this statement; no `&PackageManager` is live on
@@ -1799,8 +1795,8 @@ impl<'a> Installer<'a> {
                     }
 
                     InstallMethod::Hardlink => {
-                        let dir = match sys::open_dir_for_iteration(cache_dir, subpath.slice()) {
-                            Ok(fd) => fd,
+                        let dir = match sys::Dir::borrow(&cache_dir).open_at(subpath.slice()) {
+                            Ok(dir) => dir,
                             Err(err) => {
                                 if PackageManager::verbose_install() {
                                     bun_core::pretty_errorln!(
@@ -1812,7 +1808,6 @@ impl<'a> Installer<'a> {
                                 return Err(TaskError::LinkPackage(err));
                             }
                         };
-                        let _dir_guard = sys::CloseOnDrop::new(dir);
 
                         let mut src =
                             OsAutoAbsPath::from_long_path(cache_dir_path.slice()).assume_ok();
@@ -1820,8 +1815,12 @@ impl<'a> Installer<'a> {
                             break 'backend Err(name_too_long(err));
                         }
 
-                        let mut hardlinker =
-                            bun_core::handle_oom(Hardlinker::init(dir, src, dest_subpath, &[]));
+                        let mut hardlinker = bun_core::handle_oom(Hardlinker::init(
+                            dir.fd(),
+                            src,
+                            dest_subpath,
+                            &[],
+                        ));
                         let Err(err) = hardlinker.link() else {
                             break 'backend Ok(());
                         };
@@ -1839,7 +1838,8 @@ impl<'a> Installer<'a> {
                     }
 
                     _ => {
-                        let dir = sys::open_dir_for_iteration(cache_dir, subpath.slice())
+                        let dir = sys::Dir::borrow(&cache_dir)
+                            .open_at(subpath.slice())
                             .inspect_err(|err| {
                                 print_link_error(
                                     "open cache directory for copyfile",
@@ -1849,15 +1849,18 @@ impl<'a> Installer<'a> {
                                 );
                             })
                             .map_err(TaskError::LinkPackage)?;
-                        let _dir_guard = sys::CloseOnDrop::new(dir);
 
                         let mut src = OsAutoAbsPath::from(cache_dir_path.slice()).assume_ok();
                         if let Err(err) = PathLike::append(&mut src, subpath.slice()) {
                             break 'backend Err(err);
                         }
 
-                        let mut file_copier =
-                            bun_core::handle_oom(FileCopier::init(dir, src, dest_subpath, &[]));
+                        let mut file_copier = bun_core::handle_oom(FileCopier::init(
+                            dir.fd(),
+                            src,
+                            dest_subpath,
+                            &[],
+                        ));
                         let Err(err) = file_copier.copy() else {
                             break 'backend Ok(());
                         };
@@ -1988,7 +1991,7 @@ impl<'a> Installer<'a> {
         if !manager.postinstall_optimizer.is_native_binlink_enabled() {
             return None;
         }
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_info = postinstall_optimizer::PkgInfo {
             name_hash: pkgs.items_name_hash()[pkg_id as usize],
             ..postinstall_optimizer::PkgInfo::default()
@@ -2292,7 +2295,7 @@ impl<'a> Installer<'a> {
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
         let entry_deps = store.entries.items_dependencies();
-        let pkgs = lockfile.packages.slice();
+        let pkgs = &lockfile.packages;
         let pkg_bins = pkgs.items_bin();
 
         let mut links = self
@@ -2394,7 +2397,6 @@ impl<'a> Installer<'a> {
         global: bool,
     ) -> crate::Result<()> {
         let lockfile = self.lockfile();
-        let package_name = strings::StringOrTinyString::init(package_name);
 
         let replacement = self
             .maybe_replace_node_modules_path(pkg_id)
@@ -2404,10 +2406,7 @@ impl<'a> Installer<'a> {
                 if let Some(linked) = &self.linked {
                     linked.resolve(&mut path);
                 }
-                Ok::<_, sys::Error>((
-                    path,
-                    strings::StringOrTinyString::init(self.pkg_name(entry_id)),
-                ))
+                Ok::<_, sys::Error>((path, self.pkg_name(entry_id)))
             })
             .transpose()?;
         // A bin link to a replacement package points outside the workspace's `node_modules`. If
@@ -2419,10 +2418,9 @@ impl<'a> Installer<'a> {
             }
             links.is_behind_link.get_or_insert(false);
         }
-        // Aliases `node_modules_path` without a replacement: the Linker field is a raw pointer.
         let (target_node_modules_path, target_package_name) = match &replacement {
-            Some((path, name)) => (core::ptr::from_ref(path), *name),
-            None => (&raw const links.node_modules_path, package_name),
+            Some((path, name)) => (Some(path), *name),
+            None => (None, package_name),
         };
         let mut bin_linker = bin_real::Linker {
             bin: lockfile.packages.items_bin()[pkg_id as usize],
@@ -2435,19 +2433,18 @@ impl<'a> Installer<'a> {
             target_node_modules_path,
             node_modules_path: &mut links.node_modules_path,
             abs_target_buf: &mut *links.abs_target_buf,
-            abs_dest_buf: &mut *links.abs_dest_buf,
             rel_buf: &mut *links.rel_buf,
             is_behind_link: links.is_behind_link,
             err: None,
             skipped_due_to_missing_bin: false,
         };
 
-        bin_linker.link(global);
+        bin_linker.link(global, &mut *links.abs_dest_buf);
 
         if replacement.is_some()
             && (bin_linker.skipped_due_to_missing_bin || bin_linker.err.is_some())
         {
-            bin_linker.target_node_modules_path = bin_linker.node_modules_path;
+            bin_linker.target_node_modules_path = None;
             bin_linker.target_package_name = package_name;
             bin_linker.err = None;
             bin_linker.skipped_due_to_missing_bin = false;
@@ -2455,12 +2452,12 @@ impl<'a> Installer<'a> {
             if self.manager().options.log_level.is_verbose() {
                 bun_core::pretty_errorln!(
                     "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
-                    bstr::BStr::new(package_name.slice()),
-                    bstr::BStr::new(target_package_name.slice()),
+                    bstr::BStr::new(package_name),
+                    bstr::BStr::new(target_package_name),
                 );
             }
 
-            bin_linker.link(global);
+            bin_linker.link(global, &mut *links.abs_dest_buf);
         }
 
         links.is_behind_link = bin_linker.is_behind_link;

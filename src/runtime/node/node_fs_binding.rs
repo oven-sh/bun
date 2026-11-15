@@ -64,10 +64,10 @@ where
 {
     let vm = cx.global().bun_vm();
     run_sync_with::<R, A>(cx, args, |args| {
-        // SAFETY: the live VM owns its `NodeFS`, and `dispatch` never re-enters JS, so nothing else holds it.
-        let node_fs = unsafe { &mut *vm.node_fs().cast::<NodeFS>() };
-        node_fs.vm = Some(vm);
-        NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+        crate::jsc_hooks::with_node_fs(vm, |node_fs| {
+            node_fs.vm = Some(vm);
+            NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+        })
     })
 }
 
@@ -82,11 +82,15 @@ macro_rules! sync_functions {
 }
 
 sync_functions! {
-    exists_sync    => Exists,   args::Exists<'static>,   ret::Exists;
-    lstat_sync     => Lstat,    args::Lstat<'static>,    ret::Lstat;
-    readdir_sync   => Readdir,  args::Readdir<'static>,  ret::Readdir;
-    read_file_sync => ReadFile, args::ReadFile<'static>, ret::ReadFile;
-    stat_sync      => Stat,     args::Stat<'static>,     ret::Stat;
+    append_file_sync => AppendFile, args::AppendFile<'static>, ret::AppendFile;
+    chmod_sync       => Chmod,      args::Chmod<'static>,      ret::Chmod;
+    close_sync       => Close,      args::Close,               ret::Close;
+    exists_sync      => Exists,     args::Exists<'static>,     ret::Exists;
+    fstat_sync       => Fstat,      args::Fstat,               ret::Fstat;
+    lstat_sync       => Lstat,      args::Lstat<'static>,      ret::Lstat;
+    readdir_sync     => Readdir,    args::Readdir<'static>,    ret::Readdir;
+    read_file_sync   => ReadFile,   args::ReadFile<'static>,   ret::ReadFile;
+    stat_sync        => Stat,       args::Stat<'static>,       ret::Stat;
 }
 
 /// Which arm of an async binding was called.
@@ -273,7 +277,7 @@ impl Binding {
             .is_some_and(|graph| graph.owns_directory(rd_args.path.slice()));
         if rd_args.recursive && !is_bunfs {
             return Ok(AsyncReaddirRecursiveTask::create(
-                &cx, rd_args, vm, callback,
+                &cx, &rd_args, vm, callback,
             ));
         }
         Ok(async_::Readdir::create(&cx, self, rd_args, vm, callback))

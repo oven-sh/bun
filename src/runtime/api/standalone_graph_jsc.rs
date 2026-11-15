@@ -10,31 +10,16 @@ use bun_jsc::JSGlobalObject;
 use bun_ptr::RefPtr;
 
 use crate::webcore::Blob;
-use crate::webcore::blob::SizeType;
 use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store};
 use bun_standalone_graph::{File, Graph, is_bun_standalone_file_path};
 
 /// The process-wide template of an embedded file's `Blob`: store, content
 /// type and a shared `name`. `global_this` is null; `file_blob` stamps it per VM.
-fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
+fn template_blob(
+    file: &'static File,
+) -> NonNull<bun_standalone_graph::StandaloneModuleGraph::Blob> {
     *file.cached_blob.get_or_init(|| {
-        // `contents` is a `'static` slice into the embedded executable
-        // section — borrow it directly (no copy) and hand it to a `Bytes`
-        // store with the default allocator. The leaked extra `ref_()` below
-        // pins the refcount ≥ 1 forever, so `Store::deref` never runs and
-        // the (otherwise UB) free of a static slice is unreachable.
-        let contents = file.utf8_contents();
-        // SAFETY: `contents` is `'static` and never freed (see above);
-        // the const-cast is sound because Blob consumers only read via
-        // `shared_view()`.
-        let mut bytes = unsafe {
-            Bytes::from_raw_parts(
-                contents.as_ptr().cast_mut(),
-                contents.len() as SizeType,
-                contents.len() as SizeType,
-                bun_alloc::basic::C_ALLOCATOR,
-            )
-        };
+        let mut bytes = Bytes::init_static(file.utf8_contents());
         bytes.stored_name = file.name.to_vec().into_boxed_slice();
         let mut store = Store {
             data: Data::Bytes(bytes),
@@ -53,9 +38,8 @@ fn template_blob(file: &File) -> NonNull<bun_standalone_graph::StandaloneModuleG
             store.mime_type = mime;
         }
         let store = RefPtr::new(store);
-        // make it never free
-        let _ = store.clone().into_raw();
         blob.size.set(store.size());
+        // Never released, so JS is never given these read-only bytes to write to.
         blob.store.set(Some(store));
         let name = match bun_standalone_graph::Graph::get_ref() {
             Some(graph) => graph.display_name_of(file),
@@ -98,7 +82,7 @@ pub(crate) fn is_asset(blob: &Blob) -> bool {
 }
 
 /// A fresh dupe of the template, owned by `global`'s VM.
-pub(crate) fn file_blob(file: &File, global: &JSGlobalObject) -> Blob {
+pub(crate) fn file_blob(file: &'static File, global: &JSGlobalObject) -> Blob {
     // SAFETY: `template_blob` returns the pointer from `Blob::new`, never
     // freed for the process lifetime; only read here.
     let blob = unsafe { template_blob(file).cast::<Blob>().as_ref() }.dupe_with_content_type(true);

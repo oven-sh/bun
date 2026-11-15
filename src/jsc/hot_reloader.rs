@@ -12,7 +12,8 @@ use bun_paths::strings;
 #[cfg(not(windows))]
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
-use bun_sys::{self, Fd};
+#[cfg(not(windows))]
+use bun_sys::Fd;
 use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
@@ -58,19 +59,18 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn add_file<const COPY_FILE_PATH: bool>(
+    pub fn add_owned_file(
         &mut self,
-        fd: Fd,
+        file: Option<bun_sys::File>,
         file_path: &[u8],
         hash: bun_watcher::HashType,
-        dir_fd: Fd,
         // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
-    ) -> bun_sys::Result<bun_watcher::FdOwnership> {
+    ) -> bun_sys::Result<()> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
-                watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
+                watcher.add_owned_file(file, file_path, hash, package_json)
             }
         }
     }
@@ -594,7 +594,7 @@ where
             let handle = (*core::ptr::addr_of!((*self.reloader).reload_handle))
                 .as_ref()
                 .expect("reload_handle set for a reloader that enqueues");
-            if let crate::vm_handle::Posted::Refused(_) = handle.post(
+            if let crate::vm_handle::Posted::Refused(()) = handle.post_intrusive(
                 crate::LoopKind::Regular,
                 core::ptr::NonNull::from(concurrent),
             ) {
@@ -640,7 +640,7 @@ fn arm_watch_reload_grace_timer() {
         .name("WatchReloadGrace".into())
         .spawn(move || {
             // `force()` clears the terminal through this thread's `Output`
-            // writers; they are zeroed until the thread is configured.
+            // writers, which print nothing until the thread is configured.
             Output::Source::configure_thread_no_js();
             const STEP_MS: u64 = 10;
             // Budget to drain the posted WatchReloadTask; extended once when
@@ -801,12 +801,11 @@ where
         changed_files: &[ChangedFilePath],
         watchlist: &bun_watcher::WatchList,
     ) {
-        let slice = watchlist.slice();
-        let file_paths = slice.items_file_path();
-        let kinds = slice.items_kind();
-        let hashes = slice.items_hash();
-        let parents = slice.items_parent_hash();
-        let file_descriptors = slice.items_fd();
+        let file_paths = watchlist.items_file_path();
+        let kinds = watchlist.items_kind();
+        let hashes = watchlist.items_hash();
+        let parents = watchlist.items_parent_hash();
+        let file_descriptors = watchlist.items_fd();
         // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
         // `self` can be reborrowed inside the loop body for tombstone access,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`

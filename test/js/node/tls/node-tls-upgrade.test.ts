@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { spawn } from "child_process";
 import { once } from "events";
 import { bunEnv, bunExe, tls as certs } from "harness";
@@ -453,4 +453,86 @@ test("_parent is the wrapped net.Socket", async () => {
   } finally {
     closeAll(server, sockets);
   }
+});
+
+async function run(script: string) {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const net = require("net"), tls = require("tls"), { Duplex } = require("stream"); ${script}`,
+    ],
+    env: { ...bunEnv, CERTS: JSON.stringify(certs) },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+describe.concurrent("the write() of the Duplex under a TLS socket", () => {
+  // "x" waits for the handshake in the handle. onWrite() runs while TLS hands it to the Duplex.
+  const withParkedWrite = (script: string) => `
+    const server = tls.createServer(JSON.parse(process.env.CERTS), peer => {
+      let got = "";
+      peer.on("data", data => (got += data)).on("error", () => {});
+      peer.on("close", () => (console.log("server got", got), server.close()));
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const raw = net.connect(server.address().port, "127.0.0.1");
+      const duplex = new Duplex({ read() {}, final: callback => raw.end(callback) });
+      let onWrite;
+      duplex.write = chunk => {
+        raw.write(chunk);
+        const callback = onWrite;
+        onWrite = undefined;
+        callback?.();
+        return true;
+      };
+      raw.on("data", data => duplex.push(data)).on("end", () => duplex.push(null));
+      const socket = tls.connect({ socket: duplex, rejectUnauthorized: false });
+      socket.write("x", () => socket.end());
+      ${script}
+    });`;
+
+  test("can close the socket while what was parked is written", async () => {
+    const result = await run(
+      withParkedWrite(`socket.on("secureConnect", () => {
+        onWrite = () => socket._handle.terminate();
+        socket._write("y", "utf8", () => {});
+        raw.end();
+      });`),
+    );
+    expect(result).toEqual({ stdout: "server got xy\n", stderr: "", exitCode: 0 });
+  });
+
+  test("can emit 'drain' while what was parked is written", async () => {
+    const result = await run(
+      withParkedWrite(`socket.on("secureConnect", () => (onWrite = () => duplex.emit("drain")));`),
+    );
+    expect(result).toEqual({ stdout: "server got x\n", stderr: "", exitCode: 0 });
+  });
+
+  test("can detach the buffer that is about to be parked", async () => {
+    const result = await run(`
+      const buffer = new Uint8Array(1 << 16);
+      const duplex = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          if (buffer.length) buffer.buffer.transfer(8);
+          callback();
+        },
+      });
+      // The session is decoded after TLS has started and before it has sent the ClientHello.
+      const from = Buffer.from;
+      let socket;
+      Buffer.from = function (value) {
+        if (value !== "session" || !socket) return from.apply(this, arguments);
+        socket._write(buffer, "buffer", () => {});
+        console.log(buffer.length, socket._handle.bytesWritten);
+        process.exit(0);
+      };
+      socket = tls.connect({ socket: duplex, session: "session" });`);
+    expect(result).toEqual({ stdout: "0 0\n", stderr: "", exitCode: 0 });
+  });
 });

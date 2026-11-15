@@ -7619,6 +7619,15 @@ it("fs.writeFile (callback) keeps the source buffer attached while the write is 
   expect(readFileSync(file, "latin1")).toBe("FFFFFFFF");
 });
 
+it("fs.promises.readdir({ recursive: true }) is done with a buffer path argument when it returns", async () => {
+  using dir = tempDir("fs-readdir-path-unpinned", { "a/b.txt": "" });
+  const path = new TextEncoder().encode(String(dir)).slice();
+  const promise = fs.promises.readdir(path as any, { recursive: true });
+  new Uint8Array(path.buffer.transfer()).fill(0);
+  expect(path.buffer.detached).toBe(true);
+  expect((await promise).sort()).toEqual(["a", join("a", "b.txt")]);
+});
+
 it("fs.promises.writeFile keeps a buffer path argument attached while options are read", async () => {
   using dir = tempDir("fs-writefile-path-pin", {});
   const file = join(String(dir), "out.txt");

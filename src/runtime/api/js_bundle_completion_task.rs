@@ -1437,11 +1437,6 @@ impl CompletionStruct for JSBundleCompletionTask {
             );
         }
 
-        // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
-        // process-lifetime, concurrently read by worker threads). Do NOT
-        // materialize `&mut` from it — its provenance is `&'static`, so even a
-        // never-written-through `&mut` is UB under Stacked Borrows. Keep it raw
-        // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
 
         if self.compiles_ahead_of_time() {

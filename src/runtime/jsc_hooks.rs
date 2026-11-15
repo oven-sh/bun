@@ -4840,9 +4840,10 @@ fn write_next_to_libraries(addon_path: &[u8]) -> Option<Vec<u8>> {
             .concat(),
         );
         let is_complete = {
-            let file = bun_sys::open(&scratch, O::WRONLY | O::CREAT | O::EXCL, 0o600).ok()?;
-            let _close = bun_sys::CloseOnDrop::new(file);
-            bun_sys::File::borrow(&file).write_all(contents).is_ok()
+            let file = bun_sys::open(&scratch, O::WRONLY | O::CREAT | O::EXCL, 0o600)
+                .map(bun_sys::CloseOnDrop::new)
+                .ok()?;
+            file.write_all(contents).is_ok()
         };
         if !is_complete || bun_sys::rename(&scratch, &to).is_err() {
             let _ = bun_sys::unlink(&scratch);

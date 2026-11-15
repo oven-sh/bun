@@ -1,3 +1,4 @@
+import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isPosix, tempDir } from "harness";
 import * as fs from "node:fs";
@@ -49,6 +50,32 @@ describe("IOWriter file output redirection", () => {
 
   describe("special file types", () => {
     TestBuilder.command`echo "disappear" > /dev/null`.exitCode(0).stdout("").runAsTest("write to /dev/null");
+
+    test.concurrent.skipIf(!isPosix)("a FIFO's reader sees the end once the command closes its stdout", async () => {
+      using dir = tempDir("shell-fifo-eof", {});
+      const [out, release] = [join(String(dir), "out"), join(String(dir), "release")];
+      await $`${Bun.which("mkfifo")!} ${out} ${release}`;
+      const reader = fs.openSync(out, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+      try {
+        const shell = $`sh -c ${'echo hi; exec >&-; read line < "$0"'} ${release} > ${out}`.then(r => r.exitCode);
+        // Opens once the command has the other end, which is after it closed its stdout.
+        const writer = await fs.promises.open(release, "w");
+        const read = () => {
+          try {
+            return fs.readSync(reader, Buffer.alloc(16));
+          } catch (e: any) {
+            return e.code;
+          }
+        };
+        const reads = [read(), read()];
+        await writer.write("\n");
+        await writer.close();
+        expect(reads).toEqual([3, 0]);
+        expect(await shell).toBe(0);
+      } finally {
+        fs.closeSync(reader);
+      }
+    });
 
     // A FIFO opened by path for `>` must take the pollable path; once the pipe
     // buffer fills, write(2) returns EAGAIN and the writer has to poll for

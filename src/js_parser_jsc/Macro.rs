@@ -1,7 +1,6 @@
 use bun_collections::VecExt;
 use core::cell::Cell;
 use core::ffi::c_void;
-use core::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_ast::DisableStoreReset;
@@ -230,21 +229,34 @@ impl MacroContext {
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
         let bump: &bun_alloc::Arena = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        let ret = VirtualMachine::get().run_with_api_lock(|| {
-            Runner::run(
-                macro_,
-                log,
-                bump,
-                function_name,
-                caller,
-                source,
-                hash,
-                javascript_object,
-            )
+        let ret = with_vm_logging_to(vm, log, || {
+            VirtualMachine::get().run_with_api_lock(|| {
+                Runner::run(
+                    macro_,
+                    log,
+                    bump,
+                    function_name,
+                    caller,
+                    source,
+                    hash,
+                    javascript_object,
+                )
+            })
         });
         Ok(ret?)
         // this.macros.getOrPut(key: K)
     }
+}
+
+/// Runs `f`, and moves what `vm` logs meanwhile to `log`.
+fn with_vm_logging_to<R>(vm: &VirtualMachine, log: &Log, f: impl FnOnce() -> R) -> R {
+    let mut logged = Log::init();
+    logged.level.set(vm.log.level.get());
+    let redirect = vm.log.redirect(&mut logged);
+    let result = f();
+    drop(redirect);
+    logged.append_to(log);
+    result
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -413,23 +425,27 @@ impl Macro {
 
             let vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
-                log: Some(NonNull::from(log)),
+                own_log: Log {
+                    level: log.level.clone(),
+                    ..Default::default()
+                },
                 owned_env_loader,
                 is_main_thread: false,
                 ..Default::default()
             })?;
+            vm.log.append_to(log);
             (vm, true)
         };
 
         // Covers `configure_defines` and the macro module's top-level code.
         let _init_guard = MacroModeGuard::new(vm);
         vm.event_loop().ensure_waker();
-        if is_new_vm {
-            vm.transpiler.with_mut(|t| t.configure_defines())?;
-        }
-
-        let loaded_result =
-            vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
+        let loaded_result = with_vm_logging_to(vm, log, || -> crate::Result<_> {
+            if is_new_vm {
+                vm.transpiler.with_mut(|t| t.configure_defines())?;
+            }
+            Ok(vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?)
+        })?;
 
         // SAFETY: `loaded_result` is a live heap-allocated `JSInternalPromise`
         // returned by `loadAndEvaluateModule`.

@@ -242,7 +242,7 @@ fn resolve_target(
         || (cfg!(windows) && strings::has_prefix(argument, b"node_modules\\"));
     let (pkg, folder, other_folders) = if is_path {
         let folder = path_argument_from_root(lockfile, workspace_package_id, argument);
-        let (name, version) = read_name_and_version(manager, &folder);
+        let (name, version) = read_name_and_version(manager.log(), &folder);
         let pkg = match package_for_folder(lockfile, string_hash(&name), &version) {
             Ok(pkg) => pkg,
             Err(err) => folder_lookup_error(err, command, &folder, &name, &version),
@@ -329,7 +329,7 @@ fn path_argument_from_root(
     argument.to_vec()
 }
 
-fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
+fn read_name_and_version(log: &bun_ast::Log, folder: &[u8]) -> (Vec<u8>, Vec<u8>) {
     // `folder` is user input of any length, so the join can spill to the heap. A path that is too
     // long then simply fails to open.
     let mut spill = Vec::new();
@@ -349,7 +349,6 @@ fn read_name_and_version(manager: &PackageManager, folder: &[u8]) -> (Vec<u8>, V
         };
 
     initialize_store();
-    let log = manager.log();
     let parsed = match JSON::ParsedJson::parse_package_json(&package_json_source, log) {
         Ok(p) => p,
         Err(err) => {

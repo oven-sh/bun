@@ -123,7 +123,13 @@
   "src/runtime/napi/napi_body.rs": {
     "WorkPool::schedule*": 1,
     "intrusive_work_task!": [
-      "napi_async_work"
+      "PoolTrip"
+    ],
+    "unsafe impl Send": [
+      "AddonData"
+    ],
+    "unsafe impl Sync": [
+      "AddonData"
     ]
   },
   "src/runtime/node/fs_events.rs": {

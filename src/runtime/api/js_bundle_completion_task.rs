@@ -1426,7 +1426,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
-        // it outlives the BACKREF in `linker.loop`.
+        // it outlives the BACKREF in `BundleV2.loop`.
         let any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(NonNull::from(&any_loop));
         if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {

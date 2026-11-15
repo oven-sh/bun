@@ -599,14 +599,14 @@ impl Expect {
     }
 
     pub(crate) fn is_asymmetric_matcher(value: JSValue) -> bool {
-        if ExpectCustomAsymmetricMatcher::from_js(value).is_some() { return true; }
-        if ExpectAny::from_js(value).is_some() { return true; }
-        if ExpectAnything::from_js(value).is_some() { return true; }
-        if ExpectStringMatching::from_js(value).is_some() { return true; }
-        if ExpectCloseTo::from_js(value).is_some() { return true; }
-        if ExpectObjectContaining::from_js(value).is_some() { return true; }
-        if ExpectStringContaining::from_js(value).is_some() { return true; }
-        if ExpectArrayContaining::from_js(value).is_some() { return true; }
+        if ExpectCustomAsymmetricMatcher::from_js(&value).is_some() { return true; }
+        if ExpectAny::from_js(&value).is_some() { return true; }
+        if ExpectAnything::from_js(&value).is_some() { return true; }
+        if ExpectStringMatching::from_js(&value).is_some() { return true; }
+        if ExpectCloseTo::from_js(&value).is_some() { return true; }
+        if ExpectObjectContaining::from_js(&value).is_some() { return true; }
+        if ExpectStringContaining::from_js(&value).is_some() { return true; }
+        if ExpectArrayContaining::from_js(&value).is_some() { return true; }
         false
     }
 

@@ -1663,7 +1663,7 @@ fn console_print_runtime_object_inner<const C: bool>(
         let result = archive.write_format::<_, _, C>(formatter, &mut w);
         return rethrow_pending(global, result.is_err());
     }
-    if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
+    if bun_jsc::FetchHeaders::cast_(&value, formatter.global_this.vm()).is_some() {
         if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
             formatter.add_for_new_line("Headers ".len());
             let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());

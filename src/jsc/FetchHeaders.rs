@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use crate::{DOMWrapped, JSGlobalObject, JSValue, JsResult, VM, host_fn};
+use crate::{JSGlobalObject, JSValue, JsResult, VM, WrapperGuard, host_fn};
 use bun_core::ffi::FfiSlice;
 use bun_core::{EncodedSlice, String as BunString, StringPointer};
 use bun_http::picohttp;
@@ -121,22 +121,22 @@ impl HeadersRef {
 }
 
 /// A `headers` option: the caller's `Headers` object, or what another value was converted to.
-pub enum HeadersInit {
-    Object(DOMWrapped<FetchHeaders>),
+pub enum HeadersInit<'a> {
+    Object(WrapperGuard<'a, FetchHeaders>),
     Created(HeadersRef),
 }
 
-impl HeadersInit {
+impl<'a> HeadersInit<'a> {
     /// `None` if `value` is not a `Headers` object and converts to no header.
-    pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+    pub fn from_js(global: &JSGlobalObject, value: &'a JSValue) -> JsResult<Option<Self>> {
         match FetchHeaders::cast_(value, global.vm()) {
             Some(headers) => Ok(Some(Self::Object(headers))),
-            None => Ok(HeadersRef::create_from_js(global, value)?.map(Self::Created)),
+            None => Ok(HeadersRef::create_from_js(global, *value)?.map(Self::Created)),
         }
     }
 }
 
-impl core::ops::Deref for HeadersInit {
+impl core::ops::Deref for HeadersInit<'_> {
     type Target = FetchHeaders;
     fn deref(&self) -> &FetchHeaders {
         match self {
@@ -211,9 +211,9 @@ impl FetchHeaders {
         WebCore__FetchHeaders__fastRemove_(self, header)
     }
 
-    pub fn cast_(value: JSValue, vm: &VM) -> Option<DOMWrapped<FetchHeaders>> {
+    pub fn cast_<'a>(value: &'a JSValue, vm: &VM) -> Option<WrapperGuard<'a, FetchHeaders>> {
         // SAFETY: a `JSFetchHeaders` holds a ref on what it wraps.
-        unsafe { DOMWrapped::new(value, WebCore__FetchHeaders__cast_(value, vm)) }
+        unsafe { WrapperGuard::new(value, WebCore__FetchHeaders__cast_(*value, vm)) }
     }
 
     pub fn to_js(&self, global_this: &JSGlobalObject) -> JSValue {

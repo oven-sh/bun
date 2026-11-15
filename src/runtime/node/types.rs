@@ -153,9 +153,6 @@ impl BlobOrStringOrBuffer {
     ) -> JsResult<Option<BlobOrStringOrBuffer>> {
         match value.js_type() {
             jsc::JSType::DOMWrapper => {
-                // `as_class_ref` is the safe shared-borrow downcast (centralised
-                // deref proof in `JSValue`); the JS wrapper roots the payload
-                // while `value` is on the stack.
                 if let Some(blob) = value.as_class_ref::<Blob>() {
                     return Ok(Some(Self::Blob(Box::new(blob.dupe()))));
                 }
@@ -1063,7 +1060,7 @@ impl PathLikeExt for PathLike<'_> {
                 from_string(str)?
             }
             _ => {
-                if let Some(domurl) = jsc::DOMURL::cast(arg) {
+                if let Some(domurl) = jsc::DOMURL::cast(&arg) {
                     use jsc::dom_url::ToFileSystemPathError;
                     let str = match domurl.file_system_path() {
                         Ok(s) => s,

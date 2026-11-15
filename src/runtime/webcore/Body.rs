@@ -18,6 +18,7 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
 use bun_core::{Utf8Bytes, WTFString, WTFStringImplExt as _};
 use bun_jsc::StringJsc as _;
+use bun_jsc::WrapperGuard;
 use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_ptr::BackRef;
@@ -525,15 +526,15 @@ impl From<AnyBlob> for Value {
 }
 
 impl Body {
-    pub(crate) fn from_request_or_response(value: &JSValue) -> Option<&Body> {
+    pub(crate) fn from_request_or_response(value: &JSValue) -> Option<WrapperGuard<'_, Body>> {
         if value.is_empty_or_undefined_or_null() {
             return None;
         }
         if let Some(req) = value.as_class_ref::<crate::webcore::Request>() {
-            return Some(req.body());
+            return Some(WrapperGuard::map(req, |req| req.body()));
         }
         if let Some(res) = value.as_class_ref::<crate::webcore::Response>() {
-            return Some(res.body());
+            return Some(WrapperGuard::map(res, |res| res.body()));
         }
         None
     }
@@ -805,22 +806,18 @@ impl Value {
             }
         }
 
-        if let Some(blob) =
-            DOMFormData::with_wrapped(value, |form| Blob::from_dom_form_data(global_this, form))
-        {
-            return Ok(Value::Blob(blob));
+        if let Some(form) = DOMFormData::from_js(&value) {
+            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, &form)));
         }
 
-        if let Some(blob) = URLSearchParams::with_wrapped(value, |params| {
-            Blob::from_url_search_params(global_this, params)
-        }) {
-            return Ok(Value::Blob(blob));
+        if let Some(params) = URLSearchParams::from_js(&value) {
+            return Ok(Value::Blob(Blob::from_url_search_params(
+                global_this,
+                &params,
+            )));
         }
 
         if js_type == jsc::JSType::DOMWrapper {
-            // `as_class_ref` is the safe shared-borrow downcast (one audited
-            // unsafe in `JSValue`); `dupe_with_content_type` / `encode_for_body`
-            // both take `&self`.
             if let Some(blob) = value.as_class_ref::<Blob>() {
                 return Ok(Value::Blob(
                     // We must preserve "type" so that DOMFormData and the "type" field are preserved.

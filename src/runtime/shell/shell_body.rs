@@ -374,7 +374,10 @@ pub(crate) fn handle_template_value(
             )));
         }
 
-        if let Some(_req) = template_value.as_::<crate::webcore::Response>() {
+        if template_value
+            .as_class_ref::<crate::webcore::Response>()
+            .is_some()
+        {
             let idx = out_jsobjs.size();
             out_jsobjs.append(template_value);
             let mut cursor = std::io::Cursor::new(&mut jsobjref_buf[..]);

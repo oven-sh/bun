@@ -8484,7 +8484,7 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn watch(&mut self, args: &args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
+    pub(crate) fn watch(&mut self, args: args::Watch<'_>, _: Flavor) -> Maybe<ret::Watch> {
         args.create_fs_watcher()
     }
 

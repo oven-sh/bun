@@ -2438,6 +2438,8 @@ declare module "bun:test" {
      * - If expected is a `string` or `RegExp`, it checks the `message` property.
      * - If expected is an `Error` object, it checks the `name` and `message` properties.
      * - If expected is an `Error` constructor, it checks the class of the `Error`.
+     * - If expected is an asymmetric matcher, such as `expect.objectContaining()` or an object
+     *   with an `asymmetricMatch()` method, it checks the thrown value with the matcher.
      * - If expected is not provided, it checks that anything was thrown.
      *
      * @example
@@ -2447,9 +2449,10 @@ declare module "bun:test" {
      * expect(fail).toThrow("Oops!");
      * expect(fail).toThrow(/oops/i);
      * expect(fail).toThrow(Error);
+     * expect(fail).toThrow(expect.objectContaining({ message: "Oops!" }));
      * expect(fail).toThrow();
      *
-     * @param expected the expected error, error message, or error pattern
+     * @param expected the expected error, error message, error pattern, or asymmetric matcher
      */
     toThrow(expected?: unknown): R;
 
@@ -2459,6 +2462,8 @@ declare module "bun:test" {
      * - If expected is a `string` or `RegExp`, it checks the `message` property.
      * - If expected is an `Error` object, it checks the `name` and `message` properties.
      * - If expected is an `Error` constructor, it checks the class of the `Error`.
+     * - If expected is an asymmetric matcher, such as `expect.objectContaining()` or an object
+     *   with an `asymmetricMatch()` method, it checks the thrown value with the matcher.
      * - If expected is not provided, it checks that anything was thrown.
      *
      * @example
@@ -2468,9 +2473,10 @@ declare module "bun:test" {
      * expect(fail).toThrowError("Oops!");
      * expect(fail).toThrowError(/oops/i);
      * expect(fail).toThrowError(Error);
+     * expect(fail).toThrowError(expect.objectContaining({ message: "Oops!" }));
      * expect(fail).toThrowError();
      *
-     * @param expected the expected error, error message, or error pattern
+     * @param expected the expected error, error message, error pattern, or asymmetric matcher
      * @alias toThrow
      */
     toThrowError(expected?: unknown): R;

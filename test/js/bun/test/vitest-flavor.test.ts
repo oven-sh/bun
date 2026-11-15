@@ -2802,6 +2802,51 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  // Vitest: `thrown && matcher.asymmetricMatch(thrown)`. "bun:test" asks the matcher about every thrown value and every
+  // rejection, where Jest asks about a rejection only if it is an error.
+  test("toThrow() with an asymmetric matcher, when the thrown value is falsy", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        const outcome = async fn => { try { await fn(); return "passes"; } catch { return "fails"; } };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, async () => {
+            for (const thrown of [0, "", false, NaN, 0n, null, undefined, 1, "text", {}]) {
+              let calls = 0;
+              const always = { asymmetricMatch() { calls++; return true; } };
+              const throws = () => { throw thrown; };
+              console.log([
+                name, typeof thrown, String(thrown), "|",
+                await outcome(() => expect(throws).toThrow(always)),
+                await outcome(() => expect(throws).not.toThrow(always)),
+                await outcome(() => expect(Promise.reject(thrown)).rejects.toThrow(always)),
+                await outcome(() => expect(Promise.reject(thrown)).rejects.not.toThrow(always)),
+                calls, "|",
+                await outcome(() => expect(throws).toThrow(expect.anything())),
+                await outcome(() => expect(throws).not.toThrow(expect.anything())),
+              ].join(" "));
+            }
+          });
+        }
+      `,
+    });
+    const falsy = ["number 0", "string ", "boolean false", "number NaN", "bigint 0"];
+    const nullish = ["object null", "undefined undefined"];
+    const truthy = ["number 1", "string text", "object [object Object]"];
+    const asked = "| passes fails passes fails 4 |";
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...falsy.map(thrown => `bun ${thrown} ${asked} passes fails`),
+        ...nullish.map(thrown => `bun ${thrown} ${asked} fails passes`),
+        ...truthy.map(thrown => `bun ${thrown} ${asked} passes fails`),
+        ...[...falsy, ...nullish].map(thrown => `vitest ${thrown} | fails passes fails passes 0 | fails passes`),
+        ...truthy.map(thrown => `vitest ${thrown} ${asked} passes fails`),
+      ],
+      exitCode: 0,
+    });
+  });
+
   test(".not read more than once", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

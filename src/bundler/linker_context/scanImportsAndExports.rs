@@ -531,8 +531,8 @@ pub(crate) fn scan_imports_and_exports(
                         .graph
                         .symbols
                         .follow(this.graph.ast.items_module_ref()[source_index]);
-                    this.graph.symbols.get(exports_ref).unwrap().kind = SymbolKind::Unbound;
-                    this.graph.symbols.get(module_ref).unwrap().kind = SymbolKind::Unbound;
+                    this.graph.symbols.get_mut(exports_ref).unwrap().kind = SymbolKind::Unbound;
+                    this.graph.symbols.get_mut(module_ref).unwrap().kind = SymbolKind::Unbound;
                 } else if flag.force_include_exports_for_entry_point
                     || export_kind != ExportsKind::Cjs
                 {
@@ -775,7 +775,7 @@ pub(crate) fn scan_imports_and_exports(
                     builder.append(ident);
                     let end = builder.len;
                     let original_name = &builder.allocated_slice()[start..end];
-                    this.graph.symbols.get(r#ref).unwrap().original_name =
+                    this.graph.symbols.get_mut(r#ref).unwrap().original_name =
                         bun_ast::StoreStr::new(original_name);
                 }
             }
@@ -801,12 +801,12 @@ pub(crate) fn scan_imports_and_exports(
                 let module_name = bun_ast::StoreStr::new(&builder.allocated_slice()[start..end]);
 
                 if exports_ref.is_valid() {
-                    if let Some(s) = this.graph.symbols.get(exports_ref) {
+                    if let Some(s) = this.graph.symbols.get_mut(exports_ref) {
                         s.original_name = exports_name;
                     }
                 }
                 if module_ref.is_valid() {
-                    if let Some(s) = this.graph.symbols.get(module_ref) {
+                    if let Some(s) = this.graph.symbols.get_mut(module_ref) {
                         s.original_name = module_name;
                     }
                 }

@@ -553,7 +553,7 @@ impl Map {
             .must_not_be_renamed()
             .then_some(old_symbol.original_name);
 
-        let new_symbol = self.get(new).unwrap();
+        let new_symbol = self.get_mut(new).unwrap();
         new_symbol.use_count_estimate += use_count_estimate;
         if let Some(original_name) = pinned_name {
             new_symbol.original_name = original_name;
@@ -561,21 +561,6 @@ impl Map {
         }
         // TODO: MustStartWithCapitalLetterForJSX
         new
-    }
-
-    /// [`Map::get_const`] for writing.
-    pub fn get(&mut self, ref_: Ref) -> Option<&mut Symbol> {
-        if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
-            return None;
-        }
-        let src = ref_.source_index() as usize;
-        let idx = ref_.inner_index() as usize;
-        // SAFETY: both indices are in-bounds, as in `get_const`.
-        Some(unsafe {
-            self.symbols_for_source
-                .get_unchecked_mut(src)
-                .get_unchecked_mut(idx)
-        })
     }
 
     pub fn get_const(&self, ref_: Ref) -> Option<&Symbol> {
@@ -618,7 +603,6 @@ impl Map {
         }
     }
 
-    /// [`Map::get`] for a `Ref` that may be out of bounds.
     pub fn get_mut(&mut self, ref_: Ref) -> Option<&mut Symbol> {
         if Ref::is_source_index_null(ref_.source_index()) || ref_.is_source_contents_slice() {
             return None;

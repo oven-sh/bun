@@ -2884,7 +2884,7 @@ impl<'m, 'a> ImportMatcher<'m, 'a> {
     }
 
     fn symbol_mut(&mut self, ref_: Ref) -> &mut bun_ast::Symbol {
-        let symbol = self.symbols.get(ref_);
+        let symbol = self.symbols.get_mut(ref_);
         symbol.expect("infallible: ref in symbol table")
     }
 

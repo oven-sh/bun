@@ -204,15 +204,11 @@ impl CopyFile {
 
     fn open_destination(&mut self, path_buf: &mut PathBuffer) -> Option<File> {
         loop {
-            // Not `slice_z`: `dest` must not borrow `self`.
-            let dest_len = {
-                let s = self.destination_file_store.pathlike.path().slice();
-                let n = s.len().min(path_buf.len() - 1);
-                path_buf[..n].copy_from_slice(&s[..n]);
-                path_buf[n] = 0;
-                n
-            };
-            let dest: &bun_core::ZStr = bun_core::ZStr::from_buf(&path_buf[..], dest_len);
+            let dest = self
+                .destination_file_store
+                .pathlike
+                .path()
+                .slice_z(path_buf);
             let mode = self.destination_mode.unwrap_or(node_fs::DEFAULT_PERMISSION);
             let errno = match File::open(dest, OPEN_DESTINATION_FLAGS, mode) {
                 Ok(file) => return Some(file),
@@ -481,19 +477,11 @@ impl CopyFile {
         let mut dest_buf = bun_paths::path_buffer_pool::get();
 
         loop {
-            // reshaped for borrowck — `slice_z(&'a self, &'a mut buf)`
-            // ties the returned `&ZStr` to `self`, which would conflict with
-            // the `&mut self` borrow `mkdir_if_not_exists` needs below. The
-            // bytes live in `dest_buf`, so capture the length and re-borrow
-            // from the buffer (not `self`) after dropping the first borrow.
-            let dest_len = self
+            let dest = self
                 .destination_file_store
                 .pathlike
                 .path()
-                .slice_z(&mut dest_buf)
-                .len();
-            // SAFETY: `slice_z` wrote `dest_len` bytes + NUL into `dest_buf`.
-            let dest = bun_core::ZStr::from_buf(&dest_buf[..], dest_len);
+                .slice_z(&mut dest_buf);
             match bun_sys::clonefile(
                 self.source_file_store
                     .pathlike
@@ -1341,11 +1329,7 @@ impl CopyFileWindows {
         };
         let old_path: &bun_core::ZStr = 'brk: {
             match &source_file_store.pathlike {
-                PathOrFileDescriptor::Path(path) => {
-                    // In the buffer: it is read again after `self` is given up.
-                    let len = path.slice_z_with_force_copy::<true>(&mut pathbuf2).len();
-                    break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
-                }
+                PathOrFileDescriptor::Path(path) => break 'brk path.slice_z(&mut pathbuf2),
                 PathOrFileDescriptor::Fd(fd) => {
                     let fd = *fd;
                     match bun_sys::File::borrow(&fd).kind() {

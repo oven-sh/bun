@@ -24,7 +24,7 @@ pub(crate) fn print_report_log(mut log: bun_ast::Log) {
             if let Some(location) = data.location.as_mut()
                 && bun_paths::is_absolute(&location.file)
             {
-                let shown = bun_paths::resolve_path::relative(directory, &location.file);
+                let shown = bun_paths::resolve_path::relative_vec(directory, &location.file);
                 location.file = Box::from(shown);
             }
         };

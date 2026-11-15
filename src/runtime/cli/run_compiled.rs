@@ -128,11 +128,10 @@ fn make_stand_in_for_globals_of_vitest() -> Box<[u8]> {
     }
     text.extend_from_slice(b"}\n");
     // The name of the module. No file is there.
-    let path = bun_paths::resolve_path::join_abs_string::<bun_paths::platform::Auto>(
+    let path = bun_paths::resolve_path::join_abs_string_vec::<bun_paths::platform::Auto>(
         bun_resolver::fs::FileSystem::get().top_level_dir(),
         &[b"node_modules/.cache/bun-test-globals-of-vitest.ts"],
-    )
-    .to_vec();
+    );
     set_stand_in(&path, &text);
     path.into_boxed_slice()
 }
@@ -486,10 +485,10 @@ impl WatchedFiles {
     }
 
     fn add(&self, path: &[u8]) {
-        use bun_paths::{platform::Auto, resolve_path::join_abs_string};
-        let path = join_abs_string::<Auto>(&self.working_directory, &[path]);
-        let _ = self.watcher.add_file_by_path_slow(path);
-        self.paths.lock().push(path.to_vec());
+        use bun_paths::{platform::Auto, resolve_path::join_abs_string_vec};
+        let path = join_abs_string_vec::<Auto>(&self.working_directory, &[path]);
+        let _ = self.watcher.add_file_by_path_slow(&path);
+        self.paths.lock().push(path);
     }
 }
 
@@ -1140,7 +1139,7 @@ pub(crate) const PROGRAM_FILE_FLAG: &[u8] = b"--aot-program-file=";
 #[cold]
 #[inline(never)]
 pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<&'static Graph>> {
-    use bun_paths::resolve_path::{join_abs_string, platform};
+    use bun_paths::resolve_path::{join_abs_string_vec, platform};
     use bun_resolver::compiled_program::{FILE_IN_PLACE_OF_EXECUTABLE, FileInPlaceOfExecutable};
 
     if bun_core::getenv_z(bun_core::zstr!("BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING")).is_none() {
@@ -1185,7 +1184,7 @@ pub(crate) fn load_program_file() -> bun_standalone_graph::Result<Option<&'stati
     }
 
     let file = match bun_sys::getcwd_alloc() {
-        Ok(cwd) => join_abs_string::<platform::Auto>(cwd.as_bytes(), &[path]).to_vec(),
+        Ok(cwd) => join_abs_string_vec::<platform::Auto>(cwd.as_bytes(), &[path]),
         Err(_) => path.to_vec(),
     };
     argv[0] = Box::leak(Box::new(ZBox::from_bytes(typed.unwrap_or(&file)))).as_zstr();
@@ -1339,9 +1338,10 @@ pub(crate) fn list_refused_changes() {
     }
 }
 
-pub(crate) fn will_run_test_file(title: &[u8]) {
+pub(crate) fn will_run_test_file(path: &[u8]) {
     if runs_compiled_code() {
-        *RUNNING_TEST_FILE.lock() = title.to_vec();
+        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
+        *RUNNING_TEST_FILE.lock() = bun_paths::resolve_path::relative_vec(top_level_dir, path);
         NEWEST_REFUSAL_OF_RUNNING_TEST_FILE.lock().clear();
     }
 }
@@ -1550,7 +1550,9 @@ pub(crate) fn find_why_askers_are_of_product(refusals: &[Vec<u8>]) -> Vec<(Vec<u
 
 fn path_below_project(path: &bun_core::String) -> Vec<u8> {
     let path = path.to_owned_slice();
-    let shown = bun_paths::resolve_path::relative(
+    let mut buf = bun_paths::resolve_path::SpillBuf::default();
+    let shown = bun_paths::resolve_path::relative_spill(
+        &mut buf,
         bun_resolver::fs::FileSystem::get().top_level_dir(),
         &path,
     );

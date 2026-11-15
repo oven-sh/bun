@@ -151,9 +151,11 @@ impl FileSystemRouter {
                             }
                         }
                         let abs_parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                        // `abs()` writes into a thread-local buffer; copy out
-                        // before recursing (recursion overwrites it).
-                        let full_path = vm.fs().abs(&abs_parts).to_vec();
+                        let full_path = path::resolve_path::join_abs_string_vec::<
+                            path::platform::Loose,
+                        >(
+                            vm.fs().top_level_dir(), &abs_parts
+                        );
                         let _ = vm.transpiler.with_mut(|t| {
                             t.resolver.bust_dir_cache(
                                 strings::paths::without_trailing_slash_windows_path(&full_path),

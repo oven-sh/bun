@@ -212,7 +212,7 @@ pub(crate) struct File {
 #[optimize(size)]
 fn snapshot_file_path(test_file: TestFile, buf: &mut [u8]) -> Option<(&'static [u8], usize, usize)> {
     let name = bun_paths::fs::PathName::init(test_file.path);
-    let dir_path = name.dir_with_trailing_slash();
+    let dir_path = name.dir_with_trailing_slash(test_file.path);
     let mut pos = 0usize;
     for part in [dir_path, Snapshots::SNAPSHOTS_DIR_NAME] {
         buf.get_mut(pos..pos + part.len())?.copy_from_slice(part);

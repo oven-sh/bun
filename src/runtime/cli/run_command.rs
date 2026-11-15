@@ -3067,11 +3067,11 @@ impl RunCommand {
             let cwd = bun_core::getcwd_or_exe_dir(&mut cwd_buf);
             let cwd_len = cwd.as_bytes().len();
             cwd_buf[cwd_len] = b'/';
-            let joined = paths::resolve_path::join_abs_string::<paths::platform::Loose>(
+            let joined = paths::resolve_path::join_abs_string_vec::<paths::platform::Loose>(
                 &cwd_buf[..cwd_len + 1],
                 &[&filename],
             );
-            joined.to_vec().into_boxed_slice()
+            joined.into_boxed_slice()
         };
 
         // This arm calls `Run::boot`

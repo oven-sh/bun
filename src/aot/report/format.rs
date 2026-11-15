@@ -1,5 +1,5 @@
 use bun_core::fmt::{ItoaBuf, itoa};
-use bun_paths::resolve_path::{platform_to_posix_in_place, relative};
+use bun_paths::resolve_path::{SpillBuf, platform_to_posix_in_place, relative_spill};
 use bun_paths::{MAX_PATH_BYTES, is_absolute};
 
 pub(super) struct PathPrinter {
@@ -22,7 +22,9 @@ impl PathPrinter {
             && is_absolute(path)
             && 2 * self.working_directory.len() + path.len() < MAX_PATH_BYTES;
         if can_relativize {
-            out.extend_from_slice(relative(&self.working_directory, path));
+            SpillBuf::with_scratch(|buf| {
+                out.extend_from_slice(relative_spill(buf, &self.working_directory, path));
+            });
         }
         if out.len() == start {
             out.extend_from_slice(path);

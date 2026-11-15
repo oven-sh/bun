@@ -436,7 +436,7 @@ impl SharedConnection {
         });
         // SAFETY: the poll is a field of its owner.
         unsafe { this.file_poll.set_owner(owner(this.as_ptr())) };
-        (this.file_poll)
+        this.file_poll
             .register(bun_io::PollKind::Readable, false)
             .ok()?;
         SHARED.set(this.into_raw());

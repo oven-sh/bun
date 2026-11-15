@@ -8,7 +8,7 @@ use bun_ptr::RefPtr;
 pub struct MaxBuf {
     ref_count: Cell<u32>,
     kind: Kind,
-    /// Not the reader's parent, which is a `FileReader` once script has asked for the stream.
+    /// Not the reader's owner, which is a `FileReader` once script has asked for the stream.
     owner: Cell<Option<Owner>>,
     remaining_bytes: Cell<i64>,
 }

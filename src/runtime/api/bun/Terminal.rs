@@ -385,7 +385,7 @@ impl Terminal {
         let parent_ptr = terminal.as_ptr();
 
         let owner = Owner::new(PollTag::TerminalReader, parent_ptr.cast());
-        // SAFETY: a field of its owner.
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { terminal.reader.set_owner(owner) };
 
         // Set writer parent
@@ -408,7 +408,10 @@ impl Terminal {
 
         // Start reader with the read fd - adds a ref.
         let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
-        let Ok(result) = (terminal.reader).start(event_loop, pty_result.read.fd(), true) else {
+        let Ok(result) = terminal
+            .reader
+            .start(event_loop, pty_result.read.fd(), true)
+        else {
             // The reader did not take the fd.
             drop(pty_result.read);
             return Err(terminal.fail_reader_start());
@@ -688,7 +691,7 @@ impl Terminal {
             }
             Err(_) => {
                 // CreateThread failed — the process is in a bad state. Close the
-                // reader so onReaderDone fires next loop tick (releasing the reader
+                // reader so `on_read_result` runs (releasing the reader
                 // ref) instead of hanging on an EOF that will never come. Leak hpcon;
                 // calling ClosePseudoConsole here would deadlock since reader.close()
                 // is async (uv_close) and the pipe HANDLE is still open. Conhost sees
@@ -1495,11 +1498,11 @@ impl Terminal {
             // Dispatch ClosePseudoConsole off-thread (it blocks until the output
             // pipe is drained on Windows < 11 24H2) and leave the reader open so
             // the event loop can keep draining; conhost flushes the final frame,
-            // closes its pipe end, and the reader observes EOF → onReaderDone.
+            // closes its pipe end, and the reader observes EOF → `on_read_result`.
             if let Some(hpcon) = self.hpcon.take() {
                 self.close_pseudoconsole_off_thread(hpcon);
             }
-            // Leave the reader open; onReaderDone closes it on EOF.
+            // Leave the reader open; `on_read_result` closes it on EOF.
             let flags = self.flags.get();
             if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
                 return;
@@ -1589,7 +1592,7 @@ impl Terminal {
     /// Takes `reader_ref` before the exit callback so re-entry (`terminal.close()` from the
     /// callback) finds it gone and no-ops.
     fn on_read_result(&self, result: ReadResult) {
-        // Of the PTY stream, not of the subprocess.
+        // 0 = EOF, 1 = PTY read error; not the subprocess's exit code.
         let exit_code = match result {
             ReadResult::Pending => return,
             ReadResult::Done => 0,

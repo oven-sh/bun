@@ -223,7 +223,11 @@ impl<'a> Writable<'a> {
                     }
                 }
 
-                (pipe_ref.writer.get().handle).set_poll_flag(bun_io::FilePollFlag::Socket);
+                pipe_ref
+                    .writer
+                    .get()
+                    .handle
+                    .set_poll_flag(bun_io::FilePollFlag::Socket);
 
                 subprocess
                     .weak_file_sink_stdin_ptr

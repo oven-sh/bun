@@ -529,7 +529,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         self.note_read_result(result)
     }
 
-    /// SAFETY: `this` is what [`Self::watch`] handed out. It may be freed.
+    /// # Safety
+    /// `this` is what [`Self::watch`] handed out. It may be freed.
     pub unsafe fn on_io(this: *mut Self, kind: Kind, event: IoEvent) {
         // SAFETY: fn contract. Nothing else runs until `maybe_finished`.
         unsafe {
@@ -565,11 +566,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// the `OutputReader` is a `WindowsBufferedReader` (libuv-pipe-backed) and this fn is dead.
     #[cfg(unix)]
     fn reset_output_flags(output: &OutputReader, fd: Fd) {
-        output.update_flags(|f| f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET));
         output.update_flags(|f| {
+            f.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
             f.remove(
                 PosixFlags::MEMFD | PosixFlags::RECEIVED_EOF | PosixFlags::CLOSED_WITHOUT_REPORTING,
-            )
+            );
         });
 
         #[cfg(debug_assertions)]

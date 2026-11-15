@@ -167,7 +167,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
             self.writer.start(file.fd(), true)?;
             // The writer closes it from now on.
             file.into_raw();
-            (self.writer.handle).set_poll_flag(bun_io::FilePollFlag::Socket);
+            self.writer
+                .handle
+                .set_poll_flag(bun_io::FilePollFlag::Socket);
         }
         self.start_ref = Some(start_ref);
         Ok(())

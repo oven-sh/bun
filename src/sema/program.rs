@@ -1356,7 +1356,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
     fn wait(&self) {
         let mut state = self.state.lock();
         while !state.is_done() {
-            self.has_loaded.wait_guarded(&mut state);
+            self.has_loaded.wait(&mut state);
         }
     }
 
@@ -1377,7 +1377,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
                 return None;
             }
             state.awaited.extend_from_slice(path);
-            self.has_loaded.wait_guarded(&mut state);
+            self.has_loaded.wait(&mut state);
             state.awaited.clear();
         }
     }
@@ -1790,9 +1790,9 @@ impl<'s, 'r, 'u: 's> FileLoader<'_, 's, 'r, 'u> {
             } else if state.is_paused {
                 return true;
             } else if processes {
-                has_work.wait_guarded(&mut state);
+                has_work.wait(&mut state);
             } else {
-                has_to_read.wait_guarded(&mut state);
+                has_to_read.wait(&mut state);
             }
         }
     }
@@ -3421,7 +3421,7 @@ impl LinkPlan<'_> {
         let mut asleep = self.asleep.lock();
         *asleep += 1;
         while !is_published() {
-            self.has_published.wait_guarded(&mut asleep);
+            self.has_published.wait(&mut asleep);
         }
         *asleep -= 1;
     }
@@ -10717,7 +10717,7 @@ impl<'s> Files<'s> {
                         continue;
                     }
                     queue.asleep += 1;
-                    has_tasks.wait_guarded(&mut queue);
+                    has_tasks.wait(&mut queue);
                     queue.asleep -= 1;
                     continue;
                 };

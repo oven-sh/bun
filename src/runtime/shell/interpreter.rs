@@ -2515,7 +2515,8 @@ impl ShellTask {
                     // SAFETY: the loop of `poster` calls this once.
                     unsafe { Self::run_from_main_thread(bun_core::heap::take(ctx)) }
                 });
-                poster.post_mini(NonNull::new(at).expect("intrusive task"));
+                // SAFETY: a field of the leaked box, which is `Send` and which the callback takes back.
+                unsafe { poster.post_mini(NonNull::new(at).expect("intrusive task")) };
             }
         }
     }

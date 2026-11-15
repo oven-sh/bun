@@ -32,8 +32,8 @@ use crate::resolve::{
     CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
     ParsedFile, TranspileSettings, is_declaration_file_name,
 };
+use bun_threading::Condvar;
 use bun_threading::guarded::GuardedLock;
-use bun_threading::{Condvar, Mutex};
 use std::collections::VecDeque;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
@@ -54,7 +54,7 @@ struct EntryUpdate<'s, 'r> {
     side_effects: DeclaredSideEffects<'s>,
 }
 
-type LockedState<'w, 's, 'r> = GuardedLock<'w, WalkState<'s, 'r>, Mutex>;
+type LockedState<'w, 's, 'r> = GuardedLock<'w, WalkState<'s, 'r>>;
 
 struct WalkedFile<'s, 'r> {
     target: CodeTarget<'r>,
@@ -1005,7 +1005,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         let mut state = self.state.lock();
         while !state.is_finished {
             if !state.has_idle_threads() {
-                self.may_load_early.wait_guarded(&mut state);
+                self.may_load_early.wait(&mut state);
                 if state.has_idle_threads() {
                     self.may_load_early.notify_one();
                 }
@@ -1045,7 +1045,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 return;
             } else {
                 state.idle_plugin_readers += 1;
-                self.has_to_read_by_plugin.wait_guarded(&mut state);
+                self.has_to_read_by_plugin.wait(&mut state);
                 state.idle_plugin_readers -= 1;
             }
         }
@@ -1141,14 +1141,14 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 if processes || state.is_finished {
                     return;
                 }
-                self.has_to_read.wait_guarded(&mut state);
+                self.has_to_read.wait(&mut state);
             } else {
                 state.asleep += 1;
                 self.allow_early_load(&mut state, start.early_loader);
                 let since = self.now_if_logged();
                 match processes {
-                    true => self.has_changed.wait_guarded(&mut state),
-                    false => self.has_to_read.wait_guarded(&mut state),
+                    true => self.has_changed.wait(&mut state),
+                    false => self.has_to_read.wait(&mut state),
                 }
                 if let Some(since) = since {
                     state.time_asleep += self.began.elapsed() - since;

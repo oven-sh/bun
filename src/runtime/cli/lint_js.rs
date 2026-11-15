@@ -566,7 +566,7 @@ impl Ticket {
     fn wait(&self) {
         let mut is_done = self.is_done.lock();
         while !*is_done {
-            self.changed.wait_guarded(&mut is_done);
+            self.changed.wait(&mut is_done);
         }
     }
 }
@@ -784,7 +784,7 @@ impl Crew {
                 None => {}
             }
             state.all[at].is_idle = true;
-            self.is_posted.wait_guarded(&mut state);
+            self.is_posted.wait(&mut state);
             state.all[at].is_idle = false;
         }
     }
@@ -837,7 +837,7 @@ impl Crew {
         let (nothing, never) = (Guarded::new(()), Condition::new());
         let mut nothing = nothing.lock();
         loop {
-            never.wait_guarded(&mut nothing);
+            never.wait(&mut nothing);
         }
     }
 
@@ -940,7 +940,7 @@ impl Crew {
         meanwhile();
         let mut state = crew.state.lock();
         while state.pending > 0 {
-            crew.is_over.wait_guarded(&mut state);
+            crew.is_over.wait(&mut state);
         }
         state.shared = None;
         match is_empty {
@@ -956,7 +956,7 @@ impl Crew {
             state.ends = Some(at);
             self.is_posted.notify_all();
             while !state.all[at].is_gone {
-                self.is_over.wait_guarded(&mut state);
+                self.is_over.wait(&mut state);
             }
         }
     }

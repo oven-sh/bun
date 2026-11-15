@@ -339,7 +339,7 @@ impl Resolver<'_> {
         };
         let _lock = crate::fs::FileSystem::instance()
             .fs
-            .entries_mutex
+            .entries_mutex()
             .lock_guard();
         let entries = directory.get_entries_ref_locked(self.generation);
         let mut names: Vec<Vec<u8>> = entries.map_or_else(Vec::new, |entries| {

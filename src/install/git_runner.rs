@@ -21,7 +21,7 @@ use crate::cache_publish::UnfinishedEntry;
 use crate::install::{ExtractData, ExtractDataJson};
 use crate::network_task::add_error_or_warning;
 use crate::package_manager::directories::{CacheDirectory, get_cache_directory};
-use crate::package_manager::{INBOX, InstallFields, THREAD_POOL};
+use crate::package_manager::{INBOX, InstallFields, install_pool};
 use crate::package_manager_task::{self as Task, Job};
 use crate::repository::{GitEnv, Repository, RepositoryExt as _, is_safe_resolved_tag};
 
@@ -1371,7 +1371,7 @@ impl GitRunner {
     fn finish_on_pool(mut self, finalize: Finalize) {
         debug_assert!(!matches!(self.task.job, Job::GitCommit { .. }));
         self.task.git_finalize = Some(finalize);
-        THREAD_POOL.schedule(ThreadPool::Batch::from_owned(self.task));
+        install_pool().schedule(ThreadPool::Batch::from_owned(self.task));
     }
 
     /// Hands the finished commit lookup to `resolve_tasks`.

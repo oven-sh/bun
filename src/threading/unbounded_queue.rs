@@ -91,16 +91,9 @@ unsafe impl<T: Linked> Node for T {
 }
 
 pub struct Batch<T: Node> {
-    pub(crate) front: *mut T,
-    pub count: usize,
+    front: *mut T,
+    count: usize,
 }
-
-impl<T: Node> Clone for Batch<T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T: Node> Copy for Batch<T> {}
 
 impl<T: Node> Default for Batch<T> {
     fn default() -> Self {
@@ -112,7 +105,7 @@ impl<T: Node> Default for Batch<T> {
 }
 
 pub struct BatchIterator<T: Node> {
-    pub batch: Batch<T>,
+    pub(crate) batch: Batch<T>,
 }
 
 impl<T: Node> BatchIterator<T> {
@@ -131,6 +124,14 @@ impl<T: Node> BatchIterator<T> {
 }
 
 impl<T: Node> Batch<T> {
+    pub fn len(&self) -> usize {
+        self.count
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
+    }
+
     pub fn iterator(self) -> BatchIterator<T> {
         BatchIterator { batch: self }
     }
@@ -195,102 +196,21 @@ impl<T: Node> UnboundedQueue<T> {
         }
     }
 
-    /// `item` must point to a live `T` whose intrusive link is not concurrently
-    /// accessed outside this queue. The caller transfers logical ownership of
-    /// the node to the queue until a `pop`/`pop_batch` returns it.
-    pub fn push(&self, item: NonNull<T>) {
-        self.push_batch(item, item);
-    }
-
-    /// `first..=last` must form a valid intrusive chain of live `T` nodes. The
-    /// caller transfers logical ownership of every node in the chain.
-    pub(crate) fn push_batch(&self, first: NonNull<T>, last: NonNull<T>) {
-        let (first, last) = (first.as_ptr(), last.as_ptr());
-        // SAFETY: caller guarantees `last` is a live node (NonNull is non-null).
-        unsafe { T::set_next(last, ptr::null_mut()) };
-        if cfg!(debug_assertions) {
-            let mut item = first;
-            loop {
-                // SAFETY: `item` is reachable from `first` via the link chain,
-                // all of which the caller guarantees are valid.
-                let next_item = unsafe { T::get_next(item) };
-                if next_item.is_null() {
-                    break;
-                }
-                item = next_item;
-            }
-            debug_assert!(item == last, "`last` should be reachable from `first`");
-        }
-        let old_back = self.back.0.swap(last, Ordering::AcqRel);
+    /// # Safety
+    /// `item` is not in a queue. It stays valid, and only the queue accesses its link, until
+    /// `BatchIterator::next` returns it or the queue and its batches are no longer used.
+    pub unsafe fn push(&self, item: NonNull<T>) {
+        let item = item.as_ptr();
+        // SAFETY: fn contract.
+        unsafe { T::set_next(item, ptr::null_mut()) };
+        let old_back = self.back.0.swap(item, Ordering::AcqRel);
         if !old_back.is_null() {
             // SAFETY: `old_back` was the previous tail, still live (its `next`
-            // is null and no consumer has popped past it yet — see `pop`).
-            unsafe { T::atomic_store_next(old_back, first, Ordering::Release) };
+            // is null and no consumer has popped past it yet — see `pop_batch`).
+            unsafe { T::atomic_store_next(old_back, item, Ordering::Release) };
         } else {
-            self.front.0.store(first, Ordering::Release);
+            self.front.0.store(item, Ordering::Release);
         }
-    }
-
-    pub fn pop(&self) -> *mut T {
-        let mut first = self.front.0.load(Ordering::Acquire);
-        if first.is_null() {
-            return ptr::null_mut();
-        }
-        let next_item = loop {
-            // SAFETY: `first` is non-null (checked above / from failed CAS below).
-            let next_ptr = unsafe { T::atomic_load_next(first, Ordering::Acquire) };
-            match self.front.0.compare_exchange_weak(
-                first,
-                next_ptr,
-                // not AcqRel because we already loaded this value with Acquire
-                Ordering::Release,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => break next_ptr,
-                Err(maybe_first) => {
-                    if maybe_first.is_null() {
-                        return ptr::null_mut();
-                    }
-                    first = maybe_first;
-                }
-            }
-        };
-        if !next_item.is_null() {
-            return first;
-        }
-        // `first` was the only item in the queue, so we need to clear `self.back`.
-
-        // Even though this load is Relaxed, it will always be either `first` (in which case
-        // the cmpxchg succeeds) or an item pushed *after* `first`, because the Acquire load of
-        // `self.front` synchronizes-with the Release store in push/push_batch.
-        match self.back.0.compare_exchange(
-            first,
-            ptr::null_mut(),
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Err(back) => {
-                debug_assert!(
-                    !back.is_null(),
-                    "`back` should not be null while popping an item"
-                );
-            }
-            Ok(_) => return first,
-        }
-
-        // Another item was added to the queue before we could finish removing this one.
-        let new_first = loop {
-            // Wait for push/push_batch to set `next`.
-            // SAFETY: `first` is the node we just popped; still valid until we return it.
-            let n = unsafe { T::atomic_load_next(first, Ordering::Acquire) };
-            if !n.is_null() {
-                break n;
-            }
-            hint::spin_loop();
-        };
-
-        self.front.0.store(new_first, Ordering::Release);
-        first
     }
 
     pub fn pop_batch(&self) -> Batch<T> {
@@ -306,13 +226,13 @@ impl<T: Node> UnboundedQueue<T> {
 
         // Even though this load is Relaxed, it will always be either `first` or an item
         // pushed *after* `first`, because the Acquire load of `self.front` synchronizes-with
-        // the Release store in push/push_batch. So we know it's reachable from `first`.
+        // the Release store in push. So we know it's reachable from `first`.
         let last = self.back.0.swap(ptr::null_mut(), Ordering::Relaxed);
         debug_assert!(!last.is_null());
         let mut next_item = first;
         while next_item != last {
             next_item = loop {
-                // Wait for push/push_batch to set `next`.
+                // Wait for push to set `next`.
                 // SAFETY: `next_item` is on the chain from `first` to `last`; producer
                 // guarantees it stays valid until consumer observes its `next`.
                 let n = unsafe { T::atomic_load_next(next_item, Ordering::Acquire) };
@@ -349,7 +269,8 @@ impl<P: OwnedPtr<Target: Node>> OwnedQueue<P> {
     }
 
     pub fn push(&self, item: P) {
-        self.queue.push(P::into_raw(item));
+        // SAFETY: `OwnedPtr` keeps the item valid and unused until `from_raw`, which follows `next`.
+        unsafe { self.queue.push(P::into_raw(item)) };
     }
 
     /// Dropping the iterator pushes the remaining items back.
@@ -358,6 +279,10 @@ impl<P: OwnedPtr<Target: Node>> OwnedQueue<P> {
             rest: self.queue.pop_batch().iterator(),
             queue: self,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.queue.is_empty()
     }
 }
 
@@ -373,6 +298,10 @@ impl<P: OwnedPtr<Target: Node>> Iterator for OwnedBatchIterator<'_, P> {
         let item = NonNull::new(self.rest.next())?;
         // SAFETY: it came from `into_raw` in `push`, and `pop_batch` gives an item to one caller.
         Some(unsafe { P::from_raw(item) })
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        (self.rest.batch.count, Some(self.rest.batch.count))
     }
 }
 
@@ -409,5 +338,26 @@ mod tests {
             [1, 2]
         );
         assert!(queue.pop_batch().next().is_none());
+    }
+
+    #[test]
+    fn two_threads_that_pop_get_every_item_once() {
+        const ITEMS: u8 = 100;
+        let queue = OwnedQueue::<Box<Item>>::new();
+        let push_and_pop = |first: u8| {
+            let mut taken = Vec::new();
+            for value in first..first + ITEMS {
+                queue.push(Box::new(Item(value, Link::new())));
+                taken.extend(queue.pop_batch().map(|item| item.0));
+            }
+            taken
+        };
+        let mut taken = std::thread::scope(|scope| {
+            let other = scope.spawn(|| push_and_pop(ITEMS));
+            [push_and_pop(0), other.join().unwrap()].concat()
+        });
+        taken.extend(queue.pop_batch().map(|item| item.0));
+        taken.sort_unstable();
+        assert!(taken.into_iter().eq(0..2 * ITEMS));
     }
 }

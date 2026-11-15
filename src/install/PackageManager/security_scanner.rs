@@ -205,7 +205,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     }
 
     let has_node_modules = {
-        let _entries_lock = FileSystem::get().fs.entries_mutex.lock_guard();
+        let _entries_lock = FileSystem::get().fs.entries_mutex().lock_guard();
         manager.root_dir.has_comptime_query(b"node_modules")
     };
     // A command that names the packages it adds or updates scans only those packages and `seeds`.

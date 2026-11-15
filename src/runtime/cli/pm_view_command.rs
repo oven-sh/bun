@@ -76,7 +76,7 @@ pub(crate) fn view(
                 let has_package_json = {
                     let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
-                        .entries_mutex
+                        .entries_mutex()
                         .lock_guard();
                     manager.root_dir.has_comptime_query(b"package.json")
                 };

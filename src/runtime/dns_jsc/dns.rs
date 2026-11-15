@@ -98,6 +98,7 @@ bun_output::declare_scope!(DNSResolver, visible);
 // ──────────────────────────────────────────────────────────────────────────
 
 const IANA_DNS_PORT: i32 = 53;
+const CARES_TIMEOUT_CHECK_INTERVAL_MS: i64 = 1000;
 
 // ──────────────────────────────────────────────────────────────────────────
 // dns_sd (macOS): DNSServiceQueryRecord over one shared mDNSResponder connection, no per-lookup threads.
@@ -129,7 +130,6 @@ mod lib_c {
             },
             get_addr_info_request::LibcRequest(Some(pending)),
         );
-        this.request_sent(this.vm());
     }
 }
 
@@ -2409,7 +2409,7 @@ impl Resolver {
                 c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
-                    let _ = self.add_timer(Some(now));
+                    let _ = self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS);
                 } else {
                     self.remove_timer();
                 }
@@ -2418,12 +2418,11 @@ impl Resolver {
         crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
     }
 
+    /// Whether c-ares has a query to time out.
     fn any_requests_pending(&self) -> bool {
-        if self
-            .pending
-            .values()
-            .any(|cache| cache.used.get().mask != 0)
-        {
+        if self.pending.iter().any(|(kind, cache)| {
+            !matches!(kind, QueryKind::HostNative) && cache.used.get().mask != 0
+        }) {
             return true;
         }
         // A query that found its cache full has no slot; c-ares' own
@@ -2439,18 +2438,24 @@ impl Resolver {
     }
 
     fn request_sent(&self, _vm: &VirtualMachine) {
-        let _ = self.add_timer(None);
+        if self.any_requests_pending() {
+            let _ = self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
+        } else {
+            // c-ares answered inside the call (cache, hosts file, error). As in Node, that takes a turn of the loop.
+            self.remove_timer();
+            let _ = self.add_timer(None, 0);
+        }
     }
 
     fn request_completed(&self) {
         if self.any_requests_pending() {
-            let _ = self.add_timer(None);
+            let _ = self.add_timer(None, CARES_TIMEOUT_CHECK_INTERVAL_MS);
         } else {
             self.remove_timer();
         }
     }
 
-    fn add_timer(&self, now: Option<&bun::timespec>) -> bool {
+    fn add_timer(&self, now: Option<&bun::timespec>, delay_ms: i64) -> bool {
         if self.event_loop_timer.state.get() == EventLoopTimerState::ACTIVE {
             return false;
         }
@@ -2459,7 +2464,7 @@ impl Resolver {
         let now_ts = now
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::ForceRealTime));
-        let next = now_ts.add_ms(1000);
+        let next = now_ts.add_ms(delay_ms);
         self.event_loop_timer.next.set(next);
         let uws_loop = self.vm().uws_loop();
         let timers = crate::jsc_hooks::timer_all();
@@ -2902,7 +2907,7 @@ impl Resolver {
         lib_uv_backend::start(self, &query, pending);
         #[cfg(target_os = "macos")]
         let pending = match opts.backend {
-            GetAddrInfoBackend::System => match dns_sd::start(self, &query, pending) {
+            GetAddrInfoBackend::System => match dns_sd::start(&query, pending) {
                 Ok(()) => return Ok(promise),
                 Err(refused) => refused,
             },
@@ -3412,21 +3417,18 @@ impl Resolver {
     }
 
     pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
-        let global_this = cx.global();
-        Self::set_channel_servers(
-            Self::get_channel_from_vm(global_this)?,
-            global_this,
-            servers.to_js(),
-        )
+        global_resolver(cx.global()).set_servers(cx, servers)
     }
 
     pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        Self::set_channel_servers(
+        let result = Self::set_channel_servers(
             self.get_channel_or_error(global_this)?,
             global_this,
             servers.to_js(),
-        )
+        );
+        self.request_completed();
+        result
     }
 
     pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
@@ -3449,6 +3451,7 @@ impl Resolver {
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
         c_ares::ares_cancel(self.get_channel_or_error(cx.global())?);
+        self.request_completed();
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use core::cell::Cell;
 #[cfg(unix)]
 use core::ffi::c_void;
-use std::io::{self, Write as _};
+use std::io::Write as _;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
@@ -62,13 +62,11 @@ struct Shared {
 }
 
 impl Shared {
-    fn print(&self, fill: impl FnOnce(&mut Vec<u8>) -> io::Result<()>) -> io::Result<()> {
-        let mut buf = self.print_buf.take();
-        fill(&mut buf)?;
+    /// `buf` was taken out of `print_buf`.
+    fn print(&self, mut buf: Vec<u8>) {
         write_to_stdout(&buf);
         buf.clear();
         self.print_buf.set(buf);
-        Ok(())
     }
 }
 
@@ -90,27 +88,26 @@ impl ScriptOutput<'_> {
             self.shared.needs_redraw.set(true);
             return Ok(());
         }
-        self.shared.print(|buf| {
-            let mut content = chunk;
-            while let Some(i) = strings::index_of_char_usize(content, b'\n') {
-                let mut line;
-                (line, content) = content.split_at(i + 1);
-                if !self.buffer.is_empty() {
-                    self.buffer.extend_from_slice(line);
-                    line = &self.buffer;
-                }
-                write!(
-                    buf,
-                    "{} {}: {}",
-                    bun_core::fmt::escape_control_chars(&self.config.package_name),
-                    bun_core::fmt::escape_control_chars(&self.config.script_name),
-                    bstr::BStr::new(line),
-                )?;
-                self.buffer.clear();
+        let mut buf = self.shared.print_buf.take();
+        let mut content = chunk;
+        while let Some(i) = strings::index_of_char_usize(content, b'\n') {
+            let mut line;
+            (line, content) = content.split_at(i + 1);
+            if !self.buffer.is_empty() {
+                self.buffer.extend_from_slice(line);
+                line = &self.buffer;
             }
-            self.buffer.extend_from_slice(content);
-            Ok(())
-        })?;
+            write!(
+                buf,
+                "{} {}: {}",
+                bun_core::fmt::escape_control_chars(&self.config.package_name),
+                bun_core::fmt::escape_control_chars(&self.config.script_name),
+                bstr::BStr::new(line),
+            )?;
+            self.buffer.clear();
+        }
+        self.buffer.extend_from_slice(content);
+        self.shared.print(buf);
         Ok(())
     }
 }
@@ -355,18 +352,14 @@ impl<'a> State<'a> {
             }
             if dependent.skipped {
                 if !self.shared.pretty_output {
-                    let _ = self.shared.print(|buf| {
-                        writeln!(
-                            buf,
-                            "{} {}: Skipped",
-                            bun_core::fmt::escape_control_chars(
-                                &dependent.output.config.package_name
-                            ),
-                            bun_core::fmt::escape_control_chars(
-                                &dependent.output.config.script_name
-                            ),
-                        )
-                    });
+                    let mut buf = self.shared.print_buf.take();
+                    let _ = writeln!(
+                        buf,
+                        "{} {}: Skipped",
+                        bun_core::fmt::escape_control_chars(&dependent.output.config.package_name),
+                        bun_core::fmt::escape_control_chars(&dependent.output.config.script_name),
+                    );
+                    self.shared.print(buf);
                 }
                 self.finish(dependent_index);
             } else {
@@ -395,41 +388,40 @@ impl<'a> State<'a> {
             handle.drain_and_close_pipes();
         }
         if !self.shared.pretty_output {
-            self.shared.print(|buf| {
-                // flush any remaining buffer
-                if !handle.output.buffer.is_empty() {
+            let mut buf = self.shared.print_buf.take();
+            // flush any remaining buffer
+            if !handle.output.buffer.is_empty() {
+                writeln!(
+                    buf,
+                    "{}: {}",
+                    bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
+                    bstr::BStr::new(&handle.output.buffer),
+                )?;
+                handle.output.buffer.clear();
+            }
+            // print exit status
+            match &handle.process.as_ref().unwrap().status {
+                Status::Exited(exited) => {
                     writeln!(
                         buf,
-                        "{}: {}",
+                        "{} {}: Exited with code {}",
                         bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
-                        bstr::BStr::new(&handle.output.buffer),
+                        bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
+                        exited.code,
                     )?;
-                    handle.output.buffer.clear();
                 }
-                // print exit status
-                match &handle.process.as_ref().unwrap().status {
-                    Status::Exited(exited) => {
-                        writeln!(
-                            buf,
-                            "{} {}: Exited with code {}",
-                            bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
-                            bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
-                            exited.code,
-                        )?;
-                    }
-                    Status::Signaled(signal) => {
-                        writeln!(
-                            buf,
-                            "{} {}: Signaled with code {}",
-                            bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
-                            bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
-                            bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
-                        )?;
-                    }
-                    _ => {}
+                Status::Signaled(signal) => {
+                    writeln!(
+                        buf,
+                        "{} {}: Signaled with code {}",
+                        bun_core::fmt::escape_control_chars(&handle.output.config.package_name),
+                        bun_core::fmt::escape_control_chars(&handle.output.config.script_name),
+                        bun_sys::SignalCode(*signal).name().unwrap_or("UNKNOWN"),
+                    )?;
                 }
-                Ok(())
-            })?;
+                _ => {}
+            }
+            self.shared.print(buf);
         }
         // `start` incremented this. Skipped scripts never start, so `finish` doesn't decrement it.
         self.remaining_scripts -= 1;

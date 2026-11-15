@@ -1532,3 +1532,43 @@ test.concurrent("require('cluster') does not throw when NODE_UNIQUE_ID is set af
   expect({ stdout, stderr }).toEqual({ stdout: "loaded\n", stderr: "" });
   expect(exitCode).toBe(0);
 });
+
+test.concurrent.each(["running", "terminated"])(
+  "a %s Worker thread that set itself up as a cluster worker doesn't get the messages of the process",
+  async state => {
+    using dir = tempDir("cluster-setup-in-thread", {
+      "index.js": `
+const cluster = require("node:cluster");
+const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+if (!isMainThread) {
+  try {
+    cluster._setupWorker();
+  } catch {}
+  parentPort.on("message", () => {});
+  parentPort.postMessage("ready");
+} else if (cluster.isPrimary) {
+  cluster.fork().on("exit", (code, signal) => console.log("exit", code, signal));
+} else {
+  const thread = new Worker(__filename, { env: { NODE_UNIQUE_ID: "1" } });
+  thread.once("message", async () => {
+    if (process.env.THREAD === "terminated") await thread.terminate();
+    require("node:net").createServer().listen(0, "127.0.0.1", () => {
+      console.log("listening");
+      process.exit(0);
+    });
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: { ...bunEnv, THREAD: state },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "listening\nexit 0 null\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  },
+);

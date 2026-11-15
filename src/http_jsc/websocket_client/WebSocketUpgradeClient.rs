@@ -726,8 +726,9 @@ where
             let _guard = RefPtr::from_this(this);
             // That close clears `hostname`, so the name is moved out while the verdict borrows it.
             let hostname = this.hostname.take();
-            let ssl = socket.ssl_mut();
-            let name = identity_name(hostname.as_bytes(), ssl.as_deref());
+            // SAFETY: `socket` is live, and `accepts_tls_peer` does not use `ssl` after that callback.
+            let ssl = unsafe { socket.ssl() };
+            let name = identity_name(hostname.as_bytes(), ssl);
             let handshake = TlsHandshake::First {
                 context: this.context,
                 peer: this.tls_peer(),
@@ -753,7 +754,7 @@ where
     }
 
     /// The name check inside the handshake. See `CppWebSocket::server_identity`.
-    pub fn server_identity(&self, ssl: &mut boringssl::c::SSL) -> boringssl::ServerIdentity {
+    pub fn server_identity(&self, ssl: &boringssl::c::SSL) -> boringssl::ServerIdentity {
         let Some(ws) = self.cpp_websocket() else {
             return boringssl::ServerIdentity::Unchecked;
         };
@@ -773,7 +774,7 @@ where
     /// `server_identity` for the tunnel, whose peer is the target.
     pub(crate) fn tunnel_server_identity(
         this: ThisPtr<Self>,
-        ssl: &mut boringssl::c::SSL,
+        ssl: &boringssl::c::SSL,
         hostname: &[u8],
     ) -> boringssl::ServerIdentity {
         this.cpp_websocket()
@@ -785,7 +786,7 @@ where
     /// `accepts_tls_peer` for the tunnel, whose peer is the target.
     pub(crate) fn accepts_tunnel_peer(
         this: ThisPtr<Self>,
-        ssl: Option<&mut boringssl::c::SSL>,
+        ssl: Option<&boringssl::c::SSL>,
         chain_verified: bool,
         hostname: &[u8],
     ) -> bool {
@@ -812,14 +813,11 @@ where
         if SSL {
             let hostname = this.hostname.get();
             if !hostname.is_empty() {
-                if let Some(ssl) = socket.ssl_mut() {
+                // SAFETY: `socket` is live, and nothing in this block closes it.
+                if let Some(ssl) = unsafe { socket.ssl() } {
                     bun_http::configure_http_client_with_alpn(
                         ssl,
-                        if bun_core::ip_address::is_ip_host(hostname.as_bytes()) {
-                            core::ptr::null()
-                        } else {
-                            hostname.as_ptr()
-                        },
+                        hostname.as_bytes(),
                         bun_http::AlpnOffer::H1,
                     );
                 }
@@ -842,8 +840,7 @@ where
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
-        // `InternalSocket` has no `PartialEq`; compare native handles.
-        socket.get_native_handle() == self.tcp.get().get_native_handle()
+        socket.socket == self.tcp.get().socket
     }
 
     /// Appends `data` to `body`. Once `body` starts with a complete response head, calls `on_head`
@@ -1888,7 +1885,7 @@ fn identity_name<'a>(
         hostname.into()
     } else {
         ssl.and_then(|ssl| ssl.servername())
-            .map(<[u8]>::to_vec)
+            .map(|name| name.to_vec())
             .unwrap_or_default()
             .into()
     }

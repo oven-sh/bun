@@ -1,16 +1,11 @@
-use core::ffi::{c_int, c_void};
-use core::ptr;
-
 use bun_boringssl as boringssl;
-use bun_boringssl_sys as boringssl_sys;
 
 /// The `bun_boringssl_sys` symbols this crate calls.
 pub(crate) mod ffi {
     pub(crate) use bun_boringssl_sys::{
-        EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
-        EVP_MD_CTX_cleanup, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5, EVP_ripemd160,
-        EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512, EVP_sha224, EVP_sha256,
-        EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
+        EVP_MD, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5, EVP_ripemd160, EVP_sha1,
+        EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512, EVP_sha224, EVP_sha256, EVP_sha384,
+        EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC, OwnedEvpMdCtx,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
@@ -29,76 +24,12 @@ const SHA384_DIGEST_LENGTH: usize = 48;
 const SHA512_DIGEST_LENGTH: usize = 64;
 const SHA512_256_DIGEST_LENGTH: usize = 32;
 
-/// Generates a hasher type parameterised by a context
-/// type and four FFI functions. Stable Rust cannot
-/// take function items as const-generic parameters, and the call sites are pure
-/// token-pasting of BoringSSL symbol names, so this is expressed as a
-/// `macro_rules!` type-generator.
-// An inherent associated type `Digest = [u8; N]` would require nightly
-// `inherent_associated_types`; callers spell `[u8; <Name>::DIGEST]` instead.
-macro_rules! new_hasher {
-    (
-        $name:ident,
-        $digest_size:expr,
-        $ctx:ty,
-        $full:path,
-        $init:path,
-        $update:path,
-        $final_:path
-    ) => {
-        #[repr(C)]
-        pub struct $name {
-            hasher: $ctx,
-        }
-
-        impl $name {
-            pub const DIGEST: usize = $digest_size;
-
-            pub fn init() -> Self {
-                boringssl::load();
-                let mut this = Self {
-                    hasher: bun_core::ffi::zeroed(),
-                };
-                // SAFETY: `this.hasher` is a writable, properly sized `$ctx`;
-                // BoringSSL *_Init only writes to it and does not read prior contents.
-                let rc: c_int = unsafe { $init(&mut this.hasher) };
-                debug_assert!(rc == 1);
-                this
-            }
-
-            pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
-                // SAFETY: `out` is exactly DIGEST bytes; BoringSSL one-shot hashers
-                // accept (ptr, len, out) and never read past `len`.
-                unsafe {
-                    let _ = $full(bytes.as_ptr(), bytes.len(), out.as_mut_ptr());
-                }
-            }
-
-            pub fn update(&mut self, data: &[u8]) {
-                // SAFETY: `self.hasher` was initialised in `init()`; BoringSSL
-                // *_Update reads exactly `len` bytes from `data`.
-                let rc: c_int = unsafe {
-                    $update(&mut self.hasher, data.as_ptr().cast::<c_void>(), data.len())
-                };
-                debug_assert!(rc == 1);
-            }
-
-            pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
-                // SAFETY: `out` is exactly DIGEST bytes; *_Final writes that many.
-                let rc: c_int = unsafe { $final_(out.as_mut_ptr(), &mut self.hasher) };
-                debug_assert!(rc == 1);
-            }
-        }
-    };
-}
-
 /// Generates an EVP-backed hasher type;
 /// the BoringSSL `EVP_*` md-getter is passed as an ident.
 macro_rules! new_evp {
     ($name:ident, $digest_size:expr, $md_fn:ident) => {
-        #[repr(C)]
         pub struct $name {
-            ctx: ffi::EVP_MD_CTX,
+            ctx: ffi::OwnedEvpMdCtx,
         }
 
         impl $name {
@@ -106,61 +37,22 @@ macro_rules! new_evp {
 
             pub fn init() -> Self {
                 boringssl::load();
-
-                // EVP md getters are infallible `safe fn` returning static singletons.
-                let md = ffi::$md_fn();
-                let mut this = Self {
-                    ctx: bun_core::ffi::zeroed(),
-                };
-
-                let rc: c_int = ffi::EVP_DigestInit(&mut this.ctx, md);
-                debug_assert!(rc == 1);
-
-                this
+                Self {
+                    ctx: ffi::OwnedEvpMdCtx::new(ffi::$md_fn()),
+                }
             }
 
             pub fn hash(bytes: &[u8], out: &mut [u8; $digest_size]) {
-                let md = ffi::$md_fn();
-
-                // SAFETY: `out` is DIGEST bytes; the `size` out-param and the
-                // `ENGINE`, which BoringSSL never reads, are nullable.
-                let rc: c_int = unsafe {
-                    ffi::EVP_Digest(
-                        bytes.as_ptr().cast::<c_void>(),
-                        bytes.len(),
-                        out.as_mut_ptr(),
-                        ptr::null_mut(),
-                        md,
-                        ptr::null_mut(),
-                    )
-                };
-                debug_assert!(rc == 1);
+                let written = ffi::$md_fn().digest(bytes, out);
+                debug_assert!(written == Some($digest_size));
             }
 
             pub fn update(&mut self, data: &[u8]) {
-                // SAFETY: ctx initialised in `init()`; EVP_DigestUpdate reads `len` bytes.
-                let rc: c_int = unsafe {
-                    ffi::EVP_DigestUpdate(&mut self.ctx, data.as_ptr().cast::<c_void>(), data.len())
-                };
-                debug_assert!(rc == 1);
+                self.ctx.update(data);
             }
 
             pub fn r#final(&mut self, out: &mut [u8; $digest_size]) {
-                // SAFETY: `out` is DIGEST bytes; `out_size` is nullable.
-                let rc: c_int = unsafe {
-                    ffi::EVP_DigestFinal(&mut self.ctx, out.as_mut_ptr(), ptr::null_mut())
-                };
-                debug_assert!(rc == 1);
-            }
-        }
-
-        impl Drop for $name {
-            fn drop(&mut self) {
-                // SAFETY: ctx initialised in `init()`; cleanup is idempotent on a
-                // zeroed/initialised ctx.
-                unsafe {
-                    let _ = ffi::EVP_MD_CTX_cleanup(&mut self.ctx);
-                }
+                self.ctx.final_and_init(out);
             }
         }
     };
@@ -250,27 +142,4 @@ pub use evp::SHA384;
 pub use evp::SHA512;
 pub use evp::SHA512_256;
 
-/// API that OpenSSL 3 deprecated
-pub mod hashers {
-    use super::*;
-
-    new_hasher!(
-        SHA1,
-        SHA1_DIGEST_LENGTH,
-        boringssl_sys::SHA_CTX,
-        boringssl_sys::SHA1,
-        boringssl_sys::SHA1_Init,
-        boringssl_sys::SHA1_Update,
-        boringssl_sys::SHA1_Final
-    );
-
-    new_hasher!(
-        SHA256,
-        SHA256_DIGEST_LENGTH,
-        boringssl_sys::SHA256_CTX,
-        boringssl_sys::SHA256,
-        boringssl_sys::SHA256_Init,
-        boringssl_sys::SHA256_Update,
-        boringssl_sys::SHA256_Final
-    );
-}
+pub use bun_boringssl_sys::hashers;

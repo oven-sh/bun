@@ -610,6 +610,20 @@ impl CompileSettings {
     }
 }
 
+fn read_order_file(path: &[u8], order_files: &mut Vec<u8>) -> bun_sys::Maybe<()> {
+    let bytes = bun_sys::File::read_from(bun_sys::Fd::cwd(), path)?;
+    if bytes.starts_with(b"aot-order v1\n") {
+        let end = strings::last_index_of_char(&bytes, b'\n').map_or(0, |at| at + 1);
+        order_files.extend_from_slice(&bytes[..end]);
+    } else {
+        bun_core::warn!(
+            "--aot-order: {} is not an order file. Nothing is placed by it",
+            bstr::BStr::new(path),
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn apply_developer_word<'a>(
     key: &'static str,
     value: Option<&'a [u8]>,
@@ -649,9 +663,18 @@ pub(crate) fn apply_developer_word<'a>(
         "symbols" => options.emits_symbols = true,
         "no-builtin-modules" => options.omits_builtin_modules = true,
         "out" => options.ir_output_path = Some(Box::from(text)),
-        "order" => options
-            .order_paths
-            .extend(strings::split(text, b",").map(Box::from)),
+        "order" => {
+            for path in strings::split(text, b",").filter(|path| !path.is_empty()) {
+                read_order_file(path, &mut options.order_files).map_err(|error| {
+                    OptionError::DeveloperWord {
+                        key,
+                        word: key.as_bytes().to_vec(),
+                        sentence: format!("{} cannot be read: {}", bstr::BStr::new(path), error)
+                            .into_bytes(),
+                    }
+                })?;
+            }
+        }
         "record-order" => options.records_order = true,
         // The other words of --aot-testing are the engine's.
         "testing" if text == b"NoExecutable" => options.writes_no_executable = true,

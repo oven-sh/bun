@@ -153,7 +153,7 @@ await Bun.build({
 - **Only an executable built with `--aot-record-order` can record.** Every other one has no recorder and reads no environment variable for it.
 - **Only the layout changes.** No function is compiled differently, and builds stay reproducible. The profile contains module paths and function names, not source code.
 - **On Linux, the executable asks for that part of the file when it starts**, so a cold start waits for the disk once and not for one page after the other.
-- An empty or damaged profile prints a warning, and the executable is the one you get without it.
+- A profile that can't be read is an error. A file that isn't a profile prints a warning, and nothing is placed by it. A profile that was cut off is used as far as it goes.
 - `%p` in `BUN_AOT_ORDER_OUT` becomes the process id. `Worker` threads are recorded too. A run that records is several times slower.
 - Recording works on Linux.
 

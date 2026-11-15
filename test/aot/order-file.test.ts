@@ -53,18 +53,20 @@ const pathsOf = (directory: string, order: string) =>
     .map(name => join(directory, name))
     .join(",");
 
+const buildCommand = (directory: string, outfile: string, order?: string, flags: string[] = []) => [
+  bunExe(),
+  "build",
+  "--compile",
+  "--aot",
+  ...flags,
+  ...(order === undefined ? [] : [`--aot-order=${pathsOf(directory, order)}`]),
+  join(directory, "program.ts"),
+  "--outfile",
+  join(directory, outfile),
+];
+
 async function build(directory: string, outfile: string, order?: string, flags: string[] = []) {
-  const built = await run([
-    bunExe(),
-    "build",
-    "--compile",
-    "--aot",
-    ...flags,
-    ...(order === undefined ? [] : [`--aot-order=${pathsOf(directory, order)}`]),
-    join(directory, "program.ts"),
-    "--outfile",
-    join(directory, outfile),
-  ]);
+  const built = await run(buildCommand(directory, outfile, order, flags));
   expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
   const warnings = built.stderr.split("\n").filter(line => line.includes("--aot-order"));
   return { executable: join(directory, outfile), warnings };
@@ -146,9 +148,10 @@ test.skipIf(!isSupported)(
       expect({ name, warnings: built.warnings.length }).toEqual({ name, warnings: namesNothing ? 1 : 0 });
       if (namesNothing) expect({ name, bytes: bytesOf(built.executable) }).toEqual({ name, bytes: unordered });
     }
-    const missing = await build(String(dir), "program", "no-such-file.order");
-    expect(missing.warnings).toEqual([expect.stringContaining("cannot be read")]);
-    expect(bytesOf(missing.executable)).toBe(unordered);
+    const missing = await run(buildCommand(String(dir), "missing", "torn.order,no-such-file.order"));
+    expect(missing.stderr).toContain("no-such-file.order cannot be read");
+    expect(missing.exitCode).toBe(1);
+    expect(existsSync(join(String(dir), "missing"))).toBe(false);
   },
   600_000,
 );
@@ -159,16 +162,23 @@ test.skipIf(!isSupported)(
     const source = `process.on("SIGTRAP", () => {});
 function first(n: number): number { return n ? first(n - 1) + first(n - 1) : 1; }
 console.log(first(3));
-if (process.argv[2] === "die") setTimeout(() => process.kill(process.pid, "SIGKILL"), 500);
+if (process.argv[2] === "stay") setInterval(() => {}, 1000);
 `;
     using dir = tempDir("aot-order-file-signals", { "program.ts": source });
     const { executable } = await build(String(dir), "program", undefined, ["--aot-record-order"]);
     const order = join(String(dir), "recorded");
     expect(await run([executable], { BUN_AOT_ORDER_OUT: order })).toEqual({ stdout: "8\n", stderr: "", exitCode: 0 });
-    const killed = await run([executable, "die"], { BUN_AOT_ORDER_OUT: order + ".%p" });
-    expect(killed.stdout).toBe("8\n");
-    const [name] = [...new Bun.Glob("recorded.*").scanSync(String(dir))];
-    expect(readFileSync(join(String(dir), name), "utf8")).toContain(" first\n");
+    await using stays = Bun.spawn([executable, "stay"], {
+      env: { ...bunEnv, BUN_AOT_ORDER_OUT: order + ".%p" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const written = `${order}.${stays.pid}`;
+    while (!existsSync(written) || !readFileSync(written, "utf8").includes(" first\n")) await Bun.sleep(10);
+    stays.kill("SIGKILL");
+    expect(await stays.stdout.text()).toBe("8\n");
+    await stays.exited;
+    expect(readFileSync(written, "utf8")).toContain(" first\n");
     const missing = await run([executable], { BUN_AOT_ORDER_OUT: join(String(dir), "missing", "file") });
     expect(missing).toEqual({ stdout: "8\n", stderr: expect.stringContaining("nothing is recorded"), exitCode: 0 });
   },

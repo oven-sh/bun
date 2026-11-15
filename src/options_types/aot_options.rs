@@ -83,7 +83,7 @@ pub struct AotOptions {
     /// `bun test --aot` without `--aot-allow-code-from-disk`: `loads_code_from_disk` holds for the files of the tests. A file that an executable would hold too finds what it finds there.
     pub only_tests_load_code_from_disk: bool,
     pub ir_output_path: Option<Box<[u8]>>,
-    pub order_paths: Vec<Box<[u8]>>,
+    pub order_files: Vec<u8>,
     pub records_order: bool,
     /// The absolute paths of what the build writes besides the executable: the metafiles, the map of `--sourcemap=external`. What an earlier build left there is not what a computed path means.
     pub other_products: Vec<Vec<u8>>,
@@ -189,7 +189,7 @@ impl Default for AotOptions {
             isolates_code_from_disk: false,
             only_tests_load_code_from_disk: false,
             ir_output_path: None,
-            order_paths: Vec::new(),
+            order_files: Vec::new(),
             records_order: false,
             other_products: Vec::new(),
             writes_no_executable: false,
@@ -258,7 +258,7 @@ mod tests {
             isolates_code_from_disk,
             only_tests_load_code_from_disk,
             ir_output_path,
-            order_paths,
+            order_files,
             records_order,
             other_products,
             writes_no_executable,
@@ -318,7 +318,7 @@ mod tests {
         assert!(!isolates_code_from_disk);
         assert!(!only_tests_load_code_from_disk);
         assert!(ir_output_path.is_none());
-        assert!(order_paths.is_empty());
+        assert!(order_files.is_empty());
         assert!(!records_order);
         assert!(other_products.is_empty());
         assert!(!writes_no_executable);

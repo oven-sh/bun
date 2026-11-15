@@ -47,13 +47,6 @@ mod tty {
             // CRT keeps its own narrow-string env cache that is not updated by
             // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
             // runtime — so `libc::getenv` would silently miss those.
-            unsafe extern "system" {
-                fn GetEnvironmentVariableW(
-                    lpName: *const u16,
-                    lpBuffer: *mut u16,
-                    nSize: u32,
-                ) -> u32;
-            }
             // `name` is a compile-time ASCII C string (c"NO_COLOR" / c"CLICOLOR_FORCE");
             // widen byte-by-byte into a NUL-terminated WCHAR buffer on the stack.
             let bytes = name.to_bytes();
@@ -64,16 +57,12 @@ mod tty {
             for (i, &b) in bytes.iter().enumerate() {
                 name_w[i] = b as u16;
             }
-            let mut buf = [0u16; 2];
-            // SAFETY: `name_w` is NUL-terminated; `buf` is a valid 2-WCHAR out-param.
+            let name_w = bun_core::WStr::from_buf(&name_w, bytes.len());
             // With nSize=2: empty value copies successfully and returns 0 (chars
             // written, excluding NUL); not-found also returns 0; any non-empty
             // value returns >=1 (either chars written, or required size if it
             // didn't fit). So `rc != 0` ⇔ "exists and non-empty".
-            let rc = unsafe {
-                GetEnvironmentVariableW(name_w.as_ptr(), buf.as_mut_ptr(), buf.len() as u32)
-            };
-            return rc != 0;
+            return bun_sys::windows::GetEnvironmentVariableW(name_w, &mut [0; 2]) != 0;
         }
         #[cfg(not(windows))]
         {

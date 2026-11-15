@@ -683,13 +683,11 @@ impl RunCommand {
                 let mut made_dir = false;
                 let mut replaced = false;
                 loop {
-                    // `as_ptr()` stays inline: the buffer is mutated below (Stacked Borrows).
-                    if win::CreateHardLinkW(target_path_buffer.as_ptr(), image_path.as_ptr(), None)
-                        != 0
-                    {
+                    let link_path = bun_core::WStr::from_buf(&target_path_buffer[..], link_len);
+                    let Err(err) = win::CreateHardLinkW(link_path, image_path) else {
                         break;
-                    }
-                    match win::Win32Error::get() {
+                    };
+                    match err {
                         win::Win32Error::ALREADY_EXISTS => {
                             // As in the POSIX EEXIST branch: a rebuilt bun is a different file.
                             let keep = image_stat.as_ref().is_none_or(|image| {

@@ -2622,16 +2622,7 @@ impl RunCommand {
             // `\\?\` — `try_launch` hands this to NtCreateFile.
             let root = bun_core::w!("\\??\\");
             buf[..root.len()].copy_from_slice(root);
-            let cwd_len = unsafe {
-                sys::windows::kernel32::GetCurrentDirectoryW(
-                    (buf.len() - 4) as u32,
-                    buf.as_mut_ptr().add(root.len()),
-                )
-            } as usize;
-            'try_bunx_file: {
-                if cwd_len == 0 {
-                    break 'try_bunx_file;
-                }
+            if let Ok(cwd_len) = sys::windows::GetCurrentDirectoryW(&mut buf[root.len()..]) {
                 let mut ptr = root.len() + cwd_len;
                 let prefix = bun_core::w!("\\node_modules\\.bin\\");
                 buf[ptr..ptr + prefix.len()].copy_from_slice(prefix);
@@ -3352,30 +3343,10 @@ impl RunCommand {
                 }
             }
         }
-        #[cfg(unix)]
+        if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize()
+            && size.col > 0
         {
-            if let Some(size) = bun_core::output::File::from(Fd::stdout()).winsize() {
-                if size.col > 0 {
-                    return size.col;
-                }
-            }
-        }
-        #[cfg(windows)]
-        {
-            if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
-                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-                // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
-                // is a valid console output HANDLE from GetStdHandle and
-                // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.
-                if unsafe { sys::windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                    != sys::windows::FALSE
-                {
-                    let w = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                    if w > 0 {
-                        return u16::try_from(w).expect("int cast");
-                    }
-                }
-            }
+            return size.col;
         }
         80
     }

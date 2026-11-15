@@ -622,7 +622,7 @@ impl Resolver<'_, '_> {
             });
             return may_store_path;
         }
-        if matches!(hir[expr].kind, ExprKind::This) {
+        if matches!(hir[expr].kind, ExprKind::This | ExprKind::Super) {
             let is_evaluated = matches!(state, ExprState::Unresolved);
             let global = self.find_global_out_of_sight_through(expr);
             if is_evaluated && global.is_some_and(leads_to_main_module) {

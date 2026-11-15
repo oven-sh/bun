@@ -772,7 +772,7 @@ impl<'a, 's> Resolver<'a, 's> {
                 | Decision::Constant(_)
                 | Decision::Data(_)
                 | Decision::DeferredData => {
-                    if matches!(kind, ExprKind::This) {
+                    if matches!(kind, ExprKind::This | ExprKind::Super) {
                         self.found_or_this.push(expr);
                     }
                     self.states.set_code(expr, UNRESOLVED);

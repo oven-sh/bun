@@ -561,6 +561,9 @@ impl Resolver<'_, '_> {
         if !self.may_be_global_object(this) {
             return None;
         }
+        if matches!(self.input.hir[this].kind, ExprKind::Super) {
+            return Some(BuiltinId::GlobalThis);
+        }
         match self.classify_use(this) {
             MentionUse::Inspected | MentionUse::Called(_) => None,
             MentionUse::Holder => self.find_global_read_off(this),
@@ -586,7 +589,9 @@ impl Resolver<'_, '_> {
 
     fn classify_mention(&mut self, expr: ExprId) {
         let state = match self.state(expr) {
-            ExprState::Unresolved if matches!(self.input.hir[expr].kind, ExprKind::This) => {
+            ExprState::Unresolved
+                if matches!(self.input.hir[expr].kind, ExprKind::This | ExprKind::Super) =>
+            {
                 if let Some(global) = self.find_global_out_of_sight_through(expr) {
                     self.mention(global);
                     self.expose(global);

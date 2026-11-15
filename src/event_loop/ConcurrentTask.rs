@@ -95,9 +95,6 @@ pub mod task_tag {
         NapiAsyncWork,            // napi_async_work
         NapiFinalizerTask,
         NativePromiseContextDeferredDerefTask,
-        NativeBrotli,
-        NativeZlib,
-        NativeZstd,
         Open,
         PosixSignalTask,
         MemoryPressureTask,

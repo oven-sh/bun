@@ -1677,33 +1677,27 @@ fn encode_text_module(
     string_builder: &mut bun_core::StringBuilder,
     utf8: &[u8],
 ) -> (StringPointer, Encoding, u32) {
-    let Some(first_non_ascii) = strings::first_non_ascii(utf8) else {
+    if strings::is_all_ascii(utf8) {
         let hash = if utf8.is_empty() {
             0
         } else {
             wtf_latin1_string_hash(utf8)
         };
         return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
-    };
+    }
     if !string_builder.len.is_multiple_of(align_of::<u16>()) {
         string_builder.writable()[0] = 0;
         string_builder.len += 1;
     }
     let start = string_builder.len;
-    let dst = string_builder.writable();
-    assert!(dst.len() >= 2 * utf8.len() + 2);
-    // SAFETY: `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file; asserted above.
-    let byte_len = unsafe {
-        bun_core::strings::write_wtf8_as_utf16le(utf8, first_non_ascii as usize, dst.as_mut_ptr())
-    };
-    dst[byte_len] = 0;
-    dst[byte_len + 1] = 0;
-    #[expect(
-        clippy::cast_ptr_alignment,
-        reason = "written at an even offset just above"
-    )]
-    // SAFETY: `byte_len` initialized bytes at an even offset of the (page-aligned) section buffer.
-    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr().cast::<u16>(), byte_len / 2) };
+    // `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file.
+    let dst: &mut [u16] =
+        bun_core::cast_slice_mut(&mut string_builder.writable()[..2 * utf8.len() + 2]);
+    let len = strings::convert_utf8_to_utf16_in_buffer(dst, utf8).len();
+    dst[len] = 0;
+    // SAFETY: `dst` starts with `len` initialized units.
+    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr(), len) };
+    let byte_len = 2 * len;
     string_builder.len += byte_len + 2;
     (
         StringPointer {

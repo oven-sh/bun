@@ -169,7 +169,7 @@ pub fn owned_utf8_into_js(global_object: &JSGlobalObject, utf8: Vec<u8>) -> JsRe
     if utf8.is_empty() {
         return Ok(JSValue::js_empty_string(global_object));
     }
-    match strings::to_utf16_alloc(&utf8, false, false) {
+    match strings::StableBytes::from(&utf8).to_utf16_alloc(false) {
         Ok(None) => owned_latin1_into_js(global_object, utf8),
         Ok(Some(utf16)) => owned_utf16_into_js(global_object, utf16),
         Err(_) => Err(throw_utf16_transcode_failure(global_object, &utf8)),

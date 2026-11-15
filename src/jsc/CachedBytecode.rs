@@ -205,11 +205,8 @@ fn utf16_source(input: &[u8], first_non_ascii: usize) -> BunString {
         if string.is_dead() {
             bun_alloc::out_of_memory();
         }
-        // SAFETY: valid UTF-8 converts to exactly `len` units; `units` is `len` u16s, 2-byte aligned.
-        let written = unsafe {
-            strings::write_wtf8_as_utf16le(input, first_non_ascii, units.as_mut_ptr().cast::<u8>())
-        };
-        debug_assert_eq!(written, 2 * len);
+        let converted = strings::try_convert_utf8_to_utf16_exact(units.into(), input);
+        assert!(converted);
         return string;
     }
     // A lone surrogate or an invalid byte: the scalar path decides the length.

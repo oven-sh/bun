@@ -7428,7 +7428,7 @@ impl NodeFS {
                         );
                     }
                 }
-                // sync path: uses `webcore::encoding::to_bun_string(.., args.encoding)`.
+                // sync path: uses `encode_readdir_name(.., args.encoding)`.
                 T::append_entry_recursive(
                     entries,
                     utf8_name,
@@ -7789,9 +7789,13 @@ impl NodeFS {
                 }
                 _ => {
                     if string_type == ReadFileStringType::Default {
+                        // SAFETY: only this call uses `pre_stat_buf`, and its reads have returned.
+                        let contents = unsafe {
+                            strings::StableBytes::new(temporary_read_buffer_before_stat_call)
+                        };
                         Ok(ret::ReadFileWithOptions::TranscodedString(
-                            webcore::encoding::to_bun_string(
-                                temporary_read_buffer_before_stat_call,
+                            webcore::encoding::to_bun_string_from_stable_bytes(
+                                contents,
                                 args.encoding,
                             ),
                         ))
@@ -9959,7 +9963,7 @@ pub(crate) trait ReaddirEntry: Sized {
     /// Recursive readdir: `utf8_name` is the bare entry name, `name_to_copy`
     /// is the path *relative to the recursion root* (what Node returns).
     /// `apply_encoding` distinguishes the sync path (which honours
-    /// `args.encoding` via `webcore::encoding::to_bun_string`) from
+    /// `args.encoding` via `encode_readdir_name`) from
     /// the async path (which uses raw
     /// `BunString::clone_utf8` and ignores the requested encoding).
     fn append_entry_recursive(
@@ -9971,6 +9975,16 @@ pub(crate) trait ReaddirEntry: Sized {
         encoding: Encoding,
         apply_encoding: bool,
     );
+}
+fn encode_readdir_name(name: &[u8], encoding: Encoding) -> BunString {
+    match encoding {
+        // For a short name, this check is faster than the one in `clone_utf8`.
+        Encoding::Utf8 | Encoding::Buffer if strings::is_all_ascii(name) => {
+            BunString::clone_latin1(name)
+        }
+        Encoding::Utf8 | Encoding::Buffer => BunString::clone_utf8(name),
+        enc => webcore::encoding::to_bun_string(name, enc),
+    }
 }
 impl ReaddirEntry for BunString {
     const IS_DIRENT: bool = false;
@@ -9986,7 +10000,7 @@ impl ReaddirEntry for BunString {
         _kind: sys::FileKind,
         encoding: Encoding,
     ) {
-        entries.push(webcore::encoding::to_bun_string(utf8_name, encoding));
+        entries.push(encode_readdir_name(utf8_name, encoding));
     }
     #[cfg(windows)]
     fn append_entry_w(
@@ -10020,7 +10034,7 @@ impl ReaddirEntry for BunString {
     ) {
         let bytes = without_nt_prefix::<u8>(name_to_copy);
         entries.push(if apply_encoding {
-            webcore::encoding::to_bun_string(bytes, encoding)
+            encode_readdir_name(bytes, encoding)
         } else {
             BunString::clone_utf8(bytes)
         });
@@ -10041,7 +10055,7 @@ impl ReaddirEntry for Dirent {
         encoding: Encoding,
     ) {
         entries.push(Dirent {
-            name: webcore::encoding::to_bun_string(utf8_name, encoding),
+            name: encode_readdir_name(utf8_name, encoding),
             path: dirent_path.clone(),
             kind,
         });
@@ -10074,7 +10088,7 @@ impl ReaddirEntry for Dirent {
     ) {
         entries.push(Dirent {
             name: if apply_encoding {
-                webcore::encoding::to_bun_string(utf8_name, encoding)
+                encode_readdir_name(utf8_name, encoding)
             } else {
                 BunString::clone_utf8(utf8_name)
             },

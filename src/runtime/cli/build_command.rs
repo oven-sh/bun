@@ -668,7 +668,7 @@ impl BuildCommand {
             let event_loop = bun_event_loop::AnyEventLoop::init();
 
             if ctx.debug.hot_reload == HotReload::Watch {
-                bun_jsc::hot_reloader::enable_reloading_for_build(this_transpiler);
+                bun_jsc::hot_reloader::enable_hot_module_reloading_for_bundler(this_transpiler);
             }
 
             let build_result = match BundleV2::generate_from_cli(

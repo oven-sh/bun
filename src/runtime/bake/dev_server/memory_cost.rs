@@ -68,7 +68,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             server_register_update_callback: _,
             bun_watcher: _,
             directory_watchers: _,
-            pending_changes: _,
+            pending_reload_event: _,
             spare_reload_event: _,
             testing_batch_events: _,
             generation: _,
@@ -111,7 +111,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .plugin_state
     //   .server_register_update_callback
     //   .server_fetch_function_callback
-    //   .pending_changes, .spare_reload_event
+    //   .pending_reload_event, .spare_reload_event
 
     // pointers that are not considered a part of DevServer
     //   .vm

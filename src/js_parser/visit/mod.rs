@@ -635,7 +635,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         j
     }
 
-    /// A copy of `expr` without what `binding` does not read: other expressions can share its nodes.
+    /// Records the bound values in `const_values` and returns `expr` trimmed to what `binding` reads. Builds new nodes, because `expr` can be shared.
     fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) -> Expr {
         match (binding.data, expr.data) {
             (BData::BObject(bound_object), ExprData::EObject(object))
@@ -654,10 +654,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     ),
                     ..*object
                 };
-                let mut reads_unknown_key = false;
+                let mut has_non_string_key = false;
                 for property in bound_properties {
                     let Some(name) = property.key.as_string_literal(self.arena) else {
-                        reads_unknown_key = true;
+                        has_non_string_key = true;
                         continue;
                     };
                     let Some(query) = object.as_property(name) else {
@@ -665,7 +665,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     let value = self.visit_binding_and_expr_for_macro(property.value, query.expr);
                     match kept.as_property(name) {
-                        // Each of the bindings reads another part of it.
+                        // `name` is bound twice, so keep its whole value.
                         Some(repeated) => {
                             kept.properties[repeated.i as usize].value = Some(query.expr);
                         }
@@ -675,7 +675,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }),
                     }
                 }
-                if reads_unknown_key {
+                if has_non_string_key {
                     return expr;
                 }
                 self.new_expr(kept, expr.loc)

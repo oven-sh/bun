@@ -84,7 +84,7 @@ mod _impl {
             let write_callback =
                 validators::validate_function(global, "writeCallback", process_callback.to_js())?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
-            // the call to `stream.init` below (E0716 otherwise).
+            // the call to `Context::init` below (E0716 otherwise).
             let dictionary_buf;
             let dictionary = if dictionary.is_undefined() {
                 &[]
@@ -122,14 +122,14 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global),
             );
 
-            let initialized = self.borrow_idle_stream(global)?.context.init(
+            let result = self.borrow_idle_stream(global)?.context.init(
                 level,
                 window_bits,
                 mem_level,
                 strategy,
                 dictionary,
             );
-            if !initialized {
+            if result.is_err() {
                 self.close();
             }
 
@@ -196,7 +196,6 @@ impl Context {
         }
     }
 
-    /// False if zlib rejects the arguments.
     fn init(
         &mut self,
         level: c_int,
@@ -204,7 +203,7 @@ impl Context {
         mem_level: c_int,
         strategy: c_int,
         dictionary: &[u8],
-    ) -> bool {
+    ) -> Result<(), c::ZlibError> {
         use c::NodeMode::*;
         self.flush = c::FlushValue::NoFlush;
         self.err = c::ReturnCode::Ok;
@@ -223,20 +222,18 @@ impl Context {
 
         // `init` is JS-reachable twice on one handle: free the previous state first.
         self.state = None;
-        self.state = match self.mode {
-            DEFLATE | GZIP | DEFLATERAW => {
-                c::DeflateEncoder::new(level, window_bits_actual, mem_level, strategy)
-                    .map(State::Deflate)
-            }
-            _ => c::InflateDecoder::new(window_bits_actual).map(State::Inflate),
-        }
-        .ok();
-        if self.state.is_none() {
-            return false;
-        }
+        self.state = Some(match self.mode {
+            DEFLATE | GZIP | DEFLATERAW => State::Deflate(c::DeflateEncoder::new(
+                level,
+                window_bits_actual,
+                mem_level,
+                strategy,
+            )?),
+            _ => State::Inflate(c::InflateDecoder::new(window_bits_actual)?),
+        });
 
         let _ = self.set_dictionary();
-        true
+        Ok(())
     }
 
     fn set_dictionary(&mut self) -> Result<(), Error> {
@@ -301,7 +298,10 @@ impl Context {
         if self.gzip_id_bytes_read == 0 {
             match header.next() {
                 Some(Self::GZIP_HEADER_ID1) => self.gzip_id_bytes_read = 1,
-                Some(_) => return self.mode = c::NodeMode::INFLATE,
+                Some(_) => {
+                    self.mode = c::NodeMode::INFLATE;
+                    return;
+                }
                 None => return,
             }
         }
@@ -384,7 +384,7 @@ impl CompressionContext for Context {
         self.avail_out = buffers.avail_out();
     }
 
-    fn write_result(&mut self) -> Result<[u32; 2], Error> {
+    fn write_result(&self) -> Result<[u32; 2], Error> {
         match self.err {
             c::ReturnCode::Ok | c::ReturnCode::BufError => {
                 if self.avail_out != 0 && self.flush == c::FlushValue::Finish {

@@ -1281,6 +1281,10 @@ impl<V, C: ArrayHashContext<[u8]> + Default> StringArrayHashMap<V, C> {
         self.find(key).map(|i| &self.inner.values[i])
     }
 
+    pub fn get_key_value(&self, key: &[u8]) -> Option<(&[u8], &V)> {
+        (self.find(key)).map(|i| (&*self.inner.keys[i], &self.inner.values[i]))
+    }
+
     pub fn get_ptr_mut(&mut self, key: &[u8]) -> Option<&mut V> {
         let i = self.find(key)?;
         Some(&mut self.inner.values[i])

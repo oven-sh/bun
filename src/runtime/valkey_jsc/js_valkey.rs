@@ -427,7 +427,7 @@ impl JSValkeyClient {
     #[inline]
     #[allow(clippy::mut_from_ref)]
     pub(super) fn client_mut(&self) -> &mut valkey::ValkeyClient {
-        // SAFETY: R-2 single-JS-thread invariant (see `JsCell` docs). The
+        // SAFETY: R-2 single-JS-thread invariant. The
         // `&mut` is fresh per call site; reentrancy through
         // `ValkeyClient::parent()` forms a shared `&JSValkeyClient` only.
         unsafe { self.client.get_mut() }

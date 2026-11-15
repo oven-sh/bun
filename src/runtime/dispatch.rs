@@ -158,7 +158,7 @@ use crate::node::zlib::{
 };
 
 use crate::dns_jsc::Resolver as DNSResolver;
-use crate::server::{ServePluginsLoad, ServerAllConnectionsClosedTask};
+use crate::server::{ServePluginsLoadTask, ServerAllConnectionsClosedTask};
 
 #[cfg(not(windows))]
 use crate::api::bun_process::Process;
@@ -728,11 +728,11 @@ pub(crate) fn run_task(
         ),
 
         // ── server / bundler / streams ───────────────────────────────────
-        task_tag::ServePluginsLoad => {
-            boxed_arm!(task, [Bundler], |load: ServePluginsLoad| -> JsResult<()> {
-                load.run()
-            })?
-        }
+        task_tag::ServePluginsLoadTask => boxed_arm!(
+            task,
+            [Bundler],
+            |load: ServePluginsLoadTask| -> JsResult<()> { load.run() }
+        )?,
         task_tag::ServerAllConnectionsClosedTask => boxed_arm!(
             task,
             [Serve],
@@ -1702,7 +1702,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::S3RefusedRequest => release_boxed_in!([S3Client], S3RefusedRequest),
         task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
-        task_tag::ServePluginsLoad => release_boxed_in!([Bundler], ServePluginsLoad),
+        task_tag::ServePluginsLoadTask => release_boxed_in!([Bundler], ServePluginsLoadTask),
         task_tag::ServerAllConnectionsClosedTask => {
             release_boxed_in!([Serve], ServerAllConnectionsClosedTask)
         }

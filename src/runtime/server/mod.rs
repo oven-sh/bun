@@ -178,7 +178,7 @@ impl AnyRoute {
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
 // `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
-pub(crate) use server_body::{ServePlugins, ServePluginsLoad};
+pub(crate) use server_body::{ServePlugins, ServePluginsLoadTask};
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {

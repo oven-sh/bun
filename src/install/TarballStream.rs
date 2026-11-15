@@ -1032,7 +1032,5 @@ fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     &s[i..]
 }
 
-// Resolved Phase-B paths: Resolution::Tag is the real npm/git/tarball
-// discriminant; Job/Status live on PackageManagerTask.
 use crate::package_manager_task::{Job, Status as TaskStatus, Task};
 use crate::resolution::Tag as ResolutionTag;

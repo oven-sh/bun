@@ -138,8 +138,8 @@ fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
     dst.copy_from_slice(src);
 }
 
-/// What `resolve` answers always starts at `buf[0]`.
-fn dot<T: PathCharCwd>(buf: &mut [T]) -> &[T] {
+/// Writes `.` to `buf`: `relative_*_t` index `buf` by the length that `resolve_*_t` returns.
+fn write_dot<T: PathCharCwd>(buf: &mut [T]) -> &[T] {
     buf[0] = T::from_u8(CHAR_DOT);
     &buf[..1]
 }
@@ -2108,7 +2108,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
 
     // Exit early for empty path.
     if resolved_path_len == 0 {
-        return dot(buf);
+        return write_dot(buf);
     }
 
     // At this point the path should be resolved to a full absolute path, but
@@ -2141,7 +2141,7 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     if resolved_path_len > 0 {
         &buf[0..resolved_path_len]
     } else {
-        dot(buf)
+        write_dot(buf)
     }
 }
 
@@ -2368,7 +2368,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
 
     // Exit early for empty path.
     if resolved_tail_len == 0 {
-        return dot(buf);
+        return write_dot(buf);
     }
 
     // At this point, the path should be resolved to a full absolute path,
@@ -2396,7 +2396,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     let buf_offset = resolved_device_len + usize::from(resolved_absolute);
     let buf_size = buf_offset + resolved_tail_len;
     if buf_size == 0 {
-        return dot(buf);
+        return write_dot(buf);
     }
     buf[buf_size] = T::default();
     // Use copy_within because resolvedTail and buf overlap.

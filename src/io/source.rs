@@ -206,9 +206,7 @@ impl File {
         // libuv copies `iov`.
         let rc =
             unsafe { uv::uv_fs_read(loop_, fs, file, &raw const iov, 1, offset, Some(callback)) };
-        // Tagged `.write` even though the syscall is `uv_fs_read`, so
-        // user-visible `error.syscall` stays bit-identical with
-        // previous releases.
+        // Tagged `write`, which `error.syscall` has always said here.
         rc.to_result(bun_sys::Tag::write).inspect_err(|_| {
             self.complete(false);
             *buffer = core::mem::take(&mut self.buffer);
@@ -216,9 +214,7 @@ impl File {
     }
 
     /// `on_complete`, and the buffer with what was read in its spare capacity.
-    ///
-    /// # Safety
-    /// `fs` is what libuv passed to the callback of `submit_read`.
+    /// SAFETY: `fs` is what libuv passed to the callback of `submit_read`.
     pub(crate) unsafe fn on_read_complete(
         fs: *mut uv::fs_t,
     ) -> Option<(uv::ReturnCodeI64, Vec<u8>, *mut c_void)> {

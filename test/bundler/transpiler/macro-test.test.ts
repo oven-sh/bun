@@ -1070,3 +1070,33 @@ describe("macro VM env loader", () => {
     expect(withMacro).toEqual(withoutMacro);
   });
 });
+
+describe("diagnostics of a file that calls a macro", () => {
+  async function run(files: Record<string, string>, args: string[]) {
+    using dir = tempDir("macro-diagnostics", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Debug builds also print "[macro] call <name>" to stdout.
+    return { stdout: stdout.replace(/^\[macro\] call .*\n/gm, ""), stderr, exitCode };
+  }
+
+  test.concurrent("an unknown node: import is named when the macro's module is already loaded", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "macro.ts": `export const one = () => 1, two = () => 2;`,
+        "first.ts": `import { one } from "./macro.ts" with { type: "macro" };\nexport default one();`,
+        "second.ts": `import { two } from "./macro.ts" with { type: "macro" };\nimport "node:nope";\nexport default two();`,
+        "main.ts": `require("./first.ts");\ntry { require("./second.ts"); } catch (e) { console.log(e.name + ": " + e.message); }`,
+      },
+      ["main.ts"],
+    );
+    expect(stdout).toBe(`ResolveMessage: Could not resolve: "node:nope". Maybe you need to "bun install"?\n`);
+    expect(exitCode).toBe(0);
+  });
+});

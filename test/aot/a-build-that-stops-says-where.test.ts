@@ -2,9 +2,10 @@
 // A compiler that crashes says it in the crash report, behind the reason. No flag makes it crash at a known place, so here somebody ends a build that takes long.
 import { expect } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, raiseDoesNothing, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, raiseDoesNothing, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
+import { without } from "./harness/capabilities";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { buildEnvironment } from "./harness/flags";
@@ -104,7 +105,7 @@ describe("compile/aot/a build that stops says where", () => {
   );
 
   // The kernel drops a signal whose action is the default one if its target is the first process of a PID namespace. A raise() that does nothing stands for that kernel.
-  test.skipIf(!raiseDoesNothing.available)(
+  test.skipIf(!isLinux || !!without("a C compiler"))(
     "a build that takes long, which SIGTERM cannot end, says what it is still compiling and exits with 128 + the number of the signal",
     async () => {
       const env = { ...(await raiseDoesNothing.env()), ...withoutCrashReport };

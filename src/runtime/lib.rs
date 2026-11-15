@@ -70,6 +70,7 @@ pub(crate) mod removed_feature;
 #[path = "../bun.js.rs"]
 pub(crate) mod run_main;
 pub(crate) mod simd_exports;
+pub(crate) mod simd_testing;
 pub(crate) mod timer;
 
 // In the crate graph for the functions generated C++ calls.

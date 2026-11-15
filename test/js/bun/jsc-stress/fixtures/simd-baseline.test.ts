@@ -120,7 +120,7 @@ describe("decodeURIComponent — SIMD % scanning", () => {
   });
 });
 
-describe("URL parsing — Highway indexOfChar/indexOfAny", () => {
+describe("URL parsing — bun_simd index_of_char/index_of_any_char", () => {
   test("long URL with all components", () => {
     const longPath = "/" + "segment/".repeat(32) + "end";
     const url = new URL("https://user:pass@example.com:8080" + longPath + "?key=value&foo=bar#section");
@@ -188,7 +188,7 @@ describe("Latin-1 to UTF-8 — @Vector(16, u8) ungated", () => {
   });
 });
 
-describe("String search — Highway memMem/indexOfChar", () => {
+describe("String search — bun_simd memmem/index_of_char", () => {
   test("indexOf long string", () => {
     const haystack = Buffer.alloc(1000, "a").toString() + "needle" + Buffer.alloc(1000, "b").toString();
     expect(haystack.indexOf("needle")).toBe(1000);
@@ -274,10 +274,8 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
   });
 });
 
-describe("PNG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_png.cpp is compiled several times over, on x64 for SSSE3, SSE4 and AVX2. A machine with
-  // AVX2 runs that one alone, and any file can reach the others on a machine without. An emulated Nehalem runs SSSE3:
-  // it lacks the AES that Highway wants for SSE4.
+describe("PNG codec: bun_simd runtime dispatch", () => {
+  // src/simd/kernels/png.rs is compiled twice on x64, for SSE4 and AVX2. A machine with AVX2 runs that one alone.
   // Rows 9 and 21 begin with 96 bytes that repeat a pixel, or are such bytes. Below them Paeth has a shorter way, which
   // it looks for 64 bytes in and leaves where they end.
   const someFilterTypes = [0, 1, 2, 3, 4, 4, 3, 2, 1, 0, 4, 4];

@@ -7,7 +7,7 @@ use crate::types::tsutils::{is_intersection_type, is_union_type};
 use crate::types::{NodeFlags, SourceFile, SymbolFlags, SyntaxKind, TsNode, TsSymbol, Type, Types};
 use bun_core::strings;
 use bun_paths::platform::Posix;
-use bun_paths::resolve_path::join_spill;
+use bun_paths::resolve_path::join_string_vec;
 use std::borrow::Cow;
 
 /// `TypeOrValueSpecifier`: how rule options refer to types and values.
@@ -143,9 +143,7 @@ fn type_declared_in_file<'a>(
                 .is_some_and(|start| is_same_file_name(program, start, cwd))
         });
     };
-    let mut spill = Vec::new();
-    let absolute_path =
-        join_spill::<Posix>(&mut spill, &[current_directory, relative_path]).to_vec();
+    let absolute_path = join_string_vec::<Posix>(&[current_directory, relative_path]);
     let absolute_path = absolute_path.strip_suffix(b"/").unwrap_or(&absolute_path);
     declaration_files
         .any(|declaration| is_same_file_name(program, declaration.file_name(), absolute_path))

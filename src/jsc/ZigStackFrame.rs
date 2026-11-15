@@ -6,6 +6,7 @@ use bstr::BStr;
 use bun_core::Output;
 use bun_core::String as BunString;
 use bun_core::StringOrView;
+use bun_paths::resolve_path::{SpillBuf, relative_spill};
 use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
@@ -67,16 +68,17 @@ impl ZigStackFrame<'_> {
     ///
     /// Only an absolute path is made relative. A source URL that is not a path (a
     /// `data:` or `blob:` URL, `node:fs`, the name from a `//# sourceURL=` comment)
-    /// is printed as-is, like [`SourceURLFormatter`] prints it. `relative` normalizes
-    /// its operands in fixed path buffers, so a source URL that is too long to be a
+    /// is printed as-is, like [`SourceURLFormatter`] prints it. A source URL that is too long to be a
     /// path is printed as-is too.
-    ///
-    /// The relative form lives in `relative`'s thread-local buffer until the next call.
-    pub fn relative_source_url<'a>(dir: &[u8], source_url: &'a [u8]) -> &'a [u8] {
+    pub fn relative_source_url<'a>(
+        buf: &'a mut SpillBuf<'_>,
+        dir: &[u8],
+        source_url: &'a [u8],
+    ) -> &'a [u8] {
         if !bun_paths::is_absolute(source_url) || source_url.len() >= bun_paths::MAX_PATH_BYTES {
             return source_url;
         }
-        bun_paths::resolve_path::relative(dir, source_url)
+        relative_spill(buf, dir, source_url)
     }
 
     pub fn name_formatter(&self, enable_color: bool) -> NameFormatter<'_> {

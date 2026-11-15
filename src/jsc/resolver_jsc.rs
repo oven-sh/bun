@@ -6,7 +6,7 @@ use bstr::BStr;
 
 use crate::{JSGlobalObject, JSValue};
 use bun_core::{String as BunString, strings};
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, SpillBuf};
 use bun_paths::{Platform, SEP, SEP_STR};
 
 pub(crate) fn node_module_paths(path: &BunString) -> Vec<BunString> {
@@ -33,8 +33,6 @@ extern "C" fn node_module_paths_js_value(
 }
 
 fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunString> {
-    let mut list: Vec<bun_core::String> = Vec::new();
-
     let utf8 = in_str.to_utf8();
     let base_path: &[u8] = if use_dirname {
         resolve_path::dirname::<bun_paths::platform::Auto>(utf8.slice())
@@ -42,10 +40,19 @@ fn node_module_paths_list(in_str: &BunString, use_dirname: bool) -> Vec<BunStrin
         utf8.slice()
     };
     // Like Node's `_nodeModulePaths`, this is pure string manipulation, so there's no length limit.
-    let mut full_path: &[u8] = resolve_path::join_abs_string::<bun_paths::platform::Auto>(
-        bun_paths::fs::FileSystem::instance().top_level_dir(),
-        &[base_path],
-    );
+    SpillBuf::with_scratch(|buf| {
+        node_module_paths_of_dir(resolve_path::join_abs_string_spill::<
+            bun_paths::platform::Auto,
+        >(
+            bun_paths::fs::FileSystem::instance().top_level_dir(),
+            buf,
+            &[base_path],
+        ))
+    })
+}
+
+fn node_module_paths_of_dir(mut full_path: &[u8]) -> Vec<BunString> {
+    let mut list: Vec<bun_core::String> = Vec::new();
     let root_index: usize = {
         #[cfg(windows)]
         {

@@ -154,14 +154,17 @@ extern "C" fn BakeProdResolve(
     let after_scheme = &referrer.slice()[5..];
     let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
 
-    BunString::create_format(format_args!(
-        "bake:{}",
-        BStr::new(resolve_path::join_abs::<platform::Posix>(
-            dir,
-            // force posix paths in bake
-            specifier.slice(),
+    SpillBuf::with_scratch(|buf| {
+        BunString::create_format(format_args!(
+            "bake:{}",
+            BStr::new(resolve_path::join_abs_string_spill::<platform::Posix>(
+                dir,
+                buf,
+                // force posix paths in bake
+                &[specifier.slice()],
+            ))
         ))
-    ))
+    })
 }
 
 /// Given a key, returns the source code to load.

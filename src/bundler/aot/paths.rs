@@ -3,8 +3,7 @@ use bun_paths::resolve_path::{self, platform::Auto};
 use bun_paths::{MAX_PATH_BYTES, is_sep_native};
 
 pub(super) fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
-    let mut spill = Vec::new();
-    resolve_path::join_abs_string_spill::<Auto>(working_directory, &mut spill, &[path]).to_vec()
+    resolve_path::join_abs_string_vec::<Auto>(working_directory, &[path])
 }
 
 pub(super) fn relative_path(working_directory: &[u8], from: &[u8], to: &[u8]) -> Option<Vec<u8>> {
@@ -13,7 +12,7 @@ pub(super) fn relative_path(working_directory: &[u8], from: &[u8], to: &[u8]) ->
     let fits = from.len() < MAX_PATH_BYTES
         && to.len() < MAX_PATH_BYTES
         && max_relative_path_length(&from, &to) < MAX_PATH_BYTES;
-    fits.then(|| resolve_path::relative_platform::<Auto, false>(&from, &to).to_vec())
+    fits.then(|| resolve_path::relative_vec(&from, &to))
 }
 
 pub(super) fn report_long_path(log: &Log, kind: &str, path: &[u8]) {

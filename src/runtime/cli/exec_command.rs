@@ -5,6 +5,7 @@ use bstr::BStr;
 use bun_bundler::Transpiler;
 use bun_core::{Global, Output};
 use bun_options_types::schema::api;
+use bun_paths::resolve_path::SpillBuf;
 
 use crate::shell::ShellInterpreter;
 
@@ -39,7 +40,11 @@ impl ExecCommand {
             }
         };
         let parts: [&[u8]; 2] = [cwd, b"[eval]"];
-        let script_path = bun_paths::resolve_path::join::<bun_paths::platform::Auto>(&parts);
+        let mut script_path_buf = SpillBuf::default();
+        let script_path = bun_paths::resolve_path::join_spill::<bun_paths::platform::Auto>(
+            &mut script_path_buf,
+            &parts,
+        );
 
         let code = match ShellInterpreter::init_and_run_from_source(
             ctx,

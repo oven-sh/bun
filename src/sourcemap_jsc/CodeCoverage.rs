@@ -7,6 +7,7 @@ use bun_collections::VecExt;
 use bun_collections::bit_set::DynamicBitSet;
 use bun_core::{self, Utf8Bytes};
 use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
+use bun_paths::resolve_path::{SpillBuf, relative_spill};
 use bun_sourcemap::{InternalSourceMap, Ordinal, ParsedSourceMap};
 
 type LinesHits = Vec<u32>;
@@ -404,20 +405,22 @@ pub mod text {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let mut filename: &[u8] = &report.source_url;
-        if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
-        }
+        SpillBuf::with_scratch(|buf| {
+            let mut filename: &[u8] = &report.source_url;
+            if !base_path.is_empty() {
+                filename = relative_spill(buf, base_path, filename);
+            }
 
-        write_format_with_values::<ENABLE_COLORS>(
-            filename,
-            max_filename_length,
-            *fraction,
-            *thresholds,
-            fraction.failing,
-            writer,
-            true,
-        )?;
+            write_format_with_values::<ENABLE_COLORS>(
+                filename,
+                max_filename_length,
+                *fraction,
+                *thresholds,
+                fraction.failing,
+                writer,
+                true,
+            )
+        })?;
 
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
@@ -477,11 +480,6 @@ pub mod lcov {
         base_path: &[u8],
         writer: &mut impl bun_io::Write,
     ) -> bun_io::Result<()> {
-        let mut filename: &[u8] = &report.source_url;
-        if !base_path.is_empty() {
-            filename = bun_paths::resolve_path::relative(base_path, filename);
-        }
-
         // TN: test name
         // Empty value appears fine. For example, `TN:`.
         writer.write_all(b"TN:\n")?;
@@ -490,12 +488,16 @@ pub mod lcov {
         // For example, `SF:path/to/source.ts`
         // Sanitize newlines so a crafted source path cannot inject extra LCOV records.
         writer.write_all(b"SF:")?;
-        for &byte in filename {
-            match byte {
-                b'\n' | b'\r' => writer.write_all(b"?")?,
-                byte => writer.write_all(&[byte])?,
+        SpillBuf::with_scratch(|buf| {
+            let mut filename: &[u8] = &report.source_url;
+            if !base_path.is_empty() {
+                filename = relative_spill(buf, base_path, filename);
             }
-        }
+            filename.iter().try_for_each(|&byte| match byte {
+                b'\n' | b'\r' => writer.write_all(b"?"),
+                byte => writer.write_all(&[byte]),
+            })
+        })?;
         writer.write_all(b"\n")?;
 
         // ** Per-function coverage not supported yet, since JSC does not support function names yet. **

@@ -2,6 +2,7 @@
 // for interacting with the filesystem from JavaScript.
 // The top-level functions assume the arguments are already validated
 
+use bun_paths::resolve_path::SpillBuf;
 use bun_paths::strings;
 #[cfg(windows)]
 use core::ffi::c_void;
@@ -6926,9 +6927,8 @@ impl NodeFS {
         };
 
         let mut iterator = DirIterator::iterate(dir.fd());
-        let mut dirent_path_prev = BunString::EMPTY;
+        let mut dirent_path = BunString::EMPTY;
         let mut spill: Vec<u8> = Vec::new();
-        let mut dirent_spill: Vec<u8> = Vec::new();
 
         loop {
             let current = match iterator.next() {
@@ -6999,22 +6999,23 @@ impl NodeFS {
                 }
             }
 
-            if T::IS_DIRENT {
-                let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
-                    &mut dirent_spill,
-                    &[root_basename, name_to_copy],
-                );
-                let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
-                if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                    dirent_path_prev = BunString::clone_utf8(path_u8);
-                }
+            if T::IS_DIRENT && dirent_path.is_empty() {
+                dirent_path = SpillBuf::with_scratch(|scratch| {
+                    let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+                        scratch,
+                        &[root_basename, name_to_copy],
+                    );
+                    BunString::clone_utf8(paths::resolve_path::dirname::<paths::platform::Auto>(
+                        joined,
+                    ))
+                });
             }
             // async path: uses raw `BunString::clone_utf8` — do not apply encoding.
             T::append_entry_recursive(
                 entries,
                 utf8_name,
                 name_to_copy,
-                &dirent_path_prev,
+                &dirent_path,
                 effective_kind,
                 async_task.encoding,
                 false,
@@ -7044,7 +7045,6 @@ impl NodeFS {
             .map_err(|err| err.with_path(args.path.slice()))?;
 
         let mut spill: Vec<u8> = Vec::new();
-        let mut dirent_spill: Vec<u8> = Vec::new();
 
         while let Some(item) = stack.pop_front() {
             let is_root = item.is_none();
@@ -7061,7 +7061,7 @@ impl NodeFS {
             let fd = subdir.as_ref().unwrap_or(&root).fd();
 
             let mut iterator = DirIterator::iterate(fd);
-            let mut dirent_path_prev = BunString::DEAD;
+            let mut dirent_path = BunString::DEAD;
 
             loop {
                 let current = match iterator.next() {
@@ -7116,25 +7116,25 @@ impl NodeFS {
                     }
                 }
 
-                if T::IS_DIRENT {
-                    let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
-                        &mut dirent_spill,
-                        &[root_basename.as_bytes(), name_to_copy],
-                    );
-                    let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
-                    if dirent_path_prev.is_empty() || dirent_path_prev.byte_slice() != path_u8 {
-                        dirent_path_prev = webcore::encoding::to_bun_string(
+                if T::IS_DIRENT && dirent_path.is_empty() {
+                    dirent_path = SpillBuf::with_scratch(|scratch| {
+                        let joined = paths::resolve_path::join_spill::<paths::platform::Auto>(
+                            scratch,
+                            &[root_basename.as_bytes(), name_to_copy],
+                        );
+                        let path_u8 = paths::resolve_path::dirname::<paths::platform::Auto>(joined);
+                        webcore::encoding::to_bun_string(
                             without_nt_prefix::<u8>(path_u8),
                             encoding_to_node(args.encoding),
-                        );
-                    }
+                        )
+                    });
                 }
                 // sync path: uses `encode_readdir_name(.., args.encoding)`.
                 T::append_entry_recursive(
                     entries,
                     utf8_name,
                     name_to_copy,
-                    &dirent_path_prev,
+                    &dirent_path,
                     effective_kind,
                     args.encoding,
                     true,

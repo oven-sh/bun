@@ -195,14 +195,14 @@ pub(crate) fn is_of_the_project(command: &[u8]) -> bool {
 /// value is the working directory. Unlike there, a `\` is part of a name on POSIX where there is such a name.
 pub(crate) fn directory_of_cwd(given: &[u8]) -> Vec<u8> {
     use bun_paths::platform::Loose;
-    use bun_paths::resolve_path::{join_abs_string_spill, normalize_string_generic_t};
+    use bun_paths::resolve_path::{join_abs_string_vec, normalize_string_generic_t};
     // An absolute one needs no working directory, which may be deleted.
     let base = match bun_paths::is_absolute(given) {
         true => b"/".to_vec(),
         false => working_directory(),
     };
     if cfg!(windows) {
-        return join_abs_string_spill::<Loose>(&base, &mut Vec::new(), &[given]).to_vec();
+        return join_abs_string_vec::<Loose>(&base, &[given]);
     }
     // On POSIX, that function takes every `\` for a separator, also one in the name of the working directory.
     let fold = |given: &[u8]| {
@@ -335,10 +335,10 @@ fn has_script(name: &[u8], path: &[u8], contents: &[u8]) -> Result<bool, Unparsa
 
 /// The path of `name` below `dir`, which is absolute.
 fn below(dir: &[u8], name: &[u8]) -> Vec<u8> {
-    use bun_paths::{platform::Auto, resolve_path::join_abs_string_spill};
+    use bun_paths::{platform::Auto, resolve_path::join_abs_string_vec};
     // On POSIX, that function takes a `\` in a name for a separator.
     if cfg!(windows) {
-        return join_abs_string_spill::<Auto>(dir, &mut Vec::new(), &[name]).to_vec();
+        return join_abs_string_vec::<Auto>(dir, &[name]);
     }
     let separator: &[u8] = if dir.ends_with(b"/") { b"" } else { b"/" };
     [dir, separator, name].concat()

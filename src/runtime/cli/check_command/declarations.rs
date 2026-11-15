@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bstr::BStr;
 use bun_bundler::options::TypeChecked;
 use bun_paths::platform::Auto;
-use bun_paths::resolve_path::join_abs_string;
+use bun_paths::resolve_path::{SpillBuf, join_abs_string_spill};
 use bun_sema::check::Checker;
 use bun_sema::program::FileId;
 use bun_sema_driver::host::{Provided, from_native, to_native};
@@ -93,8 +93,10 @@ pub(crate) fn check_and_emit_declarations(checked: TypeChecked, log: &bun_ast::L
     };
     let has_configuration = tsconfig.is_some()
         || entry_paths.iter().any(|path| {
-            let path = join_abs_string::<Auto>(cwd, &[path]);
-            tsconfig_of_package(&from_native(path)).is_some()
+            let path = SpillBuf::with_scratch(|buf| {
+                from_native(join_abs_string_spill::<Auto>(cwd, buf, &[path]))
+            });
+            tsconfig_of_package(&path).is_some()
         });
     let flags = [&b"--declaration"[..], b"--declarationMap", b"false"];
     let libs = if has_configuration {

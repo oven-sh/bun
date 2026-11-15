@@ -1900,7 +1900,7 @@ impl VirtualMachine {
         specifier: &[u8],
         hash: i32,
     ) -> crate::CrateResult<*mut JSInternalPromise> {
-        use bun_bundler::entry_points::{Fs, MacroEntryPoint};
+        use bun_bundler::entry_points::MacroEntryPoint;
         use bun_collections::hash_map::Entry;
         let entry_point = self.macro_entry_points.with_mut(|entry_points| {
             crate::CrateResult::<&MacroEntryPoint>::Ok(match entry_points.entry(hash) {
@@ -1909,7 +1909,7 @@ impl VirtualMachine {
                     let mut ep = Box::new(MacroEntryPoint::default());
                     MacroEntryPoint::generate(
                         &mut *ep,
-                        &Fs::PathName::init(entry_path),
+                        entry_path,
                         function_name,
                         hash,
                         specifier,
@@ -4744,7 +4744,7 @@ impl VirtualMachine {
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
-                bun_resolver::fs::PathName::init(source).dir_with_trailing_slash()
+                bun_resolver::fs::PathName::init(source).dir_with_trailing_slash(source)
             } else {
                 source
             }
@@ -4928,8 +4928,7 @@ impl VirtualMachine {
             }
         };
         let vitest = resolve(source_dir, b"vitest/package.json")?;
-        let vitest_dir =
-            bun_resolver::fs::PathName::init(vitest.path_const()?.text).dir_with_trailing_slash();
+        let vitest_dir = vitest.path_const()?.source_dir();
         resolve(vitest_dir, b"chai")
     }
 
@@ -5178,7 +5177,9 @@ impl VirtualMachine {
             // The message is that of `bun run`, which finds the file beside the importer. What helps here is another thing.
             let importer = normalize_source(source_utf8.slice());
             let folder = match IS_A_FILE_PATH {
-                true => bun_resolver::fs::PathName::init(importer).dir_with_trailing_slash(),
+                true => {
+                    bun_resolver::fs::PathName::init(importer).dir_with_trailing_slash(importer)
+                }
                 false => importer,
             };
             let resolver = &jsc_vm.transpiler.get().resolver;
@@ -7144,11 +7145,16 @@ impl VirtualMachine {
 
         let writer = bun_core::Output::error_writer();
 
+        let mut file_buf = bun_paths::resolve_path::SpillBuf::default();
         let mut has_location = false;
         if let Some(frame) = top_frame {
             if !frame.position.is_invalid() {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let file = crate::ZigStackFrame::relative_source_url(
+                    &mut file_buf,
+                    dir,
+                    source_url.slice(),
+                );
                 let _ = write!(
                     writer,
                     "\n::error file={},line={},col={},title=",
@@ -7213,7 +7219,11 @@ impl VirtualMachine {
             };
             for frame in frames {
                 let source_url = frame.source_url.to_utf8();
-                let file = crate::ZigStackFrame::relative_source_url(dir, source_url.slice());
+                let file = crate::ZigStackFrame::relative_source_url(
+                    &mut file_buf,
+                    dir,
+                    source_url.slice(),
+                );
                 let func = frame.function_name.to_utf8();
                 if file.is_empty() && func.slice().is_empty() {
                     continue;

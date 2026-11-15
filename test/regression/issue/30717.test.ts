@@ -85,8 +85,7 @@ test.skipIf(isWindows || !cc)(
 
     // Delete the on-disk library so the compiled binary must use the
     // embedded copy — otherwise a passing test might just be hitting the
-    // backup `FileSystem::instance().abs(&[name])` path in `dlopen` (spec
-    // ffi.zig:1068-1073) which resolves `./libhello.so` relative to cwd.
+    // fallback in `dlopen`, which resolves `./libhello.so` relative to cwd.
     unlinkSync(libPath);
 
     // Run from a different cwd so cwd-relative resolution can't find the

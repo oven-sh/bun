@@ -3,39 +3,36 @@ use core::cell::Cell;
 use core::sync::atomic::Ordering;
 use std::io::Write as _;
 
+use bun_collections::HiveBox;
 use bun_core::strings;
 use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
-use bun_threading::thread_pool::Batch as ThreadPoolBatch;
 
 use crate::bun_fs::FileSystem;
-use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;
 use crate::npm;
 use crate::patch_install::Callback as PatchTaskCallback;
 use crate::retry_timer;
-use crate::tarball_stream::TarballStream;
 use bun_install::{
     DependencyID, ExtractTarball, INVALID_PACKAGE_ID, NetworkTask, PackageID, Repository,
 };
 // Import the *module* under the `Task` name so `Task::Id` resolves as a path.
-use super::{INBOX, THREAD_POOL, directories, enqueue};
+use super::{INBOX, InstallFields, InstallState, THREAD_POOL, directories, enqueue};
 use super::{
     ManifestFailure, PackageInstaller, PackageManager, ProgressStrings, RemoteTurn, Subcommand,
     TaskCallbackList,
 };
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
-use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess};
+use crate::lifecycle_script_runner::{InstallCtx, ScriptCaller};
 use crate::network_task::{Authorization, ForTarballError, add_error_or_warning, stored_string};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
-use bun_install::lockfile::Package;
+use bun_install::lockfile::{Lockfile, Package};
 use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::Do;
 use crate::isolated_install::store as Store;
 
 macro_rules! add_error_or_warning_pretty {
@@ -52,11 +49,11 @@ pub(crate) use add_error_or_warning_pretty;
 /// Who runs the tasks, which decides where their results go.
 pub(crate) enum Caller<'c, 'i> {
     /// Resolves dependencies for a command.
-    Resolver,
+    Resolver(&'c mut PackageManager),
     /// Resolves the dependency of an import that blocks the runtime's thread.
-    BlockedImport,
+    BlockedImport(&'c mut PackageManager),
     /// Fills the manifest cache.
-    ManifestCache,
+    ManifestCache(&'c mut PackageManager),
     HoistedLinker(&'c mut PackageInstaller<'i>),
     IsolatedLinker(&'c mut Store::Installer<'i>),
 }
@@ -66,11 +63,30 @@ impl Caller<'_, '_> {
         matches!(self, Self::HoistedLinker(_) | Self::IsolatedLinker(_))
     }
 
+    fn install_fields(&mut self) -> InstallFields<'_> {
+        match self {
+            Self::Resolver(manager)
+            | Self::BlockedImport(manager)
+            | Self::ManifestCache(manager) => manager.install_fields(),
+            Self::HoistedLinker(installer) => installer.manager.reborrow(),
+            Self::IsolatedLinker(installer) => installer.manager.reborrow(),
+        }
+    }
+
+    /// `None` for a linker, which ignores the results of tasks that resolve dependencies.
+    fn manager(&mut self) -> Option<&mut PackageManager> {
+        match self {
+            Self::Resolver(manager)
+            | Self::BlockedImport(manager)
+            | Self::ManifestCache(manager) => Some(manager),
+            Self::HoistedLinker(_) | Self::IsolatedLinker(_) => None,
+        }
+    }
+
     /// Marks the task as failed, so that a later enqueue fails fast. Returns `Some(is_required)` if
     /// the caller has to report the error.
     fn dispatch_tarball_error(
         &mut self,
-        manager: &mut PackageManager,
         task_id: Task::Id,
         dependency_id: DependencyID,
         name: &[u8],
@@ -78,13 +94,15 @@ impl Caller<'_, '_> {
         err: crate::Error,
         url: &[u8],
     ) -> Option<bool> {
-        manager.mark_network_task_failed(task_id);
+        let is_linker = self.is_linker();
+        let manager = self.install_fields();
+        manager.state.mark_network_task_failed(task_id);
         // A linker queues a tarball once, for the first dependency that reaches it.
-        let is_required = if self.is_linker() {
+        let is_required = if is_linker {
             let package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
             manager.is_package_required(dependency_id, package_id)
         } else {
-            manager.is_network_task_required(task_id)
+            manager.state.is_network_task_required(task_id)
         };
         match self {
             Self::IsolatedLinker(installer) if is_required => {
@@ -101,67 +119,42 @@ impl Caller<'_, '_> {
 }
 
 /// The cleanup that runs however `run_tasks` exits.
-struct FinishPass<'a> {
-    manager: &'a mut PackageManager,
-    counts_tasks: bool,
+struct FinishPass<'a, 'c, 'i> {
+    caller: Caller<'c, 'i>,
     log_level: Options::LogLevel,
     has_updated_this_run: &'a Cell<bool>,
 }
 
-impl Drop for FinishPass<'_> {
+impl Drop for FinishPass<'_, '_, '_> {
     fn drop(&mut self) {
-        let manager = &mut *self.manager;
-        manager.drain_dependency_list();
+        let counts_tasks = matches!(self.caller, Caller::Resolver(_) | Caller::ManifestCache(_));
+        match self.caller.manager() {
+            Some(manager) => manager.drain_dependency_list(),
+            None => self.caller.install_fields().schedule_queued_tasks(),
+        }
 
         if self.log_level.show_progress() {
-            manager.start_progress_bar_if_none();
+            let state = self.caller.install_fields().state;
+            state.start_progress_bar_if_none();
 
-            if self.counts_tasks {
+            if counts_tasks {
                 let completed_items =
-                    (manager.total_tasks.get() - manager.pending_task_count()) as usize;
-                let node = manager.progress.node(manager.downloads_node());
+                    (state.total_tasks.get() - state.pending_task_count()) as usize;
+                let node = state.progress.node(state.downloads_node());
                 if completed_items != node.completed_items.get() || self.has_updated_this_run.get()
                 {
                     node.completed_items.set(completed_items);
                     node.estimated_total_items
-                        .set(manager.total_tasks.get() as usize);
+                        .set(state.total_tasks.get() as usize);
                 }
             }
             // The progress bar shows the node that was activated last, so the downloads node is
             // only activated once there is something to download.
-            if manager.total_tasks.get() > 0 {
-                manager.progress.activate(manager.downloads_node());
+            if state.total_tasks.get() > 0 {
+                state.progress.activate(state.downloads_node());
             }
-            manager.progress.maybe_refresh();
+            state.progress.maybe_refresh();
         }
-    }
-}
-
-struct ReturnResolveTask<'a> {
-    manager: &'a mut PackageManager,
-    task: *mut Task::Task,
-}
-
-impl Drop for ReturnResolveTask<'_> {
-    fn drop(&mut self) {
-        // SAFETY: `task` is the sole live handle to this pool slot.
-        unsafe { self.manager.preallocated_resolve_tasks.put(self.task) };
-    }
-}
-
-/// Null if the resolve task doesn't own a network task.
-struct ReturnNetworkTask<'a> {
-    manager: &'a mut PackageManager,
-    task: *mut NetworkTask,
-}
-
-impl Drop for ReturnNetworkTask<'_> {
-    fn drop(&mut self) {
-        if self.task.is_null() {
-            return;
-        }
-        // SAFETY: see `ReturnResolveTask`.
-        unsafe { self.manager.preallocated_network_tasks.put(self.task) };
     }
 }
 
@@ -176,7 +169,7 @@ pub(crate) fn resolve_waiters_of_appended_package(
     // Recorded for a dependency that's enqueued on the same task later. See
     // `AppendedTaskPackageMap`.
     manager.appended_task_packages.insert(task_id, pkg.meta.id);
-    let Some(entry) = manager.task_queue.get_mut(&task_id) else {
+    let Some(entry) = manager.state.task_queue.get_mut(&task_id) else {
         return Ok(());
     };
     let mut result = Ok(());
@@ -195,15 +188,19 @@ pub(crate) fn resolve_waiters_of_appended_package(
                 }
             }
             // if it's a node_module folder to install, handle that after we process all the dependencies.
-            _ => manager.task_queue.get_mut(&task_id).unwrap().push(dep),
+            _ => manager
+                .state
+                .task_queue
+                .get_mut(&task_id)
+                .unwrap()
+                .push(dep),
         }
     }
     result
 }
 
 pub(crate) fn run_tasks(
-    manager: &mut PackageManager,
-    mut caller: Caller<'_, '_>,
+    caller: Caller<'_, '_>,
     install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
@@ -212,41 +209,32 @@ pub(crate) fn run_tasks(
     let has_updated_this_run = Cell::new(false);
     let mut has_network_error = false;
 
-    let finish_pass = FinishPass {
-        manager,
-        counts_tasks: !caller.is_linker() && !matches!(caller, Caller::BlockedImport),
+    let mut finish_pass = FinishPass {
+        caller,
         log_level,
         has_updated_this_run: &has_updated_this_run,
     };
-    let manager = &mut *finish_pass.manager;
+    let caller = &mut finish_pass.caller;
 
     const DOWNLOAD: &str = ProgressStrings::DOWNLOAD_EMOJI;
     const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
     // The progress bar shows the name of the first task in each pass.
-    let name_progress = |manager: &PackageManager, name: &[u8], emoji: &str| {
+    let name_progress = |state: &InstallState, name: &[u8], emoji: &str| {
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
-            manager.set_node_name(manager.downloads_node(), name, emoji.as_bytes());
+            state.set_node_name(state.downloads_node(), name, emoji.as_bytes());
         }
-    };
-    let return_network_task = |manager: &mut PackageManager, task: *mut NetworkTask| {
-        drop(ReturnNetworkTask { manager, task })
     };
 
-    let patch_tasks_batch = INBOX.patch_tasks.pop_batch();
-    let mut patch_tasks_iter = patch_tasks_batch.iterator();
-    loop {
-        let ptask_ptr = patch_tasks_iter.next();
-        if ptask_ptr.is_null() {
-            break;
-        }
-        // SAFETY: the `Box` that `PatchTask::run` pushed; `next` read its link before returning it.
-        let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
-        debug_assert!(manager.pending_task_count() > 0);
+    for mut ptask in INBOX.patch_tasks.pop_batch() {
         INBOX.decrement_pending_tasks();
-        ptask.run_from_main_thread(manager, log_level)?;
+        if matches!(ptask.callback, PatchTaskCallback::Apply(_)) {
+            ptask.run_from_main_thread_apply();
+        } else if let Some(manager) = caller.manager() {
+            ptask.run_from_main_thread_calc_hash(manager, log_level)?;
+        }
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if !apply.logger.has_errors() {
-                if let Caller::HoistedLinker(installer) = &mut caller {
+                if let Caller::HoistedLinker(installer) = caller {
                     if apply.task_id.is_none() {
                         if let Some(ctx) = apply.install_context.as_mut() {
                             // The hoisted loop runs tasks in the middle of a tree.
@@ -256,8 +244,7 @@ pub(crate) fn run_tasks(
                             installer.node_modules.tree_id = ctx.tree_id;
                             installer.current_tree_id = ctx.tree_id;
                             let pkg_id = apply.pkg_id;
-                            let resolution =
-                                &manager.lockfile.packages.items_resolution()[pkg_id as usize];
+                            let resolution = &installer.resolutions[pkg_id as usize];
 
                             // Downloaded, so already known to need an install.
                             let needs_verify = false;
@@ -283,112 +270,82 @@ pub(crate) fn run_tasks(
         }
     }
 
-    if let Caller::IsolatedLinker(installer) = &mut caller {
-        let installer_ptr: *mut Store::Installer<'_> = &raw mut **installer;
-        let batch = installer.task_queue.pop_batch();
-        let mut iter = batch.iterator();
-        loop {
-            let task_ptr = iter.next();
-            if task_ptr.is_null() {
-                break;
-            }
-            // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-            let task = unsafe { &mut *task_ptr };
-            match &task.result {
+    if let Caller::IsolatedLinker(installer) = caller {
+        installer.tasks.pop_finished_batch();
+        while let Some(task) = installer.tasks.next_finished() {
+            let entry_id = task.entry_id;
+            match core::mem::replace(&mut task.result, store_installer::Result::None) {
                 store_installer::Result::None => {
                     if Environment::CI_ASSERT {
                         unreachable!();
                     }
-                    installer
-                        .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
+                    installer.on_task_complete(entry_id, store_installer::CompleteState::Success);
                 }
-                store_installer::Result::Err(_) => {
-                    // Move the error out: `on_task_fail` takes `&mut installer`, which owns `task`.
-                    let store_installer::Result::Err(err) =
-                        core::mem::replace(&mut task.result, store_installer::Result::None)
-                    else {
-                        unreachable!()
-                    };
-                    installer.on_task_fail(task.entry_id, &err);
+                store_installer::Result::Err(err) => {
+                    installer.on_task_fail(entry_id, &err);
                 }
                 store_installer::Result::Blocked => {
-                    installer.on_task_blocked(task.entry_id);
+                    installer.on_task_blocked(entry_id);
                 }
                 store_installer::Result::RunScripts => {
-                    installer.pending_lifecycle_scripts.push_back(task.entry_id);
+                    installer.pending_lifecycle_scripts.push_back(entry_id);
                 }
                 store_installer::Result::Done => {
                     if Environment::CI_ASSERT {
                         // .monotonic is okay because we should have already synchronized with the
                         // completed task thread by virtue of popping from the `UnboundedQueue`.
-                        let step = installer.store.entries.items_step()
-                            [task.entry_id.get() as usize]
-                            .load(Ordering::Relaxed);
+                        let step = installer.shared.step(entry_id).load(Ordering::Relaxed);
                         assert!(step == store_installer::Step::Done as u32);
                     }
-                    installer
-                        .on_task_complete(task.entry_id, store_installer::CompleteState::Success);
+                    installer.on_task_complete(entry_id, store_installer::CompleteState::Success);
                 }
             }
         }
 
-        // Relaxed is enough, because scripts are spawned and reaped on this thread.
-        while LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-            < manager.options.max_concurrent_lifecycle_scripts
-        {
+        let max_scripts = installer.manager.options.max_concurrent_lifecycle_scripts;
+        while installer.manager.state.active_lifecycle_script_count() < max_scripts {
             let Some(entry_id) = installer.pending_lifecycle_scripts.pop_front() else {
                 break;
             };
-            let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
-            let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
-            let pkg_id = installer.store.nodes.items_pkg_id()[node_id.get() as usize];
-            let optional = !manager.is_package_required(dep_id, pkg_id);
+            let node_id = installer.shared.store.entries.items_node_id()[entry_id.get() as usize];
+            let dep_id = installer.shared.store.nodes.items_dep_id()[node_id.get() as usize];
+            let pkg_id = installer.shared.store.nodes.items_pkg_id()[node_id.get() as usize];
+            let optional = !installer.manager.is_package_required(dep_id, pkg_id);
             let list_val = (installer.tasks[entry_id.get() as usize].scripts.as_deref())
                 .expect("a queued entry has a scripts list")
                 .clone();
-            let spawn_res = manager.spawn_package_lifecycle_scripts(
-                list_val,
-                optional,
-                false,
-                Some(InstallCtx::Isolated {
-                    entry_id,
-                    installer: installer_ptr,
-                }),
-            );
+            let spawn_res = ScriptCaller::IsolatedLinker(installer)
+                .spawn_package_lifecycle_scripts(
+                    list_val,
+                    optional,
+                    false,
+                    Some(InstallCtx::Isolated { entry_id }),
+                );
             if let Err(err) = spawn_res {
-                // Relaxed is enough, because the task was popped from the queue and isn't running
-                // anymore.
-                installer.store.entries.items_step()[entry_id.get() as usize]
-                    .store(store_installer::Step::Done as u32, Ordering::Relaxed);
+                installer
+                    .shared
+                    .set_step(entry_id, store_installer::Step::Done);
                 installer.on_task_fail(entry_id, &store_installer::TaskError::RunScripts(err));
             }
         }
     }
 
-    let network_tasks_batch = INBOX.network_tasks.pop_batch();
-    let mut network_tasks_iter = network_tasks_batch.iterator();
-    loop {
-        let task_ptr = network_tasks_iter.next();
-        if task_ptr.is_null() {
-            break;
-        }
-        // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
-        let task = unsafe { &mut *task_ptr };
-        debug_assert!(manager.pending_task_count() > 0);
+    for mut task in INBOX.network_tasks.pop_batch() {
         INBOX.decrement_pending_tasks();
-        // We cannot free the network task at the end of this scope.
-        // It may continue to be referenced in a future task.
 
-        match &mut task.callback {
+        match task.callback {
             NetworkTaskCallback::PackageManifest {
-                loaded_manifest,
                 name: stored_name,
                 is_extended_manifest,
                 registry,
+                ..
             } => {
+                let fills_cache = matches!(caller, Caller::ManifestCache(_));
+                let Some(manager) = caller.manager() else {
+                    continue;
+                };
                 let name = stored_name.slice();
-                let is_extended_manifest = *is_extended_manifest;
-                name_progress(manager, name, DOWNLOAD);
+                name_progress(&manager.state, name, DOWNLOAD);
 
                 // Headers can arrive and the connection still die before the
                 // body does; for a 2xx/3xx that is a failed download too (an
@@ -396,7 +353,10 @@ pub(crate) fn run_tasks(
                 let (download_failed, retry) =
                     download_outcome(&task.response, manager.options.runtime_auto_install);
                 if download_failed && task.retried > 0 {
-                    throttle_after_network_error(manager, &mut has_network_error);
+                    throttle_after_network_error(
+                        &mut manager.install_fields(),
+                        &mut has_network_error,
+                    );
                 }
 
                 let err = task
@@ -411,10 +371,8 @@ pub(crate) fn run_tasks(
                         < manifest_retry_count(manager, task.task_id, name, task.response.fail)
                     {
                         task.retried += 1;
-                        let wait =
-                            retry_timer::retry(manager, task_ptr, task.retried, &task.response);
-                        // `notify` keeps the metadata it finds here if the next attempt gets none.
-                        task.response = Default::default();
+                        let retried = task.retried;
+                        let wait = retry_timer::retry(&mut manager.install_fields(), task);
 
                         if manager.options.log_level.is_verbose() {
                             bun_ast::add_warning_pretty!(
@@ -424,7 +382,7 @@ pub(crate) fn run_tasks(
                                 "{} downloading package manifest <b>{}<r>. Retry {}/{} in {}ms...",
                                 bstr::BStr::new(err.name().as_bytes()),
                                 bun_core::fmt::escape_control_chars(name),
-                                task.retried,
+                                retried,
                                 manager.options.max_retry_count,
                                 wait.as_millis(),
                             );
@@ -435,11 +393,14 @@ pub(crate) fn run_tasks(
 
                     // Try once more, because the full document was only requested for `libc`.
                     if is_extended_manifest && manager.options.minimum_release_age_ms.is_none() {
+                        let is_optional = !manager.state.is_network_task_required(task.task_id);
                         let log = manager.log();
-                        let scope = manager.scope_for_package_name(name);
-                        let is_optional = !manager.is_network_task_required(task.task_id);
-                        task.retry_with_abbreviated_manifest(scope, is_optional, log)?;
-                        enqueue::enqueue_network_task(manager, task_ptr);
+                        task.retry_with_abbreviated_manifest(
+                            &manager.install_fields(),
+                            log,
+                            is_optional,
+                        )?;
+                        enqueue::enqueue_network_task(&mut manager.state, task);
                         continue;
                     }
                 }
@@ -448,8 +409,8 @@ pub(crate) fn run_tasks(
                 else {
                     // Handle non-retry-able errors.
                     // The dependency that reports it decides between error and warning.
-                    let is_required = manager.is_network_task_required(task.task_id)
-                        || manager.task_queue.contains_key(&task.task_id);
+                    let is_required = manager.state.is_network_task_required(task.task_id)
+                        || manager.state.task_queue.contains_key(&task.task_id);
                     let log_mark = manager.log().msgs_len();
                     add_error_or_warning_pretty!(
                         manager.log(),
@@ -470,16 +431,21 @@ pub(crate) fn run_tasks(
                         log_mark,
                         failure,
                     )? {
-                        fail_update_requests(manager, task.task_id, name, None, is_required);
+                        fail_update_requests(
+                            &mut manager.install_fields(),
+                            task.task_id,
+                            name,
+                            None,
+                            is_required,
+                        );
                     }
 
-                    return_network_task(manager, task_ptr);
                     continue;
                 };
 
                 if metadata.status_code() > 399 {
                     if metadata.status_code() == 404
-                        && let Some(entry) = manager.network_dedupe_map.get_mut(&task.task_id)
+                        && let Some(entry) = manager.state.network_dedupe_map.get_mut(&task.task_id)
                     {
                         entry.missing_until = npm::Registry::manifest_expiry(metadata);
                     }
@@ -487,22 +453,21 @@ pub(crate) fn run_tasks(
                     // A dist-tag on the name of an unpublished workspace links the workspace, once
                     // `get_or_put_resolved_package` sees that the task has failed.
                     if metadata.status_code() == 404
-                        && !matches!(caller, Caller::ManifestCache)
+                        && !fills_cache
                         && enqueue::has_linkable_workspace(
                             manager,
                             bun_semver::string::Builder::string_hash(name),
                         )
                     {
-                        manager.mark_network_task_failed(task.task_id);
-                        if !manager.task_queue.contains_key(&task.task_id) {
-                            return_network_task(manager, task_ptr);
+                        manager.state.mark_network_task_failed(task.task_id);
+                        if !manager.state.task_queue.contains_key(&task.task_id) {
                             continue;
                         }
                     }
 
                     // The dependency that reports it decides between error and warning.
-                    let is_required = manager.is_network_task_required(task.task_id)
-                        || manager.task_queue.contains_key(&task.task_id);
+                    let is_required = manager.state.is_network_task_required(task.task_id)
+                        || manager.state.task_queue.contains_key(&task.task_id);
                     let log_mark = manager.log().msgs_len();
                     if is_required {
                         bun_ast::add_error_pretty!(
@@ -540,18 +505,22 @@ pub(crate) fn run_tasks(
                         failure,
                     )? {
                         let is_unanswered = is_required && retry;
-                        fail_update_requests(manager, task.task_id, name, None, is_unanswered);
+                        fail_update_requests(
+                            &mut manager.install_fields(),
+                            task.task_id,
+                            name,
+                            None,
+                            is_unanswered,
+                        );
                     }
 
-                    return_network_task(manager, task_ptr);
                     continue;
                 }
 
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        task.http.as_ref().map_or(0, |http| http.elapsed) as f64
-                            / bun_core::time::NS_PER_MS as f64,
+                        task.request().elapsed() as f64 / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
                         "\n<d>Downloaded <r><green>{}<r> versions\n",
@@ -561,14 +530,19 @@ pub(crate) fn run_tasks(
                 }
 
                 if metadata.status_code() == 304 {
+                    let expiry = npm::Registry::manifest_expiry(metadata);
                     // The HTTP request was cached
-                    if let Some(mut manifest) = loaded_manifest.take() {
+                    if let NetworkTaskCallback::PackageManifest {
+                        loaded_manifest, ..
+                    } = &mut task.callback
+                        && let Some(mut manifest) = loaded_manifest.take()
+                    {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
                         debug_assert!(
                             !is_extended_manifest || manifest.pkg.has_extended_manifest()
                         );
 
-                        manifest.pkg.public_max_age = npm::Registry::manifest_expiry(metadata);
+                        manifest.pkg.public_max_age = expiry;
 
                         // reshaped for borrowck —
                         // `bun_collections::HashMap` lacks `get_or_put` for
@@ -589,46 +563,30 @@ pub(crate) fn run_tasks(
                                     .get(&name_hash)
                                     .unwrap()
                                     .manifest(),
-                                *registry,
+                                registry,
                                 temp_dir,
                             );
                         }
 
                         // A task that `populate_manifest_cache` started has no entry.
                         if let Some(dependency_list_entry) =
-                            manager.task_queue.get_mut(&task.task_id)
+                            manager.state.task_queue.get_mut(&task.task_id)
                         {
                             let dependency_list = core::mem::take(dependency_list_entry);
 
                             process_dependency_list(manager, &dependency_list, install_peer)?;
                         }
 
-                        return_network_task(manager, task_ptr);
                         continue;
                     }
                 }
 
-                // reshaped for borrowck — split the nested `&mut
-                // manager` borrows (`task_batch.push` vs. `enqueue_*`).
-                // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
-                // and exclusively owned by this batch; `manager` is the live PackageManager.
-                let queued = unsafe {
-                    enqueue::enqueue_parse_npm_package(
-                        manager,
-                        task.task_id,
-                        *stored_name,
-                        task_ptr,
-                    )
-                };
-                manager.task_batch.push(ThreadPoolBatch::from(queued));
+                enqueue::enqueue_parse_npm_package(manager, stored_name, task);
             }
-            NetworkTaskCallback::Extract(_) => {
-                // A committed stream publishes its result through the extract
-                // Task, except when the connection failed mid-body:
-                // `TarballStream::finish()` then un-commits and sends the
-                // NetworkTask back here to be retried like any failed download.
-                debug_assert!(!task.streaming_committed);
-
+            NetworkTaskCallback::Extract(ExtractTarball {
+                name, resolution, ..
+            }) => {
+                let manager = &mut caller.install_fields();
                 let (download_failed, retry) =
                     download_outcome(&task.response, manager.options.runtime_auto_install);
                 if download_failed && task.retried > 0 {
@@ -644,25 +602,22 @@ pub(crate) fn run_tasks(
                 if retry {
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
-                        let wait =
-                            retry_timer::retry(manager, task_ptr, task.retried, &task.response);
-                        task.reset_streaming_for_retry();
+                        let retried = task.retried;
+                        let wait = retry_timer::retry(manager, task);
 
                         if manager.options.log_level.is_verbose() {
-                            let extract = task.tarball();
                             bun_ast::add_warning_pretty!(
-                                manager.log(),
+                                manager.state.log(),
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 "{} downloading tarball <b>{}@{}<r>. Retrying {}/{} in {}ms...",
                                 bstr::BStr::new(err.name().as_bytes()),
-                                bun_core::fmt::for_terminal(bstr::BStr::new(extract.name.slice())),
+                                bun_core::fmt::for_terminal(bstr::BStr::new(name.slice())),
                                 bun_core::fmt::for_terminal(
-                                    extract
-                                        .resolution
+                                    resolution
                                         .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
                                 ),
-                                task.retried,
+                                retried,
                                 manager.options.max_retry_count,
                                 wait.as_millis(),
                             );
@@ -672,30 +627,24 @@ pub(crate) fn run_tasks(
                     }
                 }
 
-                // Past this point we will not retry. If streaming state was
-                // allocated but never scheduled, release it now so the
-                // pre-created Task goes back to the pool and the stream
-                // buffers are freed. The buffered `enqueueExtractNPMPackage`
-                // path below allocates its own Task.
-                task.discard_unused_streaming_state(manager);
                 let extract = task.tarball();
 
                 let Some(metadata) = task.response.metadata.as_ref().filter(|_| !download_failed)
                 else {
                     let Some(is_required) = caller.dispatch_tarball_error(
-                        manager,
                         task.task_id,
                         extract.dependency_id,
                         extract.name.slice(),
                         &extract.resolution,
                         err,
-                        &task.url_buf,
+                        task.request().href(),
                     ) else {
                         continue;
                     };
+                    let manager = &mut caller.install_fields();
 
                     add_error_or_warning_pretty!(
-                        manager.log(),
+                        manager.state.log(),
                         is_required,
                         "{} downloading tarball <b>{}@{}<r>",
                         DownloadFailure(err.name(), &task.response),
@@ -714,14 +663,13 @@ pub(crate) fn run_tasks(
                         is_required,
                     );
 
-                    let _ = manager.task_queue.remove(&task.task_id);
+                    let _ = manager.state.task_queue.remove(&task.task_id);
 
                     continue;
                 };
 
                 if metadata.status_code() > 399 {
                     let Some(is_required) = caller.dispatch_tarball_error(
-                        manager,
                         task.task_id,
                         extract.dependency_id,
                         extract.name.slice(),
@@ -735,14 +683,15 @@ pub(crate) fn run_tasks(
                             405..=499 => crate::Error::TarballHTTP4xx,
                             _ => crate::Error::TarballHTTP5xx,
                         },
-                        &task.url_buf,
+                        task.request().href(),
                     ) else {
                         continue;
                     };
+                    let manager = &mut caller.install_fields();
 
                     if is_required {
                         bun_ast::add_error_pretty!(
-                            manager.log(),
+                            manager.state.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
@@ -753,7 +702,7 @@ pub(crate) fn run_tasks(
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
-                            manager.log(),
+                            manager.state.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
@@ -774,7 +723,7 @@ pub(crate) fn run_tasks(
                         is_required,
                     );
 
-                    let _ = manager.task_queue.remove(&task.task_id);
+                    let _ = manager.state.task_queue.remove(&task.task_id);
 
                     continue;
                 }
@@ -782,8 +731,7 @@ pub(crate) fn run_tasks(
                 if log_level.is_verbose() {
                     bun_core::pretty_error!("    ");
                     Output::print_elapsed(
-                        task.http.as_ref().map_or(0, |http| http.elapsed) as f64
-                            / bun_core::time::NS_PER_MS as f64,
+                        task.request().elapsed() as f64 / bun_core::time::NS_PER_MS as f64,
                     );
                     bun_core::pretty_error!(
                         "<d> Downloaded <r><green>{}<r> tarball\n",
@@ -792,30 +740,15 @@ pub(crate) fn run_tasks(
                     Output::flush();
                 }
 
-                name_progress(manager, extract.name.slice(), EXTRACT);
+                name_progress(manager.state, extract.name.slice(), EXTRACT);
 
-                let queued = enqueue::enqueue_extract_npm_package(manager, task_ptr);
-                manager.task_batch.push(ThreadPoolBatch::from(queued));
+                enqueue::enqueue_extract_npm_package(manager.state, task);
             }
-            _ => unreachable!(),
         }
     }
 
-    let resolve_tasks_batch = INBOX.resolve_tasks.pop_batch();
-    let mut resolve_tasks_iter = resolve_tasks_batch.iterator();
-    loop {
-        let task_ptr = resolve_tasks_iter.next();
-        if task_ptr.is_null() {
-            break;
-        }
-        debug_assert!(manager.pending_task_count() > 0);
-        // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
-        let task = unsafe { &mut *task_ptr };
-        let task_guard = ReturnResolveTask {
-            manager,
-            task: task_ptr,
-        };
-        let manager = &mut *task_guard.manager;
+    for mut task in INBOX.resolve_tasks.pop_batch() {
+        let task = &mut *task;
         INBOX.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
@@ -824,23 +757,17 @@ pub(crate) fn run_tasks(
         if task.log.has_msgs() && !holds_log {
             task.log.print(Output::error_writer())?;
             if task.log.has_errors() {
-                manager.any_failed_to_install = true;
+                caller.install_fields().state.any_failed_to_install = true;
             }
             task.log.reset();
         }
 
         match &mut task.job {
-            Task::Job::PackageManifest {
-                name,
-                network,
-                manifest,
-                ..
-            } => {
-                let network_task_guard = ReturnNetworkTask {
-                    manager,
-                    task: &raw mut **network,
+            Task::Job::PackageManifest { name, manifest, .. } => {
+                let fills_cache = matches!(caller, Caller::ManifestCache(_));
+                let Some(manager) = caller.manager() else {
+                    continue;
                 };
-                let manager = &mut *network_task_guard.manager;
                 let Some(manifest) = manifest.take() else {
                     let log_mark = manager.log().msgs_len();
                     if holds_log {
@@ -872,27 +799,26 @@ pub(crate) fn run_tasks(
                     continue;
                 };
                 let name_hash = manifest.pkg.name.hash;
-                let progress_name: Option<Vec<u8>> = (log_level.show_progress()
-                    && !has_updated_this_run.get()
-                    && !matches!(caller, Caller::ManifestCache))
-                .then(|| manifest.name().to_vec());
+                let progress_name: Option<Vec<u8>> =
+                    (log_level.show_progress() && !has_updated_this_run.get() && !fills_cache)
+                        .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
                 manager.look_ahead.arrived.push(task.id);
-                if let Some(entry) = manager.network_dedupe_map.get_mut(&task.id) {
+                if let Some(entry) = manager.state.network_dedupe_map.get_mut(&task.id) {
                     entry.manifest = crate::network_task::ManifestOrigin::Registry;
                 }
 
                 // A task that `populate_manifest_cache` started has no entry.
-                if let Some(dependency_list_entry) = manager.task_queue.get_mut(&task.id) {
+                if let Some(dependency_list_entry) = manager.state.task_queue.get_mut(&task.id) {
                     let dependency_list = core::mem::take(dependency_list_entry);
 
                     process_dependency_list(manager, &dependency_list, install_peer)?;
                 }
 
                 if let Some(name) = progress_name {
-                    manager.set_node_name(
-                        manager.downloads_node(),
+                    manager.state.set_node_name(
+                        manager.state.downloads_node(),
                         &name,
                         ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                     );
@@ -904,17 +830,7 @@ pub(crate) fn run_tasks(
                 source,
                 data,
             } => {
-                let network_task_guard = ReturnNetworkTask {
-                    manager,
-                    task: match source {
-                        Task::TarballSource::Network(network) => &raw mut **network,
-                        Task::TarballSource::Local { .. } => core::ptr::null_mut(),
-                    },
-                };
-                let manager = &mut *network_task_guard.manager;
-
                 let dependency_id = tarball.dependency_id;
-                let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
                 let alias = tarball.name.slice();
                 let resolution = &tarball.resolution;
 
@@ -922,12 +838,11 @@ pub(crate) fn run_tasks(
                     let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
                     let fail_url: &[u8] = match source {
-                        Task::TarballSource::Network(network) => &network.url_buf,
+                        Task::TarballSource::Network(network) => network.request().href(),
                         Task::TarballSource::Local { .. } => tarball.url.slice(),
                     };
                     // A linker's task for a local tarball is not in the map, so it gets no mark.
                     let Some(is_required) = caller.dispatch_tarball_error(
-                        manager,
                         task.id,
                         dependency_id,
                         alias,
@@ -937,9 +852,10 @@ pub(crate) fn run_tasks(
                     ) else {
                         continue;
                     };
+                    let manager = &mut caller.install_fields();
 
                     add_error_or_warning_pretty!(
-                        manager.log(),
+                        manager.state.log(),
                         is_required,
                         "{} extracting tarball from <b>{}<r>",
                         err.name(),
@@ -950,50 +866,66 @@ pub(crate) fn run_tasks(
                     // Resolve phase: drain the
                     // `task_queue` entry too so a later install-phase
                     // `enqueue_download` doesn't wedge on `found_existing`.
-                    let _ = manager.task_queue.remove(&task.id);
+                    let _ = manager.state.task_queue.remove(&task.id);
 
                     continue;
                 };
 
-                manager.extracted_count += 1;
+                let manager = caller.install_fields();
+                let mut package_id = manager.lockfile.buffers.resolutions[dependency_id as usize];
+                manager.state.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
 
-                if let Caller::HoistedLinker(installer) = &mut caller {
-                    installer.fix_cached_lockfile_package_slices();
-                    installer.install_enqueued_packages_after_extraction(
-                        task.id,
-                        dependency_id,
-                        data,
-                        log_level,
-                    );
-                } else if let Caller::IsolatedLinker(installer) = &mut caller {
-                    installer.on_package_extracted(task.id, data);
-                } else if manager.defers_remote_package(task.id, resolution) {
-                    manager.keep_arrived_package(task.id, resolution, data);
-                    name_progress(manager, alias, EXTRACT);
-                    continue;
-                } else if let Some(pkg) = manager.process_extracted_tarball_package(
-                    &mut package_id,
-                    resolution,
-                    data,
-                    log_level,
-                ) {
-                    resolve_waiters_of_appended_package(manager, task.id, &pkg, install_peer)?;
-                } else if let Some(dependency_list_entry) =
-                    manager.task_queue.get_mut(&Task::Id::for_manifest(
-                        manager
-                            .lockfile
-                            .str(&manager.lockfile.packages.items_name()[package_id as usize]),
-                    ))
-                {
-                    // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
-                    let dependency_list = core::mem::take(dependency_list_entry);
-                    process_dependency_list(manager, &dependency_list, install_peer)?;
+                match caller {
+                    Caller::HoistedLinker(installer) => installer
+                        .install_enqueued_packages_after_extraction(
+                            task.id,
+                            dependency_id,
+                            data,
+                            log_level,
+                        ),
+                    Caller::IsolatedLinker(installer) => {
+                        installer.on_package_extracted(task.id, data)
+                    }
+                    Caller::Resolver(manager)
+                    | Caller::BlockedImport(manager)
+                    | Caller::ManifestCache(manager) => {
+                        if manager.defers_remote_package(task.id, resolution) {
+                            manager.keep_arrived_package(task.id, resolution, data);
+                            name_progress(&manager.state, alias, EXTRACT);
+                            continue;
+                        } else if let Some(pkg) = manager.process_extracted_tarball_package(
+                            &mut package_id,
+                            resolution,
+                            data,
+                            log_level,
+                        ) {
+                            resolve_waiters_of_appended_package(
+                                manager,
+                                task.id,
+                                &pkg,
+                                install_peer,
+                            )?;
+                        } else if let Some(dependency_list_entry) = (manager.state.task_queue)
+                            .get_mut(&Task::Id::for_manifest(manager.lockfile.str(
+                                &manager.lockfile.packages.items_name()[package_id as usize],
+                            )))
+                        {
+                            // Peer dependencies do not initiate any downloads of their own, thus need to be resolved here instead
+                            let dependency_list = core::mem::take(dependency_list_entry);
+                            process_dependency_list(manager, &dependency_list, install_peer)?;
+                        }
+                    }
                 }
 
-                manager.set_preinstall_state(package_id, crate::PreinstallState::Done);
+                let manager = caller.install_fields();
+                (manager.state.preinstall_state).set(
+                    manager.lockfile,
+                    package_id,
+                    crate::PreinstallState::Done,
+                );
 
-                name_progress(manager, alias, EXTRACT);
+                name_progress(manager.state, alias, EXTRACT);
             }
             &mut Task::Job::GitClone {
                 request: ref clone,
@@ -1001,13 +933,16 @@ pub(crate) fn run_tasks(
             } => {
                 let name = clone.name.slice();
                 let url = clone.url.slice();
+                let is_linker = caller.is_linker();
+                let manager = &mut caller.install_fields();
 
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
-                    let is_required = manager.is_network_task_required(task.id);
+                    let is_required = manager.state.is_network_task_required(task.id);
                     let waiters = forget_failed_git_task(manager, task.id, name);
 
-                    if let Caller::IsolatedLinker(installer) = &mut caller {
+                    if let Caller::IsolatedLinker(installer) = caller {
+                        let lockfile = installer.shared.lockfile;
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
                         // never reaches checkout, so drain every waiting
@@ -1020,18 +955,17 @@ pub(crate) fn run_tasks(
                             else {
                                 continue;
                             };
-                            let res =
-                                manager.lockfile.packages.items_resolution()[package_id as usize];
+                            let res = &lockfile.packages.items_resolution()[package_id as usize];
                             let git = res.git();
                             let checkout_id = Task::Id::for_git_checkout(
-                                manager.lockfile.str(&git.repo),
-                                manager.lockfile.str(&git.resolved),
+                                lockfile.str(&git.repo),
+                                lockfile.str(&git.resolved),
                             );
                             if is_required {
                                 installer.on_package_download_error(
                                     checkout_id,
                                     name,
-                                    &res,
+                                    res,
                                     err,
                                     url,
                                 );
@@ -1045,7 +979,7 @@ pub(crate) fn run_tasks(
                     // logged as warnings, so report the error here.
                     if !is_required || !matches!(caller, Caller::IsolatedLinker(_)) {
                         add_error_or_warning_pretty!(
-                            manager.log(),
+                            caller.install_fields().state.log(),
                             is_required,
                             "{} cloning repository for <b>{}<r>",
                             err.name(),
@@ -1055,20 +989,27 @@ pub(crate) fn run_tasks(
                     continue;
                 }
 
-                manager.git_repositories.insert(task.id, repo_fd);
+                manager.state.git_repositories.insert(task.id, repo_fd);
 
                 // `bun pm fetch` has no installer, but like an installer, it queues its checkouts
                 // on the clone task.
-                let has_checkout_waiters = caller.is_linker()
-                    || manager.task_queue.get(&task.id).is_some_and(|waiters| {
-                        waiters.iter().any(|waiter| {
-                            matches!(waiter, bun_install::TaskCallbackContext::GitCheckout { .. })
-                        })
-                    });
+                let has_checkout_waiters = is_linker
+                    || manager
+                        .state
+                        .task_queue
+                        .get(&task.id)
+                        .is_some_and(|waiters| {
+                            waiters.iter().any(|waiter| {
+                                matches!(
+                                    waiter,
+                                    bun_install::TaskCallbackContext::GitCheckout { .. }
+                                )
+                            })
+                        });
                 if has_checkout_waiters {
                     // Installing! The clone task is shared by every dependency on
                     // this repo URL; enqueue a checkout per waiter, not just one.
-                    let Some(waiters) = manager.task_queue.remove(&task.id) else {
+                    let Some(waiters) = manager.state.task_queue.remove(&task.id) else {
                         continue;
                     };
                     for waiter in waiters.iter() {
@@ -1079,21 +1020,19 @@ pub(crate) fn run_tasks(
                         else {
                             continue;
                         };
-                        // reshaped for borrowck — copy the small `String` handles
-                        // so the `&manager.lockfile` borrow doesn't extend across
-                        // the `&mut manager` calls below.
-                        let (dep_name_handle, is_required) = {
-                            let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
-                            (dep.name, dep.behavior.is_required())
-                        };
-                        let res = manager.lockfile.packages.items_resolution()[package_id as usize];
-                        let git = *res.git();
+                        let dep = &manager.lockfile.buffers.dependencies[dep_id as usize];
+                        let res =
+                            &manager.lockfile.packages.items_resolution()[package_id as usize];
+                        let git = res.git();
                         let checkout_id = Task::Id::for_git_checkout(
                             manager.lockfile.str(&git.repo),
                             manager.lockfile.str(&git.resolved),
                         );
 
-                        if manager.has_created_network_task(checkout_id, is_required) {
+                        if manager
+                            .state
+                            .has_created_network_task(checkout_id, dep.behavior.is_required())
+                        {
                             continue;
                         }
 
@@ -1103,16 +1042,17 @@ pub(crate) fn run_tasks(
                             checkout_id,
                             repo_fd,
                             dep_id,
-                            dep_name_handle,
-                            &res,
+                            dep.name,
+                            res,
                             resolved,
                             None,
                         );
                         manager.enqueue_git_task(queued);
                     }
-                } else {
+                } else if let Some(manager) = caller.manager() {
                     // Resolving!
                     let dependency_list = manager
+                        .state
                         .task_queue
                         .remove(&task.id)
                         .expect("infallible: task queued");
@@ -1120,20 +1060,25 @@ pub(crate) fn run_tasks(
                     process_dependency_list(manager, &dependency_list, install_peer)?;
                 }
 
-                name_progress(manager, name, DOWNLOAD);
+                name_progress(caller.install_fields().state, name, DOWNLOAD);
             }
             Task::Job::GitCommit {
                 request: commit,
                 sha,
             } => {
+                let Some(manager) = caller.manager() else {
+                    continue;
+                };
                 let name = commit.name.slice();
                 // Pending while it ran, but not one of the N downloads the summary prints.
-                manager.total_tasks.update(|total| total - 1);
+                manager.state.total_tasks.update(|total| total - 1);
 
                 if task.status == Task::Status::Fail {
-                    let is_required = manager.is_network_task_required(task.id);
+                    let is_required = manager.state.is_network_task_required(task.id);
                     // The repository (with `--offline`, its cached clone) has no such commit.
-                    for waiter in forget_failed_git_task(manager, task.id, name).iter() {
+                    for waiter in
+                        forget_failed_git_task(&mut manager.install_fields(), task.id, name).iter()
+                    {
                         if let &bun_install::TaskCallbackContext::Dependency(id) = waiter {
                             manager.lockfile.unbind_refreshing(id);
                         }
@@ -1154,6 +1099,7 @@ pub(crate) fn run_tasks(
 
                 // Each waiter re-enters the enqueue path and now finds the commit.
                 let dependency_list = manager
+                    .state
                     .task_queue
                     .remove(&task.id)
                     .expect("infallible: task queued");
@@ -1170,7 +1116,7 @@ pub(crate) fn run_tasks(
                 let Some(data) = data else {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if let Caller::IsolatedLinker(installer) = &mut caller {
+                    if let Caller::IsolatedLinker(installer) = caller {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
@@ -1180,11 +1126,12 @@ pub(crate) fn run_tasks(
                             alias.slice(),
                             resolution,
                             err,
-                            manager.lockfile.str(repo),
+                            installer.shared.lockfile.str(repo),
                         );
                     } else {
+                        let manager = &mut caller.install_fields();
                         bun_ast::add_error_pretty!(
-                            manager.log(),
+                            manager.state.log(),
                             None,
                             bun_ast::Loc::EMPTY,
                             "{} checking out repository for <b>{}<r>",
@@ -1197,34 +1144,42 @@ pub(crate) fn run_tasks(
                     continue;
                 };
 
-                manager.extracted_count += 1;
+                caller.install_fields().state.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
 
-                // A linker has the package in memory already, so it enqueues no dependencies.
-                if let Caller::HoistedLinker(installer) = &mut caller {
-                    // TODO(dylan-conway) most likely not needed now that the package isn't appended
-                    installer.fix_cached_lockfile_package_slices();
-
-                    installer.install_enqueued_packages_after_extraction(
-                        task.id,
-                        git_checkout.dependency_id,
-                        data,
-                        log_level,
-                    );
-                } else if let Caller::IsolatedLinker(installer) = &mut caller {
-                    installer.on_package_extracted(task.id, data);
-                } else if manager.defers_remote_package(task.id, resolution) {
-                    manager.keep_arrived_package(task.id, resolution, data);
-                } else if let Some(pkg) = manager.process_extracted_tarball_package(
-                    &mut package_id,
-                    resolution,
-                    data,
-                    log_level,
-                ) {
-                    resolve_waiters_of_appended_package(manager, task.id, &pkg, install_peer)?;
+                match caller {
+                    Caller::HoistedLinker(installer) => installer
+                        .install_enqueued_packages_after_extraction(
+                            task.id,
+                            git_checkout.dependency_id,
+                            data,
+                            log_level,
+                        ),
+                    Caller::IsolatedLinker(installer) => {
+                        installer.on_package_extracted(task.id, data)
+                    }
+                    Caller::Resolver(manager)
+                    | Caller::BlockedImport(manager)
+                    | Caller::ManifestCache(manager) => {
+                        if manager.defers_remote_package(task.id, resolution) {
+                            manager.keep_arrived_package(task.id, resolution, data);
+                        } else if let Some(pkg) = manager.process_extracted_tarball_package(
+                            &mut package_id,
+                            resolution,
+                            data,
+                            log_level,
+                        ) {
+                            resolve_waiters_of_appended_package(
+                                manager,
+                                task.id,
+                                &pkg,
+                                install_peer,
+                            )?;
+                        }
+                    }
                 }
 
-                name_progress(manager, alias.slice(), DOWNLOAD);
+                name_progress(caller.install_fields().state, alias.slice(), DOWNLOAD);
             }
         }
     }
@@ -1288,7 +1243,7 @@ impl core::fmt::Display for DownloadFailure<'_> {
     }
 }
 
-impl PackageManager {
+impl InstallState {
     #[inline]
     pub(crate) fn pending_task_count(&self) -> u32 {
         INBOX.pending_tasks.load(Ordering::Acquire) + self.retry_queue.len() as u32
@@ -1303,75 +1258,60 @@ impl PackageManager {
     }
 }
 
-pub fn flush_network_queue(this: &mut PackageManager) {
-    while let Some(network_task) = this
-        .network_task_fifo
-        .read_item()
-        .or_else(|| this.retry_queue.pop_due())
-    {
-        // SAFETY: both queues store live `*mut NetworkTask` pushed by
-        // `enqueue_network_task` / `retry_timer::retry`; exclusive ownership transferred here.
-        let nt = unsafe { &mut *network_task };
-        let batch = if matches!(nt.callback, NetworkTaskCallback::Extract(_)) {
-            &mut this.network_tarball_batch
-        } else {
-            &mut this.network_resolve_batch
-        };
-        batch.push(nt.take_request());
+pub(crate) fn enqueue_due_retries(this: &mut InstallState) {
+    while let Some(network_task) = this.retry_queue.pop_due() {
+        enqueue::enqueue_network_task(this, network_task);
     }
 }
 
-pub fn flush_dependency_queue(this: &mut PackageManager) {
-    let mut last_count = this.total_tasks.get();
-    loop {
-        flush_network_queue(this);
-        enqueue::advance(this);
-        flush_network_queue(this);
-        this.task_batch.push(core::mem::take(&mut this.patch_batch));
+fn flush_patch_batch(this: &mut InstallState) {
+    this.task_batch.push(core::mem::take(&mut this.patch_batch));
+}
 
-        if this.total_tasks.get() == last_count {
+fn flush_dependency_queue(this: &mut PackageManager) {
+    let mut last_count = this.state.total_tasks.get();
+    loop {
+        enqueue_due_retries(&mut this.state);
+        enqueue::advance(this);
+        flush_patch_batch(&mut this.state);
+
+        if this.state.total_tasks.get() == last_count {
             break;
         }
-        last_count = this.total_tasks.get();
+        last_count = this.state.total_tasks.get();
     }
 }
 
-pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
-    let count = manager.task_batch.len
-        + manager.network_resolve_batch.len()
-        + manager.network_tarball_batch.len();
+pub(crate) fn schedule_tasks(manager: &mut InstallFields<'_>) -> usize {
+    let state = &mut *manager.state;
+    let count = state.task_batch.len
+        + state.network_resolve_batch.len()
+        + state.network_tarball_batch.len();
 
-    manager.increment_pending_tasks(u32::try_from(count).expect("int cast"));
-    THREAD_POOL.schedule(core::mem::take(&mut manager.task_batch));
-    let manifests = manager.network_resolve_batch.drain(..);
-    http::HTTPThread::schedule(manifests.chain(manager.network_tarball_batch.drain(..)));
+    state.increment_pending_tasks(u32::try_from(count).expect("int cast"));
+    THREAD_POOL.schedule(core::mem::take(&mut state.task_batch));
+    let manifests = state.network_resolve_batch.drain(..);
+    http::OwnedRequest::schedule(manifests.chain(state.network_tarball_batch.drain(..)));
     // Git tasks were counted as pending when they were queued.
     manager.start_git_tasks();
     count
 }
 
-pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    // Forget the slot token so its `Drop` does not release the slot — the
-    // caller owns the slot until a later `put()`.
-    core::mem::ManuallyDrop::new(this.preallocated_network_tasks.claim())
-        .addr()
-        .as_ptr()
-}
-
 pub(crate) fn alloc_github_url_for_ref(
-    this: &PackageManager,
+    env: &bun_dotenv::Loader,
+    lockfile: &Lockfile,
     repository: &Repository,
     committish: &[u8],
 ) -> Vec<u8> {
     let mut github_api_url: &[u8] = b"https://api.github.com";
-    if let Some(url) = this.env().get(b"GITHUB_API_URL") {
+    if let Some(url) = env.get(b"GITHUB_API_URL") {
         if !url.is_empty() {
             github_api_url = url;
         }
     }
 
-    let owner = this.lockfile.str(&repository.owner);
-    let repo = this.lockfile.str(&repository.repo);
+    let owner = lockfile.str(&repository.owner);
+    let repo = lockfile.str(&repository.repo);
 
     let mut out = Vec::new();
     write!(
@@ -1390,13 +1330,13 @@ pub(crate) fn alloc_github_url_for_ref(
 
 /// A later dependency that joins an entry left in `task_queue` waits forever. Returns the waiters.
 fn forget_failed_git_task(
-    this: &mut PackageManager,
+    this: &mut InstallFields<'_>,
     task_id: Task::Id,
     name: &[u8],
 ) -> TaskCallbackList {
     fail_update_requests(this, task_id, name, None, false);
-    let _ = this.network_dedupe_map.remove(&task_id);
-    this.task_queue.remove(&task_id).unwrap_or_default()
+    let _ = this.state.network_dedupe_map.remove(&task_id);
+    this.state.task_queue.remove(&task_id).unwrap_or_default()
 }
 
 /// How often a failed manifest request is retried. When `bunx` already has a copy of the tool, it
@@ -1424,8 +1364,8 @@ fn manifest_retry_count(
                 | http::Error::DNSResolveFailed
                 | http::Error::FailedToOpenSocket
         )
-    ) && !manager.is_network_task_required(task_id)
-        && !manager.task_queue.contains_key(&task_id)
+    ) && !manager.state.is_network_task_required(task_id)
+        && !manager.state.task_queue.contains_key(&task_id)
     {
         return 0;
     }
@@ -1502,7 +1442,7 @@ pub(crate) fn begin_linking_for_bunx(root_package_json_path: &bun_core::ZStr, ha
 /// `bun add` and `bun update <name>` exit 1 and save nothing when a download for the request fails.
 /// `unanswered` means the download is required, and no attempt got a response about the package.
 pub(crate) fn fail_update_requests(
-    this: &mut PackageManager,
+    this: &mut InstallFields<'_>,
     task_id: Task::Id,
     package_name: &[u8],
     tarball_dependency_id: Option<DependencyID>,
@@ -1514,11 +1454,15 @@ pub(crate) fn fail_update_requests(
     // Every package in `bunx`'s install directory is there for the one tool that it was asked to
     // run.
     let for_bunx = unanswered && is_bunx_install();
-    let lockfile = &*this.lockfile;
+    let lockfile = this.lockfile;
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let dependencies = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let waiters = this.task_queue.get(&task_id).map_or(&[][..], Vec::as_slice);
+    let waiters = this
+        .state
+        .task_queue
+        .get(&task_id)
+        .map_or(&[][..], Vec::as_slice);
     // An npm tarball task has no waiters: the dependencies it was for already resolved to its package.
     // A dependency that is refreshed still has the package of bun.lock, which the task was not for.
     let package_id = tarball_dependency_id
@@ -1535,7 +1479,7 @@ pub(crate) fn fail_update_requests(
                 )
             })
     };
-    let pending = this.pending_filtered_write.as_deref();
+    let pending = this.pending_filtered_write;
 
     let mut any_failed = false;
     for request in this.update_requests.iter_mut() {
@@ -1560,9 +1504,7 @@ pub(crate) fn fail_update_requests(
         }
     }
     if any_failed {
-        this.options
-            .do_
-            .remove(Do::SAVE_LOCKFILE | Do::SAVE_YARN_LOCK | Do::INSTALL_PACKAGES);
+        this.state.update_request_failed = true;
         if unanswered {
             REQUEST_GOT_NO_ANSWER.store(true, Ordering::Relaxed);
         }
@@ -1570,7 +1512,7 @@ pub(crate) fn fail_update_requests(
 }
 
 /// Runs once per pass. Skipped for auto-install, because the limit also applies to `fetch()`.
-fn throttle_after_network_error(manager: &mut PackageManager, has_network_error: &mut bool) {
+fn throttle_after_network_error(manager: &mut InstallFields<'_>, has_network_error: &mut bool) {
     if manager.options.runtime_auto_install || core::mem::replace(has_network_error, true) {
         return;
     }
@@ -1581,7 +1523,7 @@ fn throttle_after_network_error(manager: &mut PackageManager, has_network_error:
         AsyncHTTP::max_simultaneous_requests().store(lowered, Ordering::Relaxed);
         if manager.options.log_level.is_verbose() {
             bun_ast::add_warning_pretty!(
-                manager.log(),
+                manager.state.log(),
                 None,
                 bun_ast::Loc::EMPTY,
                 "request failed twice, limiting to {} concurrent requests",
@@ -1591,55 +1533,36 @@ fn throttle_after_network_error(manager: &mut PackageManager, has_network_error:
     }
 }
 
-pub fn generate_network_task_for_tarball<'a>(
-    this: &'a mut PackageManager,
+pub(crate) fn generate_network_task_for_tarball(
+    this: &mut InstallFields<'_>,
     task_id: Task::Id,
     github_url: Option<&[u8]>,
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
-) -> Result<Option<&'a mut NetworkTask>, ForTarballError> {
+) -> Result<Option<HiveBox<NetworkTask>>, ForTarballError> {
     // Only reached when the tarball is not already extracted in the cache.
     if this.options.offline == Options::OfflineMode::Offline {
         enqueue::offline_miss(this, task_id, "", package.name, is_required);
         return Err(ForTarballError::Offline);
     }
-    if this.has_created_network_task(task_id, is_required) {
+    if this.state.has_created_network_task(task_id, is_required) {
         return Ok(None);
     }
 
-    // reshaped for borrowck —
-    // all `&mut this` uses (cache/temp dir, pool slot) happen
-    // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
-    // live only through `for_tarball`, leaving `this` free for the streaming
-    // tail.
     let temp_dir = match directories::try_get_temporary_directory(this) {
         Ok(temp_dir) => temp_dir,
         Err(why) => {
             this.exit_or_log(&why);
-            this.mark_network_task_failed(task_id);
+            this.state.mark_network_task_failed(task_id);
             // No task was started, so the entry is removed. Otherwise a later enqueue would wait
             // for a task that never runs.
-            let _ = this.task_queue.remove(&task_id);
+            let _ = this.state.task_queue.remove(&task_id);
             return Err(ForTarballError::AlreadyFailed);
         }
     };
 
-    // Take the pool slot as a raw pointer so borrowck releases `this` for the
-    // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = get_network_task(this);
-    // Full struct overwrite that resets
-    // every other field (`retried`, `response`, `streaming_committed`,
-    // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
-    // `signal_store`) to its struct default. The slot may be uninitialized
-    // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
-    // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
-    // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, bun_ptr::ParentRef::new(this)) };
-    // SAFETY: `write_init` populated every field.
-    let network_task = unsafe { &mut *net_ptr };
-
-    let log = this.log();
+    let log = this.state.log();
     let pkg_name = this.lockfile.str(&package.name);
     let url = match (github_url, package.resolution.tag) {
         (Some(url), _) => url,
@@ -1648,7 +1571,7 @@ pub fn generate_network_task_for_tarball<'a>(
     };
     let (scope, authorization) = match package.resolution.tag {
         bun_install::ResolutionTag::Npm => (
-            this.scope_for_package_name(pkg_name),
+            this.options.scope_for_package_name(pkg_name),
             Authorization::AllowAuthorization,
         ),
         // One download serves every name that the URL is listed under, so the name picks no scope.
@@ -1658,19 +1581,19 @@ pub fn generate_network_task_for_tarball<'a>(
             (&this.options.scope, Authorization::AllowAuthorization)
         }
         _ => (
-            this.scope_for_package_name(pkg_name),
+            this.options.scope_for_package_name(pkg_name),
             Authorization::NoAuthorization,
         ),
     };
 
     let extract_tarball = ExtractTarball {
-        registry: directories::folder_cache_key(this, scope),
+        registry: directories::folder_cache_key(this.options, scope),
         name: stored_string(pkg_name),
         resolution: package.resolution,
         temp_dir,
         dependency_id,
-        skip_verify: false,
-        in_trusted_dependencies: this.lockfile.in_trusted_dependencies(pkg_name),
+        skip_verify: this.options.skips_verify(package.resolution.tag),
+        in_trusted_dependencies: this.in_trusted_dependencies(pkg_name),
         integrity: package.meta.integrity,
         stays_unpinned: package.meta.id != bun_install::invalid_package_id && !this.pins_tarballs(),
         url: stored_string(url),
@@ -1684,29 +1607,12 @@ pub fn generate_network_task_for_tarball<'a>(
         },
     };
 
-    if let Err(err) = network_task.for_tarball(extract_tarball, scope, authorization, log) {
+    let task = NetworkTask::for_tarball(this, log, task_id, extract_tarball, scope, authorization);
+    if task.is_err() {
         // No task will ever complete the dedupe entry, so a later enqueue would wait forever.
-        this.mark_network_task_failed(task_id);
-        return Err(err);
+        this.state.mark_network_task_failed(task_id);
     }
-
-    if extract_tarball::uses_streaming_extraction() {
-        // Pre-create the extract Task and streaming state here on the
-        // main thread: `preallocated_resolve_tasks` is not thread-safe,
-        // and the streaming extractor needs a stable `Task` pointer so
-        // it can push the result onto `resolve_tasks` when it finishes.
-        let extract_task = enqueue::create_extract_task_for_streaming(this, net_ptr);
-        // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
-        // (see `write_init` above).
-        unsafe {
-            (*net_ptr).streaming_extract_task = extract_task;
-            (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr));
-        }
-    }
-
-    // SAFETY: final reborrow of the pool slot for the caller; `net_ptr` is the
-    // sole live handle (see above) and outlives nothing past this return.
-    Ok(Some(unsafe { &mut *net_ptr }))
+    task.map(Some)
 }
 
 impl PackageManager {
@@ -1721,11 +1627,11 @@ impl PackageManager {
             }
 
             // It's only network requests here because we don't store tarballs.
-            let _ = schedule_tasks(self);
+            let _ = schedule_tasks(&mut self.install_fields());
 
             // With no task left to finish, nothing would ever try the dependency at the front of
             // the queue again. It stays unresolved, so that the ones behind it get their turn.
-            if self.pending_task_count() > 0 {
+            if self.state.pending_task_count() > 0 {
                 break;
             }
             let queue = &mut self.lockfile.scratch.dependency_list_queue;
@@ -1746,7 +1652,9 @@ impl PackageManager {
             queue.waits_for = None;
         }
     }
+}
 
+impl InstallState {
     pub(crate) fn has_created_network_task(
         &mut self,
         task_id: Task::Id,
@@ -1784,10 +1692,22 @@ impl PackageManager {
     pub(crate) fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
         (self.network_dedupe_map.get(&task_id)).is_some_and(|e| e.failed)
     }
+}
+
+impl InstallFields<'_> {
+    /// `drain_dependency_list` without resolving dependencies.
+    pub(crate) fn schedule_queued_tasks(&mut self) {
+        enqueue_due_retries(self.state);
+        flush_patch_batch(self.state);
+        if PackageManager::verbose_install() {
+            Output::flush();
+        }
+        let _ = schedule_tasks(self);
+    }
 
     pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
         let committish = self.lockfile.str(&repository.committish);
-        alloc_github_url_for_ref(self, repository, committish)
+        alloc_github_url_for_ref(self.state.env(), self.lockfile, repository, committish)
     }
 }
 
@@ -1802,7 +1722,12 @@ fn leave_failure_to_dependencies(
     log_mark: usize,
     failure: ManifestFailure,
 ) -> crate::Result<bool> {
-    let Some(waiting) = manager.task_queue.get_mut(&task_id).map(core::mem::take) else {
+    let Some(waiting) = manager
+        .state
+        .task_queue
+        .get_mut(&task_id)
+        .map(core::mem::take)
+    else {
         let _ = (manager.manifest_failures).insert(task_id, ManifestFailure::already_reported());
         return Ok(false);
     };

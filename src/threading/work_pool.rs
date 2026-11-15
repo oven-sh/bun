@@ -1,4 +1,7 @@
+use core::ptr::NonNull;
 use std::sync::OnceLock;
+
+use bun_ptr::OwnedPtr;
 
 use crate::ThreadPool;
 
@@ -34,11 +37,11 @@ pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
     }
 }
 
-// The only impl: `OwnedTask::__callback` trusts `from_task_ptr`, so no type may override it.
+// The only impl: `OwnedTaskIn::__callback` trusts `from_task_ptr`, so no type may override it.
 impl<T: bun_core::IntrusiveField<Task>> IntrusiveWorkTask for T {}
 
 /// An [`IntrusiveWorkTask`] that a [`ThreadPool`] owns. [`Batch::from_owned`] performs the `Box` →
-/// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
+/// raw-pointer hand-off and [`__callback`](OwnedTaskIn::__callback) recovers
 /// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
 /// touch `Box::into_raw`/`from_raw` directly.
 ///
@@ -48,18 +51,32 @@ pub trait OwnedTask: IntrusiveWorkTask + Send + 'static {
     /// Run the task. Receives ownership of the heap allocation; dropping
     /// `self` frees it.
     fn run(self: Box<Self>);
+}
+
+/// Like [`OwnedTask`], for a task that `P` owns.
+pub trait OwnedTaskIn<P>: IntrusiveWorkTask + Sized
+where
+    P: OwnedPtr<Target = Self> + Send + 'static,
+{
+    fn run(this: P);
 
     /// The C-ABI thread-pool callback shim. Generic over `Self`; recovers the
-    /// owning `Box<Self>` from the intrusive `*mut Task` and dispatches to
-    /// [`OwnedTask::run`]. This is the **single** `Box::from_raw` for every
-    /// `OwnedTask` implementor.
+    /// owning `P` from the intrusive `*mut Task` and dispatches to
+    /// [`OwnedTaskIn::run`]. This is the **single** `from_raw` for every
+    /// implementor.
     #[doc(hidden)]
     unsafe fn __callback(task: *mut Task) {
-        // SAFETY: `task` points to the `Task` field inside a `Box<Self>` that
+        // SAFETY: `task` points to the `Task` field behind the `P` that
         // `Batch::from_owned` leaked. The thread pool guarantees this
         // callback fires exactly once per scheduled task, so reclaiming the
-        // `Box` here is sound.
-        let this = unsafe { Box::from_raw(Self::from_task_ptr(task)) };
+        // `P` here is sound.
+        let this = unsafe { P::from_raw(NonNull::new_unchecked(Self::from_task_ptr(task))) };
+        Self::run(this);
+    }
+}
+
+impl<T: OwnedTask> OwnedTaskIn<Box<T>> for T {
+    fn run(this: Box<T>) {
         this.run();
     }
 }
@@ -119,12 +136,16 @@ macro_rules! owned_task {
 }
 
 impl Batch {
-    /// [`OwnedTask::run`] gets the `Box` back on a thread of the pool that schedules the batch.
-    pub fn from_owned<T: OwnedTask>(mut task: Box<T>) -> Batch {
+    /// [`OwnedTaskIn::run`] gets `task` back on a thread of the pool that schedules the batch.
+    pub fn from_owned<T, P>(mut task: P) -> Batch
+    where
+        T: OwnedTaskIn<P>,
+        P: OwnedPtr<Target = T> + Send + 'static,
+    {
         task.task_mut().callback = T::__callback;
-        let raw = Box::into_raw(task);
-        // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
-        // projected from the raw pointer, so that it covers the whole allocation.
+        let raw = P::into_raw(task).as_ptr();
+        // SAFETY: `raw` is a live value, which the batch now owns. The `Task` is
+        // projected from the raw pointer, so that it covers the whole value.
         Batch::from(unsafe { T::field_of(raw) })
     }
 }

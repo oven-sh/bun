@@ -18,7 +18,7 @@ use super::options::LogLevel;
 
 impl PackageManager {
     pub(crate) fn format_later_version_in_cache(
-        &mut self,
+        &self,
         package_name: &[u8],
         name_hash: PackageNameHash,
         resolution: &Resolution,
@@ -31,13 +31,6 @@ impl PackageManager {
                     return None;
                 }
 
-                // reshaped for borrowck —
-                // `this.manifests.byNameHash(this, …, .load_from_memory, …)`
-                // would require simultaneous `&mut self.manifests`
-                // (receiver) and `&mut self` (arg). The memory-only path touches
-                // nothing on `PackageManager` besides the map, so use the
-                // disjoint-borrow helper and read `self.options` / `self.lockfile`
-                // alongside the held `&mut self.manifests` field borrow.
                 let manifest = self
                     .manifests
                     .by_name_hash_in_memory(package_name, name_hash)?;

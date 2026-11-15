@@ -46,7 +46,7 @@ impl DedupeCommand {
             return InstallCommand::handle_error(ctx.log(), crate::Error::from(e));
         }
 
-        if manager.any_failed_to_install {
+        if manager.state.any_failed_to_install {
             Global::exit(1);
         }
 

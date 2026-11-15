@@ -81,7 +81,7 @@ fn install_with_cli(ctx: &mut ContextData, cli: &CommandLineArguments) -> Result
     let root_package_json_path = manager.root_package_json_path;
     install_with_manager(manager, &mut *ctx, root_package_json_path, &original_cwd)?;
 
-    if manager.any_failed_to_install {
+    if manager.state.any_failed_to_install {
         Global::exit(1);
     }
 

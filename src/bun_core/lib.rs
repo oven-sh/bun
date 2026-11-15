@@ -823,6 +823,10 @@ macro_rules! assert_not_freeze {
     };
 }
 
+/// [`core::marker::Freeze`], as a bound for the crates that do not enable the feature.
+pub trait Freeze: core::marker::Freeze {}
+impl<T: ?Sized + core::marker::Freeze> Freeze for T {}
+
 #[doc(hidden)]
 pub struct __IsFreeze<T: ?Sized>(core::marker::PhantomData<T>);
 #[doc(hidden)]
@@ -1083,7 +1087,7 @@ pub fn set_start_time(ns: i128) {
 }
 
 /// `bun.Timer` — minimal monotonic stopwatch so callers (e.g.
-/// `Lockfile::clean_with_logger`, `LifecycleScriptSubprocess`) compile against
+/// `Lockfile::clean_with_logger`, `LifecycleScriptRunner`) compile against
 /// the tier-0 surface without pulling in `bun_perf`.
 pub mod time {
     // Defined in `util::time`; re-exported so `bun_core::time::*` resolves uniformly.

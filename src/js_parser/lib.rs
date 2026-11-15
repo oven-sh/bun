@@ -32,7 +32,7 @@ pub use lower::import_meta_glob::*;
 pub use p::P;
 pub use parse::parse_entry::{Options as ParserOptions, Parser};
 
-// The part of macros that needs no JSC. The rest is in *_jsc.
+// The part of macros that needs no JSC. The rest is in `bun_js_parser_jsc::Macro`.
 #[allow(non_snake_case)]
 pub mod Macro {
     pub const NAMESPACE: &[u8] = b"macro";
@@ -62,20 +62,29 @@ pub mod Macro {
         }
     }
 
-    /// Whether each macro loaded into this thread's VM, by id. A macro can start a parse that shares this.
+    #[derive(Clone, Copy)]
+    pub enum MacroLoadState {
+        /// The load failed or has not finished.
+        Disabled,
+        Loaded,
+    }
+
+    /// Keyed by `MacroEntryPoint::generate_id`. A macro can start a nested parse that uses the same table.
     #[derive(Default)]
-    pub struct LoadedMacros(core::cell::Cell<bun_collections::ArrayHashMap<i32, bool>>);
-    impl LoadedMacros {
-        pub fn get(&self, id: i32) -> Option<bool> {
+    pub struct MacroLoadStates(
+        core::cell::Cell<bun_collections::ArrayHashMap<i32, MacroLoadState>>,
+    );
+    impl MacroLoadStates {
+        pub fn get(&self, id: i32) -> Option<MacroLoadState> {
             let macros = self.0.take();
-            let is_loaded = macros.get(&id).copied();
+            let state = macros.get(&id).copied();
             self.0.set(macros);
-            is_loaded
+            state
         }
 
-        pub fn set(&self, id: i32, is_loaded: bool) {
+        pub fn set(&self, id: i32, state: MacroLoadState) {
             let mut macros = self.0.take();
-            macros.insert(id, is_loaded);
+            macros.insert(id, state);
             self.0.set(macros);
         }
 
@@ -83,19 +92,19 @@ pub mod Macro {
             self.0.swap(&other.0);
         }
     }
-    impl Drop for LoadedMacros {
+    /// Frees this thread's `SOURCE_CODE_PRINTER` if a macro allocated it.
+    impl Drop for MacroLoadStates {
         #[inline]
         fn drop(&mut self) {
             __bun_macro_drop_source_code_printer();
         }
     }
 
-    /// What one parse calls macros with.
     #[derive(Clone, Copy)]
     pub struct MacroContext<'a> {
         /// A `bun_bundler::Transpiler`, which this crate cannot name.
         transpiler: *mut core::ffi::c_void,
-        pub loaded: &'a LoadedMacros,
+        pub macro_load_states: &'a MacroLoadStates,
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
         pub javascript_object: MacroJSCtx,
@@ -134,12 +143,12 @@ pub mod Macro {
         /// uses its resolver, or writes to its options, at the time the parser calls a macro.
         pub unsafe fn new(
             transpiler: *mut core::ffi::c_void,
-            loaded: &'a LoadedMacros,
+            macro_load_states: &'a MacroLoadStates,
             javascript_object: MacroJSCtx,
         ) -> Self {
             Self {
                 transpiler,
-                loaded,
+                macro_load_states,
                 javascript_object,
             }
         }

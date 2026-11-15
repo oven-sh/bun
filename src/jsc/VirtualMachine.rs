@@ -1840,7 +1840,7 @@ impl VirtualMachine {
                 .set(NonNull::new(self.global.get()));
         }
         // Idempotent; outside the `has_enabled_macro_mode` guard because
-        // a `LoadedMacros` is dropped per-job (RuntimeTranspilerStore
+        // a `MacroLoadStates` is dropped per-job (RuntimeTranspilerStore
         // job, JSTranspiler TransformTask, bundler `Worker::drop`) and
         // frees the printer while this VM survives with the flag still set —
         // the next macro on the same pool thread would otherwise skip re-init
@@ -3920,8 +3920,8 @@ pub(crate) static SOURCE_CODE_PRINTER: Cell<Option<NonNull<bun_js_printer::Buffe
 /// `true` when [`enable_macro_mode`](VirtualMachine::enable_macro_mode)
 /// allocated [`SOURCE_CODE_PRINTER`] on this thread and no runtime VM has since
 /// claimed it via [`VirtualMachine::load_extra_env_and_source_code_printer`]
-/// (i.e. a bundler worker thread running a macro). Lets the drop of a
-/// `LoadedMacros` free the printer on worker teardown without
+/// (i.e. a bundler worker thread running a macro). Lets
+/// `MacroLoadStates::drop` free the printer on worker teardown without
 /// touching the runtime VM's printer when an inline `Bun.build()` macro ran on
 /// the JS thread.
 #[thread_local]
@@ -3964,7 +3964,7 @@ fn drop_source_code_printer() {
 
 /// Free this thread's [`SOURCE_CODE_PRINTER`] Box only if
 /// [`enable_macro_mode`](VirtualMachine::enable_macro_mode) allocated it.
-/// Called from the drop of a `LoadedMacros` on bundler
+/// Called from `MacroLoadStates::drop` on bundler
 /// worker teardown — the macro VM never reaches `VirtualMachine::deinit`, so
 /// the box would otherwise leak when the worker thread's TLS block is torn down
 /// before LSan scans (issue 03830 on debian-13-asan after the
@@ -3974,7 +3974,7 @@ fn drop_source_code_printer() {
 /// keep their printer.
 ///
 /// Also a no-op while a [`MacroModeGuard`] is still active on this thread:
-/// a `LoadedMacros` can be dropped *inside* the guard scope (e.g. by a
+/// a `MacroLoadStates` can be dropped *inside* the guard scope (e.g. by a
 /// macro that calls `new Bun.Transpiler().transformSync(...)`), and freeing
 /// here would panic the next module fetch at
 /// `SOURCE_CODE_PRINTER.get().expect(...)` with no intervening
@@ -4001,7 +4001,7 @@ pub fn drop_source_code_printer_if_macro_owned() {
 ///
 /// Only invoked from `bun_bundler::ThreadPool::Worker::drop` (the call site
 /// is the discriminant — JS `Worker` threads never reach it). Not called from
-/// the drop of a `LoadedMacros`: that path is reached from
+/// `MacroLoadStates::drop`: that path is reached from
 /// `transformSync` and a `JSTranspiler`'s drop (during a sweep),
 /// where re-entering `run_gc` would be a recursion hazard.
 pub fn collect_macro_vm_garbage() {
@@ -4203,7 +4203,7 @@ impl VirtualMachine {
 
         ensure_source_code_printer();
         // The runtime VM owns the printer from here on — even if a macro had
-        // allocated it first, the drop of a `LoadedMacros` must not free it.
+        // allocated it first, `MacroLoadStates::drop` must not free it.
         SOURCE_CODE_PRINTER_FROM_MACRO.set(false);
 
         if map.get(b"BUN_SHOW_BUN_STACKFRAMES").is_some() {
@@ -5973,7 +5973,9 @@ impl VirtualMachine {
 
         // Loaded macros are functions of the outgoing realm, so the next file loads its own.
         self.macros.with_mut(MacroMap::clear_retaining_capacity);
-        self.module_loader.loaded_macros.swap(&Default::default());
+        self.module_loader
+            .macro_load_states
+            .swap(&Default::default());
 
         let old_global = self.global.get();
         // `old_global` valid for VM lifetime (safe ZST-handle deref);

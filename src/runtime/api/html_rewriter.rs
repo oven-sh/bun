@@ -1830,25 +1830,24 @@ impl Drop for RewriterPipe {
 impl crate::webcore::sink::JsSinkType for RewriterPipe {
     const NAME: &'static str = "HTMLRewriterSink";
 
-    type Receiver = Self;
-    type Entered<'a> = &'a mut Self;
-    unsafe fn enter<'a>(mut this: NonNull<Self>) -> &'a mut Self {
+    type Entered<'a> = &'a Self;
+    unsafe fn enter<'a>(this: NonNull<Self>) -> &'a Self {
         // SAFETY: trait contract.
-        unsafe { this.as_mut() }
+        unsafe { this.as_ref() }
     }
 
     fn memory_cost(&self) -> usize {
         self.pending_input.get().capacity() + self.output_buffer.get().capacity()
     }
-    fn write_bytes(this: &mut Self, data: &StreamResult<'_>) -> Writable {
+    fn write_bytes(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         RewriterPipe::write(this, data)
     }
-    fn write_utf16(this: &mut Self, text: &[u16]) -> Writable {
+    fn write_utf16(this: &mut Self::Entered<'_>, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
         let _ = buf.write_utf16(text);
         RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
-    fn write_latin1(this: &mut Self, data: &StreamResult<'_>) -> Writable {
+    fn write_latin1(this: &mut Self::Entered<'_>, data: &StreamResult<'_>) -> Writable {
         let bytes = data.slice();
         if bun_core::strings::is_all_ascii(bytes) {
             return RewriterPipe::write(this, data);
@@ -1857,16 +1856,19 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         let _ = buf.write_latin1(bytes);
         RewriterPipe::write(this, &StreamResult::Temporary(&buf))
     }
-    fn end(this: &mut Self, err: Option<SysError>) -> bun_sys::Result<()> {
+    fn end(this: &mut Self::Entered<'_>, err: Option<SysError>) -> bun_sys::Result<()> {
         this.end_from_stream(err.map(StreamError::Error));
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(this: &mut Self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        _cx: &bun_jsc::JsThread<'_>,
+    ) -> bun_sys::Result<JSValue> {
         this.end_from_stream(None);
         bun_sys::Result::Ok(JSValue::js_number(0.0))
     }
     fn flush_from_js(
-        this: &mut Self,
+        this: &mut Self::Entered<'_>,
         cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
@@ -1905,7 +1907,7 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
         ))
     }
     fn start(
-        _this: &mut Self,
+        _this: &mut Self::Entered<'_>,
         _config: Start,
         _context: &bun_jsc::ScriptExecutionContext,
     ) -> bun_sys::Result<()> {
@@ -1936,8 +1938,8 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
         )));
         bun_sys::Result::Ok(())
     }
-    fn source(this: &mut Self) -> &Cell<SourceHandle> {
-        Cell::from_mut(this.input_source.get_mut())
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<SourceHandle> {
+        &this.input_source
     }
 }
 

@@ -2,7 +2,9 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_io::{self, Owner, PollTag, StreamingWriter, WriteHandler, WriteResult, WriteStatus};
+use bun_io::{
+    self, IoEvent, Owner, PollTag, StreamingWriter, WriteHandler, WriteResult, WriteStatus,
+};
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_ptr::RefPtr;
@@ -33,8 +35,9 @@ bun_core::declare_scope!(FileSink, visible);
 pub struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: StreamingWriter,
+    /// Held while a write is in flight.
     #[cfg(windows)]
-    write_ref: Cell<Option<RefPtr<FileSink>>>,
+    inflight_write_ref: Cell<Option<RefPtr<FileSink>>>,
     pub(crate) event_loop_handle: EventLoopHandle,
     pub(crate) written: Cell<usize>,
     pub(crate) pending: JsCell<streams::WritablePending>,
@@ -218,16 +221,16 @@ impl FileSink {
         self.keep_alive_ref.set(None);
     }
 
+    pub(crate) fn on_writer_io(&self, event: IoEvent) {
+        self.writer.on_io(self, event);
+    }
+
     fn run_pending(&self) {
         self.run_pending_armed.set(false);
 
         let _entered = self.event_loop().entered();
         if self.pending.get().state == streams::PendingState::Pending {
-            let used = streams::WritablePending {
-                state: streams::PendingState::Used,
-                ..Default::default()
-            };
-            self.pending.replace(used).run();
+            self.pending.take().run();
         }
 
         // See `protect_js_wrapper`.
@@ -349,8 +352,8 @@ impl WriteHandler for FileSink {
     }
 
     #[cfg(windows)]
-    fn on_write_in_flight(&self, in_flight: bool) {
-        self.write_ref.set(in_flight.then(|| self.ref_guard()));
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref.set(value.then(|| self.ref_guard()));
     }
 }
 
@@ -513,7 +516,7 @@ impl FileSink {
         this
     }
 
-    /// On the fd that `init` was given.
+    /// Starts the writer on `self.fd`.
     #[cfg(windows)]
     pub(crate) fn start_writer(&self, owns_fd: bool, sync: bool) -> sys::Result<()> {
         self.writer.set_owns_fd(owns_fd);
@@ -636,7 +639,10 @@ impl FileSink {
             }
         }
 
-        match (self.writer).start(self, event_loop, file.fd(), self.pollable.get()) {
+        match self
+            .writer
+            .start(self, event_loop, file.fd(), self.pollable.get())
+        {
             sys::Result::Err(err) => return sys::Result::Err(err),
             sys::Result::Ok(()) => {
                 // The writer closes it from now on.
@@ -756,7 +762,7 @@ impl FileSink {
         match self.writer.flush(self) {
             WriteResult::Err(err) => {
                 self.update_ref(false);
-                // `flush()` does not report it, and the pending slot still holds `Owned(consumed)`.
+                // On POSIX `flush()` does not call `on_error`, and the pending slot still holds `Owned(consumed)`.
                 self.record_stream_error(streams::StreamError::Error(err.clone()));
                 self.done.set(true);
                 if self.pending.get().state == streams::PendingState::Pending {
@@ -880,7 +886,7 @@ impl FileSink {
     pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> RefPtr<FileSink> {
         let this = RefPtr::new(FileSink::new(event_loop_handle.into(), fd));
         let owner = Owner::new(PollTag::FileSink, this.as_ptr().cast());
-        // SAFETY: a field of its owner.
+        // SAFETY: `owner` points to the heap allocation that holds this writer.
         unsafe { this.writer.set_owner(owner) };
         this
     }
@@ -1176,14 +1182,16 @@ impl crate::webcore::sink::JsSinkType for FileSink {
 
     crate::impl_js_sink_forwarders!(start_takes_context);
 
-    type Receiver = RefPtr<Self>;
     type Entered<'a> = RefPtr<Self>;
     unsafe fn enter<'a>(this: NonNull<Self>) -> Self::Entered<'a> {
         // SAFETY: trait contract.
         unsafe { RefPtr::init_ref(this.as_ptr()) }
     }
 
-    fn end_from_js(this: &mut RefPtr<Self>, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
+    fn end_from_js(
+        this: &mut Self::Entered<'_>,
+        cx: &bun_jsc::JsThread<'_>,
+    ) -> sys::Result<JSValue> {
         Self::end_from_js(this, cx)
     }
     fn pending_state_is_pending(&self) -> bool {
@@ -1221,7 +1229,7 @@ impl crate::webcore::sink::ControlledSink for FileSink {
         let _ = this.end(None);
         sys::Result::Ok(())
     }
-    fn source(this: &mut RefPtr<Self>) -> &Cell<streams::SourceHandle> {
+    fn source<'a>(this: &'a mut Self::Entered<'_>) -> &'a Cell<streams::SourceHandle> {
         &this.source
     }
 }
@@ -1317,7 +1325,7 @@ impl FileSink {
             ref_count: Cell::new(1),
             writer: StreamingWriter::default(),
             #[cfg(windows)]
-            write_ref: Cell::new(None),
+            inflight_write_ref: Cell::new(None),
             event_loop_handle,
             written: Cell::new(0),
             pending: JsCell::new(streams::WritablePending {

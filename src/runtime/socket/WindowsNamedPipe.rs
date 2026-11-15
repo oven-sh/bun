@@ -55,7 +55,8 @@ pub(crate) struct WindowsNamedPipe {
     /// honest model here rather than a threaded lifetime.
     pub(crate) vm: &'static VirtualMachine,
     writer: StreamingWriter,
-    write_ref: Cell<Option<RefPtr<WindowsNamedPipeContext>>>,
+    /// Held while a write is in flight.
+    inflight_write_ref: Cell<Option<RefPtr<WindowsNamedPipeContext>>>,
 
     pub(crate) incoming: JsCell<Vec<u8>>, // Maybe we should use IPCBuffer here as well
     pub(crate) ssl_error: JsCell<CertError>,
@@ -173,7 +174,7 @@ impl WindowsNamedPipe {
     /// event loop before it returns (`expect().resolves` blocks on a promise
     /// that way), which runs that task. A callback that uses `self` after it
     /// dispatched to a handler holds this guard, so the free waits until the
-    /// callback is done. `write_ref` does the same around an in-flight write,
+    /// callback is done. `inflight_write_ref` does the same around an in-flight write,
     /// and `connect`/`open` around the connect.
     ///
     /// Only for paths that cannot run after `on_close` released the
@@ -421,7 +422,7 @@ impl WindowsNamedPipe {
             handlers,
             // defaults:
             writer: StreamingWriter::default(),
-            write_ref: Cell::new(None),
+            inflight_write_ref: Cell::new(None),
             incoming: JsCell::new(Vec::new()),
             ssl_error: JsCell::new(CertError::default()),
             connect_req: JsCell::new(bun_core::ffi::zeroed::<uv::uv_connect_t>()),
@@ -609,10 +610,9 @@ impl WindowsNamedPipe {
         let this: *mut Self = self.root_ptr();
         self.update_flags(|f| f.insert(Flags::PIPE_ADOPTED));
         let owner = Owner::new(PollTag::WindowsNamedPipe, this.cast());
-        // SAFETY: a field of its owner.
+        // SAFETY: `owner` points to `self`, in the heap allocation of its context.
         unsafe { self.writer.set_owner(owner) };
-        self.writer.set_pipe(pipe);
-        self.writer.start_with_current_pipe(self);
+        self.writer.start_with_pipe(self, pipe);
         let Some(stream) = self.writer.get_stream() else {
             self.on_error(bun_sys::Error::from_code(
                 bun_sys::E::PIPE,
@@ -879,8 +879,9 @@ impl WriteHandler for WindowsNamedPipe {
         (self.handlers.on_writable)(self.handlers.ctx);
     }
 
-    fn on_write_in_flight(&self, in_flight: bool) {
-        self.write_ref.set(in_flight.then(|| self.keep_alive()));
+    fn set_has_inflight_write(&self, value: bool) {
+        self.inflight_write_ref
+            .set(value.then(|| self.keep_alive()));
     }
 }
 

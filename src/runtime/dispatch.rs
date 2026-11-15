@@ -1010,7 +1010,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [FileSink, Bodies, Spawn, Shell],
             RefPtr::init_ref,
             FileSink,
-            |this, _, event| this.writer.on_io(&*this, event)
+            |this, _, event| this.on_writer_io(event)
         ),
         #[cfg(windows)]
         PollTag::WindowsNamedPipe => io_arm!(

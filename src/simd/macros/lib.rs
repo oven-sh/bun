@@ -179,11 +179,15 @@ fn targets_to_export(arguments: &str) -> TokenStream {
     ))
 }
 
-/// Drops `#[inline]` and the `mut` of parameters.
-fn signature_to_export(signature: &[TokenTree]) -> impl Iterator<Item = TokenTree> {
+fn without_inline(signature: &[TokenTree]) -> impl Iterator<Item = &TokenTree> {
     let is_inline_at = |i: usize| signature.get(i).is_some_and(is_inline);
     let kept = (0..signature.len()).filter(move |&i| !is_inline_at(i) && !is_inline_at(i + 1));
-    kept.map(|i| match &signature[i] {
+    kept.map(|i| &signature[i])
+}
+
+/// Drops `#[inline]` and the `mut` of parameters.
+fn signature_to_export(signature: &[TokenTree]) -> impl Iterator<Item = TokenTree> {
+    without_inline(signature).map(|token| match token {
         TokenTree::Group(group) if group.delimiter() == Delimiter::Parenthesis => {
             let list: Vec<TokenTree> = group.stream().into_iter().collect();
             let is_binding = |i: usize| i == 0 || is(list.get(i - 1), ",");
@@ -218,10 +222,12 @@ fn take_exports(module: TokenStream) -> (TokenStream, TokenStream) {
         rest.next();
         let signature = std::iter::from_fn(|| rest.next_if(|t| !is_group(t, Delimiter::Brace)));
         let signature: Vec<TokenTree> = signature.collect();
-        if !signature.iter().any(is_inline) {
-            body.extend(parse("#[inline(never)]"));
-        }
-        body.extend(signature.iter().cloned());
+        body.extend(parse(match signature.iter().any(is_inline) {
+            // A debug build optimizes the crate of the kernels, and not that of the caller.
+            true => "#[cfg_attr(debug_assertions, inline(never))] #[cfg_attr(not(debug_assertions), inline)]",
+            false => "#[inline(never)]",
+        }));
+        body.extend(without_inline(&signature).cloned());
 
         let mut export = targets_to_export(&arguments);
         export.extend(signature_to_export(&signature));

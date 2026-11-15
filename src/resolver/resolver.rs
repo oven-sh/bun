@@ -372,18 +372,6 @@ static RESOLVER_MUTEX: Mutex = Mutex::new();
 static BIN_FOLDERS: bun_threading::Guarded<BoundedArray<&'static [u8], 128>> =
     bun_threading::Guarded::new(BoundedArray::new());
 
-// LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
-// register directory watches. The concrete callback lives in `bun_watcher`
-// (lower tier); defining the vtable shape there and re-exporting here keeps a
-// single type so `Watcher::get_resolve_watcher()` flows directly into
-// `Resolver.watcher` without a seam converter.
-pub use bun_watcher::AnyResolveWatcher;
-
-// NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
-// const params depending on type params are both forbidden. Carry a
-// runtime fn-pointer alongside the context — `init` produces the
-// `AnyResolveWatcher` erased shim.
-
 pub struct Resolver<'a> {
     pub opts: options::BundleOptions,
     // NOTE: `fs` / `log` are raw aliasing
@@ -411,7 +399,7 @@ pub struct Resolver<'a> {
     pub debug_logs: Option<DebugLogs>,
     pub elapsed: u64, // tracing
 
-    pub watcher: Option<AnyResolveWatcher>,
+    pub watcher: Option<Arc<bun_watcher::Watcher>>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -524,7 +512,7 @@ impl<'a> Resolver<'a> {
     /// Per-worker constructor — replaces the bundler's prior bitwise
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
-    /// per-worker `caches` (the only `Drop`-carrying field, via the
+    /// `watcher` is cloned, and the per-worker `caches` (which drop the
     /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
@@ -549,7 +537,7 @@ impl<'a> Resolver<'a> {
             // `DebugLogs` owns Vecs — per-worker fresh.
             debug_logs: None,
             elapsed: 0,
-            watcher: from.watcher,
+            watcher: from.watcher.clone(),
             caches: CacheSet::init(),
             generation: from.generation,
             package_manager: from.package_manager,
@@ -2721,10 +2709,15 @@ impl<'a> Resolver<'a> {
 
     /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        Self::bust_dir_cache_in(&mut self.fs_mut().fs, path)
+    }
+
+    /// [`Self::bust_dir_cache`] without a resolver: both caches are process-wide.
+    pub fn bust_dir_cache_in(fs: &mut Fs::file_system::RealFS, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache.remove(DirInfo::Cache::hash(path));
+        let first_bust = fs.bust_entries_cache(path);
+        let second_bust = DirInfo::Cache::instance().remove(DirInfo::Cache::hash(path));
         bun_core::scoped_log!(
             ResolverDev,
             "Bust {} = {}, {}",
@@ -6115,7 +6108,9 @@ impl<'a> Resolver<'a> {
             // Start watching it automatically,
             if let Some(watcher) = self.watcher.as_ref() {
                 if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
-                    watcher.watch(dir, fd);
+                    bun_removable_features::removable_body_of_either!(HotReload, Bundler, {
+                        watcher.on_maybe_watch_directory(dir, fd)
+                    });
                 }
             }
         }

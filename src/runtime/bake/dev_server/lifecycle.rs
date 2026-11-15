@@ -19,9 +19,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .unwrap_or(false);
 
     // Note: `server_transpiler` / `client_transpiler` / `ssr_transpiler` /
-    // `bun_watcher` / `router` / `watcher_atomics` must be assigned after the
+    // `router` / `pending_reload_event` must be assigned after the
     // heap address is stable. Rust forbids partial struct literals and
-    // `mem::zeroed()` here is UB (`Box<Watcher>` is `NonNull`-backed;
+    // `mem::zeroed()` here is UB (`Arc<Watcher>` is `NonNull`-backed;
     // `Transpiler<'a>` carries `&'a Arena`), so use
     // `Box::new_uninit()` + per-field `addr_of_mut!().write()`, leaving those
     // fields uninitialized until their real values are computed against
@@ -49,7 +49,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         w!(magic, Magic::Valid);
         w!(vm, bun_ptr::BackRef::new(options.vm));
-        w!(vm_handle, options.vm.handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
         w!(server_fetch_function_callback, jsc::StrongOptional::empty());
@@ -87,7 +86,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             next_bundle,
             NextBundle {
                 route_queue: Default::default(),
-                reload_event: None,
+                has_reload_event: false,
                 requests: deferred_request::List::default(),
             }
         );
@@ -143,12 +142,12 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-    // `.bun_watcher = undefined` → `Watcher.init(DevServer, dev, fs, ...)`
-    // SAFETY: `Watcher::init` only stores `p` as an opaque `*mut ()` ctx; it does
-    // not dereference it until `start()` spawns the watcher thread, by which point
-    // `*p` is a valid `DevServer` (`assume_init` below precedes
-    // `bun_watcher.start()`).
-    let bun_watcher = match Watcher::init::<DevServer>(p, top_level_dir) {
+    let pending_reload_event = PendingReloadEvent::new(p);
+    let watch_context = Box::new(watch::WatchContext {
+        pending_reload_event: Arc::clone(&pending_reload_event),
+        vm_handle: options.vm.handle(),
+    });
+    let bun_watcher = match Watcher::init(watch_context, top_level_dir) {
         Ok(w) => w,
         Err(err) => {
             return Err(global.throw_error(
@@ -157,15 +156,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             ));
         }
     };
-    // SAFETY: per-field write into uninit struct; see `w!` SAFETY above.
-    unsafe { w!(bun_watcher, ::core::mem::ManuallyDrop::new(bun_watcher)) };
-
-    // `.watcher_atomics = undefined` → `WatcherAtomics.init(dev)`
-    // SAFETY: `WatcherAtomics::init` / `HotReloadEvent::init_empty` only store `p`
-    // as a BACKREF for later `concurrent_task.from(dev)` / `run`; not dereferenced
-    // during construction.
-    unsafe { w!(watcher_atomics, WatcherAtomics::init(p)) };
-
     // This causes a memory leak, but the allocator is otherwise used on multiple threads.
     // (allocator param dropped — global mimalloc)
 
@@ -230,6 +220,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             }
         }
 
+        w!(bun_watcher, bun_watcher);
+        w!(pending_reload_event, pending_reload_event);
+        w!(spare_reload_event, HotReloadEvent::default());
         w!(bundler_framework_views, bundler_framework_views);
         w!(framework, options.framework);
         w!(bundler_options, options.bundler_options);
@@ -249,18 +242,15 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    // `bun_resolver::AnyResolveWatcher` is now a re-export of
-    // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
-    // vtable flows directly into the resolver without conversion.
-    let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
+    let watcher = Some(Arc::clone(&dev.bun_watcher));
     dev.server_transpiler.options.dev_server = dev_ptr as *const ();
-    dev.server_transpiler.resolver.watcher = Some(resolve_watcher);
+    dev.server_transpiler.resolver.watcher.clone_from(&watcher);
     dev.client_transpiler.options.dev_server = dev_ptr as *const ();
-    dev.client_transpiler.resolver.watcher = Some(resolve_watcher);
+    dev.client_transpiler.resolver.watcher.clone_from(&watcher);
 
     if let Some(ssr_transpiler) = dev.ssr_transpiler_mut() {
         ssr_transpiler.options.dev_server = dev_ptr as *const ();
-        ssr_transpiler.resolver.watcher = Some(resolve_watcher);
+        ssr_transpiler.resolver.watcher = watcher;
     }
 
     debug_assert!(dev.server_transpiler.resolver.opts.target != bun_ast::Target::Browser);
@@ -503,7 +493,6 @@ impl Drop for DevServer {
                 inspector_server_id: _,
                 configuration_hash_key: _,
                 vm: _,
-                vm_handle: _,
                 server: _,
                 router: _,
                 route_bundles: _,
@@ -528,7 +517,8 @@ impl Drop for DevServer {
                 server_register_update_callback: _,
                 bun_watcher: _,
                 directory_watchers: _,
-                watcher_atomics: _,
+                pending_reload_event: _,
+                spare_reload_event: _,
                 testing_batch_events: _,
                 generation: _,
                 bundles_since_last_error: _,
@@ -565,19 +555,7 @@ impl Drop for DevServer {
         }
 
         self.graph_safety_lock.lock();
-        // Hand ownership of the heap allocation to the watcher thread (which frees it in
-        // `thread_main` once `running` flips false). Auto-dropping the `Box`
-        // here would free the allocation out from under the still-running
-        // thread; on Windows the kernel additionally retains a pending
-        // `ReadDirectoryChangesW` against the inline 64 KiB `DirWatcher.buf` +
-        // `overlapped`, so the freed block being recycled by mimalloc for a
-        // later allocation is a kernel write into live unrelated heap data.
-        // SAFETY: `bun_watcher` was written exactly once in `init()` and is
-        // never taken elsewhere; this is `Drop`, so the field is not read again.
-        let watcher = unsafe { ::core::mem::ManuallyDrop::take(&mut self.bun_watcher) };
-        // SAFETY: `Box::into_raw` yields the unique heap pointer; ownership
-        // transfers to `shutdown`, which reclaims or hands off to the thread.
-        unsafe { Watcher::shutdown(Box::into_raw(watcher), true) };
+        self.bun_watcher.shutdown(true);
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
@@ -598,37 +576,7 @@ impl Drop for DevServer {
             debug_assert!(value.ref_count > 0);
         }
 
-        // `Watcher::shutdown` serialises with `dispatch_file_updates` on
-        // `Watcher.mutex`, so `next_event` is stable from the watcher side.
-        let atomics = self.watcher_atomics.as_ptr();
-        // SAFETY: `atomics` is the `heap::alloc_nn` pointer from `init()`.
-        let next = unsafe {
-            (*atomics)
-                .next_event
-                .load(::core::sync::atomic::Ordering::Acquire)
-        };
-        if next == crate::bake::dev_server::NextEvent::DONE.0 {
-            // SAFETY: `atomics` is the unique owner; no event is queued.
-            unsafe {
-                for event in &mut (*atomics).events {
-                    event.dirs.clear_and_free();
-                    event.files.clear_and_free();
-                    event.extra_files.clear();
-                }
-                bun_core::heap::destroy(atomics);
-            }
-        } else {
-            // A `HotReloadEvent.concurrent_task` is still linked in the
-            // concurrent queue; `HotReloadEvent::run` will see the nulled
-            // `owner` and reclaim this allocation.
-            // SAFETY: `atomics` is live; the main thread is the sole writer
-            // of `owner` here (watcher thread is serialised out).
-            unsafe {
-                for event in &mut (*atomics).events {
-                    event.owner = ::core::ptr::null_mut();
-                }
-            }
-        }
+        self.pending_reload_event.detach();
 
         if let TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) =
             &mut self.testing_batch_events

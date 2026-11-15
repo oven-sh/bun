@@ -133,7 +133,8 @@ impl NapiEnv {
     }
 
     fn retain(&self) -> NapiEnvRef {
-        // SAFETY: `self` is a live C++-owned napi_env.
+        // SAFETY: `self` is a live C++-owned napi_env. Its count is not atomic, and `&NapiEnv` is not
+        // `Send`: it is made on the JS thread, or on the collector's while that thread is stopped.
         unsafe { NapiEnvRef::clone_from_raw(self.as_mut_ptr()) }
     }
 
@@ -1322,7 +1323,7 @@ extern "C" fn napi_async_destroy(env_: Option<&NapiEnv>, _async_ctx: *mut c_void
 }
 
 // this is just a regular function call
-/// SAFETY: `args` is null, or points to `arg_count` values that nothing writes during the call.
+/// SAFETY: `args` is null, or points to `arg_count` values that nothing writes while the callee runs.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn napi_make_callback(
     env_: Option<&NapiEnv>,
@@ -2464,8 +2465,7 @@ unsafe extern "C" {
 
     /// Returns false if the env has already torn down its registry.
     fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *const c_void) -> bool;
-    /// Returns false if the env's teardown has the entry.
-    fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *const c_void) -> bool;
+    fn NapiEnv__unregisterThreadSafeFunction(env: *mut NapiEnv, tsfn: *const c_void);
 }
 
 /// SAFETY: `env` lives until its VM has run its cleanup hooks.
@@ -2561,7 +2561,7 @@ impl Finalizer {
 /// immediate task queue instead of run immediately. This lets finalizers perform allocations,
 /// which they couldn't if they ran immediately while the garbage collector is still running.
 ///
-/// SAFETY: `fun` takes `data` and `hint`, once.
+/// SAFETY: `fun` takes `data` and `hint`, once. This is `env`'s JS thread, or the collector's while that thread is stopped.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__napi_enqueue_finalizer(
     env: Option<&NapiEnv>,
@@ -2735,6 +2735,10 @@ impl ThreadSafeFunction {
         result
     }
 
+    fn js_side<'a>(&'a self, vm: &'a VirtualMachine) -> &'a TsfnJsSide {
+        self.js.get(vm).expect("the function's own VM")
+    }
+
     // This has two states:
     // 1. We need to run potentially multiple tasks.
     // 2. We need to finalize the ThreadSafeFunction.
@@ -2760,9 +2764,7 @@ impl ThreadSafeFunction {
                 break;
             };
             this = returned;
-            let Some(js) = this.js.get(vm) else {
-                break;
-            };
+            let js = this.js_side(vm);
 
             state = match step {
                 DispatchStep::Call { task, more: false } => this
@@ -2805,7 +2807,7 @@ impl ThreadSafeFunction {
                 return match state {
                     DispatchState::Ready => self.dequeue(shared),
                     DispatchState::MicrotasksPending => Some(DispatchStep::DrainMicrotasks),
-                    // The queue is left for `env_teardown`.
+                    // The queue waits for the next dispatch, or for `env_teardown`.
                     DispatchState::Stopped => None,
                 };
             }
@@ -2961,15 +2963,14 @@ impl ThreadSafeFunction {
     /// Runs once the function has closed (Node's Finalize).
     fn finalize(self: &Arc<Self>, js: &TsfnJsSide) {
         let Some(target) = js.target.take() else {
-            // `env_teardown` has done it, or is doing it.
             return;
         };
         let this = Arc::as_ptr(self);
-        // SAFETY: env is live (we hold a ref). An entry of its registry is a reference.
+        // SAFETY: env is live (we hold a ref). Its registry still has its reference: the env's
+        // teardown takes `target`, and it runs no task.
         unsafe {
-            if NapiEnv__unregisterThreadSafeFunction(target.env.get(), this.cast()) {
-                Arc::decrement_strong_count(this);
-            }
+            NapiEnv__unregisterThreadSafeFunction(target.env.get(), this.cast());
+            Arc::decrement_strong_count(this);
         }
         self.release_resources(js, &target.env);
     }
@@ -3002,9 +3003,7 @@ impl ThreadSafeFunction {
     /// ThreadSafeFunction::Cleanup -> Finalize -> MaybeDelete.
     fn env_teardown(&self, env: &NapiEnv) {
         let vm = env.to_js().bun_vm();
-        let Some(js) = self.js.get(vm) else {
-            return;
-        };
+        let js = self.js_side(vm);
 
         // Phase 1: publish "the loop is going away". From here no other thread
         // schedules onto it, but none may free us either -- the JS resources
@@ -3048,7 +3047,7 @@ impl ThreadSafeFunction {
         self.release_resources(js, env);
     }
 
-    /// `napi_ref_threadsafe_function`. Does nothing on another thread than the function's.
+    /// `napi_ref_threadsafe_function`. Ignored on another thread, where Node applies it and races with its loop.
     fn ref_(&self) {
         let Some(vm) = VirtualMachine::get_or_null() else {
             return;
@@ -3182,9 +3181,6 @@ unsafe extern "C" fn napi_create_threadsafe_function(
         ctx: context,
         call_js: call_js_cb,
     });
-    let Some(js) = function.js.get(vm) else {
-        return env.generic_failure();
-    };
 
     // Register with the env so that VM/worker teardown neutralizes this TSFN
     // before the VM is freed. `false` means the env has
@@ -3201,6 +3197,7 @@ unsafe extern "C" fn napi_create_threadsafe_function(
         return env.generic_failure();
     }
 
+    let js = function.js_side(vm);
     js.target.set(Some(target));
     let mut shared = function.shared.lock();
     shared.idle = Some(Arc::clone(&function));

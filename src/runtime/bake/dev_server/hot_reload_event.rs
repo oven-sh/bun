@@ -2,8 +2,8 @@
 
 use super::*;
 
+use bun_jsc::vm_handle::Posted;
 use core::sync::atomic::AtomicPtr;
-use std::sync::Arc;
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
 #[derive(Default)]
@@ -25,7 +25,7 @@ pub(super) struct PendingState {
     pub(super) event: HotReloadEvent,
     /// When the first change in `event` was seen.
     pub(super) timer: Instant,
-    /// The JS thread looks at `event` again without being told.
+    /// No task is posted while set. `process_reload_events` clears it once `event` is empty.
     pub(super) scheduled: bool,
 }
 
@@ -223,7 +223,17 @@ impl PendingReloadEvent {
         self.owner.store(core::ptr::null_mut(), Ordering::SeqCst);
     }
 
-    /// SAFETY: `this` came off the queue of the thread that owns the `DevServer`.
+    pub(super) fn post(self: &Arc<Self>, vm_handle: &bun_jsc::VmHandle) {
+        let queued = Arc::into_raw(Arc::clone(self));
+        let task = bun_event_loop::ConcurrentTask::create_from(queued.cast_mut());
+        if let Posted::Refused(_) = vm_handle.post(bun_jsc::LoopKind::Regular, task) {
+            // SAFETY: from `into_raw` above, and not queued.
+            drop(unsafe { Arc::from_raw(queued) });
+        }
+    }
+
+    /// # Safety
+    /// `this` came off the queue of the thread that owns the `DevServer`.
     #[inline(never)]
     pub(crate) unsafe fn run(this: *mut Self) {
         bun_removable_features::removable_definition!(Bundler, Self::run);
@@ -271,7 +281,7 @@ impl PendingReloadEvent {
 }
 
 impl DevServer {
-    /// Returns when the first change was seen.
+    /// Returns the time of the first change.
     pub(super) fn process_reload_events(&mut self, entry_points: &mut EntryPointList) -> Instant {
         let mut event = core::mem::take(&mut self.spare_reload_event);
         let mut first_seen = None;

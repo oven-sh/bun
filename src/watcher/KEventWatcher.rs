@@ -1,12 +1,12 @@
 use bun_core::output as Output;
-use bun_sys::Fd;
+use bun_sys::CloseOnDrop;
 
 use crate::watcher_impl::{Op, WatchEvent, Watcher, WatcherThread};
 
 pub(crate) type Platform = KEventWatcher;
 
 pub struct KEventWatcher {
-    pub(crate) fd: Fd,
+    pub(crate) fd: CloseOnDrop,
 }
 
 const CHANGELIST_COUNT: usize = 128;
@@ -17,13 +17,9 @@ impl KEventWatcher {
         if fd.native() == 0 {
             return Err(crate::Error::KQueueError);
         }
-        Ok(Self { fd })
-    }
-}
-
-impl Drop for KEventWatcher {
-    fn drop(&mut self) {
-        let _ = bun_sys::close(self.fd);
+        Ok(Self {
+            fd: CloseOnDrop::new(fd),
+        })
     }
 }
 
@@ -49,16 +45,9 @@ fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     }
 }
 
-pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
-    while this.running.load() {
-        watch_loop_cycle(this, thread)?;
-    }
-    Ok(())
-}
-
-fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
+pub(crate) fn watch_loop_cycle(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     let _flush = Output::flush_guard();
-    let fd = this.platform.fd;
+    let fd = this.platform.fd.fd();
 
     let mut changelist: [libc::kevent; CHANGELIST_COUNT] = bun_core::ffi::zeroed();
 

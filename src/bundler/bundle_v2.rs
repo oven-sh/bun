@@ -70,7 +70,6 @@ pub struct BundleV2<'a> {
     /// For the linker's source map tasks. Here because the linker may move while they run.
     pub(crate) line_offset_wait_group: WaitGroup,
     pub(crate) quoted_contents_wait_group: WaitGroup,
-    pub bun_watcher: Option<std::sync::Arc<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle<'a>>,
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
@@ -3016,7 +3015,6 @@ pub mod bv2_impl {
                 bytecode_order: None,
                 line_offset_wait_group: Default::default(),
                 quoted_contents_wait_group: Default::default(),
-                bun_watcher: None,
                 plugins: None,
                 completion: None,
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
@@ -3964,8 +3962,6 @@ pub mod bv2_impl {
             fetcher: Option<&mut DependenciesScanner<'_>>,
         ) -> Result<BuildResult, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, None, alloc);
-            this.bun_watcher
-                .clone_from(&this.transpiler.resolver.watcher);
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -4555,7 +4551,7 @@ pub mod bv2_impl {
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
 
-                    if let Some(bun_watcher) = &this.bun_watcher {
+                    if let Some(bun_watcher) = &this.transpiler.resolver.watcher {
                         'add_watchers: {
                             if !this.should_add_watcher_plugin(&load.namespace, &load.path) {
                                 break 'add_watchers;
@@ -6201,7 +6197,7 @@ pub mod bv2_impl {
 
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
-                                if self.bun_watcher.is_some() {
+                                if self.transpiler.resolver.watcher.is_some() {
                                     if !had_busted_dir_cache {
                                         bun_core::scoped_log!(
                                             watcher,
@@ -6917,7 +6913,7 @@ pub mod bv2_impl {
             }
 
             // To minimize contention, watchers are appended on the bundle thread.
-            if let Some(bun_watcher) = &this.bun_watcher {
+            if let Some(bun_watcher) = &this.transpiler.resolver.watcher {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before

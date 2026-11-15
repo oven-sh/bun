@@ -9,6 +9,8 @@ use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{BoxedTask, Task, TaskTag, task_tag};
 use bun_io::KeepAlive;
+#[cfg(not(target_os = "macos"))]
+use bun_jsc::SysErrorJsc as _;
 use bun_jsc::bindgen::JsScope;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::node::PathLike;
@@ -72,7 +74,7 @@ pub(crate) struct FSWatcher {
 
     /// The JS wrapper holds one ref, and so does each task queued for the JS thread.
     ref_count: ThreadSafeRefCount<FSWatcher>,
-    /// What the next task delivers. Under `PathWatcherManager::mutex`.
+    /// What the next task delivers. Under the lock of `PathWatcherManager`.
     #[cfg(not(windows))]
     pending_events: JsCell<Events>,
 
@@ -695,7 +697,6 @@ impl FSWatcher {
     /// observes a re-entrant `watcher.close()` from inside the listener.
     #[cfg(not(target_os = "macos"))]
     pub(crate) fn emit_error(&self, err: &bun_sys::Error, close: bool) {
-        use bun_jsc::SysErrorJsc as _;
         if self.closed.get() {
             return;
         }

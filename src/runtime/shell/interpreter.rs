@@ -27,7 +27,9 @@
 
 use bun_collections::VecExt;
 use bun_core::IntrusiveField;
-use bun_event_loop::{BoxedTask, EventLoopTask};
+use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::BoxedTask;
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{ConcurrentPoster, GlobalRef, JsCell, JsCellRefExt as _, JsRef};
 use bun_options_types::context::ContextData;
@@ -2355,6 +2357,9 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 /// A queued task's reference to its [`ShellInterpreter`], whose `finish` panics while one is out.
 pub(crate) struct ShellInterpreterRef(NonNull<ShellInterpreter>);
 
+// SAFETY: only `get` dereferences the pointer, on the thread of the script.
+unsafe impl Send for ShellInterpreterRef {}
+
 impl ShellInterpreterRef {
     pub(crate) fn new(interp: &mut Interpreter<'_>) -> Self {
         interp.pending_tasks += 1;
@@ -2398,22 +2403,25 @@ pub(crate) trait ShellTaskCtx: IntrusiveField<ShellTask> + BoxedTask + Send {
 
 pub(crate) type WorkPoolTask = bun_threading::work_pool::Task;
 
+/// Owned storage for either kind of concurrent task.
+enum EventLoopTask {
+    Js(ConcurrentTask),
+    Mini(AnyTaskWithExtraContext),
+}
+
+// SAFETY: it is empty until `ShellTask::on_finish` puts a `Send` task into it.
+unsafe impl Send for EventLoopTask {}
+
 pub(crate) struct ShellTask {
     /// Held while the task is out on the pool. For a JS loop this is the ticket its VM waits for.
     poster: Option<ConcurrentPoster>,
     /// `None` once the task is back.
     interp: Option<ShellInterpreterRef>,
-    /// Held by the tasks that share `interp`. The last one gives it up.
+    /// Cloned by `new_child`. The task that drops the last clone decrements `pending_tasks`.
     interp_owners: Option<Arc<()>>,
-    /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
-    /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
-    /// mini arm holds an `AnyTaskWithExtraContext`.
+    /// Intrusive concurrent-task node for the worker→main bounce.
     concurrent_task: EventLoopTask,
 }
-
-// SAFETY: `poster` and `interp_owners` are `Send`, only `run_from_main_thread` dereferences `interp`, and
-// `concurrent_task` is empty until `on_finish` puts a `Send` task into it.
-unsafe impl Send for ShellTask {}
 
 /// For a task that never calls `on_finish`.
 impl Default for ShellTask {
@@ -2440,13 +2448,16 @@ impl ShellTask {
                     .expect("shell task on the pool holds its poster")
                     .clone(),
             ),
-            interp: (parent.interp.as_ref()).map(|interp| ShellInterpreterRef(interp.0)),
+            interp: parent
+                .interp
+                .as_ref()
+                .map(|interp| ShellInterpreterRef(interp.0)),
             interp_owners: Some(Arc::clone(parent.interp_owners.get_or_insert_default())),
             ..Default::default()
         }
     }
 
-    /// Takes the poster (for a JS loop, a ticket on its VM).
+    /// Creates the poster (for a JS loop, a ticket on its VM).
     #[track_caller]
     pub(crate) fn new(interp: &mut Interpreter<'_>) -> Self {
         ShellTask {
@@ -2500,7 +2511,10 @@ impl ShellTask {
         // SAFETY: caller contract.
         let shell_interp = unsafe { interp_ref.get() };
         let _keep = shell_interp.ensure_still_alive();
-        let is_last = (task.interp_owners.take()).is_none_or(|it| Arc::into_inner(it).is_some());
+        let is_last = task
+            .interp_owners
+            .take()
+            .is_none_or(|it| Arc::into_inner(it).is_some());
         if is_last {
             shell_interp.with_interp(|interp| interp.pending_tasks -= 1);
         }

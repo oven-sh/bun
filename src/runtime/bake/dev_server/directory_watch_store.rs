@@ -50,12 +50,7 @@ impl DevServer {
             entry.dir
         );
 
-        self.bun_watcher.remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        self.bun_watcher.remove_at_index(entry.watch_index);
 
         // The Box key drops on swap_remove_at.
         let _ = store.watches.swap_remove_at(entry_index);
@@ -80,7 +75,7 @@ pub(crate) struct Entry {
     pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
+    /// To pass to `Watcher::remove_at_index`.
     pub(crate) watch_index: bun_watcher::WatchItemIndex,
 }
 impl Default for Entry {
@@ -320,17 +315,9 @@ impl DevServer {
             }
         });
 
-        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
-        // retains the path until eviction runs (deferred onto `evict_list` and
-        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
-        // transient `dirname()` view of a thread-local path buffer. A borrowed
-        // (`::<false>`) `Cow` would dangle once this returns — well before
-        // the watcher reads it on a file event. Owning the copy also lets the
-        // map keep its own boxed key independently, so no extra intermediate
-        // `Box` is needed here.
         let watch_index = self
             .bun_watcher
-            .add_directory::<true>(
+            .add_directory(
                 fd,
                 dir_name_to_watch,
                 bun_watcher::Watcher::get_hash(dir_name_to_watch),

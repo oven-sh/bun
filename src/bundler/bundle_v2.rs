@@ -70,9 +70,6 @@ pub struct BundleV2<'a> {
     /// For the linker's source map tasks. Here because the linker may move while they run.
     pub(crate) line_offset_wait_group: WaitGroup,
     pub(crate) quoted_contents_wait_group: WaitGroup,
-    // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
-    // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
-    pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle<'a>>,
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
@@ -240,19 +237,6 @@ impl<'a> BundleV2<'a> {
         // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
         // `&JSBundlerPlugin` projection from this `BundleV2` overlaps.
         self.plugins.map(|mut p| unsafe { p.as_mut() })
-    }
-
-    /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
-    /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
-    /// liveness/exclusivity argument lives in one place.
-    #[inline]
-    pub(crate) fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
-        // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
-        // `install_bun_watcher`), live for the process under `--watch`. The
-        // watcher storage is disjoint from `self`; `&mut self` excludes any
-        // other safe projection from this `BundleV2`, and `add_file` is only
-        // ever driven from the single bundle thread (`thread_lock`-asserted).
-        self.bun_watcher.map(|mut p| unsafe { p.as_mut() })
     }
 
     #[inline]
@@ -1488,33 +1472,6 @@ pub mod bv2_impl {
         #[inline]
         pub(crate) fn wtf_string_hash(wtf8: &[u8]) -> u32 {
             __bun_jsc_wtf_string_hash(wtf8)
-        }
-
-        unsafe extern "Rust" {
-            /// Defined `#[no_mangle]` in `bun_jsc::hot_reloader`. Installs a
-            /// `NewHotReloader<BundleV2, AnyEventLoop, true>` watcher on the given
-            /// `BundleV2`. The bundler can't name the
-            /// reloader generic (T6), so this is a definer-prefixed extern hook.
-            /// `'static` matches the impl-side signature; the sole caller
-            /// (`bun build --watch`) leaks the `Box<BundleV2>` via
-            /// `Box::into_raw` once `generate_from_cli` returns, so the
-            /// box is never dropped while the watcher holds a pointer to it.
-            fn __bun_jsc_enable_hot_module_reloading_for_bundler(
-                bv2: core::ptr::NonNull<super::BundleV2<'static>>,
-            );
-        }
-
-        /// `Watcher.enableHotModuleReloading(this, null)` for `bun build --watch`.
-        #[inline]
-        pub(crate) fn enable_hot_module_reloading_for_bundler(bv2: *mut super::BundleV2<'_>) {
-            let bv2 = core::ptr::NonNull::new(bv2.cast::<super::BundleV2<'static>>())
-                .expect("BundleV2 watcher: bv2 is non-null");
-            // SAFETY: link-time-resolved Rust-ABI fn in `bun_jsc::hot_reloader`.
-            // Not `safe fn`: the callee dereferences `bv2`, so it must point to a
-            // live `BundleV2` whose backing allocation outlives the watcher (sole
-            // caller is `BundleV2::init`; the box is leaked on the success path —
-            // see the watch-mode caveat above).
-            unsafe { __bun_jsc_enable_hot_module_reloading_for_bundler(bv2) }
         }
 
         /// Bytecode generation entry point for the linker: marks the calling
@@ -2921,7 +2878,6 @@ pub mod bv2_impl {
             bake_options: Option<BakeOptions<'a>>,
             alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
-            cli_watch_flag: bool,
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
         ) -> Box<BundleV2<'a>> {
@@ -2930,7 +2886,6 @@ pub mod bv2_impl {
                 bake_options,
                 alloc,
                 event_loop,
-                cli_watch_flag,
                 thread_pool,
                 heap,
             );
@@ -2944,7 +2899,6 @@ pub mod bv2_impl {
             bake_options: Option<BakeOptions<'a>>,
             _alloc: &bun_alloc::Arena,
             event_loop: EventLoop,
-            cli_watch_flag: bool,
             thread_pool: Option<NonNull<ThreadPoolLib>>,
             heap: &'a ThreadLocalArena,
         ) -> Box<BundleV2<'a>> {
@@ -2964,7 +2918,6 @@ pub mod bv2_impl {
                 bytecode_order: None,
                 line_offset_wait_group: Default::default(),
                 quoted_contents_wait_group: Default::default(),
-                bun_watcher: None,
                 plugins: None,
                 completion: None,
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
@@ -3070,13 +3023,6 @@ pub mod bv2_impl {
                 }
             }
 
-            // The watcher keeps a raw `*mut BundleV2`: `generate_from_cli` leaks the box.
-            if cli_watch_flag {
-                // CYCLEBREAK GENUINE: hot_reloader is T6; runtime constructs the
-                // `dispatch::WatcherHandle` (erased owner + `&'static WatcherVTable`)
-                // via this extern hook and writes `bun_watcher`.
-                dispatch::enable_hot_module_reloading_for_bundler(core::ptr::from_mut(&mut *this));
-            }
             this
         }
 
@@ -3907,118 +3853,95 @@ pub mod bv2_impl {
             transpiler: &'a mut Transpiler<'a>,
             alloc: &'a bun_alloc::Arena,
             event_loop: EventLoop,
-            enable_reloading: bool,
             reachable_files_count: &mut usize,
             minify_duration: &mut u64,
             source_code_size: &mut u64,
             fetcher: Option<&mut DependenciesScanner<'_>>,
         ) -> Result<BuildResult, Error> {
-            let mut this = BundleV2::init(
-                transpiler,
-                None,
-                alloc,
-                event_loop,
-                enable_reloading,
-                None,
-                alloc,
-            );
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, None, alloc);
             this.unique_key = generate_unique_key();
 
-            // Wrap so every exit path (incl. `?`) reaches the leak below.
-            let result = (|| -> Result<BuildResult, Error> {
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-
-                let entry_points: *const [Box<[u8]>] =
-                    &raw const *this.transpiler.options.entry_points;
-                // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
-                // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
-                // sidestep for the `&mut self` overlap.
-                this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
-
-                // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
-                this.wait_for_parse();
-                this.dump_pool_stats("parse");
-
-                *minify_duration = (((bun_core::time::nano_timestamp() as i64)
-                    - (bun_core::start_time() as i64))
-                    / (bun_core::time::NS_PER_MS as i64)) as u64;
-                *source_code_size = this.source_code_length as u64;
-
-                if this.transpiler.log().has_errors() {
-                    return Err(crate::Error::BuildFailed);
-                }
-                this.fail_if_no_entry_points()?;
-                this.type_check()?;
-
-                this.scan_for_secondary_paths();
-
-                this.process_server_component_manifest_files()?;
-
-                let reachable_files = this.find_reachable_files()?;
-                *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
-
-                let additional_output_files = this.process_files_to_copy(&reachable_files)?;
-
-                this.add_server_component_boundaries_as_extra_entry_points()?;
-
-                let mut linker_graph = this.create_linker_graph()?;
-                linker_graph.additional_output_files = additional_output_files;
-
-                let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
-                let mut chunks = linker.link(this.transpiler.log_mut())?;
-                this.dump_pool_stats("link");
-
-                // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
-                if let Some(fetch) = fetcher {
-                    drop(chunks);
-                    let linker_graph = linker.into_graph();
-                    this.get_all_dependencies(&linker_graph, &reachable_files, fetch)?;
-                    return Ok(BuildResult {
-                        output_files: Vec::new(),
-                        metafile: None,
-                        metafile_markdown: None,
-                    });
-                }
-
-                let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                    &mut linker,
-                    this.transpiler.log_mut(),
-                    &mut chunks,
-                )?;
-                this.dump_pool_stats("print");
-
-                // Generate metafile if requested (the CLI build command writes the files)
-                let metafile: Option<Box<[u8]>> = if linker.options.metafile {
-                    match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
-                        Ok(m) => Some(m),
-                        Err(err) => {
-                            bun_core::warn!("Failed to generate metafile: {}", err);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                // Markdown is generated later by the CLI build command
-                Ok(BuildResult {
-                    output_files,
-                    metafile,
-                    metafile_markdown: None,
-                })
-            })();
-
-            // Under `--watch` the watcher thread holds `*mut BundleV2` (via the
-            // reloader's `ctx`) and dereferences it in `on_file_update` after this
-            // function returns, so leak the Box to keep the pointee alive.
-            // Bounded leak: the next file change `execve()`s the process anyway.
-            if enable_reloading {
-                let _ = Box::into_raw(this);
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
             }
 
-            result
+            let entry_points: *const [Box<[u8]>] = &raw const *this.transpiler.options.entry_points;
+            // SAFETY: `transpiler.options.entry_points` is borrowed only for the duration
+            // of `enqueue_entry_points_normal`, which never frees/reallocates it; raw-ptr
+            // sidestep for the `&mut self` overlap.
+            this.enqueue_entry_points_normal(unsafe { &*entry_points })?;
+
+            // Like `run_from_js_in_new_thread`: drain the pool, then report entry point errors.
+            this.wait_for_parse();
+            this.dump_pool_stats("parse");
+
+            *minify_duration = (((bun_core::time::nano_timestamp() as i64)
+                - (bun_core::start_time() as i64))
+                / (bun_core::time::NS_PER_MS as i64)) as u64;
+            *source_code_size = this.source_code_length as u64;
+
+            if this.transpiler.log().has_errors() {
+                return Err(crate::Error::BuildFailed);
+            }
+            this.fail_if_no_entry_points()?;
+            this.type_check()?;
+
+            this.scan_for_secondary_paths();
+
+            this.process_server_component_manifest_files()?;
+
+            let reachable_files = this.find_reachable_files()?;
+            *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
+
+            let additional_output_files = this.process_files_to_copy(&reachable_files)?;
+
+            this.add_server_component_boundaries_as_extra_entry_points()?;
+
+            let mut linker_graph = this.create_linker_graph()?;
+            linker_graph.additional_output_files = additional_output_files;
+
+            let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
+            let mut chunks = linker.link(this.transpiler.log_mut())?;
+            this.dump_pool_stats("link");
+
+            // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
+            if let Some(fetch) = fetcher {
+                drop(chunks);
+                let linker_graph = linker.into_graph();
+                this.get_all_dependencies(&linker_graph, &reachable_files, fetch)?;
+                return Ok(BuildResult {
+                    output_files: Vec::new(),
+                    metafile: None,
+                    metafile_markdown: None,
+                });
+            }
+
+            let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
+                &mut linker,
+                this.transpiler.log_mut(),
+                &mut chunks,
+            )?;
+            this.dump_pool_stats("print");
+
+            // Generate metafile if requested (the CLI build command writes the files)
+            let metafile: Option<Box<[u8]>> = if linker.options.metafile {
+                match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
+                    Ok(m) => Some(m),
+                    Err(err) => {
+                        bun_core::warn!("Failed to generate metafile: {}", err);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            // Markdown is generated later by the CLI build command
+            Ok(BuildResult {
+                output_files,
+                metafile,
+                metafile_markdown: None,
+            })
         }
 
         /// Build only the parse graph for the given entry points and return the
@@ -4039,7 +3962,7 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
-            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc);
+            let mut this = BundleV2::init(transpiler, None, alloc, event_loop, None, alloc);
             this.unique_key = generate_unique_key();
 
             if this.transpiler.log().has_errors() {
@@ -4074,7 +3997,6 @@ pub mod bv2_impl {
                 Some(bake_options),
                 alloc,
                 event_loop,
-                false,
                 None,
                 alloc,
             );
@@ -4514,7 +4436,7 @@ pub mod bv2_impl {
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
 
-                    if this.bun_watcher.is_some() {
+                    if let Some(bun_watcher) = &this.transpiler.resolver.watcher {
                         'add_watchers: {
                             if !this.should_add_watcher_plugin(path.namespace, path.text) {
                                 break 'add_watchers;
@@ -4540,7 +4462,7 @@ pub mod bv2_impl {
                             };
 
                             // Failures to watch are intentionally ignored.
-                            let _ = this.bun_watcher_mut().unwrap().add_owned_file(
+                            let _ = bun_watcher.add_owned_file(
                                 file,
                                 path.text,
                                 bun_wyhash::hash(path.text) as u32,
@@ -6085,7 +6007,7 @@ pub mod bv2_impl {
 
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
-                                if self.bun_watcher.is_some() {
+                                if self.transpiler.resolver.watcher.is_some() {
                                     if !had_busted_dir_cache {
                                         bun_core::scoped_log!(
                                             watcher,
@@ -6789,7 +6711,7 @@ pub mod bv2_impl {
             }
 
             // To minimize contention, watchers are appended on the bundle thread.
-            if this.bun_watcher.is_some() {
+            if let Some(bun_watcher) = &this.transpiler.resolver.watcher {
                 if let Some(file) = parse_result.watcher_data.file.take() {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before
@@ -6801,14 +6723,11 @@ pub mod bv2_impl {
                         let fd = file.fd();
                         let dir_fd = parse_result.watcher_data.dir_fd;
                         let hash = bun_wyhash::hash(source_path) as u32;
-                        let bun_watcher = this.bun_watcher_mut().unwrap();
-                        // The watcher keeps the path past this bundle; borrow it
-                        // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let added = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(fd, source_path, hash, dir_fd)
-                        } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd)
+                        let added = match Fs::as_interned_path(source_path) {
+                            Some(path) if !cfg!(windows) => {
+                                bun_watcher.add_file_static(fd, path, hash, dir_fd)
+                            }
+                            _ => bun_watcher.add_file(fd, source_path, hash, dir_fd),
                         };
                         // A file that's already watched keeps its first descriptor.
                         if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
@@ -7179,11 +7098,6 @@ pub mod bv2_impl {
             if diff < 0 {
                 this.on_after_decrement_scan_counter();
             }
-        }
-
-        /// To satisfy the interface from NewHotReloader()
-        pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-            self.transpiler.resolver.bust_dir_cache(path)
         }
     }
 

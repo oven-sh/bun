@@ -58,7 +58,7 @@ pub mod task_tag {
     }
     tags! {
         AnyTaskJob,               // bun_jsc::Job<C> (typed pool job, one erased tag)
-        BakeHotReloadEvent,       // bun.bake.DevServer.HotReloadEvent
+        BakePendingReloadEvent,   // bake::dev_server::PendingReloadEvent
         BundleV2DeferredBatchTask, // bun.bundle_v2.DeferredBatchTask
         BundleV2PluginResolve,    // bun.bundle_v2.Resolve (JS-thread hop)
         BundleV2PluginLoad,       // bun.bundle_v2.Load (JS-thread hop)
@@ -86,7 +86,6 @@ pub mod task_tag {
         HandledPromise,
         HotReloadTask,
         HTMLRewriterBackgroundPull,
-        WatchReloadTask,
         JSBundleCompletionTask,
         JSCDeferredWorkTask,
         NapiAsyncWork,            // napi_async_work

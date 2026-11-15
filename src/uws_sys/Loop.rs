@@ -242,8 +242,7 @@ impl PosixLoop {
             return;
         }
         // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
-        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
-        // does not flush.
+        // callback.
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
@@ -420,8 +419,7 @@ impl WindowsLoop {
             return;
         }
         // SAFETY: `self` is this thread's live loop. `processing` keeps this out of every lsquic
-        // callback but the `on_stream_open` that `us_quic_socket_make_stream` makes, and that one
-        // does not flush.
+        // callback.
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 

@@ -13,11 +13,6 @@ use crate::InFlightRequest;
 pub struct Stream {
     // HTTP/2 stream IDs are 31-bit; the top bit must stay clear.
     pub(crate) id: u32,
-    /// Snapshot of `client.async_http_id` at attach time. Stored so the
-    /// session's `by_http_id` index can be maintained after `client` has been
-    /// taken (terminal delivery takes `client` before `remove_stream`).
-    /// `None` for clients without an abort-signal store (not indexed).
-    pub(crate) async_http_id: Option<u32>,
     pub(crate) client: Option<InFlightRequest>,
     pub(crate) opened_at: Instant,
 
@@ -83,10 +78,9 @@ impl Drop for Stream {
 }
 
 impl Stream {
-    pub(crate) fn new(id: u32, async_http_id: Option<u32>, send_window: i32) -> Self {
+    pub(crate) fn new(id: u32, send_window: i32) -> Self {
         Self {
             id,
-            async_http_id,
             client: None,
             opened_at: Instant::now(),
             header_block: Vec::new(),
@@ -106,12 +100,6 @@ impl Stream {
             pending_body: bun_ptr::RawSlice::EMPTY,
         }
     }
-
-    // No `rst()` here: re-entering the session via the `session` backref
-    // would autoref a second `&mut ClientSession` while
-    // `parse_frames`' `&mut ClientSession` is still live (Stacked-Borrows UB),
-    // so RST is routed through `ClientSession::rst_stream` instead — the
-    // session `&mut` is already in scope at every call site.
 
     pub(crate) fn sent_end_stream(&mut self) {
         self.state = match self.state {

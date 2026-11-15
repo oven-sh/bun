@@ -59,9 +59,8 @@ pub struct AotBuildRequest<'r, 'a> {
     pub outfile: Option<&'r [u8]>,
     /// The real path of the file that the executable replaces, if any.
     pub replaced_file: Option<&'r [u8]>,
-    /// `transpiler.log`. The resolver and the bundler write through that pointer while the build
-    /// runs, so no reference to the log is held across a call that may reach them.
-    pub log: *const Log,
+    /// That of `transpiler`.
+    pub log: &'r Log,
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
@@ -153,8 +152,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         working_directory: crate::bun_fs::FileSystem::get().top_level_dir(),
         node_path: transpiler.env().get(b"NODE_PATH"),
     };
-    // SAFETY: the log outlives the build, and nothing below this call reaches the transpiler.
-    let Some(options) = options_from_bundler(&input, unsafe { &*log }) else {
+    let Some(options) = options_from_bundler(&input, log) else {
         return Err(AotBuildFailure {
             stage: None,
             is_internal_error: false,
@@ -212,8 +210,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
     .with_assets(assets_by_absolute_paths, assets_root);
     let said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &said_by_compiler);
-    // SAFETY: the log outlives the build, and the reference ends with the statement.
-    said_by_compiler.append_to(unsafe { &*log });
+    said_by_compiler.append_to(log);
 
     let levels_above_root = match &result {
         Ok(compilation) => compilation.levels_above_root,

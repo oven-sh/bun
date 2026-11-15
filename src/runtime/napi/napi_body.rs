@@ -22,9 +22,9 @@ use bun_jsc::{
 };
 use bun_ptr::CellExt;
 use bun_threading::Condition as Condvar;
+use bun_threading::Guarded;
 use bun_threading::guarded::GuardedLock;
 use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
-use bun_threading::{Guarded, Mutex};
 
 // ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
 
@@ -2743,7 +2743,7 @@ impl ThreadSafeFunction {
     /// This thread holds a `thread_count` reference or an `Arc`, and only `f` gives it up during the call.
     unsafe fn with_lock_raw<R>(
         this: *const Self,
-        f: impl FnOnce(&Self, &mut GuardedLock<'_, TsfnShared, Mutex>) -> R,
+        f: impl FnOnce(&Self, &mut GuardedLock<'_, TsfnShared>) -> R,
     ) -> R {
         // SAFETY: `this` is live on entry. `f` gives the reference up to `dispatch_ref` or `threads_ref`,
         // which another thread can only take under the lock. `_orphaned` is dropped after the unlock.
@@ -2924,13 +2924,13 @@ impl ThreadSafeFunction {
     /// Runs on an addon thread (Node's `Push`).
     fn enqueue(
         &self,
-        shared: &mut GuardedLock<'_, TsfnShared, Mutex>,
+        shared: &mut GuardedLock<'_, TsfnShared>,
         item: AddonData,
         block: bool,
     ) -> NapiStatus {
         if block {
             while self.is_blocked(shared) && !shared.is_closing() {
-                self.blocking_condvar.wait_guarded(shared);
+                self.blocking_condvar.wait(shared);
             }
         } else if self.is_blocked(shared) && !shared.is_closing() {
             // A closing threadsafe function reports napi_closing even with a full

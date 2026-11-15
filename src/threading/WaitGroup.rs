@@ -10,12 +10,12 @@
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{Condition, Mutex};
+use crate::{Condition, Guarded};
 
 #[derive(Default)]
 pub struct WaitGroup {
     raw_count: AtomicUsize,
-    mutex: Mutex,
+    mutex: Guarded<()>,
     cond: Condition,
 }
 
@@ -23,7 +23,7 @@ impl WaitGroup {
     pub const fn init() -> Self {
         Self {
             raw_count: AtomicUsize::new(0),
-            mutex: Mutex::new(),
+            mutex: Guarded::new(()),
             cond: Condition::new(),
         }
     }
@@ -87,25 +87,20 @@ impl WaitGroup {
         //
         // SAFETY: hence live until that unlock (fn contract), whose store is the last access.
         unsafe {
-            (*this).mutex.lock();
-            let old_count = (*this).raw_count.fetch_sub(1, Ordering::AcqRel);
-            debug_assert!(old_count >= 1);
-            (*this).cond.signal();
-            Mutex::unlock_raw(&raw const (*this).mutex);
+            Guarded::with_lock_raw(&raw const (*this).mutex, |_| {
+                let old_count = (*this).raw_count.fetch_sub(1, Ordering::AcqRel);
+                debug_assert!(old_count >= 1);
+                (*this).cond.signal();
+            });
         }
     }
 
     /// Once this returns every [`finish_raw`](Self::finish_raw) is done; the group may be freed.
     pub fn wait(&self) {
-        self.mutex.lock();
-        // crate::Mutex is a raw lock/unlock wrapper (no RAII guard), so unlock
-        // is called explicitly at scope exit below.
-
+        let mut guard = self.mutex.lock();
         while self.raw_count.load(Ordering::Acquire) > 0 {
-            self.cond.wait(&self.mutex);
+            self.cond.wait(&mut guard);
         }
-
-        self.mutex.unlock();
     }
 }
 

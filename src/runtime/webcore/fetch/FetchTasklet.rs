@@ -764,7 +764,7 @@ impl FetchTasklet {
     fn update_progress(
         &mut self,
         vm: &VirtualMachine,
-        lock: MutexGuard,
+        lock: MutexGuard<'_>,
         is_done: bool,
     ) -> JsResult<()> {
         // teardown forbade script: we cannot touch JS

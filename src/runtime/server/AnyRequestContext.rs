@@ -2,6 +2,7 @@
 //! Only really exists because of `NewServer()` and `NewRequestContext()` generics.
 
 use core::ffi::{c_uint, c_void};
+use core::ptr::NonNull;
 
 use bun_ptr::{RefCounted, RefPtr};
 use bun_uws as uws;
@@ -176,7 +177,7 @@ impl Drop for AnyRequestContextRef {
             ptr | _T,
             ptr | {
                 // SAFETY: `ptr` is from `into_raw` in `new`.
-                drop(unsafe { RefPtr::from_raw(ptr) })
+                unsafe { RefPtr::decrement_strong_count(ptr) }
             }
         )
     }
@@ -232,7 +233,7 @@ impl AnyRequestContext {
             }
             // `Req<_,_> = c_void` (erased handle). For non-mux the underlying
             // type is always `uws::Request`, so the cast is purely nominal.
-            ctx.req.set(Some(req.cast::<c_void>()));
+            ctx.req.set(NonNull::new(req.cast::<c_void>()));
         })
     }
 
@@ -242,7 +243,7 @@ impl AnyRequestContext {
                 // url/headers already on the Request
                 return None;
             }
-            ctx.req.get().map(|p| p.cast::<uws::Request>())
+            ctx.req.get().map(|p| p.as_ptr().cast::<uws::Request>())
         })
     }
 

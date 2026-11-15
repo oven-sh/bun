@@ -315,9 +315,9 @@ fn text_that_stores_its_exports_stays_a_commonjs_file() {
 
 #[test]
 fn module_of_eager_entry() {
-    let whole = b"export * as entry from \"./pages/a.cjs\";\n";
+    let whole = b"import * as entry from \"./pages/a.cjs\";\nexport { entry };\n";
     assert_eq!(write_module_of_eager_entry(b"", b"./pages/a.cjs"), whole);
-    let raw = b"export * as entry from \"./a:b \\\"c\\\".txt\" with { type: \"text\" };\n";
+    let raw = b"import * as entry from \"./a:b \\\"c\\\".txt\" with { type: \"text\" };\nexport { entry };\n";
     assert_eq!(
         write_module_of_eager_entry(b"text", b"./a:b \"c\".txt"),
         raw

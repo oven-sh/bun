@@ -696,12 +696,10 @@ fn has_no_links(dir: &bun_sys::Dir) -> bool {
             };
             let name = entry.name.slice_u8();
             let kind = match entry.kind {
-                EntryKind::Unknown => {
-                    match bun_sys::lstatat(fd, &bun_core::ZBox::from_bytes(name)) {
-                        Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
-                        Err(_) => return false,
-                    }
-                }
+                EntryKind::Unknown => match bun_sys::lstatat(fd, entry.name.as_zstr()) {
+                    Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
+                    Err(_) => return false,
+                },
                 known => known,
             };
             match kind {

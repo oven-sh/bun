@@ -22,19 +22,21 @@ pub(crate) struct ReactCompilerCandidate {
     pub(crate) is_top_level: bool,
 }
 
-pub struct ReactCompilerHost<'p, 'a, const TS: bool, const SCAN_ONLY: bool> {
-    p: &'p mut P<'a, TS, SCAN_ONLY>,
+pub struct ReactCompilerHost<'p, 'a, 'log, const TS: bool, const SCAN_ONLY: bool> {
+    p: &'p mut P<'a, 'log, TS, SCAN_ONLY>,
 }
 
-impl<'p, 'a, const TS: bool, const SCAN_ONLY: bool> ReactCompilerHost<'p, 'a, TS, SCAN_ONLY> {
+impl<'p, 'a, 'log, const TS: bool, const SCAN_ONLY: bool>
+    ReactCompilerHost<'p, 'a, 'log, TS, SCAN_ONLY>
+{
     #[inline]
-    pub(crate) fn new(p: &'p mut P<'a, TS, SCAN_ONLY>) -> Self {
+    pub(crate) fn new(p: &'p mut P<'a, 'log, TS, SCAN_ONLY>) -> Self {
         Self { p }
     }
 }
 
 impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
-    for ReactCompilerHost<'_, 'a, TS, SCAN_ONLY>
+    for ReactCompilerHost<'_, 'a, '_, TS, SCAN_ONLY>
 {
     fn symbols(&self) -> &[js_ast::Symbol] {
         self.p.symbols.as_slice()
@@ -191,7 +193,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, TS, SCAN_ONLY> {
+impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, '_, TS, SCAN_ONLY> {
     /// Drops the replaced body's symbols, or the renamer prints a new local `count` as `count2`.
     pub(crate) fn drop_symbols_of_replaced_function(&mut self, name: Option<js_ast::Ref>) {
         let mut body = self.current_scope;

@@ -46,9 +46,8 @@ type ListManaged<'a, T> = BumpVec<'a, T>;
 /// Erases `P<'a, TS, SCAN>`'s const-generics so helpers like `JSXTag::parse`
 /// can take any instantiation. Only the surface those helpers actually
 /// touch is exposed.
-pub(crate) trait ParserLike<'a> {
-    fn lexer(&mut self) -> &mut js_lexer::Lexer<'a>;
-    fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log>;
+pub(crate) trait ParserLike<'a, 'log> {
+    fn lexer(&mut self) -> &mut js_lexer::Lexer<'a, 'log>;
     fn bump(&self) -> &'a Bump;
     fn source(&self) -> &'a bun_ast::Source<'a>;
     fn new_expr<T: js_ast::expr::IntoExprData>(&mut self, t: T, loc: bun_ast::Loc) -> Expr;
@@ -56,14 +55,10 @@ pub(crate) trait ParserLike<'a> {
 }
 // Trait + impl defined so Expr methods can bound on it. Method bodies
 // forward to the inherent impls.
-impl<'a, const TS: bool, const SCAN: bool> ParserLike<'a> for P<'a, TS, SCAN> {
+impl<'a, 'log, const TS: bool, const SCAN: bool> ParserLike<'a, 'log> for P<'a, 'log, TS, SCAN> {
     #[inline]
-    fn lexer(&mut self) -> &mut js_lexer::Lexer<'a> {
+    fn lexer(&mut self) -> &mut js_lexer::Lexer<'a, 'log> {
         &mut self.lexer
-    }
-    #[inline]
-    fn log_ptr(&self) -> core::ptr::NonNull<bun_ast::Log> {
-        self.log
     }
     #[inline]
     fn bump(&self) -> &'a Bump {
@@ -225,9 +220,9 @@ pub enum ReactRefreshExportKind {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // P — the parser struct.
-// `'a` covers borrowed init() params (log/define/source) AND the arena (`bump`).
+// `'a` covers borrowed init() params (define/source) AND the arena (`bump`).
 // ─────────────────────────────────────────────────────────────────────────────
-pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
+pub struct P<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// Runtime JSX transform mode. Was the `<J: JsxT>` const-generic type
     /// parameter; demoted to a field because JSX only affects a handful of
     /// expression arms (see the `bun .` startup note in `parser.rs`) and the
@@ -237,13 +232,9 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) macro_: MacroState<'a>,
     pub(crate) arena: &'a Bump,
     pub(crate) options: ParserOptions<'a>,
-    /// Raw pointer alias of `lexer.log`. Rust cannot store two `&'a mut Log` to one allocation
-    /// (Stacked-Borrows UB), so this is a `NonNull` and reborrowed at use sites
-    /// via `P::log()`. The pointee outlives `'a` (enforced by `Parser::init`).
-    pub(crate) log: core::ptr::NonNull<bun_ast::Log>,
     pub(crate) define: &'a Define,
     pub(crate) source: &'a bun_ast::Source<'a>,
-    pub lexer: js_lexer::Lexer<'a>,
+    pub lexer: js_lexer::Lexer<'a, 'log>,
     pub(crate) allow_in: bool,
     pub(crate) allow_private_identifiers: bool,
 
@@ -718,7 +709,7 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const IS_TYPESCRIPT_ENABLED: bool = TYPESCRIPT;
     pub(crate) const TRACK_SYMBOL_USAGE_DURING_PARSE_PASS: bool = SCAN_ONLY && TYPESCRIPT;
 
@@ -731,8 +722,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     #[inline]
     pub(crate) fn log(&self) -> &bun_ast::Log {
-        // SAFETY: alias of `self.lexer.log`.
-        unsafe { self.log.as_ref() }
+        self.lexer.log
     }
 
     pub(crate) fn report_stack_overflow(&self, loc: bun_ast::Loc) {
@@ -868,7 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) const ALLOW_MACROS: bool = !cfg!(target_family = "wasm");
 
     /// use this instead of checking p.source.index
@@ -7208,7 +7198,7 @@ fn path_package_name<'a>(path: &fs::Path<'a>) -> Option<&'a [u8]> {
     Some(pkgname)
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn lower_class(&mut self, stmtorexpr: js_ast::StmtOrExpr) -> &'a mut [Stmt] {
         use js_ast::g::PropertyKind;
         match stmtorexpr {
@@ -8791,7 +8781,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 // ═══════════════════════════════════════════════════════════════════════════
 // P::to_ast — final assembly P→Ast.
 // ═══════════════════════════════════════════════════════════════════════════
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn to_ast(
         &mut self,
         parts: &mut ListManaged<'a, js_ast::Part>,
@@ -9437,14 +9427,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 }
 
-impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
+impl<'a, 'log, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, 'log, TYPESCRIPT, SCAN_ONLY> {
     /// PERF: `P` is over 4 KiB. The literal is the tail expression, with no `Result`, so it is written in the caller's frame.
     pub fn init(
         arena: &'a Bump,
-        log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
-        mut lexer: js_lexer::Lexer<'a>,
+        mut lexer: js_lexer::Lexer<'a, 'log>,
         mut opts: ParserOptions<'a>,
     ) -> Self {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
@@ -9550,7 +9539,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             import_records: ImportRecordList::Owned(BumpVec::new_in(arena)), // overwritten below for !SCAN_ONLY
             named_imports: Default::default(),
             named_exports: Default::default(),
-            log,
             stack_check: bun_core::StackCheck::init(),
             starts_for_parse_only: None,
             reported_stack_overflow: core::cell::Cell::new(false),
@@ -9717,7 +9705,7 @@ pub(crate) struct LowerUsingDeclarationsContext {
 
 impl LowerUsingDeclarationsContext {
     pub(crate) fn init<'a, const T: bool, const S_: bool>(
-        p: &mut P<'a, T, S_>,
+        p: &mut P<'a, '_, T, S_>,
     ) -> Result<Self, crate::Error> {
         Ok(Self {
             first_using_loc: bun_ast::Loc::EMPTY,
@@ -9728,7 +9716,7 @@ impl LowerUsingDeclarationsContext {
 
     pub(crate) fn scan_stmts<'a, const T: bool, const S_: bool>(
         &mut self,
-        p: &mut P<'a, T, S_>,
+        p: &mut P<'a, '_, T, S_>,
         stmts: &mut [Stmt],
     ) {
         for stmt in stmts.iter_mut() {
@@ -9793,7 +9781,7 @@ impl LowerUsingDeclarationsContext {
 
     pub(crate) fn finalize<'a, const T: bool, const S_: bool>(
         &mut self,
-        p: &mut P<'a, T, S_>,
+        p: &mut P<'a, '_, T, S_>,
         stmts: &'a mut [Stmt],
         should_hoist_fns: bool,
     ) -> ListManaged<'a, Stmt> {

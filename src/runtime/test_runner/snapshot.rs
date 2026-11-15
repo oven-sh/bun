@@ -861,24 +861,7 @@ impl Snapshots {
                     }
                     next_start += fn_name.len();
 
-                    // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
-                    // `Log`, but Rust forbids two live `&'a mut Log`;
-                    // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
-                    // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
-                    // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
-                    // reborrow between parser uses.
-                    // SAFETY: `log` outlives the `'blk` block; lexer/parser are dropped at
-                    // block exit (or `continue 'ils`). See Parser.rs:214 for the provenance
-                    // discussion.
-                    let log_ptr: *const bun_ast::Log = &raw const *log;
-                    let mut lexer = js_lexer::Lexer::init_without_reading(
-                        // SAFETY: `log_ptr` derived from `&raw const *log` just above; `log`
-                        // outlives `'blk` and no other `&mut Log` is live until `lexer` is
-                        // moved into `parser` below.
-                        unsafe { &*log_ptr },
-                        &source,
-                        &arena,
-                    );
+                    let mut lexer = js_lexer::Lexer::init_without_reading(&log, &source, &arena);
                     if next_start > 0 {
                         // equivalent to lexer.consumeRemainderBytes(next_start)
                         lexer.current += next_start - (lexer.current - lexer.end);
@@ -892,7 +875,6 @@ impl Snapshots {
                     );
                     let mut parser = js_parser::TSXParser::init(
                         &arena,
-                        core::ptr::NonNull::new(log_ptr.cast_mut()).expect("log_ptr derived from &*log"),
                         &source,
                         &vm.transpiler.get().options.define,
                         lexer,

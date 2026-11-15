@@ -32,11 +32,11 @@ export const QuicSession = b.class({
     getLocalAddress: address,
     getPeerCertificate: certificate,
     getRemoteAddress: address,
-    gracefulClose: { ...js, args: { options: b.any } },
+    gracefulClose: { ...js, args: { options: b.any }, passThis: true },
     localTransportParams: objectIfOpen,
     openStream: { ...objectIfOpen, args: { direction: b.any, body: b.any }, passThis: true },
     remoteTransportParams: objectIfOpen,
-    sendDatagram: { ...js, args: { data: b.any }, returns: b.any.returning("bigint") },
+    sendDatagram: { ...js, args: { data: b.any }, returns: b.any.returning("bigint"), passThis: true },
     updateKey: { returns: b.bool },
   },
 });

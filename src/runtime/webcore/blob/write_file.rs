@@ -595,22 +595,7 @@ mod windows_impl {
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
                 return write_file.open();
             };
-            write_file.fd = 'brk: {
-                // `RareData::std{out,err,in}_store` is type-erased: compare the addresses.
-                if let Some(rare) = event_loop.vm_ref().rare_data.get() {
-                    let store_ptr = Some(store.as_ptr().cast::<c_void>());
-                    if rare.stdout_store.get().map(|p| p.as_ptr()) == store_ptr {
-                        break 'brk 1;
-                    } else if rare.stderr_store.get().map(|p| p.as_ptr()) == store_ptr {
-                        break 'brk 2;
-                    } else if rare.stdin_store.get().map(|p| p.as_ptr()) == store_ptr {
-                        break 'brk 0;
-                    }
-                }
-
-                // The file stored descriptor is not stdin, stdout, or stderr.
-                fd.uv()
-            };
+            write_file.fd = fd.uv();
 
             write_file.do_write_loop()
         }

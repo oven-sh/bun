@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux } from "harness";
 import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs";
+import { join } from "node:path";
 
 // process.on("memoryPressure") is a Bun extension. These tests drive the
 // emit path synthetically via bun:internal-for-testing since real OS memory
@@ -9,10 +10,10 @@ import { closeSync, constants, openSync, readFileSync, writeSync } from "node:fs
 // The one test that arms a real PSI trigger first checks that this process
 // is allowed to create one, and is skipped otherwise.
 
-async function run(src: string) {
+async function run(src: string, env = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
-    env: bunEnv,
+    env: { ...bunEnv, ...env },
     stderr: "pipe",
     stdout: "pipe",
   });
@@ -131,6 +132,15 @@ describe.concurrent("process.on('memoryPressure')", () => {
     `);
     expect(stdout).toBe("done");
     expect(exitCode).toBe(0);
+  });
+
+  test("the watcher is released when the VM is destroyed with a listener", async () => {
+    const result = await run(`process.on("memoryPressure", () => {}); process.stdout.write("done");`, {
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+      LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+    });
+    expect(result).toEqual({ stdout: "done", stderr: "", exitCode: 0 });
   });
 
   // psi_write() in kernel/sched/psi.c overwrites the last byte of the write

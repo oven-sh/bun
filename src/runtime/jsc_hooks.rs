@@ -1,20 +1,17 @@
 //! `crate::jsc_hooks` — high-tier bodies for the cold-path entry points that
 //! `bun_jsc` cannot define itself without inverting the crate DAG
-//! (`timer::All`, `ServerEntryPoint`, `Transpiler`, `HardcodedModule`, …).
+//! (`timer::All`, `Transpiler`, `HardcodedModule`, …).
 //!
 //! Layout:
 //!   1. [`RuntimeState`] — per-VM state the low tier stores as `*mut c_void`
-//!      (owns `timer::All` + the synthetic `bun:main` `ServerEntryPoint`).
-//!   2. `__BUN_RUNTIME_HOOKS` — `init_runtime_state` / `generate_entry_point`
-//!      / `load_preloads` / `ensure_debugger` / `auto_tick` (fn-ptr table).
+//!   2. `__BUN_RUNTIME_HOOKS` — `init_runtime_state`, `load_preloads`, … (fn-ptr table).
 //!   3. Module loader: `__bun_transpile_source_code` /
 //!      `__bun_fetch_builtin_module` (declared `extern "Rust"` in
 //!      `bun_jsc::module_loader`, link-time resolved) and the
 //!      `Bun__transpileFile` / `Bun__transpileVirtualModule` /
 //!      `Bun__resolveAndFetchBuiltinModule` / `Bun__resolveEmbeddedNodeFile`
 //!      C++ entry points.
-//!   4. `__bun_get_vm_ctx` / `__bun_stdio_blob_store_new` /
-//!      `__bun_http_sync_download_*` — low-tier extern impls.
+//!   4. `__bun_get_vm_ctx` / `__bun_http_sync_download_*` — low-tier extern impls.
 
 use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
@@ -38,7 +35,6 @@ use bun_jsc::{
 
 use bun_ast::ImportKind;
 use bun_ast::Loader;
-use bun_bundler::entry_points::ServerEntryPoint;
 use bun_bundler::options::{self, ModuleType};
 use bun_resolve_builtins::Module as HardcodedModule;
 use bun_resolver::fs as Fs;
@@ -78,8 +74,6 @@ pub(crate) struct RuntimeState {
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
-    /// Synthetic `bun:main` wrapper source.
-    pub(crate) entry_point: ServerEntryPoint,
     /// Backing arena for `vm.transpiler` (spec passes `bun.default_allocator`;
     /// the Rust `Transpiler<'a>` threads `&'a Arena`). Owned here so
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
@@ -106,10 +100,14 @@ pub(crate) struct RuntimeState {
     /// In-process `Bun.cron()` jobs that `--hot` reload / worker teardown must
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
-    pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    pub(crate) cron_jobs: JsCell<Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>,
     pub(crate) stat_watcher_scheduler: JsCell<Option<bun_ptr::RefPtr<StatWatcherScheduler>>>,
     /// Innermost entered `Pass`, borrowed from a caller's stack frame; `EnteredPass::drop` pops it.
     pub(crate) matcher_pass: Cell<*const crate::test_runner::expect::expect_deferred::Pass>,
+    /// For the `node:fs` calls that have no binding object. See [`with_node_fs`].
+    node_fs: JsCell<Option<crate::node::fs::NodeFS>>,
+    /// Installed while `process.on("memoryPressure", ...)` has a listener.
+    pub(crate) memory_pressure_watcher: crate::node::memory_pressure::WatcherSlot,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -122,54 +120,48 @@ pub(crate) struct RuntimeState {
 #[thread_local]
 static RUNTIME_STATE: Cell<*mut RuntimeState> = Cell::new(ptr::null_mut());
 
-/// Recover this thread's [`RuntimeState`] as a raw pointer. Null only before
-/// `init_runtime_state` has run (e.g. `bun_jsc` unit tests with no high tier).
-///
-/// Note: returns `*mut` (NOT `&'static mut`) — `auto_tick` holds the
-/// pointer across `get_timeout`/`drain_timers`, which fire JS callbacks
-/// that may re-enter `runtime_state()`. Handing out `&'static mut` would mint
-/// aliased `&mut` to the same allocation (UB per PORTING.md §Forbidden).
-/// Callers dereference per-field under `// SAFETY:` blocks.
+/// This thread's [`RuntimeState`]. Every JS host call runs with one installed.
 #[inline]
-pub(crate) fn runtime_state() -> *mut RuntimeState {
-    RUNTIME_STATE.get()
-}
-
-/// This thread's timers. Every JS host call runs with `RuntimeState` installed.
-#[inline]
-pub(crate) fn timer_all() -> &'static timer::All {
-    let state = runtime_state();
+pub(crate) fn runtime_state() -> &'static RuntimeState {
+    let state = RUNTIME_STATE.get();
     debug_assert!(!state.is_null(), "RuntimeState not installed");
     // SAFETY: the box is freed with the VM (at the top of the thread, on a path that never returns,
-    // or when `init` fails) and only then borrowed exclusively. `All` is not `Sync`: the reference
-    // stays here.
-    unsafe { &(*state).timer }
+    // or when `init` fails). Only `init_runtime_state` and `take_lint_vm` borrow fields exclusively
+    // before that. It is not `Sync`: the reference stays here.
+    unsafe { &*state }
+}
+
+/// [`runtime_state`] for hooks that also run without one.
+#[inline]
+pub(crate) fn try_runtime_state() -> Option<&'static RuntimeState> {
+    (!RUNTIME_STATE.get().is_null()).then(runtime_state)
+}
+
+/// [`runtime_state`] without the thread-local.
+#[inline]
+pub(crate) fn state_of(vm: &VirtualMachine) -> &RuntimeState {
+    let state = vm.runtime_state.get().cast::<RuntimeState>();
+    debug_assert!(!state.is_null(), "RuntimeState not installed");
+    // SAFETY: as `runtime_state`.
+    unsafe { &*state }
+}
+
+/// This thread's timers.
+#[inline]
+pub(crate) fn timer_all() -> &'static timer::All {
+    &runtime_state().timer
 }
 
 /// [`timer_all`] without the thread-local.
 #[inline]
 pub(crate) fn timer_all_of(vm: &VirtualMachine) -> &timer::All {
-    let state = vm.runtime_state.get().cast::<RuntimeState>();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: as `timer_all`.
-    unsafe { &(*state).timer }
+    &state_of(vm).timer
 }
 
 /// [`timer_all`] for hooks that also run without a `RuntimeState`.
 #[inline]
 fn try_timer_all() -> Option<&'static timer::All> {
-    (!runtime_state().is_null()).then(timer_all)
-}
-
-#[inline]
-pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>>
-{
-    let state = runtime_state();
-    if state.is_null() {
-        return None;
-    }
-    // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
-    Some(unsafe { &mut (*state).cron_jobs })
+    try_runtime_state().map(|state| &state.timer)
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -177,15 +169,7 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
 pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
-    let state = runtime_state();
-    debug_assert!(
-        !state.is_null(),
-        "global_dns_data before init_runtime_state"
-    );
-    // SAFETY: `state` is the live per-thread `RuntimeState` box; the field
-    // address is stable for the VM's lifetime and only read (interior
-    // mutability via `OnceCell`).
-    unsafe { &(*state).global_dns_data }
+    &runtime_state().global_dns_data
 }
 
 /// [`RuntimeState::stat_watcher_scheduler`] of `vm`.
@@ -201,43 +185,31 @@ pub(crate) fn stat_watcher_scheduler(
 /// [`RuntimeState::ssl_ctx_cache`] of this thread's VM.
 #[inline]
 pub(crate) fn ssl_ctx_cache() -> &'static crate::api::SSLContextCache::SSLContextCache {
-    let state = runtime_state();
-    debug_assert!(!state.is_null(), "ssl_ctx_cache before init_runtime_state");
-    // SAFETY: as `timer_all`.
-    unsafe { &(*state).ssl_ctx_cache }
+    &runtime_state().ssl_ctx_cache
 }
 
 /// [`RuntimeState::sql_rare`] of `vm`.
 pub(crate) fn sql_rare(vm: &VirtualMachine) -> &bun_sql_jsc::jsc::RareData {
-    let state = vm.runtime_state.get().cast::<RuntimeState>();
-    debug_assert!(!state.is_null(), "sql_rare before init_runtime_state");
-    // SAFETY: as `timer_all`.
-    unsafe { &(*state).sql_rare }
+    &state_of(vm).sql_rare
 }
 
 /// [`RuntimeState::path_watchers`] of this thread's VM.
 #[cfg(windows)]
 pub(crate) fn path_watchers() -> &'static crate::node::win_watcher::PathWatchers {
-    let state = runtime_state();
-    debug_assert!(!state.is_null(), "RuntimeState not installed");
-    // SAFETY: as `timer_all`.
-    unsafe { &(*state).path_watchers }.get_or_init(Default::default)
+    runtime_state().path_watchers.get_or_init(Default::default)
 }
 
 /// [`RuntimeState::lint`] of this thread's VM.
 #[inline]
 pub(crate) fn lint_vm() -> &'static core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>> {
-    let state = runtime_state();
-    debug_assert!(!state.is_null(), "lint_vm before init_runtime_state");
-    // SAFETY: as `global_dns_data`.
-    unsafe { &(*state).lint }
+    &runtime_state().lint
 }
 
 /// Takes [`RuntimeState::lint`] out of this thread's VM, which is about to end.
 pub(crate) fn take_lint_vm() -> Option<Box<crate::cli::lint_js::LintVm>> {
-    let state = runtime_state();
+    let state = RUNTIME_STATE.get();
     debug_assert!(!state.is_null(), "take_lint_vm before init_runtime_state");
-    // SAFETY: this thread's state, and no `lint_vm()` borrow is live: the caller runs no JavaScript.
+    // SAFETY: this thread's state, and no `runtime_state()` borrow is live at the top of the thread.
     unsafe { (*state).lint.take() }
 }
 
@@ -358,7 +330,6 @@ unsafe fn init_runtime_state(
         sql_rare: Default::default(),
         ssl_ctx_cache: Default::default(),
         global_dns_data: core::cell::OnceCell::new(),
-        entry_point: ServerEntryPoint::default(),
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
@@ -385,9 +356,11 @@ unsafe fn init_runtime_state(
         #[cfg(windows)]
         path_watchers: Default::default(),
         wake_ctx: None,
-        cron_jobs: Vec::new(),
+        cron_jobs: JsCell::default(),
         stat_watcher_scheduler: JsCell::new(None),
         matcher_pass: Cell::new(ptr::null()),
+        node_fs: JsCell::new(None),
+        memory_pressure_watcher: Default::default(),
         lint: core::cell::OnceCell::new(),
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
         // wrote `handle` before calling this hook (the wake context below reads
@@ -432,7 +405,7 @@ unsafe fn init_runtime_state(
         args.target = Some(api::Target::Bun);
         // The arena lives on
         // `RuntimeState` (boxed above) so `deinit_runtime_state` reclaims it
-        // alongside `timer`/`entry_point` on Worker teardown. The `Box`
+        // alongside `timer` on Worker teardown. The `Box`
         // payload address is stable, so a `'static` borrow is sound for the
         // `Transpiler<'static>` field — both die in VM teardown
         // (`vm.transpiler` is never dropped; see `ptr::write` note below).
@@ -691,19 +664,13 @@ fn configure_debugger(vm: &VirtualMachine, cli_flag: &bun_options_types::context
 /// Reclaim the per-VM [`RuntimeState`] boxed in [`init_runtime_state`]. Called
 /// from `VirtualMachine::deinit` / worker `destroy()` with the opaque pointer
 /// returned by `init_runtime_state`. Clears the thread-local and drops the
-/// `Box`, freeing `timer` + `entry_point`.
+/// `Box`.
 ///
 /// # Safety
 /// `state` must be the exact pointer returned by [`init_runtime_state`] for
-/// this thread (or null), and must not be used again after this call. `vm` is
-/// the live VM of this thread.
-unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeState) {
+/// this thread (or null), and must not be used again after this call.
+unsafe fn deinit_runtime_state(state: OpaqueRuntimeState) {
     RUNTIME_STATE.set(ptr::null_mut());
-    // SAFETY: per fn contract.
-    if let Some(node_fs) = unsafe { (*vm).node_fs.take() } {
-        // SAFETY: `create_node_fs` boxed it for this VM, and the field that held it was just cleared.
-        drop(unsafe { bun_core::heap::take(node_fs.cast::<crate::node::fs::NodeFS>()) });
-    }
     // Free the per-thread `TRANSPILE_PRINTER`. Workers lazy-init their own
     // copy in `Bun__transpileFile` / `Bun__transpileVirtualModule`; without this
     // each worker thread strands a `Box<BufferPrinter>` (mirrors the
@@ -721,7 +688,7 @@ unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeStat
         // from `init_runtime_state`; the TLS was just cleared so no other live
         // alias exists on this thread.
         let state = unsafe { bun_core::heap::take(state.cast::<RuntimeState>()) };
-        debug_assert!(state.cron_jobs.is_empty());
+        debug_assert!(state.cron_jobs.get().is_empty());
         drop(state);
     }
     // Free the thread-local AST stores allocated by `Transpiler::init`
@@ -733,19 +700,6 @@ unsafe fn deinit_runtime_state(vm: *mut VirtualMachine, state: OpaqueRuntimeStat
     // touches the stores again.
     bun_ast::expr::data::Store::deinit();
     bun_ast::stmt::data::Store::deinit();
-}
-
-/// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
-/// `bun:main` wrapper. Returns `false` on error (the error is already logged
-/// into `vm.log` by `generate`).
-fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool {
-    let state = runtime_state();
-    if state.is_null() {
-        return false;
-    }
-    // SAFETY: `state` is the live per-thread `RuntimeState` (boxed in
-    // `init_runtime_state`); no other `&mut` to `entry_point` is held here.
-    ServerEntryPoint::generate(unsafe { &mut (*state).entry_point }, watch, entry_path).is_ok()
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
@@ -985,16 +939,14 @@ fn auto_tick(vm: &VirtualMachine) {
     }
 
     // ── DateHeaderTimer / imminent-GC ───────────────────────────────────
-    #[cfg(unix)]
-    let state = runtime_state();
-    let timers = try_timer_all();
-    if let Some(timers) = timers {
-        timers.update_date_header_timer_if_necessary(loop_, vm);
+    let state = try_runtime_state();
+    if let Some(state) = state {
+        state.timer.update_date_header_timer_if_necessary(loop_, vm);
     }
     el.run_imminent_gc_timer();
 
     // ── poll the I/O loop with the next-timer deadline ──────────────────
-    let Some(timers) = timers else {
+    let Some(state) = state else {
         // No high-tier state (unit test) — fall back to a non-blocking I/O
         // poll. The uws loop must always be polled
         // (`tick_with_timeout`/`tick_without_idle`); `EventLoop::tick()` would only
@@ -1009,11 +961,8 @@ fn auto_tick(vm: &VirtualMachine) {
 
     // ── addons' uv_idle_t / uv_prepare_t ────────────────────────────────
     // Run them before reading `has_pending_immediate` because their callbacks can queue work.
-    // SAFETY: `state` is the live per-thread `RuntimeState`. This only borrows
-    // the `uv_loop` field, so it doesn't alias the `timer` accesses that
-    // callbacks make through `runtime_state()`.
     #[cfg(unix)]
-    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    let uv_idle_started = state.uv_loop.before_poll();
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -1041,7 +990,7 @@ fn auto_tick(vm: &VirtualMachine) {
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            let have_timeout = timers.get_timeout(
+            let have_timeout = state.timer.get_timeout(
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
@@ -1058,9 +1007,8 @@ fn auto_tick(vm: &VirtualMachine) {
     #[cfg(unix)]
     {
         // ── addons' uv_check_t (libuv runs them right after its poll) ────
-        // SAFETY: same as `before_poll` above.
-        unsafe { (*state).uv_loop.after_poll() };
-        timers.drain_timers(vm);
+        state.uv_loop.after_poll();
+        state.timer.drain_timers(vm);
     }
 
     vm.on_after_event_loop();
@@ -1107,18 +1055,15 @@ fn auto_tick_active(vm: &VirtualMachine) {
         }
     }
 
-    #[cfg(unix)]
-    let state = runtime_state();
-    let Some(timers) = try_timer_all() else {
+    let Some(state) = try_runtime_state() else {
         loop_.tick_without_idle();
         vm.on_after_event_loop();
         return;
     };
-    timers.update_date_header_timer_if_necessary(loop_, vm);
+    state.timer.update_date_header_timer_if_necessary(loop_, vm);
 
-    // SAFETY: see the matching call in `auto_tick`.
     #[cfg(unix)]
-    let uv_idle_started = unsafe { (*state).uv_loop.before_poll() };
+    let uv_idle_started = state.uv_loop.before_poll();
     #[cfg(not(unix))]
     let uv_idle_started = false;
 
@@ -1136,7 +1081,7 @@ fn auto_tick_active(vm: &VirtualMachine) {
             // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
             // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
-            let have_timeout = timers.get_timeout(
+            let have_timeout = state.timer.get_timeout(
                 &mut timespec,
                 has_pending_immediate,
                 quic_next_tick_us,
@@ -1152,9 +1097,8 @@ fn auto_tick_active(vm: &VirtualMachine) {
 
     #[cfg(unix)]
     {
-        // SAFETY: see the matching calls in `auto_tick`.
-        unsafe { (*state).uv_loop.after_poll() };
-        timers.drain_timers(vm);
+        state.uv_loop.after_poll();
+        state.timer.drain_timers(vm);
     }
 
     vm.on_after_event_loop();
@@ -1245,18 +1189,18 @@ fn timers_left() -> TimersLeft {
     }
 }
 
-/// `Node.fs.NodeFS{ .vm = … }` lazy creation.
-/// The low tier stores the result in `vm.node_fs: Option<*mut c_void>`.
-/// A worker's [`deinit_runtime_state`] frees the returned box.
-fn create_node_fs(vm: &'static VirtualMachine) -> *mut c_void {
-    use crate::node::fs::NodeFS;
-    // `.vm` is set only when standalone-module-graph is active
-    // (it gates the embedded-file `Bun.file()` lookups inside `node:fs`).
-    bun_core::heap::into_raw(Box::new(NodeFS {
-        sync_error_buf: bun_paths::path_buffer_pool::get(),
-        vm: vm.standalone_module_graph.is_some().then_some(vm),
-    }))
-    .cast::<c_void>()
+/// Runs `f`, which must not run script, on the `NodeFS` of `vm`.
+pub(crate) fn with_node_fs<R>(
+    vm: &'static VirtualMachine,
+    f: impl FnOnce(&mut crate::node::fs::NodeFS) -> R,
+) -> R {
+    state_of(vm).node_fs.with_mut(|node_fs| {
+        f(node_fs.get_or_insert_with(|| crate::node::fs::NodeFS {
+            sync_error_buf: bun_paths::path_buffer_pool::get(),
+            // It gates the embedded-file lookups inside `node:fs`.
+            vm: vm.standalone_module_graph.is_some().then_some(vm),
+        }))
+    })
 }
 
 /// `WebCore.ObjectURLRegistry.singleton().has(specifier["blob:".len..])`.
@@ -1406,7 +1350,6 @@ mod vm_loader_ctx {
 static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     init_runtime_state,
     deinit_runtime_state,
-    generate_entry_point,
     load_preloads,
     ensure_debugger,
     auto_tick,
@@ -1420,7 +1363,6 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timers_left,
     default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
-    create_node_fs,
     has_blob_url,
     name_text_of_blob_url,
     body_mixin_get_blob,
@@ -1641,14 +1583,11 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 /// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
 fn stop_dns_for_vm_teardown() -> SweepResult {
-    let state = runtime_state();
-    if state.is_null() {
+    let Some(state) = try_runtime_state() else {
         return SweepResult::Idle;
-    }
+    };
     let mut result = SweepResult::Idle;
-    // SAFETY: `state` is the live per-thread `RuntimeState` box; shared borrow
-    // of the `OnceCell` only (the resolver's own state is interior-mutable).
-    if let Some(gd) = unsafe { &(*state).global_dns_data }.get() {
+    if let Some(gd) = state.global_dns_data.get() {
         // SAFETY: the VM-global resolver, pinned by `GlobalData` (its own ref
         // never drops here).
         result = result.and(unsafe {
@@ -3428,18 +3367,10 @@ fn get_hardcoded_module(
 
     match hardcoded {
         HardcodedModule::BunMain => {
-            // Synthetic `bun:main` wrapper — pulls source from this thread's
-            // `RuntimeState.entry_point`.
-            let state = runtime_state();
-            if state.is_null() {
-                return None;
-            }
-            // SAFETY: `state` is the live per-thread `RuntimeState` boxed in
-            // `init_runtime_state`; no other `&mut` to `entry_point` is held.
-            let ep = unsafe { &(*state).entry_point };
+            let vm = VirtualMachine::get();
+            let ep = vm.entry_point.get();
             // A compiled entry point runs without the wrapper: the text is empty.
-            let is_compiled =
-                VirtualMachine::get().main_entry_point.get() == MainEntryPoint::Compiled;
+            let is_compiled = vm.main_entry_point.get() == MainEntryPoint::Compiled;
             if !ep.generated && !is_compiled {
                 return None;
             }
@@ -3558,20 +3489,12 @@ fn __bun_fetch_builtin_module(
     }
 
     // ── `macro:` namespace ──────────────────────────────────────────────
-    // `vm.macro_entry_points` values are
-    // `*mut MacroEntryPoint` (gated `bun_bundler::entry_points` type); the
-    // map itself is keyed by `i32` hash of the specifier.
     if spec.starts_with(b"macro:") {
         use bun_bundler::entry_points::MacroEntryPoint;
         let id = MacroEntryPoint::generate_id_from_specifier(spec);
         if let Some(&entry) = jsc_vm.macro_entry_points.get().get(&id) {
-            let entry = entry.cast::<MacroEntryPoint>();
-            // SAFETY: `entry` is the `heap::alloc`d `MacroEntryPoint`
-            // inserted by `load_macro_entry_point`; map ownership keeps it
-            // alive for the VM lifetime.
-            let contents = unsafe { &*entry }.code();
             return Some(ResolvedSource {
-                source_code: bun_core::String::clone_utf8(contents),
+                source_code: bun_core::String::clone_utf8(entry.code()),
                 source_url: specifier.clone(),
                 ..ResolvedSource::default()
             });
@@ -5054,16 +4977,12 @@ pub(crate) extern "C" fn Bun__resolveAndFetchBuiltinModule(
 fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
     match kind {
         bun_io::AllocatorType::Js => VirtualMachine::get().loop_ctx(),
-        bun_io::AllocatorType::SpawnSync => {
-            let event_loop = VirtualMachine::get()
-                .rare_data()
-                .existing_spawn_sync_event_loop()
-                .expect("a FilePoll of the spawnSync loop outlived it")
-                .event_loop_ptr()
-                .cast::<bun_jsc::event_loop::EventLoop>();
-            // SAFETY: owned by the VM's `RareData`.
-            unsafe { (*event_loop).event_loop_ctx() }
-        }
+        bun_io::AllocatorType::SpawnSync => VirtualMachine::get()
+            .rare_data()
+            .existing_spawn_sync_event_loop()
+            .expect("a FilePoll of the spawnSync loop outlived it")
+            .event_loop()
+            .event_loop_ctx(),
         bun_io::AllocatorType::Mini => {
             let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
             // SAFETY: set before anything on this thread polls on a mini loop.
@@ -5094,43 +5013,5 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
         Some(date_f64 as u64)
     } else {
         None
-    }
-}
-
-/// `bun_event_loop::__bun_stdio_blob_store_new` body.
-/// Returns an erased `*mut webcore::blob::Store` with intrusive `ref_count = 2`
-/// (one for `RareData`, one for the eventual `Blob` consumer).
-/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
-/// resolved.
-#[unsafe(no_mangle)]
-fn __bun_stdio_blob_store_new(fd: bun_sys::Fd, is_atty: bool, mode: bun_sys::Mode) -> *mut () {
-    use bun_jsc::node_path::PathOrFileDescriptor;
-    use bun_jsc::webcore_types::store::{Data, File, IsAllAscii, Store};
-    bun_core::heap::into_raw(Box::new(Store {
-        data: Data::File(File {
-            pathlike: PathOrFileDescriptor::Fd(fd),
-            is_atty: Some(is_atty),
-            mode,
-            ..Default::default()
-        }),
-        mime_type: bun_http_types::MimeType::NONE,
-        ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
-        is_all_ascii: IsAllAscii::default(),
-    }))
-    .cast()
-}
-
-/// Releases both refs from [`__bun_stdio_blob_store_new`]'s `+2` (one owner ref + one
-/// dead immortality sentinel). Live retained `RefPtr<Store>`s keep their own `+1`, so safe.
-#[unsafe(no_mangle)]
-fn __bun_stdio_blob_store_deinit(ptr: *mut ()) {
-    use bun_jsc::webcore_types::store::Store;
-    let Some(this) = core::ptr::NonNull::new(ptr.cast::<Store>()) else {
-        return;
-    };
-    // SAFETY: ptr is a live `Box<Store>` raw from the ctor; releasing its +2.
-    unsafe {
-        Store::deref(this);
-        Store::deref(this);
     }
 }

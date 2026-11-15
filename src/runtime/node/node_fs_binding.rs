@@ -64,10 +64,10 @@ where
 {
     let vm = cx.global().bun_vm();
     run_sync_with::<R, A>(cx, args, |args| {
-        // SAFETY: the live VM owns its `NodeFS`, and `dispatch` never re-enters JS, so nothing else holds it.
-        let node_fs = unsafe { &mut *vm.node_fs().cast::<NodeFS>() };
-        node_fs.vm = Some(vm);
-        NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+        crate::jsc_hooks::with_node_fs(vm, |node_fs| {
+            node_fs.vm = Some(vm);
+            NodeFS::dispatch::<R, A, F>(node_fs, args, Flavor::Sync)
+        })
     })
 }
 

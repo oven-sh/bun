@@ -206,12 +206,9 @@ pub struct VirtualMachine {
     /// `bun bake`: the `framework` object of a plugin in `bake.config.ts`, as for the `app` option of
     /// `Bun.serve()`. Empty for the default React framework.
     pub bake_framework: JsCell<crate::strong::Optional>,
-    pub(crate) entry_point: bun_bundler::entry_points::ServerEntryPoint,
+    /// Synthetic `bun:main` wrapper source.
+    pub entry_point: JsCell<bun_bundler::entry_points::ServerEntryPoint>,
     pub origin: bun_url::URL<'static>,
-    // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
-    // `bun_runtime` is a forward dep of this crate; stored type-erased and
-    // cast back by the `bun_runtime` consumers.
-    pub node_fs: Cell<Option<*mut c_void>>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
     /// `RuntimeHooks::init_runtime_state` in [`init`]; reclaimed by
@@ -295,9 +292,10 @@ pub struct VirtualMachine {
     pub(crate) had_errors: Cell<bool>,
 
     pub macros: JsCell<MacroMap>,
-    // LAYERING: values are `MacroEntryPoint` from `bun_bundler::entry_points`
-    // (forward dep); stored type-erased and cast back by the consumers.
-    pub macro_entry_points: JsCell<bun_collections::ArrayHashMap<i32, *mut c_void>>,
+    /// Never freed.
+    pub macro_entry_points: JsCell<
+        bun_collections::ArrayHashMap<i32, &'static bun_bundler::entry_points::MacroEntryPoint>,
+    >,
     pub macro_mode: Cell<bool>,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
     /// macro JS may be executing — both `MacroContext::call` and `Macro::init`
@@ -1989,8 +1987,8 @@ impl VirtualMachine {
         use bun_bundler::entry_points::{Fs, MacroEntryPoint};
         use bun_collections::hash_map::Entry;
         let entry_point = self.macro_entry_points.with_mut(|entry_points| {
-            crate::CrateResult::<*mut MacroEntryPoint>::Ok(match entry_points.entry(hash) {
-                Entry::Occupied(e) => (*e.get()).cast(),
+            crate::CrateResult::<&MacroEntryPoint>::Ok(match entry_points.entry(hash) {
+                Entry::Occupied(e) => *e.get(),
                 Entry::Vacant(v) => {
                     let mut ep = Box::new(MacroEntryPoint::default());
                     MacroEntryPoint::generate(
@@ -2000,16 +1998,12 @@ impl VirtualMachine {
                         hash,
                         specifier,
                     )?;
-                    let raw = bun_core::heap::into_raw(ep);
-                    v.insert(raw.cast());
-                    raw
+                    *v.insert(Box::leak(ep))
                 }
             })
         })?;
 
-        // SAFETY: `entry_point` was just inserted (heap-allocated) or fetched
-        // from the cache; it lives for the VM lifetime.
-        let path: &[u8] = unsafe { &*entry_point }.label();
+        let path = entry_point.label();
         let promise = self.run_with_api_lock(|| self._load_macro_entry_point(path));
         promise.ok_or(crate::CrateError::JSError)
     }
@@ -2719,8 +2713,7 @@ extern crate alloc;
 // §Dispatch — `bun_runtime` vtable.
 //
 // `init` / `load_entry_point` / the `bun -e` path reach into types that live
-// in the higher-tier `bun_runtime` crate (`timer::All`, `node::fs`,
-// `webcore::Body`, the bundler entry-point generator, …). Per PORTING.md
+// in the higher-tier `bun_runtime` crate (`timer::All`, …). Per PORTING.md
 // §Dispatch (cold-path), the low tier defines a manual vtable; `bun_runtime`
 // defines the `#[no_mangle]` static `__BUN_RUNTIME_HOOKS`. The fn-ptr
 // indirection at every call site below is acceptable — each does
@@ -2779,11 +2772,7 @@ pub struct RuntimeHooks {
     /// pointer `init_runtime_state` returned (or null). The high tier
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
-    pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
-    /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
-    /// `bun:main` module body for `entry_path`. Returns `false` on error
-    /// (error already logged into `vm.log`).
-    pub generate_entry_point: fn(vm: &VirtualMachine, watch: bool, entry_path: &[u8]) -> bool,
+    pub deinit_runtime_state: unsafe fn(state: RuntimeState),
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
     /// preload promise if any, else null. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
@@ -2839,10 +2828,6 @@ pub struct RuntimeHooks {
         opts: &uws::SocketContext::BunSocketContextOptions,
         err: &mut uws::create_bun_socket_error_t,
     ) -> Option<bun_boringssl::c::OwnedSslCtx>,
-    /// Lazy `NodeFS` creation.
-    /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
-    /// the type-erased pointer. Stored back into `vm.node_fs`.
-    pub create_node_fs: fn(vm: &'static VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `bun_aot::module_keys::name_of_text` of the text behind an object URL.
@@ -3276,7 +3261,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).source_mappings).write(SavedSourceMap::default());
         }
 
-        // High-tier per-VM state — Transpiler / Timer::All / entry_point.
+        // High-tier per-VM state — Transpiler / Timer::All.
         // Note (init order): the transpiler and per-VM timer state must be
         // built BEFORE `JSGlobalObject` creation. The C++ body
         // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
@@ -3517,12 +3502,10 @@ impl VirtualMachine {
 
         if let (MainEntryPoint::File, Some(entry_path)) = (self.main_entry_point.get(), entry_path)
         {
-            if let Some(hooks) = hooks {
-                let watch = self.is_watcher_enabled();
-                if !(hooks.generate_entry_point)(self, watch, entry_path) {
-                    return Err(crate::CrateError::ServerEntryPointGenerate);
-                }
-            }
+            let watch = self.is_watcher_enabled();
+            self.entry_point
+                .with_mut(|entry_point| entry_point.generate(watch, entry_path))
+                .map_err(|_| crate::CrateError::ServerEntryPointGenerate)?;
         }
 
         if !self.transpiler.get().options.disable_transpilation {
@@ -4757,21 +4740,6 @@ impl VirtualMachine {
         }
     }
 
-    /// `NodeFS` lives in `bun_runtime` (forward-dep on `bun_jsc`), so the
-    /// field is stored type-erased and the lazy boxed allocation goes through
-    /// [`RuntimeHooks::create_node_fs`]. Callers in `bun_runtime` cast the
-    /// returned pointer back to `*mut node::fs::NodeFS`.
-    #[inline]
-    pub fn node_fs(&'static self) -> *mut c_void {
-        if let Some(existing) = self.node_fs.get() {
-            return existing;
-        }
-        let hooks = runtime_hooks().expect("runtime hooks not installed");
-        let new = (hooks.create_node_fs)(self);
-        self.node_fs.set(Some(new));
-        new
-    }
-
     /// Returns the next debugger async-task id, or 0 when no debugger is attached.
     pub(crate) fn next_async_task_id(&self) -> u64 {
         let Some(debugger) = self.debugger.get() else {
@@ -5099,10 +5067,6 @@ impl VirtualMachine {
         // (see js_parser/runtime.rs).
         if bun_paths::basename(specifier) == b"bun:wrap" {
             ret.path = b"bun:wrap";
-            return Ok(());
-        }
-        if specifier == MAIN_FILE_NAME && self.entry_point.generated {
-            ret.path = MAIN_FILE_NAME;
             return Ok(());
         }
         if specifier.starts_with(Macro::NAMESPACE_WITH_COLON) {
@@ -5689,6 +5653,7 @@ impl VirtualMachine {
             drop(core::mem::take(&mut (*this).module_loader));
 
             drop((*this).preload.take());
+            drop((*this).entry_point.take());
 
             (*this).transpiler.as_mut().deinit();
 
@@ -5704,7 +5669,7 @@ impl VirtualMachine {
 
             if let Some(hooks) = runtime_hooks() {
                 let state = (*this).runtime_state.replace(core::ptr::null_mut());
-                (hooks.deinit_runtime_state)(this, state);
+                (hooks.deinit_runtime_state)(state);
             }
         }
     }

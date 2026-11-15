@@ -8,8 +8,8 @@ use bstr::BStr;
 use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_http::Method as HttpMethod;
-use bun_jsc::JsCell;
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper, StringOrJsBytes};
+use bun_jsc::{ArrayBufferPin, JsCell, PinnedArrayBuffer};
 use bun_ptr::{AsCtxPtr, RefPtr};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -116,6 +116,7 @@ pub(crate) struct NodeHTTPResponse {
     /// view. The cached `pendingWriteBuffer` slot GC-roots the JS cell; for
     /// buffers the underlying ArrayBuffer is additionally `pin()`ed.
     pending_pinned_write_owner: JsCell<crate::node::StringOrBuffer<'static>>,
+    pending_pinned_write_pin: Cell<ArrayBufferPin>,
 
     /// Held while the deferred flush is registered.
     auto_flush_ref: JsCell<Option<RefPtr<Self>>>,
@@ -368,16 +369,12 @@ struct PendingPinnedWrite {
     /// The body bytes not yet accepted by the kernel / cork buffer. Borrows
     /// `pending_pinned_write_owner`'s storage; advanced in place on drain.
     remaining: *const [u8],
-    /// The ArrayBuffer/View to `unpin()` on release. ZERO for string inputs
-    /// (strings are kept alive by the native WTFStringImpl ref in the owner).
-    pinned_value: JSValue,
 }
 
 impl Default for PendingPinnedWrite {
     fn default() -> Self {
         Self {
             remaining: ptr::slice_from_raw_parts(ptr::null(), 0),
-            pinned_value: JSValue::ZERO,
         }
     }
 }
@@ -1444,7 +1441,7 @@ impl NodeHTTPResponse {
         if EVENT == AbortEvent::Abort {
             // Release the pin + owner + GC root atomically before any user JS
             // (on_data_or_aborted runs the ondata callback). Clearing the slot
-            // alone would un-root `pinned_value` while it is still read later.
+            // alone would un-root the pinned value while it is still read later.
             self.clear_pending_pinned_write(VirtualMachine::get().global(), js_this);
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
@@ -1819,7 +1816,7 @@ impl NodeHTTPResponse {
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
     /// `js_this` is the wrapper to clear the cached slot on; pass the value
     /// handed in by C++ on terminal paths where `get_this_value()` is already
-    /// ZERO, or ZERO to have it looked up. The unpin reads `pinned_value`
+    /// ZERO, or ZERO to have it looked up. The unpin comes
     /// before the cached-slot clear, so the cell is still GC-rooted when
     /// `dynamicDowncast` touches it.
     fn clear_pending_pinned_write(&self, global_object: &JSGlobalObject, js_this: JSValue) {
@@ -1827,9 +1824,7 @@ impl NodeHTTPResponse {
             .pending_pinned_write
             .replace(PendingPinnedWrite::default());
         if p.is_some() {
-            if p.pinned_value != JSValue::ZERO {
-                p.pinned_value.unpin_array_buffer();
-            }
+            self.pending_pinned_write_pin.set(ArrayBufferPin::NONE);
             drop(
                 self.pending_pinned_write_owner
                     .replace(crate::node::StringOrBuffer::EMPTY),
@@ -1879,7 +1874,6 @@ impl NodeHTTPResponse {
         if consumed < remaining.len() {
             self.pending_pinned_write.set(PendingPinnedWrite {
                 remaining: ptr::from_ref(&remaining[consumed..]),
-                ..p
             });
             return true;
         }
@@ -2177,18 +2171,14 @@ impl NodeHTTPResponse {
                 );
                 // For buffers, pin so `transfer()` copies instead of detaching.
                 // If a pin can't keep the bytes mapped, copy them into the backpressure buffer instead.
-                let pinned_value = match buffer_value {
-                    Some(buffer_value) => match buffer_value.as_pinned_arraybuffer(global_object) {
-                        Some(ab) if ab.can_be_freed_while_pinned() => {
-                            ab.unpin();
-                            None
-                        }
-                        Some(ab) if ab.pinned => Some(buffer_value),
-                        Some(_) | None => Some(JSValue::ZERO),
-                    },
-                    None => Some(JSValue::ZERO),
+                let pin = match buffer_value.and_then(|v| PinnedArrayBuffer::pin(global_object, v))
+                {
+                    Some(ab) if ab.can_be_freed_while_pinned() => None,
+                    // SAFETY: the `pendingWriteBuffer` slot roots the value until `clear_pending_pinned_write` drops the pin, and `Drop` defuses it.
+                    Some(ab) => Some(unsafe { ab.into_pin() }),
+                    None => Some(ArrayBufferPin::NONE),
                 };
-                if let Some(pinned_value) = pinned_value {
+                if let Some(pin) = pin {
                     let remaining = ptr::from_ref(tail);
                     // `string_or_buffer` owns the bytes (WTFStringImpl ref /
                     // borrowed ArrayBuffer / encoded Vec); move it so it
@@ -2197,10 +2187,9 @@ impl NodeHTTPResponse {
                         self.pending_pinned_write_owner
                             .replace(core::mem::take(&mut string_or_buffer)),
                     );
-                    self.pending_pinned_write.set(PendingPinnedWrite {
-                        remaining,
-                        pinned_value,
-                    });
+                    self.pending_pinned_write
+                        .set(PendingPinnedWrite { remaining });
+                    self.pending_pinned_write_pin.set(pin);
                     if let Some(buffer_value) = buffer_value {
                         js::pending_write_buffer_set_cached(js_this, global_object, buffer_value);
                     }
@@ -2622,6 +2611,8 @@ impl Drop for NodeHTTPResponse {
         debug_assert!(!self.body_read_ref.has.get());
         debug_assert!(!self.poll_ref.has.get());
         debug_assert!(!self.pending_pinned_write.get().is_some());
+        // The VM's last sweep can free the buffer first.
+        self.pending_pinned_write_pin.get_mut().defuse();
         let flags = self.flags.get();
         debug_assert!(
             flags.contains(Flags::SOCKET_CLOSED)
@@ -2716,6 +2707,7 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
         raw_request_headers: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
         pending_pinned_write: Cell::new(PendingPinnedWrite::default()),
+        pending_pinned_write_pin: Cell::new(ArrayBufferPin::NONE),
         pending_pinned_write_owner: JsCell::new(crate::node::StringOrBuffer::EMPTY),
         auto_flush_ref: JsCell::new(None),
     });

@@ -1,13 +1,12 @@
 use core::cell::Cell;
-use core::ffi::c_void;
-use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
+use crate::debugger::{AgentSlot, EnabledAgent};
+use bun_core::ffi::FfiSlice;
 use bun_core::{String as BunString, StringView};
 
 pub struct HTTPServerAgent {
-    /// Underlying C++ agent. Set to null when not enabled.
-    pub agent: Cell<Option<NonNull<InspectorHTTPServerAgent>>>,
+    pub agent: AgentSlot<InspectorHTTPServerAgent>,
 
     /// This becomes the "server ID" field.
     pub next_server_id: Cell<ServerId>,
@@ -16,7 +15,7 @@ pub struct HTTPServerAgent {
 impl Default for HTTPServerAgent {
     fn default() -> Self {
         Self {
-            agent: Cell::new(None),
+            agent: AgentSlot::default(),
             next_server_id: Cell::new(ServerId::init(0)),
         }
     }
@@ -41,9 +40,8 @@ pub struct Route<'a> {
     pub path: StringView<'a>,
     pub r#type: RouteType,
     pub script_line: i32,
-    /// Unused; always null/0 (kept for the C++ layout).
-    pub param_names: *mut BunString,
-    pub param_names_len: usize,
+    /// Unused; always empty (kept for the C++ layout).
+    pub param_names: FfiSlice<'a, BunString>,
     pub file_path: StringView<'a>,
     pub script_id: StringView<'a>,
     pub script_url: StringView<'a>,
@@ -65,8 +63,7 @@ impl Default for Route<'_> {
             path: StringView::EMPTY,
             r#type: RouteType::Default,
             script_line: -1,
-            param_names: core::ptr::null_mut(),
-            param_names_len: 0,
+            param_names: FfiSlice::new(&[]),
             file_path: StringView::EMPTY,
             script_id: StringView::EMPTY,
             script_url: StringView::EMPTY,
@@ -78,7 +75,7 @@ impl Default for Route<'_> {
 
 // #region C++ agent reference type
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
     pub struct InspectorHTTPServerAgent;
 }
@@ -87,46 +84,32 @@ bun_opaque::opaque_ffi! {
 // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
 // called below with explicit casts to the codegen's opaque param types.
 impl InspectorHTTPServerAgent {
-    /// # Safety
-    /// `server_instance` is forwarded to C++ as an opaque token; caller must
-    /// ensure it remains valid for the duration of the FFI call.
-    pub unsafe fn notify_server_started(
-        agent: *mut InspectorHTTPServerAgent,
+    pub fn notify_server_started(
+        &self,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
         address: &BunString,
         start_time: f64,
-        server_instance: *mut c_void,
+        server_instance: usize,
     ) {
-        // `opaque_mut` is the centralised ZST-handle deref proof (panics on
-        // null). The C++ side never reads `server_instance` as anything but an
-        // opaque token, so passing the raw pointer through is sound.
-        let agent = Self::opaque_mut(agent);
-        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
-        // above; remaining args are by-value scalars / `&BunString`.
+        // SAFETY: C++ never reads through the last argument.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
-                core::ptr::from_mut(agent).cast(),
+                self.as_mut_ptr().cast(),
                 server_id.get() as _,
                 hot_reload_id as _,
                 address,
                 start_time,
-                server_instance,
+                core::ptr::without_provenance_mut(server_instance),
             );
         }
     }
 
-    pub fn notify_server_stopped(
-        agent: *mut InspectorHTTPServerAgent,
-        server_id: ServerId,
-        timestamp: f64,
-    ) {
-        let agent = Self::opaque_mut(agent);
-        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
-        // via `opaque_mut`; remaining args are by-value scalars.
+    pub fn notify_server_stopped(&self, server_id: ServerId, timestamp: f64) {
+        // SAFETY: `self` is the live agent; remaining args are by-value scalars.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStopped(
-                core::ptr::from_mut(agent).cast(),
+                self.as_mut_ptr().cast(),
                 server_id.get() as _,
                 timestamp,
             );
@@ -134,20 +117,18 @@ impl InspectorHTTPServerAgent {
     }
 
     pub fn notify_server_routes_updated(
-        agent: *mut InspectorHTTPServerAgent,
+        &self,
         server_id: ServerId,
         hot_reload_id: HotReloadId,
-        routes: &mut [Route<'_>],
+        routes: &[Route<'_>],
     ) {
-        let agent = Self::opaque_mut(agent);
-        // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
-        // via `opaque_mut`; `routes` is a valid `&mut [Route]` slice.
+        // SAFETY: C++ only reads `routes`, during the call.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerRoutesUpdated(
-                core::ptr::from_mut(agent).cast(),
+                self.as_mut_ptr().cast(),
                 server_id.get() as _,
                 hot_reload_id as _,
-                routes.as_mut_ptr().cast(),
+                routes.as_ptr().cast_mut().cast(),
                 routes.len(),
             );
         }
@@ -159,9 +140,11 @@ impl InspectorHTTPServerAgent {
 // #region C++ entry points
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
+extern "C" fn Bun__HTTPServerAgent__setEnabled(
+    agent: Option<EnabledAgent<InspectorHTTPServerAgent>>,
+) {
     if let Some(debugger) = VirtualMachine::get().debugger.get() {
-        debugger.http_server_agent.agent.set(NonNull::new(agent));
+        debugger.http_server_agent.agent.set(agent);
     }
 }
 

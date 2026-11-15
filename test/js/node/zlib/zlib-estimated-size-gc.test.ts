@@ -41,10 +41,9 @@ test("zstd decompress: estimated size stays tied to construction mode across clo
   checkFootprintStableAcrossClose(() => zlib.createZstdDecompress(), 90000);
 });
 
-// GC-safety guard: drive a write, then force
-// GC so estimatedSize/visitChildren fires on the marking thread against a live
-// stream. Asserts the stream still works and the process exits cleanly (this
-// build has ASAN under `bun bd`).
+// GC-safety guard: drive a write, then force GC so estimatedSize/visitChildren
+// fires on the marking thread against a live stream. Asserts the stream still
+// works and the process exits cleanly (this build has ASAN under `bun bd`).
 const brotliGcFixture = /* js */ `
   const zlib = require("zlib");
   const buf = Buffer.alloc(256 * 1024, "abcdefgh");

@@ -5,8 +5,8 @@ use core::mem::size_of;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::borrow::Cow;
 
-use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{AnyBitPattern, StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
@@ -879,7 +879,7 @@ fn add_ancestor_directories(dirs: &mut StringArrayHashMap<()>, path: &[u8]) {
 
 pub(crate) fn add_source_directories(
     dirs: &mut StringArrayHashMap<()>,
-    files: &StringArrayHashMap<File>,
+    files: &ArrayHashMap<&[u8], File>,
     program: &CompiledProgram,
 ) {
     if program.preserves_source_paths {
@@ -1612,7 +1612,7 @@ impl StandaloneModuleGraph {
             let path = &spelled[..spelled.len() - 1];
             let folder = strings::last_index_of_char(path, b'/').unwrap_or(0);
             let is_held = self.dirs.contains(&path[..folder])
-                && (self.files.contains(path) || self.dirs.contains(path));
+                && (self.files.contains(&path) || self.dirs.contains(path));
             return is_held
                 || self.key_of_mounted_asset(path).is_some()
                 || self.contains_written_file(path);
@@ -1985,7 +1985,7 @@ impl StandaloneModuleGraph {
         let mut earlier_folders: Vec<Vec<u8>> = Vec::new();
         Some(keys.filter_map(move |(key, folder_length)| {
             let (folder, below) = key.split_at(folder_length);
-            let is_file = may_be_file && self.files.contains(&key);
+            let is_file = may_be_file && self.files.contains(&key.as_slice());
             let normalized_name = [root, base_name, below].concat();
             let mut earlier = earlier_folders.iter();
             let is_found = (is_file || self.dirs.contains(&key))
@@ -2001,7 +2001,7 @@ impl StandaloneModuleGraph {
         let name_prefix = |end: usize| [earlier_folder, &below[..end]].concat();
         let ends = (1..below.len()).filter(|&at| below[at] == b'/');
         let mut ancestor_names = ends.chain([below.len()]).map(name_prefix);
-        !ancestor_names.any(|name| self.files.contains(&name))
+        !ancestor_names.any(|name| self.files.contains(&name.as_slice()))
             && !(is_file && self.dirs.contains(&name_prefix(below.len())))
     }
 
@@ -2014,7 +2014,7 @@ impl StandaloneModuleGraph {
     ) -> bool {
         let root = BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX.as_bytes();
         // The graph has no file for a compiled module that is no entry point.
-        let is_own_file = |path: &[u8]| self.files.contains(path) || program.holds_module_at(path);
+        let is_own_file = |path: &[u8]| self.files.contains(&path) || program.holds_module_at(path);
         let is_own_folder =
             || self.dirs.contains(normalized_name) || program.holds_module_below(normalized_name);
         let ends = (root.len()..normalized_name.len()).filter(|&at| normalized_name[at] == b'/');
@@ -2122,7 +2122,7 @@ impl StandaloneModuleGraph {
         }
         let key = Self::key_under_own_root(program, name)?;
         let named_at_root = || self.root_asset_key(&key);
-        let is_file = self.files.contains(&key);
+        let is_file = self.files.contains(&key.as_slice());
         Some((!is_file).then(named_at_root).flatten().unwrap_or(key))
     }
 
@@ -2179,7 +2179,7 @@ impl StandaloneModuleGraph {
             return false;
         };
         let holds = |key: &[u8]| {
-            self.files.contains(key)
+            self.files.contains(&key)
                 || self.dirs.contains(key)
                 || program.holds_module_at(key)
                 || program.holds_module_below(key)
@@ -2345,7 +2345,7 @@ impl StandaloneModuleGraph {
 
     /// `import.meta.dirname` leads to `key`, at or below which the program has removed what `__dirname` leads to. Only a file that nobody asked the build to embed is gone.
     fn forget_implicit_files(&self, key: &[u8]) {
-        if let Some(file) = self.files.get(key) {
+        if let Some(file) = self.files.get(&key) {
             if self.is_file_for_file_system_alone(file) {
                 record_removed_path(file.name);
             }
@@ -2478,9 +2478,9 @@ impl StandaloneModuleGraph {
             return None;
         }
         let key_in_graph = under_own_root.as_deref().unwrap_or(key.as_bytes());
-        let file_index = self.files.get_index(key_in_graph).or_else(|| {
+        let file_index = self.files.get_index(&key_in_graph).or_else(|| {
             self.files
-                .get_index(&self.key_of_mounted_asset(key_in_graph)?)
+                .get_index(&self.key_of_mounted_asset(key_in_graph)?.as_slice())
         })?;
         // The file of an entry point is empty: its text is on the disk or nowhere.
         let is_entry_point = program
@@ -2733,7 +2733,7 @@ impl StandaloneModuleGraph {
         let mut buffer = path_buffer_pool::get();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buffer);
-        match self.files.get_index(name) {
+        match self.files.get_index(&name) {
             Some(file_index) => program.entry_point_by_file_index(u32::try_from(file_index).ok()?),
             None => program.entry_point_by_module_path(name),
         }

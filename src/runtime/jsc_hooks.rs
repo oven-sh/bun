@@ -3131,7 +3131,7 @@ fn __bun_fetch_builtin_module(
     if let Some(file) = bun_standalone_graph::Graph::get_ref().and_then(|graph| {
         graph
             .files
-            .get(spec)
+            .get(&spec)
             .filter(|file| !graph.is_asset_of_compiled_program(spec, file))
             .filter(|_| !bun_jsc::compiled_program::is_compiled_module(spec))
             .filter(|_| !bun_jsc::compiled_program::is_entry_point_beside_thread(spec))

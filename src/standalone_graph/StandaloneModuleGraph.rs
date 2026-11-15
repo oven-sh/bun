@@ -9,7 +9,7 @@ use std::sync::{Arc, OnceLock};
 
 use bun_ast::Loader;
 use bun_bundler::options::{self, OutputFile};
-use bun_collections::StringArrayHashMap;
+use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{Environment, Output};
 use bun_core::{String as BunString, StringPointer, Unaligned, ZStr};
 use bun_exe_format::mapped_file::FileBytes;
@@ -44,7 +44,7 @@ pub use crate::executable_request::{
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
 pub struct StandaloneModuleGraph {
-    pub files: StringArrayHashMap<File>,
+    pub files: ArrayHashMap<&'static [u8], File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
     pub dirs: StringArrayHashMap<()>,
     pub entry_point_id: u32,
@@ -150,10 +150,10 @@ impl StandaloneModuleGraph {
         let mut buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
-        self.files
-            .get(name)
-            .or_else(|| self.files.get(&self.root_asset_key(name)?))
-            .or_else(|| self.files.get(&self.key_of_file_above_root(name)?))
+        let get = |key: &[u8]| Some(&self.files.values()[self.files.get_index(&key)?]);
+        get(name)
+            .or_else(|| get(&self.root_asset_key(name)?))
+            .or_else(|| get(&self.key_of_file_above_root(name)?))
     }
 
     pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
@@ -1154,7 +1154,7 @@ impl StandaloneModuleGraph {
         let raw_len = raw.len();
         if raw_len == 0 {
             return Ok(StandaloneModuleGraph {
-                files: StringArrayHashMap::new(),
+                files: ArrayHashMap::new(),
                 dirs: StringArrayHashMap::new(),
                 entry_point_id: 0,
                 compile_exec_argv: b"",
@@ -1328,7 +1328,7 @@ impl StandaloneModuleGraph {
             file_prelinked_index[file as usize] = module_index as u32;
         }
 
-        let mut modules = StringArrayHashMap::<File>::new();
+        let mut modules = ArrayHashMap::<&'static [u8], File>::new();
         modules.reserve(modules_list_count);
         for (i, module) in modules_list.iter().enumerate() {
             let module = CompiledModuleGraphFile::from_bytes(module).ok_or(CORRUPTED)?;

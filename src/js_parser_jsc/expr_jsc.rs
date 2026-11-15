@@ -39,13 +39,13 @@ pub fn to_js_error(e: ToJSError, global: &JSGlobalObject) -> JsError {
 pub trait ExprJsc {
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError>;
 }
-impl ExprJsc for Expr {
+impl ExprJsc for Expr<'_> {
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
         expr_to_js(self, global)
     }
 }
-impl ExprJsc for ExprData {
+impl ExprJsc for ExprData<'_> {
     #[inline]
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
         data_to_js(self, global)
@@ -206,16 +206,12 @@ fn json_rows_to_js(
 }
 
 fn object_json_to_js(this: &E::ObjectJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let root = E::JsonValue::Object(bun_ast::StoreRef::from_raw(
-        core::ptr::from_ref(this).cast_mut(),
-    ));
+    let root = E::JsonValue::Object(E::JsonRef::new(this));
     json_rows_to_js(root, this.tape(), global)
 }
 
 fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-    let root = E::JsonValue::Array(bun_ast::StoreRef::from_raw(
-        core::ptr::from_ref(this).cast_mut(),
-    ));
+    let root = E::JsonValue::Array(E::JsonRef::new(this));
     json_rows_to_js(root, this.tape(), global)
 }
 

@@ -20,7 +20,7 @@ use bun_core::strings;
 // `ts::Data` carries only Copy payloads but lacks a `derive(Clone)` upstream;
 // local helper so we can re-insert values fetched from `ref_to_ts_namespace_member`.
 #[inline]
-fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
+fn clone_ts_member_data<'a>(d: &TSNamespaceMemberData<'a>) -> TSNamespaceMemberData<'a> {
     match d {
         TSNamespaceMemberData::Property => TSNamespaceMemberData::Property,
         TSNamespaceMemberData::Namespace(m) => TSNamespaceMemberData::Namespace(*m),
@@ -33,7 +33,7 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn parse_type_script_decorators(
         &mut self,
-    ) -> Result<&'a mut [ExprNodeIndex], Error> {
+    ) -> Result<&'a mut [ExprNodeIndex<'a>], Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
             return Ok(&mut []);
@@ -75,7 +75,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     ///   @ DecoratorMemberExpression
     ///   @ DecoratorCallExpression
     ///   @ DecoratorParenthesizedExpression
-    pub(crate) fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
+    pub(crate) fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex<'a>, Error> {
         let p = self;
 
         // @(Expression) — parenthesized, any expression allowed
@@ -207,7 +207,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         // "namespace foo {}";
         let name_loc = p.lexer.loc();
@@ -286,7 +286,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     if func.func.flags.contains(flags::Function::IsExport) {
                         let locref = func.func.name.unwrap();
                         let ref_ = locref.ref_;
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let fn_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
                         exported_members.put(
@@ -305,7 +304,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                     if class.is_export {
                         let locref = class.class.class_name.unwrap();
                         let ref_ = locref.ref_;
-                        // SAFETY: original_name is an arena-owned slice valid for 'a.
                         let class_name: &[u8] =
                             p.symbols[ref_.inner_index() as usize].original_name.slice();
                         exported_members.put(
@@ -325,7 +323,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let ref_ = ns.name.ref_;
                         if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             let member_data = clone_ts_member_data(member_data);
-                            // SAFETY: original_name is arena-owned, valid for 'a.
                             let ns_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
@@ -345,7 +342,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                         let ref_ = ns.name.ref_;
                         if let Some(member_data) = p.ref_to_ts_namespace_member.get(&ref_) {
                             let member_data = clone_ts_member_data(member_data);
-                            // SAFETY: original_name is arena-owned, valid for 'a.
                             let enum_name: &[u8] =
                                 p.symbols[ref_.inner_index() as usize].original_name.slice();
                             exported_members.put(
@@ -428,7 +424,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             //     console.log(foo_1.foo);
             //   })(foo || (foo = {}));
             //
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
             if p.current_scope().members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. Keep adding "_" until the argument does not collide
@@ -490,7 +485,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         opts: &mut ParseStatementOptions,
         default_name_loc: bun_ast::Loc,
         default_name: &'a [u8],
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         p.lexer.expect(T::TEquals)?;
 
@@ -585,7 +580,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         &mut self,
         loc: bun_ast::Loc,
         opts: &mut ParseStatementOptions,
-    ) -> Result<Stmt, Error> {
+    ) -> Result<Stmt<'a>, Error> {
         let p = self;
         p.lexer.expect(T::TEnum)?;
         let name_loc = p.lexer.loc();
@@ -718,7 +713,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             //   (function (foo) {
             //     foo[foo["bar"] = foo] = "bar";
             //   })(foo || (foo = {}));
-            // SAFETY: current_scope is an arena-owned Scope pointer valid for 'a.
             if p.current_scope().members.contains_key(name_text) {
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid

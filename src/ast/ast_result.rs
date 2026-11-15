@@ -15,7 +15,7 @@ use crate::symbol::List as SymbolList;
 use crate::{AstArrayHashMap, AstBox, AstStringArrayHashMap, AstStringHashMap, AstVec, StoreRef};
 type ImportRecordList<'a> = crate::import_record::List<'a>;
 
-pub type TopLevelSymbolToParts = AstArrayHashMap<Ref, AstVec<u32>>;
+pub type TopLevelSymbolToParts<'a> = AstArrayHashMap<'a, Ref, AstVec<'a, u32>>;
 
 pub struct Ast<'a> {
     pub approximate_newline_count: usize,
@@ -47,10 +47,9 @@ pub struct Ast<'a> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: ImportRecordList<'a>,
 
-    // `hashbang`/`directive` are slices into source text. `StoreStr` records
-    // them under the same lifetime-erased contract as `StoreRef`.
-    pub hashbang: StoreStr,
-    pub directive: Option<StoreStr>,
+    // `hashbang`/`directive` are slices into source text.
+    pub hashbang: StoreStr<'a>,
+    pub directive: Option<StoreStr<'a>>,
     /// `export default X` where `X` is an import binding in this file. When
     /// `X` resolves to a module namespace the linker binds importers of
     /// `default` through `X` (a namespace never changes identity, so the
@@ -59,9 +58,9 @@ pub struct Ast<'a> {
     pub parts: PartList<'a>,
     // This list may be mutated later, so we should store the capacity
     pub symbols: SymbolList<'a>,
-    pub module_scope: Scope,
-    pub char_freq: Option<AstBox<CharFreq>>,
-    pub scope_uses: ScopeUseList,
+    pub module_scope: Scope<'a>,
+    pub char_freq: Option<AstBox<'a, CharFreq>>,
+    pub scope_uses: ScopeUseList<'a>,
     pub exports_ref: Ref,
     pub module_ref: Ref,
     /// When using format .bake_internal_dev, this is the HMR variable instead
@@ -73,25 +72,25 @@ pub struct Ast<'a> {
     // These are used when bundling. They are filled in during the parser pass
     // since we already have to traverse the AST then anyway and the parser pass
     // is conveniently fully parallelized.
-    pub named_imports: NamedImports,
-    pub named_exports: NamedExports,
-    pub export_star_import_records: AstVec<u32>,
+    pub named_imports: NamedImports<'a>,
+    pub named_exports: NamedExports<'a>,
+    pub export_star_import_records: AstVec<'a, u32>,
     /// `import_record_index → aliases`. An entry means every use of that
     /// `import()` call's result was a tracked property access / destructuring
     /// of exactly these names; absence means the namespace escaped (keep all
     /// exports).
-    pub dynamic_import_aliases: DynamicImportAliases,
+    pub dynamic_import_aliases: DynamicImportAliases<'a>,
 
-    pub top_level_symbols_to_parts: TopLevelSymbolToParts,
+    pub top_level_symbols_to_parts: TopLevelSymbolToParts<'a>,
 
-    pub commonjs_named_exports: CommonJSNamedExports,
+    pub commonjs_named_exports: CommonJSNamedExports<'a>,
 
     pub redirect_import_record_index: Option<u32>,
 
     /// Only populated when bundling
     pub target: Target,
     // const_values: ConstValuesMap,
-    pub ts_enums: TsEnumsMap,
+    pub ts_enums: TsEnumsMap<'a>,
 
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
@@ -169,9 +168,9 @@ pub enum CommonJSExportValue {
     Identifier(Ref),
 }
 
-pub type CommonJSNamedExports = AstStringArrayHashMap<CommonJSNamedExport>;
+pub type CommonJSNamedExports<'a> = AstStringArrayHashMap<'a, CommonJSNamedExport>;
 
-pub type NamedImports = AstArrayHashMap<Ref, NamedImport>;
+pub type NamedImports<'a> = AstArrayHashMap<'a, Ref, NamedImport<'a>>;
 /// This file's symbol `symbol` (inner index) is referenced directly in the
 /// scope whose `Scope::visit_span` starts at `scope`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -204,49 +203,50 @@ impl ScopeUseSpan {
 /// without identifier minification. References to unbound globals are left
 /// out (every scope avoids their names anyway).
 #[derive(Default)]
-pub struct ScopeUseList {
+pub struct ScopeUseList<'a> {
     /// `false`: nothing was recorded; every symbol must count as referenced
     /// everywhere.
     pub tracked: bool,
     /// In visit order, adjacent repeats dropped.
-    pub points: AstVec<ScopeUse>,
+    pub points: AstVec<'a, ScopeUse>,
     /// Sorted, no repeats. Class field initializers (may be printed inside
     /// the constructor: the span is the class body), the parser's generated
     /// temporaries and helpers (may be printed deeper than recorded) and
     /// `module`/`exports` (printed for one another): the span is the file.
-    pub spans: AstVec<ScopeUseSpan>,
+    pub spans: AstVec<'a, ScopeUseSpan>,
 }
 
 /// One `import()` / `require()` whose every use the parser accounted for.
 #[derive(Clone, Copy, Default)]
-pub struct DynamicImportUse {
+pub struct DynamicImportUse<'a> {
     /// The export names read off the result, sorted and deduplicated.
-    pub aliases: crate::StoreSlice<crate::StoreStr>,
+    pub aliases: crate::StoreSlice<'a, crate::StoreStr<'a>>,
     /// The import items those names are read through: a local a pattern
     /// binds (`const { z } = …`) or a read off a namespace local (`ns.z`).
-    pub items: crate::StoreSlice<DynamicImportItem>,
+    pub items: crate::StoreSlice<'a, DynamicImportItem<'a>>,
     /// Some use needs the namespace object whatever the linker binds: a read
     /// that is not an item, or a local that may hold several namespaces.
     pub needs_namespace_object: bool,
 }
 
 #[derive(Clone, Copy)]
-pub struct DynamicImportItem {
+pub struct DynamicImportItem<'a> {
     pub local: Ref,
-    pub alias: crate::StoreStr,
+    pub alias: crate::StoreStr<'a>,
     pub namespace_ref: Ref,
 }
-pub type DynamicImportAliases = AstArrayHashMap<u32, DynamicImportUse>;
-pub type NamedExports = AstStringArrayHashMap<NamedExport>;
-pub type ConstValuesMap = AstArrayHashMap<Ref, Expr>;
-pub type TsEnumsMap = AstArrayHashMap<Ref, StoreRef<AstStringHashMap<InlinedEnumValue>>>;
+pub type DynamicImportAliases<'a> = AstArrayHashMap<'a, u32, DynamicImportUse<'a>>;
+pub type NamedExports<'a> = AstStringArrayHashMap<'a, NamedExport>;
+pub type ConstValuesMap<'a> = AstArrayHashMap<'a, Ref, Expr<'a>>;
+pub type TsEnumsMap<'a> =
+    AstArrayHashMap<'a, Ref, StoreRef<'a, AstStringHashMap<'a, InlinedEnumValue<'a>>>>;
 /// `import X ...; X.name` where `X` resolved to a module namespace while
 /// linking: `X` -> `name` -> the generated import symbol bound to that export.
 /// The printer emits that symbol in place of the property access.
-pub type ImportMemberBindings = AstArrayHashMap<Ref, AstStringHashMap<Ref>>;
+pub type ImportMemberBindings<'a> = AstArrayHashMap<'a, Ref, AstStringHashMap<'a, Ref>>;
 
 impl<'a> Ast<'a> {
-    pub fn from_parts(parts: Box<[Part]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {
+    pub fn from_parts(parts: Box<[Part<'a>]>, arena: &'a bun_alloc::MimallocArena) -> Ast<'a> {
         let mut p = PartList::with_capacity_in(parts.len(), arena);
         p.extend(parts.into_vec());
         Ast {

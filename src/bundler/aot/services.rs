@@ -753,7 +753,7 @@ impl SourceProvider for BundlerServices {
         defines::fold_options(options, &self.user_defined_names, arena, atoms, log)
     }
 
-    fn define(&self) -> Option<&Define> {
+    fn define(&self) -> Option<&Define<'_>> {
         Some(&*self.context.options().define)
     }
 

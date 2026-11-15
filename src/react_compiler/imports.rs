@@ -232,9 +232,9 @@ pub(crate) fn validate_restricted_imports(
 /// its `ImportRecord` registered via `host.add_import_record`. Emitting a second
 /// import statement for an already-imported module is valid JS; the bundler's
 /// linker (not the printer) merges import records when bundling.
-pub(crate) fn add_imports_to_program(
-    arena: &AstArena,
-    stmts: &mut Vec<Stmt>,
+pub(crate) fn add_imports_to_program<'a>(
+    arena: &'a AstArena,
+    stmts: &mut Vec<Stmt<'a>>,
     host: &mut dyn Host,
     context: &ProgramContext,
 ) {
@@ -290,7 +290,10 @@ pub(crate) fn add_imports_to_program(
 }
 
 /// Create a `ClauseItem` AST node from a NonLocalImportSpecifier.
-fn make_import_specifier(arena: &AstArena, spec: &NonLocalImportSpecifier) -> ClauseItem {
+fn make_import_specifier<'a>(
+    arena: &'a AstArena,
+    spec: &NonLocalImportSpecifier,
+) -> ClauseItem<'a> {
     ClauseItem {
         alias: arena.dupe_str(spec.imported.as_bytes()),
         alias_loc: Loc::EMPTY,

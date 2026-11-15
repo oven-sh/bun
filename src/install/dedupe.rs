@@ -824,7 +824,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
             .workspace_package_json_cache
             .get_with_path(log, path, Default::default())
         {
-            GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
+            GetJsonResult::Entry(entry) => (entry.source, entry.root),
             GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => {
                 if !quiet {
                     print_log_errors(log);
@@ -841,7 +841,7 @@ fn package_json_declares_dependencies(manager: &mut PackageManager) -> crate::Re
         &mut lockfile,
         &mut ParseFields::new(manager),
         log,
-        &source,
+        source,
         bun_ast::JsonView::from(&json),
         &mut resolver,
         Features::main(),

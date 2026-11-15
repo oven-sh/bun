@@ -39,13 +39,13 @@ type ListManaged<'bump, T> = BumpVec<'bump, T>;
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     // Thin alias of `current_scope_mut()` kept for local readability.
     #[inline(always)]
-    fn vis_scope(&mut self) -> &mut js_ast::Scope {
+    fn vis_scope(&mut self) -> &mut js_ast::Scope<'a> {
         self.current_scope_mut()
     }
 
     pub(crate) fn visit_stmts_and_prepend_temp_refs(
         &mut self,
-        stmts: &mut ListManaged<'a, Stmt>,
+        stmts: &mut ListManaged<'a, Stmt<'a>>,
         opts: &mut PrependTempRefsOpts,
     ) -> Result<(), crate::Error> {
         debug_assert!(
@@ -79,10 +79,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     pub(crate) fn visit_func(
         &mut self,
-        mut func: G::Fn,
+        mut func: G::Fn<'a>,
         open_parens_loc: bun_ast::Loc,
         is_expr: bool,
-    ) -> G::Fn {
+    ) -> G::Fn<'a> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -219,7 +219,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         func
     }
 
-    pub(crate) fn visit_args(&mut self, args: &mut [G::Arg], opts: &VisitArgsOpts) {
+    pub(crate) fn visit_args(&mut self, args: &mut [G::Arg<'a>], opts: &VisitArgsOpts) {
         let strict_loc = fn_body_contains_use_strict(opts.body);
         let has_simple_args = Self::is_simple_parameter_list(args, opts.has_rest_arg);
         // StringVoidMap::get returns a pool guard; Drop releases.
@@ -264,7 +264,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    pub(crate) fn visit_ts_decorators(&mut self, decs: js_ast::StoreSlice<Expr>) {
+    pub(crate) fn visit_ts_decorators(&mut self, decs: js_ast::StoreSlice<'a, Expr<'a>>) {
         for dec in decs.slice_mut() {
             self.visit_expr(dec);
         }
@@ -272,7 +272,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     pub(crate) fn visit_decls<const IS_POSSIBLY_DECL_TO_REMOVE: bool>(
         &mut self,
-        decls: &mut [G::Decl],
+        decls: &mut [G::Decl<'a>],
         kind: LocalKind,
         is_export: bool,
     ) -> usize {
@@ -380,7 +380,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                                     .hasher;
                                 decl.binding
                                     .data
-                                    .write_to_hasher(hasher, self.symbols.as_mut_slice());
+                                    .write_to_hasher(hasher, self.symbols.as_slice());
                             }
                         }
                     }
@@ -635,7 +635,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         j
     }
 
-    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr) {
+    pub(crate) fn visit_binding_and_expr_for_macro(&mut self, binding: Binding, expr: Expr<'a>) {
         match binding.data {
             BData::BObject(bound_object) => {
                 let bound_object = bound_object.get();
@@ -712,7 +712,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
+    pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl<'a>, opts: VisitDeclOpts) {
         let VisitDeclOpts {
             was_anonymous_named_expr,
             could_be_const_value,
@@ -731,7 +731,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 } else {
                     self.vis_scope().is_after_const_local_prefix = true;
                 }
-                // SAFETY: original_name is arena-owned, valid for 'a.
                 let original_name: &'a [u8] = self.symbols[id_ref.inner_index() as usize]
                     .original_name
                     .slice();
@@ -752,7 +751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt, is_in_or_of: bool) -> Stmt {
+    pub(crate) fn visit_for_loop_init(&mut self, stmt: Stmt<'a>, is_in_or_of: bool) -> Stmt<'a> {
         match stmt.data {
             StmtData::SExpr(mut st) => {
                 let assign_target = if is_in_or_of {
@@ -788,7 +787,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     pub(crate) fn visit_binding(
         &mut self,
-        binding: BindingNodeIndex,
+        binding: BindingNodeIndex<'a>,
         mut duplicate_arg_check: Option<&mut StringVoidMap>,
     ) {
         if !self.stack_check.is_safe_to_recurse() {
@@ -811,7 +810,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                 {
                     self.record_scope_use(bind.r#ref);
                 }
-                // SAFETY: original_name is arena-owned, valid for 'a.
                 let name: &'a [u8] = self.symbols[bind.r#ref.inner_index() as usize]
                     .original_name
                     .slice();
@@ -913,7 +911,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         }
     }
 
-    pub(crate) fn visit_loop_body(&mut self, stmt: Stmt) -> Stmt {
+    pub(crate) fn visit_loop_body(&mut self, stmt: Stmt<'a>) -> Stmt<'a> {
         let old_is_inside_loop = self.fn_or_arrow_data_visit.is_inside_loop;
         self.fn_or_arrow_data_visit.is_inside_loop = true;
         self.loop_body = stmt.data;
@@ -922,7 +920,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         res
     }
 
-    pub(crate) fn visit_single_stmt_block(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub(crate) fn visit_single_stmt_block(&mut self, stmt: Stmt<'a>, kind: StmtsKind) -> Stmt<'a> {
         let mut new_stmt = stmt;
         self.push_scope_for_visit_pass(ScopeKind::Block, stmt.loc)
             .expect("unreachable");
@@ -934,20 +932,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         stmts.extend_from_slice(block_stmts);
         self.visit_stmts(&mut stmts, kind).expect("unreachable");
         self.pop_scope();
-        let items: &'a mut [Stmt] = stmts.into_bump_slice_mut();
+        let items = bun_ast::StoreSlice::from_bump(stmts);
         if let StmtData::SBlock(mut b) = new_stmt.data {
-            b.stmts = bun_ast::StoreSlice::new_mut(items);
+            b.stmts = items;
         }
         if self.options.features.minify_syntax {
             // `stmts` was consumed above; `items` aliases the slice now
             // stored in `s_block.stmts`.
-            new_stmt = self.stmts_to_single_stmt(stmt.loc, items);
+            new_stmt = self.stmts_to_single_stmt(stmt.loc, items.slice_mut());
         }
 
         new_stmt
     }
 
-    pub(crate) fn visit_single_stmt(&mut self, stmt: Stmt, kind: StmtsKind) -> Stmt {
+    pub(crate) fn visit_single_stmt(&mut self, stmt: Stmt<'a>, kind: StmtsKind) -> Stmt<'a> {
         if matches!(stmt.data, StmtData::SBlock(_)) {
             return self.visit_single_stmt_block(stmt, kind);
         }
@@ -982,7 +980,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn visit_class(
         &mut self,
         name_scope_loc: bun_ast::Loc,
-        class: &mut G::Class,
+        class: &mut G::Class<'a>,
         default_name_ref: Ref,
         is_expr: bool,
     ) -> Ref {
@@ -1035,17 +1033,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             } else {
                 name_ref
             };
-            // SAFETY: `original_name` is an AST-arena slice.
-            unsafe {
-                self.current_scope.members.put(
-                    self.ast_arena,
-                    original_name,
-                    ScopeMember {
-                        ref_: body_ref,
-                        loc: name.loc,
-                    },
-                )
-            };
+            self.current_scope.members.put(
+                self.ast_arena,
+                original_name,
+                ScopeMember {
+                    ref_: body_ref,
+                    loc: name.loc,
+                },
+            );
             name_ref
         } else {
             let name_str: &'a [u8] = if default_name_ref.is_empty() {
@@ -1503,7 +1498,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     // Try separating the list for appending, so that it's not a pointer.
     pub(crate) fn visit_stmts(
         &mut self,
-        stmts: &mut ListManaged<'a, Stmt>,
+        stmts: &mut ListManaged<'a, Stmt<'a>>,
         kind: StmtsKind,
     ) -> Result<(), crate::Error> {
         debug_assert!(
@@ -1590,7 +1585,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             // This is only done for function declarations that are not generators
                             // or async functions, since this is a backwards-compatibility hack from
                             // Annex B of the JavaScript standard.
-                            // SAFETY: current_scope is a valid arena ptr for the parse.
                             if !p.current_scope().kind_stops_hoisting()
                                 && p.symbols[data.func.name.unwrap().ref_.inner_index() as usize]
                                     .kind
@@ -1641,7 +1635,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
                             // case we give up and do not preserve the semantics of the original code.
                             let name = data.func.name.unwrap();
                             let name_ref = name.ref_;
-                            // SAFETY: current_scope is a valid arena ptr for the parse.
                             if p.current_scope().contains_direct_eval {
                                 if let Some(hoisted_ref) =
                                     p.hoisted_ref_for_sloppy_mode_block_fn.get(&name_ref)
@@ -1780,7 +1773,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // and leave the S.Try body dangling.
             let arena = p.arena;
             let raw = core::mem::replace(stmts, ListManaged::new_in(arena)).into_bump_slice_mut();
-            // SAFETY: current_scope is a valid arena ptr for the parse.
             let parent_is_none = p.current_scope().parent.is_none();
             *stmts = ctx.finalize(p, raw, parent_is_none);
         }
@@ -1850,7 +1842,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             return Ok(());
         }
 
-        // SAFETY: current_scope is a valid arena ptr for the parse.
         if p.current_scope().parent.is_some() && !p.current_scope().contains_direct_eval {
             // Remove inlined constants now that we know whether any of these statements
             // contained a direct eval() or not. This can't be done earlier when we
@@ -1945,7 +1936,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // Ignore declarations if the scope is shadowed by a direct "eval" call.
             // The eval'd code may indirectly reference this symbol and the actual
             // use count may be greater than 1.
-            // SAFETY: current_scope is a valid arena ptr for the parse.
             if p.current_scope != p.module_scope
                 && !p.current_scope().contains_direct_eval
                 && !p.options.features.is_library
@@ -2244,7 +2234,6 @@ fn fn_body_contains_use_strict(body: &[Stmt]) -> Option<bun_ast::Loc> {
         match &stmt.data {
             StmtData::SComment(_) => continue,
             StmtData::SDirective(dir) => {
-                // SAFETY: arena-owned slice valid for the parse.
                 if dir.value.slice() == b"use strict" {
                     return Some(stmt.loc);
                 }

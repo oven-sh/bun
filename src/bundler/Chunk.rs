@@ -80,7 +80,7 @@ pub struct Chunk<'a> {
     /// The nested scopes still to name after `rename_symbols_in_chunk`
     /// (number renamer only), `(source_index, module-scope child)` grouped by
     /// file; each file becomes a `NestedRenamer` task.
-    pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope)>,
+    pub(crate) nested_scopes_to_rename: Vec<(u32, *const bun_ast::Scope<'a>)>,
 
     pub compile_results_for_chunk: Box<[CompileResult]>,
 
@@ -1159,7 +1159,7 @@ impl EntryPoint {
 }
 
 #[derive(Default)]
-pub struct JavaScriptChunk {
+pub struct JavaScriptChunk<'a> {
     pub(crate) files_in_chunk_order: Box<[IndexInt]>,
     pub parts_in_chunk_in_order: Box<[PartRange]>,
 
@@ -1173,8 +1173,8 @@ pub struct JavaScriptChunk {
     /// Bindings declared in this chunk that another chunk imports; named by `cross_chunk_names`.
     pub(crate) exports_to_other_chunks: ArrayHashMap<Ref, ()>,
     pub(crate) imports_from_other_chunks: ImportsFromOtherChunks,
-    pub(crate) cross_chunk_prefix_stmts: Vec<Stmt>,
-    pub(crate) cross_chunk_suffix_stmts: Vec<Stmt>,
+    pub(crate) cross_chunk_prefix_stmts: Vec<Stmt<'a>>,
+    pub(crate) cross_chunk_suffix_stmts: Vec<Stmt<'a>>,
 
     /// Indexes to CSS chunks. Currently this will only ever be zero or one
     /// items long, but smarter css chunking will allow multiple js entry points
@@ -1404,7 +1404,7 @@ impl Chunk<'_> {
 // would leak. The CSS/JS chunk size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
 pub enum Content<'a> {
-    Javascript(JavaScriptChunk),
+    Javascript(JavaScriptChunk<'a>),
     Css(CssChunk<'a>),
     Html,
 }
@@ -1414,7 +1414,7 @@ impl<'a> Content<'a> {
     pub(crate) fn is_javascript(&self) -> bool {
         matches!(self, Content::Javascript(_))
     }
-    bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk);
+    bun_core::enum_unwrap!(pub Content, Javascript => fn javascript / javascript_mut -> JavaScriptChunk<'a>);
 
     pub(crate) fn sourcemap(&self, default: options::SourceMapOption) -> options::SourceMapOption {
         match self {

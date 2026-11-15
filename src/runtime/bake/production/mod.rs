@@ -553,7 +553,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             &entry_points,
             server_transpiler,
             bun_bundler::bundle_v2::BakeOptions {
-                framework: bundler_framework,
+                framework: &bundler_framework,
                 client_transpiler,
                 ssr_transpiler,
                 plugins: (options.bundler_options.plugin.as_ref())

@@ -68,7 +68,7 @@ struct CssModuleFile<'a> {
     source: Source<'a>,
     /// `None` when the file's loader is not CSS.
     sheet: Option<BundlerStyleSheet<'a>>,
-    symbols: Vec<Symbol>,
+    symbols: Vec<Symbol<'a>>,
     import_records: Vec<ImportRecord<'a>>,
 }
 

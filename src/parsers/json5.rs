@@ -365,7 +365,7 @@ impl<'a> JSON5Parser<'a> {
         source: &'a Source<'a>,
         log: &Log,
         bump: &'a AstArena,
-    ) -> Result<Expr, ExternalError> {
+    ) -> Result<Expr<'a>, ExternalError> {
         source.check_parseable_len(log, "JSON5 document")?;
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
@@ -643,7 +643,7 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Parser ──
 
-    fn parse_root(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
+    fn parse_root(&mut self, arena: &'a AstArena) -> Result<Expr<'a>, ParseError> {
         self.scan()?;
         let result = self.parse_value(arena)?;
         if !matches!(self.token.data, TokenData::Eof) {
@@ -652,7 +652,7 @@ impl<'a> JSON5Parser<'a> {
         Ok(result)
     }
 
-    fn parse_value(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
+    fn parse_value(&mut self, arena: &'a AstArena) -> Result<Expr<'a>, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
         }
@@ -693,7 +693,7 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    fn parse_object(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
+    fn parse_object(&mut self, arena: &'a AstArena) -> Result<Expr<'a>, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '{'
 
@@ -741,7 +741,7 @@ impl<'a> JSON5Parser<'a> {
         ))
     }
 
-    fn parse_object_key(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
+    fn parse_object_key(&mut self, arena: &'a AstArena) -> Result<Expr<'a>, ParseError> {
         let loc = self.token.loc;
         match self.token.data {
             TokenData::String(s) => {
@@ -766,7 +766,7 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    fn parse_array(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
+    fn parse_array(&mut self, arena: &'a AstArena) -> Result<Expr<'a>, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '['
 

@@ -105,14 +105,11 @@ test(
   10_000 * ASAN_MULTIPLIER,
 );
 
-// handle_received_stream_id invoked the JS streamStart callback without arming the
-// dispatch guard while holding the just-created *Stream. JS reached from inside that
-// callback (here: EventEmitter.prototype.on, called by the Http2Stream constructor)
-// could close the stream and then re-enter parser.read() at dispatch depth 0, where
-// the deferred-close drain frees the Stream box; the native caller then wrote the
-// stream context through the dangling pointer (ASAN: heap-use-after-free in
-// Stream::set_context). The parser is driven directly because the hook must observe
-// the window inside the native callback, before setStreamContext runs.
+// handle_received_stream_id holds the just-created Stream across the JS streamStart
+// callback. JS reached from inside that callback (here: EventEmitter.prototype.on, called
+// by the Http2Stream constructor) can close the stream and re-enter parser.read(), whose
+// deferred-close drain must not free it yet. The parser is driven directly because the hook
+// must observe the window inside the native callback, before setStreamContext runs.
 test(
   "closing the new stream and re-entering read() inside the streamStart callback does not UAF",
   async () => {
@@ -141,7 +138,7 @@ test(
         armed = false;
         hooked = true;
         parser.rstStream(2, 8 /* NGHTTP2_CANCEL */); // queue the new stream's deferred close
-        parser.read(Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n")); // depth-0 read used to drain it
+        parser.read(Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n")); // must not drain it
       }
       return origOn.call(this, ev, fn);
     };
@@ -160,7 +157,7 @@ test(
     // The close must have been deferred, not drained inside the callback: the native
     // entry is still alive (pre-fix this throws "Invalid stream id" on every build
     // tier because the drain freed it), and no context may have been installed for
-    // the closed stream (a guard-only fix would return the Http2Stream here).
+    // the closed stream.
     let ctx;
     try {
       ctx = parser.getStreamContext(2);
@@ -172,7 +169,7 @@ test(
       console.error("context installed for closed stream");
       process.exit(1);
     }
-    // One depth-0 read runs the deferred drain; the entry must actually go away.
+    // One read outside the callback runs the deferred drain; the entry must actually go away.
     parser.read(Buffer.alloc(0));
     let drained = false;
     try {
@@ -321,7 +318,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       const socket = tls.connect({ socket: duplex, ALPNProtocols: ["h2"], rejectUnauthorized: false });
       await once(socket, "secureConnect");
       const [peer] = await accepted;
-      peer.resume();
+      peer.on("error", () => {}).resume();
       const session = http2.connect("https://localhost", { createConnection: () => socket });
       await once(session, "connect");
       const acked = once(session, "localSettings");

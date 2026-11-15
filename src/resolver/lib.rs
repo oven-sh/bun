@@ -771,6 +771,8 @@ pub mod fs {
         }
     }
 
+    static ENTRIES_MUTEX: Mutex = Mutex::new();
+
     /// The active filesystem backend (always the real filesystem).
     pub(crate) type Implementation = RealFS;
 
@@ -779,7 +781,7 @@ pub mod fs {
     /// Real-filesystem backend: directory-entry cache plus fd-limit
     /// bookkeeping.
     pub struct RealFS {
-        pub entries_mutex: Mutex,
+        pub entries_mutex: &'static Mutex,
         /// Port of `entries: *EntriesOption.Map`. The resolver body addresses
         /// this directly (`rfs.entries.get_or_put(..)`); modeled as the wrapper
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
@@ -798,7 +800,7 @@ pub mod fs {
             #[cfg(windows)]
             let _ = file_limit;
             RealFS {
-                entries_mutex: Mutex::default(),
+                entries_mutex: &ENTRIES_MUTEX,
                 entries: EntriesMap::new(),
                 cwd,
                 #[cfg(not(windows))]

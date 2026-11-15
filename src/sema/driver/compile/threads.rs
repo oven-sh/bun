@@ -1,6 +1,6 @@
 use crate::{ThreadCaches, for_each_parallel_while, region_pool};
 use bun_threading::Guarded;
-use bun_threading::thread_pool::{Batch, Node, Task};
+use bun_threading::thread_pool::{Batch, Task};
 use core::ffi::c_void;
 
 pub fn drop_thread_caches(caches: &ThreadCaches) {
@@ -42,32 +42,31 @@ pub fn run_on_threads_while<B>(
     result.expect("called once")
 }
 
+/// # Safety
+/// `run(argument)` is sound to call once on another thread.
 pub unsafe extern "C" fn run_on_region_thread(
     run: unsafe extern "C" fn(*mut c_void),
     argument: *mut c_void,
 ) {
-    #[repr(C)]
     struct Call {
         task: Task,
         run: unsafe extern "C" fn(*mut c_void),
         argument: *mut c_void,
     }
-    unsafe fn call(task: *mut Task) {
-        // SAFETY: the first field of the `Call` allocated below, which is queued once.
-        let call = unsafe { bun_core::heap::take(task.cast::<Call>()) };
-        // SAFETY: the promise of whoever queued it.
-        unsafe { (call.run)(call.argument) };
+    // SAFETY: the contract of `run_on_region_thread`.
+    unsafe impl Send for Call {}
+    bun_threading::intrusive_work_task!(Call, task);
+    impl bun_threading::OwnedTask for Call {
+        fn run(self: Box<Call>) {
+            // SAFETY: the contract of `run_on_region_thread`.
+            unsafe { (self.run)(self.argument) };
+        }
     }
-    let task = Task {
-        node: Node::default(),
-        callback: call,
-    };
-    let call = bun_core::heap::into_raw(Box::new(Call {
-        task,
+    region_pool().schedule(Batch::from_owned(Box::new(Call {
+        task: Task::default(),
         run,
         argument,
-    }));
-    region_pool().schedule(Batch::from(call.cast::<Task>()));
+    })));
 }
 
 pub fn wake_idle_region_threads() {
@@ -316,34 +315,15 @@ mod tests {
     fn pool_without_spare_threads() -> &'static bun_threading::ThreadPool {
         let config = bun_threading::thread_pool::Config {
             max_threads: 8,
+            name: "Test",
+            keeps_spare_thread_awake: false,
             ..Default::default()
         };
-        let pool = bun_threading::ThreadPool::init(config).named("Test");
-        Box::leak(Box::new(pool.without_spare_threads()))
+        bun_threading::ThreadPool::get_or_init(Box::leak(Box::default()), || config)
     }
 
     fn schedule_on(pool: &'static bun_threading::ThreadPool, run: impl FnOnce() + Send + 'static) {
-        pool.schedule(task_that_calls(run));
-    }
-
-    fn task_that_calls(run: impl FnOnce() + Send + 'static) -> Batch {
-        #[repr(C)]
-        struct Call {
-            task: Task,
-            run: Box<dyn FnOnce() + Send>,
-        }
-        unsafe fn call(task: *mut Task) {
-            // SAFETY: the first field of the `Call` allocated below, which is queued once.
-            let call = unsafe { bun_core::heap::take(task.cast::<Call>()) };
-            (call.run)();
-        }
-        let task = Task {
-            node: Node::default(),
-            callback: call,
-        };
-        let run: Box<dyn FnOnce() + Send> = Box::new(run);
-        let call = bun_core::heap::into_raw(Box::new(Call { task, run }));
-        Batch::from(call.cast::<Task>())
+        pool.schedule(Batch::from_fn(run));
     }
 
     fn wait_until(is_done: impl Fn() -> bool, what: &str) {
@@ -396,7 +376,7 @@ mod tests {
         );
         schedule_on(pool, move || {
             for _ in 0..3 {
-                pool.schedule_inside_thread_pool(task_that_calls(move || meet(8)));
+                pool.schedule_inside_thread_pool(Batch::from_fn(move || meet(8)));
             }
             meet(8);
         });

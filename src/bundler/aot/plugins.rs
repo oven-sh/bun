@@ -80,7 +80,7 @@ impl PluginWaiter {
             if state.has_deferred {
                 return WakeReason::Deferred;
             }
-            self.changed.wait_guarded(&mut state);
+            self.changed.wait(&mut state);
         }
     }
 
@@ -90,7 +90,7 @@ impl PluginWaiter {
             if let Some(answer) = state.answer.take() {
                 return answer;
             }
-            self.changed.wait_guarded(&mut state);
+            self.changed.wait(&mut state);
         }
     }
 }

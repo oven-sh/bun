@@ -26,7 +26,7 @@ pub struct Task {
     pub(crate) err: Option<crate::Error>,
     /// The filesystem tail of a clone or checkout task; `run` runs it. default: `None`
     pub(crate) git_finalize: Option<crate::git_runner::Finalize>,
-    /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
+    /// INTRUSIVE — `OwnedQueue<HiveBox<Task>>`
     /// default: null
     next: bun_threading::Link<Task>,
 }
@@ -39,7 +39,7 @@ impl HasStaticHive for Task {
 
 bun_threading::intrusive_work_task!(Task, threadpool_task);
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
+// SAFETY: `next` is the sole intrusive link for `OwnedQueue<HiveBox<Task>>`;
 // `link()` always projects to it.
 unsafe impl bun_threading::Linked for Task {
     #[inline]

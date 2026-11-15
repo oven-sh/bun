@@ -533,7 +533,7 @@ fn each_unit_of_work_wakes_a_sleeper_that_takes_it() {
                 let mut counts = counts.lock();
                 counts.asleep += 1;
                 while counts.units == 0 {
-                    sleepers.wait_guarded(&mut counts);
+                    sleepers.wait(&mut counts);
                 }
                 counts.units -= 1;
                 counts.taken += 1;

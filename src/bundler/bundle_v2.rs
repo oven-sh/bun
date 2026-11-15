@@ -3813,12 +3813,9 @@ pub mod bv2_impl {
             self.increment_scan_counter();
 
             // SAFETY: `task` is the box just allocated; sole reference here.
-            self.graph
-                .pool()
-                .worker_pool()
-                .schedule(bun_threading::thread_pool::Batch::from(unsafe {
-                    core::ptr::addr_of_mut!((*task).task)
-                }));
+            let batch =
+                unsafe { bun_threading::thread_pool::Batch::from_raw(&raw mut (*task).task) };
+            self.graph.pool().worker_pool().schedule(batch);
 
             Ok(u32::try_from(source_index).expect("int cast"))
         }

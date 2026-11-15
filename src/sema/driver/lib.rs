@@ -54,6 +54,7 @@ use bun_sema::util::SharedSort;
 use bun_sema::util::{FxHashMap, FxHashSet, ShardedMap};
 use bun_sema::verify::verify_project_references;
 use bun_threading::Guarded;
+use bun_threading::thread_pool::Batch;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::cmp::Reverse;
@@ -132,17 +133,8 @@ impl ThreadCaches {
 /// The allocator retains a thread's free pages for that thread, and only that thread can release them. Each thread of
 /// `pool` does so when it's next idle, like the bundler's `ThreadPool::drop`.
 fn release_free_pages_of(pool: &bun_threading::ThreadPool) {
-    use bun_threading::thread_pool::{Node, Task};
-    unsafe fn release(task: *mut Task) {
-        // SAFETY: `task` was allocated below and queued once.
-        drop(unsafe { bun_core::heap::take(task) });
-        bun_core::Global::mimalloc_cleanup(true);
-    }
     pool.push_idle_task_to_each_thread(|| {
-        bun_core::heap::into_raw(Box::new(Task {
-            node: Node::default(),
-            callback: release,
-        }))
+        Batch::from_fn(|| bun_core::Global::mimalloc_cleanup(true))
     });
 }
 
@@ -293,7 +285,7 @@ impl Shares {
     fn take(&self, turn: usize, threads: usize) {
         let mut state = self.state.lock();
         while state.served != turn || state.free < threads {
-            self.has_changed.wait_guarded(&mut state);
+            self.has_changed.wait(&mut state);
         }
         state.free -= threads;
         state.served += 1;
@@ -429,26 +421,29 @@ pub fn use_pool_for_lowering(name: &'static str) {
     make_pool(&LOWERING_POOL, name, LOWERING_STACK_SIZE);
 }
 
-fn make_pool(place: &OnceLock<bun_threading::ThreadPool>, name: &'static str, stack_size: u32) {
-    place.get_or_init(|| {
+fn make_pool(
+    place: &'static OnceLock<bun_threading::ThreadPool>,
+    name: &'static str,
+    stack_size: u32,
+) {
+    bun_threading::ThreadPool::get_or_init(place, || {
         // The tests of this program run at once on the one pool, and some hold a thread of it until another thread comes: as many as the pool can count.
         let max_threads = match cfg!(test) {
             true => 0x3FFF,
             false => u32::from(bun_core::get_thread_count()),
         };
-        let pool = bun_threading::ThreadPool::init(bun_threading::thread_pool::Config {
+        let allowed_threads = if FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
+            threads_for_sources_read()
+        } else {
+            NonZeroUsize::new(*CHOSEN_THREADS.lock()).map_or(usize::MAX, NonZeroUsize::get)
+        };
+        bun_threading::thread_pool::Config {
             max_threads,
             stack_size,
-            ..Default::default()
-        })
-        .named(name)
-        .without_spare_threads();
-        if FITS_THREADS_TO_SOURCES.load(Ordering::Relaxed) {
-            pool.limit_threads(threads_for_sources_read());
-        } else if let Some(count) = NonZeroUsize::new(*CHOSEN_THREADS.lock()) {
-            pool.limit_threads(count.get());
+            name,
+            keeps_spare_thread_awake: false,
+            allowed_threads,
         }
-        pool
     });
 }
 
@@ -602,17 +597,6 @@ impl JoinableRegion {
     /// # Safety
     /// `region` is valid: the caller started the region, or `state` counts it.
     unsafe fn ask_idle_threads(self: &Arc<JoinableRegion>) {
-        use bun_threading::thread_pool::{Batch, Node, Task};
-        #[repr(C)]
-        struct Helper {
-            task: Task,
-            region: Arc<JoinableRegion>,
-        }
-        unsafe fn help(task: *mut Task) {
-            // SAFETY: the first field of a `Helper` allocated below, which is queued once.
-            let helper = unsafe { bun_core::heap::take(task.cast::<Helper>()) };
-            helper.region.help();
-        }
         if self.helpers_left.load(Ordering::Relaxed) == 0 {
             return;
         }
@@ -634,13 +618,8 @@ impl JoinableRegion {
         }
         let mut batch = Batch::default();
         for _ in 0..helpers {
-            let task = Task {
-                node: Node::default(),
-                callback: help,
-            };
             let region = Arc::clone(self);
-            let helper = bun_core::heap::into_raw(Box::new(Helper { task, region }));
-            batch.push(Batch::from(helper.cast::<Task>()));
+            batch.push(Batch::from_fn(move || region.help()));
         }
         pool.schedule(batch);
     }
@@ -2720,16 +2699,12 @@ impl Room<'_> {
     }
 
     /// Waits, for a program that has `threads`. They're lent out in the meantime.
-    fn wait(
-        &self,
-        usage: &mut bun_threading::guarded::GuardedLock<'_, RoomUsage, bun_threading::Mutex>,
-        threads: usize,
-    ) {
+    fn wait(&self, usage: &mut bun_threading::guarded::GuardedLock<'_, RoomUsage>, threads: usize) {
         if let Some(shares) = self.shares {
             shares.lend(threads);
         }
         usage.waiting += 1;
-        self.has_changed.wait_guarded(usage);
+        self.has_changed.wait(usage);
         usage.waiting -= 1;
         if let Some(shares) = self.shares {
             shares.take_back(threads);
@@ -3868,7 +3843,7 @@ fn check_with_references(
                 if state.left == 0 {
                     return;
                 }
-                project_built.wait_guarded(&mut state);
+                project_built.wait(&mut state);
                 continue;
             };
             state.left -= 1;
@@ -5966,7 +5941,7 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
                 }
                 while activity.changes == seen && activity.active != 0 && has_file_to_recheck() {
                     activity.waiting += 1;
-                    activity_has_changed.wait_guarded(&mut activity);
+                    activity_has_changed.wait(&mut activity);
                     activity.waiting -= 1;
                 }
                 activity.changes != seen

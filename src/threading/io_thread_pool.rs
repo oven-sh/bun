@@ -10,12 +10,11 @@ use crate::ThreadPool;
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 pub fn get() -> &'static ThreadPool {
-    POOL.get_or_init(|| {
-        ThreadPool::init(crate::thread_pool::Config {
-            max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
-            // Use a much smaller stack size for the IO thread pool
-            stack_size: 512 * 1024,
-        })
+    ThreadPool::get_or_init(&POOL, || crate::thread_pool::Config {
+        max_threads: u32::from(bun_core::get_thread_count().clamp(2, 4)),
+        // Use a much smaller stack size for the IO thread pool
+        stack_size: 512 * 1024,
+        ..Default::default()
     })
 }
 

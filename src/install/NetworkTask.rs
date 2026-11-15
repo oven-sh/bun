@@ -54,7 +54,7 @@ impl HasStaticHive for NetworkTask {
 }
 
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
-// these accessors by `UnboundedQueue<NetworkTask>`.
+// these accessors by `OwnedQueue<HiveBox<NetworkTask>>`.
 unsafe impl bun_threading::Linked for NetworkTask {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {

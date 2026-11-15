@@ -183,7 +183,7 @@ fn is_tree_of_last_file_gone(is_last_pass: bool) -> bool {
                 after_file: Some(&|_, file, _| {
                     let mut committed = committed.lock();
                     while file == last && *committed + 1 < all {
-                        has_committed.wait_guarded(&mut committed);
+                        has_committed.wait(&mut committed);
                     }
                 }),
                 after_commit: &|_| {

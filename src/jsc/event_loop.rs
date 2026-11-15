@@ -26,7 +26,6 @@ use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
 // bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::AnyTaskWithExtraContext;
 pub use bun_event_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
 };
@@ -644,8 +643,8 @@ impl EventLoop {
         }
 
         let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
+        let count = concurrent.len();
+        if concurrent.is_empty() {
             return tasks.readable_length() - start_count;
         }
 
@@ -753,10 +752,12 @@ impl EventLoop {
 
     /// Any thread.
     pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) {
-        // SAFETY: the task is the caller's until it is pushed.
-        match unsafe { task.as_ref() }.task.tag().is_plugin_request() {
-            true => self.concurrent_plugin_requests.push(task),
-            false => self.concurrent_tasks.push(task),
+        // SAFETY: the task is the caller's until it is pushed, and the queue's until it is popped.
+        unsafe {
+            match task.as_ref().task.tag().is_plugin_request() {
+                true => self.concurrent_plugin_requests.push(task),
+                false => self.concurrent_tasks.push(task),
+            }
         }
     }
 

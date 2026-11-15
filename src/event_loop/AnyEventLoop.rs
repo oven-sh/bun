@@ -248,7 +248,7 @@ impl EventLoopHandle {
     #[inline]
     fn into_tag_ptr(self) -> (core::ffi::c_char, *mut core::ffi::c_void) {
         match self {
-            EventLoopHandle::Js { owner, .. } => (1, owner.owner.cast()),
+            EventLoopHandle::Js { owner, .. } => (1, owner.owner().cast()),
             EventLoopHandle::Mini(mini) => (2, mini.as_const_ptr().cast_mut().cast()),
         }
     }

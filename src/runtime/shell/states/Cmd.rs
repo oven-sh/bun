@@ -848,7 +848,6 @@ impl Cmd {
 
     pub(crate) fn deinit(interp: &Interpreter, this: NodeId) {
         log!("Cmd {} deinit", this);
-        // The teardown re-enters this Cmd via `buffered_input_close`, a no-op once `exec` is taken.
         let exec = core::mem::take(&mut interp.as_cmd_mut(this).exec);
         match exec {
             Exec::None => {}
@@ -867,7 +866,7 @@ impl Cmd {
                     // Stop any still-active stdio before the drop (only the
                     // VM-shutdown path reaches here in flight).
                     #[cfg(not(windows))]
-                    ShellSubprocess::deinit_in_flight_io(child);
+                    (*child).deinit_in_flight_io();
                     drop(bun_core::heap::take(child));
                 }
             }

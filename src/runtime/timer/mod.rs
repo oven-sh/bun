@@ -529,8 +529,7 @@ pub(crate) struct All {
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: Cell<u32>,
-    /// The latest generation [`All::open_drain`] gave out: the stamp of a timer armed now. `wtf_arm` reads it
-    /// on any thread.
+    /// The latest generation of [`All::open_drain`], the stamp of a timer armed now. Read on any thread.
     drain_seq: AtomicU32,
     pub(crate) immediate_ref_count: Cell<i32>,
     #[cfg(windows)]
@@ -810,8 +809,7 @@ impl All {
         }
     }
 
-    /// Opens the next generation. The timers a drain must leave for the next turn are the ones stamped from its
-    /// generation on, see [`Self::armed_in_drain`].
+    /// Opens the next generation. A drain leaves the timers stamped from its generation on for the next turn.
     fn open_drain(&self) -> u32 {
         let seq = self.drain_seq.load(Ordering::Relaxed).wrapping_add(1);
         self.drain_seq.store(seq, Ordering::Relaxed);

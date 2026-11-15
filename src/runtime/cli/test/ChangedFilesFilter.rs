@@ -10,6 +10,8 @@
 //!
 //! Only those test entry points are returned.
 
+use std::sync::Arc;
+
 use bun_bundler::mal_prelude::*;
 
 use bstr::BStr;
@@ -127,7 +129,7 @@ pub(crate) fn filter<'a>(
     let log: &'static bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let mut scan_transpiler =
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {
+        match Transpiler::init(arena, log, ctx.args.clone(), Arc::clone(vm.env_loader())) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -146,6 +148,7 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.ignore_module_resolution_errors = true;
     scan_transpiler.options.output_dir = Box::default();
     scan_transpiler.options.tree_shaking = false;
+    scan_transpiler.options.env.behavior = bun_options_types::schema::api::DotEnvBehavior::disable;
     scan_transpiler.configure_from_tsconfig();
     let _ = scan_transpiler.configure_defines();
     // `Transpiler::init` already projected resolver.opts, so sync only the
@@ -153,7 +156,7 @@ pub(crate) fn filter<'a>(
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
-    scan_transpiler.resolver.env_loader = core::ptr::NonNull::new(scan_transpiler.env);
+    scan_transpiler.resolver.care_about_node_path = true;
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.

@@ -9,8 +9,6 @@
 //! - Multi-line input support
 //! - REPL commands (.help, .exit, .clear, .load, .save, .editor)
 
-use core::ptr::NonNull;
-
 use crate::dns_jsc::Order as DnsOrder;
 use bun_core::EncodedSlice;
 use bun_core::{Global, Output};
@@ -93,7 +91,7 @@ impl ReplCommand {
             b.resolver.opts.install = install_ptr;
             b.resolver.opts.install_preference = offline;
             b.options.install_preference = offline;
-            b.resolver.env_loader = NonNull::new(b.env);
+            b.resolver.care_about_node_path = true;
             b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;
             b.options.dead_code_elimination = false; // REPL needs all code
             b.configure_defines()
@@ -103,7 +101,7 @@ impl ReplCommand {
             Global::exit(1);
         }
 
-        bun_http::async_http::load_env(vm.log, vm.transpiler.get().env());
+        bun_http::async_http::load_env(vm.log, vm.env_loader());
         vm.load_extra_env();
 
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
@@ -205,8 +203,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         }
 
         // Set timezone if specified
-        // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
-        if let Some(tz) = unsafe { (*vm.transpiler.get().env).get(b"TZ") } {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = global.set_time_zone(&EncodedSlice::from_bytes(tz));
             }

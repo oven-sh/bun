@@ -659,7 +659,7 @@ pub(crate) fn open_in_editor<'a>(
 
     EDITOR_CONTEXT.with(|cell| {
         let edit = &mut *cell.borrow_mut();
-        let env = vm.transpiler.get().env_mut();
+        let env = vm.env_loader();
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
@@ -1334,10 +1334,8 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
     // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
     // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the VM's dotenv loader, which outlives the call.
-    let env_creds = crate::webcore::fetch::s3_credentials_from_env(unsafe {
-        (*vm.transpiler.get().env).get_s3_credentials()
-    });
+    let env_creds =
+        crate::webcore::fetch::s3_credentials_from_env(vm.env_loader().get_s3_credentials());
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1474,12 +1472,11 @@ pub(crate) mod environment_variables {
         ptr: &mut core::mem::MaybeUninit<*const Box<[u8]>>,
     ) -> usize {
         let bun_vm = global_object.bun_vm();
-        let env = bun_vm.env_loader();
+        let env = bun_vm.env_loader().snapshot();
         let keys: &[Box<[u8]>] = env.map.map.keys();
         // C++ declares this out-param as `void**` and only ever round-trips it
         // back into `Bun__getEnvKey` below; the element layout is opaque to it.
-        // The backing Vec lives for the VM lifetime and is not reallocated
-        // between this call and `Bun__getEnvKey`.
+        // The VM's loader keeps the backing Vec until the next `Bun__setEnvValue`.
         ptr.write(keys.as_ptr());
         keys.len()
     }
@@ -1501,15 +1498,12 @@ pub(crate) mod environment_variables {
     }
 
     #[unsafe(no_mangle)]
-    extern "C" fn Bun__getEnvValueAt<'a>(
-        global_object: &'a JSGlobalObject,
-        i: usize,
-        value: &mut core::mem::MaybeUninit<EncodedSlice<'a>>,
-    ) {
-        let env = global_object.bun_vm().env_loader();
-        value.write(EncodedSlice::from_bytes(&env.map.map.values()[i].value));
+    extern "C" fn Bun__getEnvValueAt(global_object: &JSGlobalObject, i: usize) -> JSValue {
+        let env = global_object.bun_vm().env_loader().snapshot();
+        EncodedSlice::from_bytes(&env.map.map.values()[i].value).to_js(global_object)
     }
 
+    /// Does not see the writes of `Bun__setEnvValue`.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__getEnvValue<'a>(
         global_object: &'a JSGlobalObject,
@@ -1529,60 +1523,15 @@ pub(crate) mod environment_variables {
     /// observe the updated value. Used by process.env's write and delete paths for proxy-related
     /// env vars (HTTP_PROXY, HTTPS_PROXY, ALL_PROXY, NO_PROXY and lowercase variants).
     /// A `Dead` value removes the variable.
-    ///
-    /// Values are ref-counted in RareData.proxy_env_storage so that
-    /// worker_threads share the parent's strings (refcount bumped at spawn)
-    /// rather than cloning. A worker only allocates its own value if it
-    /// writes to that var. Parent deref'ing on overwrite won't free the
-    /// bytes while a worker still holds a ref.
     #[unsafe(no_mangle)]
     extern "C" fn Bun__setEnvValue(
         global_object: &JSGlobalObject,
         name: &BunString,
         value: &BunString,
     ) {
-        let vm = global_object.bun_vm();
-        let name_slice = name.to_utf8();
-
-        // Synchronize the slot swap + env.map.put against a concurrently
-        // spawning worker's cloneFrom + env.map.cloneWithAllocator. Without
-        // this, the worker could clone the slot `Arc` between our drop
-        // (refcount → 0 → free) and the `None` write below.
-        let mut slots = vm.proxy_env_storage.lock();
-
-        let Some(slot) = slots.slot(name_slice.slice()) else {
-            return;
-        };
-
-        // Deref our previous value. If a worker still holds a ref, the
-        // bytes stay alive; if not, they're freed now.
-        *slot.ptr = None;
-
-        let env_map = &mut vm.transpiler.get().env_mut().map;
-
-        // `delete process.env.X`
-        if value.tag() == bun_core::Tag::Dead {
-            env_map.remove(slot.key);
-            return;
-        }
-
-        if value.is_empty() {
-            // Store a static empty string rather than removing, so that
-            // process.env.X reads back as "" (Node.js semantics) instead
-            // of undefined. isNoProxy treats empty strings the same as
-            // absent — no bypass.
-            bun_core::handle_oom(env_map.put(slot.key, b""));
-            return;
-        }
-
-        let value_slice = value.to_utf8();
-        let new_val = bun_jsc::rare_data::RefCountedEnvValue::create(value_slice.slice());
-        let stored = slot.ptr.insert(new_val);
-        // slot.key is a static-lifetime string literal (the struct field name).
-        // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
-        // only backs `proxy_env_storage` for worker `cloneFrom`; ordering is
-        // kept for spec parity.
-        bun_core::handle_oom(env_map.put(slot.key, &stored.bytes));
+        let value = (value.tag() != bun_core::Tag::Dead).then(|| value.to_utf8());
+        (global_object.bun_vm().env_loader())
+            .set_proxy_env(name.to_utf8().slice(), value.as_ref().map(|v| v.slice()));
     }
 
     fn get_env_value<'a>(

@@ -2,7 +2,6 @@ use core::cell::OnceCell;
 use core::ffi::c_void;
 use core::marker::PhantomData;
 use core::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use crate::bindgen::JsHeap;
 use crate::node_path::PathOrFileDescriptor;
@@ -13,7 +12,6 @@ use crate::webcore_types::store::{Data, File, Store};
 use crate::{JSGlobalObject, JsCell};
 use bun_boringssl::c as boring;
 use bun_collections::StringArrayHashMap;
-use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
@@ -243,8 +241,6 @@ pub struct RareData {
     /// [`Self::tls_default_ciphers`] strips it.
     tls_default_ciphers: JsCell<Option<Box<[u8]>>>,
 
-    // proxy_env_storage moved to VirtualMachine — see comment there on why
-    // lazy RareData creation raced with worker spawn.
     spawn_sync_event_loop_: OnceCell<Box<SpawnSyncEventLoop>>,
 
     pub path_buf: JsCell<PathBuf>,
@@ -322,146 +318,6 @@ impl PathBuf {
 
 /// One max-size HTTP/2 PADDED DATA frame payload (pad-length byte + data + padding).
 pub type H2PaddedFrameBuffer = [u8; 16384];
-
-// ──────────────────────────────────────────────────────────────────────────
-// ProxyEnvStorage
-// ──────────────────────────────────────────────────────────────────────────
-
-/// Serialises `Bun__setEnvValue`'s slot swap + `env.map.put` against a worker's
-/// `clone_from` + `env.map.cloneWithAllocator`. Closes two races: (1) worker
-/// reading a slot `Arc` concurrently with the parent dropping it to refcount 0;
-/// (2) the env map being iterated during clone while the parent's `put()`
-/// rehashes it. Callers hold the guard across the paired env-map op — the
-/// mutex doubles as the env-map serialisation point even though it owns only
-/// the slots.
-///
-/// PORTING.md §Concurrency: lock owns the data — no sidecar `Mutex<()>` field.
-#[derive(Default)]
-pub struct ProxyEnvStorage(Mutex<ProxyEnvSlots>);
-
-impl ProxyEnvStorage {
-    #[inline]
-    pub fn lock(&self) -> bun_core::MutexGuard<'_, ProxyEnvSlots> {
-        self.0.lock()
-    }
-}
-
-/// Uppercase first: on Windows the case-insensitive compare in `slot` matches
-/// the uppercase entry for either input case.
-const PROXY_ENV_KEYS: [&[u8]; 8] = [
-    b"HTTP_PROXY",
-    b"http_proxy",
-    b"HTTPS_PROXY",
-    b"https_proxy",
-    b"ALL_PROXY",
-    b"all_proxy",
-    b"NO_PROXY",
-    b"no_proxy",
-];
-
-/// One value per `PROXY_ENV_KEYS` entry.
-#[derive(Default)]
-pub struct ProxyEnvSlots([Option<Arc<RefCountedEnvValue>>; PROXY_ENV_KEYS.len()]);
-
-pub struct Slot<'a> {
-    /// Static-lifetime name (e.g. "NO_PROXY") — safe to use as
-    /// the env map key without duping.
-    pub key: &'static [u8],
-    pub ptr: &'a mut Option<Arc<RefCountedEnvValue>>,
-}
-
-impl ProxyEnvSlots {
-    pub fn slot(&mut self, name: &[u8]) -> Option<Slot<'_>> {
-        // On Windows the env.map is case-insensitive (CaseInsensitiveASCII-
-        // StringArrayHashMap) — map.put("HTTP_PROXY", ...) and
-        // map.put("http_proxy", ...) write the same entry. If we tracked
-        // refs in separate case-variant slots, one slot's value would leak
-        // and syncInto would replay the stale one into the worker's map.
-        // Canonicalize both cases to the uppercase slot on Windows; the
-        // lowercase slots stay null. Posix keeps both — its map and its
-        // getHttpProxy lookup are case-sensitive.
-        let eql: fn(&[u8], &[u8]) -> bool = if cfg!(windows) {
-            strings::eql_case_insensitive_ascii_check_length
-        } else {
-            strings::eql
-        };
-        let index = PROXY_ENV_KEYS.iter().position(|key| eql(name, key))?;
-        Some(Slot {
-            key: PROXY_ENV_KEYS[index],
-            ptr: &mut self.0[index],
-        })
-    }
-
-    /// Bump refcounts on all non-null values so a worker can share the
-    /// parent's strings. Caller passes the parent's locked guard — the `Arc`
-    /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
-    pub(crate) fn clone_from(&mut self, parent: &ProxyEnvSlots) {
-        self.0.clone_from(&parent.0);
-    }
-
-    /// Overwrite proxy-var entries in an env map with this storage's reffed
-    /// bytes. Used after map.cloneWithAllocator in the worker so the cloned
-    /// map and the reffed storage agree — defense-in-depth in case the map
-    /// clone captured a snapshot the storage doesn't hold a ref on (e.g. an
-    /// initial-environ value later overwritten by the setter).
-    pub(crate) fn sync_into(&self, map: &mut bun_dotenv::Map) {
-        for (key, value) in PROXY_ENV_KEYS.iter().zip(&self.0) {
-            if let Some(value) = value {
-                bun_core::handle_oom(map.put(key, &value.bytes));
-            }
-        }
-    }
-
-    /// Undo every `Bun__setEnvValue` since `snapshot` was captured: drop the
-    /// slot refs and put the captured values back into `map`. Caller holds
-    /// the `ProxyEnvStorage` lock, like the setter.
-    pub(crate) fn restore(&mut self, map: &mut bun_dotenv::Map, snapshot: &ProxyEnvSnapshot) {
-        self.0 = Default::default();
-        for (key, value) in &snapshot.entries {
-            match value {
-                Some(value) => bun_core::handle_oom(map.put(key, value)),
-                None => map.remove(key),
-            }
-        }
-    }
-}
-
-/// The proxy keys as the env map held them when the test runner started.
-/// `process.env` writes to these keys go through `Bun__setEnvValue` into the
-/// per-VM env map, which seeds every later global's `process.env`, so
-/// `--isolate` restores them from this between files.
-pub struct ProxyEnvSnapshot {
-    entries: [(&'static [u8], Option<Box<[u8]>>); PROXY_ENV_KEYS.len()],
-}
-
-impl ProxyEnvSnapshot {
-    pub fn capture(map: &bun_dotenv::Map) -> Self {
-        Self {
-            entries: PROXY_ENV_KEYS.map(|key| (key, map.get(key).map(Box::from))),
-        }
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// RefCountedEnvValue
-// ──────────────────────────────────────────────────────────────────────────
-
-/// A ref-counted heap-allocated byte slice. The env map stores borrowed
-/// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
-///
-/// Holders are `Arc<RefCountedEnvValue>` (per LIFETIMES.tsv): the refcount
-/// lives in the `Arc` header, so ref/deref are `Arc::clone`/`drop`.
-pub struct RefCountedEnvValue {
-    pub bytes: Box<[u8]>,
-}
-
-impl RefCountedEnvValue {
-    pub fn create(value: &[u8]) -> Arc<RefCountedEnvValue> {
-        Arc::new(RefCountedEnvValue {
-            bytes: Box::<[u8]>::from(value),
-        })
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // RareData methods — simple accessors / lazy-init

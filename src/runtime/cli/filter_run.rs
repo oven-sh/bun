@@ -307,11 +307,7 @@ struct State<'a> {
     /// The POSIX shell that the scripts run under. `None` on Windows (see `ScriptArgv`).
     shell_bin: Option<&'static ZStr>,
     aborted: bool,
-    // Raw `*mut` — process-lifetime singleton owned
-    // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
-    // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
-    // own raw-ptr field. Reborrow `&mut *env` at use sites.
-    env: *mut bun_dotenv::Loader,
+    env: &'a mut bun_dotenv::Loader,
 }
 
 struct ElideResult<'b> {
@@ -326,9 +322,7 @@ impl<'a> State<'a> {
 
     fn start(&mut self, index: usize) {
         self.remaining_scripts += 1;
-        // SAFETY: the process-lifetime DotEnv loader; nothing else reaches it during `start`.
-        let env = unsafe { &mut *self.env };
-        if self.handles[index].start(self.shell_bin, env).is_err() {
+        if self.handles[index].start(self.shell_bin, self.env).is_err() {
             if self.shared.needs_redraw.get() {
                 let _ = self.redraw(false);
             }
@@ -880,12 +874,7 @@ pub(crate) fn run_scripts_with_filter(
         selected.error_script_not_found(&*ctx, &quoted);
     }
 
-    // SAFETY: Transpiler::init always sets `env` to the process-lifetime singleton.
-    let env_ptr: *mut bun_dotenv::Loader = this_transpiler.env;
-    let event_loop = MiniEventLoopMod::init_global(
-        // SAFETY: see above; `&'static mut` reborrow of the singleton for first-init only.
-        Some(unsafe { &mut *env_ptr }),
-    );
+    let event_loop = MiniEventLoopMod::init_global();
     // Windows: recursive kill-on-close Job so cmd.exe/.cmd-shim grandchildren
     // (which escape libuv's SILENT_BREAKAWAY job) die with us. POSIX: no-op.
     bun_io::ParentDeathWatchdog::ensure_kill_on_close_job();
@@ -894,8 +883,7 @@ pub(crate) fn run_scripts_with_filter(
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
     bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop.as_event_loop_ctx());
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
-        // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-        let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
+        let path = this_transpiler.env().get(b"PATH").unwrap_or(b"");
         let top_level_dir = fsinstance.top_level_dir();
         Some(RunCommand::find_shell(path, top_level_dir).ok_or(crate::Error::MissingShell)?)
     } else {
@@ -964,7 +952,7 @@ pub(crate) fn run_scripts_with_filter(
         last_lines_written: 0,
         shell_bin,
         aborted: false,
-        env: env_ptr,
+        env: this_transpiler.env_mut(),
     };
     for (i, script) in scripts.iter().enumerate() {
         map.get_or_put(&script.package_name)?.value_ptr.push(i);

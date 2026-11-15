@@ -6,6 +6,7 @@
 
 use ::core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
+use std::sync::Arc;
 
 use bun_ast::Loader;
 use bun_bundler::Transpiler;
@@ -355,14 +356,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         if !use_system_shell {
-            // SAFETY: `MiniEventLoop` stores `env` as a raw `*mut`; the loader
-            // outlives the call (process-lifetime in `configure_env_for_run`).
-            let mini = bun_event_loop::MiniEventLoop::init_global(Some(unsafe {
-                &mut *std::ptr::from_mut::<DotEnv::Loader>(env)
-            }));
             let code = match crate::shell::ShellInterpreter::init_and_run_from_source(
                 ctx,
-                mini,
+                env,
                 name,
                 &copy_script,
                 Some(cwd),
@@ -446,10 +442,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: `env` outlives the mini event loop.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                    ),
+                    bun_event_loop::MiniEventLoop::init_global(),
                 ),
                 ..Default::default()
             },
@@ -580,7 +573,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn configure_env_for_run<'t>(
         ctx: &mut ContextData,
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader>,
+        env: Option<Arc<DotEnv::Loader>>,
         opts: ConfigureEnvOptions,
     ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, true)
@@ -592,7 +585,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     pub(crate) fn configure_env_for_run_without_tsconfig<'t>(
         ctx: &mut ContextData,
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader>,
+        env: Option<Arc<DotEnv::Loader>>,
         opts: ConfigureEnvOptions,
     ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         Self::configure_env_for_run_impl(ctx, this_transpiler, env, opts, false)
@@ -615,20 +608,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     fn configure_env_for_run_impl<'t>(
         ctx: &mut ContextData,
         this_transpiler: &'t mut ::core::mem::MaybeUninit<Transpiler<'static>>,
-        env: Option<*mut DotEnv::Loader>,
+        env: Option<Arc<DotEnv::Loader>>,
         opts: ConfigureEnvOptions,
         with_tsconfig: bool,
     ) -> crate::Result<(&'t mut Transpiler<'static>, &'static bun_resolver::DirInfo)> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
+        let env = env.unwrap_or_default();
         let arena: &'static bun_ast::AstArena = cli_arena();
         // Out-param constructor — `configure_env_for_run` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot.
         let this_transpiler = this_transpiler.write(Transpiler::init(arena, ctx.log(), args, env)?);
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
-        let env_loader = this_transpiler.env_mut();
-        env_loader.quiet = true;
+        this_transpiler.env_mut().quiet = true;
         this_transpiler.options.env.prefix = Box::default();
 
         this_transpiler.resolver.care_about_bin_folder = true;
@@ -674,10 +667,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.store_fd = false;
 
         if env_is_none {
-            // Re-derive — borrowck won't let `env_loader` straddle the
-            // `&mut this_transpiler.resolver` above. Scoped to this block so it
-            // does NOT straddle `run_env_loader` below (which itself derives
-            // `env_mut()`, popping any outstanding `&mut Loader` tag).
             let env_loader = this_transpiler.env_mut();
             env_loader.load_process()?;
 
@@ -692,10 +681,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             let _ = this_transpiler.run_env_loader(true);
         }
 
-        // Re-derive after `run_env_loader` — that call creates its own
-        // `env_mut()` borrow, which under Stacked Borrows invalidates any
-        // `&mut Loader` derived before it. Take a fresh borrow here for the
-        // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
         // This and `npm_package_*` describe this run, over whatever an outer `bun run` exported.
@@ -811,7 +796,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.resolver.opts.install_preference = offline;
         b.options.global_cache = ctx.debug.global_cache;
         b.options.install_preference = offline;
-        b.resolver.env_loader = ::core::ptr::NonNull::new(b.env);
+        b.resolver.care_about_node_path = true;
         if ctx.runtime_options.eval.reads_configuration {
             b.resolver.opts.packages_require_like_node();
         }
@@ -882,6 +867,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 // A request to an origin the environment proxies never dials it.
                 if VirtualMachine::get()
                     .env_loader()
+                    .snapshot()
                     .get_http_proxy_for(&url)
                     .is_some()
                 {
@@ -909,19 +895,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let mut args = ctx.args.clone();
         args.write = Some(false);
         args.target = Some(api::Target::Bun);
-        let mut bundle = Transpiler::init(cli_arena(), ctx.log(), args, None)?;
+        let env = ctx.env_loader.take().unwrap_or_default();
+        let mut bundle = Transpiler::init(cli_arena(), ctx.log(), args, env)?;
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
-
-        let mini = bun_event_loop::MiniEventLoop::init_global(
-            // SAFETY: `bundle.env` points to the process-lifetime DotEnv
-            // singleton (set by `Transpiler::init`).
-            Some(unsafe { &mut *bundle.env }),
-        );
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
 
-        crate::shell::ShellInterpreter::init_and_run_from_file(ctx, mini, entry_path, &src)
+        crate::shell::ShellInterpreter::init_and_run_from_file(ctx, bundle.env(), entry_path, &src)
     }
 
     /// `VirtualMachine::init`,
@@ -1018,6 +999,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             transform_options: ctx.args.clone(),
             argv: std::mem::take(&mut ctx.passthrough).leak(),
             log: ctx.log,
+            env_loader: ctx.env_loader.take(),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
             global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
@@ -2080,7 +2062,7 @@ impl RunCommand {
         executable: &[u8],
         executable_z: &ZStr,
         cwd: &[u8],
-        env: &mut DotEnv::Loader,
+        env: &DotEnv::Loader,
         passthrough: &[Box<[u8]>],
         original_script_for_bun_run: Option<&[u8]>,
     ) -> crate::Result<::core::convert::Infallible> {
@@ -2129,10 +2111,7 @@ impl RunCommand {
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
-                        // SAFETY: env loader is process-lifetime.
-                        Some(unsafe { &mut *::core::ptr::from_mut::<DotEnv::Loader>(env) }),
-                    ),
+                    bun_event_loop::MiniEventLoop::init_global(),
                 ),
                 ..Default::default()
             },
@@ -2392,7 +2371,7 @@ impl RunCommand {
             root_dir_info.abs_path,
             force_using_bun,
         )?;
-        let env_loader: &mut DotEnv::Loader = this_transpiler.env_mut();
+        let env_loader = this_transpiler.env_mut();
         env_loader
             .map
             .put(b"npm_command", b"run-script")
@@ -2414,6 +2393,7 @@ impl RunCommand {
 
         // ── stdin (`bun run -`) ─────────────────────────────────────────────
         if target_name.len() == 1 && target_name[0] == b'-' {
+            ctx.env_loader = Some(::core::mem::take(&mut this_transpiler.resolver.env_loader));
             return Self::exec_stdin(ctx);
         }
 
@@ -2589,6 +2569,8 @@ impl RunCommand {
                     // borrowck — `boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
+                    ctx.env_loader =
+                        Some(::core::mem::take(&mut this_transpiler.resolver.env_loader));
                     return Ok(Self::boot_and_handle_error(ctx, &text, Some(loader)));
                 } else {
                     bun_core::scoped_log!(
@@ -2606,6 +2588,8 @@ impl RunCommand {
                 if strings::has_suffix_comptime(target_name, b".html")
                     && strings::contains_char(target_name, b'*')
                 {
+                    ctx.env_loader =
+                        Some(::core::mem::take(&mut this_transpiler.resolver.env_loader));
                     return Ok(Self::boot_and_handle_error(
                         ctx,
                         target_name,
@@ -2614,6 +2598,8 @@ impl RunCommand {
                 }
             }
         }
+
+        let env_loader = this_transpiler.env_mut();
 
         // ── Windows .bunx fast-path ──────────────────────────────────────────
         // With `--check` the way below is taken, on which the project is checked.
@@ -2752,6 +2738,7 @@ impl RunCommand {
                 long_running: true,
                 ..Default::default()
             });
+            ctx.env_loader = Some(::core::mem::take(&mut this_transpiler.resolver.env_loader));
             if let Err(err) = Self::boot_main(ctx, BootMain::Bake) {
                 Self::boot_failed_exit(ctx, b"bake", &err);
             }
@@ -3244,7 +3231,6 @@ impl RunCommand {
                 b"",
                 b"",
                 None,
-                None,
                 bun_http::FetchRedirect::Follow,
             )
         }));
@@ -3474,13 +3460,14 @@ impl RunCommand {
 
         let args = ctx.args.clone();
 
-        let Ok(mut this_transpiler) = Transpiler::init(cli_arena(), ctx.log(), args, None) else {
+        let Ok(mut this_transpiler) =
+            Transpiler::init(cli_arena(), ctx.log(), args, Arc::default())
+        else {
             return Ok(shell_out);
         };
         this_transpiler.options.env.behavior = api::DotEnvBehavior::LoadAll;
         this_transpiler.options.env.prefix = Box::default();
-        // SAFETY: `Transpiler::env` is a non-null process-lifetime `*mut Loader`.
-        unsafe { (*this_transpiler.env).quiet = true };
+        this_transpiler.env_mut().quiet = true;
 
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
@@ -3900,6 +3887,8 @@ impl BunXFastPath {
         ctx.passthrough = passthrough.to_vec();
 
         let env_block = env.map.write_windows_env_block();
+        // `direct_launch_callback` takes it and does not return.
+        ctx.env_loader = Some(Arc::new(::core::mem::take(env)));
 
         let run_ctx = bun_install::windows_shim::bun_shim_impl::FromBunRunContext {
             handle,
@@ -3922,6 +3911,7 @@ impl BunXFastPath {
         bun_install::windows_shim::bun_shim_impl::try_startup_from_bun_js(run_ctx);
 
         bun_core::scoped_log!(BUNX_FAST_PATH_LOG, "did not start via shim");
+        *env = Arc::unwrap_or_clone(ctx.env_loader.take().expect("set above"));
     }
 
     fn direct_launch_callback(wpath: &mut [u16], ctx: bun_options_types::context::Context<'_>) {

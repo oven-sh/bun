@@ -107,6 +107,17 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# The next one: compiled, the importer reads a name that no module exports from the mock behind `export *`. spyOn() lays the spy there, and the importer calls it.
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > after the mock of a module ended, a name that the module does not export takes no spy
+# The next one: compiled, a.ts and k.ts run before the factory of a.ts. The mock of k.ts has its exports when the factory asks, and the spy is laid.
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export of a module mock that has no exports yet takes no spy
+# The next one: a file names an export that its module has only as a mock. The build of a compiled run stops there: "export 'gone' not found".
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export that a module has only while it is mocked takes no spy
+# The next four: a compiled run refuses a spy on any export that is a namespace object, of a mocked module or not: "the build didn't see a test spy on it".
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export that is the namespace object of a mocked module takes no spy ["--isolate"]
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export that is the namespace object of a mocked module takes no spy ["--isolate=modules"]
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export that is the namespace object of a mocked module takes no spy []
+test/js/bun/test/mock/mock-module.test.ts: spyOn() on a module export stores the spy where importers read it, or throws > an export that is the namespace object of a module that was loaded before its mock takes the spy
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
 # These ask about the transpiler cache, which a compiled run doesn't use: they say nothing about compiled code.

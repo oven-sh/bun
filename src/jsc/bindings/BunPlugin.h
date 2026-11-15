@@ -373,6 +373,7 @@ String keyOfImportWhileModuleMocksRun(Zig::GlobalObject*, const String& key, con
 String packageImportKey(Zig::GlobalObject*, const String& key, const String& importer, bool isESM);
 bool isModuleMockWaitingForFactory(Zig::GlobalObject*, const String& key);
 // The object that a module mock's factory returned, the name that the export has there, and the mock, which importers read the export from.
+// If the mock ended before the module ran: the namespace object that importers read in its place, and no mock.
 struct ExportOfModuleMock {
     JSC::JSObject* object { nullptr };
     JSC::Identifier name;

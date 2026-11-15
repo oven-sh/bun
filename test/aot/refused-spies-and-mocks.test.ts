@@ -81,6 +81,37 @@ test(name, () => {
   });
 }, 600000);
 
+test("on an export that is the namespace object of a mocked module", async () => {
+  // No build has seen the file that hands the namespace object on, so the spy is on a namespace object of the loader.
+  using dir = tempDir("aot-refused-spies-and-mocks", {
+    "package.json": `{ "name": "p", "type": "module" }`,
+    "dep.js": `export function answer() { return "real"; }`,
+    "a.test.js": `import { mock, spyOn, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+mock.module("./dep.js", () => ({ answer: () => "mocked" }));
+const name = "spy";
+test(name, async () => {
+  const file = join(import.meta.dir, "late.mjs");
+  writeFileSync(file, 'export * as dep from "./dep.js";');
+  const late = await import(file);
+  try {
+    spyOn(late, "dep");
+    ${reports}
+});`,
+  });
+  const refused = {
+    said: [
+      "SAID spy: TypeError: Cannot spy on the `dep` export because it is the namespace object of a module that was loaded as a mock. Spy on an export of that module instead",
+    ],
+    exitCode: 0,
+  };
+  const plain = await run([bunExe(), "test"], String(dir), bunEnv);
+  expect({ said: said(plain.stdout + "\n" + plain.stderr), exitCode: plain.exitCode }).toEqual(refused);
+  const compiled = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
+  expect({ said: said(compiled.stdout + "\n" + compiled.stderr), exitCode: compiled.exitCode }).toEqual(refused);
+}, 600000);
+
 test("in an executable", async () => {
   using dir = tempDir("aot-refused-spies-and-mocks", {
     "lib.js": `export function answer() { return "real"; }`,

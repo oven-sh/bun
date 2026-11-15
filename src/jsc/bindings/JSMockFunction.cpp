@@ -2977,6 +2977,23 @@ static void throwNotExported(JSGlobalObject* globalObject, ThrowScope& scope, JS
     throwTypeError(globalObject, scope, makeString("spyOn(target, prop) expects the module namespace object to export `"_s, propertyKeyForMessage(written, key), '`'));
 }
 
+// JSModuleNamespaceObject::overrideExportValue() stored nothing for `key`. A spy that is laid all the same is one that no importer calls.
+__attribute__((minsize)) static void throwExportTakesNoSpy(VM& vm, JSGlobalObject* globalObject, ThrowScope& scope, JSModuleNamespaceObject* moduleNamespace, JSValue written, const Identifier& key)
+{
+    auto resolution = moduleNamespace->moduleRecord()->resolveExport(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, );
+    auto reason = "the module that declares it takes no other value for it"_s;
+    // The engine stores into no variable of a module that was loaded as a mock. exportOfModuleMock() found no object for the export either.
+    if (auto* record = resolution.type == AbstractModuleRecord::Resolution::Type::Resolved ? resolution.moduleRecord : nullptr; record && record->hasLiveExports()) {
+        JSObject* source = record->liveExportsSource();
+        if (resolution.localName == vm.propertyNames->starNamespacePrivateName)
+            reason = "it is the namespace object of a module that was loaded as a mock. Spy on an export of that module instead"_s;
+        else if (!source || !source->inherits<JSModuleNamespaceObject>())
+            reason = "the module mock that provides it has no exports yet. Call spyOn() once that module has loaded"_s;
+    }
+    throwTypeError(globalObject, scope, makeString("Cannot spy on the `"_s, propertyKeyForMessage(written, key), "` export because "_s, reason));
+}
+
 // As isModuleNamespace(). It asks about a compiled module only if the realm runs a compiled program.
 static ALWAYS_INLINE bool isNamespaceObjectOfModule(Zig::GlobalObject* globalObject, JSObject* object)
 {
@@ -3164,7 +3181,10 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     // True if the object is a module namespace object. Its exports are replaced in the module that declares them.
     auto replaceExport = [&](JSValue replacement) {
         if (JSModuleNamespaceObject* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(object)) {
-            moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            bool isReplaced = moduleNamespaceObject->overrideExportValue(globalObject, propertyKey, replacement);
+            RETURN_IF_EXCEPTION(scope, true);
+            if (!isReplaced)
+                throwExportTakesNoSpy(vm, globalObject, scope, moduleNamespaceObject, propertyKeyValue, propertyKey);
             return true;
         }
 #if ENABLE(AOT)
@@ -3198,7 +3218,8 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         }
 
         bool isNamespace = isModuleNamespace(object);
-        if (isNamespace && !hasValue) {
+        // A namespace object has `Symbol.toStringTag`, which is no export.
+        if (isNamespace && (!hasValue || propertyKey.isSymbol())) {
             throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
             return {};
         }

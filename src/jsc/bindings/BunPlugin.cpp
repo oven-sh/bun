@@ -963,6 +963,15 @@ static Bun::ExportOfModuleMock findExportOfModuleMock(JSC::JSGlobalObject* globa
         return {};
     JSObject* source = resolution.moduleRecord->liveExportsSource();
     auto* mock = source ? dynamicDowncast<JSModuleMock>(source) : nullptr;
+    // The mock ended before the module ran: the record reads the namespace object of the module that it imported in its place (evaluateModuleMock()).
+    if (source && !mock && resolution.moduleRecord->hasLiveExports()) {
+        // The record answers for any name. A name that the namespace object lacks is read as undefined, and has no place for a spy.
+        bool hasName = source->hasProperty(globalObject, resolution.localName);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!hasName)
+            return {};
+        return { source, resolution.localName, nullptr };
+    }
     JSObject* exports = mock ? mock->exports.get() : nullptr;
     if (!exports)
         return {};

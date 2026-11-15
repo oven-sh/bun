@@ -466,7 +466,7 @@ impl Drop for WorkerGuard {
 pub struct WorkerData {
     // Kept raw because the pointee's arena
     // is the sibling field `Worker.heap`, which Rust cannot express as a borrow.
-    pub(crate) log: *mut bun_ast::Log,
+    pub(crate) log: *const bun_ast::Log,
     // lifetime erased to `'static` — the inner `&'a Arena` borrows
     // `Worker.heap`, which Rust can't express on a sibling field.
     //
@@ -566,7 +566,7 @@ impl Worker {
         // caches only the last heap a thread touched.
         self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
-        let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
+        let log: *const bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // Use a fresh Bump (no nested-arena type yet).

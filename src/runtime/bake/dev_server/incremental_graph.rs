@@ -1554,14 +1554,11 @@ impl Graphs {
                 Side::Client => &self.client.bundled_files.keys()[idx],
             };
             let owner_display_name = relative_path(&self.root, &mut *buf, key);
-            SerializedFailure::init_from_log(
-                match SIDE {
-                    Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
-                    Side::Client => serialized_failure::Owner::Client(FileIndex::init(idx as u32)),
-                },
-                owner_display_name,
-                &log.msgs,
-            )?
+            let owner = match SIDE {
+                Side::Server => serialized_failure::Owner::Server(FileIndex::init(idx as u32)),
+                Side::Client => serialized_failure::Owner::Client(FileIndex::init(idx as u32)),
+            };
+            log.with_msgs(|msgs| SerializedFailure::init_from_log(owner, owner_display_name, msgs))?
         };
         let fail_gop = self.bundling_failures.get_or_put(fail_owner)?;
         self.incremental_result.failures_added.push(failure.clone());

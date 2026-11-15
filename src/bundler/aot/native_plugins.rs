@@ -24,7 +24,7 @@ pub(crate) fn run_before_parse(
     context: &BuildContext,
     module: ModuleName<'_>,
     loaded: Loaded,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Loaded, Failed> {
     let (contents, loader) = match &loaded {
         Loaded::Source {
@@ -45,10 +45,10 @@ pub(crate) fn run_before_parse(
     }
 
     // `get_code_for_parse_task` blames the plugin for every error that is already in its log.
-    let mut plugin_log = Log::init();
+    let plugin_log = Log::init();
     let changed = context.with_worker(|transpiler, arena| {
         let mut task = create_task(context, module, contents, loader);
-        run_plugins(&mut task, loader, transpiler, arena, &mut plugin_log)
+        run_plugins(&mut task, loader, transpiler, arena, &plugin_log)
     });
     plugin_log.append_to(log);
     Ok(changed?.unwrap_or(loaded))
@@ -85,7 +85,7 @@ fn run_plugins(
     mut loader: Loader,
     transpiler: &mut Transpiler<'static>,
     arena: &Arena,
-    log: &mut Log,
+    log: &Log,
 ) -> Result<Option<Loaded>, Failed> {
     let mut file_path = task.path;
     let mut from_plugin = false;
@@ -137,14 +137,14 @@ mod tests {
             |_| {},
             |context| {
                 assert!(!has_before_parse_plugins(context));
-                let mut log = Log::init();
+                let log = Log::init();
                 let source = Loaded::Source {
                     contents: Cow::Borrowed(b"let a;"),
                     loader: Loader::Ts,
                     is_from_plugin: true,
                 };
                 assert!(matches!(
-                    run_before_parse(context, MODULE, source, &mut log),
+                    run_before_parse(context, MODULE, source, &log),
                     Ok(Loaded::Source {
                         contents: Cow::Borrowed(b"let a;"),
                         loader: Loader::Ts,
@@ -152,14 +152,14 @@ mod tests {
                     })
                 ));
                 assert!(matches!(
-                    run_before_parse(context, MODULE, Loaded::Deferred, &mut log),
+                    run_before_parse(context, MODULE, Loaded::Deferred, &log),
                     Ok(Loaded::Deferred)
                 ));
                 assert!(matches!(
-                    run_before_parse(context, MODULE, Loaded::NotFound, &mut log),
+                    run_before_parse(context, MODULE, Loaded::NotFound, &log),
                     Ok(Loaded::NotFound)
                 ));
-                assert!(log.msgs.is_empty());
+                assert_eq!(log.msgs_len(), 0);
             },
         );
     }

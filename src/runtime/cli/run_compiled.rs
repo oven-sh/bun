@@ -174,9 +174,8 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
         })));
     }
 
-    let mut said_before_the_build = bun_ast::Log::init();
-    // SAFETY: nothing else borrows the log in front of the build.
-    unsafe { ctx.log_mut() }.append_to(&mut said_before_the_build);
+    let said_before_the_build = bun_ast::Log::init();
+    ctx.log().append_to(&said_before_the_build);
 
     let mut entry_points = entry_points;
     if has_globals_of_vitest {
@@ -199,30 +198,28 @@ pub(crate) fn start(ctx: Context<'_>, entry_points: Vec<Box<[u8]>>, test_file_co
     let outcome = match compile_from_context(&mut *ctx, product) {
         Err(error) => {
             print_log(&said_before_the_build);
-            print_log(ctx.log_ref());
+            print_log(ctx.log());
             Output::err_generic("{}", (BStr::new(error.name()),));
             exit_or_wait_for_change(watched)
         }
         Ok(Err(failure)) => {
-            // SAFETY: nothing else borrows the log behind a build.
-            let log = unsafe { ctx.log_mut() };
+            let log = ctx.log();
             if !log.has_errors() {
                 log.add_error_fmt(None, bun_ast::Loc::EMPTY, format_args!("the build failed"));
             }
             let target = &ctx.bundler_options.compile_target;
             print_log(&said_before_the_build);
-            print_failure(ctx.log_ref(), RequestOrigin::BuildFlag, target, &failure);
+            print_failure(ctx.log(), RequestOrigin::BuildFlag, target, &failure);
             exit_or_wait_for_change(watched)
         }
         Ok(Ok(outcome)) => outcome,
     };
     // A program forked this process, and what goes to its stderr is the program's to read. One that reads nothing would leave it waiting in write().
     if env_var::NODE_CHANNEL_FD.get().is_some() {
-        // SAFETY: nothing else borrows the log behind a build.
-        let messages = &mut unsafe { ctx.log_mut() }.msgs;
-        messages.retain(|message| message.kind == bun_ast::Kind::Err);
+        ctx.log()
+            .with_msgs(|messages| messages.retain(|message| message.kind == bun_ast::Kind::Err));
     }
-    print_log(ctx.log_ref());
+    print_log(ctx.log());
     // A run from the sources has no image to say which names the files add to built-in objects.
     #[cfg(unix)]
     let program = outcome.unnamed_file.map(Program::Written);
@@ -591,7 +588,7 @@ const NO_DESCRIPTOR: &[u8] = b"-";
 #[inline(never)]
 pub(crate) fn print_failure_and_exit(ctx: &ContextData, failure: &CompileFailure) -> ! {
     exit_with_failure(
-        ctx.log_ref(),
+        ctx.log(),
         RequestOrigin::BuildFlag,
         &ctx.bundler_options.compile_target,
         failure,

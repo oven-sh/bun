@@ -30,7 +30,7 @@ pub(crate) fn is_typed_file(file: &OutputFile) -> bool {
 
 pub(crate) fn add_typed_files(
     request: &TypedOutputs<'_>,
-    log: &mut Log,
+    log: &Log,
     output_files: &mut Vec<OutputFile>,
 ) -> CompilerOptions {
     let outdir = join_abs_string::<Auto>(request.working_directory, &[request.outdir]).to_vec();

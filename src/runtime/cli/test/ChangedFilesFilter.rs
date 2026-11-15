@@ -124,7 +124,7 @@ pub(crate) fn filter<'a>(
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
     let arena: &'static Arena = crate::cli::cli_arena();
-    let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
+    let log: &'static bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let mut scan_transpiler =
         match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.get().env)) {

@@ -24,7 +24,7 @@ use crate::transpiler::{ParseResult, ResolveQueue, ResolveResults};
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
-    pub log: *mut Log,
+    pub log: *const Log,
 }
 
 const RUNTIME_SOURCE_PATH: &[u8] = b"bun:wrap";
@@ -70,23 +70,14 @@ pub(crate) fn dupe(src: &[u8]) -> &'static [u8] {
     RELATIVE_PATHS_LIST.append(src).expect("OOM")
 }
 impl Linker {
-    /// Exclusive borrow of the owning `Transpiler.log`.
-    ///
-    /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in
-    /// `configure_linker*` / `set_log`. Callers borrow `&mut self.linker`
-    /// field-disjointly from `Transpiler.log`, and no callee reached from a
-    /// `Linker` method re-derives a borrow of `*self.log`, so the `&mut`
-    /// returned here is exclusive for its lifetime. Never null.
     #[inline]
-    pub(crate) fn log_mut(&mut self) -> &mut Log {
+    pub(crate) fn log(&self) -> &Log {
         debug_assert!(!self.log.is_null());
-        // SAFETY: non-null backref to `Transpiler.log` set in `configure_linker*`;
-        // callers borrow `&mut self.linker` field-disjointly so no other live
-        // borrow of `*self.log` exists for the returned lifetime.
-        unsafe { &mut *self.log }
+        // SAFETY: non-null backref to `Transpiler.log` set in `configure_linker*`.
+        unsafe { &*self.log }
     }
 
-    pub(crate) fn init(log: *mut Log) -> Self {
+    pub(crate) fn init(log: *const Log) -> Self {
         Self { log }
     }
 
@@ -217,7 +208,7 @@ impl Linker {
                             // if a module is not found here, it is not found at
                             // all so we can just disable it
                             if Self::when_module_not_found::<IS_BUN>(
-                                self.log_mut(),
+                                self.log(),
                                 target,
                                 import_record,
                                 source,
@@ -244,7 +235,7 @@ impl Linker {
     // Takes the disjoint pieces explicitly rather than `&mut self` plus
     // overlapping sub-borrows of `result`.
     fn when_module_not_found<const IS_BUN: bool>(
-        log: &mut Log,
+        log: &Log,
         target: BundleTarget,
         import_record: &mut ImportRecord,
         source: &bun_ast::Source,

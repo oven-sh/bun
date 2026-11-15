@@ -903,9 +903,9 @@ fn collect_vulnerabilities(
     }
 
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
-    let mut log = bun_ast::Log::init();
+    let log = bun_ast::Log::init();
 
-    let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
+    let parsed = match bun_json::ParsedJson::parse_json(&source, &log) {
         Ok(e) => e,
         Err(_) => return Ok(Err(SkipReason::NotJson)),
     };

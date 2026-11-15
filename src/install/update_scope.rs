@@ -310,7 +310,7 @@ fn exit_on_lockfile_load_failure(manager: &mut PackageManager, subject: &[u8]) -
         crate::lockfile::LoadResult::NotFound => missing(silent, subject),
         crate::lockfile::LoadResult::Err(cause) => {
             if !silent {
-                cause.report(manager.log_mut());
+                cause.report(manager.log());
             }
             Global::exit(1);
         }

@@ -395,7 +395,7 @@ impl bun_core::output::ErrName for ForManifestError {
 }
 
 pub(crate) fn add_error_or_warning(
-    log: &mut bun_ast::Log,
+    log: &bun_ast::Log,
     is_error: bool,
     message: core::fmt::Arguments<'_>,
 ) {
@@ -473,9 +473,7 @@ impl NetworkTask {
         needs_extended: bool,
     ) -> Result<Box<AsyncHTTP<'static>>, ForManifestError> {
         let pm = self.package_manager;
-        // SAFETY: `pm.log` is the long-lived `*mut Log` the package manager
-        // was constructed with.
-        let log = pm.log_mut();
+        let log = pm.log();
 
         self.url_buf = 'blk: {
             // Not all registries support scoped package names when fetching the manifest.
@@ -789,9 +787,7 @@ impl NetworkTask {
 
         if !(self.url_buf.starts_with(b"https://") || self.url_buf.starts_with(b"http://")) {
             let redacted_tarball_url = redacted_url(&self.url_buf);
-            // SAFETY: `pm.log` is the long-lived `*mut Log` the package
-            // manager was constructed with.
-            pm.log_mut().add_error_fmt(
+            pm.log().add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(

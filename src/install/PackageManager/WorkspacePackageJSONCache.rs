@@ -59,7 +59,7 @@ impl MapEntry {
     }
 
     /// Replaces the text and the tree together: prints `root`, then parses what it printed.
-    pub fn save(&mut self, root: Expr, log: &mut Log) -> Result<(), Error> {
+    pub fn save(&mut self, root: Expr, log: &Log) -> Result<(), Error> {
         let printed = Source {
             path: self.source.path,
             contents: Cow::Owned(self.print(root)?),
@@ -80,7 +80,7 @@ pub type Map = StringHashMap<MapEntry>;
 
 fn parse_package_json(
     source: &Source,
-    log: &mut Log,
+    log: &Log,
     bump: &bun_alloc::Arena,
     guess_indentation: bool,
 ) -> Result<json::JsonResult, crate::Error> {
@@ -138,7 +138,7 @@ impl WorkspacePackageJSONCache {
     /// cache, it will be read from disk and parsed, and stored in the cache.
     pub fn get_with_path(
         &mut self,
-        log: &mut Log,
+        log: &Log,
         abs_package_json_path: &[u8],
         opts: GetJSONOptions,
     ) -> GetResult<'_> {
@@ -148,7 +148,7 @@ impl WorkspacePackageJSONCache {
     /// `contents` is the text of a package.json that's never written to disk (`bun add --dry-run`).
     pub(crate) fn insert_unwritten(
         &mut self,
-        log: &mut Log,
+        log: &Log,
         abs_package_json_path: &[u8],
         contents: &'static [u8],
     ) -> Result<(), Error> {
@@ -164,7 +164,7 @@ impl WorkspacePackageJSONCache {
 
     fn get_or_insert(
         &mut self,
-        log: &mut Log,
+        log: &Log,
         abs_package_json_path: &[u8],
         opts: GetJSONOptions,
         unwritten: Option<&'static [u8]>,

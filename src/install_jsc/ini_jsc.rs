@@ -19,7 +19,7 @@ pub(crate) fn load_npmrc<'a>(
     let global = cx.global();
     let source = Source::init_path_string(b"<js>", contents);
 
-    let mut log = Log::init();
+    let log = Log::init();
 
     let envjs = env.to_js();
     // The loader is either VM-owned or built locally; keep local storage in
@@ -62,7 +62,7 @@ pub(crate) fn load_npmrc<'a>(
     };
 
     let mut install = Box::new(BunInstall::default());
-    if load_npmrc(&mut install, env, &mut log, &source).is_err() {
+    if load_npmrc(&mut install, env, &log, &source).is_err() {
         return log.to_js(global, format_args!("error"));
     }
     // The package manager applies `url_auth` in `Options::load`; the same walk reports what the default registry would get.

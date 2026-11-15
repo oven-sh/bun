@@ -374,7 +374,7 @@ impl<'a> LoadHost<'a> {
         self.plugins.take_failed_loads()
     }
 
-    pub(crate) fn say(&self, log: &mut Log) {
+    pub(crate) fn say(&self, log: &Log) {
         self.input.messages.say(log);
     }
 
@@ -855,8 +855,8 @@ impl<'a> LoadHost<'a> {
         }
         // Behind the load, nothing else asks for what plugins say of reads that fail.
         if self.reads_in_background_after_load {
-            for (_, mut log) in self.take_failed_loads() {
-                self.say(&mut log);
+            for (_, log) in self.take_failed_loads() {
+                self.say(&log);
             }
         }
         let (provider, messages) = (self.input.provider, self.input.messages);

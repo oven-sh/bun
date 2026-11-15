@@ -43,6 +43,7 @@ static TranscodeEncoding parseTranscodeEncoding(const WTF::String& encoding)
 }
 
 // Decode the source bytes into well-formed UTF-16 for the pivot paths.
+// A lone surrogate can remain if `input` changes during the call.
 // Returns false when the decoded string cannot be allocated.
 static bool transcodeDecodeToUtf16(std::span<const uint8_t> input, TranscodeEncoding fromEncoding, bool replaceTrailingOddByte, WTF::Vector<char16_t>& units)
 {
@@ -210,7 +211,7 @@ BUN_DEFINE_HOST_FUNCTION(jsBufferTranscode,
         const size_t expected = simdutf::utf16_length_from_utf8(data, length);
         result = WebCore::createUninitializedBuffer(globalObject, expected * 2);
         RETURN_IF_EXCEPTION(scope, {});
-        if (!Bun__encoding__convertUTF8ToUTF16Exact(input.data(), length, reinterpret_cast<char16_t*>(result->typedVector()), expected)) {
+        if (!Bun__encoding__tryConvertUTF8ToUTF16Exact(input.data(), length, reinterpret_cast<char16_t*>(result->typedVector()), expected)) {
             errorCode = U_INVALID_CHAR_FOUND_ERRNO;
             errorName = "U_INVALID_CHAR_FOUND"_s;
         }

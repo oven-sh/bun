@@ -164,10 +164,10 @@ impl TextEncoderStreamEncoder {
             break 'prepend None;
         };
 
-        let input = simdutf::WithUtf8Len::utf16(remain);
+        let measured = simdutf::WithUtf8Len::utf16(remain);
 
         buf.try_reserve(
-            input.utf8_len()
+            measured.utf8_len()
                 + match prepend {
                     Some(pre) => pre.len as usize,
                     None => 0,
@@ -180,7 +180,7 @@ impl TextEncoderStreamEncoder {
         }
 
         let result = bun_core::vec::append_with(buf, usize::MAX, |spare| {
-            simdutf::convert::utf16::to::utf8::with_errors::le(input, spare)
+            simdutf::convert::utf16::to::utf8::with_errors::le(measured, spare)
         });
 
         if result.status != simdutf::Status::SUCCESS {

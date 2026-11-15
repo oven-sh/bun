@@ -56,7 +56,7 @@ pub(crate) struct Worker {
     /// Set when the process-exit notification arrives. Reaping waits for both
     /// this and `ipc.done` so trailing IPC frames are decoded first.
     pub(crate) exit_status: Option<Status>,
-    /// Of all the processes of this slot that have exited.
+    /// Highest peak RSS among this slot's exited processes.
     pub(crate) peak_rss_mb: u32,
     /// Set when this process sends `.ready`; reset before each respawn.
     /// `inflight == None` with `!reached_ready` at reap distinguishes a

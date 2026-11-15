@@ -164,33 +164,15 @@ pub(crate) unsafe extern "C" fn OPENSSL_system_free(ptr: *mut c_void) {
 
 pub use bun_sys::posix::INET6_ADDRSTRLEN;
 
-// Canonical cross-platform AF_* surface — handles the Windows ws2def.h split.
-use bun_sys::posix::AF::{INET as AF_INET, INET6 as AF_INET6};
-
 /// Node.js's `canonicalizeIP`: the canonical text of the address that libuv's `uv_inet_pton` reads in `addr_str`, without the zone id of an IPv6 address. `None` for any other text.
 pub fn canonicalize_ip<'a>(
     addr_str: &[u8],
     out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
 ) -> Option<&'a [u8]> {
     match bun_core::ip_address::parse_uv_inet_pton(addr_str)? {
-        IpAddr::V4(ip) => canonical_ip_octets(&ip.octets(), out_ip),
-        IpAddr::V6(ip) => canonical_ip_octets(&ip.octets(), out_ip),
+        IpAddr::V4(ip) => c_ares::ntop(&ip.octets(), out_ip),
+        IpAddr::V6(ip) => c_ares::ntop(&ip.octets(), out_ip),
     }
-}
-
-/// Canonical text form of raw IP address octets (4 or 16 bytes), e.g. `::1`.
-fn canonical_ip_octets<'a>(
-    octets: &[u8],
-    out_ip: &'a mut [u8; INET6_ADDRSTRLEN + 1],
-) -> Option<&'a [u8]> {
-    let af: c_int = match octets.len() {
-        4 => AF_INET,
-        16 => AF_INET6,
-        _ => return None,
-    };
-    // SAFETY: `octets` is readable for its checked 4/16-byte length and
-    // `out_ip` is INET6_ADDRSTRLEN + 1 bytes — `ntop`'s requirements.
-    unsafe { c_ares::ntop(af, octets.as_ptr().cast(), &mut out_ip[..]) }
 }
 
 /// Strips a single trailing `.` (the DNS root label). Mirrors Node.js
@@ -724,7 +706,7 @@ impl core::fmt::Display for CanonicalIpList<'_> {
         let mut first = true;
         for entry in names.subject_alt_names() {
             if let boring::SubjectAltName::Ip(octets) = entry {
-                if let Some(ip) = canonical_ip_octets(octets, &mut buf) {
+                if let Some(ip) = c_ares::ntop(octets, &mut buf) {
                     if !core::mem::take(&mut first) {
                         f.write_str(", ")?;
                     }

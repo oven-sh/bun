@@ -178,14 +178,14 @@ impl TLSSocket {
         // certificate is reached, the way Node's getPeerCertificate(true) walks
         // X509_STORE_CTX_get1_issuer to surface the root that completed
         // verification even though the peer never sent it.
-        let ctx_store = ssl_ctx.cert_store();
-        // Without `ca`, Node looks in the bundled roots.
-        let shared_store = if ctx_store.is_none() || us_ssl_ctx_has_user_ca(&ssl_ctx) == 0 {
-            us_get_shared_default_ca_store()
+        let store = if us_ssl_ctx_has_user_ca(&ssl_ctx) != 0 {
+            ssl_ctx
+                .cert_store()
+                .or_else(|| us_get_shared_default_ca_store())
         } else {
-            None
+            // Without `ca`, Node looks in the bundled roots.
+            us_get_shared_default_ca_store().or_else(|| ssl_ctx.cert_store())
         };
-        let store = shared_store.or(ctx_store);
         let Some(lookup) = store.as_deref().and_then(boringssl::IssuerLookup::new) else {
             return Ok(first_obj);
         };
@@ -488,16 +488,14 @@ impl TLSSocket {
         Ok(())
     }
 
-    pub(crate) fn disable_renegotiation(&self) {
-        // SAFETY: `socket` is live or detached, and `ssl` is used at once.
-        if let Some(ssl) = unsafe { self.socket.get().ssl() } {
+    pub(crate) fn disable_renegotiation(&self, heap: &JsHeap<'_>) {
+        if let Some(ssl) = self.ssl(heap) {
             ssl.set_renegotiate_mode(boringssl::RenegotiateMode::Never);
         }
     }
 
-    pub(crate) fn is_session_reused(&self) -> bool {
-        // SAFETY: `socket` is live or detached, and `ssl` is used at once.
-        unsafe { self.socket.get().ssl() }.is_some_and(|ssl| ssl.is_session_reused())
+    pub(crate) fn is_session_reused(&self, heap: &JsHeap<'_>) -> bool {
+        self.ssl(heap).is_some_and(|ssl| ssl.is_session_reused())
     }
 
     pub(crate) fn set_verify_mode(

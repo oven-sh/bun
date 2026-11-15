@@ -4382,7 +4382,7 @@ describe.concurrent(
 
     // A queued frame holds one callback, so a write that lands in the same frame completes the
     // write before it. That callback is the JS here: the socket is native.
-    it("callback of the previous queued write", async () => {
+    it("previous write's callback running while the next write is queued, native writer", async () => {
       const result = await run(/* js */ `
       const server = http2.createServer({ settings: { initialWindowSize: 100 } });
       server.on("error", die("server error"));
@@ -4404,6 +4404,7 @@ describe.concurrent(
       const holder = { src: payload(8000, false) };
       const snap = Buffer.from(holder.src);
       let fired = false;
+      // write() waits for the callback; _write() queues two writes at once.
       req._write(Buffer.from("aaa"), "buffer", () => { fired = true; yank(holder, "transfer"); });
       req._write(holder.src, "buffer", () => req.end());
       const firedDuringWrite = fired;

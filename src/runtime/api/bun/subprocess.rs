@@ -101,7 +101,7 @@ pub struct Subprocess<'a> {
     pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     pub(crate) observable_getters: Cell<EnumSet<ObservableGetter>>,
     pub closed: Cell<EnumSet<StdioKind>>,
-    pub this_value: JsCell<JsRef>,
+    pub this_value: JsRef,
 
     pub(crate) ipc_data: OnceCell<RefPtr<IPC::SendQueue>>,
     pub(crate) flags: Cell<Flags>,
@@ -291,7 +291,7 @@ impl Subprocess<'_> {
         }
         // The wrapper is gone (finalize() closing stdio that a stopped worker
         // left pending): there is nothing to keep alive or release.
-        if self.this_value.get().is_finalized() {
+        if self.this_value.is_finalized() {
             return;
         }
 
@@ -303,9 +303,9 @@ impl Subprocess<'_> {
         // Upgrade or downgrade the reference based on pending activity
         if has_pending {
             let global_this = self.global_this;
-            self.this_value.with_mut(|v| v.upgrade(global_this.get()));
+            self.this_value.upgrade(global_this.get());
         } else {
-            self.this_value.with_mut(|v| v.downgrade());
+            self.this_value.downgrade();
         }
     }
 
@@ -515,8 +515,7 @@ impl Subprocess<'_> {
         let global_this = cx.global();
         // Safe: this method can only be called while the object is alive (reachable from JS)
         // The finalizer only runs when the object becomes unreachable
-        self.this_value
-            .with_mut(|v| v.update(global_this, this_value.to_js()));
+        self.this_value.update(global_this, this_value.to_js());
 
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
@@ -696,7 +695,7 @@ impl Subprocess<'_> {
 
     pub(crate) fn on_process_exit(&self, status: &Status, rusage: &Rusage) {
         bun_output::scoped_log!(Subprocess, "onProcessExit()");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let this_jsvalue = self.this_value.try_get().unwrap_or_default();
         // Copy the BackRef out so the `&JSGlobalObject` borrow is detached from `&self`
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
@@ -961,7 +960,7 @@ impl Subprocess<'_> {
         // Ensure any code which references the "this" value doesn't attempt to
         // access it after it's been freed We cannot call any methods which
         // access GC'd values during the finalizer
-        self.this_value.with_mut(|v| v.finalize());
+        self.this_value.finalize();
 
         self.clear_abort_signal();
 
@@ -1080,7 +1079,7 @@ impl Subprocess<'_> {
             }
             IPC::DecodedIPCMessage::Data(data) => {
                 bun_output::scoped_log!(IPC, "Received IPC message from child");
-                let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+                let this_jsvalue = self.this_value.try_get().unwrap_or_default();
                 let _keep = jsc::EnsureStillAlive(this_jsvalue);
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
@@ -1110,7 +1109,7 @@ impl Subprocess<'_> {
 
     pub(crate) fn handle_ipc_close(&self) {
         bun_output::scoped_log!(IPC, "Subprocess#handleIPCClose");
-        let this_jsvalue = self.this_value.get().try_get().unwrap_or_default();
+        let this_jsvalue = self.this_value.try_get().unwrap_or_default();
         let _keep = jsc::EnsureStillAlive(this_jsvalue);
         let global_this = self.global_this;
         let global_this = global_this.get();

@@ -1393,7 +1393,7 @@ impl BunTest {
         }
         if sequence.test_entry.is_none() {
             if let (Some(slot), None) = (hook.teardown, hook.around) {
-                self.entry(slot).callback.set(strong_create(returned));
+                self.entry(slot).callback.set(VirtualMachine::get().global(), returned);
             }
         } else if sequence.test_follows(self, active_entry) {
             sequence.defer(self, Deferred::Teardown, returned, hook.timeout);
@@ -1403,8 +1403,9 @@ impl BunTest {
     /// The `aroundAll` hook `hook` called `runSuite()`.
     pub(crate) fn enter_around_all(&self, hook: &ExecutionEntry, tear_down: JSValue, async_context: JSValue) {
         if let (Some(slot), Some(scope)) = (hook.teardown, hook.base.parent) {
-            self.entry(slot).callback.set(strong_create(tear_down));
-            self.scope(scope).async_context.set(strong_create(async_context));
+            let global = VirtualMachine::get().global();
+            self.entry(slot).callback.set(global, tear_down);
+            self.scope(scope).async_context.set(global, async_context);
         }
     }
 

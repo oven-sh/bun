@@ -80,7 +80,7 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
     this.closed.set(true);
     this.abort_handle.leave();
     this.poll_ref.disable();
-    this.this_value.with_mut(|r| r.downgrade());
+    this.this_value.downgrade();
     this.socket.set(None);
     // The descriptor dies with the socket: prune the registry entry so a
     // recycled fd number isn't refused (or worse, accepted) later.
@@ -119,7 +119,7 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int, is_errq
 extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = this.enter_owners_context();
-    let Some(this_value) = this.this_value.get().try_get() else {
+    let Some(this_value) = this.this_value.try_get() else {
         return;
     };
     let Some(callback) = js::on_drain_get_cached(this_value) else {
@@ -150,7 +150,7 @@ extern "C" fn on_data(
 ) {
     let udp_socket: &UDPSocket = UDPSocket::from_uws(socket);
     let _context = udp_socket.enter_owners_context();
-    let Some(this_value) = udp_socket.this_value.get().try_get() else {
+    let Some(this_value) = udp_socket.this_value.try_get() else {
         return;
     };
     let Some(callback) = js::on_data_get_cached(this_value) else {
@@ -489,7 +489,7 @@ pub(crate) struct UDPSocket {
     // Read-only back-reference to the owning JS global; the VM/global strictly
     // outlives every socket it creates.
     pub global_this: BackRef<JSGlobalObject>,
-    pub this_value: JsCell<JsRef>,
+    pub this_value: JsRef,
 
     pub poll_ref: JsKeepAlive,
     /// if marked as closed the socket pointer may be stale
@@ -550,7 +550,7 @@ impl UDPSocket {
             socket: Cell::new(None),
             config: JsCell::new(UDPSocketConfig::default()),
             global_this: BackRef::new(cx.global()),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             poll_ref: JsKeepAlive::default(),
             closed: Cell::new(false),
             connect_info: Cell::new(None),
@@ -576,15 +576,14 @@ impl UDPSocket {
             // `on_close` (udp.c `s->on_close(s)`), which re-derives `&UDPSocket`
             // from the uws user pointer. `downgrade()` is idempotent (on_close
             // repeats it), so ordering is unobservable.
-            this.this_value.with_mut(|r| r.downgrade());
+            this.this_value.downgrade();
             if let Some(socket) = this.socket.take() {
                 // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
                 uws::udp::Socket::opaque_mut(socket).close();
             }
         });
 
-        this.this_value
-            .with_mut(|r| r.set_strong(js_value, cx.global()));
+        this.this_value.set_strong(js_value, cx.global());
 
         this.config
             .set(UDPSocketConfig::from_js(cx.global(), options, js_value)?);
@@ -762,7 +761,7 @@ impl UDPSocket {
 
     pub(crate) fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {
         let this_value = if this_value_.is_empty() {
-            match self.this_value.get().try_get() {
+            match self.this_value.try_get() {
                 Some(v) => v,
                 None => return,
             }
@@ -1490,7 +1489,7 @@ impl UDPSocket {
             // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
             // shared borrow is sound; the (idempotent) downgrade is hoisted
             // because `on_close` repeats it.
-            self.this_value.with_mut(|r| r.downgrade());
+            self.this_value.downgrade();
             // Unregister before close(2) so no other thread can observe a
             // stale entry for the recycled number (on_close is the backstop).
             #[cfg(not(windows))]
@@ -1631,7 +1630,7 @@ impl Drop for UDPSocket {
         // `close` runs `on_close`, which reaches this struct again through the uws user pointer.
         let this = &*self;
         bun_output::scoped_log!(UdpSocket, "Finalize {:p}", &raw const *this);
-        this.this_value.with_mut(|r| r.finalize());
+        this.this_value.finalize();
         debug_assert!(this.closed.get() || VirtualMachine::get().is_shutting_down());
         // At VM shutdown the wrapper can die with the socket open: close it so that `drain_closed_sockets()` frees it.
         if let Some(socket) = this.socket.take() {
@@ -1681,7 +1680,7 @@ pub(crate) fn connect(
     }
     this.connect_info.set(Some(ConnectInfo { port }));
 
-    if let Some(this_value) = this.this_value.get().try_get() {
+    if let Some(this_value) = this.this_value.try_get() {
         js::address_set_cached(this_value, global_this, JSValue::ZERO);
         js::remote_address_set_cached(this_value, global_this, JSValue::ZERO);
     }

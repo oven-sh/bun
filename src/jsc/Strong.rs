@@ -3,9 +3,8 @@
 //! For a strong that may be empty (to reuse allocation), use `Optional`.
 
 use core::cell::Cell;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
-
-use bun_ptr::{CellExt as _, OptionCellExt as _};
 
 use crate::{JSGlobalObject, JSValue};
 
@@ -117,31 +116,66 @@ impl Optional {
     }
 }
 
-/// An optional `Strong` that is set and cleared through `&self`.
+/// An `Optional` that is set and cleared through `&self`.
 #[derive(Default)]
-pub struct StrongCell(Cell<Option<Strong>>);
+pub struct StrongCell(Cell<Option<NonNull<Impl>>>);
 
 impl From<Option<Strong>> for StrongCell {
     fn from(value: Option<Strong>) -> StrongCell {
-        StrongCell(Cell::new(value))
+        StrongCell(Cell::new(value.map(|strong| strong.handle.into_raw())))
     }
 }
 
 impl StrongCell {
+    /// Still owned by the cell, and no method of `OwnedImpl` runs code that can clear it.
+    fn handle(&self) -> Option<ManuallyDrop<OwnedImpl>> {
+        Some(ManuallyDrop::new(OwnedImpl(self.0.get()?)))
+    }
+
+    pub(crate) fn has_slot(&self) -> bool {
+        self.0.get().is_some()
+    }
+
+    pub(crate) fn acquire_slot(&self, global: &JSGlobalObject, value: JSValue) {
+        debug_assert!(!self.has_slot());
+        self.0.set(Some(OwnedImpl::new(global, value).into_raw()));
+    }
+
     pub fn get(&self) -> Option<JSValue> {
-        self.0.with_taken(|value| value.as_ref().map(Strong::get))
+        let value = self.handle()?.get();
+        (!value.is_empty()).then_some(value)
     }
 
     pub fn is_some(&self) -> bool {
-        self.0.is_some()
+        self.get().is_some()
     }
 
-    pub fn set(&self, value: Strong) {
-        self.0.set(Some(value));
+    pub fn set(&self, global: &JSGlobalObject, value: JSValue) {
+        match self.handle() {
+            Some(handle) => handle.set(global, value),
+            None if value.is_empty() => {}
+            None => self.acquire_slot(global, value),
+        }
+    }
+
+    pub fn take(&self) -> StrongCell {
+        StrongCell(Cell::new(self.0.take()))
     }
 
     pub fn clear(&self) {
-        self.0.set(None);
+        drop(self.0.take().map(OwnedImpl));
+    }
+
+    pub fn clear_without_deallocation(&self) {
+        if let Some(handle) = self.handle() {
+            handle.clear();
+        }
+    }
+}
+
+impl Drop for StrongCell {
+    fn drop(&mut self) {
+        drop(self.0.get().map(OwnedImpl));
     }
 }
 
@@ -167,6 +201,10 @@ impl OwnedImpl {
     fn new(global: &JSGlobalObject, value: JSValue) -> OwnedImpl {
         crate::mark_binding!();
         Bun__StrongRef__new(global, value)
+    }
+
+    fn into_raw(self) -> NonNull<Impl> {
+        ManuallyDrop::new(self).0
     }
 
     #[inline(always)]

@@ -97,7 +97,7 @@ impl bun_jsc::JsClass for Response {
 /// Every JS-facing member takes `&Response` (not
 /// `&mut Response`) so re-entrant JS calls cannot stack two `&mut` to the same
 /// instance. Fields the members mutate are therefore wrapped in `Cell` (Copy
-/// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
+/// scalars) or `JsCell` (non-Copy `body`/`init`/`url`). Both are
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
 #[derive(bun_ptr::RefCounted)]
@@ -115,7 +115,7 @@ pub(crate) struct Response {
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
     /// backpressure lets GC run between `render()` and the async callback.
     weak_ptr_data: WeakPtrData,
-    js_ref: JsCell<JsRef>,
+    js_ref: JsRef,
 
     // We must report a consistent value for this
     reported_estimated_size: Cell<usize>,
@@ -133,7 +133,7 @@ impl Default for Response {
             redirected: Cell::new(false),
             ref_count: bun_ptr::RefCount::init(),
             weak_ptr_data: WeakPtrData::EMPTY,
-            js_ref: JsCell::new(JsRef::empty()),
+            js_ref: JsRef::empty(),
             reported_estimated_size: Cell::new(0),
             abort_listener: JsCell::new(None),
         }
@@ -154,7 +154,7 @@ pub(crate) type WeakRef = bun_ptr::WeakPtr<Response>;
 impl crate::webcore::body::BodyOwnerJs for Response {
     #[inline]
     fn js_ref(&self) -> Option<JSValue> {
-        self.js_ref.get().try_get()
+        self.js_ref.try_get()
     }
     #[inline]
     fn body_get_cached(this: JSValue) -> Option<JSValue> {
@@ -334,7 +334,7 @@ impl Response {
     pub(crate) fn to_js(this: RefPtr<Self>, global_object: &JSGlobalObject) -> JSValue {
         this.calculate_estimated_byte_size();
         let js_value = js::to_js(this.as_ptr(), global_object);
-        this.js_ref.set(JsRef::init_weak(js_value));
+        this.js_ref.set_weak(js_value);
 
         this.check_body_stream_ref(global_object);
         // The wrapper has held this ref since `js::to_js`.
@@ -671,7 +671,7 @@ impl Response {
     }
 
     pub(crate) fn finalize(&self) {
-        self.js_ref.with_mut(|r| r.finalize());
+        self.js_ref.finalize();
     }
 
     pub(crate) fn construct_json(cx: &mut JsScope<'_>, args: &[JsLocal<'_>]) -> JsResult<JSValue> {
@@ -849,7 +849,7 @@ impl Response {
         let response = Self::construct_into(cx.global(), body.to_js(), init.to_js())?;
         let this = response.this_ptr();
         let this_value = structure.create(&cx.heap, response);
-        this.js_ref.set(JsRef::init_weak(this_value.to_js()));
+        this.js_ref.set_weak(this_value.to_js());
         this.check_body_stream_ref(cx.global());
         Ok(this_value)
     }

@@ -17,7 +17,7 @@
 
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigStackFrame};
+use bun_jsc::{JSGlobalObject, JSPromise, JSValue, StringJsc as _, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -82,10 +82,7 @@ pub(crate) fn set_override_module_run_main(vm: &VirtualMachine, is_patched: bool
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm, promise)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMainPromise, c)
-pub(crate) fn set_override_module_run_main_promise(
-    vm: &VirtualMachine,
-    promise: *mut JSInternalPromise,
-) {
+pub(crate) fn set_override_module_run_main_promise(vm: &VirtualMachine, promise: &JSPromise) {
     if vm.pending_internal_promise().is_none() {
         vm.set_pending_internal_promise(Some(promise));
     }

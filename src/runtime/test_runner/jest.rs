@@ -313,7 +313,7 @@ pub(crate) mod Jest {
         let copy_properties = |from: JSValue, to: JSValue| -> JsResult<()> {
             let properties = jsc::JSPropertyIterator::init(
                 global_object,
-                from.to_object(global_object)?,
+                &*from.to_object(global_object)?,
                 jsc::JSPropertyIteratorOptions::new(false, true),
             )?;
             while let Some((name, value)) = properties.next()? {

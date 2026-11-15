@@ -1,6 +1,6 @@
 use core::cell::Cell;
-use core::ptr::NonNull;
 
+use crate::bindgen::JsLocal;
 use crate::host_fn::from_js_host_call_generic;
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 
@@ -69,36 +69,6 @@ impl From<PropertyIteratorOptions> for JSPropertyIteratorOptions {
     }
 }
 
-/// Conversion shim so [`JSPropertyIterator::init`]'s `object` argument accepts
-/// both `*mut JSObject` and `&JSObject`.
-pub trait IntoIterObject {
-    fn into_iter_object(self) -> *mut JSObject;
-}
-impl IntoIterObject for *mut JSObject {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        self
-    }
-}
-impl IntoIterObject for NonNull<JSObject> {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        self.as_ptr()
-    }
-}
-impl IntoIterObject for &JSObject {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        std::ptr::from_ref::<JSObject>(self).cast_mut()
-    }
-}
-impl IntoIterObject for &mut JSObject {
-    #[inline]
-    fn into_iter_object(self) -> *mut JSObject {
-        std::ptr::from_mut::<JSObject>(self)
-    }
-}
-
 pub struct JSPropertyIterator<'a> {
     pub len: usize,
     /// Index of the property last yielded by `next()`.
@@ -108,33 +78,27 @@ pub struct JSPropertyIterator<'a> {
     impl_: Option<OwnedJSPropertyIteratorImpl>,
 
     pub(crate) global_object: &'a JSGlobalObject,
-    pub(crate) object: *mut JSObject,
+    object: JsLocal<'a, JSObject>,
     options: JSPropertyIteratorOptions,
 }
 
 impl<'a> JSPropertyIterator<'a> {
     pub(crate) fn get_longest_property_name(&self) -> usize {
         if let Some(iter) = &self.impl_ {
-            Bun__JSPropertyIterator__getLongestPropertyName(
-                iter,
-                self.global_object,
-                JSObject::opaque_ref(self.object),
-            )
+            Bun__JSPropertyIterator__getLongestPropertyName(iter, self.global_object, &self.object)
         } else {
             0
         }
     }
 
-    /// `object` should be a `JSC::JSObject`. Non-objects will be runtime converted.
     pub fn init(
         global_object: &'a JSGlobalObject,
-        object: impl IntoIterObject,
+        object: &JSObject,
         options: impl Into<JSPropertyIteratorOptions>,
     ) -> JsResult<Self> {
         let options = options.into();
-        let object = object.into_iter_object();
         let mut len: usize = 0;
-        JSValue::from_cell(object).ensure_still_alive();
+        object.to_js().ensure_still_alive();
         let impl_ = JSPropertyIteratorImpl::init(
             global_object,
             object,
@@ -157,7 +121,7 @@ impl<'a> JSPropertyIterator<'a> {
             iter_i: Cell::new(0),
             impl_,
             global_object,
-            object,
+            object: object.to_local(global_object),
             options,
         })
     }
@@ -182,7 +146,7 @@ impl<'a> JSPropertyIterator<'a> {
                 .as_deref()
                 .expect("len > 0 implies impl_ is Some");
             if self.options.include_value {
-                let object = JSObject::opaque_ref(self.object);
+                let object = &*self.object;
                 let current: JSValue = if self.options.observable {
                     JSPropertyIteratorImpl::get_name_and_value(
                         iter,
@@ -234,7 +198,7 @@ bun_opaque::owned_handle! {
 impl JSPropertyIteratorImpl {
     fn init(
         global_object: &JSGlobalObject,
-        object: *mut JSObject,
+        object: &JSObject,
         count: &mut usize,
         own_properties_only: bool,
         only_non_index_properties: bool,
@@ -244,7 +208,7 @@ impl JSPropertyIteratorImpl {
         from_js_host_call_generic(global_object, || {
             Bun__JSPropertyIterator__create(
                 global_object,
-                JSValue::from_cell(object),
+                object.to_js(),
                 count,
                 own_properties_only,
                 only_non_index_properties,

@@ -336,7 +336,7 @@ impl Stringifier {
                 }
                 let iter = jsc::JSPropertyIterator::init(
                     global,
-                    attributes.to_object(global)?,
+                    &*attributes.to_object(global)?,
                     iter_options(),
                 )?;
                 while let Some((attr_name, prop_value)) = iter.next()? {
@@ -557,7 +557,7 @@ impl Stringifier {
     ) -> StringifyResult<()> {
         let mut root: Option<(bun_core::StringView<'_>, JSValue)> = None;
         let iter =
-            jsc::JSPropertyIterator::init(global, document.to_object(global)?, iter_options())?;
+            jsc::JSPropertyIterator::init(global, &*document.to_object(global)?, iter_options())?;
         while let Some((key, prop_value)) = iter.next()? {
             let value = prop_value.unwrap_boxed_primitive(global)?;
             if skipped(value) {
@@ -710,7 +710,7 @@ impl Stringifier {
         self.builder.append_string(name);
         let mut has_elements = false;
         let mut has_text = false;
-        let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
+        let iter = jsc::JSPropertyIterator::init(global, &object, iter_options())?;
         while let Some((key, child)) = iter.next()? {
             if skipped(child) {
                 continue;
@@ -748,7 +748,7 @@ impl Stringifier {
         if pretty {
             self.indent += 1;
         }
-        let iter = jsc::JSPropertyIterator::init(global, object, iter_options())?;
+        let iter = jsc::JSPropertyIterator::init(global, &object, iter_options())?;
         while let Some((key, child)) = iter.next()? {
             if skipped(child) || key.starts_with_ascii(b"@") {
                 continue;

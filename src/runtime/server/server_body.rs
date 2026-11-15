@@ -1010,7 +1010,7 @@ impl ServePlugins {
         }
 
         let promise = result
-            .as_any_promise()
+            .as_promise()
             .expect("the result of an async function");
         this.pending.set(Some(PendingLoad {
             plugin,
@@ -1963,7 +1963,7 @@ where
             .to_js());
         }
 
-        if response_value.as_any_promise().is_some() {
+        if response_value.as_promise().is_some() {
             return Ok(response_value);
         }
 

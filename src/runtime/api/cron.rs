@@ -1514,7 +1514,7 @@ impl CronJob {
             return;
         }
 
-        if let Some(promise) = result.as_any_promise() {
+        if let Some(promise) = result.as_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Pending => {
                     js::pending_promise_set_cached(js_this, &this.global, result);
@@ -1542,18 +1542,8 @@ impl CronJob {
                 }
                 jsc::js_promise::Status::Fulfilled => {}
                 jsc::js_promise::Status::Rejected => {
-                    promise.set_handled(this.global.vm());
-                    // `bun_jsc::AnyPromise` (lib.rs duplicate) lacks `.result()`;
-                    // dispatch on the variant and call `JSPromise::result` directly.
-                    // S012: `JSPromise` is an `opaque_ffi!` ZST — safe deref.
-                    let reason = match promise {
-                        jsc::AnyPromise::Normal(p) => {
-                            jsc::JSPromise::opaque_mut(p).result(this.global.vm())
-                        }
-                        jsc::AnyPromise::Internal(p) => {
-                            jsc::JSPromise::opaque_mut(p).result(this.global.vm())
-                        }
-                    };
+                    promise.set_handled();
+                    let reason = promise.result(this.global.vm());
                     vm.unhandled_rejection(vm.global(), reason, result);
                 }
             }

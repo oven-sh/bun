@@ -708,7 +708,7 @@ impl ServerWebSocket {
             }
         };
 
-        if let Some(promise) = result.as_any_promise() {
+        if let Some(promise) = result.as_promise() {
             match promise.status() {
                 jsc::js_promise::Status::Rejected => {
                     // Value discarded; the side

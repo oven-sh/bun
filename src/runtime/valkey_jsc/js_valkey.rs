@@ -43,7 +43,7 @@ pub(crate) use crate::generated_bindgen::valkey::js_RedisClient as js;
 
 impl SubscriptionCtx {
     pub(crate) fn init(valkey_parent: &JSValkeyClient) -> JsResult<Self> {
-        let callback_map = JSMap::create(&valkey_parent.global_object);
+        let callback_map = JSMap::create(&valkey_parent.global_object).to_js();
         let parent_this = valkey_parent.this_value.try_get().expect("unreachable");
 
         js::subscription_callback_map_set_cached(
@@ -65,18 +65,15 @@ impl SubscriptionCtx {
 /// and a `&SubscriptionCtx` carries no right to reach the client around it.
 impl JSValkeyClient {
     /// `None` while the wrapper is dead but unswept: `finalize()` has not run, socket callbacks still do.
-    fn try_subscription_callback_map(&self) -> Option<&JSMap> {
+    fn try_subscription_callback_map(&self) -> Option<JsLocal<'_, JSMap>> {
         let parent_this = self.this_value.try_get()?;
         let value_js = js::subscription_callback_map_get_cached(parent_this).unwrap();
-        // `JSMap` is an `opaque_ffi!` ZST — `opaque_ref` is the safe deref.
-        // `from_js` returns a non-null heap cell when the slot was set by
-        // `init()`; single JS thread.
-        let map = JSMap::from_js(value_js).unwrap();
-        Some(JSMap::opaque_ref(map.as_ptr()))
+        let map = JSMap::from_js(&value_js).unwrap();
+        Some(map.to_local(&self.global_object))
     }
 
     /// For callers that know the wrapper is alive: their `this`, or it has handlers and so is held.
-    fn subscription_callback_map(&self) -> &JSMap {
+    fn subscription_callback_map(&self) -> JsLocal<'_, JSMap> {
         self.try_subscription_callback_map().expect("unreachable")
     }
 
@@ -1024,7 +1021,9 @@ impl JSValkeyClient {
                                 &global_object,
                                 JSValue::ZERO,
                             );
-                            JSPromise::opaque_mut(promise.as_promise().unwrap())
+                            promise
+                                .as_promise()
+                                .unwrap()
                                 .reject(&global_object, Ok(error))
                         }
                         None => Ok(()),
@@ -1053,9 +1052,7 @@ impl JSValkeyClient {
 
             if let Some(promise) = js::connection_promise_get_cached(this_value) {
                 js::connection_promise_set_cached(this_value, &global_object, JSValue::ZERO);
-                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
-                // safe deref. Cached slot held a valid JSPromise.
-                let js_promise = JSPromise::opaque_mut(promise.as_promise().unwrap());
+                let js_promise = promise.as_promise().unwrap();
                 if self.flags.connection_promise_returns_client.get() {
                     debug!("Resolving connection promise with client instance");
                     js_promise.resolve(&global_object, this_value)?;
@@ -1182,9 +1179,9 @@ impl JSValkeyClient {
         if !this_jsvalue.is_undefined() {
             if let Some(promise) = js::connection_promise_get_cached(this_jsvalue) {
                 js::connection_promise_set_cached(this_jsvalue, &global_object, JSValue::ZERO);
-                // `JSPromise` is an `opaque_ffi!` ZST — `opaque_mut` is the
-                // safe deref. Cached slot held a valid JSPromise.
-                JSPromise::opaque_mut(promise.as_promise().unwrap())
+                promise
+                    .as_promise()
+                    .unwrap()
                     .reject(&global_object, Ok(error_value))?;
             }
         }
@@ -1313,7 +1310,7 @@ impl JSValkeyClient {
         global_this: &JSGlobalObject,
         _this_value: JSValue,
         command: &Command,
-    ) -> Result<*mut JSPromise, crate::Error> {
+    ) -> Result<JSValue, crate::Error> {
         // Keep `*self` alive across re-entrant connect/close paths below;
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_guard();

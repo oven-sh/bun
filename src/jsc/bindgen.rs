@@ -12,9 +12,9 @@ use bun_ptr::CellExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    ArrayBuffer, CommonString, EnsureStillAlive, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated,
-    ThreadIsolatedArg, WrapperGuard,
+    ArrayBuffer, CommonString, EnsureStillAlive, ErrorCode, JSArray, JSGlobalObject, JSMap,
+    JSObject, JSPromise, JSString, JSValue, JsClass, JsError, JsThread, PinnedArrayBuffer, Strong,
+    ThreadIsolated, ThreadIsolatedArg, WrapperGuard,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -420,7 +420,7 @@ impl<'a> IntoError<'a> for core::convert::Infallible {
 
 // ───────────────────────────── values ─────────────────────────────
 
-/// A [`JSValue`] held by a host call, known to be a `T`. Lists of them go in a [`crate::MarkedArgumentBuffer`].
+/// A [`JSValue`] on the stack, known to be a `T`. Lists of them go in a [`crate::MarkedArgumentBuffer`].
 #[repr(transparent)]
 pub struct JsLocal<'a, T = JSValue>(JSValue, InvariantLifetime<'a>, PhantomData<*const T>);
 impl<T> Clone for JsLocal<'_, T> {
@@ -481,7 +481,7 @@ impl<'a, T> JsLocal<'a, T> {
     /// As [`JSValue::as_class_ref`].
     #[inline]
     pub fn as_class_ref<C: JsClass>(self) -> Option<WrapperGuard<'a, C>> {
-        // The guard copies the value, which the call holds for 'a.
+        // The guard copies the value, so it needs no borrow of `self`.
         let WrapperGuard {
             native, wrapper, ..
         } = C::from_js(&self.0)?;
@@ -551,12 +551,41 @@ impl<'a> JsLocal<'a> {
     }
 }
 
+macro_rules! impl_cell_local {
+    ($($cell:ty),+) => {$(
+        impl $cell {
+            #[inline(always)]
+            pub fn to_js(&self) -> JSValue {
+                // SAFETY: only a live cell is borrowed as `&Self`.
+                unsafe { JSValue::from_cell(self) }
+            }
+
+            /// The cell as a value, for a function that returns it. Like any value, it is no root on the heap.
+            #[inline(always)]
+            pub fn to_local<'a>(&self, _: &'a JSGlobalObject) -> JsLocal<'a, Self> {
+                JsLocal::from_raw(self.to_js())
+            }
+        }
+
+        impl core::ops::Deref for JsLocal<'_, $cell> {
+            type Target = $cell;
+            #[inline(always)]
+            fn deref(&self) -> &$cell {
+                // SAFETY: known to be one.
+                unsafe { self.0.as_cell_unchecked() }
+            }
+        }
+    )+};
+}
+impl_cell_local!(JSMap, JSObject, JSPromise, JSString);
+
 impl<'a> JsLocal<'a, JSString> {
     /// SAFETY: `cell` is a `JSString` that something holds for the call `heap` belongs to.
     #[doc(hidden)]
     #[inline(always)]
     pub unsafe fn from_cell(cell: *mut c_void, _: &JsHeap<'a>) -> Self {
-        Self::from_raw(JSValue::from_cell(cell))
+        // SAFETY: the caller's.
+        Self::from_raw(unsafe { JSValue::from_cell(cell) })
     }
 
     #[inline(always)]
@@ -564,7 +593,7 @@ impl<'a> JsLocal<'a, JSString> {
         // SAFETY: a `JsLocal` is never empty, and this one is a `JSString`, whose value is its address.
         unsafe {
             core::hint::assert_unchecked(self.0.encoded() != 0);
-            JSString::opaque_ref_nn(self.0.encoded() as *const JSString)
+            &*(self.0.encoded() as *const JSString)
         }
     }
 
@@ -1002,7 +1031,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     #[inline]
     unsafe fn wrapper_value(&self) -> JSValue {
         // SAFETY: the payload is at this offset in its cell.
-        JSValue::from_cell(unsafe { core::ptr::from_ref(self).byte_sub(Self::PAYLOAD_OFFSET) })
+        unsafe { JSValue::from_cell(core::ptr::from_ref(self).byte_sub(Self::PAYLOAD_OFFSET)) }
     }
 }
 
@@ -1117,7 +1146,8 @@ impl<'a, T> JsWrapper<'a, T> {
 
     #[inline(always)]
     pub fn to_js(self) -> JSValue {
-        JSValue::from_cell(self.0.as_ptr())
+        // SAFETY: a `JsWrapper` is the address of its cell.
+        unsafe { JSValue::from_cell(self.0.as_ptr()) }
     }
 }
 
@@ -1260,7 +1290,8 @@ impl<T: JsPayload> StrongWrapper<T> {
             return None;
         }
         let cell = payload.wrapping_byte_sub(T::PAYLOAD_OFFSET);
-        let value = EnsureStillAlive(JSValue::from_cell(cell));
+        // SAFETY: the VM is open, so a `StrongWrapper` roots it.
+        let value = EnsureStillAlive(unsafe { JSValue::from_cell(cell) });
         Some(f(BorrowedWrapper(value.0, PhantomData)))
     }
 }
@@ -1327,7 +1358,7 @@ pub mod to_js {
         u32: u32 => |n| JSValue::js_number_from_uint64(u64::from(n));
         u64: u64 => JSValue::js_number_from_uint64;
         usize: usize => |n| JSValue::js_number_from_uint64(n as u64);
-        f64: f64 => |n| JSValue::js_number(JSValue::purify_nan(n));
+        f64: f64 => JSValue::js_number;
     }
 
     #[inline]
@@ -1340,7 +1371,7 @@ pub mod to_js {
 
     #[inline]
     pub fn date<'a>(heap: &JsHeap<'a>, time_value: f64) -> Result<'a, JsLocal<'a>> {
-        let date = JSValue::from_date_number(heap.global_object(), JSValue::purify_nan(time_value));
+        let date = JSValue::from_date_number(heap.global_object(), time_value);
         Ok(JsLocal::from_raw(date))
     }
 

@@ -524,7 +524,7 @@ pub(crate) enum PromiseResult {
 }
 
 impl PromiseResult {
-    fn fulfill(self, global: &JSGlobalObject, promise: &mut JSPromise) -> JsResult<()> {
+    fn fulfill(self, global: &JSGlobalObject, promise: &JSPromise) -> JsResult<()> {
         match self {
             PromiseResult::Resolve(v) => promise.resolve(global, v),
             PromiseResult::Reject(v) => promise.reject_with_async_stack(global, Ok(v)),
@@ -553,7 +553,7 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
     }
     fn then(mut ctx: C, mut promise: JSPromiseStrong, cx: &bun_jsc::JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let promise = promise.swap();
+        let promise = promise.swap(global);
         let result = match ctx.run_from_js(global) {
             Ok(r) => r,
             Err(e) => {
@@ -561,7 +561,7 @@ impl<C: TaskContext> bun_jsc::JobContext for AsyncTask<C> {
                 return promise.reject(global, Err(e));
             }
         };
-        result.fulfill(global, promise)
+        result.fulfill(global, &promise)
     }
 }
 
@@ -967,11 +967,6 @@ impl TaskContext for FilesContext {
         match &mut self.result {
             FilesResult::Success(entries) => {
                 let map = JSMap::create(global);
-                let Some(map_ptr) = JSMap::from_js(map) else {
-                    return Ok(PromiseResult::Reject(
-                        global.create_error_instance(format_args!("Failed to create Map")),
-                    ));
-                };
 
                 for entry in entries.iter_mut() {
                     let data = core::mem::take(&mut entry.data); // Ownership transferred
@@ -982,10 +977,10 @@ impl TaskContext for FilesContext {
 
                     let name_js = blob.name.get().to_js(global)?;
                     let blob_js = blob.into_js(global);
-                    JSMap::opaque_ref(map_ptr.as_ptr()).set(global, name_js, blob_js)?;
+                    map.set(global, name_js, blob_js)?;
                 }
 
-                Ok(PromiseResult::Resolve(map))
+                Ok(PromiseResult::Resolve(map.to_js()))
             }
             FilesResult::ArchiveErr(err) => Ok(PromiseResult::Reject(
                 global.create_error_instance(format_args!("{err}")),

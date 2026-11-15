@@ -343,7 +343,7 @@ impl JobContext for WalkTask {
 
     fn then(this: Self, mut js: WalkJs, cx: &JsThread<'_>) -> JsResult<()> {
         let global = cx.global();
-        let promise = js.promise.swap();
+        let promise = js.promise.swap(global);
         if let Some(err) = &this.err {
             promise.reject_with_async_stack(global, err.to_js(global))?;
             return Ok(());

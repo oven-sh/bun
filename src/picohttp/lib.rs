@@ -454,18 +454,12 @@ impl<'a> Response<'a> {
         }
     }
 
-    pub fn parse_parts(
-        buf: &'a [u8],
-        src: &'a mut [Header],
-        offset: Option<&mut usize>,
-    ) -> Result<Response<'a>, ParseResponseError> {
+    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
         let mut minor_version: c_int = 1;
         let mut status_code: c_int = 0;
         let mut status_ptr: *const u8 = b"".as_ptr();
         let mut status_len: usize = 0;
         let mut num_headers: usize = src.len();
-
-        let offset = offset.unwrap();
 
         // SAFETY: src is layout-compatible with phr_header (asserted above);
         // out-params are valid for write.
@@ -479,7 +473,7 @@ impl<'a> Response<'a> {
                 &raw mut status_len,
                 src.as_mut_ptr().cast::<c::phr_header>(),
                 &raw mut num_headers,
-                *offset,
+                0,
             )
         };
 
@@ -488,10 +482,7 @@ impl<'a> Response<'a> {
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)
             }
-            -2 => {
-                *offset += buf.len();
-                Err(ParseResponseError::ShortRead)
-            }
+            -2 => Err(ParseResponseError::ShortRead),
             _ => {
                 // RFC 9112 section 5.2: picohttpparser surfaces an obs-fold
                 // continuation line as a separate entry with an empty name.
@@ -520,12 +511,6 @@ impl<'a> Response<'a> {
                 })
             }
         }
-    }
-
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
-        let mut offset: usize = 0;
-        let response = Self::parse_parts(buf, src, Some(&mut offset))?;
-        Ok(response)
     }
 }
 

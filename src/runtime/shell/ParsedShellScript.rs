@@ -1,7 +1,7 @@
 use core::cell::Cell;
 use core::sync::atomic::Ordering;
 
-use bun_core::String as BunString;
+use bun_core::{EncodedUnits, String as BunString};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{
     JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsClass as _,
@@ -137,8 +137,7 @@ fn throw_if_nul(global: &JSGlobalObject, name: &str, bytes: &[u8]) -> JsResult<(
 fn env_bytes(global: &JSGlobalObject, name: &str, str: &BunString) -> JsResult<Box<[u8]>> {
     // Fast path, because this runs for every variable of every command. The scan stops at
     // any byte below 0x20 or above 0x7F, so `None` proves the bytes are ASCII without a NUL.
-    if !str.is_utf16() {
-        let bytes = str.latin1();
+    if let EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) = str.encoded_units() {
         if bun_core::strings::index_of_newline_or_non_ascii(bytes, 0).is_none() {
             return Ok(Box::from(bytes));
         }

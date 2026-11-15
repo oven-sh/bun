@@ -1,3 +1,4 @@
+#![feature(core_io_borrowed_buf)]
 #![allow(non_snake_case)]
 #![warn(unused_must_use)]
 pub mod error;

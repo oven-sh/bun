@@ -7,7 +7,7 @@ use core::num::NonZeroU8;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use crate::vec::{BorrowedBuf, BorrowedCursor};
+use crate::vec::{BorrowedBuf, BorrowedCursor, append_mapped};
 use bun_alloc::AllocError;
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
@@ -326,14 +326,6 @@ impl AsciiStatus {
             Some(false) => AsciiStatus::NonAscii,
         }
     }
-}
-
-/// Returned by classification functions that do not discriminate between utf8 and ascii.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum EncodingNonAscii {
-    Utf8,
-    Utf16,
-    Latin1,
 }
 
 #[inline]
@@ -1459,26 +1451,18 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     Ok(dest_len - remain.len())
 }
 
-pub fn encode_bytes_to_hex(destination: &mut [u8], source: &[u8]) -> usize {
-    debug_assert!(!destination.is_empty());
+/// Panics if `destination` is shorter than `2 * source.len()`.
+pub fn encode_bytes_to_hex(destination: BorrowedCursor<'_, u8>, source: &[u8]) {
     debug_assert!(!source.is_empty());
-    let to_write = if destination.len() < source.len() * 2 {
-        destination.len() - destination.len() % 2
-    } else {
-        source.len() * 2
-    };
-
-    let to_read = to_write / 2;
 
     // Runtime-dispatched SIMD kernel for bulk encodes (Buffer.toString("hex"));
     // the scalar LUT loop wins below this size because of the dispatch overhead.
     const HIGHWAY_MIN_LEN: usize = 64;
-    if to_read >= HIGHWAY_MIN_LEN {
-        highway::encode_hex_lower(&source[..to_read], &mut destination[..to_write]);
-        return to_write;
+    if source.len() >= HIGHWAY_MIN_LEN {
+        return highway::encode_hex_lower(source, destination);
     }
 
-    crate::fmt::bytes_to_hex_lower(&source[..to_read], &mut destination[..to_write])
+    append_mapped(destination, source, crate::fmt::hex_byte_lower);
 }
 
 /// Leave a single leading char

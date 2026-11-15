@@ -28,7 +28,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVec;
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, Loc, Log, Source, StoreRef};
+use bun_ast::{E, Expr, LinePosition, Loc, Location, Log, Source, StoreRef};
 use bun_collections::HashMap;
 use bun_core::{StackCheck, strings};
 use bun_simdutf_sys::simdutf;
@@ -176,6 +176,8 @@ pub trait Unit: Copy + Eq + Ord + core::hash::Hash + Default + 'static {
     fn bytes(units: &[Self]) -> &[u8];
     /// Bytes (a transcoded document) as the unit type, which is `u8` wherever this is reached.
     fn from_bytes(bytes: &[u8]) -> &[Self];
+    /// The units as UTF-16 code units, which is `u16` wherever this is reached.
+    fn utf16(units: &[Self]) -> &[u16];
     /// The highway structural-index kernel for this width.
     fn structural_index_chunk(
         chunk: &[Self],
@@ -217,6 +219,9 @@ impl Unit for u8 {
     #[inline(always)]
     fn from_bytes(bytes: &[u8]) -> &[Self] {
         bytes
+    }
+    fn utf16(_: &[Self]) -> &[u16] {
+        unreachable!("Unit::utf16 on u8")
     }
     fn structural_index_chunk(
         chunk: &[Self],
@@ -277,6 +282,9 @@ impl Unit for u16 {
     #[inline(always)]
     fn from_bytes(_: &[u8]) -> &[Self] {
         unreachable!("Unit::from_bytes on u16")
+    }
+    fn utf16(units: &[Self]) -> &[u16] {
+        units
     }
     fn structural_index_chunk(
         chunk: &[Self],
@@ -756,6 +764,31 @@ struct Frame<'a, U: Unit> {
     report_pos: usize,
 }
 
+/// What the document buffer (`src` of frame 0) is to the caller's bytes:
+/// the same, or UTF-8 the parser transcoded them to. A diagnostic's `offset`
+/// is mapped back to the caller's bytes; the sink's row `Loc`s are not.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Origin {
+    Input,
+    /// From UTF-16 bytes whose units start `payload_start` bytes in.
+    Utf16 {
+        payload_start: usize,
+    },
+    /// From ISO-8859-1 bytes, one per character.
+    Latin1,
+}
+
+/// The [`Location`] of a diagnostic at `unit` of a UTF-16 document.
+#[cold]
+#[inline(never)]
+fn locate_utf16(source: &Source, units: &[u16], unit: usize, offset: usize) -> Location {
+    let at = LinePosition::utf16(units, unit);
+    let line = strings::to_utf8_alloc(&units[at.line_start..at.line_end]);
+    let in_line =
+        simdutf::length::utf8::from::utf16::le_with_replacement(&units[at.line_start..at.index]);
+    at.to_location(source, &line, in_line, offset)
+}
+
 // ── scanner ─────────────────────────────────────────────────────────────────
 
 /// Owns the byte cursor, the input-frame stack and the entity tables; the
@@ -786,9 +819,7 @@ struct Scanner<'a, 'log, U: Unit> {
     /// undeclared) was seen: later declarations may depend on it.
     saw_unread_pe: bool,
 
-    /// Positions cannot be mapped back to `source` once the input has been
-    /// transcoded, so diagnostics carry no location in that case.
-    transcoded: bool,
+    origin: Origin,
     saw_utf8_bom: bool,
     needs_utf16_declaration: bool,
     /// Where the document proper starts (after a byte-order mark): the only
@@ -883,8 +914,9 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
 
     // ── error helpers ──────────────────────────────────────────────────────
 
+    /// A row's position for the sink, a byte offset into `source.contents`.
     fn loc(&self, pos: usize) -> Loc {
-        if self.transcoded {
+        if self.origin != Origin::Input {
             Loc::EMPTY
         } else {
             Loc {
@@ -898,17 +930,64 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     }
 
     fn err_fmt(&mut self, pos: usize, args: core::fmt::Arguments<'_>) -> PErr {
-        let loc = self.loc(pos);
-        self.log.add_error_fmt_opts(
-            args,
-            ast::AddErrorOptions {
-                source: Some(self.source),
-                loc,
-                len: 0,
-                redact_sensitive_information: false,
-            },
-        );
+        self.report_error(pos, args);
         PErr::Syntax
+    }
+
+    /// `src` of frame 0, which every reported `pos` indexes (see `here`).
+    fn document(&self) -> &'a [U] {
+        match self.suspended.first() {
+            Some(frame) => frame.src,
+            None => self.src,
+        }
+    }
+
+    /// Logs the error with its location, in the caller's units.
+    #[cold]
+    #[inline(never)]
+    fn report_error(&mut self, pos: usize, args: core::fmt::Arguments<'_>) {
+        let doc = self.document();
+        let pos = pos.min(doc.len());
+        // A byte-order mark is not in any column; `offset` still counts it.
+        let bom = self.content_start.min(pos);
+        let doc = &doc[bom..];
+        let rel = pos - bom;
+        let location = if U::WIDE {
+            locate_utf16(self.source, U::utf16(doc), rel, pos)
+        } else {
+            let bytes = U::bytes(doc);
+            if self.latin1 {
+                let at = LinePosition::latin1(bytes, rel);
+                let line = &bytes[at.line_start..at.line_end];
+                let in_line = at.index - at.line_start;
+                match strings::to_utf8_from_latin1(line) {
+                    Some(utf8) => {
+                        let in_line = simdutf::length::utf8::from::latin1(&line[..in_line]);
+                        at.to_location(self.source, &utf8, in_line, pos)
+                    }
+                    None => at.to_location(self.source, line, in_line, pos),
+                }
+            } else {
+                let at = LinePosition::utf8(bytes, rel);
+                let line = &bytes[at.line_start..at.line_end];
+                let mut boundary = rel;
+                while boundary > 0
+                    && boundary < bytes.len()
+                    && !strings::is_utf8_char_boundary(bytes[boundary])
+                {
+                    boundary -= 1;
+                }
+                let offset = match self.origin {
+                    Origin::Input => pos,
+                    Origin::Utf16 { payload_start } => {
+                        payload_start + 2 * simdutf::length::utf16::from::utf8(&bytes[..boundary])
+                    }
+                    Origin::Latin1 => simdutf::length::utf16::from::utf8(&bytes[..boundary]),
+                };
+                at.to_location(self.source, line, at.index - at.line_start, offset)
+            }
+        };
+        self.log.add_error_with_location(location, args);
     }
 
     /// `{before} '{name}'{after}`.
@@ -1254,7 +1333,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         // Latin-1, is valid UTF-8 by construction; only raw bytes need it.
         if U::WIDE
             || matches!(self.encoding, InputEncoding::Text | InputEncoding::Latin1)
-            || self.transcoded
+            || self.origin != Origin::Input
         {
             return Ok(());
         }
@@ -1267,10 +1346,8 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     }
 
     fn transcode_utf16(&mut self, payload: &[u8], big_endian: bool) -> PResult<()> {
+        let payload_start = self.src.len() - payload.len();
         let (pairs, rest) = payload.as_chunks::<2>();
-        if !rest.is_empty() {
-            return Err(self.err(payload.len(), "UTF-16 input has an odd number of bytes"));
-        }
         let units: Vec<u16> = pairs
             .iter()
             .map(|&p| {
@@ -1281,6 +1358,14 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                 }
             })
             .collect();
+        if !rest.is_empty() {
+            return Err(self.err_in_utf16(
+                &units,
+                units.len(),
+                payload_start,
+                "UTF-16 input has an odd number of bytes",
+            ));
+        }
         let len = simdutf::length::utf8::from::utf16::le(&units);
         let slot = self.bump.alloc_uninit_slice::<u8>(len);
         // SAFETY: simdutf only writes into `utf8`; only the `result.count` bytes it wrote are read.
@@ -1288,12 +1373,27 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) };
         let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, utf8);
         if !result.is_successful() {
-            return Err(self.err(result.count * 2, "Invalid UTF-16"));
+            return Err(self.err_in_utf16(&units, result.count, payload_start, "Invalid UTF-16"));
         }
         self.src = U::from_bytes(&utf8[..result.count]);
         self.pos = 0;
-        self.transcoded = true;
+        self.origin = Origin::Utf16 { payload_start };
         Ok(())
+    }
+
+    /// An error in UTF-16 bytes before they are transcoded, at `unit`.
+    #[cold]
+    fn err_in_utf16(
+        &mut self,
+        units: &[u16],
+        unit: usize,
+        payload_start: usize,
+        msg: &'static str,
+    ) -> PErr {
+        let location = locate_utf16(self.source, units, unit, payload_start + 2 * unit);
+        self.log
+            .add_error_with_location(location, format_args!("{}", msg));
+        PErr::Syntax
     }
 
     /// UTF-16 without a byte-order mark is only legal with an encoding
@@ -1317,7 +1417,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
         }
         let is = |canonical: &str| eq_ascii_ignore_case(name, canonical.as_bytes());
         if is("UTF-8") || is("UTF8") || is("US-ASCII") || is("ASCII") {
-            if self.transcoded {
+            if self.origin != Origin::Input {
                 return Err(self.err_named(
                     pos,
                     "Document is UTF-16 but declares encoding",
@@ -1327,7 +1427,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             }
             Ok(())
         } else if is("UTF-16") || is("UTF-16LE") || is("UTF-16BE") {
-            if !self.transcoded && self.encoding == InputEncoding::Bytes {
+            if self.origin == Origin::Input && self.encoding == InputEncoding::Bytes {
                 return Err(self.err_named(
                     pos,
                     "Document is not UTF-16 but declares encoding",
@@ -1338,7 +1438,7 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             self.needs_utf16_declaration = false;
             Ok(())
         } else if is("ISO-8859-1") || is("ISO_8859-1") || is("LATIN1") || is("L1") || is("CP819") {
-            if self.transcoded {
+            if self.origin != Origin::Input {
                 return Err(self.err_named(
                     pos,
                     "Document is UTF-16 but declares encoding",
@@ -1354,11 +1454,11 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     "",
                 ));
             }
-            if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(&self.src[self.pos..])) {
+            // The whole buffer, so offsets before the cursor do not move.
+            debug_assert!(strings::is_all_ascii(U::bytes(&self.src[..self.pos])));
+            if let Some(utf8) = strings::to_utf8_from_latin1(U::bytes(self.src)) {
                 self.src = U::from_bytes(self.bump.alloc_slice_copy(&utf8));
-                self.pos = 0;
-                self.content_start = usize::MAX;
-                self.transcoded = true;
+                self.origin = Origin::Latin1;
             }
             Ok(())
         } else {
@@ -3171,8 +3271,7 @@ impl<'a, 'log, U: Unit, S: Sink<'a, U>> Parser<'a, 'log, U, S> {
                 has_external_subset: false,
                 saw_pe_reference: false,
                 saw_unread_pe: false,
-                // UTF-16 unit offsets are not byte offsets into `source`.
-                transcoded: U::WIDE,
+                origin: Origin::Input,
                 saw_utf8_bom: false,
                 needs_utf16_declaration: false,
                 content_start: 0,

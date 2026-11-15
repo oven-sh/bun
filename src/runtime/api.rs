@@ -192,6 +192,35 @@ fn with_text_format_source<R>(
     f(arena, &mut log, &source)
 }
 
+/// The `position` of a parse `SyntaxError`: `{ line, column, offset, lineText }`
+/// from a [`bun_ast::Location`] with UTF-8 `line_text`, or `None` for the `line: -1` sentinel.
+fn location_to_js(
+    global: &bun_jsc::JSGlobalObject,
+    location: &bun_ast::Location,
+) -> bun_jsc::JsResult<Option<bun_jsc::JSValue>> {
+    if location.line <= 0 {
+        return Ok(None);
+    }
+    let object = bun_jsc::JSValue::create_empty_object(global, 4);
+    object.put(global, b"line", bun_jsc::JSValue::from(location.line));
+    object.put(global, b"column", bun_jsc::JSValue::from(location.column));
+    object.put(global, b"offset", bun_jsc::JSValue::from(location.offset));
+    object.put(
+        global,
+        b"lineText",
+        bun_jsc::bun_string_jsc::create_utf8_for_js(
+            global,
+            location.line_text.as_deref().unwrap_or(b""),
+        )?,
+    );
+    Ok(Some(object))
+}
+
+/// The index in a JS string of the byte `offset` of its UTF-8 form.
+fn js_string_index(utf8: &[u8], offset: usize) -> usize {
+    bun_core::strings::element_length_utf8_into_utf16(&utf8[..offset.min(utf8.len())])
+}
+
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────
 
 /// `Expr` → `JSValue` for the text-format parsers (TOML, JSON5), through the

@@ -92,6 +92,12 @@ function expectRejects(input: string | Buffer, message?: string): void {
   }
   expect(err).toBeInstanceOf(SyntaxError);
   if (message !== undefined) expect((err as SyntaxError).message).toBe(message);
+  // Every rejection says where, in the document.
+  const { position } = err as SyntaxError & { position: Bun.ParseErrorPosition };
+  expect(position.line).toBeGreaterThanOrEqual(1);
+  expect(position.column).toBeGreaterThanOrEqual(1);
+  expect(position.offset).toBeWithin(0, input.length + 1);
+  expect(typeof position.lineText).toBe("string");
   expect(() => tree(input)).toThrow(SyntaxError);
 }
 

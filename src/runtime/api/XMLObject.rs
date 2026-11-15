@@ -64,7 +64,7 @@ pub(crate) fn parse<'a>(
         }
     };
     // SAFETY: parsing runs no JavaScript. Nor does making the result: its keys are primitives, and its properties are
-    // defined and not set. What throws returns without reading `input` again.
+    // defined and not set. What throws reads `input` (held for the whole call) only before `throw_value`.
     let global = unsafe { cx.heap.global() };
 
     super::with_text_format_source(global, bytes, b"input.xml", |arena, log, source| {
@@ -76,12 +76,14 @@ pub(crate) fn parse<'a>(
         };
         let utf8;
         let utf8_source;
+        let mut reparsed: Option<&[u8]> = None;
         if matches!(result, Err(bun_parsers::Error::NeedsWiderEncoding)) {
             // A character reference the Latin-1 result cannot hold: once
             // more, over the same text as UTF-8.
             utf8 = strings::allocate_latin1_into_utf8(&source.contents)
                 .map_err(|_| JsError::OutOfMemory)?;
             utf8_source = bun_ast::Source::init_path_string(b"input.xml", &utf8[..]);
+            reparsed = Some(&utf8[..]);
             *log = bun_ast::Log::init();
             let options = xml::Options {
                 compact,
@@ -89,27 +91,37 @@ pub(crate) fn parse<'a>(
             };
             result = XML::parse(&utf8_source, log, arena, options);
         }
-        let root = match result {
-            Ok(root) => root,
-            Err(bun_parsers::Error::StackOverflow) => {
-                return Err(global.throw_stack_overflow());
-            }
-            Err(bun_parsers::Error::Alloc(_)) => {
-                return Err(JsError::OutOfMemory);
-            }
-            Err(_) => {
-                if let Some(first_msg) = log.msgs.first() {
+        let root =
+            match result {
+                Ok(root) => root,
+                Err(bun_parsers::Error::StackOverflow) => {
+                    return Err(global.throw_stack_overflow());
+                }
+                Err(bun_parsers::Error::Alloc(_)) => {
+                    return Err(JsError::OutOfMemory);
+                }
+                Err(_) => {
+                    if let Some(first_msg) = log.msgs.first_mut() {
+                        let error = global.create_syntax_error_instance(format_args!(
+                            "XML Parse error: {}",
+                            bstr::BStr::new(&first_msg.data.text),
+                        ));
+                        if let Some(location) = &mut first_msg.data.location {
+                            if let Some(utf8) = reparsed {
+                                // The re-parse read a UTF-8 copy of the string.
+                                location.offset = super::js_string_index(utf8, location.offset);
+                            }
+                            if let Some(position) = super::location_to_js(global, location)? {
+                                error.put(global, b"position", position);
+                            }
+                        }
+                        return Err(global.throw_value(error));
+                    }
                     return Err(global.throw_value(global.create_syntax_error_instance(
-                        format_args!("XML Parse error: {}", bstr::BStr::new(&first_msg.data.text),),
+                        format_args!("XML Parse error: Unable to parse XML"),
                     )));
                 }
-                return Err(
-                    global.throw_value(global.create_syntax_error_instance(format_args!(
-                        "XML Parse error: Unable to parse XML"
-                    ))),
-                );
-            }
-        };
+            };
 
         root.to_js(global)
             .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))

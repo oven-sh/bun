@@ -716,10 +716,9 @@ impl Listener {
         let server_name_z = bun_core::ZBox::from_bytes(server_name_bytes);
         let server_name = server_name_z.as_zstr().as_cstr();
 
-        let ListenerType::Uws(ls) = this.listener.get() else {
+        if !matches!(this.listener.get(), ListenerType::Uws(_)) {
             return Ok(());
-        };
-        let ls = ls.as_ptr();
+        }
 
         // Both real callers (node:tls addContext, node:net) pass a native
         // SecureContext; enforcement policy stays server-level, like Node's.
@@ -755,9 +754,12 @@ impl Listener {
 
         uws_sys::socket_context::enable_alpn_select(&sni_ctx);
 
-        // The C SNI tree SSL_CTX_up_ref()s; ours drops here.
-        // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        bun_opaque::opaque_deref_mut(ls).add_server_name(server_name, sni_ctx.as_ptr());
+        // A getter of `tls` may have stopped it. The C SNI tree SSL_CTX_up_ref()s; ours drops here.
+        if let ListenerType::Uws(ls) = this.listener.get() {
+            // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+            bun_opaque::opaque_deref_mut(ls.as_ptr())
+                .add_server_name(server_name, sni_ctx.as_ptr());
+        }
 
         Ok(())
     }

@@ -374,7 +374,7 @@ impl DevServer {
         let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
         // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
         // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
-        // server one on this thread (`watch_directory`, `finalize_bundle`).
+        // server one on this thread (`finalize_bundle`).
         let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
             use bun_ptr::detach_lifetime_mut as detach;
             (

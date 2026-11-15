@@ -23,8 +23,9 @@ pub(crate) struct FdPipe {
     is_queued: Cell<bool>,
     /// In no uSockets group, so the context that opened it closes it through this when it stops.
     abort_handle: bun_jsc::AbortHandle,
+    /// Forced: the kernel keeps a fired poll for as long as the file is open, and `close` leaves stdout open.
     #[cfg(not(windows))]
-    poll: JsCell<Option<bun_io::OwnedFilePoll>>,
+    poll: JsCell<Option<bun_io::OwnedFilePoll<true>>>,
 }
 
 bun_jsc::impl_abort_handle_owner!(FdPipe, abort_handle, |this, _cause| {

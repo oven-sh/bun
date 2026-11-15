@@ -1594,6 +1594,47 @@ describe("Socket fd adoption", () => {
       }
     });
 
+    it("a socket can fill stdout after one that did has closed", async () => {
+      const { rfd, wfd } = openFifo("again.fifo", nonBlocking);
+      try {
+        await using proc = Bun.spawn({
+          // spawn() makes the child's stdout blocking, so a shell puts the pipe there.
+          cmd: [
+            "sh",
+            "-c",
+            'exec "$@" >&3',
+            "sh",
+            bunExe(),
+            "-e",
+            `
+              const net = require("node:net");
+              for (const fill of "ab") {
+                const socket = new net.Socket({ fd: 1, readable: false, writable: true }).on("error", () => {});
+                const err = await new Promise(resolve => socket.write(Buffer.alloc(300_000, fill), resolve));
+                console.error(fill, err?.code);
+                await new Promise(resolve => socket.destroy().on("close", resolve));
+              }
+            `,
+          ],
+          env: bunEnv,
+          stdio: ["ignore", "ignore", "pipe", wfd],
+        });
+        fs.closeSync(wfd);
+        const [received, stderr, exitCode] = await Promise.all([
+          new Response(Bun.file(rfd).stream()).bytes(),
+          proc.stderr.text(),
+          proc.exited,
+        ]);
+        expect({ bytes: received.length, stderr, exitCode }).toEqual({
+          bytes: 600_000,
+          stderr: "a undefined\nb undefined\n",
+          exitCode: 0,
+        });
+      } finally {
+        fs.closeSync(rfd);
+      }
+    });
+
     it("destroy() cancels a write the pipe had no room for", async () => {
       const { rfd, wfd } = openFifo("cancel.fifo", nonBlocking);
       try {

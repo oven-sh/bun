@@ -12,9 +12,9 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     let mut b = StringBuilder::default();
 
     for msg in this.messages.iter() {
-        b.cap += msg.payload().utf8_byte_length() + 1;
+        b.count_len(msg.payload().utf8_byte_length() + 1);
     }
-    let _ = b.allocate();
+    let mut b = b.allocate();
 
     let mut severity: &String = &String::DEAD;
     let mut code: &String = &String::DEAD;

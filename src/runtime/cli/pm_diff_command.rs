@@ -984,7 +984,7 @@ fn registry_get(
     accept: Option<&[u8]>,
     for_error: Option<(&[u8], &[u8])>,
 ) -> Result<MutableString, crate::Error> {
-    let mut headers = http::HeaderBuilder::default();
+    let mut headers = http::HeaderCounter::default();
     if let Some(accept) = accept {
         headers.count(b"Accept", accept);
     }
@@ -994,11 +994,10 @@ fn registry_get(
         .tarball_credentials(scope, &url, normalized)
         .and_then(|credentials| credentials.authorization_parts(&url));
     if let Some((scheme, value)) = authorization {
-        headers.count(b"Authorization", b"");
-        headers.content.cap += scheme.len() + value.len();
+        headers.count_bytes_value(b"Authorization", scheme, value);
         headers.count(b"npm-auth-type", b"legacy");
     }
-    headers.allocate()?;
+    let mut headers = headers.allocate()?;
     if let Some(accept) = accept {
         headers.append(b"Accept", accept);
     }

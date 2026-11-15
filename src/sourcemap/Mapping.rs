@@ -13,35 +13,22 @@ use crate::{LineColumnOffset, Ordinal, ParseFail, ParseResult, ParsedSourceMap};
 
 declare_scope!(SourceMap, visible);
 
-// Typed SoA column accessors — thin wrappers over the reflection-backed
-// `MultiArrayList::items::<"field", T>()` so callers don't repeat the type.
-trait MappingColumns {
-    fn items_generated(&self) -> &[LineColumnOffset];
-    fn items_original(&self) -> &[LineColumnOffset];
-    fn items_source_index(&self) -> &[i32];
-}
-impl MappingColumns for MultiArrayList<MappingWithoutName> {
-    fn items_generated(&self) -> &[LineColumnOffset] {
-        self.items::<"generated", LineColumnOffset>()
-    }
-    fn items_original(&self) -> &[LineColumnOffset] {
-        self.items::<"original", LineColumnOffset>()
-    }
-    fn items_source_index(&self) -> &[i32] {
-        self.items::<"source_index", i32>()
+bun_collections::multi_array_columns! {
+    trait MappingWithoutNameColumns for MappingWithoutName {
+        generated: LineColumnOffset,
+        original: LineColumnOffset,
+        source_index: i32,
     }
 }
-impl MappingColumns for MultiArrayList<Mapping> {
-    fn items_generated(&self) -> &[LineColumnOffset] {
-        self.items::<"generated", LineColumnOffset>()
-    }
-    fn items_original(&self) -> &[LineColumnOffset] {
-        self.items::<"original", LineColumnOffset>()
-    }
-    fn items_source_index(&self) -> &[i32] {
-        self.items::<"source_index", i32>()
+
+bun_collections::multi_array_columns! {
+    trait MappingColumns for Mapping {
+        generated: LineColumnOffset,
+        original: LineColumnOffset,
+        source_index: i32,
     }
 }
+
 #[derive(Clone, Copy)]
 pub struct Mapping {
     pub generated: LineColumnOffset,
@@ -176,10 +163,13 @@ impl List {
 
     pub(crate) fn sort(&mut self) {
         both_lists!(&mut self.r#impl, |list| {
-            list.sort_by_column::<"generated", LineColumnOffset>(|a, b| {
-                (a.lines.zero_based(), a.columns.zero_based())
-                    .cmp(&(b.lines.zero_based(), b.columns.zero_based()))
-            });
+            list.sort_by_column(
+                |list| list.items_generated(),
+                |a, b| {
+                    (a.lines.zero_based(), a.columns.zero_based())
+                        .cmp(&(b.lines.zero_based(), b.columns.zero_based()))
+                },
+            );
         })
     }
 
@@ -216,7 +206,7 @@ impl List {
                 if let Some(i) =
                     Self::find_index_from_generated(list.items_generated(), line, column)
                 {
-                    return Some(*list.get(i));
+                    return Some(list.get(i));
                 }
             }
         }

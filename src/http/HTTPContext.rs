@@ -679,7 +679,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         let oldest = |same_session: bool| -> (Option<*mut PooledSocket<SSL>>, usize) {
             let mut oldest: Option<*mut PooledSocket<SSL>> = None;
             let mut count = 0usize;
-            let mut iter = pool.used.iterator::<true, true>();
+            let mut iter = pool.used().iter_set();
             while let Some(idx) = iter.next() {
                 let ptr = pool.at(u16::try_from(idx).expect("int cast"));
                 if same_session && pooled_socket_mut(ptr).pool_id != options.id {
@@ -702,7 +702,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 Self::close_socket(pooled_socket_mut(evict).http_socket);
             }
         }
-        if pool.used.find_first_unset().is_none() {
+        if pool.used().find_first_unset().is_none() {
             let (Some(oldest), _) = oldest(false) else {
                 return Some(pooled);
             };
@@ -711,17 +711,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
             // (`close_socket`), not the RST `terminate_socket` sends.
             Self::close_socket(pooled_socket_mut(oldest).http_socket);
         }
-        let Some(slot) = pool.claim() else {
-            return Some(pooled);
-        };
         let socket = pooled.http_socket;
+        let slot = match pool.try_get_init(pooled) {
+            Ok(slot) => slot,
+            Err(pooled) => return Some(pooled),
+        };
         Self::set_socket_ext(
             socket,
-            ActiveSocket::<SSL>::init(slot.addr().as_ptr().cast_const()),
+            ActiveSocket::<SSL>::init(slot.as_ptr().cast_const()),
         );
         socket.flush();
         Self::arm_idle_timeout(socket, options.idle_timeout_seconds);
-        slot.write(pooled);
         None
     }
 
@@ -790,7 +790,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             transport,
             pool_id,
         } = *key;
-        let mut iter = pool.used.iterator::<true, true>();
+        let mut iter = pool.used().iter_set();
 
         while let Some(pending_socket_index) = iter.next() {
             let socket_ptr = pool.at(u16::try_from(pending_socket_index).expect("int cast"));
@@ -1178,7 +1178,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             pool: &HiveArray<PooledSocket<SSL>, N>,
             pool_id: u64,
         ) {
-            let mut iter = pool.used.iterator::<true, true>();
+            let mut iter = pool.used().iter_set();
             while let Some(idx) = iter.next() {
                 let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
                 if pooled.pool_id == pool_id {
@@ -1207,7 +1207,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     }
 
     fn drain_pool<const N: usize>(pool: &HiveArray<PooledSocket<SSL>, N>) {
-        let mut iter = pool.used.iterator::<true, true>();
+        let mut iter = pool.used().iter_set();
         while let Some(idx) = iter.next() {
             let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
             // Not shutdown(): its close callback would deref the freed HTTPClient in the ext slot.

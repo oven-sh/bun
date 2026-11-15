@@ -96,7 +96,7 @@ pub(crate) fn download_pinned_packages(
         if only.is_some_and(|only| only != pkg_id) {
             continue;
         }
-        let pkg = *manager.lockfile.packages.get(i);
+        let pkg = manager.lockfile.packages.get(i);
         let resolution = pkg.resolution;
         let behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 

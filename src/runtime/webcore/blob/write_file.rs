@@ -1,7 +1,5 @@
-use core::ffi::c_void;
 #[cfg(not(windows))]
 use core::ops::Range;
-use core::ptr::NonNull;
 #[cfg(not(windows))]
 use core::sync::atomic::{AtomicU8, Ordering};
 
@@ -17,12 +15,11 @@ use bun_sys::{self as sys, Fd};
 #[cfg(not(windows))]
 use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
-use crate::webcore::blob::{self, Blob, SizeType, Store};
 #[cfg(not(windows))]
 use crate::webcore::blob::{
     ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, mkdir_if_not_exists,
 };
-use crate::webcore::body;
+use crate::webcore::blob::{SizeType, Store};
 
 bun_output::declare_scope!(WriteFile, hidden);
 
@@ -495,6 +492,7 @@ pub(crate) use self::windows_impl::WriteFileWindows;
 mod windows_impl {
     use super::*;
     use crate::dispatch::fold;
+    use crate::webcore::blob::Blob;
     use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
@@ -801,99 +799,5 @@ fn settle(
 pub(super) fn note_written(file_store: &Store) {
     if let Some(path) = file_store.data.as_file().path() {
         crate::node::fs::note_opened_for_write(path, true);
-    }
-}
-
-pub(crate) struct WriteFileWaitFromLockedValueTask {
-    pub(crate) file_blob: Blob,
-    /// The context of the script that asked for the write.
-    pub(crate) context: bun_jsc::ContextId,
-    /// JSC_BORROW: process-lifetime global; `BackRef` so the deref is safe and
-    /// (being `Copy`) detaches from `&self` for use across `&mut self` and
-    /// past `heap::take(this)`.
-    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
-    pub(crate) promise: jsc::JSPromiseStrong,
-    pub(crate) mkdirp_if_not_exists: bool,
-}
-
-impl WriteFileWaitFromLockedValueTask {
-    pub(crate) fn then_wrap(this: NonNull<c_void>, value: &mut body::Value) {
-        // SAFETY: `this` is the Box-allocated task registered as `locked.task` below;
-        // ownership is reclaimed here (the `Locked` arm re-leaks it).
-        let this = unsafe {
-            bun_core::heap::take(this.cast::<WriteFileWaitFromLockedValueTask>().as_ptr())
-        };
-        let _ = Self::then(this, value);
-        // TODO: properly propagate exception upwards
-    }
-
-    pub(crate) fn then(
-        mut this: Box<WriteFileWaitFromLockedValueTask>,
-        value: &mut body::Value,
-    ) -> jsc::JsResult<()> {
-        let global_ref = this.global_this;
-        let global_this = global_ref.get();
-        let context = global_this.bun_vm().context_of(this.context);
-        match value {
-            body::Value::Error(err_ref) => {
-                let err = err_ref.to_js(global_this);
-                let _ = value.use_();
-                this.promise
-                    .get()
-                    .reject_with_async_stack(global_this, Ok(err))?;
-            }
-            body::Value::Used => {
-                let _ = value.use_();
-                this.promise.get().reject(
-                    global_this,
-                    Ok(global_this.create_error_instance(format_args!(
-                        "Body was used after it was consumed"
-                    ))),
-                )?;
-            }
-            body::Value::WTFStringImpl(_)
-            | body::Value::InternalBlob(_)
-            | body::Value::Null
-            | body::Value::Empty
-            | body::Value::Blob(_) => {
-                let mut blob = value.use_();
-                // TODO: this should be one promise not two!
-                let new_promise = match blob::write_file_with_source_destination(
-                    &global_this.js_thread(context),
-                    &mut blob,
-                    &mut this.file_blob,
-                    &blob::WriteFileOptions {
-                        mkdirp_if_not_exists: Some(this.mkdirp_if_not_exists),
-                        ..Default::default()
-                    },
-                ) {
-                    Ok(p) => p,
-                    Err(err) => {
-                        this.promise.get().reject(global_this, Err(err))?;
-                        return Ok(());
-                    }
-                };
-
-                if let Some(p) = new_promise.as_any_promise() {
-                    let promise = this.promise.get();
-                    match p.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
-                        // Fulfill the new promise using the pending promise
-                        jsc::PromiseResult::Pending => promise.resolve(global_this, new_promise)?,
-                        jsc::PromiseResult::Rejected(err) => {
-                            promise.reject(global_this, Ok(err))?
-                        }
-                        jsc::PromiseResult::Fulfilled(result) => {
-                            promise.resolve(global_this, result)?
-                        }
-                    }
-                }
-            }
-            body::Value::Locked(locked) => {
-                // Re-registering for a future callback — `this` stays alive.
-                locked.on_receive_value = Some(Self::then_wrap);
-                locked.task = Some(bun_core::heap::into_raw_nn(this).cast::<c_void>());
-            }
-        }
-        Ok(())
     }
 }

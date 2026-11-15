@@ -86,9 +86,9 @@ pub(crate) struct RuntimeState {
     pub(crate) transpiler_arena: Box<bun_ast::AstArena>,
     /// Taken by `with_text_format_source` while it runs.
     pub(crate) text_format_arena: Cell<bun_ast::AstArena>,
-    /// `vm.body_value_pool` — pooled storage for `Body.Value`
+    /// `vm.body_value_pool` — pooled storage for `Body`
     /// (`Request.body` payloads).
-    /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
+    /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     /// `ManuallyDrop` inside the `Box`: `deinit_runtime_state` runs after
     /// `event_loop.deinit()`, so `HiveArray::Drop` on a leaked body would run

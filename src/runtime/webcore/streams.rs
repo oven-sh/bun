@@ -22,7 +22,7 @@ use crate::generated_bindgen::sink::{
 };
 use crate::webcore::blob::Any as AnyBlob;
 use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
-use crate::webcore::{AutoFlusher, ByteListPool};
+use crate::webcore::{AutoFlusher, ByteListPool, DrainResult, ReadableStream};
 
 // scope statics renamed with `Log` suffix so they don't collide with
 // the `HTTPServerWritable` / `NetworkSink` *types* defined below
@@ -868,6 +868,75 @@ impl SourceHandle {
             | SourceHandle::FileReader(_)
             | SourceHandle::Subprocess(_)
             | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
+    /// `.text()` or one of its friends waits for the whole of a pending body, which this call can settle.
+    pub(crate) fn start_buffering(self) {
+        match self {
+            SourceHandle::FetchResponseBody(p) => {
+                removable_body_behind_value!(Fetch, { p.on_start_buffering() })
+            }
+            SourceHandle::ServerRequestBody(any) => {
+                removable_body_behind_value!(Serve, { any.on_start_buffering() })
+            }
+            SourceHandle::HTMLRewriter(p) => {
+                removable_body_behind_value!(HtmlRewriter, { p.on_start_buffering() })
+            }
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
+    /// A pending body is about to become a stream, which starts with the result.
+    pub(crate) fn start_streaming(self) -> DrainResult {
+        match self {
+            SourceHandle::FetchResponseBody(p) => removable_body_behind_value!(Fetch, {
+                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_start_streaming(p)
+            }),
+            SourceHandle::ServerRequestBody(any) => {
+                removable_body_behind_value!(Serve, { any.on_start_streaming_request_body() })
+            }
+            SourceHandle::HTMLRewriter(p) => {
+                removable_body_behind_value!(HtmlRewriter, { p.on_start_streaming() })
+            }
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::TestingCancelOnDrain(_) => DrainResult::EstimatedSize(0),
+        }
+    }
+
+    pub(crate) fn readable_stream_available(
+        self,
+        global: &JSGlobalObject,
+        readable: ReadableStream,
+    ) {
+        match self {
+            SourceHandle::FetchResponseBody(p) => {
+                removable_body_behind_value!(Fetch, { p.on_readable_stream_available(readable) })
+            }
+            SourceHandle::ServerRequestBody(any) => removable_body_behind_value!(Serve, {
+                any.on_request_body_readable_stream_available(global, readable)
+            }),
+            SourceHandle::HTMLRewriter(p) => removable_body_behind_value!(HtmlRewriter, {
+                p.on_readable_stream_available(global, readable)
+            }),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::S3DownloadBody(_)
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }

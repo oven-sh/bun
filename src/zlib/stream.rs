@@ -46,7 +46,7 @@ impl ZStream {
         Self { ptr }
     }
 
-    /// `next_in` and `next_out` dangle outside `with_buffers`: only for calls that read neither.
+    /// `next_in` and `next_out` dangle outside `with_buffers`: only for calls that dereference neither.
     #[inline]
     pub(crate) fn as_ptr(&self) -> z_streamp {
         self.ptr.as_ptr()

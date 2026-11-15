@@ -19,7 +19,6 @@
 use core::ffi::{c_int, c_void};
 
 use bun_core::EncodedSlice;
-use bun_core::ffi::slice;
 use bun_core::vec::{BorrowedCursor, append_with};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::{
@@ -67,24 +66,21 @@ impl Format {
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// One codec call: grows `out` by up to [`CHUNK`], clamped to `cap`. Also returns whether `step` left room.
+/// One codec call: reserves up to [`CHUNK`] in `out`, and lends `step` the spare capacity up to `cap`.
 fn append_step<R>(
     out: &mut Vec<u8>,
     cap: usize,
     step: impl FnOnce(BorrowedCursor<'_, u8>) -> R,
-) -> Result<(R, bool), CodecError> {
+) -> Result<R, CodecError> {
     debug_assert!(out.len() < cap);
     let budget = cap - out.len();
     out.try_reserve(budget.min(CHUNK))
         .map_err(|_| CodecError::OutOfMemory)?;
-    Ok(append_with(out, budget, |mut spare| {
-        let result = step(spare.reborrow());
-        (result, spare.capacity() != 0)
-    }))
+    Ok(append_with(out, budget, step))
 }
 
 fn zstd_error(code: bun_zstd::ErrorCode, message: &'static str) -> CodecError {
-    if code.0 == zstd::ZSTD_error_memory_allocation {
+    if code.is_alloc_failure() {
         CodecError::OutOfMemory
     } else {
         CodecError::Message(message)
@@ -421,12 +417,13 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let ((consumed, ok), has_room) =
+                    let (consumed, ok) =
                         append_step(out, cap, |spare| p.step((remaining, spare), op))?;
                     remaining = &remaining[consumed..];
                     if !ok {
                         return Err(CodecError::Message("brotli encode failed"));
                     }
+                    let has_room = out.len() < cap.min(out.capacity());
                     if remaining.is_empty() && has_room {
                         return Ok(Progress::Done);
                     }
@@ -447,7 +444,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let ((consumed, result), _) =
+                    let (consumed, result) =
                         append_step(out, cap, |spare| p.step((remaining, spare)))?;
                     remaining = &remaining[consumed..];
                     match result {
@@ -491,7 +488,7 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let ((consumed, hint), _) =
+                    let (consumed, hint) =
                         append_step(out, cap, |spare| p.step((remaining, spare), end))?;
                     remaining = &remaining[consumed..];
                     let hint = hint.map_err(|code| zstd_error(code, "zstd encode failed"))?;
@@ -529,13 +526,14 @@ impl CompressionStreamCoder {
                             consumed: input.len() - remaining.len(),
                         });
                     }
-                    let ((consumed, hint), has_room) =
+                    let (consumed, hint) =
                         append_step(out, cap, |spare| p.step((remaining, spare)))?;
                     remaining = &remaining[consumed..];
                     if hint.map_err(|code| zstd_error(code, "zstd decode failed"))? == 0 {
                         self.ended = true;
                         continue;
                     }
+                    let has_room = out.len() < cap.min(out.capacity());
                     if remaining.is_empty() && has_room {
                         if finish {
                             return Err(CodecError::Message("unexpected end of file"));
@@ -615,7 +613,8 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
 ///
-/// SAFETY: `this` is the coder that the calling cell owns. `input` is null, or valid for `input_len` bytes.
+/// # Safety
+/// `this` is the coder that the calling cell owns. `input` is null, or valid for `input_len` bytes.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn CompressionStreamCoder__transform(
@@ -632,8 +631,9 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transform(
     );
     let rare = global.bun_vm().rare_data();
     let mut out = rare.take_compression_scratch();
-    // SAFETY: fn contract. Both borrows end with `step`, which runs no JavaScript.
-    let result = match unsafe { (*this).step(slice(input, input_len), finish, &mut out) } {
+    // SAFETY: fn contract. Both borrows end when `step()` returns, and it runs no JavaScript.
+    let step = unsafe { (*this).step(bun_core::ffi::slice(input, input_len), finish, &mut out) };
+    let result = match step {
         Ok(has_more) => {
             *more = has_more;
             let chunk = if out.is_empty() {
@@ -684,7 +684,8 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 /// native sink of `controller`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
 ///
-/// SAFETY: as [`CompressionStreamCoder__transform`].
+/// # Safety
+/// As [`CompressionStreamCoder__transform`].
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
@@ -703,7 +704,8 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformInto(
     let rare = global.bun_vm().rare_data();
     let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
-    let result = match unsafe { (*this).step(slice(input, input_len), finish, &mut out) } {
+    let step = unsafe { (*this).step(bun_core::ffi::slice(input, input_len), finish, &mut out) };
+    let result = match step {
         Ok(has_more) => {
             *more = has_more;
             'write: {
@@ -781,7 +783,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
             Bun__CompressionStream__deliverAsync(
                 global,
                 stream.get(),
-                Box::into_raw(this.coder).cast(),
+                bun_core::heap::into_raw(this.coder).cast(),
                 out.as_ptr(),
                 out.len(),
                 this.more,
@@ -795,7 +797,8 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 /// Schedules one off-thread step; a continuation step passes no chunk and no
 /// input (the coder kept the tail).
 ///
-/// SAFETY: `stream_cell` is the cell that owned `this`. `input` is null, or valid for `input_len` bytes.
+/// # Safety
+/// `stream_cell` is the cell that owned `this`. `input` is null, or valid for `input_len` bytes.
 #[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformAsync(
@@ -812,8 +815,13 @@ pub(crate) unsafe extern "C" fn CompressionStreamCoder__transformAsync(
         CompressionStreamCoder__transformAsync
     );
     // SAFETY: fn contract. The job is dropped on the JS thread, and `run` only borrows the bytes.
-    let input =
-        unsafe { ThreadIsolated::new(AsyncInput::new(global, chunk, slice(input, input_len))) };
+    let input = unsafe {
+        ThreadIsolated::new(AsyncInput::new(
+            global,
+            chunk,
+            bun_core::ffi::slice(input, input_len),
+        ))
+    };
     // Called by script, the step is that script's; asked for by a native sink, it is the
     // stream's maker's.
     let vm = global.bun_vm();

@@ -1207,17 +1207,27 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
   // socket. c-ares has to see that error to give up on the server; until it
   // does, the query sits there for the full `timeout`.
   //
-  // The port has to be fully closed: Windows drops a datagram to a port that
-  // still has a socket bound to it (even one connected elsewhere) without
-  // sending the ICMP error.
-  async function closedUdpPort(except = []) {
+  // On POSIX the socket stays open, bound to the port but connected to itself:
+  // the port stays reserved (c-ares cannot autobind its query socket onto it)
+  // while a datagram from any other peer matches no socket and still draws the
+  // ICMP error. Windows drops a datagram to a port with any socket bound and
+  // sends no ICMP, so there the port has to be fully closed.
+  async function deadServer(except = []) {
     for (;;) {
       const socket = dgram.createSocket("udp4");
       socket.bind(0, "127.0.0.1");
       await once(socket, "listening");
       const { port } = socket.address();
-      await new Promise(resolve => socket.close(resolve));
-      if (!except.includes(port)) return port;
+      if (except.includes(port)) {
+        await new Promise(resolve => socket.close(resolve));
+        continue;
+      }
+      if (isWindows) {
+        await new Promise(resolve => socket.close(resolve));
+        return { port, address: `127.0.0.1:${port}`, [Symbol.dispose]() {} };
+      }
+      await new Promise((resolve, reject) => socket.connect(port, "127.0.0.1", err => (err ? reject(err) : resolve())));
+      return { port, address: `127.0.0.1:${port}`, [Symbol.dispose]: () => socket.close() };
     }
   }
 
@@ -1242,8 +1252,9 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
   }
 
   it("dns.promises.Resolver rejects with ECONNREFUSED instead of ETIMEOUT", async () => {
+    using dead = await deadServer();
     const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers([`127.0.0.1:${await closedUdpPort()}`]);
+    resolver.setServers([dead.address]);
     const err = await resolver.resolve4("refused.example.test").then(
       () => {
         throw new Error("expected resolve4 to reject");
@@ -1258,8 +1269,9 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
   });
 
   it("dns.Resolver (callback API) errors with ECONNREFUSED instead of ETIMEOUT", async () => {
+    using dead = await deadServer();
     const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
-    resolver.setServers([`127.0.0.1:${await closedUdpPort()}`]);
+    resolver.setServers([dead.address]);
     const { promise, resolve } = Promise.withResolvers();
     resolver.resolve4("refused.example.test", (err, addresses) => resolve({ code: err?.code, addresses }));
     expect(await promise).toEqual({ code: "ECONNREFUSED", addresses: undefined });
@@ -1267,14 +1279,14 @@ describe("Resolver with a nameserver that nothing is listening on", () => {
 
   it("falls over to the next server without waiting out the timeout", async () => {
     using live = await liveServer();
-    const dead1 = await closedUdpPort();
-    const dead2 = await closedUdpPort([dead1]);
+    using dead1 = await deadServer();
+    using dead2 = await deadServer([dead1.port]);
     // Large on purpose: the three loopback hops take well under a second even
     // on a debug+ASAN build, and without the fix each dead server is only
     // abandoned once its `timeout` expires, so that path takes 2 * timeout.
     const timeout = 20_000;
     const resolver = new dns_promises.Resolver({ timeout, tries: 1 });
-    resolver.setServers([`127.0.0.1:${dead1}`, `127.0.0.1:${dead2}`, live.address]);
+    resolver.setServers([dead1.address, dead2.address, live.address]);
     const start = performance.now();
     const addresses = await resolver.resolve4("failover.example.test");
     const elapsed = performance.now() - start;

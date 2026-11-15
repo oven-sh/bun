@@ -8,10 +8,9 @@ use crate::jsc::{self, JSGlobalObject, JSValue, JsResult};
 use bun_core::WStr;
 use bun_core::ZStr;
 use bun_core::{self, Utf8Bytes, Utf8WithString, fmt as bun_fmt};
+use bun_jsc::StringJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope, StringOrJsBytes};
-use bun_jsc::bun_string_jsc;
 use bun_jsc::node_path::JoinedPath;
-use bun_jsc::{StringJsc as _, Utf8WithStringJsc as _};
 pub(crate) use bun_jsc::{ThreadIsolated, ThreadIsolatedArg};
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
@@ -21,8 +20,7 @@ use bun_sys::{self, Fd, Mode, O};
 use crate::node::util::validators;
 use crate::webcore::{Blob, Request, Response};
 
-pub(crate) use jsc::MarkedArrayBuffer as Buffer;
-use jsc::PinnedArrayBuffer;
+use jsc::{ArrayBuffer, PinnedArrayBuffer};
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
 pub(crate) use jsc::ArgumentsSlice;
@@ -212,8 +210,8 @@ pub(crate) enum StringOrBuffer<'a> {
     String(Utf8WithString),
     ThreadIsolatedString(Utf8WithString),
     Utf8(Utf8Bytes<'a>),
-    /// A JS buffer borrowed for a synchronous call, or owned result bytes not yet handed to JS.
-    Buffer(Buffer),
+    /// A JS buffer borrowed for a synchronous call.
+    Buffer(ArrayBuffer),
     /// A JS buffer parsed for an async call: pinned and GC-rooted until this drops.
     PinnedBuffer(PinnedArrayBuffer),
 }
@@ -248,22 +246,6 @@ impl<'a> StringOrBuffer<'a> {
     }
 }
 
-impl StringOrBuffer<'_> {
-    pub(crate) fn into_js(self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
-        match self {
-            Self::ThreadIsolatedString(str) | Self::String(str) => str.into_js(ctx),
-            Self::Utf8(utf8) => bun_string_jsc::create_utf8_for_js(ctx, &utf8),
-            Self::Buffer(mut buffer) => {
-                if buffer.buffer.value != JSValue::ZERO {
-                    return Ok(buffer.buffer.value);
-                }
-                buffer.to_node_buffer(ctx)
-            }
-            Self::PinnedBuffer(buffer) => Ok(buffer.value),
-        }
-    }
-}
-
 // SAFETY: `Flavor::Async` yields `ThreadIsolatedString` / `Utf8` / `PinnedBuffer` only.
 unsafe impl ThreadIsolatedArg for StringOrBuffer<'static> {}
 
@@ -283,7 +265,7 @@ impl StringOrBuffer<'static> {
         flavor: Flavor,
     ) -> JsResult<Self> {
         if flavor == Flavor::Sync {
-            return Ok(Self::Buffer(Buffer::from_array_buffer(global, value)));
+            return Ok(Self::Buffer(ArrayBuffer::from_typed_array(global, value)));
         }
         match PinnedArrayBuffer::root_read_only(global, value) {
             Some(buffer) => Ok(Self::PinnedBuffer(buffer)),
@@ -393,9 +375,9 @@ impl StringOrBuffer<'static> {
     ) -> JsResult<Option<Self>> {
         let parsed = Self::from_js(global, value)?;
         if let Some(Self::Buffer(buffer)) = &parsed
-            && buffer.buffer.can_change_under_borrow()
+            && buffer.can_change_under_borrow()
         {
-            return match buffer.buffer.try_copy_bytes() {
+            return match buffer.try_copy_bytes() {
                 Some(copy) => Ok(Some(Self::owned(copy))),
                 None => Err(global.throw_out_of_memory()),
             };
@@ -484,7 +466,7 @@ impl StringOrBuffer<'static> {
     ) -> Self {
         match value {
             StringOrJsBytes::Bytes(bytes) => {
-                Self::Buffer(Buffer::from_array_buffer(global, bytes.to_js()))
+                Self::Buffer(ArrayBuffer::from_typed_array(global, bytes.to_js()))
             }
             StringOrJsBytes::String(str) if encoding == Encoding::Utf8 || str.is_empty() => {
                 Self::String(str.into_utf8_with_string())

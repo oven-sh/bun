@@ -101,7 +101,7 @@ impl HTMLProcessorHandler for HTMLLoader<'_, '_> {
             return;
         }
 
-        if self.linker.dev_server.is_some() {
+        if self.linker.has_dev_server {
             if !unique_key_for_additional_files.is_empty() {
                 set_attribute(element, url_attribute, unique_key_for_additional_files);
             } else if import_record.path.is_disabled
@@ -264,7 +264,7 @@ impl HTMLLoader<'_, '_> {
     fn end_head_tag_handler(opaque_this: *mut (), end: &mut EndTag<'_>) -> HandlerResult {
         // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
         let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
-        if this.linker.dev_server.is_none() {
+        if !this.linker.has_dev_server {
             this.add_head_tags(end);
         } else {
             this.end_tag_indices.head = Some(u32::try_from(this.output.len()).expect("int cast"));
@@ -275,7 +275,7 @@ impl HTMLLoader<'_, '_> {
     fn end_body_tag_handler(opaque_this: *mut (), end: &mut EndTag<'_>) -> HandlerResult {
         // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
         let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
-        if this.linker.dev_server.is_none() {
+        if !this.linker.has_dev_server {
             if this.compile_to_standalone_html {
                 // In standalone mode, insert JS before </body> so DOM is available
                 this.add_body_tags(end);
@@ -291,7 +291,7 @@ impl HTMLLoader<'_, '_> {
     fn end_html_tag_handler(opaque_this: *mut (), end: &mut EndTag<'_>) -> HandlerResult {
         // SAFETY: `opaque_this` is the erased `&mut HTMLLoader` from `register_end_tag_handler`.
         let this: &mut Self = unsafe { &mut *opaque_this.cast::<Self>() };
-        if this.linker.dev_server.is_none() {
+        if !this.linker.has_dev_server {
             if this.compile_to_standalone_html {
                 // Fallback: if no </body> was found, insert both CSS and JS before </html>
                 this.add_head_tags(end);
@@ -342,7 +342,6 @@ pub(crate) fn generate_compile_result_for_html_chunk<'a>(
     // `CompileResult` — no arena-lifetime distinction needed.
 
     let compile_to_standalone_html = c.options.compile_mode.is_standalone_html();
-    let has_dev_server = c.dev_server.is_some();
     let contents: &[u8] = &sources[source_index as usize].contents;
     let records = import_records[source_index as usize].as_slice();
 
@@ -372,7 +371,7 @@ pub(crate) fn generate_compile_result_for_html_chunk<'a>(
     // element. In this case, head_end_tag_index will be 0, and a simple
     // search through the page is done to find the "</head>"
     // See https://github.com/oven-sh/bun/issues/17554
-    let script_injection_offset: u32 = if has_dev_server {
+    let script_injection_offset: u32 = if c.has_dev_server {
         'brk: {
             if let Some(head) = html_loader.end_tag_indices.head {
                 break 'brk head;

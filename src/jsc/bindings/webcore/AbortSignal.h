@@ -86,7 +86,7 @@ public:
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
 
-    bool aborted() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
+    bool aborted() const { return flags() & static_cast<uint8_t>(AbortSignalFlags::Aborted); }
     void markAborted(JSC::JSValue reason);
     void runAbortSteps();
 
@@ -107,8 +107,8 @@ public:
     // has to turn false then, or JSAbortSignalOwner::isReachableFromOpaqueRoots keeps an observed
     // signal's wrapper alive for a timeout that can no longer fire.
     void cancelTimer();
-    bool hasAbortEventListener() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
-    bool isFiringEventListeners() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
+    bool hasAbortEventListener() const { return flags() & static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener); }
+    bool isFiringEventListeners() const { return flags() & static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners); }
 
     // ContextDestructionObserver.
     void ref() const final { RefCounted::ref(); }
@@ -152,7 +152,7 @@ public:
         m_timeoutObserverCount.fetch_sub(1, std::memory_order_relaxed);
     }
     bool hasPendingActivity() const { return pendingActivityCount > 0; }
-    bool isDependent() const { return m_flags & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
+    bool isDependent() const { return flags() & static_cast<uint8_t>(AbortSignalFlags::Dependent); }
 
     size_t memoryCost() const;
 
@@ -170,29 +170,32 @@ private:
     void addDependentSignal(AbortSignal&);
     void releaseSourceObserverCounts();
 
-    void applyFlags(uint8_t flags) { m_flags |= flags; }
+    // Only the owning thread writes m_flags, so a load and a store are enough.
+    uint8_t flags() const { return m_flags.load(std::memory_order_relaxed); }
+    void applyFlags(uint8_t added) { m_flags.store(flags() | added, std::memory_order_relaxed); }
+    void clearFlags(uint8_t removed) { m_flags.store(flags() & ~removed, std::memory_order_relaxed); }
     void setIsDependent(bool isDependent)
     {
         if (isDependent) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::Dependent);
+            applyFlags(static_cast<uint8_t>(AbortSignalFlags::Dependent));
         } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::Dependent);
+            clearFlags(static_cast<uint8_t>(AbortSignalFlags::Dependent));
         }
     }
     void setHasAbortEventListener(bool hasAbortEventListener)
     {
         if (hasAbortEventListener) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener);
+            applyFlags(static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener));
         } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener);
+            clearFlags(static_cast<uint8_t>(AbortSignalFlags::HasAbortEventListener));
         }
     }
     void setIsFiringEventListeners(bool isFiringEventListeners)
     {
         if (isFiringEventListeners) {
-            m_flags |= static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners);
+            applyFlags(static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners));
         } else {
-            m_flags &= ~static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners);
+            clearFlags(static_cast<uint8_t>(AbortSignalFlags::IsFiringEventListeners));
         }
     }
 
@@ -223,7 +226,8 @@ private:
     std::atomic<uint32_t> m_timeoutObserverCount { 0 };
     uint32_t m_algorithmIdentifier { 0 };
     AbortSignalTimeout m_timeout { nullptr };
-    uint8_t m_flags { 0 };
+    // Read by the work pool (node:fs) and by GC marker threads.
+    std::atomic<uint8_t> m_flags { 0 };
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

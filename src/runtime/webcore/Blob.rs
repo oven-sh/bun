@@ -2565,25 +2565,18 @@ impl<'a> FormDataContext<'a> {
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy
-                            // Use a fresh stack
-                            // `NodeFS` (it is stateless aside from a path scratch
-                            // buffer; a per-VM cache would be purely a perf reuse).
-                            let mut node_fs = crate::node::fs::NodeFS::default();
-                            let rf_args = crate::node::fs::args::ReadFile {
-                                encoding: crate::node::types::Encoding::Buffer,
-                                path: file.pathlike(),
-                                offset: blob.offset.get(),
-                                max_size: Some(blob.size.get()),
-                                ..Default::default()
-                            };
-                            let res = node_fs.read_file(&rf_args, crate::node::fs::Flavor::Sync);
+                            let res = crate::node::fs::NodeFS::read_file_bytes(
+                                file.pathlike(),
+                                blob.offset.get(),
+                                blob.size.get(),
+                            );
                             match res {
                                 Err(err) => {
                                     self.failed = true;
                                     let js_err = err.to_js(global_this);
                                     let _ = global_this.throw_value(js_err);
                                 }
-                                Ok(result) => joiner.push_cloned(result.slice()),
+                                Ok(bytes) => joiner.push_owned(bytes),
                             }
                         }
                         store::Data::Bytes(_) => joiner.push(blob.shared_view()),

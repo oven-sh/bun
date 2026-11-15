@@ -98,9 +98,7 @@ pub(crate) struct LinkerContext<'l, 'a> {
 
     pub(crate) source_maps: SourceMapData<'l, 'a>,
 
-    /// Used by Bake to extract []CompileResult before it is joined.
-    /// CYCLEBREAK GENUINE: erased bake::DevServer (see bundle_v2::dispatch).
-    pub(crate) dev_server: Option<crate::dispatch::DevServerHandle>,
+    pub(crate) has_dev_server: bool,
     pub(crate) framework: Option<&'l bake::Framework>,
 
     pub(crate) mangled_props: MangledProps,
@@ -124,7 +122,14 @@ pub(crate) struct LinkerContext<'l, 'a> {
 
 // SAFETY: workers share `&LinkerContext`. Of `bundle` they read the graph, the transpilers and the
 // framework, and get their `Worker` from the pool, which locks its map. What the rows of
-// `bundle.graph.ast` point to is shared with `graph.ast`; see `LinkerGraph` for what workers write.
+// `bundle.graph.ast` point to is shared with `graph.ast`. What is not `Sync` in `graph`:
+// - The columns that workers write through `split_raw()`: each task writes only the rows of its own
+//   file or chunk. Nothing writes `Part.scopes` or the `symbols` column of `ast` while workers run.
+// - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
+//   `LinkerContext::link()` shortens them all with `follow_all()` before workers
+//   follow any. The dev server skips `link()`: its links come from the parser and
+//   stay within one file, and tasks that run at the same time work on different files.
+// - The arena. Only the bundle thread allocates from it; workers use `worker.arena()`.
 unsafe impl Sync for LinkerContext<'_, '_> {}
 
 impl<'l, 'a> LinkerContext<'l, 'a> {
@@ -341,7 +346,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 line_offsets: SourceMapTasks::new(&bundle.line_offset_wait_group),
                 quoted_contents: SourceMapTasks::new(&bundle.quoted_contents_wait_group),
             },
-            dev_server: bundle.dev_server,
+            has_dev_server: bundle.dev_server.is_some(),
             framework: bundle.framework.as_ref(),
             mangled_props: Default::default(),
             cross_chunk_names: Default::default(),

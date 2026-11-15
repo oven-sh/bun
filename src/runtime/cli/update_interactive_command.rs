@@ -767,38 +767,14 @@ impl UpdateInteractiveCommand {
     /// Returns the size of the whole terminal. `viewport_height` says how many package rows fit in
     /// it.
     fn get_terminal_size() -> TerminalSize {
-        #[cfg(unix)]
+        if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize()
+            && size.row > 0
+            && size.col > 0
         {
-            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize()
-                && size.row > 0
-                && size.col > 0
-            {
-                return TerminalSize {
-                    height: size.row as usize,
-                    width: size.col as usize,
-                };
-            }
-        }
-        #[cfg(windows)]
-        {
-            use bun_sys::windows;
-            if let Some(handle) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
-                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-                let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-                // SAFETY: handle is valid; csbi is a valid out-ptr.
-                if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                    != windows::FALSE
-                {
-                    let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                    let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-                    if width > 0 && height > 0 {
-                        return TerminalSize {
-                            height: usize::try_from(height).expect("int cast"),
-                            width: usize::try_from(width).expect("int cast"),
-                        };
-                    }
-                }
-            }
+            return TerminalSize {
+                height: size.row as usize,
+                width: size.col as usize,
+            };
         }
         TerminalSize {
             height: 24,

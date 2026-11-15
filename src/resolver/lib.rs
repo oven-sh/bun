@@ -1171,8 +1171,8 @@ pub mod fs {
 
             #[cfg(windows)]
             {
-                use bun_sys::windows as w;
-                use std::os::windows::io::{AsRawHandle as _, HandleOrInvalid, OwnedHandle};
+                use bun_sys::windows::{self as w, Win32ErrorExt as _};
+                use std::os::windows::io::AsRawHandle as _;
                 let _ = (existing_fd, store_fd);
                 let file = bun_sys::get_file_attributes(absolute_path_c)
                     .ok_or(crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
@@ -1210,33 +1210,28 @@ pub mod fs {
                     &mut wbuf.0[..],
                     absolute_path_c.as_bytes(),
                 );
-                // SAFETY: `wpath` is NUL-terminated UTF-16; null security/template handles.
-                let handle = unsafe {
-                    HandleOrInvalid::from_raw_handle(w::CreateFileW(
-                        wpath.as_ptr(),
-                        0,
-                        w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
-                        core::ptr::null_mut(),
-                        w::OPEN_EXISTING,
-                        // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
-                        // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
-                        // follow the full reparse chain to the final target.
-                        w::FILE_FLAG_BACKUP_SEMANTICS,
-                        core::ptr::null_mut(),
-                    ))
-                };
-                let Ok(owned) = OwnedHandle::try_from(handle) else {
-                    if is_dangling_link_error(w::last_system_errno().to_e()) {
-                        cache.kind = EntryKind::Dangling;
+                let owned = match w::CreateFileW(
+                    wpath,
+                    0,
+                    w::FILE_SHARE_READ | w::FILE_SHARE_WRITE | w::FILE_SHARE_DELETE,
+                    w::OPEN_EXISTING,
+                    // FILE_FLAG_BACKUP_SEMANTICS lets us open directories;
+                    // omitting FILE_FLAG_OPEN_REPARSE_POINT makes Windows
+                    // follow the full reparse chain to the final target.
+                    w::FILE_FLAG_BACKUP_SEMANTICS,
+                ) {
+                    Ok(owned) => owned,
+                    Err(err) => {
+                        if is_dangling_link_error(err.to_e()) {
+                            cache.kind = EntryKind::Dangling;
+                        }
+                        // anything else keeps the kind from the link's own directory bit
+                        return Ok(cache);
                     }
-                    // anything else keeps the kind from the link's own directory bit
-                    return Ok(cache);
                 };
                 let handle = owned.as_raw_handle();
 
-                let mut info: w::BY_HANDLE_FILE_INFORMATION = bun_core::ffi::zeroed();
-                // SAFETY: `handle` is valid; `info` is a valid out-param.
-                if unsafe { w::GetFileInformationByHandle(handle, &mut info) } != 0 {
+                if let Ok(info) = w::GetFileInformationByHandle(handle) {
                     cache.kind = if info.dwFileAttributes & w::FILE_ATTRIBUTE_DIRECTORY != 0 {
                         EntryKind::Dir
                     } else {

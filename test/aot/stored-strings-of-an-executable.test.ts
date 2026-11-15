@@ -36,7 +36,7 @@ interface Range {
   section: string;
   offset: number;
   length: number;
-  encoding: "latin1" | "utf16le" | "utf8" | "coded" | "compressed";
+  encoding: "latin1" | "utf16le" | "utf8" | "coded";
   text: string;
   isZero: boolean;
 }
@@ -71,9 +71,9 @@ function expectEveryByteIsCovered(ranges: Range[], file: Buffer) {
   }
 }
 
-/** The characters of a string as they are in the file, or null if they are coded or compressed. */
+/** The characters of a string as they are in the file, or null if they are coded. */
 function readCharacters(file: Buffer, { offset, length, encoding }: Range) {
-  return encoding === "coded" || encoding === "compressed" ? null : file.toString(encoding, offset, offset + length);
+  return encoding === "coded" ? null : file.toString(encoding, offset, offset + length);
 }
 
 test("the strings that an executable stores are printed out of the finished file", async () => {
@@ -342,8 +342,7 @@ test("the text of a function and the text that an error quotes are printed too",
   for (const [index, text] of [quoted, functionSource].entries()) {
     const [, , , offset, length, beside] = lineOnOtherText.exec(onOthers[index])!.map(Number);
     const at = file.indexOf(text, offset, "utf8");
-    // A text lies in its section as it is, or compressed, and then nowhere behind the start of the section.
-    expect({ text, isInside: at < 0 || (at >= offset && at + Buffer.byteLength(text) <= offset + length) }).toEqual({
+    expect({ text, isInside: at >= offset && at + Buffer.byteLength(text) <= offset + length }).toEqual({
       text,
       isInside: true,
     });

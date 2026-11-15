@@ -435,8 +435,10 @@ pub mod posix_spawn {
     ) -> sys::Result<pid_t> {
         let mut pid: c_int = 0;
 
-        // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
-        let rc = unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, argv, envp) };
+        let rc = sys::close_on_fork::with_pending_fork(|fork| {
+            // SAFETY: path is NUL-terminated; argv/envp are NULL-terminated arrays of C strings
+            unsafe { posix_spawn_bun(&raw mut pid, path.as_ptr(), req, fork.cast(), argv, envp) }
+        });
 
         if cfg!(debug_assertions) {
             // SAFETY: argv has at least one element (the NULL terminator)

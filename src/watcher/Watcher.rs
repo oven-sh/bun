@@ -295,14 +295,13 @@ impl Watcher {
             // ends before the free below.
             let me = unsafe { &*this };
             // `thread_body` clears `watchloop_handle` under this mutex when it returns ownership.
-            me.mutex.lock();
+            let guard = me.mutex.lock_guard();
             if me.watchloop_handle.load() {
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
-                me.mutex.unlock();
                 false
             } else {
-                me.mutex.unlock();
+                drop(guard);
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -839,7 +838,7 @@ impl Watcher {
 
         // Only open fd if we might need it
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let fd: Fd = {
+        let file = {
             let mut path_z = bun_paths::path_buffer_pool::get();
             if file_path.len() >= path_z.len() {
                 return false;
@@ -849,31 +848,31 @@ impl Watcher {
             // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
             // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
-            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
-                Ok(opened) => opened,
+            match sys::File::open(z, WATCH_OPEN_FLAGS, 0) {
+                Ok(opened) => Some(opened),
                 Err(_) => return false,
             }
         };
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
+        let file = None;
 
-        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, None);
-        match res {
-            Ok(ownership) => {
-                // Not adopted (another thread won the add race); close the
-                // fd opened above.
-                if ownership == FdOwnership::Caller && fd.is_valid() {
-                    let _ = bun_sys::close(fd);
-                }
-                true
-            }
-            Err(_) => {
-                if fd.is_valid() {
-                    let _ = bun_sys::close(fd);
-                }
-                false
-            }
+        self.add_owned_file(file, file_path, hash, None).is_ok()
+    }
+
+    /// [`Self::add_file`] that closes `file` unless the watchlist keeps it.
+    pub fn add_owned_file(
+        &mut self,
+        file: Option<sys::File>,
+        file_path: &[u8],
+        hash: HashType,
+        package_json: Option<&'static PackageJSON>,
+    ) -> sys::Result<()> {
+        let fd = file.as_ref().map_or(Fd::INVALID, sys::File::fd);
+        let owner = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, package_json)?;
+        if owner == FdOwnership::Watcher {
+            let _ = file.map(sys::File::into_raw);
         }
+        Ok(())
     }
 
     pub fn add_file<const CLONE_FILE_PATH: bool>(
@@ -885,7 +884,7 @@ impl Watcher {
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
-        self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
 
         if let Some(index) = self.index_of(hash) {
             let mut ownership = FdOwnership::Caller;
@@ -901,19 +900,16 @@ impl Watcher {
                     ownership = FdOwnership::Watcher;
                 }
             }
-            self.mutex.unlock();
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
+        self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
             fd,
             file_path,
             hash,
             dir_fd,
             package_json,
-        );
-        self.mutex.unlock();
-        r
+        )
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {

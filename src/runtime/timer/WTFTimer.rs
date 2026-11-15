@@ -62,16 +62,11 @@ impl WTFTimer {
     ///
     /// # Safety
     /// `this` was published by [`WTFTimer::update`] into
-    /// `imminent_gc_timer` and remains live; `vm` is the live VM that owns
-    /// this timer.
-    pub(crate) unsafe fn run(this: *mut Self, vm: *mut VirtualMachine) {
+    /// `imminent_gc_timer` and remains live; `vm` owns this timer.
+    pub(crate) unsafe fn run(this: *mut Self, vm: &VirtualMachine) {
         // SAFETY: per fn contract — `this` is live.
         let t = unsafe { bun_ptr::ThisPtr::new(this) };
-        // SAFETY: `vm` is the live VM that owns this timer's heap.
-        unsafe {
-            let state = crate::jsc_hooks::runtime_state_of(vm);
-            (*state).timer.wtf_disarm(&t.event_loop_timer);
-        }
+        crate::jsc_hooks::timer_all_of(vm).wtf_disarm(&t.event_loop_timer);
         t.run_without_removing();
     }
 
@@ -186,12 +181,12 @@ impl WTFTimer {
         }
     }
 
-    /// `EventLoopTimer.fire` dispatch arm body for `Tag::WTFTimer`.
+    /// `dispatch::fire_timer` arm body for `Tag::WTFTimer`.
     ///
     /// # Safety
     /// `this` is the container of an `EventLoopTimer` just popped from
-    /// `All.wtf_timers`; `_vm` is the live per-thread VM.
-    pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, _vm: *mut VirtualMachine) {
+    /// `All.wtf_timers`.
+    pub(crate) unsafe fn fire(this: *mut Self) {
         // SAFETY: per fn contract — `this` is live; `ThisPtr` vends only fresh
         // short-lived `&Self` per Deref.
         let t = unsafe { bun_ptr::ThisPtr::new(this) };
@@ -233,14 +228,11 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
         return ptr::null_mut();
     };
 
-    // SAFETY: `vm` is the thread-local VirtualMachine; `run_loop_timer` is
-    // non-null per caller contract; `event_loop().imminent_gc_timer` lives as
-    // long as the VM.
+    // SAFETY: `run_loop_timer` is non-null per caller contract.
     let this = unsafe {
-        let vm_ref = &*vm;
-        let el = vm_ref.event_loop();
+        let el = vm.event_loop();
         Box::new(WTFTimer {
-            vm: NonNull::new_unchecked(vm),
+            vm: NonNull::from(vm),
             imminent: bun_ptr::BackRef::new(&el.imminent_gc_timer),
             event_loop_timer: EventLoopTimer {
                 next: Cell::new(ElTimespec {
@@ -252,7 +244,7 @@ unsafe extern "C" fn WTFTimer__create(run_loop_timer: *mut RunLoopTimer) -> *mut
             },
             run_loop_timer: NonNull::new_unchecked(run_loop_timer),
             script_execution_context_id: ScriptExecutionContextIdentifier(
-                vm_ref.initial_script_execution_context_identifier as u32,
+                vm.initial_script_execution_context_identifier as u32,
             ),
         })
     };

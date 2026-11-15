@@ -11,7 +11,7 @@ use crate::{
 };
 
 pub(crate) fn compute_cross_chunk_dependencies<'a>(
-    c: &mut LinkerContext<'a>,
+    c: &mut LinkerContext<'_, 'a>,
     chunks: &mut [Chunk<'a>],
 ) -> Result<(), bun_alloc::AllocError> {
     if !c.graph.code_splitting {
@@ -47,7 +47,7 @@ pub(crate) fn compute_cross_chunk_dependencies<'a>(
         // LinkerContext's invariant `'_`. `NonNull::from(&mut *c)` preserves
         // `c`'s Unique provenance (see note above).
         let ctx_ref = bun_ptr::BackRef::from(
-            core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
+            core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static, 'static>>(),
         );
         // `BackRef` from raw place addr (not `BackRef::new(&…)`) so no
         // intermediate `&` borrow is pushed before the `split_mut()` calls
@@ -105,7 +105,7 @@ struct CrossChunkDependencies<'a, 'bump> {
     // opt out here via `BackRef` (safe `Deref` at each use site in `walk`). Lifetime
     // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
     // to the LinkerContext's own invariant lifetime parameter.
-    ctx: bun_ptr::BackRef<LinkerContext<'static>>,
+    ctx: bun_ptr::BackRef<LinkerContext<'static, 'static>>,
     // `BackRef` — `walk` mutates per-chunk symbol slots via
     // `Map::assign_chunk_index(&self)`, which is a Relaxed store to
     // `Symbol.chunk_index: AtomicU32`, so a shared `&Map` suffices. Holding
@@ -130,7 +130,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
         // slice, valid for the link pass (see note on the struct fields).
         // `chunks` aliases the slice the caller iterates mutably but is only read here.
-        let ctx: &LinkerContext<'_> = deps.ctx.get();
+        let ctx: &LinkerContext<'_, '_> = deps.ctx.get();
         // `BackRef` into `LinkerContext.graph.symbols`, valid for the link
         // pass. Shared `&Map` — per-slot writes go through
         // `Symbol.chunk_index: AtomicU32`; no `&mut Map` is materialized.
@@ -171,10 +171,6 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
-                        // Slice copy (fat pointer):
-                        // `path.text` borrows the chunk's
-                        // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
-                        // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
                         import_record.path.pretty = _chunks[other_chunk_index as usize].id_key;
                         import_record.source_index = Index::INVALID;

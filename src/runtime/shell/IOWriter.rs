@@ -14,8 +14,6 @@
 
 use bun_collections::VecExt;
 use core::cell::UnsafeCell;
-#[cfg(not(windows))]
-use core::ffi::c_void;
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
@@ -1037,7 +1035,7 @@ bun_io::impl_buffered_writer_parent! {
     on_close   = on_close,
     get_buffer = |this| (*this).get_buffer(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*(*this).evtloop().loop_()).uv_loop(),
+    uv_loop    = |this| (*this).evtloop().loop_().uv_loop(),
     // INVARIANT: `this` is `Rc::as_ptr` stashed via `writer.set_parent` in
     // `IOWriter::init` (sole constructor); passing a non-Rc ptr is UB.
     ref_       = |this| std::rc::Rc::increment_strong_count(this.cast_const()),
@@ -1129,11 +1127,8 @@ impl Drop for IOWriter {
         crate::shell_log!("IOWriter(fd={}) deinit", s.fd);
         #[cfg(not(windows))]
         {
-            if matches!(s.writer.handle, bun_io::pipes::PollOrFd::Poll(_)) {
-                s.writer
-                    .handle
-                    .close_impl(None, None::<fn(*mut c_void)>, false);
-            }
+            // The poll goes before its fd.
+            s.writer.handle = bun_io::pipes::PollOrFd::Closed;
         }
         #[cfg(windows)]
         {

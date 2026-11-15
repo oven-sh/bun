@@ -2,9 +2,10 @@
 //! the syscall, so every length in a record is bounds-checked.
 
 use crate::{E, Error, Tag};
+use bun_core::ZStr;
 
 /// Describes a record's field offsets. Every layout has `d_ino` at 0 and `d_reclen` at 16.
-pub trait Layout {
+pub(crate) trait Layout {
     const D_TYPE: usize;
     /// `None` on Linux, where the name is only NUL-terminated.
     const D_NAMLEN: Option<usize>;
@@ -20,7 +21,7 @@ const D_INO: usize = 0;
 const D_RECLEN: usize = 16;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub struct Linux;
+pub(crate) struct Linux;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 impl Layout for Linux {
     const D_TYPE: usize = 18;
@@ -39,7 +40,7 @@ const _: () = {
 };
 
 #[cfg(target_os = "macos")]
-pub struct Darwin;
+pub(crate) struct Darwin;
 #[cfg(target_os = "macos")]
 impl Layout for Darwin {
     const D_TYPE: usize = 20;
@@ -59,7 +60,7 @@ const _: () = {
 };
 
 #[cfg(target_os = "freebsd")]
-pub struct FreeBsd;
+pub(crate) struct FreeBsd;
 #[cfg(target_os = "freebsd")]
 impl Layout for FreeBsd {
     const D_TYPE: usize = 18;
@@ -79,22 +80,21 @@ const _: () = {
 };
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-pub type Native = Linux;
+pub(crate) type Native = Linux;
 #[cfg(target_os = "macos")]
-pub type Native = Darwin;
+pub(crate) type Native = Darwin;
 #[cfg(target_os = "freebsd")]
-pub type Native = FreeBsd;
+pub(crate) type Native = FreeBsd;
 
-pub struct Record<'a> {
+pub(crate) struct Record<'a> {
     /// Offset of the next record, with `at < next <= filled.len()`.
     pub next: usize,
     /// `None` for records that walkers skip, such as `.`, `..` and removed entries.
     pub entry: Option<Entry<'a>>,
 }
 
-pub struct Entry<'a> {
-    /// `d_name` without its NUL. The NUL is the next byte and is inside the record.
-    pub name: &'a [u8],
+pub(crate) struct Entry<'a> {
+    pub name: &'a ZStr,
     pub d_type: u8,
     pub ino: u64,
 }
@@ -102,7 +102,7 @@ pub struct Entry<'a> {
 /// Parses the record at `filled[at..]`, where `filled` is the part of the buffer the syscall wrote.
 /// Returns `None` if the record is malformed.
 #[inline]
-pub fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
+pub(crate) fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
     let rest = filled.get(at..)?;
     let header = rest.get(..L::D_NAME)?;
     let u16_at = |offset: usize| {
@@ -153,7 +153,7 @@ pub fn parse<L: Layout>(filled: &[u8], at: usize) -> Option<Record<'_>> {
     Some(Record {
         next: at + reclen,
         entry: Some(Entry {
-            name,
+            name: ZStr::from_buf(name_field, name.len()),
             d_type: *header.get(L::D_TYPE)?,
             ino,
         }),
@@ -169,7 +169,7 @@ const ENDED: usize = usize::MAX;
 #[cold]
 // Not `#[inline(never)]`: an outlined call pushes `next` past the inline threshold in the recursive
 // `readdirSync` loops.
-pub fn end_walk<T>(end_index: &mut usize, syscall: Tag) -> Result<Option<T>, Error> {
+pub(crate) fn end_walk<T>(end_index: &mut usize, syscall: Tag) -> Result<Option<T>, Error> {
     if *end_index == ENDED {
         return Ok(None);
     }

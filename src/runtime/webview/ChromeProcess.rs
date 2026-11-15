@@ -44,7 +44,7 @@ use bun_spawn::{
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd, File};
 use bun_which::which;
 
 declare_scope!(Chrome, hidden);
@@ -59,14 +59,14 @@ pub(crate) struct ChromeProcess {
     generation: u32,
 }
 
-/// Our ends of the two pipes (boxed, null once closed) and the read scratch.
+/// Our ends of the two pipes (`None` once closed) and the read scratch.
 #[cfg(windows)]
 struct WindowsPipes {
-    /// Child reads the other end as fd 3.
-    cmd: *mut uv::Pipe,
     /// Child writes the other end as fd 4.
-    reply: *mut uv::Pipe,
-    read_buf: Box<[u8]>,
+    reply: Option<uv::Owned<uv::Pipe>>,
+    /// Child reads the other end as fd 3.
+    cmd: Option<uv::Owned<uv::Pipe>>,
+    read_buf: bun_jsc::JsCell<Box<[u8]>>,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
@@ -173,21 +173,19 @@ unsafe extern "C" fn Bun__Chrome__ensure(
 
 bun_spawn::link_impl_ProcessExit! {
     ChromeProcess for ChromeProcess => |this| {
-        on_process_exit(process, status, _rusage) => ChromeProcess::on_exit(this, process, &status),
+        on_process_exit(status, _rusage) => ChromeProcess::on_exit(this, &status),
     }
 }
 
 impl ChromeProcess {
-    /// Safety: `this` is the pointer published in INSTANCE (freed here); `process` is the exit callback's own argument, which carries the `&mut Process` already live in its frame (as in `SyncWindowsProcess::on_process_exit`).
-    unsafe fn on_exit(this: *mut ChromeProcess, process: *mut Process, status: &Status) {
+    /// Safety: `this` is the pointer published in INSTANCE (freed here).
+    unsafe fn on_exit(this: *mut ChromeProcess, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
         // A retired Chrome was already unpublished by `Bun__Chrome__retire`.
         let _ =
             INSTANCE.compare_exchange(this, ptr::null_mut(), Ordering::Relaxed, Ordering::Relaxed);
         // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
-        let mut chrome = unsafe { bun_core::heap::take(this) };
-        debug_assert_eq!(process, chrome.process.as_ptr());
-        chrome.close_transport();
+        let chrome = unsafe { bun_core::heap::take(this) };
         if chrome.retired {
             return;
         }
@@ -200,12 +198,6 @@ impl ChromeProcess {
             // SAFETY: plain FFI call; takes no pointers.
             unsafe { Bun__Chrome__died(signo) };
         }
-    }
-
-    /// On POSIX C++ owns the socket.
-    fn close_transport(&mut self) {
-        #[cfg(windows)]
-        self.pipes.close();
     }
 }
 
@@ -377,10 +369,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let parts: [&[u8]; 2] = [root, cache_subpath];
     let cache_dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &parts);
 
-    let fd = bun_sys::open_dir_absolute(&cache_dir[..]).ok()?;
-    // `defer fd.close()` — Fd has no Drop; close explicitly on all
-    // exit paths via scopeguard.
-    let _fd_guard = scopeguard::guard(fd, |fd| fd.close());
+    let dir = File::from_fd(bun_sys::open_dir_absolute(&cache_dir[..]).ok()?);
 
     // Scan for chromium_headless_shell-<rev> and track max rev.
     let mut best_rev: u32 = 0;
@@ -388,7 +377,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let mut best_len: usize = 0;
     const PREFIX: &[u8] = b"chromium_headless_shell-";
 
-    let mut iter = bun_sys::iterate_dir(fd);
+    let mut iter = bun_sys::iterate_dir(dir.fd());
     loop {
         let entry = match iter.next() {
             Ok(Some(e)) => e,
@@ -570,7 +559,11 @@ fn spawn(
         argv.push(core::ptr::null());
 
         // SAFETY: `transpiler.env` is set during VM init and lives for VM lifetime.
-        let env = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
+        let env = unsafe {
+            (*vm.transpiler.get().env)
+                .map
+                .create_null_delimited_env_map()
+        }?;
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,
@@ -617,95 +610,67 @@ unsafe extern "C" {
 
 #[cfg(not(windows))]
 struct Endpoints {
-    /// `[parent, child]`. Both closed on drop unless taken.
-    fds: Option<[Fd; 2]>,
-    child_closed: bool,
+    parent: File,
+    /// `None` once closed.
+    child: Option<File>,
 }
 
 #[cfg(not(windows))]
 impl Endpoints {
     fn create(_event_loop: EventLoopHandle) -> crate::Result<Endpoints> {
         // Only our end goes nonblocking (for usockets); Chrome's reader thread wants its end blocking.
-        let fds: [Fd; 2] = bun_sys::socketpair(
+        let [parent, child] = bun_sys::socketpair(
             libc::AF_UNIX as i32,
             libc::SOCK_STREAM as i32,
             0,
             false, // .blocking
         )?;
-        let mut endpoints = Endpoints {
-            fds: Some(fds),
-            child_closed: false,
+        let endpoints = Endpoints {
+            parent: File::from_fd(parent),
+            child: Some(File::from_fd(child)),
         };
-        match bun_sys::set_nonblocking(fds[0]) {
-            Ok(()) => Ok(endpoints),
-            Err(err) => {
-                endpoints.close_all();
-                Err(err.into())
-            }
-        }
+        bun_sys::set_nonblocking(parent)?;
+        Ok(endpoints)
     }
 
     fn child_fds(&self) -> Box<[Stdio]> {
-        let child = self.fds.expect("endpoints live")[1];
+        let child = self.child.as_ref().expect("endpoints live").fd();
         // The one socket at both fd 3 (Chrome reads) and fd 4 (Chrome writes).
         vec![Stdio::Pipe(child), Stdio::Pipe(child)].into_boxed_slice()
     }
 
     fn close_child_ends(&mut self) {
-        if !self.child_closed {
-            self.child_closed = true;
-            self.fds.expect("endpoints live")[1].close();
-        }
-    }
-
-    fn close_all(&mut self) {
-        if let Some(fds) = self.fds.take() {
-            fds[0].close();
-            if !self.child_closed {
-                fds[1].close();
-            }
-        }
+        self.child = None;
     }
 
     /// Publishes the singleton and returns our fd for C++ to adopt.
-    fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+    fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
+        let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
             process,
             retired: false,
-        }));
-        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`
-        // and outlives it.
+        });
+        // SAFETY: `chrome` owns `process` and outlives it.
         let process = unsafe {
-            let process = &(*self_ptr).process;
-            process
-                .process_mut()
-                .set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
+            let process = &(*chrome.as_ptr()).process;
+            Process::set_exit_handler(
+                process,
+                ProcessExit::new(ProcessExitKind::ChromeProcess, chrome.as_ptr()),
+            );
             process
         };
-        if let Err(e) = process.process_mut().watch() {
+        if let Err(e) = process.watch() {
             scoped_log!(Chrome, "watch failed: {}", e);
-            // SAFETY: reclaim the Box (drops our process ref).
-            drop(unsafe { bun_core::heap::take(self_ptr) });
-            self.close_all();
             return Err(crate::Error::WatchFailed);
         }
         // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
         // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
         // also SIGKILLs via Bun__Chrome__kill.
-        process.process_mut().disable_keeping_event_loop_alive();
-        INSTANCE.store(self_ptr, Ordering::Relaxed);
+        process.disable_keeping_event_loop_alive();
+        INSTANCE.store(chrome.into_raw(), Ordering::Relaxed);
 
-        let fds = self.fds.take().expect("endpoints live");
-        debug_assert!(self.child_closed);
+        debug_assert!(self.child.is_none());
         // usockets owns the fd from here on; this module only owns the process.
-        Ok(fds[0].native())
-    }
-}
-
-#[cfg(not(windows))]
-impl Drop for Endpoints {
-    fn drop(&mut self) {
-        self.close_all();
+        Ok(self.parent.into_raw().native())
     }
 }
 
@@ -716,154 +681,96 @@ const READ_BUF_SIZE: usize = 64 * 1024;
 
 #[cfg(windows)]
 struct Endpoints {
-    /// The child's ends; `None` once closed.
-    cmd_child: Option<Fd>,
-    reply_child: Option<Fd>,
-    /// Our ends; null once handed over.
-    cmd: *mut uv::Pipe,
-    reply: *mut uv::Pipe,
+    /// The child's fds 3 and 4; `None` once closed.
+    child: Option<[File; 2]>,
+    cmd: uv::Owned<uv::Pipe>,
+    reply: uv::Owned<uv::Pipe>,
 }
 
 #[cfg(windows)]
 impl Endpoints {
     fn create(event_loop: EventLoopHandle) -> crate::Result<Endpoints> {
-        // uv_pipe() returns [read end, write end]; UV_NONBLOCK_PIPE (overlapped) goes on our ends only.
-        let mut cmd_fds: [uv::uv_file; 2] = [0; 2];
-        // SAFETY: FFI; `cmd_fds` is the out-array uv_pipe fills.
-        unsafe { uv::uv_pipe(&raw mut cmd_fds, 0, uv::UV_NONBLOCK_PIPE as i32) }
-            .to_result(bun_sys::Tag::uv_pipe)?;
-        let mut endpoints = Endpoints {
-            cmd_child: Some(Fd::from_uv(cmd_fds[0])),
-            reply_child: None,
-            cmd: ptr::null_mut(),
-            reply: ptr::null_mut(),
-        };
-        let cmd_parent = Fd::from_uv(cmd_fds[1]);
-        if let Err(err) = endpoints.wrap(event_loop, cmd_parent, |e, pipe| e.cmd = pipe) {
-            cmd_parent.close();
-            return Err(err);
-        }
-
-        let mut reply_fds: [uv::uv_file; 2] = [0; 2];
-        // SAFETY: FFI; `reply_fds` is the out-array uv_pipe fills.
-        unsafe { uv::uv_pipe(&raw mut reply_fds, uv::UV_NONBLOCK_PIPE as i32, 0) }
-            .to_result(bun_sys::Tag::uv_pipe)?;
-        endpoints.reply_child = Some(Fd::from_uv(reply_fds[1]));
-        let reply_parent = Fd::from_uv(reply_fds[0]);
-        if let Err(err) = endpoints.wrap(event_loop, reply_parent, |e, pipe| e.reply = pipe) {
-            reply_parent.close();
-            return Err(err);
-        }
-        Ok(endpoints)
+        // UV_NONBLOCK_PIPE (overlapped) goes on our ends only.
+        let [cmd_child, cmd] = Self::pipe(0, uv::UV_NONBLOCK_PIPE as i32)?;
+        let cmd = Self::wrap(event_loop, cmd)?;
+        let [reply, reply_child] = Self::pipe(uv::UV_NONBLOCK_PIPE as i32, 0)?;
+        let reply = Self::wrap(event_loop, reply)?;
+        Ok(Endpoints {
+            child: Some([cmd_child, reply_child]),
+            cmd,
+            reply,
+        })
     }
 
-    /// On success libuv owns `fd`; on failure the caller still does.
-    fn wrap(
-        &mut self,
-        event_loop: EventLoopHandle,
-        fd: Fd,
-        store: impl FnOnce(&mut Endpoints, *mut uv::Pipe),
-    ) -> crate::Result<()> {
-        let pipe: *mut uv::Pipe = bun_core::heap::into_raw(bun_core::boxed_zeroed::<uv::Pipe>());
-        // SAFETY: `pipe` is a live Box; `close_and_destroy` frees it in any state.
-        let result = unsafe {
-            (*pipe)
-                .init(event_loop.uv_loop(), false)
-                .to_result(bun_sys::Tag::uv_pipe)
-                .and_then(|()| (*pipe).open(fd.uv()).to_result(bun_sys::Tag::open))
-        };
-        if let Err(err) = result {
-            // SAFETY: see above.
-            unsafe { uv::Pipe::close_and_destroy(pipe) };
-            return Err(err.into());
-        }
+    /// `[read end, write end]`
+    fn pipe(read_flags: i32, write_flags: i32) -> bun_sys::Result<[File; 2]> {
+        let mut fds: [uv::uv_file; 2] = [0; 2];
+        // SAFETY: FFI; `fds` is the out-array uv_pipe fills.
+        unsafe { uv::uv_pipe(&raw mut fds, read_flags, write_flags) }
+            .to_result(bun_sys::Tag::uv_pipe)?;
+        Ok(fds.map(|fd| File::from_fd(Fd::from_uv(fd))))
+    }
+
+    fn wrap(event_loop: EventLoopHandle, file: File) -> bun_sys::Result<uv::Owned<uv::Pipe>> {
+        let mut pipe = bun_io::Source::open_pipe(event_loop.uv_loop(), file.fd())?;
+        let _ = file.into_raw(); // pipe owns it now
         // Pending commands keep the loop alive (Transport::updateKeepAlive), not
         // the pipes.
-        // SAFETY: `pipe` is initialized.
-        unsafe { (*pipe).unref() };
-        store(self, pipe);
-        Ok(())
+        pipe.unref();
+        Ok(pipe)
     }
 
     fn child_fds(&self) -> Box<[Stdio]> {
-        vec![
-            Stdio::Pipe(self.cmd_child.expect("endpoints live")), // fd 3
-            Stdio::Pipe(self.reply_child.expect("endpoints live")), // fd 4
-        ]
-        .into_boxed_slice()
+        let child = self.child.as_ref().expect("endpoints live");
+        child.iter().map(|file| Stdio::Pipe(file.fd())).collect()
     }
 
     fn close_child_ends(&mut self) {
-        if let Some(fd) = self.cmd_child.take() {
-            fd.close();
-        }
-        if let Some(fd) = self.reply_child.take() {
-            fd.close();
-        }
+        self.child = None;
     }
 
     /// Moves our ends into a [`ChromeProcess`], starts reading replies, and publishes it.
-    fn attach(mut self, process: ProcessHandle) -> crate::Result<i32> {
+    fn attach(self, process: ProcessHandle) -> crate::Result<i32> {
+        let reply = self.reply.as_ptr();
         let pipes = WindowsPipes {
-            cmd: core::mem::replace(&mut self.cmd, ptr::null_mut()),
-            reply: core::mem::replace(&mut self.reply, ptr::null_mut()),
-            read_buf: vec![0u8; READ_BUF_SIZE].into_boxed_slice(),
+            reply: Some(self.reply),
+            cmd: Some(self.cmd),
+            read_buf: bun_jsc::JsCell::new(vec![0u8; READ_BUF_SIZE].into_boxed_slice()),
         };
-        let reply = pipes.reply;
         let generation = GENERATION.load(Ordering::Relaxed).wrapping_add(1);
-        let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess {
+        let chrome = bun_ptr::AliasableBox::new(ChromeProcess {
             process,
             retired: false,
             pipes,
             generation,
-        }));
-        // SAFETY: `self_ptr` is the freshly-allocated Box that owns `process`.
-        let process: *mut Process = unsafe { (*self_ptr).process.as_ptr() };
+        });
+        let self_ptr = chrome.as_ptr();
+        // SAFETY: a field projection of `chrome`.
+        let process = unsafe { &(*self_ptr).process };
 
         // Unlike POSIX the exit can't be delivered before we return (it comes
         // through this thread's loop), so the exit handler is installed after.
-        // SAFETY: `reply` and `process` are owned by `*self_ptr`, which
-        // outlives the reads (`WindowsPipes::close` stops them first).
+        // SAFETY: `reply` is owned by `*self_ptr`, which
+        // outlives the reads (closing the pipe stops them).
         let started = unsafe {
             (*reply)
                 .read_start_ctx::<ChromeProcess>(self_ptr)
                 .to_result(bun_sys::Tag::listen)
-                .and_then(|()| (*process).watch())
+                .and_then(|()| process.watch())
         };
         if let Err(err) = started {
             scoped_log!(Chrome, "read_start/watch failed: {}", err);
-            // SAFETY: `self_ptr` is unpublished; dropping it closes the pipes,
-            // then detaches and releases the process.
-            unsafe {
-                let mut chrome = bun_core::heap::take(self_ptr);
-                chrome.pipes.close();
-                let _ = chrome.process.kill(9);
-            }
+            let _ = process.kill(9);
             return Err(err.into());
         }
 
         // SAFETY: `self_ptr` is live until `on_exit`.
-        unsafe {
-            let p = process;
-            (*p).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
-            (*p).disable_keeping_event_loop_alive();
-        }
-        INSTANCE.store(self_ptr, Ordering::Relaxed);
+        let handler = unsafe { ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr) };
+        Process::set_exit_handler(process, handler);
+        process.disable_keeping_event_loop_alive();
+        INSTANCE.store(chrome.into_raw(), Ordering::Relaxed);
         GENERATION.store(generation, Ordering::Relaxed);
         Ok(0)
-    }
-}
-
-#[cfg(windows)]
-impl Drop for Endpoints {
-    fn drop(&mut self) {
-        self.close_child_ends();
-        for pipe in [self.cmd, self.reply] {
-            if !pipe.is_null() {
-                // SAFETY: still ours; `attach` nulls the fields it takes over.
-                unsafe { uv::Pipe::close_and_destroy(pipe) };
-            }
-        }
     }
 }
 
@@ -871,29 +778,19 @@ impl Drop for Endpoints {
 impl WindowsPipes {
     /// Idempotent; in-flight writes complete with UV_ECANCELED and free themselves.
     fn close(&mut self) {
-        let reply = core::mem::replace(&mut self.reply, ptr::null_mut());
-        if !reply.is_null() {
-            // SAFETY: the live Box from `attach`; ownership ends here.
-            unsafe {
-                (*reply).read_stop();
-                uv::Pipe::close_and_destroy(reply);
-            }
-        }
-        let cmd = core::mem::replace(&mut self.cmd, ptr::null_mut());
-        if !cmd.is_null() {
-            // SAFETY: as above.
-            unsafe { uv::Pipe::close_and_destroy(cmd) };
-        }
+        self.reply = None;
+        self.cmd = None;
     }
 }
 
+// SAFETY: only these callbacks use `read_buf`, and `reply` closes ahead of it.
 #[cfg(windows)]
-impl uv::StreamReader for ChromeProcess {
-    fn on_read_alloc(this: &mut Self, _suggested_size: usize) -> &mut [u8] {
-        &mut this.pipes.read_buf
+unsafe impl uv::StreamReader for ChromeProcess {
+    fn on_read_alloc(this: &Self, _suggested_size: usize) -> *mut [u8] {
+        this.pipes.read_buf.with_mut(|buf| &raw mut **buf)
     }
 
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &Self, err: core::ffi::c_int) {
         scoped_log!(
             Chrome,
             "reply pipe closed: {:?}",
@@ -902,11 +799,9 @@ impl uv::StreamReader for ChromeProcess {
         PipeEvent::Closed.post(this.generation);
     }
 
-    unsafe fn on_read(this: *mut Self, data: &[u8]) {
-        scoped_log!(Chrome, "read {} bytes", data.len());
-        // SAFETY: `this` is live for the duration of the callback.
-        let generation = unsafe { (*this).generation };
-        PipeEvent::Data(Box::from(data)).post(generation);
+    unsafe fn on_read(this: &Self, nread: usize) {
+        scoped_log!(Chrome, "read {} bytes", nread);
+        PipeEvent::Data(Box::from(&this.pipes.read_buf.get()[..nread])).post(this.generation);
     }
 }
 
@@ -928,12 +823,10 @@ pub(crate) struct QueuedEvent {
 impl PipeEvent {
     fn post(self, generation: u32) {
         // Not dispatched from the read callback: C++ runs JS that may spin a nested event loop (bun:test does), and libuv re-arms the read only after the callback returns.
-        VirtualMachine::get()
-            .as_mut()
-            .enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
-                generation,
-                event: self,
-            })));
+        VirtualMachine::get().enqueue_task(bun_jsc::Task::from_boxed(Box::new(QueuedEvent {
+            generation,
+            event: self,
+        })));
     }
 }
 
@@ -995,19 +888,19 @@ impl WriteReq {
             generation,
         });
         req.buf = uv::uv_buf_t::init(&req.bytes);
-        let req = bun_core::heap::into_raw(req);
+        let owned = bun_ptr::AliasableBox::from(req);
+        let req = owned.as_ptr();
         // SAFETY: caller contract; `req` stays put until `on_write` reclaims it.
         let rc = unsafe {
             (*req)
                 .req
-                .write((*pipe).as_stream(), &(*req).buf, req, WriteReq::on_write)
+                .write(pipe.cast(), &(*req).buf, req, WriteReq::on_write)
         };
         if let Some(err) = rc.to_error(bun_sys::Tag::write) {
             scoped_log!(Chrome, "uv_write failed: {}", err);
-            // SAFETY: libuv did not take `req`, so the callback will not run.
-            unsafe { bun_core::heap::destroy(req) };
             return false;
         }
+        let _ = owned.into_raw(); // libuv's until `on_write`
         true
     }
 
@@ -1032,19 +925,15 @@ unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
     if instance.is_null() {
         return; // Chrome already exited; the Exited event is on its way to C++
     }
-    // SAFETY: INSTANCE is live until `on_exit` clears it; raw field reads, so
-    // nothing aliases the `&mut` the read callbacks form.
-    let (pipe, generation) = unsafe { ((*instance).pipes.cmd, (*instance).generation) };
-    debug_assert!(
-        !pipe.is_null(),
-        "pipes are only closed after INSTANCE is cleared"
-    );
+    // SAFETY: INSTANCE is live until `on_exit` clears it, and no read callback runs below.
+    let (pipe, generation) = unsafe { (&(*instance).pipes.cmd, (*instance).generation) };
+    let pipe = pipe.as_ref().expect("closed after INSTANCE is cleared");
     scoped_log!(Chrome, "write {} bytes", len);
     // SAFETY: caller contract.
     let bytes = unsafe { bun_core::ffi::slice(data, len) };
     for chunk in bytes.chunks(u32::MAX as usize) {
         // SAFETY: `pipe` belongs to the published instance read above.
-        if !unsafe { WriteReq::submit(pipe, chunk, generation) } {
+        if !unsafe { WriteReq::submit(pipe.as_ptr(), chunk, generation) } {
             PipeEvent::Closed.post(generation);
             return;
         }

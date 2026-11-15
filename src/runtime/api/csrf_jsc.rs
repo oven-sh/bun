@@ -58,10 +58,7 @@ fn algorithm<'a>(heap: &JsHeap<'a>, name: Option<&[u8]>) -> bindgen::Result<'a, 
 }
 
 fn default_secret<'a>() -> &'a [u8] {
-    VirtualMachine::get()
-        .as_mut()
-        .rare_data()
-        .default_csrf_secret()
+    VirtualMachine::get().rare_data().default_csrf_secret()
 }
 
 pub(crate) fn generate<'a>(

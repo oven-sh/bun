@@ -6,6 +6,7 @@
 use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
@@ -245,7 +246,7 @@ fn vm_console(global: &JSGlobalObject) -> *mut ConsoleObject {
     // before that. Returned as a raw pointer (not `&'static mut`) so callers
     // dereference at each use site without holding overlapping `&mut`
     // references.
-    global.bun_vm().as_mut().console.cast::<ConsoleObject>()
+    global.bun_vm().console.cast::<ConsoleObject>()
 }
 
 /// `&mut ConsoleObject` accessor for the set-once `VirtualMachine.console`
@@ -1181,24 +1182,11 @@ impl<'a> DynWriteAdapter<'a> {
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
-    // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let err = global.create_error_instance(format_args!("trace output"));
-    // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
-    // `exception` and `&holder.need_to_clear_parser_arena_on_deinit` would be
-    // two simultaneous `&mut` into `holder`. Capture the flag in a local and
-    // write it back after.
-    let mut need_to_clear = holder.need_to_clear_parser_arena_on_deinit;
-    vm.remap_zig_exception(
-        holder.zig_exception(),
-        err,
-        None,
-        &mut need_to_clear,
-        &mut source_code,
-        false,
-    );
-    holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
+    let _arena_reset =
+        vm.remap_zig_exception(holder.zig_exception(), err, None, &mut source_code, false);
 
     let mut adapter = DynWriteAdapter::new(writer);
     let _ = VirtualMachine::print_stack_trace(
@@ -1206,8 +1194,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         &holder.zig_exception().stack,
         Output::enable_ansi_colors_stderr(),
     );
-
-    holder.deinit(vm);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -1604,9 +1590,7 @@ pub mod formatter {
         pub map: visited::Map,
         /// Pooled backing for `map`. `None` until the first cell that can have
         /// circular refs is formatted; `Drop` returns it to `visited::Pool`.
-        /// Raw pointer (not `Box`) because `visited::Pool` owns the
-        /// `heap::alloc`/`from_raw` lifecycle.
-        pub(crate) map_node: Option<core::ptr::NonNull<visited::PoolNode>>,
+        pub(crate) map_node: ManuallyDrop<Option<Box<visited::PoolNode>>>,
         pub(crate) hide_native: bool,
         pub(crate) indent: u32,
         pub depth: u16,
@@ -1642,7 +1626,7 @@ pub mod formatter {
                 global_this,
                 remaining_values: bun_ptr::RawSlice::EMPTY,
                 map: visited::Map::default(),
-                map_node: None,
+                map_node: ManuallyDrop::new(None),
                 hide_native: false,
                 indent: 0,
                 depth: 0,
@@ -1680,7 +1664,7 @@ pub mod formatter {
                 global_this: self.global_this,
                 remaining_values: self.remaining_values,
                 map: visited::Map::default(),
-                map_node: None,
+                map_node: ManuallyDrop::new(None),
                 hide_native: self.hide_native,
                 indent: self.indent,
                 depth: self.depth,
@@ -1727,21 +1711,13 @@ pub mod formatter {
             if let Some(mut node) = self.map_node.take() {
                 // Move the working map back into the pooled node, shrink if it
                 // ballooned, then return the node to the thread-local pool.
-                let map = core::mem::take(&mut self.map);
-                // `node_data_mut` is safe: `Map::INIT` is `Some`, so the
-                // pooled slot already holds an (empty, post-`take`) `Map`;
-                // assigning over it drops that empty value and moves `map` in.
-                let data = visited::node_data_mut(&mut node);
-                *data = map;
-                if data.capacity() > 512 {
-                    data.deinit();
+                node.data = core::mem::take(&mut self.map);
+                if node.data.capacity() > 512 {
+                    node.data.deinit();
                 } else {
-                    data.clear();
+                    node.data.clear();
                 }
-                // SAFETY: `node` was obtained from `Pool::get_node()` and is
-                // exclusively owned by this formatter; `Map::INIT` is `Some`,
-                // so `data` is initialized. Ownership returns to the pool.
-                unsafe { visited::Pool::release(node.as_ptr()) };
+                visited::Pool::release(node);
             }
         }
     }
@@ -1835,22 +1811,14 @@ pub mod formatter {
         }
 
         impl bun_collections::pool::ObjectPoolType for Map {
-            // Fresh nodes start with an empty map so clearing retained
-            // capacity on first use is well-defined.
-            const INIT: Option<fn() -> Result<Self, bun_core::Error>> = Some(|| Ok(Map::default()));
+            fn init() -> Self {
+                Map::default()
+            }
         }
 
         // Thread-local free list, capped at 16 nodes.
         bun_collections::object_pool!(pub Pool: Map, threadsafe, 16);
         pub type PoolNode = bun_collections::pool::Node<Map>;
-
-        #[inline]
-        pub(crate) fn node_data_mut(node: &mut core::ptr::NonNull<PoolNode>) -> &mut Map {
-            // SAFETY: `Map::INIT` is `Some`, so `data` is initialized for
-            // every node from `Pool::get_node()`; the caller owns `node`
-            // exclusively until `Pool::release`, so forming `&mut` is sound.
-            unsafe { node.as_mut().data.assume_init_mut() }
-        }
     }
 
     // ───────────────────────────────────────────────────────────────────────
@@ -3249,12 +3217,10 @@ pub mod formatter {
         #[inline(never)]
         pub(crate) fn visited_insert(&mut self, value: JSValue) -> bool {
             if self.map_node.is_none() {
-                let mut node = core::ptr::NonNull::new(visited::Pool::get_node())
-                    .expect("ObjectPool::get_node always returns a valid heap node");
-                let data = visited::node_data_mut(&mut node);
-                data.clear();
-                self.map = core::mem::take(data);
-                self.map_node = Some(node);
+                let mut node = visited::Pool::get_node();
+                node.data.clear();
+                self.map = core::mem::take(&mut node.data);
+                self.map_node = ManuallyDrop::new(Some(node));
             }
             !self
                 .map
@@ -3923,8 +3889,7 @@ pub mod formatter {
             }
 
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
-            // SAFETY: per-thread VM.
-            let vm = VirtualMachine::get().as_mut();
+            let vm = VirtualMachine::get();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
             Ok(())
         }

@@ -27,6 +27,7 @@ use crate::import_sites::{
     is_module_that_reaches_modules, reaches_modules_unnamed, touches_export,
     write_from_other_folder, write_question_where_file_lies, write_start_from_other_folder,
 };
+use crate::module_format::ModuleFormat;
 use crate::resolve::{
     CodeHost, CodeRead, DeclaredSideEffects, EnclosingPackage, FinishedFile, HostPayload,
     ParsedFile, TranspileSettings, is_declaration_file_name,
@@ -289,6 +290,7 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
                 }
             }
             import_what_is_required(self, &mut state);
+            share_commonjs_modules(self, &mut state);
             ordered = Some(order_files(self, &mut state));
         };
         match early_prefetch.get() {
@@ -2212,11 +2214,57 @@ fn share_form<'r>(
         return;
     }
     let reached = *first_forms.entry(path).or_insert(asked_for);
+    retarget_load(files, index, next, reached);
+}
+
+fn retarget_load(files: &mut [WalkedFile<'_, '_>], importer: u32, next: usize, reached: u32) {
     let key = files[reached as usize].target.key;
-    let file = &mut files[index as usize];
+    let file = &mut files[importer as usize];
     file.targets[next] = reached;
     if let Some(parsed) = &mut file.parsed {
         parsed.code.targets[next].key = key;
+    }
+}
+
+fn share_commonjs_modules<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    state: &mut WalkState<'_, 'r>,
+) {
+    let is_commonjs = |file: &WalkedFile<'_, '_>| {
+        let LoadKey { path, loader } = file.target.key;
+        file.parsed.as_ref().is_some_and(|parsed| {
+            let analysis = &parsed.code.analyzed.analysis;
+            let where_imported = context.resolver.module_type_where_imported(path);
+            analysis.module_format == ModuleFormat::CommonJs
+                && analysis.module_formats.get(where_imported) == ModuleFormat::CommonJs
+                && context.host.loads_as_code(path, loader)
+        })
+    };
+    let find_form_without_type = |form: &WalkedFile<'_, 'r>| {
+        let key = context.canonical_key(LoadKey {
+            loader: HostLoader::default(),
+            ..form.target.key
+        });
+        let index = *state.index_of.get(&key)?;
+        is_commonjs(&state.files[index as usize]).then_some(index)
+    };
+    let forms = (state.files.iter().zip(0u32..))
+        .filter(|(file, _)| file.target.key.loader != HostLoader::default() && is_commonjs(file));
+    let mut replacements: FxHashMap<u32, u32> = forms
+        .filter_map(|(file, form)| Some((form, find_form_without_type(file)?)))
+        .collect();
+    if replacements.is_empty() {
+        return;
+    }
+    let is_of_program = find_files_of_program(context, state);
+    replacements.retain(|_, shared| is_of_program[*shared as usize]);
+    for importer in 0..state.files.len() as u32 {
+        for next in 0..state.files[importer as usize].code_targets().len() {
+            let loaded = state.files[importer as usize].targets[next];
+            if let Some(&shared) = replacements.get(&loaded) {
+                retarget_load(&mut state.files, importer, next, shared);
+            }
+        }
     }
 }
 

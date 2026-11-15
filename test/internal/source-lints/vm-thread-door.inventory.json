@@ -1,12 +1,4 @@
 {
-  "src/event_loop/AnyEventLoop.rs": {
-    "unsafe impl Send": [
-      "JsPoster"
-    ],
-    "unsafe impl Sync": [
-      "JsPoster"
-    ]
-  },
   "src/jsc/CppTask.rs": {
     "WorkPool::schedule*": 1,
     "owned_task!": [
@@ -58,12 +50,10 @@
   "src/jsc/webcore_types.rs": {
     "unsafe impl Send": [
       "Blob",
-      "Bytes",
       "Store"
     ],
     "unsafe impl Sync": [
       "Blob",
-      "Bytes",
       "Store"
     ]
   },
@@ -194,10 +184,11 @@
     "WorkPool::schedule*": 1
   },
   "src/runtime/shell/builtin/rm.rs": {
-    "WorkPool::schedule*": 2,
+    "WorkPool::schedule*": 2
+  },
+  "src/runtime/shell/dispatch_tasks.rs": {
     "unsafe impl Send": [
-      "DirTask",
-      "ShellRmTask"
+      "ShellGlobTask"
     ]
   },
   "src/runtime/shell/interpreter.rs": {

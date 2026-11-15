@@ -109,10 +109,7 @@ impl Handler {
             return Ok(());
         }
 
-        let _ =
-            VirtualMachine::get()
-                .as_mut()
-                .uncaught_exception(global_object, error_value, false);
+        let _ = VirtualMachine::get().uncaught_exception(global_object, error_value, false);
         Ok(())
     }
 

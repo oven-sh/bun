@@ -624,8 +624,8 @@ pub mod build_options {
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
 pub use bun_alloc::oom_from_alloc;
 pub use bun_alloc::{
-    Alignment, AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory,
-    page_size, range_of_slice_in_buffer,
+    AllocError, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory, page_size,
+    range_of_slice_in_buffer,
 };
 // FFI ABI-safety primitives — `bun_opaque` is the zero-dep `#![no_std]` crate
 // that hosts both the opaque-handle macro and the layout-assert macro, so all
@@ -1664,16 +1664,11 @@ pub(crate) mod strings_impl {
         }
     }
 
-    pub fn convert_utf16_to_utf8(mut list: Vec<u8>, utf16: &[u16]) -> Vec<u8> {
+    pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
         let need = simdutf::length::utf8::from::utf16::le(utf16);
-        list.reserve(need + 16);
+        let mut list = Vec::with_capacity(need + 16);
         convert_utf16_to_utf8_append(&mut list, utf16);
         list
-    }
-
-    #[inline]
-    pub fn to_utf8_alloc(utf16: &[u16]) -> Vec<u8> {
-        convert_utf16_to_utf8(Vec::new(), utf16)
     }
 
     /// Transcode raw UTF-16-LE *bytes* (no alignment requirement) to a fresh

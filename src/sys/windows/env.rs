@@ -33,10 +33,8 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {
-        let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
-        let _free = scopeguard::guard(wtf16_buf, |p| {
-            crate::windows::FreeEnvironmentStringsW(p);
-        });
+        let environment = crate::windows::EnvironmentStrings::get().ok_or(AllocError)?;
+        let wtf16_buf = environment.as_ptr();
         let mut len: usize = 0;
         loop {
             // SAFETY: `wtf16_buf` is a contiguous double-NUL-terminated block returned by the OS;

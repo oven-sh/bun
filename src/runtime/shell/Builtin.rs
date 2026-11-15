@@ -263,8 +263,7 @@ pub(crate) enum BuiltinInput {
     Ignore,
 }
 
-/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount;
-/// `Drop` runs `Blob::deinit`.
+/// Refcounted wrapper around a `webcore.Blob`. `Rc` provides the refcount.
 pub(crate) struct BuiltinBlob {
     pub(crate) blob: crate::webcore::Blob,
 }
@@ -603,7 +602,7 @@ impl Builtin {
                         }
                         Ok(f) => {
                             note_shell_redirect(cwd, path.as_bytes(), redirect.to_flags());
-                            f
+                            f.into_raw()
                         }
                     }
                 };
@@ -899,7 +898,7 @@ impl Builtin {
     /// Cwd fd of the owning Cmd's shell env.
     #[inline]
     pub(crate) fn cwd(interp: &Interpreter, cmd: NodeId) -> bun_sys::Fd {
-        Self::shell(interp, cmd).cwd_fd
+        Self::shell(interp, cmd).cwd_fd.fd()
     }
 
     /// Format `"{kind}: {fmt}"` into a fresh heap buffer.

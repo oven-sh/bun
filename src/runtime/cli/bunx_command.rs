@@ -1405,7 +1405,6 @@ impl BunxCommand {
                     bun_event_loop::MiniEventLoop::init_global(
                         // SAFETY: a reborrow through the live `env_loader`, not a second `env_mut()` aliasing it.
                         Some(unsafe { &mut *(env_loader as *mut _) }),
-                        None,
                     ),
                 ),
                 ..Default::default()

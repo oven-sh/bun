@@ -12,7 +12,7 @@ use bun_js_parser::parser::Runtime;
 use bun_options_types::context::MacroOptions;
 use bun_options_types::schema::api;
 use bun_paths::resolve_path;
-use bun_sys::{self, Fd, FdExt as _};
+use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
@@ -60,7 +60,7 @@ impl BuildCommand {
     #[inline(never)]
     pub(crate) fn exec(
         ctx: Context,
-        fetcher: Option<&bundle_v2::DependenciesScanner>,
+        fetcher: Option<&mut bundle_v2::DependenciesScanner<'_>>,
     ) -> Result<(), crate::Error> {
         Global::configure_allocator(Global::AllocatorConfiguration {
             long_running: true,
@@ -147,7 +147,7 @@ impl BuildCommand {
             std::ptr::from_ref::<transpiler::Transpiler>(this_transpiler).cast(),
             core::mem::size_of::<transpiler::Transpiler>(),
         );
-        if let Some(fetch) = fetcher {
+        if let Some(fetch) = &fetcher {
             this_transpiler
                 .options
                 .entry_points
@@ -691,12 +691,12 @@ impl BuildCommand {
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            let event_loop = bun_event_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,
                 arena,
-                Some(core::ptr::NonNull::from(&mut event_loop)),
+                Some(core::ptr::NonNull::from(&event_loop)),
                 ctx.debug.hot_reload == HotReload::Watch,
                 &mut reachable_file_count,
                 &mut minify_duration,
@@ -1517,11 +1517,10 @@ pub(crate) fn collect_compile_assets(
         };
         if bun_core::S::ISDIR(st.st_mode as _) {
             let dir = match bun_sys::open_dir_for_iteration(cwd, asset_trimmed) {
-                Ok(d) => d,
+                Ok(d) => bun_sys::File::from_fd(d),
                 Err(e) => return fail(e.with_path(asset)),
             };
-            let _close = scopeguard::guard(dir, |fd| fd.close());
-            let mut walker = match bun_sys::walker_skippable::walk(dir, &[], &[]) {
+            let mut walker = match bun_sys::walker_skippable::walk(dir.fd(), &[], &[]) {
                 Ok(w) => w,
                 Err(_) => bun_core::out_of_memory(),
             };

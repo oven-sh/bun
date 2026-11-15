@@ -8,7 +8,7 @@ use bun_core::String as BunString;
 use bun_jsc::bindgen::{self, BufferSource, Callable, JsHeap, JsLocal, JsScope, StringOrJsBytes};
 use bun_jsc::{
     self as jsc, ArrayBuffer, ErrorCode, JSGlobalObject, JSType, JSValue, Job, JobContext, JsPtr,
-    JsResult, JsThread, Protected, Strong, UUID, UUID7,
+    JsResult, JsThread, ProtectedJSValue, Strong, UUID, UUID7,
 };
 
 use crate::crypto::pbkdf2::{self, PBKDF2};
@@ -212,9 +212,9 @@ enum RandomFillJob {
 #[derive(bun_jsc::JsAffine)]
 struct RandomFillJs {
     callback: Strong,
-    value: Protected,
+    value: ProtectedJSValue,
     /// The `WebAssembly.Memory` that `value` is a view of. `grow()` detaches `value`.
-    memory: Option<Protected>,
+    memory: Option<ProtectedJSValue>,
 }
 
 const MAX_POSSIBLE_LENGTH: usize = {
@@ -289,8 +289,8 @@ fn schedule(
         job,
         RandomFillJs {
             callback: Strong::create(callback.with_async_context_if_needed(global), global),
-            value: Protected::new(value),
-            memory: memory.map(Protected::new),
+            value: value.protected(),
+            memory: memory.map(JSValue::protected),
         },
     );
 }
@@ -386,11 +386,9 @@ fn random_int<'a>(
     let res: i64 = {
         let range = (max - min) as u64;
         debug_assert!(range > 0);
-        let rare_data = global.bun_vm().as_mut().rare_data();
-        let mut buf = [0u8; 8];
+        let rare_data = global.bun_vm().rare_data();
         let x = loop {
-            buf.copy_from_slice(rare_data.entropy_slice(8));
-            let x = u64::from_ne_bytes(buf);
+            let x = u64::from_ne_bytes(rare_data.entropy());
             let m = (x as u128).wrapping_mul(range as u128);
             let l = m as u64;
             if l < range {
@@ -426,7 +424,7 @@ pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> Bun
     } else {
         // SAFETY: it only leads to the VM's entropy cache.
         let global = unsafe { heap.global() };
-        global.bun_vm().as_mut().rare_data().next_uuid()
+        global.bun_vm().rare_data().next_uuid()
     };
 
     uuid.print(
@@ -448,7 +446,7 @@ pub(crate) fn random_uuid_v7(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> 
     if options.disable_entropy_cache {
         boringssl::rand_bytes(&mut entropy);
     } else {
-        entropy.copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
+        entropy = global.bun_vm().rare_data().entropy();
     }
     let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
 

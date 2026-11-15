@@ -6,7 +6,7 @@ use crate::jsc::virtual_machine::VirtualMachine;
 use crate::jsc_hooks::timer_all;
 use crate::timer::{
     AbortSignalTimeout, Clock, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
-    ImmediateObject, InHeap, TimeoutObject, TimerHeap, TimerObjectInternals,
+    InHeap, Popped, TimerHeap, TimerObjectInternals,
 };
 use crate::generated_bindgen::fake_timers as generated;
 use bun_core::{Timespec, TimespecMockMode};
@@ -542,14 +542,14 @@ const AUTO_STEP: u32 = 0;
 #[unsafe(no_mangle)]
 extern "C" fn Bun__FakeTimers__setSystemTime(global: &JSGlobalObject, ms: f64) {
     let this = &timer_all().fake_timers;
-    let vm = global.bun_vm().as_mut();
+    let vm = global.bun_vm();
     if !this.active.get() {
-        this.from_preload.set(vm.is_in_preload);
+        this.from_preload.set(vm.is_in_preload.get());
         return;
     }
     if ms.is_nan() {
         bun_core::mock_time::clear_wall();
-        vm.overridden_time_origin = None;
+        vm.overridden_time_origin.set(None);
         return;
     }
     this.date_now_offset.set(ms - this.now().ms() as f64);
@@ -660,11 +660,11 @@ impl FakeTimers {
             JSMock__setOverridenDateNow(global, self.date_now());
         }
         if faked.contains(Api::Performance) {
-            let vm = global.bun_vm().as_mut();
-            vm.overridden_performance_now = Some(self.now().ns());
+            let vm = global.bun_vm();
+            vm.overridden_performance_now.set(Some(self.now().ns()));
             // `Date.now() == date_now_offset + performance.now()`, so the offset is
             // the fake clock's `performance.timeOrigin`.
-            vm.overridden_time_origin = Some(self.date_now_offset.get());
+            vm.overridden_time_origin.set(Some(self.date_now_offset.get()));
         }
     }
 
@@ -674,9 +674,9 @@ impl FakeTimers {
         // NaN is JSGlobalObject::overridenDateNow's "no override" sentinel; a
         // real -1 would pin Date.now() at 1969-12-31T23:59:59.999Z.
         JSMock__setOverridenDateNow(global, f64::NAN);
-        let vm = global.bun_vm().as_mut();
-        vm.overridden_performance_now = None;
-        vm.overridden_time_origin = None;
+        let vm = global.bun_vm();
+        vm.overridden_performance_now.set(None);
+        vm.overridden_time_origin.set(None);
     }
 
     /// Never moves the clock back, since a nested run may already have taken it past `to`.
@@ -692,7 +692,7 @@ impl FakeTimers {
         self.faked.set(options.faked);
         self.fakes_abort_signal_timeout
             .set(options.fakes_abort_signal_timeout);
-        self.from_preload.set(global.bun_vm().is_in_preload);
+        self.from_preload.set(global.bun_vm().is_in_preload.get());
         self.installs.update(|installs| installs.wrapping_add(1));
         self.loop_limit.set(options.loop_limit);
         self.now.set(Timespec::EPOCH);
@@ -707,9 +707,7 @@ impl FakeTimers {
         self.from_preload.set(false);
         self.installs.update(|installs| installs.wrapping_add(1));
         self.tick_mode.set(TickMode::Manual);
-        if self.tick_timer.state.get() == EventLoopTimerState::ACTIVE {
-            timer_all().remove(&self.tick_timer);
-        }
+        self.tick_timer.disarm();
     }
 
     /// `global` won't run JS again (`--isolate` swap, VM teardown). `cancel_all_timeout_objects` drains the heap afterwards.
@@ -721,7 +719,7 @@ impl FakeTimers {
         // SAFETY: JS thread; releasing a `Strong` runs no JS.
         unsafe {
             (*self.replaced.as_ptr()).clear();
-            (*self.originals.get()).deinit();
+            *self.originals.get() = Default::default();
             (*self.ticks.get()).clear();
             (*self.drives.as_ptr()).clear();
         }
@@ -730,7 +728,7 @@ impl FakeTimers {
 
     /// Pop every fake timer and tell its owner. Runs no JS.
     #[optimize(size)]
-    fn clear(&self, vm: *mut VirtualMachine) {
+    fn clear(&self, vm: &VirtualMachine) {
         // SAFETY: JS thread; releasing a `Strong` runs no JS.
         unsafe { (*self.ticks.get()).clear() };
         while let Some(timer) = self.timers.delete_min() {
@@ -740,19 +738,8 @@ impl FakeTimers {
                 (*timer).in_heap.set(InHeap::None);
                 (*timer).state.set(EventLoopTimerState::CANCELLED);
                 match (*timer).tag {
-                    EventLoopTimerTag::TimeoutObject => {
-                        let parent = TimeoutObject::from_timer_ptr(timer);
-                        TimerObjectInternals::release_heap_pin(
-                            core::ptr::NonNull::new_unchecked(&raw mut (*parent).internals),
-                            vm,
-                        );
-                    }
-                    EventLoopTimerTag::ImmediateObject => {
-                        let parent = ImmediateObject::from_timer_ptr(timer);
-                        TimerObjectInternals::release_heap_pin(
-                            core::ptr::NonNull::new_unchecked(&raw mut (*parent).internals),
-                            vm,
-                        );
+                    EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                        Popped::new(timer).cancel(vm);
                     }
                     EventLoopTimerTag::AbortSignalTimeout => {
                         AbortSignalTimeout::discard(AbortSignalTimeout::from_timer_ptr(timer));
@@ -804,7 +791,7 @@ impl FakeTimers {
     #[optimize(size)]
     fn uninstall(global: &JSGlobalObject, restore: Restore) -> Vec<AsyncDrive> {
         let this = &timer_all().fake_timers;
-        this.clear(global.bun_vm_ptr());
+        this.clear(global.bun_vm());
         this.forget_installation(global);
         let (mut uninstalled, drives) = (this.replaced.take(), this.drives.take());
         for replaced in &uninstalled {
@@ -968,24 +955,17 @@ impl FakeTimers {
         let (tag, at) = unsafe { ((*timer).tag, (*timer).next.get()) };
         timer_all().fake_timers.advance_clock_to(global, at);
         let _firing = Firing::begin();
-        let vm = VirtualMachine::get_mut_ptr();
+        let vm = VirtualMachine::get();
         let mut thrown = JSValue::ZERO;
-        // SAFETY: `timer` is live and its tag names its owner; the callees take raw pointers (noalias re-entrancy).
+        // SAFETY: `timer` was just popped from our heap.
         unsafe {
             match tag {
-                EventLoopTimerTag::TimeoutObject => TimerObjectInternals::fire_catching(
-                    core::ptr::addr_of_mut!((*TimeoutObject::from_timer_ptr(timer)).internals),
-                    vm,
-                    &raw mut thrown,
-                ),
-                EventLoopTimerTag::ImmediateObject => TimerObjectInternals::fire_catching(
-                    core::ptr::addr_of_mut!((*ImmediateObject::from_timer_ptr(timer)).internals),
-                    vm,
-                    &raw mut thrown,
-                ),
+                EventLoopTimerTag::TimeoutObject | EventLoopTimerTag::ImmediateObject => {
+                    TimerObjectInternals::fire_catching(Popped::new(timer), vm, &raw mut thrown)
+                }
                 // An abort listener or cron job that throws is reported as uncaught, same as in the real drain.
                 _ => {
-                    if let Err(err) = EventLoopTimer::fire(timer, &at, vm.cast()) {
+                    if let Err(err) = crate::dispatch::fire_timer(timer, &at, vm) {
                         bun_jsc::task::report_error_or_terminate(global, err)
                             .map_err(|stopped| stopped.throw(global))?;
                     }
@@ -1163,7 +1143,6 @@ impl FakeTimers {
             None => {
                 let _ = global
                     .bun_vm()
-                    .as_mut()
                     .uncaught_exception(global, thrown, false);
             }
         }
@@ -1298,7 +1277,7 @@ impl FakeTimers {
                 // Like sinon, reject with this one even if a timer threw earlier.
                 // SAFETY: JS thread; the borrow ends at this statement.
                 if let Some(drive) = AsyncDrive::find(unsafe { &mut *this.drives.as_ptr() }, id) {
-                    drive.thrown.deinit();
+                    drive.thrown = Default::default();
                 }
                 Self::drive_threw(global, id, thrown);
                 Some(Step::Finished)
@@ -1326,15 +1305,12 @@ impl FakeTimers {
 
     #[optimize(size)]
     fn set_tick_mode(mode: TickMode) {
-        let all = timer_all();
-        let this = &all.fake_timers;
+        let this = &timer_all().fake_timers;
         if this.tick_mode.get() == mode {
             return;
         }
         this.tick_mode.set(mode);
-        if this.tick_timer.state.get() == EventLoopTimerState::ACTIVE {
-            all.remove(&this.tick_timer);
-        }
+        this.tick_timer.disarm();
         Self::arm_tick_timer();
         this.post_auto_step();
     }
@@ -1413,7 +1389,6 @@ impl FakeTimers {
         if !thrown.is_empty() {
             let _ = global
                 .bun_vm()
-                .as_mut()
                 .uncaught_exception(global, thrown, false);
         }
         this.post_auto_step();
@@ -1843,7 +1818,7 @@ pub(crate) fn clear_all_timers(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) ->
     let global = cx.global();
     error_unless_fake_timers(global)?;
 
-    timer_all().fake_timers.clear(global.bun_vm_ptr());
+    timer_all().fake_timers.clear(global.bun_vm());
 
     Ok(chainable_this(global, this_value))
 }

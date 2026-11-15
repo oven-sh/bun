@@ -3,13 +3,12 @@ use crate::node::types::PathLike;
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    PoolTask, ShellTask, ShellWork, parse_flags,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use core::ops::ControlFlow;
-use core::ptr::NonNull;
 
 #[derive(Default)]
 pub(crate) struct Mkdir {
@@ -124,14 +123,16 @@ impl Mkdir {
                 }
                 let opts = Self::state_mut(interp, cmd).opts;
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 for i in args_start..argc {
-                    let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task =
-                        ShellMkdirTask::create(cmd, opts, path, cwd.clone(), evtloop, interp_ptr);
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule(task) };
+                    let task = ShellMkdirTask {
+                        cmd,
+                        opts,
+                        filepath: Builtin::of(interp, cmd).arg_bytes(i).to_vec(),
+                        cwd_path: cwd.clone(),
+                        created_directories: Vec::new(),
+                        err: None,
+                    };
+                    PoolTask::schedule(interp, task);
                 }
                 Yield::suspended()
             }
@@ -155,9 +156,8 @@ impl Mkdir {
         Self::next(interp, cmd)
     }
 
-    /// The caller ([`ShellMkdirTask::run_from_main_thread`]) owns the heap
-    /// allocation and drops it after this returns.
-    fn on_shell_mkdir_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellMkdirTask) {
+    fn on_shell_mkdir_task_done(interp: &Interpreter, task: &mut ShellMkdirTask) -> Yield {
+        let cmd = task.cmd;
         let output = core::mem::take(&mut task.created_directories);
         let err = task.err.take();
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -172,7 +172,7 @@ impl Mkdir {
             }
             s
         });
-        OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref()).run(interp);
+        OutputTask::<Mkdir>::start(output_task, interp, errstr.as_deref())
     }
 }
 
@@ -269,53 +269,33 @@ pub(crate) struct ShellMkdirTask {
     pub cwd_path: Vec<u8>,
     pub created_directories: Vec<u8>,
     pub err: Option<bun_sys::Error>,
-    pub task: ShellTask,
 }
 
-impl ShellMkdirTask {
-    fn create(
-        cmd: NodeId,
-        opts: Opts,
-        filepath: Vec<u8>,
-        cwd_path: Vec<u8>,
-        evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
-    ) -> *mut ShellMkdirTask {
-        let mut task = Box::new(ShellMkdirTask {
-            cmd,
-            opts,
-            filepath,
-            cwd_path,
-            created_directories: Vec::new(),
-            err: None,
-            task: ShellTask::new(evtloop),
-        });
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
-    }
+impl ShellWork for ShellMkdirTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
 
-    fn run_from_thread_pool(this: &mut ShellMkdirTask) {
+    fn run_from_thread_pool(&mut self, _: &ShellTask) {
         use bun_paths::{Platform, platform, resolve_path};
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
             // Owned `Vec<u8>`; ensure NUL-terminated.
-            if this.filepath.last() != Some(&0) {
-                this.filepath.push(0);
+            if self.filepath.last() != Some(&0) {
+                self.filepath.push(0);
             }
-            bun_core::ZStr::from_buf(&this.filepath, this.filepath.len() - 1)
+            bun_core::ZStr::from_buf(&self.filepath, self.filepath.len() - 1)
         } else {
             resolve_path::join_z_spill::<platform::Auto>(
                 &mut spill,
-                &[&this.cwd_path, &this.filepath],
+                &[&self.cwd_path, &self.filepath],
             )
         };
 
         // `NodeFS` expects the `Valid::path_too_long` bound its JS callers
         // enforce; past it, `PathLike::slice_z` yields "" and mkdir reports ENOENT.
         if filepath.len() >= bun_paths::MAX_PATH_BYTES {
-            this.err = Some(
+            self.err = Some(
                 bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::mkdir)
                     .with_path(filepath.as_bytes()),
             );
@@ -325,65 +305,39 @@ impl ShellMkdirTask {
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
             path: PathLike::borrowed(filepath.as_bytes()),
-            recursive: this.opts.parents,
+            recursive: self.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,
         };
 
-        if this.opts.parents {
+        if self.opts.parents {
             let mut vtable = MkdirVerboseVTable {
-                inner: &mut this.created_directories,
-                active: this.opts.verbose,
+                inner: &mut self.created_directories,
+                active: self.opts.verbose,
             };
             if let Err(e) = node_fs.mkdir_recursive_impl(&args, &mut vtable) {
-                this.err = Some(e.with_path(filepath.as_bytes()));
+                self.err = Some(e.with_path(filepath.as_bytes()));
                 core::hint::black_box(&node_fs);
             }
         } else {
             match node_fs.mkdir_non_recursive(&args) {
                 Ok(_) => {
-                    if this.opts.verbose {
-                        this.created_directories
+                    if self.opts.verbose {
+                        self.created_directories
                             .extend_from_slice(filepath.as_bytes());
-                        this.created_directories.push(b'\n');
+                        self.created_directories.push(b'\n');
                     }
                 }
                 Err(e) => {
-                    this.err = Some(e.with_path(filepath.as_bytes()));
+                    self.err = Some(e.with_path(filepath.as_bytes()));
                     core::hint::black_box(&node_fs);
                 }
             }
         }
-        // Bounce-back to the main thread is posted by `shell_task_trampoline`
-        // via `ShellTask::on_finish::<Self>` (handles both JS and mini event
-        // loops).
     }
 
-    /// Reclaims ownership of the heap allocation produced by [`Self::create`]
-    /// and forwards it to [`Mkdir::on_shell_mkdir_task_done`].
-    fn run_from_main_thread(this: NonNull<ShellMkdirTask>, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap allocation produced by `Self::create`;
-        // the dispatch contract guarantees it is not yet freed.
-        let mut task = unsafe { bun_core::heap::take(this.as_ptr()) };
-        let cmd = task.cmd;
-        Mkdir::on_shell_mkdir_task_done(interp, cmd, &mut task);
-    }
-}
-
-impl bun_event_loop::Taskable for ShellMkdirTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+        Mkdir::on_shell_mkdir_task_done(interp, self)
     }
 }
 
@@ -412,18 +366,6 @@ impl MkdirCtx for MkdirVerboseVTable<'_> {
             out.extend_from_slice(dirpath.as_bytes());
             out.push(b'\n');
         }
-    }
-}
-
-impl crate::shell::interpreter::ShellTaskCtx for ShellMkdirTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // `ShellTaskCtx` callers guarantee `this` is the live, non-null
-        // heap-allocated task posted via `ShellTask::schedule`.
-        Self::run_from_main_thread(NonNull::new(this).unwrap(), interp)
     }
 }
 

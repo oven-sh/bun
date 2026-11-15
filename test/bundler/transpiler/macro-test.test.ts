@@ -271,6 +271,29 @@ test("destructuring a macro result keeps what another binding reads", async () =
   expect(exitCode).toBe(0);
 });
 
+test.concurrent.each(["{ 0: zero, key }", "{ key, 0: zero }"])(
+  "destructuring a macro result with %s inlines what has a known key",
+  async pattern => {
+    using dir = tempDir("macro-destructure-unknown-key", {
+      "m.ts": `export const object = () => ({ 0: "zero", key: "value" });`,
+      "index.ts": `
+        import { object } from "./m.ts" with { type: "macro" };
+        const ${pattern} = object();
+        console.log(zero, key);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--minify-syntax", "index.ts", "--outfile=out.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "ignore",
+      stderr: "inherit",
+    });
+    expect(await proc.exited).toBe(0);
+    expect(await Bun.file(path.join(String(dir), "out.js")).text()).toEndWith(`console.log(zero, "value");\n`);
+  },
+);
+
 // A `const` initialized with a macro result is inlined at each use, so every use shares one AST object.
 test("spreading a macro result into JSX doesn't change the other uses of its const", async () => {
   using dir = tempDir("macro-jsx-spread-run", {

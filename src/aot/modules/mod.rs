@@ -995,6 +995,7 @@ fn bind_scanned_modules(
         folders_of_databases: modules.folders_of_databases,
         star_names_left_out,
         names_laid_on_object_prototype,
+        enums_stored_into: OnceLock::new(),
     };
     let ((), graph) = run_steps_beside(
         input.beside,

@@ -135,6 +135,7 @@ fn unfinished_graph(file_count: usize, rows: Vec<FileRow>) -> ModuleGraph {
         folders_of_databases: Vec::new(),
         star_names_left_out: StarNamesLeftOut::default(),
         names_laid_on_object_prototype: Vec::new(),
+        enums_stored_into: OnceLock::new(),
     }
 }
 

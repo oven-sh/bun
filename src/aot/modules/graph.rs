@@ -27,7 +27,7 @@ use bun_sema::bind::{MemberStores, SymbolId};
 use bun_sema::components::strongly_connected_components;
 use bun_sema::hir::{ExprId, FnId};
 use bun_sema::import_sites::{ImportSiteKind, JsxImport};
-use bun_sema::program::FileId;
+use bun_sema::program::{FileId, Sym};
 use bun_sema::resolve::ExternalKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use core::ops::Range;
@@ -71,6 +71,7 @@ pub struct ModuleGraph {
     pub(super) folders_of_databases: Vec<FileId>,
     pub(super) star_names_left_out: StarNamesLeftOut,
     pub(super) names_laid_on_object_prototype: Vec<Box<[u8]>>,
+    pub(super) enums_stored_into: OnceLock<FxHashSet<Sym>>,
 }
 
 #[derive(Default)]

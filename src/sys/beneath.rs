@@ -306,12 +306,7 @@ fn refuse_absolute_and_dot_dot(path: &[u8], tag: Tag) -> Maybe<()> {
 }
 
 fn z<'a>(path: &[u8], buf: &'a mut [u8], tag: Tag) -> Maybe<&'a ZStr> {
-    if path.len() >= buf.len() {
-        return Err(Error::from_code(E::ENAMETOOLONG, tag).with_path(path));
-    }
-    buf[..path.len()].copy_from_slice(path);
-    buf[path.len()] = 0;
-    Ok(ZStr::from_buf(buf, path.len()))
+    strings::copy_z(buf, path).ok_or_else(|| Error::from_code(E::ENAMETOOLONG, tag).with_path(path))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "android")))]

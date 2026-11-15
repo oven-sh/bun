@@ -1532,17 +1532,15 @@ pub fn jpeg_rgba_to_ycc420(
     }
 }
 
-/// Fills `blocks` from 8 rows of samples, `stride` bytes apart. A coefficient `c` becomes
-/// `((|c| + divisors[0]) * divisors[1] >> 16) * divisors[2] >> 16`, all unsigned, with the sign of `c`.
-///
-/// Bit `k` of a mask is about coefficient `k` of its block in zigzag order. With `MASKS == 1`: it is not zero. With
-/// `MASKS == 4`: bit 0 of its magnitude, bit 1, any higher bit, and it is negative.
+/// Fills `blocks` from 8 rows of samples, `stride` bytes apart.
 #[inline(always)]
 pub fn jpeg_forward_transform<const MASKS: usize>(
     samples: &[u8],
     stride: usize,
-    divisors: &[JpegBlock; 3],
+    // A coefficient `c` becomes `(2 * c - (c < 0)) * divisors[0] / 2^15 * divisors[1] / 2^15`, rounded after each division.
+    divisors: &[JpegBlock; 2],
     blocks: &mut [JpegBlock],
+    // By coefficient, in zigzag order: it is not zero or, in four masks, bits 0, 1 and above of its magnitude, and `c < 0`.
     masks: &mut [[u64; MASKS]],
 ) {
     const { assert!(MASKS == 1 || MASKS == 4) };

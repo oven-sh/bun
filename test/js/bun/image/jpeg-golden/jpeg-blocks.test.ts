@@ -30,6 +30,10 @@ describe.each(sizes)("blocks of %i samples each way", size => {
     await expectBlocks(64 * values.length, (block, i) => (block[i % 64] = values[i >> 6]));
   });
 
+  test("each of its low bits, with steps that make them show", async () => {
+    await expectBlocks(64 * 4, (block, i) => (block[i % 64] = 1 << (i >> 6)), Array(64).fill(30));
+  });
+
   test("all at once", async () => {
     await expectBlocks(slow ? 64 : 256, block => block.forEach((_, k) => (block[k] = within(k ? 100 : 200))));
   });

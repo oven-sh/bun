@@ -2,7 +2,7 @@
 
 use crate::bit_reader::Window;
 use crate::header::{MAX_COMPONENTS, Scan, Segments};
-use crate::huffman::{Alphabet, DecodeTables, QUICK_CODES_IN_REFILL, ZEROS};
+use crate::huffman::{Alphabet, DecodeTables, QUICK_CODES_IN_REFILL};
 use crate::output::Output;
 use crate::scan::{Layout, Region, Restarts};
 use crate::{Error, Result, filled, wrapped, wrapped_mut};
@@ -48,19 +48,20 @@ pub(crate) fn decode_scan(
         return Err(Error::InvalidScan);
     }
     let interval = usize::from(tables.restart_interval);
-    if !interval.is_multiple_of(layout.mcus_wide) {
+    if !interval.is_multiple_of(layout.mcus.wide) {
         return Err(Error::InvalidRestartInterval);
     }
-    let mut restarts = Restarts::new(interval / layout.mcus_wide);
+    let mut restarts = Restarts::new(interval / layout.mcus.wide);
 
     let numbers = scan.components().iter().map(|it| it.dc_table);
     let shared_tables = DecodeTables::new(numbers, &tables.dc, Alphabet::Lossless)?;
     let tables = shared_tables.dc_by_component(scan)?;
+    let from_zeros = tables.map(|table| table.search(0).value(0) as u16);
 
     // For each component: the row above those of a row of MCUs, then those.
     let (mut regions, mut len) = ([Region::default(); MAX_COMPONENTS], 0);
     for part in layout.parts() {
-        let stride = layout.mcus_wide * part.h;
+        let stride = layout.mcus.wide * part.h;
         *wrapped_mut(&mut regions, part.index) = Region {
             start: len + stride,
             stride,
@@ -68,12 +69,12 @@ pub(crate) fn decode_scan(
         len += (1 + part.v) * stride;
     }
     let mut samples = filled(len, 0u16)?;
-    let slots = layout.slots(&regions, 0);
+    let slots = layout.slots(&regions);
 
     let middle = 1 << (precision - scan.shift - 1);
     let mut window = Window::new(input);
     let mut bits = window.bits_from(0);
-    for mcu_row in 0..layout.mcus_high {
+    for mcu_row in 0..layout.mcus.high {
         let mut starts_over = mcu_row == 0;
         if let Some(number) = restarts.due() {
             bits = window.restart(bits, number);
@@ -83,11 +84,15 @@ pub(crate) fn decode_scan(
         let has_data = window.has_data(bits);
         if has_data {
             let mut left = 0;
-            for mcu in 0..layout.mcus_wide {
+            for mcu in 0..layout.mcus.wide {
                 for slot in slots.as_slice() {
                     let table = slot.pick(&tables);
                     let quick = table.quick(bits.peek());
                     if left == 0 {
+                        if !window.has_data(bits) {
+                            *slot.of(&mut samples, mcu)? = slot.pick(&from_zeros);
+                            continue;
+                        }
                         bits.start_block(&mut window);
                         bits.refill(&window);
                         left = QUICK_CODES_IN_REFILL;
@@ -100,7 +105,6 @@ pub(crate) fn decode_scan(
                         left = 0;
                         let code = table.search(bits.peek());
                         code.value(code.take(&mut bits)) as u16
-                            | u16::from(code.run() == ZEROS) << 15
                     };
                 }
             }

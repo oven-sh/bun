@@ -167,6 +167,26 @@ test("a difference has up to 16 bits, and 32768 takes no more than its code", as
   );
 });
 
+test("long and short codes in any order", async () => {
+  // With the bits that follow them, they take 3, 15, 16, 31 and 3 bits.
+  const [sizes, lengths] = [
+    [1, 8, 9, 15, 16],
+    [2, 7, 7, 16, 3],
+  ];
+  const often = [1, 8, 8, 8, 8, 9, 15, 15, 15, 16];
+  const frame = frameOf(1500, 1, three, { type });
+  const random = randomBytes(10);
+  for (const { data } of frame.components) {
+    data.forEach((_, i) => {
+      const size = often[random() % often.length];
+      const magnitude = (1 << (size - 1)) | (size < 16 ? ((random() << 8) | random()) >> (17 - size) : 0);
+      data[i] = ((i ? data[i - 1] : 128) + (random() & 1 ? magnitude : -magnitude)) & 0xffff;
+    });
+  }
+  const file = write(frame, [scanOf(all(frame), 1, 0)], { tables: { 0: tableOf(sizes, lengths) } });
+  await expectPictures([{ name: "all", file, expected: pictureOf(frame) }]);
+});
+
 test("components can be in one scan or in several, each with its own predictor and shift", async () => {
   const frame = noise(frameOf(9, 7, three, { type }), randomBytes(4));
   await expectPictures(

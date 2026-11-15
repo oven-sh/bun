@@ -194,8 +194,8 @@ impl Output {
             Process::Lossless => (1, 1),
             _ => (usize::from(eighths), 8),
         };
-        let (max_h, max_v) = frame.max_sampling();
-        let (mcus_wide, _) = frame.size_in_mcus();
+        let (max_h, max_v) = (frame.max_h(), frame.max_v());
+        let mcus_wide = frame.size_in_mcus().wide;
         let (image_width, image_height) = (usize::from(frame.width), usize::from(frame.height));
         let width = (image_width * scale).div_ceil(unit);
         let height = (image_height * scale).div_ceil(unit);

@@ -2,7 +2,7 @@
 
 use crate::bit_writer::{BitBuffer, PendingBits};
 use crate::block::{self, Block, NATURAL_ORDER, Zigzag};
-use crate::header::MAX_DIMENSION;
+use crate::header::{Grid, MAX_DIMENSION};
 use crate::huffman::{STANDARD_AC, STANDARD_DC, Spec};
 use crate::marker::*;
 use crate::{Error, Result, filled, progressive_encoder, wrapped};
@@ -79,17 +79,16 @@ fn quant_table(standard: &[u8; 64], quality: u8) -> [u8; 64] {
     })
 }
 
-/// What makes the kernel divide by 8 times the steps, and round. It is exact for up to 15 bits.
-fn divisors(quant: &[u8; 64]) -> [Block; 3] {
-    let [mut rounding, mut reciprocals, mut scales] = [block::ZERO; 3];
+/// What makes the kernel divide by 8 times the steps. It is exact for all that the transform puts out.
+fn divisors(quant: &[u8; 64]) -> [Block; 2] {
+    let [mut reciprocals, mut scales] = [block::ZERO; 2];
     for (k, &step) in quant.iter().enumerate() {
         let divisor = 8 * u32::from(step);
-        let shift = 16 + (divisor - 1).ilog2();
-        *rounding.at_mut(k) = (divisor / 2) as i16;
-        *reciprocals.at_mut(k) = (1u32 << shift).div_ceil(divisor) as i16;
-        *scales.at_mut(k) = (1 << (32 - shift)) as i16;
+        let reciprocal = (1u32 << (15 + divisor.ilog2())).div_ceil(divisor);
+        *reciprocals.at_mut(k) = reciprocal.min(0x7FFF) as i16;
+        *scales.at_mut(k) = 1 << (14 - divisor.ilog2());
     }
-    [rounding, reciprocals, scales]
+    [reciprocals, scales]
 }
 
 fn write_segment(out: &mut Vec<u8>, marker: u8, parts: &[&[u8]]) -> Result<()> {
@@ -127,20 +126,23 @@ pub(crate) struct Strips<'a> {
     height: usize,
     chroma_stride: usize,
     planes: [Vec<u8>; 3],
-    divisors: [[Block; 3]; 2],
+    divisors: [[Block; 2]; 2],
 }
 
 impl Strips<'_> {
-    pub(crate) fn size_in_mcus(&self) -> (usize, usize) {
-        (
-            self.width.div_ceil(MCU_SIZE),
-            self.height.div_ceil(MCU_SIZE),
-        )
+    pub(crate) fn size_in_mcus(&self) -> Grid {
+        Grid {
+            wide: self.width.div_ceil(MCU_SIZE),
+            high: self.height.div_ceil(MCU_SIZE),
+        }
     }
 
     /// An MCU has 2 by 2, whether they are in the image or not.
-    pub(crate) fn size_in_luma_blocks(&self) -> (usize, usize) {
-        (self.width.div_ceil(8), self.height.div_ceil(8))
+    pub(crate) fn size_in_luma_blocks(&self) -> Grid {
+        Grid {
+            wide: self.width.div_ceil(8),
+            high: self.height.div_ceil(8),
+        }
     }
 
     /// The last pixel of a row goes on to the end of the MCU, and so does the last row of samples.
@@ -295,8 +297,7 @@ fn write_baseline(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<()> {
     }
     write_scan_header(out, &[[1, 0x00], [2, 0x11], [3, 0x11]], [0, 63, 0])?;
 
-    let (mcus_wide, mcus_high) = strips.size_in_mcus();
-    let (blocks_wide, blocks_high) = strips.size_in_luma_blocks();
+    let (mcus, luma) = (strips.size_in_mcus(), strips.size_in_luma_blocks());
 
     let mut luma_blocks = [[[block::ZERO; 2]; BATCH_LEN]; 2];
     let mut luma_masks = [[[[0; 1]; 2]; BATCH_LEN]; 2];
@@ -304,10 +305,10 @@ fn write_baseline(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<()> {
     let mut chroma_masks = [[[0; 1]; BATCH_LEN]; 2];
     let [mut y, mut cb, mut cr] = [0; 3];
     let (mut buffer, mut bits) = (BitBuffer::new(out), PendingBits::NONE);
-    for mcu_row in 0..mcus_high {
+    for mcu_row in 0..mcus.high {
         strips.convert(mcu_row);
-        for first in (0..mcus_wide).step_by(BATCH_LEN) {
-            let count = BATCH_LEN.min(mcus_wide - first);
+        for first in (0..mcus.wide).step_by(BATCH_LEN) {
+            let count = BATCH_LEN.min(mcus.wide - first);
             for (row, (blocks, masks)) in luma_blocks.iter_mut().zip(&mut luma_masks).enumerate() {
                 let blocks = blocks.split_at_mut(count).0.as_flattened_mut();
                 let masks = masks.split_at_mut(count).0.as_flattened_mut();
@@ -323,9 +324,7 @@ fn write_baseline(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<()> {
                 for (row, (blocks, masks)) in luma_blocks.iter().zip(&luma_masks).enumerate() {
                     let pair = wrapped(blocks, mcu).iter().zip(wrapped(masks, mcu));
                     for (column, block) in pair.enumerate() {
-                        if 2 * (first + mcu) + column < blocks_wide
-                            && 2 * mcu_row + row < blocks_high
-                        {
+                        if 2 * (first + mcu) + column < luma.wide && 2 * mcu_row + row < luma.high {
                             write_block(block, &mut y, &LUMA_CODES, &mut bits, &mut buffer)?;
                         } else {
                             let filler = (&block::ZERO, &[0]);

@@ -240,19 +240,18 @@ pub(crate) fn write_scans(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<
     let [mut y_low, mut y_high, mut y_second, mut y_last] = [Tokens::NONE; 4];
     let [mut cb, mut cr] = [const { [Tokens::NONE; 2] }; 2];
 
-    let (mcus_wide, mcus_high) = strips.size_in_mcus();
-    let (blocks_wide, blocks_high) = strips.size_in_luma_blocks();
+    let (mcus, luma) = (strips.size_in_mcus(), strips.size_in_luma_blocks());
     let mut blocks = [block::ZERO; BATCH_LEN];
     let mut masks = [[0; 4]; BATCH_LEN];
     // For each MCU in the row.
-    let mut dc = filled(mcus_wide, [0i16; 8])?;
+    let mut dc = filled(mcus.wide, [0i16; 8])?;
     let mut predictions = [0; MAX_COMPONENTS];
-    for mcu_row in 0..mcus_high {
+    for mcu_row in 0..mcus.high {
         strips.convert(mcu_row);
-        let rows = (blocks_high - 2 * mcu_row).min(2);
+        let rows = (luma.high - 2 * mcu_row).min(2);
         for row in 0..rows {
-            for x in (0..blocks_wide).step_by(BATCH_LEN) {
-                let count = BATCH_LEN.min(blocks_wide - x);
+            for x in (0..luma.wide).step_by(BATCH_LEN) {
+                let count = BATCH_LEN.min(luma.wide - x);
                 let (blocks, masks) = (blocks.split_at_mut(count).0, masks.split_at_mut(count).0);
                 strips.transform(0, (x, row), blocks, masks);
                 for scan in [&mut y_low, &mut y_high, &mut y_second, &mut y_last] {
@@ -273,8 +272,8 @@ pub(crate) fn write_scans(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<
             }
         }
         for (component, [first, last]) in [(1, &mut cb), (2, &mut cr)] {
-            for x in (0..mcus_wide).step_by(BATCH_LEN) {
-                let count = BATCH_LEN.min(mcus_wide - x);
+            for x in (0..mcus.wide).step_by(BATCH_LEN) {
+                let count = BATCH_LEN.min(mcus.wide - x);
                 let (blocks, masks) = (blocks.split_at_mut(count).0, masks.split_at_mut(count).0);
                 strips.transform(component, (x, 0), blocks, masks);
                 first.make_room(count * MAX_TOKENS_IN_BLOCK)?;
@@ -289,8 +288,8 @@ pub(crate) fn write_scans(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<
             }
         }
 
-        dc_first.make_room(6 * mcus_wide)?;
-        dc_last.make_room(mcus_wide)?;
+        dc_first.make_room(6 * mcus.wide)?;
+        dc_last.make_room(mcus.wide)?;
         for dc in &mut dc {
             if rows == 1 {
                 // So is what is below it.

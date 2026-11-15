@@ -1,7 +1,7 @@
 //! What all scans have in common: the order of their blocks, and restarts.
 
 use crate::block::Block;
-use crate::header::{Frame, MAX_COMPONENTS, Process, Scan};
+use crate::header::{Frame, Grid, MAX_COMPONENTS, Process, Scan};
 use crate::{Error, Result, wrapped};
 use core::ops::Range;
 
@@ -25,10 +25,9 @@ pub(crate) struct Part {
 }
 
 pub(crate) struct Layout {
-    pub(crate) mcus_wide: usize,
-    pub(crate) mcus_high: usize,
-    /// With the rows that a scan of a single component leaves out.
-    pub(crate) padded_mcus_high: usize,
+    pub(crate) mcus: Grid,
+    /// How many rows of them a row of MCUs of the frame has.
+    pub(crate) rows_in_strip: usize,
     pub(crate) blocks_in_mcu: usize,
     parts: [Part; MAX_COMPONENTS],
     count: usize,
@@ -37,16 +36,14 @@ pub(crate) struct Layout {
 impl Layout {
     pub(crate) fn new(frame: &Frame, scan: &Scan) -> Result<Self> {
         let mut parts = [Part::default(); MAX_COMPONENTS];
-        let (mut mcus_wide, mut mcus_high) = frame.size_in_mcus();
-        let mut padded_mcus_high = mcus_high;
+        let (mut mcus, mut rows_in_strip) = (frame.size_in_mcus(), 1);
         for (part, in_scan) in parts.iter_mut().zip(scan.components()) {
             let index = usize::from(in_scan.index);
             let component = *frame.components().get(index).ok_or(Error::Internal)?;
             let (mut h, mut v) = (component.h.into(), component.v.into());
             if let [_] = scan.components() {
-                (mcus_wide, mcus_high) = frame.size_in_blocks(component);
-                padded_mcus_high *= v;
-                (h, v) = (1, 1);
+                mcus = frame.size_in_blocks(component);
+                (rows_in_strip, h, v) = (v, 1, 1);
             }
             *part = Part { index, h, v };
         }
@@ -55,9 +52,8 @@ impl Layout {
             return Err(Error::InvalidScan);
         }
         Ok(Self {
-            mcus_wide,
-            mcus_high,
-            padded_mcus_high,
+            mcus,
+            rows_in_strip,
             blocks_in_mcu,
             parts,
             count: scan.components().len(),
@@ -69,7 +65,7 @@ impl Layout {
     }
 
     /// `regions` go by the index of the component in the frame.
-    pub(crate) fn slots(&self, regions: &[Region; MAX_COMPONENTS], mcu_row: usize) -> Slots {
+    pub(crate) fn slots(&self, regions: &[Region; MAX_COMPONENTS]) -> Slots {
         let mut slots = [Slot::default(); MAX_BLOCKS_IN_MCU];
         let mut free = slots.iter_mut();
         for (component, part) in self.parts().iter().enumerate() {
@@ -77,8 +73,9 @@ impl Layout {
             for y in 0..part.v {
                 for (x, slot) in (0..part.h).zip(&mut free) {
                     *slot = Slot {
-                        start: region.start + (mcu_row * part.v + y) * region.stride + x,
+                        start: region.start + y * region.stride + x,
                         step: part.h,
+                        step_down: part.v * region.stride,
                         component,
                     };
                 }
@@ -107,7 +104,7 @@ impl Allowance {
             },
             _ => 256,
         };
-        let blocks = layout.mcus_wide * layout.mcus_high * layout.blocks_in_mcu;
+        let blocks = layout.mcus.wide * layout.mcus.high * layout.blocks_in_mcu;
         let left = self.0.checked_sub(4096 + weight * blocks);
         self.0 = left.ok_or(Error::InvalidScan)?;
         Ok(())
@@ -120,6 +117,12 @@ impl Slots {
     pub(crate) fn as_slice(&self) -> &[Slot] {
         self.0.get(..self.1).unwrap_or_default()
     }
+
+    pub(crate) fn move_down(&mut self) {
+        for slot in self.0.iter_mut().take(self.1) {
+            slot.start += slot.step_down;
+        }
+    }
 }
 
 /// One of the blocks of an MCU.
@@ -129,6 +132,8 @@ pub(crate) struct Slot {
     pub(crate) start: usize,
     /// How far it is from there to the block of the next.
     pub(crate) step: usize,
+    /// And to that of the one below.
+    step_down: usize,
     /// In `Scan::components()`.
     pub(crate) component: usize,
 }

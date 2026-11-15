@@ -41,6 +41,12 @@ pub(crate) struct Component {
 }
 
 #[derive(Clone, Copy)]
+pub(crate) struct Grid {
+    pub(crate) wide: usize,
+    pub(crate) high: usize,
+}
+
+#[derive(Clone, Copy)]
 pub(crate) struct Frame {
     pub(crate) process: Process,
     pub(crate) arithmetic: bool,
@@ -56,27 +62,29 @@ impl Frame {
         self.components.get(..self.count.into()).unwrap_or_default()
     }
 
-    pub(crate) fn max_sampling(&self) -> (usize, usize) {
-        let max = |(h, v): (u8, u8), it: &Component| (h.max(it.h), v.max(it.v));
-        let (h, v) = self.components().iter().fold((1, 1), max);
-        (h.into(), v.into())
+    pub(crate) fn max_h(&self) -> usize {
+        self.components().iter().fold(1, |h, it| it.h.max(h)).into()
+    }
+
+    pub(crate) fn max_v(&self) -> usize {
+        self.components().iter().fold(1, |v, it| it.v.max(v)).into()
     }
 
     /// In a lossless file, each sample counts as a block.
-    pub(crate) fn size_in_blocks(&self, component: Component) -> (usize, usize) {
+    pub(crate) fn size_in_blocks(&self, component: Component) -> Grid {
         let unit = match self.process {
             Process::Lossless => 1,
             _ => 8,
         };
-        let (max_h, max_v) = self.max_sampling();
-        (
-            (usize::from(self.width) * usize::from(component.h)).div_ceil(max_h * unit),
-            (usize::from(self.height) * usize::from(component.v)).div_ceil(max_v * unit),
-        )
+        let (width, height) = (usize::from(self.width), usize::from(self.height));
+        Grid {
+            wide: (width * usize::from(component.h)).div_ceil(self.max_h() * unit),
+            high: (height * usize::from(component.v)).div_ceil(self.max_v() * unit),
+        }
     }
 
     /// Of a scan with more than one component.
-    pub(crate) fn size_in_mcus(&self) -> (usize, usize) {
+    pub(crate) fn size_in_mcus(&self) -> Grid {
         self.size_in_blocks(Component {
             h: 1,
             v: 1,
@@ -86,9 +94,9 @@ impl Frame {
 
     /// With those that fill up the MCUs at the edges.
     pub(crate) fn block_count(&self) -> usize {
-        let (mcus_wide, mcus_high) = self.size_in_mcus();
+        let mcus = self.size_in_mcus();
         let in_mcu = self.components().iter().map(|it| usize::from(it.h * it.v));
-        mcus_wide * mcus_high * in_mcu.sum::<usize>()
+        mcus.wide * mcus.high * in_mcu.sum::<usize>()
     }
 
     /// With nothing to be relative to, the sampling factors of a single component say nothing about the image.

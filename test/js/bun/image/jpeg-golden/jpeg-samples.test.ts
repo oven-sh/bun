@@ -93,6 +93,22 @@ test.each(range(1, 7))("any sampling factors at %i eighths", async eighths => {
   );
 });
 
+test.each(["2x3", "2x4", "3x2", "4x2"])("samples that are repeated %s times, in one scan", async times => {
+  const random = randomBytes(9);
+  await expectPictures(
+    [1, 2, 3, 5, 17, 25, 33, 67].flatMap(height => {
+      const frame = noise(frameOf(41, height, `1x1,${times},1x1`), random, { sparse: 12, ac: 160 });
+      const file = write(frame, undefined, { before: said.RGB, tables });
+      return (slow ? [3, 8] : range(1, 8)).map(eighths => ({
+        name: `${height} high at ${eighths}/8`,
+        file,
+        eighths,
+        expected: pictureOf(frame, { eighths, colors: "RGB" }),
+      }));
+    }),
+  );
+});
+
 test("other ways to write the usual ones, at every scale", async () => {
   const random = randomBytes(8);
   await expectPictures(

@@ -3,6 +3,7 @@
 //   libjpeg-turbo/  test files of libjpeg-turbo, which are the Independent JPEG Group's and under its license
 //   damaged/        small ones of the others with bytes changed, some for each thing djpeg had to say about such a file
 //   limit/          decoded with a `maxPixels`
+//   by-hand/        put together bit by bit
 // The others are named by the program that wrote them, from a picture made for this test, and by what it was told.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
@@ -15,8 +16,8 @@ const recorded = await loadCases<Cases>(join(import.meta.dir, "cases.json.gz"));
 const cases = { ...observable(recorded), "decode with more behind": observable(recorded, withMoreBehind).decode };
 
 describe.each([
-  ["decode", 655],
-  ["decode with more behind", 655],
+  ["decode", 667],
+  ["decode with more behind", 667],
   ["scale", 1158],
   ["encode", 224],
 ] as const)("Bun.Image reads and writes JPEG the way it was recorded to: %s", (kind, count) => {

@@ -121,8 +121,8 @@ test("steps have 16 bits, without a sign", async () => {
 test("in long rows", async () => {
   const random = randomBytes(14);
   await expectPictures(
-    [95, 96, 97, 98, 99, 200].map(wide => {
-      const frame = noise(frameOf(wide * 8, 8, "1x1", { type: SOF2, tables: [steps] }), random, { sparse: 200 });
+    [30, 31, 32, 33, 34, 35, 64, 65, 97].map(wide => {
+      const frame = noise(frameOf(wide * 8, 16, "1x1", { type: SOF2, tables: [steps] }), random, { sparse: 200 });
       const scans = [scanOf([0], 0, 0)];
       return { name: `${wide}`, file: write(frame, scans), expected: guessed(frame, scans) };
     }),

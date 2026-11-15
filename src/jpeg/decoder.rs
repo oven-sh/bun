@@ -1,13 +1,14 @@
 use crate::arithmetic::{self, Arithmetic};
 use crate::block::{self, Block};
-use crate::header::{ColorSpace, Frame, Header, MAX_COMPONENTS, Process, Scan, Segments, Tables};
+use crate::header::{
+    ColorSpace, Frame, Grid, Header, MAX_COMPONENTS, Process, Scan, Segments, Tables,
+};
 use crate::output::Output;
 use crate::progressive::Progressive;
 use crate::scan::{Allowance, EntropyDecoder, Layout, Region, Restarts};
 use crate::sequential::{BATCH_ROOM, Sequential, StepTables};
 use crate::smoothing::{self, Progress};
 use crate::{Error, Result, filled, lossless, wrapped, wrapped_mut};
-use core::cell::Cell;
 
 /// So many blocks wait for their transform at most. They fit in the L1 cache.
 const BATCH_LEN: usize = 96;
@@ -34,6 +35,47 @@ struct Place {
     component: usize,
     x: usize,
     y: usize,
+}
+
+struct Coefficients {
+    blocks: Vec<Block>,
+    regions: [Region; MAX_COMPONENTS],
+}
+
+impl Coefficients {
+    fn blocks_from_mut(&mut self, Place { component, x, y }: Place) -> &mut [Block] {
+        let Region { start, stride } = *wrapped(&self.regions, component);
+        let blocks = self.blocks.get_mut(start + y * stride + x..);
+        blocks.unwrap_or_default()
+    }
+}
+
+/// Where the blocks of a sequential scan go.
+enum Target<'a> {
+    Output(&'a mut Output, &'a QuantTables),
+    Coefficients(&'a mut Coefficients),
+}
+
+impl Target<'_> {
+    fn put(&mut self, blocks: &[Block], place: Place) -> Result<()> {
+        match self {
+            Self::Output(output, quant) => {
+                let Place { component, x, y } = place;
+                let plane = output.planes.get_mut(component).ok_or(Error::Internal)?;
+                plane.put(blocks, wrapped(&quant.tables, component), x, y);
+            }
+            // What another scan of the same component leaves out stays as it was.
+            Self::Coefficients(all) => {
+                for (old, new) in all.blocks_from_mut(place).iter_mut().zip(blocks) {
+                    for (old, &new) in old.0.iter_mut().zip(&new.0) {
+                        *old = if new != 0 { new } else { *old };
+                    }
+                    old.0[0] = new.0[0];
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 /// A component keeps the table that is there when its first scan starts.
@@ -104,7 +146,7 @@ impl<'a> Decoder<'a> {
             self.frame.ignore_lone_sampling();
         }
         let strips = match is_lossless && !is_only_scan {
-            true => self.frame.size_in_mcus().1,
+            true => self.frame.size_in_mcus().high,
             false => 1,
         };
         let mut output = Output::new(&self.frame, color_space, eighths.clamp(1, 8), strips)?;
@@ -146,20 +188,14 @@ impl<'a> Decoder<'a> {
             match self.segments.next_scan()? {
                 Some((_, next)) => scan = next,
                 None if missing != 0 => return Err(Error::MissingScan),
-                None => return output.convert_strips(self.frame.size_in_mcus().1),
+                None => return output.convert_strips(self.frame.size_in_mcus().high),
             }
         }
     }
 
-    /// `before` and `after` get each row of blocks in a batch of MCUs. `None` comes at the end of a row of MCUs.
-    fn decode_sequential(
-        &mut self,
-        scan: &Scan,
-        mut before: impl FnMut(&mut [Block], Place),
-        mut after: impl FnMut(Option<(&[Block], Place)>) -> Result<()>,
-    ) -> Result<()> {
+    fn decode_sequential(&mut self, scan: &Scan, mut target: Target<'_>) -> Result<()> {
         let layout = self.lay_out(scan)?;
-        let batch = (BATCH_LEN / layout.blocks_in_mcu).min(layout.mcus_wide);
+        let batch = (BATCH_LEN / layout.blocks_in_mcu).min(layout.mcus.wide);
         let (mut regions, mut len) = ([Region::default(); MAX_COMPONENTS], 0);
         for part in layout.parts() {
             let stride = batch * part.h;
@@ -167,7 +203,7 @@ impl<'a> Decoder<'a> {
             len += part.v * stride;
         }
         let mut blocks = filled(BATCH_ROOM, block::ZERO)?;
-        let slots = layout.slots(&regions, 0);
+        let slots = layout.slots(&regions);
 
         let Segments { input, tables, .. } = &mut self.segments;
         let mut restarts = Restarts::new(tables.restart_interval.into());
@@ -182,9 +218,9 @@ impl<'a> Decoder<'a> {
             &mut huffman
         };
 
-        for mcu_row in 0..layout.mcus_high {
-            for first in (0..layout.mcus_wide).step_by(batch) {
-                let count = batch.min(layout.mcus_wide - first);
+        for mcu_row in 0..layout.mcus.high {
+            for first in (0..layout.mcus.wide).step_by(batch) {
+                let count = batch.min(layout.mcus.wide - first);
                 let rows = || {
                     layout.parts().iter().flat_map(|part| {
                         let Region { start, stride } = *wrapped(&regions, part.index);
@@ -199,16 +235,23 @@ impl<'a> Decoder<'a> {
                         })
                     })
                 };
-                for (row, place) in rows() {
-                    before(blocks.get_mut(row).ok_or(Error::Internal)?, place);
+                if let Target::Coefficients(all) = &mut target {
+                    for (row, place) in rows() {
+                        let row = blocks.get_mut(row).ok_or(Error::Internal)?;
+                        for (new, old) in row.iter_mut().zip(all.blocks_from_mut(place)) {
+                            new.0[0] = old.0[0];
+                        }
+                    }
                 }
                 restarts.decode(decoder, &mut blocks, slots.as_slice(), 0..count)?;
                 for (row, place) in rows() {
-                    after(Some((blocks.get(row).ok_or(Error::Internal)?, place)))?;
+                    target.put(blocks.get(row).ok_or(Error::Internal)?, place)?;
                 }
                 blocks.get_mut(..len).unwrap_or_default().fill(block::ZERO);
             }
-            after(None)?;
+            if let Target::Output(output, _) = &mut target {
+                output.finish_strip()?;
+            }
         }
         Ok(())
     }
@@ -217,23 +260,14 @@ impl<'a> Decoder<'a> {
         let scan = self.first_scan;
         let mut quant = QuantTables::NONE;
         quant.latch(&self.frame, &scan, &self.segments.tables)?;
-        let leave = |_: &mut [Block], _| {};
-        self.decode_sequential(&scan, leave, |row| {
-            let Some((blocks, Place { component, x, y })) = row else {
-                return output.finish_strip();
-            };
-            let plane = output.planes.get_mut(component).ok_or(Error::Internal)?;
-            plane.put(blocks, wrapped(&quant.tables, component), x, y);
-            Ok(())
-        })
+        self.decode_sequential(&scan, Target::Output(output, &quant))
     }
 
     /// Returns the last row of MCUs of the frame that the scan had data for.
     fn decode_progressive(
         &mut self,
         scan: &Scan,
-        regions: &[Region; MAX_COMPONENTS],
-        blocks: &mut [Block],
+        Coefficients { blocks, regions }: &mut Coefficients,
         nonzero: &mut [u64],
     ) -> Result<usize> {
         let layout = self.lay_out(scan)?;
@@ -249,27 +283,28 @@ impl<'a> Decoder<'a> {
             &mut huffman
         };
 
-        let mut last_row_with_data = 0;
-        for mcu_row in 0..layout.mcus_high {
-            let slots = layout.slots(regions, mcu_row);
-            if restarts.decode(decoder, blocks, slots.as_slice(), 0..layout.mcus_wide)? {
+        let (mut slots, mut last_row_with_data) = (layout.slots(regions), 0);
+        for mcu_row in 0..layout.mcus.high {
+            if restarts.decode(decoder, blocks, slots.as_slice(), 0..layout.mcus.wide)? {
                 last_row_with_data = mcu_row;
             }
+            slots.move_down();
         }
-        Ok(last_row_with_data * self.frame.size_in_mcus().1 / layout.padded_mcus_high)
+        Ok(last_row_with_data / layout.rows_in_strip)
     }
 
     fn decode_scans(&mut self, output: &mut Output) -> Result<()> {
         let frame = self.frame;
         let is_progressive = frame.process == Process::Progressive;
-        let (mcus_wide, mcus_high) = frame.size_in_mcus();
+        let mcus = frame.size_in_mcus();
         let (mut regions, mut len) = ([Region::default(); MAX_COMPONENTS], 0);
         for (region, component) in regions.iter_mut().zip(frame.components()) {
-            let stride = mcus_wide * usize::from(component.h);
+            let stride = mcus.wide * usize::from(component.h);
             *region = Region { start: len, stride };
-            len += mcus_high * usize::from(component.v) * stride;
+            len += mcus.high * usize::from(component.v) * stride;
         }
-        let mut blocks = filled(len, block::ZERO)?;
+        let blocks = filled(len, block::ZERO)?;
+        let mut all = Coefficients { blocks, regions };
         let mut nonzero = filled(if is_progressive { len } else { 0 }, 0)?;
 
         let (mut quant, mut progress) = (QuantTables::NONE, Progress::NONE);
@@ -282,36 +317,9 @@ impl<'a> Decoder<'a> {
             quant.latch(&frame, &scan, &self.segments.tables)?;
             if is_progressive {
                 progress.add(&scan);
-                last_strip_with_data =
-                    self.decode_progressive(&scan, &regions, &mut blocks, &mut nonzero)?;
+                last_strip_with_data = self.decode_progressive(&scan, &mut all, &mut nonzero)?;
             } else {
-                // What another scan of the same component leaves out stays as it was.
-                let image = Cell::from_mut(blocks.as_mut_slice()).as_slice_of_cells();
-                let at = |Place { component, x, y }| {
-                    let region = wrapped(&regions, component);
-                    image
-                        .get(region.start + y * region.stride + x..)
-                        .unwrap_or_default()
-                };
-                let before = |batch: &mut [Block], place| {
-                    for (new, old) in batch.iter_mut().zip(at(place)) {
-                        new.0[0] = old.get().0[0];
-                    }
-                };
-                self.decode_sequential(&scan, before, |row| {
-                    let Some((batch, place)) = row else {
-                        return Ok(());
-                    };
-                    for (new, old) in batch.iter().zip(at(place)) {
-                        let mut merged = old.get();
-                        for (merged, &new) in merged.0.iter_mut().zip(&new.0) {
-                            *merged = if new != 0 { new } else { *merged };
-                        }
-                        merged.0[0] = new.0[0];
-                        old.set(merged);
-                    }
-                    Ok(())
-                })?;
+                self.decode_sequential(&scan, Target::Coefficients(&mut all))?;
             }
             next = self.segments.next_scan()?.map(|(_, scan)| scan);
         }
@@ -320,17 +328,17 @@ impl<'a> Decoder<'a> {
         let used_tables = quant.tables.get(..frame.components().len());
         let accuracy = progress.accuracy(used_tables.unwrap_or_default());
         let mut smoothed = [block::ZERO; smoothing::BATCH_LEN];
-        for strip in 0..mcus_high {
+        for strip in 0..mcus.high {
             let components = frame.components().iter().zip(&mut output.planes);
             for (index, (component, plane)) in components.enumerate() {
-                let (width, height) = frame.size_in_blocks(*component);
+                let Grid { wide, high } = frame.size_in_blocks(*component);
                 let (region, quant) = (wrapped(&regions, index), wrapped(&quant.tables, index));
                 let row = |y: usize| {
-                    let row = blocks.get(region.start + y * region.stride..);
-                    row.and_then(|row| row.get(..width)).unwrap_or_default()
+                    let row = all.blocks.get(region.start + y * region.stride..);
+                    row.and_then(|row| row.get(..wide)).unwrap_or_default()
                 };
                 let top = strip * usize::from(component.v);
-                let rows = usize::from(component.v).min(height - top);
+                let rows = usize::from(component.v).min(high - top);
                 for y in top..top + rows {
                     let Some(accuracy) = &accuracy else {
                         plane.put(row(y), quant, 0, y);
@@ -338,7 +346,7 @@ impl<'a> Decoder<'a> {
                     };
                     // All rows of MCUs count as having as many rows of blocks as this one.
                     let above = (strip * rows + y - top).min(2);
-                    let below = (mcus_high * rows - 1 - (strip * rows + y - top)).min(2);
+                    let below = (mcus.high * rows - 1 - (strip * rows + y - top)).min(2);
                     let around = [
                         row(y - above),
                         row(y - above.min(1)),
@@ -348,7 +356,7 @@ impl<'a> Decoder<'a> {
                     ];
                     let is_late = strip > last_strip_with_data;
                     let accuracy = wrapped(accuracy, index);
-                    for x in (0..width).step_by(smoothed.len()) {
+                    for x in (0..wide).step_by(smoothed.len()) {
                         let out = accuracy.smooth(is_late, quant, &around, x, &mut smoothed);
                         plane.put(out, quant, x, y);
                     }

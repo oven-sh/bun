@@ -178,10 +178,13 @@ pub(crate) enum Alphabet {
     AcRefine,
 }
 
-/// The run of 16 zeros that no coefficient follows. In a lossless scan, the difference of 32768 that no bits follow.
+/// The run of 16 zeros that no coefficient follows.
 pub(crate) const ZEROS: usize = 16;
 /// The run of the code that ends a block.
 pub(crate) const END: usize = 128;
+
+/// No bits follow that difference. [`extend`] makes 32768 or -32768 of anything, which is the same in 16 bits.
+const MASK_OF_32768: u32 = 0x8000;
 
 /// The number that the bits of `bits` under `mask` stand for.
 #[inline(always)]
@@ -200,7 +203,7 @@ impl Code {
     fn new(alphabet: Alphabet, symbol: u8, code_length: u32) -> Self {
         let (high, low) = (symbol >> 4, symbol & 15);
         let (run, extra) = match (alphabet, high, low) {
-            (Alphabet::Lossless, 1, 0) => (ZEROS, 0),
+            (Alphabet::Lossless, 1, 0) => return Self(code_length | MASK_OF_32768 << 16),
             (Alphabet::Dc | Alphabet::Lossless, ..) => (0, low),
             (Alphabet::AcRefine, 15, 0) => (15, 0),
             (_, 15, 0) => (ZEROS, 0),
@@ -230,14 +233,14 @@ impl Code {
         (self.0 >> 8 & 0xFF) as usize
     }
 
-    /// A one for each of the bits that follow the code.
+    /// A one for each of the bits that follow the code, or [`MASK_OF_32768`].
     #[inline(always)]
     pub(crate) fn mask(self) -> u32 {
         self.0 >> 16
     }
 
-    pub(crate) fn extra_length(self) -> u32 {
-        self.mask().count_ones()
+    fn extra_length(self) -> u32 {
+        self.mask().trailing_ones()
     }
 
     /// The number that `bits`, which end with those that follow the code, stand for.

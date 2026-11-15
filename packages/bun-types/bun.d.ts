@@ -9751,7 +9751,7 @@ declare module "bun" {
      *   path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
      *   A JPEG with stray bytes, a missing end marker or truncated scan data
-     *   does not reject.
+     *   usually does not reject.
      *   Blocks with no data come back flat grey. A PNG with a wrong CRC or
      *   Adler-32 does not reject either: Bun verifies neither. A PNG that ends
      *   before its last row, or inside the data of the `IDAT` chunk that holds

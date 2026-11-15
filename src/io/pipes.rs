@@ -1,14 +1,16 @@
+#[cfg(not(windows))]
 use core::ffi::c_void;
 
-use bun_sys::Fd;
 #[cfg(not(windows))]
-use bun_sys::FdExt;
+use bun_sys::{Fd, FdExt};
 
 #[cfg(target_os = "macos")]
 use crate::FilePollFlag;
+#[cfg(not(windows))]
 use crate::{EventLoopHandle, FilePollRef, OwnedFilePoll, Owner};
 
 /// Dropping it releases the poll. The fd stays open.
+#[cfg(not(windows))]
 pub enum PollOrFd {
     /// Forced: the kernel keeps a fired poll for as long as the file is open.
     Poll(OwnedFilePoll<true>),
@@ -16,6 +18,7 @@ pub enum PollOrFd {
     Closed,
 }
 
+#[cfg(not(windows))]
 impl PollOrFd {
     pub(crate) fn tag_name(&self) -> &'static str {
         match self {
@@ -61,7 +64,7 @@ impl PollOrFd {
         let fd = self.get_fd();
         #[cfg(target_os = "macos")]
         let mut close_async = true;
-        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        #[cfg(not(target_os = "macos"))]
         let close_async = true;
         #[cfg(target_os = "macos")]
         if let PollOrFd::Poll(poll) = self {
@@ -81,22 +84,10 @@ impl PollOrFd {
         *self = PollOrFd::Closed;
 
         if fd != Fd::INVALID {
-            // TODO: We should make this call compatible using bun.FD
-            #[cfg(windows)]
-            {
-                if close_fd {
-                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                if close_async && close_fd {
-                    crate::closer::Closer::close(fd, ());
-                } else {
-                    if close_fd {
-                        let _ = fd.close_allowing_bad_file_descriptor(None);
-                    }
-                }
+            if close_async && close_fd {
+                crate::closer::Closer::close(fd, ());
+            } else if close_fd {
+                let _ = fd.close_allowing_bad_file_descriptor(None);
             }
             if let Some(f) = on_close_fn {
                 // SAFETY: caller guarantees ctx is Some and properly aligned

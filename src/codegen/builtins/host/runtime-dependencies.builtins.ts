@@ -723,7 +723,7 @@ const nativeCalls = [
         calls: queuedByNativeCode(flushesDirectStreamCell, b.undefined, b.nativeMemory),
       },
       { file: "src/runtime/ipc.rs", caller: "abort_unsent", onBehalfOf: channelUsers },
-      { file: "src/runtime/ipc.rs", caller: "call_next_tick", times: 2, onBehalfOf: channelUsers },
+      { file: "src/runtime/ipc.rs", caller: "call_next_tick", onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "complete", onBehalfOf: channelUsers },
       { file: "src/runtime/ipc.rs", caller: "on_ack_nack", onBehalfOf: channelUsers },
       {

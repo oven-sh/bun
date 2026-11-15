@@ -120,7 +120,7 @@ pub struct FileInPlaceOfExecutable {
     pub can_be_started: bool,
 }
 
-/// Not a `&[u8]`: `JSC::AOT::useImage` relocates the image in place. C++ sees `{ const uint8_t* ptr; size_t len; }`.
+/// Not a `&[u8]`: `JSC::AOT::useImage` relocates the image in place. Mirrors `BunAOTBytes` (BunAOTCompile.h).
 #[repr(C)]
 #[derive(Copy, Clone, Default)]
 pub struct LoadedImage {

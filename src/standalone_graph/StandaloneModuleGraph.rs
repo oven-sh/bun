@@ -28,7 +28,7 @@ use bun_sourcemap::SerializedSourceMap::SerializedSourceMap;
 use bun_sys::FdExt as _;
 use bun_sys::{self as Syscall, E, Fd, Stat};
 
-use crate::compiled_program::{self, CompiledProgramInput, ImagePlace, RawPayload};
+use crate::compiled_program::{self, CompiledProgramInput, ImagePlace};
 use crate::executable_file::{
     ElfWriteError, ImageRange, MappedFile, Original, PayloadParts, TemplateBytes,
     with_executable_image, write_elf,
@@ -40,6 +40,7 @@ pub use crate::executable_request::{
     ExecutableDetails, ExecutableOutcome, ExecutableRequest, GraphRequest, to_graph_bytes,
     with_graph_slices, write_executable,
 };
+use crate::payload::RawPayload;
 
 bun_core::declare_scope!(StandaloneModuleGraph, hidden);
 
@@ -146,6 +147,7 @@ impl StandaloneModuleGraph {
         let mut buf = bun_paths::path_buffer_pool::get();
         #[cfg(windows)]
         let name = normalize_file_key(name, &mut buf);
+        // Not `files.get`: its result would borrow from `key`.
         let get = |key: &[u8]| Some(&self.files.values()[self.files.get_index(&key)?]);
         get(name)
             .or_else(|| get(&self.root_asset_key(name)?))
@@ -616,7 +618,9 @@ mod macho {
         super::assert_first_get_data_call();
         // SAFETY: section data is `length` bytes immediately following the u64 header. It is never
         // unmapped.
-        Some(unsafe { super::RawPayload::new(slice_ptr.add(data_offset), length as usize, None) })
+        Some(unsafe {
+            super::RawPayload::from_raw_parts(slice_ptr.add(data_offset), length as usize, None)
+        })
     }
 
     unsafe extern "C" {
@@ -691,7 +695,7 @@ mod pe {
             return None;
         }
         // SAFETY: data_ptr points to `length` bytes of section data valid for program lifetime.
-        Some(unsafe { super::RawPayload::new(data_ptr, length as usize, None) })
+        Some(unsafe { super::RawPayload::from_raw_parts(data_ptr, length as usize, None) })
     }
 }
 
@@ -740,7 +744,7 @@ mod elf {
         exit_if_page_is_past_eof(payload as usize + payload_len as usize - 1);
         super::assert_first_get_data_call();
         // SAFETY: as above. The segment is never unmapped.
-        Some(unsafe { super::RawPayload::new(payload, payload_len as usize, None) })
+        Some(unsafe { super::RawPayload::from_raw_parts(payload, payload_len as usize, None) })
     }
 
     /// The size of the payload if it holds a program compiled ahead of time, else 0.
@@ -811,7 +815,9 @@ mod elf {
                 core::slice::from_raw_parts((end - TRAILER.len()) as *const u8, TRAILER.len()),
             )
         };
-        if trailer == TRAILER && offsets.flags & Flags::HAS_COMPILED_PROGRAM.bits() != 0 {
+        if trailer == TRAILER
+            && Flags::from_bits_retain(offsets.flags).contains(Flags::HAS_COMPILED_PROGRAM)
+        {
             len as usize
         } else {
             0
@@ -919,8 +925,8 @@ pub struct File {
     pub contents: &'static [u8],
     sourcemap: LazySourceMap,
     pub encoding: Encoding,
-    wtf_string: std::sync::OnceLock<BunString>,
-    utf8: std::sync::OnceLock<Box<[u8]>>,
+    wtf_string: OnceLock<BunString>,
+    utf8: OnceLock<Box<[u8]>>,
     // Built with a payload order file, this is the one payload all files share, and the file's own cache entry
     // starts `bytecode_entry_offset` into it.
     pub bytecode: &'static [u8],
@@ -1152,7 +1158,6 @@ impl StandaloneModuleGraph {
         let flags = Flags::from_bits_retain(offsets.flags);
         let modules_list_count =
             offsets.modules_ptr.length as usize / size_of::<CompiledModuleGraphFile>();
-        let read_u32 = |at: usize| raw.read::<u32>(at).ok_or(CORRUPTED);
 
         // The optional records `to_bytes` chains directly after the module table, in `Flags` bit order.
         let mut record_at =
@@ -1166,7 +1171,7 @@ impl StandaloneModuleGraph {
 
         let mut builtin_bytecode_table_at = record_at;
         if flags.contains(Flags::HAS_BUILTIN_BYTECODE) {
-            let count = read_u32(record_at)? as usize;
+            let count = raw.read::<u32>(record_at).ok_or(CORRUPTED)? as usize;
             builtin_bytecode_table_at += size_of::<u32>();
             record_at = builtin_bytecode_table_at + count * 3 * size_of::<u32>();
         }
@@ -1179,9 +1184,8 @@ impl StandaloneModuleGraph {
         }
 
         let startup_module_count = if flags.contains(Flags::HAS_STARTUP_MODULE_COUNT)
-            && record_at + size_of::<u32>() <= raw_len
+            && let Some(count) = raw.read::<u32>(record_at)
         {
-            let count = read_u32(record_at)?;
             record_at += size_of::<u32>();
             count
         } else {
@@ -1189,12 +1193,8 @@ impl StandaloneModuleGraph {
         };
         let mut module_info_string_table_ptr = StringPointer::default();
         if flags.contains(Flags::HAS_MODULE_INFO_STRING_TABLE)
-            && record_at + 2 * size_of::<u32>() <= raw_len
+            && let Some(ptr) = raw.read::<StringPointer>(record_at)
         {
-            let ptr = StringPointer {
-                offset: read_u32(record_at)?,
-                length: read_u32(record_at + 4)?,
-            };
             record_at += 2 * size_of::<u32>();
             if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len {
                 module_info_string_table_ptr = ptr;
@@ -1203,21 +1203,17 @@ impl StandaloneModuleGraph {
         let mut prelinked_module_graph_ptr = StringPointer::default();
         let mut prelinked_module_files: Vec<u32> = Vec::new();
         if flags.contains(Flags::HAS_PRELINKED_MODULE_GRAPH)
-            && record_at + 3 * size_of::<u32>() <= raw_len
+            && let Some([offset, length, count]) = raw.read::<[u32; 3]>(record_at)
         {
-            let ptr = StringPointer {
-                offset: read_u32(record_at)?,
-                length: read_u32(record_at + 4)?,
-            };
-            let count = read_u32(record_at + 8)? as usize;
+            let ptr = StringPointer { offset, length };
+            let count = count as usize;
             record_at += 3 * size_of::<u32>();
             if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len
                 && count <= modules_list_count
-                && record_at + count * size_of::<u32>() <= raw_len
+                && let Some(files) = raw.bytes(record_at, count * size_of::<u32>())
             {
                 prelinked_module_graph_ptr = ptr;
-                let files = raw.bytes(record_at, count * size_of::<u32>());
-                prelinked_module_files = Unaligned::<u32>::slice_of(files.ok_or(CORRUPTED)?)
+                prelinked_module_files = Unaligned::<u32>::slice_of(files)
                     .iter()
                     .map(|file| file.get())
                     .collect();
@@ -1234,12 +1230,11 @@ impl StandaloneModuleGraph {
             }
         }
         let mut runtime_options = RuntimeOptions::default();
-        if flags.contains(Flags::HAS_RUNTIME_OPTIONS) && record_at + 2 * size_of::<u32>() <= raw_len
+        if flags.contains(Flags::HAS_RUNTIME_OPTIONS)
+            && let Some([option_flags, value]) = raw.read::<[u32; 2]>(record_at)
         {
-            let flags = read_u32(record_at)?;
-            let value = read_u32(record_at + 4)?;
             record_at += 2 * size_of::<u32>();
-            if flags & RuntimeOptions::HAS_JIT_POLICY != 0 {
+            if option_flags & RuntimeOptions::HAS_JIT_POLICY != 0 {
                 let scale = f32::from_bits(value);
                 if scale.is_finite() && scale >= 1.0 {
                     runtime_options.jit_policy = scale;
@@ -1248,18 +1243,14 @@ impl StandaloneModuleGraph {
         }
         let mut linked_bytecode_payload = StringPointer::default();
         let mut linked_bytecode_region_ends = [0u32; LINKED_BYTECODE_REGION_COUNT];
-        const LINKED_PAYLOAD_RECORD: usize = (2 + LINKED_BYTECODE_REGION_COUNT) * size_of::<u32>();
+        type LinkedPayloadRecord = [u32; 2 + LINKED_BYTECODE_REGION_COUNT];
         if flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD)
-            && record_at + LINKED_PAYLOAD_RECORD <= raw_len
+            && let Some([offset, length, region_ends @ ..]) =
+                raw.read::<LinkedPayloadRecord>(record_at)
         {
-            let ptr = StringPointer {
-                offset: read_u32(record_at)?,
-                length: read_u32(record_at + 4)?,
-            };
-            for (i, end) in linked_bytecode_region_ends.iter_mut().enumerate() {
-                *end = read_u32(record_at + 8 + i * size_of::<u32>())?;
-            }
-            record_at += LINKED_PAYLOAD_RECORD;
+            let ptr = StringPointer { offset, length };
+            linked_bytecode_region_ends = region_ends;
+            record_at += size_of::<LinkedPayloadRecord>();
             if (ptr.offset as usize).saturating_add(ptr.length as usize) <= raw_len
                 && linked_bytecode_region_ends.is_sorted()
                 && linked_bytecode_region_ends[LINKED_BYTECODE_REGION_COUNT - 1] == ptr.length
@@ -1274,12 +1265,12 @@ impl StandaloneModuleGraph {
         } else {
             (raw.into_payload(), None)
         };
-        let slice_to = |ptr: StringPointer| payload.pointed_bytes(ptr).ok_or(CORRUPTED);
+        let pointed_bytes = |ptr: StringPointer| payload.pointed_bytes(ptr).ok_or(CORRUPTED);
 
-        let (modules_list, _) = slice_to(offsets.modules_ptr)?.as_chunks();
+        let (modules_list, _) = pointed_bytes(offsets.modules_ptr)?.as_chunks();
         let source_hashes = payload.bytes(source_hashes_at, source_hashes_length);
         let source_hashes = Unaligned::<u32>::slice_of(source_hashes.ok_or(CORRUPTED)?);
-        let linked_bytecode = slice_to(linked_bytecode_payload)?;
+        let linked_bytecode = pointed_bytes(linked_bytecode_payload)?;
         let has_linked_bytecode_payload = flags.contains(Flags::HAS_LINKED_BYTECODE_PAYLOAD);
 
         let builtin_bytecode_table =
@@ -1290,7 +1281,7 @@ impl StandaloneModuleGraph {
         for record in builtin_bytecode_table {
             let [id, offset, length] = record.get();
             if !has_linked_bytecode_payload {
-                builtin_bytecode.push((id, slice_to(StringPointer { offset, length })?, 0));
+                builtin_bytecode.push((id, pointed_bytes(StringPointer { offset, length })?, 0));
             } else if let Some(entry_offset) = offset
                 .checked_sub(linked_bytecode_payload.offset)
                 .filter(|&entry_offset| entry_offset < linked_bytecode_payload.length)
@@ -1298,6 +1289,7 @@ impl StandaloneModuleGraph {
                 // Like a module's `bytecode`, an internal module's runs from its cache entry to the end of the payload.
                 builtin_bytecode.push((id, linked_bytecode, entry_offset));
             }
+            // Any other entry has no bytecode, as for a module below.
         }
         let mut file_prelinked_index = vec![u32::MAX; modules_list_count];
         for (module_index, &file) in prelinked_module_files.iter().enumerate() {
@@ -1319,8 +1311,8 @@ impl StandaloneModuleGraph {
                         .wrapping_sub(linked_bytecode_payload.offset)
                 })
                 .filter(|&entry_offset| entry_offset < linked_bytecode_payload.length);
-            let name = slice_to(module.name)?;
-            let contents = slice_to(module.contents)?;
+            let name = pointed_bytes(module.name)?;
+            let contents = pointed_bytes(module.contents)?;
             if module.encoding == Encoding::Utf16
                 && bun_core::try_cast_slice::<u8, u16>(contents).is_none()
             {
@@ -1334,7 +1326,7 @@ impl StandaloneModuleGraph {
                     contents,
                     sourcemap: LazySourceMap {
                         serialized: SerializedSourceMap {
-                            bytes: slice_to(module.sourcemap)?,
+                            bytes: pointed_bytes(module.sourcemap)?,
                         },
                         parsed: OnceLock::new(),
                     },
@@ -1343,17 +1335,17 @@ impl StandaloneModuleGraph {
                     } else if has_linked_bytecode_payload {
                         &[]
                     } else {
-                        slice_to(module.bytecode)?
+                        pointed_bytes(module.bytecode)?
                     },
                     bytecode_entry_offset: linked_entry_offset.unwrap_or(0),
-                    module_info: slice_to(module.module_info)?,
-                    bytecode_origin_path: slice_to(module.bytecode_origin_path)?,
+                    module_info: pointed_bytes(module.module_info)?,
+                    bytecode_origin_path: pointed_bytes(module.bytecode_origin_path)?,
                     source_hash: source_hashes.get(i).map_or(0, |hash| hash.get()),
                     module_format: module.module_format,
                     side: module.side,
                     encoding: module.encoding,
-                    wtf_string: std::sync::OnceLock::new(),
-                    utf8: std::sync::OnceLock::new(),
+                    wtf_string: OnceLock::new(),
+                    utf8: OnceLock::new(),
                     prelinked_index: file_prelinked_index[i],
                 },
             );
@@ -1365,10 +1357,10 @@ impl StandaloneModuleGraph {
         if entry_point_id as usize >= module_count {
             return Err(crate::Error::CorruptedModuleGraphEntryPointIDIsGreaterThanModuleListCount);
         }
-        let compile_exec_argv = slice_to(offsets.compile_exec_argv_ptr)?;
-        let bytecode_string_table = slice_to(bytecode_string_table_ptr)?;
-        let module_info_string_table = slice_to(module_info_string_table_ptr)?;
-        let prelinked_module_graph = slice_to(prelinked_module_graph_ptr)?;
+        let compile_exec_argv = pointed_bytes(offsets.compile_exec_argv_ptr)?;
+        let bytecode_string_table = pointed_bytes(bytecode_string_table_ptr)?;
+        let module_info_string_table = pointed_bytes(module_info_string_table_ptr)?;
+        let prelinked_module_graph = pointed_bytes(prelinked_module_graph_ptr)?;
         modules.lock_pointers(); // make the pointers stable forever
 
         // Keys are posix-separated already (see `to_bytes`), so byte-scan for `/`.
@@ -2025,7 +2017,7 @@ pub(crate) fn to_bytes(
         let base = string_builder.ptr.unwrap().as_ptr();
         // SAFETY: nothing touches the builder, and nothing read from `graph` is kept, until `graph`
         // is dropped. Everything but the room of an `ImagePlace::OutsideGraph` image was written.
-        let payload = unsafe { RawPayload::new(base, string_builder.len, None) };
+        let payload = unsafe { RawPayload::from_raw_parts(base, string_builder.len, None) };
         let graph = StandaloneModuleGraph::from_bytes(payload, offsets)?;
         debug_assert_eq!(graph.files.count(), modules.len());
         debug_assert_eq!(graph.compiled_program.is_some(), program.is_some());

@@ -7,11 +7,11 @@ use std::borrow::Cow;
 
 use bun_collections::index_sort;
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::{AnyBitPattern, StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
+use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledFurtherPackageName, CompiledPackageName, CompiledPathAlias,
-    CompiledProgram, FoundForFileSystemAlone, ImageFile, LoadedImage, NamesReadLater, RefusedData,
+    CompiledProgram, FoundForFileSystemAlone, ImageFile, NamesReadLater, RefusedData,
     compare_source_paths, name_in_plain_executable,
 };
 use bun_resolver::package_names::FurtherPackageName;
@@ -26,6 +26,7 @@ use crate::StandaloneModuleGraph::{
     BASE_PUBLIC_PATH, BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX, File, StandaloneModuleGraph, dir_stat,
     is_bun_standalone_file_path,
 };
+use crate::payload::{Payload, RawPayload};
 
 const CORRUPTED: Error = Error::CorruptedCompiledProgram;
 /// The `u64` length before the payload, in a section of an executable and in `to_graph_bytes`.
@@ -600,88 +601,6 @@ fn read_path_aliases(payload: &Payload, at: &mut usize) -> Option<Box<[CompiledP
     Some(aliases.into_boxed_slice())
 }
 
-/// The only handle to a payload. Nothing writes to the payload before `split_off_image` hands out its image.
-pub(crate) struct RawPayload {
-    base: *mut u8,
-    length: usize,
-    file: Option<ImageFile>,
-}
-
-impl RawPayload {
-    /// `file`: the descriptor `base` was mapped from, and the offset of `base` in that file.
-    ///
-    /// # Safety
-    /// While the result or anything read from it is in use, `base[..length]` stays readable and is only written
-    /// through the `LoadedImage` of the result. It is initialized, except for an image that no record overlaps.
-    pub(crate) unsafe fn new(base: *mut u8, length: usize, file: Option<ImageFile>) -> RawPayload {
-        RawPayload { base, length, file }
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.length
-    }
-
-    pub(crate) fn bytes(&self, offset: usize, length: usize) -> Option<&[u8]> {
-        if offset.checked_add(length)? > self.length {
-            return None;
-        }
-        // SAFETY: the range lies in `base[..length]`, and the borrow ends before there is a `LoadedImage`.
-        Some(unsafe { core::slice::from_raw_parts(self.base.add(offset), length) })
-    }
-
-    pub(crate) fn read<T: AnyBitPattern>(&self, offset: usize) -> Option<T> {
-        bun_core::read_prefix(self.bytes(offset, size_of::<T>())?)
-    }
-
-    /// For a payload without an image.
-    pub(crate) fn into_payload(self) -> Payload {
-        Payload {
-            before_image: &[],
-            // SAFETY: there will be no `LoadedImage`.
-            after_image: unsafe { core::slice::from_raw_parts(self.base, self.length) },
-            image_end: 0,
-        }
-    }
-
-    fn split_off_image(self, image: StringPointer) -> Option<(Payload, LoadedImage)> {
-        let (start, length) = (image.offset as usize, image.length as usize);
-        let image_end = start + length;
-        let length_after = self.length.checked_sub(image_end)?;
-        // SAFETY: three disjoint ranges of `base[..length]`, and `self` was the only handle to them.
-        unsafe {
-            let payload = Payload {
-                before_image: core::slice::from_raw_parts(self.base, start),
-                after_image: core::slice::from_raw_parts(self.base.add(image_end), length_after),
-                image_end,
-            };
-            let image = core::ptr::slice_from_raw_parts_mut(self.base.add(start), length);
-            Some((payload, LoadedImage::from_raw(image)))
-        }
-    }
-}
-
-/// A payload without its image.
-#[derive(Copy, Clone)]
-pub(crate) struct Payload {
-    before_image: &'static [u8],
-    after_image: &'static [u8],
-    image_end: usize,
-}
-
-impl Payload {
-    /// `None` if the range is out of bounds or overlaps the image.
-    pub(crate) fn bytes(&self, offset: usize, length: usize) -> Option<&'static [u8]> {
-        match offset.checked_sub(self.image_end) {
-            Some(offset) => self.after_image.get(offset..offset.checked_add(length)?),
-            None => self.before_image.get(offset..offset.checked_add(length)?),
-        }
-    }
-
-    pub(crate) fn pointed_bytes(&self, pointer: StringPointer) -> Option<&'static [u8]> {
-        self.bytes(pointer.offset as usize, pointer.length as usize)
-    }
-}
-
 pub(crate) fn read(
     raw: RawPayload,
     record_at: &mut usize,
@@ -700,7 +619,7 @@ fn try_read(
         return None;
     }
     let payload_file = raw.file;
-    let (payload, image) = raw.split_off_image(header.image)?;
+    let (payload, image) = raw.into_payload_and_image(header.image)?;
     let entry_point_count = header.entry_point_count as usize;
     if entry_point_count > file_count {
         return None;
@@ -1446,8 +1365,9 @@ impl StandaloneModuleGraph {
         };
         // SAFETY: `PAYLOAD_HEADER_SIZE + length <= size`. The memory is new, is never released, and nothing else
         // has its address. The caller's contract covers the file behind it.
-        let payload =
-            unsafe { RawPayload::new(base.add(PAYLOAD_HEADER_SIZE), length as usize, Some(file)) };
+        let payload = unsafe {
+            RawPayload::from_raw_parts(base.add(PAYLOAD_HEADER_SIZE), length as usize, Some(file))
+        };
         Self::from_payload(payload)
     }
 
@@ -2849,7 +2769,7 @@ pub(crate) mod tests {
     fn leak_payload(bytes: Vec<u8>) -> RawPayload {
         let bytes = bytes.leak();
         // SAFETY: leaked, and `bytes` is not used again.
-        unsafe { RawPayload::new(bytes.as_mut_ptr(), bytes.len(), None) }
+        unsafe { RawPayload::from_raw_parts(bytes.as_mut_ptr(), bytes.len(), None) }
     }
 
     fn image_bytes(program: &CompiledProgram) -> &[u8] {

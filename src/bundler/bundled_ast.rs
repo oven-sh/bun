@@ -39,7 +39,7 @@ pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 // `BundledAstColumns` (`items_named_imports()`,
 // `items_named_exports()`, …) at `crate::bundled_ast::*`.
 //
-// 31 fields ≤ `multi_array_list::MAX_FIELDS` (32).
+// 30 fields ≤ `multi_array_list::MAX_FIELDS` (32).
 
 pub struct BundledAst<'arena> {
     pub(crate) approximate_newline_count: u32,
@@ -54,8 +54,6 @@ pub struct BundledAst<'arena> {
     /// they can be manipulated efficiently without a full AST traversal
     pub(crate) import_records: import_record::List<'arena>,
 
-    // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
-    // round-trip.
     pub(crate) hashbang: StoreStr,
     /// See `Ast::directives`.
     pub(crate) directives: StoreSlice<Stmt>,
@@ -72,7 +70,6 @@ pub struct BundledAst<'arena> {
     pub(crate) exports_ref: Ref,
     pub(crate) module_ref: Ref,
     pub(crate) wrapper_ref: Ref,
-    pub(crate) require_ref: Ref,
     pub(crate) top_level_await_keyword: bun_ast::Range,
     pub tla_check: TlaCheck,
 
@@ -121,7 +118,6 @@ bun_collections::multi_array_columns! {
         exports_ref: Ref,
         module_ref: Ref,
         wrapper_ref: Ref,
-        require_ref: Ref,
         top_level_await_keyword: bun_ast::Range,
         tla_check: TlaCheck,
         named_imports: NamedImports,
@@ -151,7 +147,6 @@ bitflags::bitflags! {
         const FORCE_CJS_TO_ESM = 1 << 4;
         const HAS_LAZY_EXPORT = 1 << 5;
         const COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED = 1 << 6;
-        const HAS_IMPORT_META = 1 << 8;
         /// See `Ast::commonjs_lifted_to_esm`.
         const COMMONJS_LIFTED_TO_ESM = 1 << 9;
         // _padding: u6 fills the rest
@@ -181,7 +176,6 @@ impl<'arena> BundledAst<'arena> {
             exports_ref: Ref::NONE,
             module_ref: Ref::NONE,
             wrapper_ref: Ref::NONE,
-            require_ref: Ref::NONE,
             top_level_await_keyword: bun_ast::Range::NONE,
             tla_check: TlaCheck::default(),
             named_imports: NamedImports::default(),
@@ -198,75 +192,14 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    // The collection types aren't Copy, so consume `self` to move them (to_ast
-    // is a one-shot conversion back to the fat Ast).
-    pub(crate) fn to_ast(self) -> Ast<'arena> {
-        let arena: &'arena bun_alloc::Arena = *self.parts.allocator();
-        Ast {
+    pub(crate) fn for_printer(&self) -> bun_js_printer::BundledFile<'_> {
+        bun_js_printer::BundledFile {
             approximate_newline_count: self.approximate_newline_count as usize,
-            nested_scope_slot_counts: self.nested_scope_slot_counts,
-
-            exports_kind: self.exports_kind,
-
-            import_records: self.import_records,
-
-            hashbang: self.hashbang,
-            directives: self.directives,
-            export_default_alias_of_import: self.export_default_alias_of_import,
-            parts: self.parts,
-            // This list may be mutated later, so we should store the capacity
-            symbols: self.symbols,
-            module_scope: self.module_scope,
-            char_freq: self.char_freq,
-            exports_ref: self.exports_ref,
-            module_ref: self.module_ref,
-            wrapper_ref: self.wrapper_ref,
-            require_ref: self.require_ref,
-            top_level_await_keyword: self.top_level_await_keyword,
-
-            // These are used when bundling. They are filled in during the parser pass
-            // since we already have to traverse the AST then anyway and the parser pass
-            // is conveniently fully parallelized.
-            named_imports: self.named_imports,
-            named_exports: self.named_exports,
-            export_star_import_records: self.export_star_import_records,
-            dynamic_import_aliases: self.dynamic_import_aliases,
-
-            top_level_symbols_to_parts: self.top_level_symbols_to_parts,
-            scope_uses: self.scope_uses,
-
-            commonjs_named_exports: self.commonjs_named_exports,
-
-            redirect_import_record_index: if self.redirect_import_record_index == u32::MAX {
-                None
-            } else {
-                Some(self.redirect_import_record_index)
-            },
-
-            target: self.target,
-
-            // const_values: self.const_values,
-            ts_enums: self.ts_enums,
-
-            uses_exports_ref: self.flags.contains(Flags::USES_EXPORTS_REF),
-            uses_module_ref: self.flags.contains(Flags::USES_MODULE_REF),
-            // uses_require_ref: ast.uses_require_ref,
-            export_keyword: bun_ast::Range {
-                len: if self.flags.contains(Flags::USES_EXPORT_KEYWORD) {
-                    1
-                } else {
-                    0
-                },
-                loc: bun_ast::Loc::default(),
-            },
-            force_cjs_to_esm: self.flags.contains(Flags::FORCE_CJS_TO_ESM),
-            commonjs_lifted_to_esm: self.flags.contains(Flags::COMMONJS_LIFTED_TO_ESM),
             has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
-            commonjs_module_exports_assigned_deoptimized: self
-                .flags
-                .contains(Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
-            has_import_meta: self.flags.contains(Flags::HAS_IMPORT_META),
-            ..Ast::empty_in(arena)
+            has_top_level_await: !self.top_level_await_keyword.is_empty(),
+            exports_kind: self.exports_kind,
+            named_exports: &self.named_exports,
+            export_star_import_records: &self.export_star_import_records,
         }
     }
 
@@ -283,7 +216,6 @@ impl<'arena> BundledAst<'arena> {
             Flags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED,
             ast.commonjs_module_exports_assigned_deoptimized,
         );
-        flags.set(Flags::HAS_IMPORT_META, ast.has_import_meta);
 
         Self {
             approximate_newline_count: ast.approximate_newline_count as u32,
@@ -308,7 +240,6 @@ impl<'arena> BundledAst<'arena> {
             exports_ref: ast.exports_ref,
             module_ref: ast.module_ref,
             wrapper_ref: ast.wrapper_ref,
-            require_ref: ast.require_ref,
             top_level_await_keyword: ast.top_level_await_keyword,
             tla_check: TlaCheck::default(),
             // These are used when bundling. They are filled in during the parser pass

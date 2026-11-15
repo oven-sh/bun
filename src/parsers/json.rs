@@ -63,14 +63,9 @@ pub const PACKAGE_JSON_OPTS: JSONOptions = JSONOptions {
     ..JSONOptions::DEFAULT
 };
 
-static EMPTY_OBJECT: bun_core::RacyCell<E::Object> = bun_core::RacyCell::new(E::Object::EMPTY);
-
 #[inline]
 fn empty_object_expr() -> Expr {
-    Expr {
-        loc: bun_ast::Loc { start: 0 },
-        data: js_ast::expr::Data::EObject(js_ast::StoreRef::from_raw(EMPTY_OBJECT.get())),
-    }
+    Expr::init(E::Object::default(), bun_ast::Loc { start: 0 })
 }
 
 /// A parsed immutable-AST JSON document: the root expression plus the [`E::JsonTape`] it borrows.

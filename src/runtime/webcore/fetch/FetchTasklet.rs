@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
-use bun_event_loop::{
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -218,11 +215,7 @@ pub struct FetchTasklet {
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum HTTPRequestBody {
     AnyBlob(AnyBlob),
-    Sendfile {
-        window: http::SendFile,
-        /// Owns `window.fd`.
-        _file: bun_sys::File,
-    },
+    Sendfile(http::SendFile),
     ReadableStream(ReadableStreamStrong),
 }
 
@@ -247,6 +240,15 @@ impl HTTPRequestBody {
             HTTPRequestBody::AnyBlob(blob) => blob.slice(),
             _ => b"",
         }
+    }
+
+    fn take_sendfile(&mut self) -> Option<http::SendFile> {
+        if let HTTPRequestBody::Sendfile(_) = self
+            && let HTTPRequestBody::Sendfile(sendfile) = core::mem::take(self)
+        {
+            return Some(sendfile);
+        }
+        None
     }
 
     pub(crate) fn from_js(cx: &bun_jsc::JsThread<'_>, value: JSValue) -> JsResult<HTTPRequestBody> {
@@ -317,7 +319,7 @@ impl HTTPRequestBody {
         match self {
             HTTPRequestBody::AnyBlob(blob) => blob.size() > 0,
             HTTPRequestBody::ReadableStream(stream) => stream.has(),
-            HTTPRequestBody::Sendfile { .. } => true,
+            HTTPRequestBody::Sendfile(_) => true,
         }
     }
 }
@@ -1877,6 +1879,8 @@ impl FetchTasklet {
             fetch_tasklet.signals.cert_errors = None;
         }
 
+        let sendfile = fetch_tasklet.request_body.take_sendfile();
+
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
         // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
         // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
@@ -1969,10 +1973,10 @@ impl FetchTasklet {
             .header_progress
             .store(true, Ordering::Relaxed);
 
-        if let HTTPRequestBody::Sendfile { window, .. } = fetch_tasklet.request_body {
+        if let Some(sendfile) = sendfile {
             debug_assert!(url_is_http);
             debug_assert!(!matches!(fetch_options.proxy, ProxyPolicy::Explicit { .. }));
-            http.request_body = http::HTTPRequestBody::Sendfile(window);
+            http.request_body = http::HTTPRequestBody::Sendfile(sendfile);
         }
 
         if let Some(signal) = fetch_options.signal {
@@ -2387,15 +2391,11 @@ impl FetchTasklet {
                 return;
             }
         }
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
+        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link. This thread's ref keeps the
         // tasklet (and the ticket in it) alive across the post.
-        task_ref.ticket().post(ct);
+        task_ref.ticket().post_intrusive(ct);
     }
 }
 
@@ -2517,16 +2517,12 @@ impl FetchTaskletPromiseSettle {
     }
 }
 
-impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
+impl bun_event_loop::BoxedTask for FetchTaskletPromiseSettle {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
     /// Drop the held value and promise handle without settling.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the completion queued.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The fetch() promise is settled for the script that fetched.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the box the completion queued.
-        unsafe { (*this).context }
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.context
     }
 }

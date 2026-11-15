@@ -2,7 +2,7 @@
 //! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
-//! `Worker::create` / `initialize_transpiler` build the per-worker
+//! `Worker::create` builds the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
 //! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, output as Output};
-use bun_ptr::AliasableBox;
+use bun_ptr::{AliasableBox, BackRef};
 use bun_sys::Fd;
 use bun_threading::{WaitGroup, io_thread_pool, thread_pool as ThreadPoolLib};
 
@@ -49,9 +49,7 @@ pub struct ThreadPool {
     /// last step schedules a parse on `worker_pool`, and that parse can finish
     /// before the callback returns.
     io_tasks_in_flight: WaitGroup,
-    pub worker_pool: *mut ThreadPoolLib::ThreadPool,
-    /// `worker_pool`, unless the caller lent one.
-    _owned_worker_pool: Option<AliasableBox<ThreadPoolLib::ThreadPool>>,
+    worker_pool: WorkerPool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
     // the field so `get_worker` can take `&self` — `Worker::get` is entered
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
@@ -64,15 +62,20 @@ pub struct ThreadPool {
     pub(crate) generation: u64,
 }
 
+enum WorkerPool {
+    Owned(AliasableBox<ThreadPoolLib::ThreadPool>),
+    Lent(BackRef<ThreadPoolLib::ThreadPool>),
+}
+
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
 // field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
-// the raw-pointer fields are set during init, before the pool is shared with
+// the pointer fields are set during init, before the pool is shared with
 // worker threads, and only read thereafter.
 unsafe impl Send for ThreadPool {}
 // SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
 // `get_worker(&self)`; the only field mutated under `&self` is
 // `workers_assignments` (through its `bun_threading::Guarded` lock), and the
-// raw-pointer target (`ThreadPoolLib::ThreadPool`) is `Sync`.
+// pointers' target (`ThreadPoolLib::ThreadPool`) is `Sync`.
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
@@ -81,31 +84,22 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    pub(crate) fn init(
-        // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
-        // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
-        // worker threads). Materializing `&mut` from that provenance is UB
-        // under Stacked Borrows even if the body never writes through it; the
-        // pool is stored as `*mut` in the struct anyway, so keep it raw
-        // end-to-end.
-        worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
-    ) -> ThreadPool {
-        let (worker_pool, owned) = match worker_pool {
-            Some(lent) => (lent.as_ptr(), None),
+    pub(crate) fn init(worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>) -> ThreadPool {
+        let worker_pool = match worker_pool {
+            Some(lent) => WorkerPool::Lent(BackRef::from(lent)),
             None => {
                 let cpu_count = bun_core::get_thread_count();
-                let pool =
-                    AliasableBox::new(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
+                bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
+                WorkerPool::Owned(AliasableBox::new(ThreadPoolLib::ThreadPool::init(
+                    ThreadPoolLib::Config {
                         max_threads: u32::from(cpu_count),
                         ..Default::default()
-                    }));
-                bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
-                (pool.as_ptr(), Some(pool))
+                    },
+                )))
             }
         };
         ThreadPool {
             worker_pool,
-            _owned_worker_pool: owned,
             io_pool: Self::uses_io_pool().then(io_thread_pool::get),
             io_tasks_in_flight: WaitGroup::init(),
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
@@ -128,14 +122,12 @@ impl ThreadPool {
         unsafe { WaitGroup::finish_raw(&raw const (*this).io_tasks_in_flight) };
     }
 
-    /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
-    /// pointer is set in `init` and never null while `self`
-    /// is observable; encapsulating the deref keeps callers out of `unsafe`.
     #[inline]
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
-        // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until it drops; all driver methods take `&self`.
-        unsafe { &*self.worker_pool }
+        match &self.worker_pool {
+            WorkerPool::Owned(pool) => pool,
+            WorkerPool::Lent(pool) => pool,
+        }
     }
 
     /// Sends every thread that may hold a [`Worker`] through its idle queue.
@@ -567,13 +559,14 @@ impl Worker {
         self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
+        // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
             log,
-            transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
+            transpiler: Transpiler::for_worker(self.ctx.transpiler(), arena_ref, log),
             other_transpiler: None,
         });
         // Wire the self-referential `macro_context` now that `transpiler`
@@ -583,23 +576,6 @@ impl Worker {
         bun_core::scoped_log!(ThreadPool, "Worker.create()");
     }
 
-    /// Build a per-worker `Transpiler` from `from`.
-    ///
-    /// reshaped for borrowck — associated fn (no `&mut self`) so
-    /// callers can borrow `self.data.log` disjointly. The returned value is a
-    /// fully-owned `Transpiler` whose `Drop` is sound; `wire_after_move` must
-    /// be called once it is at its final address.
-    fn initialize_transpiler(
-        log: *mut bun_ast::Log,
-        from: &Transpiler<'_>,
-        arena: &'static ThreadLocalArena,
-    ) -> Transpiler<'static> {
-        // SAFETY: `from` is the `BundleV2`-owned transpiler (or its
-        // client transpiler), which outlives every worker; the
-        // `&'a`-carrying fields inside reference process-lifetime data.
-        unsafe { Transpiler::<'static>::for_worker(from, arena, log) }
-    }
-
     pub(crate) fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         // Callers only invoke this after `Worker::get` → `create()`.
         let data = self.data.as_mut().expect("Worker.data set in create()");
@@ -607,13 +583,13 @@ impl Worker {
             if data.other_transpiler.is_none() {
                 // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.
-                let client: &Transpiler<'_> = self.ctx.client_transpiler_ref().unwrap();
+                let client = self.ctx.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),
                 // pinned for the worker's lifetime; detach to `'static` for the
                 // erased `Transpiler<'static>` slot.
                 let arena_ref: &'static ThreadLocalArena =
                     unsafe { bun_ptr::detach_lifetime_ref(self.arena.get()) };
-                let mut boxed = Box::new(Self::initialize_transpiler(data.log, client, arena_ref));
+                let mut boxed = Box::new(Transpiler::for_worker(client, arena_ref, data.log));
                 // Wire self-refs after the value reached its final (heap) address.
                 boxed.wire_after_move();
                 data.other_transpiler = Some(boxed);

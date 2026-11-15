@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { closeSync, openSync, readFileSync, writeSync } from "node:fs";
 
 const stateSize = 536;
 const removalOffset = 24;
@@ -80,4 +80,14 @@ export function readRemovedFeatures(path: string): number[] | undefined {
   if (!file.subarray(offset, offset + stateSignature.length).equals(stateSignature)) return undefined;
   const removal = file.subarray(offset + removalOffset, offset + removalOffset + removalCount);
   return [...removal.keys()].filter(index => removal[index] !== 0);
+}
+
+/** For a Bun that can't cut its executables: this one says that it lacks the features, and holds their code. */
+export function sayFeaturesAreRemoved(path: string, features: number[]): void {
+  const offset = stateSectionOffset(readFileSync(path));
+  if (offset === undefined) throw new Error(`${path} has no state of removable features`);
+  const unused = Buffer.from([1]);
+  const descriptor = openSync(path, "r+");
+  for (const index of features) writeSync(descriptor, unused, 0, 1, offset + removalOffset + index);
+  closeSync(descriptor);
 }

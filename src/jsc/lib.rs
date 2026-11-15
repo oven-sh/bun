@@ -454,8 +454,6 @@ pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
 
-#[path = "AsyncModule.rs"]
-pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]

@@ -310,13 +310,10 @@ fn add_files_below(root: &[u8], start: &[u8], end: &[u8], found: &mut Vec<Box<[u
     ];
     let mut folders: Vec<Vec<u8>> = vec![Vec::new()];
     while let Some(relative) = folders.pop() {
-        let path = bun_core::ZBox::from_bytes([root, &relative[..]].concat());
-        let flags = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY;
-        let Ok(folder) = bun_sys::openat(Fd::cwd(), &path, flags, 0) else {
+        let Ok(folder) = bun_sys::Dir::open(&[root, &relative[..]].concat()) else {
             continue;
         };
-        let _close = bun_sys::CloseOnDrop::new(folder);
-        let mut entries = bun_sys::dir_iterator::iterate(folder);
+        let mut entries = bun_sys::dir_iterator::iterate(folder.fd());
         while let Ok(Some(entry)) = entries.next() {
             let name = entry.name.slice_u8();
             let below = [&relative[..], b"/", name].concat();

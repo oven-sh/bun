@@ -57,6 +57,15 @@ The entry point is a file, or the name of a command-line tool of an installed pa
   from disk at run time. Makes it larger and slower
 </ParamField>
 
+<ParamField path="--aot-order" type="string">
+  Lay the executable out by the order file that runs of it wrote (<code>--aot-record-order</code>), so that it starts
+  faster from a cold disk. Takes a list of files, most important first
+</ParamField>
+
+<ParamField path="--aot-record-order" type="boolean">
+  Build an executable that writes an order file when it runs with <code>BUN_AOT_ORDER_OUT</code>
+</ParamField>
+
 <ParamField path="--aot-harden" type="string">
   Make a bug in the compiler harder to turn into a memory bug. Takes a list of <code>proof-checks</code> and{" "}
   <code>ignore-told-ranges</code>. The executable runs slower

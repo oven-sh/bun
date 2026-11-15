@@ -2202,7 +2202,6 @@ impl<'a> Repl<'a> {
         );
 
         if bun_js_printer::print_ast::<
-            _,
             /* ASCII_ONLY */ true,
             /* GENERATE_SOURCE_MAP */ false,
         >(

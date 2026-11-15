@@ -639,7 +639,6 @@ impl<'a> Transpiler<'a> {
 
 use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
-use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
 use bun_sys::Fd as FD;
@@ -680,10 +679,6 @@ pub struct ParseResult<'a> {
     pub already_bundled: AlreadyBundled,
     pub empty: bool,
 
-    /// SAFETY: erased — bundler stores it
-    /// and hands it back to the runtime side; never dereferenced here.
-    pub(crate) runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-
     /// Owns the bytes that `source.contents` points into when they came from
     /// `cache::Fs::read_file_with_allocator` (non-shared-buffer path) or a
     /// decoded `data:` URL. That borrow is erased, so the backing must live at least as long as
@@ -708,7 +703,6 @@ impl<'a> ParseResult<'a> {
             ast: bun_ast::Ast::empty_in(arena),
             already_bundled: AlreadyBundled::None,
             empty: true,
-            runtime_transpiler_cache: None,
             source_contents_backing,
         }
     }
@@ -763,7 +757,7 @@ pub struct ParseOptions<'a, 'b> {
     /// See: https://nodejs.org/api/packages.html#type
     pub module_type: options::ModuleType,
 
-    pub runtime_transpiler_cache: Option<&'b mut RuntimeTranspilerCache>,
+    pub runtime_transpiler_cache: Option<&'b mut dyn js_ast::TranspilerCache>,
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
@@ -772,11 +766,10 @@ pub struct ParseOptions<'a, 'b> {
 use bun_options_types::schema::api;
 
 // ── type unification (parse_maybe Js/Ts arm) ─────────────────────────────
-// `ModuleType`, `Define`, `RuntimeTranspilerCache` are single nominal types
-// shared between `bun_js_parser` and this crate (canonical defs live in the
+// `ModuleType` and `Define` are shared with `bun_js_parser` (canonical defs live in the
 // lower-tier crate; bundler re-exports). There are no by-value conversion
 // shims — `to_parser_module_type` is an identity fn and `parse_maybe`
-// threads `self.options.define` / `runtime_transpiler_cache` directly.
+// threads `self.options.define` directly.
 //
 // D042 UNIFIED: `crate::options_impl::jsx::Pragma` IS
 // `js_ast::parser::options::JSX::Pragma` (both re-export
@@ -1103,7 +1096,7 @@ impl<'a> Transpiler<'a> {
         const DATA_ONLY: bool,
     >(
         &mut self,
-        mut this_parse: ParseOptions<'p, '_>,
+        this_parse: ParseOptions<'p, '_>,
         // The only caller passes `EntryPoints::ClientEntryPoint`, so the
         // param is typed concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
@@ -1337,18 +1330,6 @@ impl<'a> Transpiler<'a> {
                     .trim_unused_imports
                     .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
-                // `bun_ast::RuntimeTranspilerCache` is the single nominal
-                // type on both sides; thread the pointer directly.
-                // The same `RuntimeTranspilerCache` raw pointer goes to BOTH
-                // `opts.features` and the returned `ParseResult`. Derive both
-                // from a single reborrow so they share one provenance tag —
-                // re-touching the parent `&mut` after the `*mut` cast would
-                // pop the raw pointer off the borrow stack (Stacked Borrows).
-                let rtc_ptr: Option<core::ptr::NonNull<RuntimeTranspilerCache>> = this_parse
-                    .runtime_transpiler_cache
-                    .as_deref_mut()
-                    .map(core::ptr::NonNull::from);
-                opts.features.runtime_transpiler_cache = rtc_ptr.map(core::ptr::NonNull::as_ptr);
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1438,9 +1419,14 @@ impl<'a> Transpiler<'a> {
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
                 // are stateless unit structs, so calling the bundler-crate one
                 // directly is equivalent.
-                let parsed = match crate::cache::JavaScript::init()
-                    .parse(arena, opts, define, log, source)
-                {
+                let parsed = match crate::cache::JavaScript::init().parse(
+                    arena,
+                    opts,
+                    define,
+                    log,
+                    source,
+                    this_parse.runtime_transpiler_cache,
+                ) {
                     Ok(Some(r)) => r,
                     Ok(None) | Err(_) => return None,
                 };
@@ -1449,14 +1435,12 @@ impl<'a> Transpiler<'a> {
                         ast: *value,
                         source: source.clone(),
                         loader,
-                        runtime_transpiler_cache: rtc_ptr,
                         already_bundled: AlreadyBundled::None,
                         empty: false,
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
                         ast: bun_ast::Ast::empty_in(arena),
-                        runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
                         loader,
                         already_bundled: AlreadyBundled::None,
@@ -1533,7 +1517,6 @@ impl<'a> Transpiler<'a> {
                         },
                         source: source.clone(),
                         loader,
-                        runtime_transpiler_cache: None,
                         empty: false,
                         source_contents_backing: source_backing,
                     },
@@ -1857,7 +1840,6 @@ fn parse_data_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -1896,7 +1878,6 @@ fn parse_text_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -1948,7 +1929,6 @@ fn parse_md_loader<'a>(
         source: source.clone(),
         loader,
         already_bundled: AlreadyBundled::None,
-        runtime_transpiler_cache: None,
         empty: false,
         source_contents_backing: source_backing,
     });
@@ -1983,7 +1963,6 @@ fn parse_wasm_loader<'a>(
             source: source.clone(),
             loader,
             already_bundled: AlreadyBundled::None,
-            runtime_transpiler_cache: None,
             empty: false,
             source_contents_backing: source_backing,
         });
@@ -2011,7 +1990,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // `format` is a runtime arg rather than a const generic —
 // `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
 // from this crate). All callers pass a literal anyway; the inner
-// `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
+// `print_ast::<ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
 // bools, so codegen monomorphizes the printer body identically.
 // PERF: outer `match format` is one extra branch — profile if hot.
 // ══════════════════════════════════════════════════════════════════════════
@@ -2063,7 +2042,7 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
@@ -2090,8 +2069,6 @@ impl<'a> Transpiler<'a> {
         // *does* affect the EsmAscii/bun-runtime path (js_printer/lib.rs:6872
         // gates the `var {require}=import.meta;` hoist on `target == Bun`;
         // regression of oven-sh/bun#15738 if left at the `Browser` default).
-        // `runtime_transpiler_cache` is now forwarded — js_printer holds the
-        // `NonNull<RuntimeTranspilerCache>` directly.
         // `module_info` is now forwarded — this fn's parameter is the
         // printer-crate `analyze_transpiled_module::ModuleInfo` (see the `use`
         // above), so the seam is gone (EsmAscii arm only).
@@ -2159,7 +2136,7 @@ impl<'a> Transpiler<'a> {
 
     // PERF: cold thunk — see `print_with_source_map_maybe` comment. Body is
     // verbatim from the former `Format::Esm` match arm; `#[cold]` moves the
-    // `print_ast::<W,false,SM>` Printer<…> tree to `.text.unlikely`.
+    // `print_ast::<false,SM>` Printer<…> tree to `.text.unlikely`.
     #[cold]
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
@@ -2171,7 +2148,7 @@ impl<'a> Transpiler<'a> {
         symbols: bun_ast::symbol::Map,
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
             bundling: false,
@@ -2187,7 +2164,7 @@ impl<'a> Transpiler<'a> {
             mangled_props: None,
             ..Default::default()
         };
-        js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<false, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2214,7 +2191,7 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
@@ -2242,7 +2219,7 @@ impl<'a> Transpiler<'a> {
         source: &bun_ast::Source,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
-        runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         let opts = js_printer::Options {
@@ -2276,7 +2253,7 @@ impl<'a> Transpiler<'a> {
             target: to_bundle_enums_target(self.options.target),
             ..Default::default()
         };
-        js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(
+        js_printer::print_ast::<IS_BUN, ENABLE_SOURCE_MAP>(
             writer,
             print_arena,
             ast,
@@ -2329,6 +2306,7 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
+        runtime_transpiler_cache: Option<&dyn js_printer::TranspilerCacheWriter>,
         module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // env_var feature_flag getters return `Option<bool>`
@@ -2344,7 +2322,7 @@ impl<'a> Transpiler<'a> {
                 writer,
                 format,
                 Some(handler),
-                result.runtime_transpiler_cache,
+                runtime_transpiler_cache,
                 module_info,
             );
         }
@@ -2355,7 +2333,7 @@ impl<'a> Transpiler<'a> {
             writer,
             format,
             Some(handler),
-            result.runtime_transpiler_cache,
+            runtime_transpiler_cache,
             module_info,
         )
     }

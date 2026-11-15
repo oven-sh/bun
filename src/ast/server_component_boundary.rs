@@ -7,7 +7,7 @@
 //! This is sometimes abbreviated as SCB
 
 use bun_collections::array_hash_map::ArrayHashAdapter;
-use bun_collections::{ArrayHashMap, DynamicBitSetUnmanaged, MultiArrayList};
+use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 
 use super::base::IndexInt;
 use super::use_directive::UseDirective;
@@ -105,11 +105,8 @@ impl List {
         Some(self.list.items::<"reference_source_index", IndexInt>()[i])
     }
 
-    pub fn bit_set(
-        &self,
-        input_file_count: usize,
-    ) -> Result<DynamicBitSetUnmanaged, bun_alloc::AllocError> {
-        let mut scb_bitset = DynamicBitSetUnmanaged::init_empty(input_file_count)?;
+    pub fn bit_set(&self, input_file_count: usize) -> Result<DynamicBitSet, bun_alloc::AllocError> {
+        let mut scb_bitset = DynamicBitSet::init_empty(input_file_count)?;
         for &source_index in self.list.items::<"source_index", IndexInt>() {
             scb_bitset.set(source_index as usize);
         }

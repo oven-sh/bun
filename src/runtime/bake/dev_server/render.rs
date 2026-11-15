@@ -116,9 +116,9 @@ impl DevServer {
                     // Fixed 8-char native-endian byte hex per u32; `on_js_request`
                     // slices exactly 16 chars and decodes via `parse_hex_to_u64`.
                     let js = BunString::create_format(format_args!(
-                        "{CLIENT_PREFIX}/route-{:08x}{:08x}.js",
-                        bundle_index.to_be(),
-                        generation.to_be(),
+                        "{CLIENT_PREFIX}/route-{}{}.js",
+                        bun_core::fmt::hex_lower(&bundle_index.to_ne_bytes()),
+                        bun_core::fmt::hex_lower(&generation.to_ne_bytes()),
                     ))
                     .into_js(global)?;
                     framework_bundle.cached_client_bundle_url =

@@ -13,7 +13,7 @@ use bun_bundler::Transpiler;
 use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
-use bun_install::dependency::VersionTag;
+use bun_install::dependency::{self, VersionTag};
 use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
@@ -927,8 +927,7 @@ impl BunxCommand {
             b"tsc"
         } else if update_request.name == b"@anthropic-ai/claude-code" {
             b"claude"
-        } else if let bun_install::dependency::Value::Github(github) = &update_request.version.value
-        {
+        } else if let dependency::Value::Github(github) = &update_request.version.value {
             github.repo.slice(update_request.version_buf())
         } else if let Some(index) = strings::last_index_of_char(update_request.name, b'/') {
             initial_bin_name_is_a_guess = true;

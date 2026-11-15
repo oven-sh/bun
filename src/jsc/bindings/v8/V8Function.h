@@ -12,6 +12,12 @@ namespace v8 {
 
 class Context;
 
+namespace shim {
+// The body of Function::Call and Object::CallAsFunction: call `callee` with
+// `recv` as this. A non-callable callee throws a TypeError. Empty on throw.
+MaybeLocal<Value> callAsFunction(Local<Context> context, JSC::JSValue callee, Local<Value> recv, int argc, Local<Value> argv[]);
+}
+
 class Function : public Object {
 public:
     BUN_EXPORT static const int kLineOffsetNotFound;

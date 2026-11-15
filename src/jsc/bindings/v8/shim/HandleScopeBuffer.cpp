@@ -186,6 +186,15 @@ TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer a
                     reinterpret_cast<Oddball*>(v8_object)->kind());
             }
         }
+        if (v8_object->map()->m_instanceType == InstanceType::HeapNumber) {
+            // A double has no cell: copy the number instead of reading the union as one.
+            if (reuseHandle) {
+                *reuseHandle = Handle(v8_object->asDouble());
+                return reuseHandle->slot();
+            } else {
+                return createDoubleHandle(v8_object->asDouble());
+            }
+        }
         if (reuseHandle) {
             *reuseHandle = Handle(v8_object->map(), v8_object->asCell(), vm(), m_owner);
             return reuseHandle->slot();

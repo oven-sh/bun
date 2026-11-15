@@ -1,4 +1,8 @@
 #include "ObjectTemplate.h"
+#include "FunctionTemplate.h"
+#include "Function.h"
+#include "GlobalInternals.h"
+#include "ZigGlobalObject.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
@@ -21,22 +25,32 @@ const JSC::ClassInfo ObjectTemplate::s_info = {
     CREATE_METHOD_TABLE(ObjectTemplate)
 };
 
-ObjectTemplate* ObjectTemplate::create(JSC::VM& vm, JSC::Structure* structure)
+ObjectTemplate* ObjectTemplate::create(JSC::VM& vm, JSC::Structure* structure, FunctionTemplate* constructor)
 {
-    // TODO take a constructor
     auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
-    objectTemplate->finishCreation(vm);
+    objectTemplate->finishCreation(vm, constructor);
     return objectTemplate;
 }
 
-void ObjectTemplate::finishCreation(JSC::VM& vm)
+void ObjectTemplate::finishCreation(JSC::VM& vm, FunctionTemplate* constructor)
 {
     Base::finishCreation(vm);
+    m_constructor.setMayBeNull(vm, this, constructor);
     m_objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
+        auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(init.owner->globalObject());
+        // As in V8, instances of a template with a constructor get the constructor's prototype.
+        JSC::JSValue prototype = zigGlobal->objectPrototype();
+        if (auto* constructor = init.owner->m_constructor.get()) {
+            auto* function = constructor->cachedFunction();
+            RELEASE_ASSERT(function);
+            JSC::JSValue functionPrototype = function->getDirect(init.vm, init.vm.propertyNames->prototype);
+            if (functionPrototype.isObject())
+                prototype = functionPrototype;
+        }
         init.set(JSC::Structure::create(
             init.vm,
-            init.owner->globalObject(),
-            init.owner->globalObject()->objectPrototype(),
+            zigGlobal,
+            prototype,
             JSC::TypeInfo(JSC::ObjectType, InternalFieldObject::StructureFlags),
             InternalFieldObject::info()));
     });
@@ -50,6 +64,7 @@ void ObjectTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(tmp, visitor);
 
     tmp->m_objectStructure.visit(visitor);
+    visitor.append(tmp->m_constructor);
 
     WTF::Locker locker { tmp->cellLock() };
     for (auto& prop : tmp->m_properties) {
@@ -72,9 +87,17 @@ Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSC::JSGlobalObject* glo
 
 InternalFieldObject* ObjectTemplate::newInstance()
 {
+    auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject());
+    auto& vm = JSC::getVM(zigGlobal);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* constructor = m_constructor.get()) {
+        constructor->makeFunction(vm, zigGlobal, zigGlobal->V8GlobalInternals());
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
     auto* structure = m_objectStructure.get(this);
-    auto* newInstance = InternalFieldObject::create(globalObject()->vm(), structure, m_internalFieldCount);
+    auto* newInstance = InternalFieldObject::create(vm, structure, this, m_internalFieldCount);
     applyTemplateProperties(globalObject(), newInstance, m_properties, m_accessors);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     return newInstance;
 }
 

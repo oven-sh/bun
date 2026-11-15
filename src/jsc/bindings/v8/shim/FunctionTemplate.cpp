@@ -80,7 +80,7 @@ ObjectTemplate* FunctionTemplate::ensureInstanceTemplate(JSC::JSGlobalObject* gl
     auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     auto* structure = zigGlobal->V8GlobalInternals()->objectTemplateStructure(globalObject);
-    auto* objectTemplate = ObjectTemplate::create(vm, structure);
+    auto* objectTemplate = ObjectTemplate::create(vm, structure, this);
     m_instanceTemplate.set(vm, this, objectTemplate);
     return objectTemplate;
 }
@@ -92,7 +92,7 @@ ObjectTemplate* FunctionTemplate::ensurePrototypeTemplate(JSC::JSGlobalObject* g
     auto* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     auto* structure = zigGlobal->V8GlobalInternals()->objectTemplateStructure(globalObject);
-    auto* objectTemplate = ObjectTemplate::create(vm, structure);
+    auto* objectTemplate = ObjectTemplate::create(vm, structure, nullptr);
     m_prototypeTemplate.set(vm, this, objectTemplate);
     return objectTemplate;
 }
@@ -125,19 +125,18 @@ Function* FunctionTemplate::makeFunction(JSC::VM& vm, Zig::GlobalObject* globalO
         return cached;
 
     auto* f = Function::create(vm, internals->v8FunctionStructure(globalObject), this);
+    JSC::JSObject* protoObj = JSC::constructEmptyObject(globalObject);
+    f->putDirect(vm, vm.propertyNames->prototype, protoObj,
+        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    protoObj->putDirect(vm, vm.propertyNames->constructor, f, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    // Cached first: a property can be a template whose instances take this prototype.
+    m_cachedFunction.set(vm, this, f);
 
     // Properties recorded directly on the FunctionTemplate become own properties
     // of the created function (static members in V8's class model).
     applyTemplateProperties(globalObject, f, m_properties, m_accessors);
-
-    JSC::JSObject* protoObj = JSC::constructEmptyObject(globalObject);
     if (auto* protoTemplate = m_prototypeTemplate.get())
         applyTemplateProperties(globalObject, protoObj, protoTemplate->properties(), protoTemplate->accessors());
-    f->putDirect(vm, vm.propertyNames->prototype, protoObj,
-        JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
-    protoObj->putDirect(vm, vm.propertyNames->constructor, f, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
-
-    m_cachedFunction.set(vm, this, f);
     return f;
 }
 
@@ -166,7 +165,7 @@ JSC::EncodedJSValue FunctionTemplate::functionConstruct(JSC::JSGlobalObject* glo
 
     JSC::JSValue prototype = callee->get(globalObject, vm.propertyNames->prototype);
     RETURN_IF_EXCEPTION(scope, {});
-    if (prototype.isObject()) {
+    if (prototype.isObject() && receiver->getPrototypeDirect() != prototype) {
         receiver->setPrototypeDirect(vm, prototype);
     }
 

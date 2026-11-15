@@ -10,12 +10,6 @@ namespace v8 {
 class Name;
 class Value;
 
-enum class SideEffectType {
-    kHasSideEffect,
-    kHasNoSideEffect,
-    kHasSideEffectToReceiver,
-};
-
 // matches V8 class hierarchy
 class Template : public Data {
 public:

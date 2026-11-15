@@ -59,6 +59,14 @@ void MakeWeak(uintptr_t* location, void* data, WeakCallbackInfo<void>::Callback 
     weakHandleParameters().set(location, data);
 }
 
+void MakeWeak(uintptr_t** location_addr)
+{
+    // PersistentBase::SetWeak() with no callback: V8 clears *location_addr when the
+    // object is collected. Like the overload above, the handle stays strong, so the
+    // Global is emptied only by Reset(). Real weak semantics are the subject of #47922.
+    (void)location_addr;
+}
+
 void* ClearWeak(uintptr_t* location)
 {
     if (!location) return nullptr;

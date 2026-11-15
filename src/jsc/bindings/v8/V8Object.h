@@ -9,8 +9,15 @@
 #include "V8Data.h"
 #include "V8MaybeLocal.h"
 #include "V8Name.h"
+#include "V8PropertyCallbackInfo.h"
 
 namespace v8 {
+
+enum class SideEffectType {
+    kHasSideEffect,
+    kHasNoSideEffect,
+    kHasSideEffectToReceiver,
+};
 
 namespace internal {
 enum ExternalPointerTag : uint16_t;
@@ -52,6 +59,20 @@ public:
     BUN_EXPORT int InternalFieldCount() const;
 
     BUN_EXPORT int GetIdentityHash();
+
+    BUN_EXPORT Maybe<bool> SetNativeDataProperty(
+        Local<Context> context,
+        Local<Name> name,
+        AccessorNameGetterCallback getter,
+        AccessorNameSetterCallback setter = nullptr,
+        Local<Value> data = Local<Value>(),
+        PropertyAttribute attributes = None,
+        SideEffectType getter_side_effect_type = SideEffectType::kHasSideEffect,
+        SideEffectType setter_side_effect_type = SideEffectType::kHasSideEffect);
+
+    BUN_EXPORT Maybe<bool> SetPrototypeV2(Local<Context> context, Local<Value> prototype);
+
+    BUN_EXPORT MaybeLocal<Value> CallAsFunction(Local<Context> context, Local<Value> recv, int argc, Local<Value> argv[]);
 
 private:
     BUN_EXPORT Local<Data> SlowGetInternalField(int index);

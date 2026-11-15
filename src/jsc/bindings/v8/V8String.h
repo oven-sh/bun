@@ -7,6 +7,16 @@
 
 namespace v8 {
 
+class Value;
+
+namespace shim {
+// V8's Utf8LengthV2 rule: an unpaired surrogate counts 3 bytes.
+size_t utf8Length(WTF::StringView);
+// Encode as UTF-8 into `buffer`, never a partial sequence, an unpaired surrogate as U+FFFD.
+// Returns the bytes written. `read` gets the code units consumed.
+size_t writeUtf8(WTF::StringView, char* buffer, size_t capacity, size_t* read);
+}
+
 enum class NewStringType {
     kNormal,
     kInternalized,
@@ -122,6 +132,32 @@ public:
     {
         return localToObjectPointer<JSC::JSString>();
     }
+
+    // The UTF-8 bytes of ToString(obj), null-terminated. Empty (null, 0) if the
+    // Local is empty or ToString throws; the exception is cleared, as in V8.
+    class Utf8Value {
+    public:
+        BUN_EXPORT Utf8Value(Isolate* isolate, Local<v8::Value> obj);
+        BUN_EXPORT ~Utf8Value();
+#if OS(WINDOWS)
+        // Inline in v8-primitive.h without V8_INLINE, so an addon built with MSVC /Ob0
+        // (node-gyp --debug) imports them instead of emitting them.
+        BUN_EXPORT char* operator*();
+        BUN_EXPORT const char* operator*() const;
+        BUN_EXPORT size_t length() const;
+#else
+        char* operator*() { return str_; }
+        const char* operator*() const { return str_; }
+        size_t length() const { return length_; }
+#endif
+
+        Utf8Value(const Utf8Value&) = delete;
+        void operator=(const Utf8Value&) = delete;
+
+    private:
+        char* str_;
+        size_t length_;
+    };
 };
 
 } // namespace v8

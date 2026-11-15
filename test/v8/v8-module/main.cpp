@@ -1,4 +1,5 @@
 #include <node.h>
+#include <node_buffer.h>
 #ifndef _WIN32
 #include <unistd.h>
 #endif
@@ -10,6 +11,7 @@
 #include <cstdarg>
 #include <iomanip>
 #include <iostream>
+#include <vector>
 
 using namespace v8;
 
@@ -2200,6 +2202,556 @@ void test_v8_cpu_profiler_title_api(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// ---- Members that the node-re2 addon imports (oven-sh/bun#48600) ----
+
+static std::string utf8_of(Isolate *isolate, Local<Value> value) {
+  String::Utf8Value utf8(isolate, value);
+  if (*utf8 == nullptr) {
+    return "<empty>";
+  }
+  return std::string(*utf8, utf8.length());
+}
+
+static void data_echo_getter(Local<Name> property,
+                             const PropertyCallbackInfo<Value> &info) {
+  // Returns the data value, so the driver can tell the accessors apart.
+  info.GetReturnValue().Set(info.Data());
+}
+
+static int object_accessor_set_count = 0;
+
+static void count_setter(Local<Name> property, Local<Value> value,
+                         const PropertyCallbackInfo<void> &info) {
+  object_accessor_set_count++;
+}
+
+// Object::SetNativeDataProperty on a function, a plain object and a primitive,
+// as node-re2 defines `unicodeWarningLevel` on its constructor.
+void test_v8_object_set_native_data_property(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<Function> ctor =
+      FunctionTemplate::New(isolate)->GetFunction(context).ToLocalChecked();
+  Maybe<bool> on_function = ctor->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "level"), data_echo_getter,
+      count_setter, String::NewFromUtf8Literal(isolate, "function-data"));
+  LOG_EXPR(on_function.FromJust());
+
+  Local<Object> plain = Object::New(isolate);
+  Maybe<bool> on_object = plain->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "readOnly"),
+      data_echo_getter, nullptr,
+      String::NewFromUtf8Literal(isolate, "object-data"),
+      static_cast<PropertyAttribute>(ReadOnly | DontEnum));
+  LOG_EXPR(on_object.FromJust());
+
+  // A symbol name.
+  Maybe<bool> symbol_named = plain->SetNativeDataProperty(
+      context, Symbol::GetIterator(isolate), data_echo_getter, nullptr,
+      String::NewFromUtf8Literal(isolate, "iterator-data"));
+  LOG_EXPR(symbol_named.FromJust());
+
+  // An index-like name.
+  Maybe<bool> index_named = plain->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "0"), data_echo_getter,
+      nullptr, String::NewFromUtf8Literal(isolate, "index-data"));
+  LOG_EXPR(index_named.FromJust());
+
+  // An own property that is not configurable stays as it is.
+  Maybe<bool> on_prototype_property = ctor->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "prototype"),
+      data_echo_getter, nullptr,
+      String::NewFromUtf8Literal(isolate, "replaced-prototype"));
+  LOG_EXPR(on_prototype_property.FromJust());
+
+  // info[0]: a Proxy. info[1]: a revoked Proxy.
+  for (int i = 0; i < 2; i++) {
+    Maybe<bool> on_proxy = info[i].As<Object>()->SetNativeDataProperty(
+        context, String::NewFromUtf8Literal(isolate, "viaProxy"),
+        data_echo_getter, nullptr,
+        String::NewFromUtf8Literal(isolate, "proxy-data"));
+    LOG_EXPR(on_proxy.FromJust());
+  }
+
+  // info[2]: an object with a non-configurable own "fixed" and "0". info[3]: an array.
+  for (const char *key : {"fixed", "0"}) {
+    Maybe<bool> on_fixed = info[2].As<Object>()->SetNativeDataProperty(
+        context, String::NewFromUtf8(isolate, key).ToLocalChecked(),
+        data_echo_getter, nullptr,
+        String::NewFromUtf8Literal(isolate, "replaced"));
+    LOG_EXPR(on_fixed.FromJust());
+  }
+  Maybe<bool> on_length = info[3].As<Object>()->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "length"), data_echo_getter,
+      nullptr, String::NewFromUtf8Literal(isolate, "replaced"));
+  LOG_EXPR(on_length.FromJust());
+
+  // On the global object, through its proxy.
+  Maybe<bool> on_global = context->Global()->SetNativeDataProperty(
+      context, String::NewFromUtf8Literal(isolate, "nativeGlobalProp"),
+      data_echo_getter, nullptr,
+      String::NewFromUtf8Literal(isolate, "global-data"));
+  LOG_EXPR(on_global.FromJust());
+
+  object_accessor_set_count = 0;
+  Local<Value> results[] = {ctor, plain};
+  info.GetReturnValue().Set(Array::New(isolate, results, 2));
+}
+
+void get_object_accessor_set_count(const FunctionCallbackInfo<Value> &info) {
+  info.GetReturnValue().Set(object_accessor_set_count);
+}
+
+// HasInstance is a record of the creating template, not a prototype walk.
+static Global<FunctionTemplate> has_instance_template;
+
+void test_v8_function_template_has_instance(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate);
+  tpl->InstanceTemplate()->SetInternalFieldCount(1);
+  Local<FunctionTemplate> other = FunctionTemplate::New(isolate);
+  Local<Function> ctor = tpl->GetFunction(context).ToLocalChecked();
+
+  Local<Object> constructed = ctor->NewInstance(context).ToLocalChecked();
+  Local<Object> from_instance_template =
+      tpl->InstanceTemplate()->NewInstance(context).ToLocalChecked();
+  Local<Object> from_other =
+      other->GetFunction(context).ToLocalChecked()->NewInstance(context)
+          .ToLocalChecked();
+  Local<Object> with_explicit_constructor =
+      ObjectTemplate::New(isolate, tpl)->NewInstance(context).ToLocalChecked();
+
+  LOG_EXPR(tpl->HasInstance(constructed));
+  LOG_EXPR(tpl->HasInstance(from_instance_template));
+  LOG_EXPR(tpl->HasInstance(with_explicit_constructor));
+  LOG_EXPR(tpl->HasInstance(from_other));
+  LOG_EXPR(other->HasInstance(constructed));
+  LOG_EXPR(tpl->HasInstance(Object::New(isolate)));
+  LOG_EXPR(tpl->HasInstance(ctor));
+  LOG_EXPR(tpl->HasInstance(Number::New(isolate, 1.5)));
+  LOG_EXPR(tpl->HasInstance(Undefined(isolate)));
+
+  // The driver reparents objects and asks again through has_instance().
+  has_instance_template.Reset(isolate, tpl);
+  Local<Value> results[] = {ctor, constructed, with_explicit_constructor};
+  info.GetReturnValue().Set(Array::New(isolate, results, 3));
+}
+
+// Bun only: V8 overflows its stack on a template whose properties hold an
+// instance of the template itself, so there is no Node output to compare.
+void test_v8_template_holds_its_own_instance(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<FunctionTemplate> tpl = FunctionTemplate::New(isolate);
+  tpl->Set(String::NewFromUtf8Literal(isolate, "sample"),
+           tpl->InstanceTemplate());
+  tpl->PrototypeTemplate()->Set(String::NewFromUtf8Literal(isolate, "proto"),
+                                ObjectTemplate::New(isolate, tpl));
+  // An instance before the function exists, then the function.
+  Local<Object> early =
+      tpl->InstanceTemplate()->NewInstance(context).ToLocalChecked();
+  Local<Function> ctor = tpl->GetFunction(context).ToLocalChecked();
+  LOG_EXPR(tpl->HasInstance(early));
+  Local<Value> sample =
+      ctor->Get(context, String::NewFromUtf8Literal(isolate, "sample"))
+          .ToLocalChecked();
+  LOG_EXPR(tpl->HasInstance(sample));
+  Local<Value> results[] = {ctor, early};
+  info.GetReturnValue().Set(Array::New(isolate, results, 2));
+}
+
+void has_instance(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  info.GetReturnValue().Set(
+      has_instance_template.Get(isolate)->HasInstance(info[0]));
+}
+
+static void reset_has_instance_template(void *unused) {
+  has_instance_template.Reset();
+}
+
+static void log_buffer_contents(Local<Value> value) {
+  char *data = node::Buffer::Data(value);
+  size_t length = node::Buffer::Length(value);
+  std::cout << "length = " << length << " store = "
+            << value.As<ArrayBufferView>()->Buffer()->ByteLength()
+            << " bytes =";
+  for (size_t i = 0; i < length; i++) {
+    printf(" %02x", static_cast<unsigned char>(data[i]));
+  }
+  std::cout << std::endl;
+}
+
+// node::Buffer::{HasInstance, Data, Length, Copy, New}, as node-re2 uses them
+// for every input string and every match.
+void test_v8_node_buffer(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  // info[0]: [Buffer, Uint16Array view at an offset, ArrayBuffer, plain object, string]
+  Local<Array> inputs = info[0].As<Array>();
+  for (uint32_t i = 0; i < inputs->Length(); i++) {
+    Local<Value> value = inputs->Get(context, i).ToLocalChecked();
+    bool is_buffer = node::Buffer::HasInstance(value);
+    std::cout << "input " << i << ": HasInstance = " << is_buffer;
+    if (value->IsObject()) {
+      std::cout << " HasInstance(Object) = "
+                << node::Buffer::HasInstance(value.As<Object>());
+    }
+    if (is_buffer) {
+      std::cout << " Length = " << node::Buffer::Length(value)
+                << " Length(Object) = "
+                << node::Buffer::Length(value.As<Object>())
+                << " first byte = "
+                << static_cast<int>(node::Buffer::Data(value)[0])
+                << " same Data(Object) = "
+                << (node::Buffer::Data(value.As<Object>()) ==
+                    node::Buffer::Data(value));
+    }
+    std::cout << std::endl;
+  }
+
+  Local<Object> copy =
+      node::Buffer::Copy(isolate, "hi\0there", 8).ToLocalChecked();
+  LOG_EXPR(node::Buffer::HasInstance(copy));
+  log_buffer_contents(copy);
+  Local<Object> empty_copy = node::Buffer::Copy(isolate, "", 0).ToLocalChecked();
+  LOG_EXPR(node::Buffer::Length(empty_copy));
+
+  struct {
+    const char *name;
+    node::encoding encoding;
+  } encodings[] = {{"UTF8", node::UTF8},     {"LATIN1", node::LATIN1},
+                   {"ASCII", node::ASCII},   {"UCS2", node::UCS2},
+                   {"HEX", node::HEX},       {"BASE64", node::BASE64},
+                   {"BASE64URL", node::BASE64URL}, {"BUFFER", node::BUFFER}};
+  // info[1]: strings to encode
+  Local<Array> strings = info[1].As<Array>();
+  for (uint32_t i = 0; i < strings->Length(); i++) {
+    Local<String> str = strings->Get(context, i).ToLocalChecked().As<String>();
+    for (const auto &e : encodings) {
+      std::cout << "string " << i << " as " << e.name << ": ";
+      Local<Object> encoded =
+          node::Buffer::New(isolate, str, e.encoding).ToLocalChecked();
+      log_buffer_contents(encoded);
+    }
+  }
+
+  // The default encoding is UTF8.
+  Local<Object> utf8 =
+      node::Buffer::New(isolate, String::NewFromUtf8Literal(isolate, "héllo"))
+          .ToLocalChecked();
+  log_buffer_contents(utf8);
+
+  // Data() of a large Buffer stays valid when JS reaches its ArrayBuffer.
+  std::string large(100 * 1024, 'x');
+  Local<Object> big =
+      node::Buffer::New(isolate,
+                        String::NewFromUtf8(isolate, large.c_str()).ToLocalChecked())
+          .ToLocalChecked();
+  char *before = node::Buffer::Data(big);
+  Local<Value> ab = big->Get(context, String::NewFromUtf8Literal(isolate, "buffer"))
+                        .ToLocalChecked();
+  LOG_EXPR(ab->IsArrayBuffer());
+  LOG_EXPR(node::Buffer::Data(big) == before);
+  LOG_EXPR(ab.As<ArrayBuffer>()->Data() == before);
+  LOG_EXPR(ab.As<ArrayBuffer>()->ByteLength());
+
+  info.GetReturnValue().Set(copy);
+}
+
+// Data(info[0]) before and after info[1]() runs, which makes JS reach the view's
+// ArrayBuffer, then a byte written through the first pointer.
+void buffer_data_is_stable(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  char *before = node::Buffer::Data(info[0]);
+  before[0] = 'B';
+  info[1].As<Function>()->Call(context, Undefined(isolate), 0, nullptr).ToLocalChecked();
+  char *after = node::Buffer::Data(info[0]);
+  LOG_EXPR(before == after);
+  before[1] = 'C';
+  info.GetReturnValue().Set(node::Buffer::Length(info[0]) > 0);
+}
+
+// An exception thrown by the addon stays pending across a Utf8Value of a string.
+void utf8_value_with_pending_exception(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowException(Exception::Error(
+      String::NewFromUtf8Literal(isolate, "thrown before Utf8Value")));
+  String::Utf8Value utf8(isolate, info[0]);
+  LOG_EXPR(*utf8 == nullptr);
+  LOG_EXPR(utf8.length());
+}
+
+// String::Utf8Value runs ToString and swallows a throw.
+void test_v8_string_utf8_value(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  // info[0]: [string, number, object with toString, object with throwing toString, symbol]
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> inputs = info[0].As<Array>();
+  for (uint32_t i = 0; i < inputs->Length(); i++) {
+    Local<Value> value = inputs->Get(context, i).ToLocalChecked();
+    String::Utf8Value utf8(isolate, value);
+    std::cout << "input " << i << ": null = " << (*utf8 == nullptr)
+              << " length = " << utf8.length();
+    if (*utf8 != nullptr) {
+      std::cout << " terminated = " << ((*utf8)[utf8.length()] == '\0')
+                << " bytes =";
+      for (size_t j = 0; j < utf8.length(); j++) {
+        printf(" %02x", static_cast<unsigned char>((*utf8)[j]));
+      }
+    }
+    std::cout << std::endl;
+  }
+  String::Utf8Value empty(isolate, Local<Value>());
+  LOG_EXPR(*empty == nullptr);
+  LOG_EXPR(empty.length());
+  return ok(info);
+}
+
+// Exception::RangeError and Exception::SyntaxError, thrown for JS to catch.
+void test_v8_exception_range_and_syntax(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<String> msg =
+      String::NewFromUtf8Literal(isolate, "Invalid string length");
+  Local<Value> range = Exception::RangeError(msg);
+  Local<Value> syntax = Exception::SyntaxError(
+      String::NewFromUtf8Literal(isolate, "missing ): (a"));
+  Local<Value> empty_syntax = Exception::SyntaxError(
+      String::NewFromUtf8(isolate, "").ToLocalChecked());
+  LOG_EXPR(range->IsObject());
+  LOG_EXPR(syntax->IsObject());
+  Local<Value> errors[] = {range, syntax, empty_syntax};
+  info.GetReturnValue().Set(Array::New(isolate, errors, 3));
+}
+
+void throw_range_error(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  isolate->ThrowException(Exception::RangeError(
+      String::NewFromUtf8Literal(isolate, "thrown range error")));
+}
+
+// Value::IsRegExp, RegExp::GetSource and RegExp::GetFlags for each flag.
+void test_v8_regexp(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> inputs = info[0].As<Array>();
+  for (uint32_t i = 0; i < inputs->Length(); i++) {
+    Local<Value> value = inputs->Get(context, i).ToLocalChecked();
+    std::cout << "input " << i << ": IsRegExp = " << value->IsRegExp();
+    if (value->IsRegExp()) {
+      Local<RegExp> re = value.As<RegExp>();
+      std::cout << " source = " << utf8_of(isolate, re->GetSource())
+                << " flags = " << static_cast<int>(re->GetFlags());
+      RegExp::Flags flags = re->GetFlags();
+      std::cout << " g=" << bool(flags & RegExp::kGlobal)
+                << " i=" << bool(flags & RegExp::kIgnoreCase)
+                << " m=" << bool(flags & RegExp::kMultiline)
+                << " y=" << bool(flags & RegExp::kSticky)
+                << " u=" << bool(flags & RegExp::kUnicode)
+                << " s=" << bool(flags & RegExp::kDotAll)
+                << " d=" << bool(flags & RegExp::kHasIndices)
+                << " v=" << bool(flags & RegExp::kUnicodeSets);
+    }
+    std::cout << std::endl;
+  }
+  return ok(info);
+}
+
+// Symbol::GetIterator drives a JS iterator, as RE2.Set reads its patterns.
+void test_v8_symbol_get_iterator(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Symbol> iterator = Symbol::GetIterator(isolate);
+  LOG_EXPR(iterator->StrictEquals(info[1]));
+  LOG_EXPR(iterator->IsString());
+
+  Local<Object> iterable = info[0].As<Object>();
+  Local<Value> method = iterable->Get(context, iterator).ToLocalChecked();
+  LOG_EXPR(method->IsFunction());
+  Local<Object> it = method.As<Object>()
+                         ->CallAsFunction(context, iterable, 0, nullptr)
+                         .ToLocalChecked()
+                         .As<Object>();
+  Local<Value> next =
+      it->Get(context, String::NewFromUtf8Literal(isolate, "next"))
+          .ToLocalChecked();
+  for (int i = 0; i < 10; i++) {
+    Local<Object> result = next.As<Object>()
+                               ->CallAsFunction(context, it, 0, nullptr)
+                               .ToLocalChecked()
+                               .As<Object>();
+    if (result->Get(context, String::NewFromUtf8Literal(isolate, "done"))
+            .ToLocalChecked()
+            ->BooleanValue(isolate)) {
+      std::cout << "done after " << i << std::endl;
+      break;
+    }
+    Local<Value> value =
+        result->Get(context, String::NewFromUtf8Literal(isolate, "value"))
+            .ToLocalChecked();
+    std::cout << "value " << i << " = " << utf8_of(isolate, value) << std::endl;
+  }
+  return ok(info);
+}
+
+// Object::SetPrototypeV2 and Object::CallAsFunction.
+void test_v8_object_set_prototype_and_call(
+    const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<Object> groups = Object::New(isolate);
+  LOG_EXPR(groups->SetPrototypeV2(context, Null(isolate)).IsJust());
+  Local<Object> proto = Object::New(isolate);
+  Local<Object> child = Object::New(isolate);
+  LOG_EXPR(child->SetPrototypeV2(context, proto).FromJust());
+  // A cycle is refused without an exception.
+  LOG_EXPR(proto->SetPrototypeV2(context, child).IsNothing());
+  // info[0]: a frozen object
+  LOG_EXPR(info[0].As<Object>()->SetPrototypeV2(context, proto).IsNothing());
+  // A primitive is ignored.
+  LOG_EXPR(child->SetPrototypeV2(context, Number::New(isolate, 1)).IsNothing());
+  // info[3]: a Proxy whose setPrototypeOf trap throws. info[4]: a revoked Proxy.
+  LOG_EXPR(info[3].As<Object>()->SetPrototypeV2(context, proto).IsNothing());
+  LOG_EXPR(info[4].As<Object>()->SetPrototypeV2(context, proto).IsNothing());
+
+  // info[1]: function returning `this.tag + args.length + arg0`, info[2]: throwing function
+  Local<Object> receiver = Object::New(isolate);
+  receiver->Set(context, String::NewFromUtf8Literal(isolate, "tag"),
+                String::NewFromUtf8Literal(isolate, "recv"))
+      .Check();
+  Local<Value> args[] = {Number::New(isolate, 7)};
+  Local<Value> result = info[1].As<Object>()
+                            ->CallAsFunction(context, receiver, 1, args)
+                            .ToLocalChecked();
+  LOG_EXPR(utf8_of(isolate, result));
+  Local<Value> bare = info[1].As<Object>()
+                          ->CallAsFunction(context, Undefined(isolate), 0, nullptr)
+                          .ToLocalChecked();
+  LOG_EXPR(utf8_of(isolate, bare));
+
+  Local<Value> results[] = {groups, child};
+  info.GetReturnValue().Set(Array::New(isolate, results, 2));
+}
+
+// CallAsFunction(info[0], receiver info[1], args info[2..]). A throw is left
+// pending for the JS caller.
+void call_as_function(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  std::vector<Local<Value>> args;
+  for (int i = 2; i < info.Length(); i++) {
+    args.push_back(info[i]);
+  }
+  MaybeLocal<Value> result = info[0].As<Object>()->CallAsFunction(
+      context, info[1], static_cast<int>(args.size()), args.data());
+  LOG_EXPR(result.IsEmpty());
+  if (!result.IsEmpty()) {
+    info.GetReturnValue().Set(result.ToLocalChecked());
+  }
+}
+
+// NumberValue(info[0]) then ToObject(info[0]); a throw is left pending.
+void number_value_then_to_object(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Maybe<double> number = info[0]->NumberValue(context);
+  LOG_EXPR(number.IsNothing());
+  if (number.IsNothing()) {
+    return;
+  }
+  LOG_EXPR(number.FromJust());
+  MaybeLocal<Object> object = info[0]->ToObject(context);
+  LOG_EXPR(object.IsEmpty());
+  if (!object.IsEmpty()) {
+    info.GetReturnValue().Set(object.ToLocalChecked());
+  }
+}
+
+// Value::ToObject, Value::NumberValue, Value::BooleanValue and the
+// ArrayBuffer type checks, for values whose conversion does not throw.
+void test_v8_value_conversions(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+  Local<Array> inputs = info[0].As<Array>();
+  for (uint32_t i = 0; i < inputs->Length(); i++) {
+    Local<Value> value = inputs->Get(context, i).ToLocalChecked();
+    std::cout << "input " << i << ":";
+    std::cout << " IsArrayBuffer = " << value->IsArrayBuffer()
+              << " IsArrayBufferView = " << value->IsArrayBufferView()
+              << " IsSharedArrayBuffer = " << value->IsSharedArrayBuffer()
+              << " BooleanValue = " << value->BooleanValue(isolate);
+    std::cout << " NumberValue = " << value->NumberValue(context).FromJust();
+    if (value->IsNullOrUndefined()) {
+      std::cout << " ToObject = (throws)";
+    } else {
+      Local<Object> o = value->ToObject(context).ToLocalChecked();
+      std::cout << " ToObject same = " << o->StrictEquals(value)
+                << " IsObject = " << o->IsObject();
+    }
+    if (value->IsArrayBuffer()) {
+      Local<ArrayBuffer> ab = value.As<ArrayBuffer>();
+      std::cout << " ByteLength = " << ab->ByteLength()
+                << " Data[0] = " << (ab->ByteLength() ? static_cast<int>(static_cast<uint8_t *>(ab->Data())[0]) : -1);
+    }
+    if (value->IsSharedArrayBuffer()) {
+      Local<SharedArrayBuffer> sab = value.As<SharedArrayBuffer>();
+      std::cout << " ByteLength = " << sab->ByteLength()
+                << " Data[0] = " << (sab->ByteLength() ? static_cast<int>(static_cast<uint8_t *>(sab->Data())[0]) : -1);
+    }
+    std::cout << std::endl;
+  }
+  return ok(info);
+}
+
+// node-re2's cache of its last input: two Globals reset on every call, made
+// weak after the call (the phantom MakeWeak), cleared again before the next one.
+void test_v8_global_reset_cycle(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  int iterations = info[0].As<Int32>()->Value();
+  Global<Value> last_string;
+  Global<Object> last_cache;
+  for (int i = 0; i < iterations; i++) {
+    HandleScope scope(isolate);
+    if (!last_string.IsEmpty()) {
+      last_string.ClearWeak();
+      last_string.Reset();
+    }
+    if (!last_cache.IsEmpty()) {
+      last_cache.ClearWeak();
+      last_cache.Reset();
+    }
+    std::string text = "input " + std::to_string(i);
+    Local<Value> input =
+        String::NewFromUtf8(isolate, text.c_str()).ToLocalChecked();
+    last_string.Reset(isolate, input);
+    Local<String> str =
+        input->ToString(isolate->GetCurrentContext()).ToLocalChecked();
+    last_cache.Reset(isolate,
+                     node::Buffer::New(isolate, str).ToLocalChecked());
+    last_string.SetWeak();
+    last_cache.SetWeak();
+  }
+  LOG_EXPR(last_string.IsEmpty());
+  LOG_EXPR(node::Buffer::Length(last_cache.Get(isolate)));
+  LOG_EXPR(describe(isolate, last_string.Get(isolate)));
+  last_string.ClearWeak();
+  last_string.Reset();
+  last_cache.ClearWeak();
+  last_cache.Reset();
+  return ok(info);
+}
+
 void initialize(Local<Object> exports, Local<Value> module,
                 Local<Context> context) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
@@ -2308,11 +2860,44 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_cpu_profiler_title_api",
                   test_v8_cpu_profiler_title_api);
 
+  NODE_SET_METHOD(exports, "test_v8_object_set_native_data_property",
+                  test_v8_object_set_native_data_property);
+  NODE_SET_METHOD(exports, "get_object_accessor_set_count",
+                  get_object_accessor_set_count);
+  NODE_SET_METHOD(exports, "test_v8_function_template_has_instance",
+                  test_v8_function_template_has_instance);
+  NODE_SET_METHOD(exports, "has_instance", has_instance);
+  NODE_SET_METHOD(exports, "test_v8_template_holds_its_own_instance",
+                  test_v8_template_holds_its_own_instance);
+  NODE_SET_METHOD(exports, "test_v8_node_buffer", test_v8_node_buffer);
+  NODE_SET_METHOD(exports, "buffer_data_is_stable", buffer_data_is_stable);
+  NODE_SET_METHOD(exports, "utf8_value_with_pending_exception",
+                  utf8_value_with_pending_exception);
+  NODE_SET_METHOD(exports, "test_v8_string_utf8_value",
+                  test_v8_string_utf8_value);
+  NODE_SET_METHOD(exports, "test_v8_exception_range_and_syntax",
+                  test_v8_exception_range_and_syntax);
+  NODE_SET_METHOD(exports, "throw_range_error", throw_range_error);
+  NODE_SET_METHOD(exports, "test_v8_regexp", test_v8_regexp);
+  NODE_SET_METHOD(exports, "test_v8_symbol_get_iterator",
+                  test_v8_symbol_get_iterator);
+  NODE_SET_METHOD(exports, "test_v8_object_set_prototype_and_call",
+                  test_v8_object_set_prototype_and_call);
+  NODE_SET_METHOD(exports, "test_v8_value_conversions",
+                  test_v8_value_conversions);
+  NODE_SET_METHOD(exports, "call_as_function", call_as_function);
+  NODE_SET_METHOD(exports, "number_value_then_to_object",
+                  number_value_then_to_object);
+  NODE_SET_METHOD(exports, "test_v8_global_reset_cycle",
+                  test_v8_global_reset_cycle);
+
   // without this, node hits a UAF deleting the Global
   // (Context::GetIsolate was removed in V8 14.6; the module initializer runs
   // with the isolate entered, so take the current one)
   node::AddEnvironmentCleanupHook(Isolate::GetCurrent(),
                                   GlobalTestWrapper::cleanup, nullptr);
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(),
+                                  reset_has_instance_template, nullptr);
 }
 
 NODE_MODULE_CONTEXT_AWARE(NODE_GYP_MODULE_NAME, initialize)

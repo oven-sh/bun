@@ -1434,7 +1434,7 @@ impl PipeReader {
             out_kind_str(out_type)
         );
         let owner = Owner::new(PollTag::ShellPipeReader, this_ptr.cast());
-        // SAFETY: a field of its owner.
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { rc.reader.set_owner(owner) };
         // `start()` goes through `start_with_current_pipe`.
         #[cfg(windows)]
@@ -1451,7 +1451,10 @@ impl PipeReader {
 
     fn start(self: &Rc<Self>, eager: bool) {
         #[cfg(windows)]
-        let started = (self.reader.start_with_current_pipe()).map(|()| ReadResult::Pending);
+        let started = self
+            .reader
+            .start_with_current_pipe()
+            .map(|()| ReadResult::Pending);
         // `reader` owns the fd from here.
         #[cfg(not(windows))]
         let started = self.reader.start(
@@ -1480,7 +1483,7 @@ impl PipeReader {
     /// The `Cmd` may drop every other `Rc`.
     pub(crate) fn read(self: &Rc<Self>, event: Option<IoEvent>) {
         let event_loop = self.event_loop.as_event_loop_ctx();
-        let result = (self.reader).read_chunks(event_loop, event, |chunk, state| {
+        let result = self.reader.read_chunks(event_loop, event, |chunk, state| {
             self.on_read_chunk(&chunk, state)
         });
         self.on_read_result(result);

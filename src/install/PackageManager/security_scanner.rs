@@ -817,7 +817,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             PollTag::SecurityScanReader,
             core::ptr::from_mut(self).cast(),
         );
-        // SAFETY: a field of its owner, which is boxed.
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { self.ipc_reader.set_owner(owner) };
 
         // Two extra pipes for communicating with the scanner subprocess:
@@ -924,8 +924,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         }
         let [child_read, parent_write] = json_fds.map(|fd| File::from_fd(Fd::from_uv(fd)));
 
-        let pipe =
-            bun_io::Source::open_pipe(self.event_loop_handle.native_loop(), parent_write.fd())?;
+        let pipe = bun_io::Source::open_pipe(self.event_loop_handle.uv_loop(), parent_write.fd())?;
         let _ = parent_write.into_raw(); // pipe owns it now
 
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -972,7 +971,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
         let event_loop = self.event_loop_handle;
-        let result = (self.ipc_reader)
+        let result = self
+            .ipc_reader
             .start(event_loop.as_event_loop_ctx(), ipc_read.into_raw(), true)
             .map_err(|e| e.to_zig_err())?;
         self.on_read_result(result);
@@ -1036,10 +1036,12 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     pub fn on_io(&mut self, event: IoEvent) {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
-        let result = (self.ipc_reader).read_chunks(event_loop, Some(event), |chunk, _| {
-            self.ipc_data.extend_from_slice(&chunk);
-            true
-        });
+        let result = self
+            .ipc_reader
+            .read_chunks(event_loop, Some(event), |chunk, _| {
+                self.ipc_data.extend_from_slice(&chunk);
+                true
+            });
         self.on_read_result(result);
     }
 

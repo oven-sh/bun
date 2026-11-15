@@ -452,7 +452,9 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub(crate) fn get_file_type(&self) -> FileType {
-        (self.handle.with_poll(FilePoll::file_type)).unwrap_or(FileType::File)
+        self.handle
+            .with_poll(FilePoll::file_type)
+            .unwrap_or(FileType::File)
     }
 
     pub(crate) fn get_fd(&self) -> Fd {
@@ -550,7 +552,8 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
     }
 
     pub fn update_ref(&self, value: bool) {
-        (self.handle).with_poll(|poll| poll.set_keeping_process_alive(value));
+        self.handle
+            .with_poll(|poll| poll.set_keeping_process_alive(value));
     }
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
@@ -753,7 +756,9 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
     }
 
     pub(crate) fn get_file_type(&self) -> FileType {
-        (self.handle.with_poll(FilePoll::file_type)).unwrap_or(FileType::File)
+        self.handle
+            .with_poll(FilePoll::file_type)
+            .unwrap_or(FileType::File)
     }
 
     pub fn has_pending_data(&self) -> bool {
@@ -1044,7 +1049,8 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         if value && self.is_done {
             return;
         }
-        (self.handle).with_poll(|poll| poll.set_keeping_process_alive(value));
+        self.handle
+            .with_poll(|poll| poll.set_keeping_process_alive(value));
     }
 
     pub fn end(&mut self) {

@@ -4507,10 +4507,6 @@ pub fn pread_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>, off: i64) -> Maybe<
     unsafe { pread_uninit(fd, cursor.as_mut(), off).inspect(|&n| _ = cursor.advance(n)) }
 }
 
-pub fn recv_non_block(fd: Fd, buf: &mut [u8]) -> Maybe<usize> {
-    recv_non_block_buf(fd, BorrowedBuf::from(buf).unfilled())
-}
-
 pub fn recv_non_block_buf(fd: Fd, mut cursor: BorrowedCursor<'_, u8>) -> Maybe<usize> {
     // SAFETY: as in `read_buf`.
     unsafe { recv_non_block_uninit(fd, cursor.as_mut()).inspect(|&n| _ = cursor.advance(n)) }

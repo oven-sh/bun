@@ -28,7 +28,7 @@ pub(crate) struct PipeReader {
     ref_count: RefCount<PipeReader>,
     /// Held from `start()` until the read ends or moves into a stream.
     start_ref: Cell<Option<RefPtr<PipeReader>>>,
-    /// Until `start()`.
+    /// Taken by `start()`.
     #[cfg(unix)]
     stdio_result: Cell<StdioResult>,
 }
@@ -59,7 +59,7 @@ impl PipeReader {
             stdio_result: Cell::new(result),
         });
         let owner = Owner::new(PollTag::SubprocessPipeReader, this.as_ptr().cast());
-        // SAFETY: a field of its owner.
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
         unsafe { this.reader.set_owner(owner) };
         #[cfg(windows)]
         if let StdioResult::Buffer(pipe) = result {
@@ -68,7 +68,8 @@ impl PipeReader {
         this
     }
 
-    /// SAFETY: `this` is live. It may be freed.
+    /// # Safety
+    /// `this` is live. It may be freed.
     pub(crate) unsafe fn on_io(this: *mut Self, event: IoEvent) {
         // SAFETY: fn contract. Filling the buffer releases no ref.
         let result = unsafe { (*this).reader.read((*this).event_loop, Some(event)) };
@@ -111,10 +112,10 @@ impl PipeReader {
         #[cfg(not(windows))]
         {
             // No poll until JS first pulls, so that the child blocks on the pipe.
-            this.reader
-                .update_flags(|f| f.set(PosixFlags::IS_PAUSED, lazy));
-            this.reader
-                .update_flags(|f| f.insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING));
+            this.reader.update_flags(|f| {
+                f.set(PosixFlags::IS_PAUSED, lazy);
+                f.insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING);
+            });
             let fd = this.stdio_result.take().unwrap().into_raw();
             let started = this.reader.start(this.event_loop, fd, true);
             Self::on_read_result(this, started.unwrap_or_else(ReadResult::Err));

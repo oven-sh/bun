@@ -243,15 +243,18 @@ impl FileResponseStream {
 
         // BufferedReader path
         let reader = &this_ref.reader;
-        reader.update_flags(|f| f.remove(ReaderFlags::CLOSE_HANDLE)); // `self.fd` closes it
-        reader.update_flags(|f| f.set(ReaderFlags::POLLABLE, opts.pollable));
-        reader.update_flags(|f| f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File));
-        #[cfg(unix)]
-        reader.update_flags(|f| f.set(ReaderFlags::SOCKET, opts.file_type == FileType::Socket));
+        reader.update_flags(|f| {
+            f.remove(ReaderFlags::CLOSE_HANDLE); // `self.fd` closes it
+            f.set(ReaderFlags::POLLABLE, opts.pollable);
+            f.set(ReaderFlags::NONBLOCKING, opts.file_type != FileType::File);
+            #[cfg(unix)]
+            f.set(ReaderFlags::SOCKET, opts.file_type == FileType::Socket);
+        });
         // The reader reports the end of the body as EOF, so `on_read_chunk` ends the response there like at a real EOF.
         reader.set_limit(opts.length.map(|len| len as usize));
-        // SAFETY: a field of its owner.
-        unsafe { reader.set_owner(Owner::new(PollTag::FileResponseStream, this.cast())) };
+        let owner = Owner::new(PollTag::FileResponseStream, this.cast());
+        // SAFETY: `owner` points to the heap allocation that holds this reader.
+        unsafe { reader.set_owner(owner) };
 
         let (event_loop, fd) = (this_ref.event_loop, this_ref.fd.get());
         let start_result = if opts.offset > 0 {
@@ -303,9 +306,11 @@ impl FileResponseStream {
     // ───────────────────────── reader backend ─────────────────────────
 
     pub(crate) fn read(&self, event: Option<IoEvent>) {
-        let result = (self.reader).read_chunks(self.event_loop, event, |chunk, state| {
-            self.on_read_chunk(&chunk, state)
-        });
+        let result = self
+            .reader
+            .read_chunks(self.event_loop, event, |chunk, state| {
+                self.on_read_chunk(&chunk, state)
+            });
         self.on_read_result(result);
     }
 

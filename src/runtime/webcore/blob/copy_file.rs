@@ -214,7 +214,7 @@ impl CopyFile {
                 Ok(file) => return Some(file),
                 Err(errno) => errno,
             };
-            match blob::mkdir_if_not_exists(self, &errno, dest, dest.as_bytes()) {
+            match blob::mkdir_if_not_exists(self, &errno, dest) {
                 Retry::Continue => continue,
                 Retry::Fail => return None,
                 Retry::No => {}
@@ -490,8 +490,7 @@ impl CopyFile {
                 dest,
             ) {
                 bun_sys::Result::Err(errno) => {
-                    let err_path = self.destination_file_store.pathlike.path().slice().to_vec();
-                    match blob::mkdir_if_not_exists(self, &errno, dest, &err_path) {
+                    match blob::mkdir_if_not_exists(self, &errno, dest) {
                         Retry::Continue => continue,
                         Retry::Fail => {}
                         Retry::No => {}
@@ -1318,9 +1317,7 @@ impl CopyFileWindows {
                                     }
                                 };
                                 let len = out.len();
-                                pathbuf1[len] = 0;
-                                // SAFETY: pathbuf1[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf1[..], len);
+                                break 'brk bun_core::ZStr::nul_terminate(&mut pathbuf1, len);
                             }
                         },
                     }
@@ -1361,9 +1358,7 @@ impl CopyFileWindows {
                                     }
                                 };
                                 let len = out.len();
-                                pathbuf2[len] = 0;
-                                // SAFETY: pathbuf2[len] == 0 written above
-                                break 'brk bun_core::ZStr::from_buf(&pathbuf2[..], len);
+                                break 'brk bun_core::ZStr::nul_terminate(&mut pathbuf2, len);
                             }
                         },
                     }

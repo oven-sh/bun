@@ -732,8 +732,7 @@ impl Route {
                 } else {
                     let parts = [entry.dir(), entry.base()];
                     abs_len = FileSystem::get().abs_buf(&parts, route_file_buf).len();
-                    route_file_buf[abs_len] = 0;
-                    let buf = bun_core::ZStr::from_buf(&route_file_buf[..], abs_len);
+                    let buf = bun_core::ZStr::nul_terminate(route_file_buf, abs_len);
                     match bun_sys::open_file_absolute_z(buf, bun_sys::OpenFlags::READ_ONLY) {
                         Ok(f) => {
                             *file = Some(f);

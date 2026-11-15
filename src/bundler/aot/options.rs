@@ -533,12 +533,7 @@ fn start_with_first_script(
 
 fn real_file_path(path: &[u8]) -> Option<Vec<u8>> {
     let mut name = bun_paths::path_buffer_pool::get();
-    if path.len() >= name.len() {
-        return None;
-    }
-    name[..path.len()].copy_from_slice(path);
-    name[path.len()] = 0;
-    let name = bun_core::ZStr::from_buf(&name[..], path.len());
+    let name = strings::copy_z(&mut name, path)?;
     let mut buffer = bun_paths::path_buffer_pool::get();
     Some(bun_sys::realpath(name, &mut buffer).ok()?.to_vec())
 }

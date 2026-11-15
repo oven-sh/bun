@@ -935,9 +935,7 @@ impl BuildCommand {
                     let mut zbuf = bun_paths::path_buffer_pool::get();
                     let n = outfile.len().min(zbuf.0.len() - 1);
                     zbuf.0[..n].copy_from_slice(&outfile[..n]);
-                    zbuf.0[n] = 0;
-                    // SAFETY: NUL-terminated above.
-                    let z = bun_core::ZStr::from_buf(&zbuf.0[..], n);
+                    let z = bun_core::ZStr::nul_terminate(&mut zbuf, n);
                     if bun_sys::directory_exists_at(root_dir.fd, z).unwrap_or(false) {
                         outfile = b"index";
                     }
@@ -1468,16 +1466,14 @@ pub(crate) fn collect_compile_assets(
             ));
         }
 
-        if asset_trimmed.len() >= zbuf.len() || strings::index_of_char(asset_trimmed, 0).is_some() {
+        let Some(asset_z) = strings::copy_z(&mut zbuf, asset_trimmed)
+            .filter(|asset_z| !strings::contains_char(asset_z, 0))
+        else {
             return fail(
                 bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
                     .with_path(asset),
             );
-        }
-        let n = asset_trimmed.len();
-        zbuf[..n].copy_from_slice(asset_trimmed);
-        zbuf[n] = 0;
-        let asset_z = bun_core::ZStr::from_buf(&zbuf[..], n);
+        };
 
         let st = match bun_sys::stat(asset_z) {
             Ok(st) => st,

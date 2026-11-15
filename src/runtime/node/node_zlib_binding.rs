@@ -198,7 +198,7 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
     }
 
     fn then(write: Self, handle: StrongWrapper<T>, cx: &JsThread<'_>) -> JsResult<()> {
-        let (global, this, this_value) = (handle.global(cx), handle.payload(cx), handle.to_js());
+        let (global, this, this_value) = (handle.global(), handle.payload(), handle.to_js());
         let Self {
             mut stream,
             buffers,

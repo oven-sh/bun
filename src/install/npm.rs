@@ -1457,6 +1457,7 @@ pub mod package_manifest {
             temp_dir: &'static TemporaryDirectory,
         ) {
             use bun_threading::thread_pool::{Batch as PoolBatch, Task as PoolTask};
+            use bun_threading::work_pool::OwnedTask;
 
             struct SaveTask {
                 manifest: PackageManifest,
@@ -1468,7 +1469,7 @@ pub mod package_manifest {
 
             bun_threading::intrusive_work_task!(SaveTask, task);
 
-            impl bun_threading::work_pool::OwnedTask for SaveTask {
+            impl OwnedTask for SaveTask {
                 fn run(self: Box<Self>) {
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
@@ -1590,13 +1591,14 @@ pub mod package_manifest {
             let mut pkg_stream = bun_io::FixedBufferStream::new(bytes);
             pkg_stream.pos = Self::HEADER_BYTES.len();
 
+            let key = scope.manifest_cache_key();
             let registry_hash = pkg_stream.read_int_le::<u64>()?;
-            if scope.url_hash != registry_hash {
+            if key.url_hash != registry_hash {
                 return Ok(None);
             }
 
             let registry_length = pkg_stream.read_int_le::<u64>()?;
-            if strings::without_trailing_slash(scope.url.href()).len() as u64 != registry_length {
+            if key.url_len != registry_length {
                 return Ok(None);
             }
 
@@ -2045,7 +2047,13 @@ impl PackageManifest {
         let literal = version.literal.slice(buf);
         let dist_tag = match &version.value {
             Value::Npm(npm) => {
-                return self.find_for_range(literal, npm, buf, minimum_release_age_ms, exclusions);
+                return self.find_for_range(
+                    literal,
+                    &npm.version,
+                    buf,
+                    minimum_release_age_ms,
+                    exclusions,
+                );
             }
             Value::DistTag(dist_tag) => dist_tag,
             _ => return FindVersionResult::Err(FindVersionError::NotFound),
@@ -2068,7 +2076,7 @@ impl PackageManifest {
     pub(crate) fn find_for_range(
         &self,
         literal: &[u8],
-        npm: &crate::dependency::NpmInfo,
+        range: &Semver::query::Group,
         buf: &[u8],
         minimum_release_age_ms: Option<f64>,
         exclusions: Option<&MinimumReleaseAgeExcludes>,
@@ -2076,7 +2084,7 @@ impl PackageManifest {
         if is_any_version_range(literal) {
             return self.find_any_version(minimum_release_age_ms, exclusions);
         }
-        self.find_best_version_with_filter(&npm.version, buf, minimum_release_age_ms, exclusions)
+        self.find_best_version_with_filter(range, buf, minimum_release_age_ms, exclusions)
     }
 
     /// Resolves npm's `*`: `latest`, even if it's a prerelease, unless it's deprecated. Otherwise

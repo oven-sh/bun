@@ -37,7 +37,7 @@ pub trait IntrusiveWorkTask: bun_core::IntrusiveField<Task> {
 // The only impl: `OwnedTask::__callback` trusts `from_task_ptr`, so no type may override it.
 impl<T: bun_core::IntrusiveField<Task>> IntrusiveWorkTask for T {}
 
-/// An [`IntrusiveWorkTask`] that the [`WorkPool`] takes ownership of by value
+/// An [`IntrusiveWorkTask`] that a [`ThreadPool`] takes ownership of by value
 /// (`Box<Self>`). [`Batch::from_owned`] performs the `Box` →
 /// raw-pointer hand-off and [`__callback`](OwnedTask::__callback) recovers
 /// `Box<Self>` via [`IntrusiveWorkTask::from_task_ptr`], so call sites never
@@ -120,13 +120,12 @@ macro_rules! owned_task {
 }
 
 impl Batch {
-    /// For any [`ThreadPool`]. [`OwnedTask::run`] gets the `Box` back on one of its threads.
+    /// [`OwnedTask::run`] gets the `Box` back on a thread of the pool that schedules the batch.
     pub fn from_owned<T: OwnedTask>(mut task: Box<T>) -> Batch {
         task.task_mut().callback = T::__callback;
-        // The pointer to the field is made from this one, so that it covers the whole allocation.
         let raw = Box::into_raw(task);
-        // SAFETY: `raw` is a live heap allocation, which the batch now owns;
-        // `IntrusiveField::field_of` projects to the embedded `Task`.
+        // SAFETY: `raw` is a live heap allocation, which the batch now owns. The `Task` is
+        // projected from the raw pointer, so that it covers the whole allocation.
         Batch::from(unsafe { T::field_of(raw) })
     }
 }

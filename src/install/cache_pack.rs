@@ -527,7 +527,7 @@ fn pack_entry(
 /// Write every cache entry the loaded lockfile needs, and the cache has, to `destination`.
 pub fn pack(pm: &mut PackageManager, destination: &[u8]) -> Result<PackSummary, Error> {
     let entries = lockfile_entries(pm);
-    let cache_dir = pm.get_cache_directory();
+    let cache_dir = pm.get_cache_directory().handle.fd();
     let output = if pm.options.dry_run {
         None
     } else {
@@ -917,7 +917,7 @@ fn create_index_link(cache_dir: Fd, cache_dir_path: &[u8], entry: &ZStr) {
 /// Restore the entries of the pack at `pack_path` that the cache does not have.
 pub fn unpack(pm: &mut PackageManager, pack_path: &[u8]) -> Result<UnpackSummary, Error> {
     let mut r = Reader::open(pack_path)?;
-    let cache_dir = pm.get_cache_directory();
+    let cache_dir = pm.get_cache_directory().handle.fd();
     let staging = Staging::create(pm.get_temporary_directory().handle.fd())?;
     let mut summary = UnpackSummary::default();
     let mut staged: Vec<(ZBox, ResolutionTag)> = Vec::new();

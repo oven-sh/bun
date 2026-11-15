@@ -3420,8 +3420,8 @@ pub(crate) type TLSSocket = NewSocket<true>;
 
 /// The TLS members of a plain socket, see `tls_socket_functions.rs`.
 impl TCPSocket {
-    pub(crate) fn disable_renegotiation(&self) {}
-    pub(crate) fn is_session_reused(&self) -> bool {
+    pub(crate) fn disable_renegotiation(&self, _: &JsHeap<'_>) {}
+    pub(crate) fn is_session_reused(&self, _: &JsHeap<'_>) -> bool {
         false
     }
     pub(crate) fn set_verify_mode(

@@ -3,14 +3,18 @@ use core::mem;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollKind, LoopRef, Owner, PollTag};
+use crate::{EventLoopHandle, LoopRef};
+#[cfg(unix)]
+use crate::{FilePollKind, Owner, PollTag};
 
 /// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
 /// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
 /// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 use crate::max_buf::MaxBuf;
-use crate::pipes::{Chunk, FileType, PollOrFd, ReadState};
+use crate::pipes::{Chunk, ReadState};
+#[cfg(unix)]
+use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
 use crate::source::Source;
 use bun_ptr::RefPtr;
@@ -91,6 +95,7 @@ impl BufferedReaderVTable {
         unsafe { crate::BufferedReaderParentLink::new(self.kind, self.parent) }
     }
 
+    #[cfg(unix)]
     fn event_loop(&self) -> EventLoopHandle {
         self.link().event_loop()
     }
@@ -169,6 +174,7 @@ impl ReadLimit {
 // PosixBufferedReader
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(unix)]
 pub struct PosixBufferedReader {
     pub handle: PollOrFd,
     /// Set once `preadv2(RWF_NOWAIT)` said this fd's file type does not support it (tty), so we stop asking.
@@ -181,6 +187,7 @@ pub struct PosixBufferedReader {
     pub maxbuf: Option<RefPtr<MaxBuf>>,
 }
 
+#[cfg(unix)]
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct PosixFlags: u16 {
@@ -200,12 +207,14 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(unix)]
 impl PosixFlags {
     pub(crate) const fn new() -> Self {
         Self::from_bits_truncate(PosixFlags::CLOSE_HANDLE.bits() | PosixFlags::KEEP_ALIVE.bits())
     }
 }
 
+#[cfg(unix)]
 impl PosixBufferedReader {
     pub fn init<T: BufferedReaderParent>() -> PosixBufferedReader {
         PosixBufferedReader {
@@ -963,6 +972,7 @@ impl PosixBufferedReader {
     }
 }
 
+#[cfg(unix)]
 enum Stop {
     Eof,
     OverBudget,
@@ -970,11 +980,13 @@ enum Stop {
     Error(sys::Error),
 }
 
+#[cfg(unix)]
 enum ReadOnce {
     Read(usize, Option<Stop>),
     Stop(Stop),
 }
 
+#[cfg(unix)]
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
@@ -1002,6 +1014,7 @@ pub struct WindowsBufferedReader {
     pub(crate) vtable: BufferedReaderVTable,
 }
 
+#[cfg(windows)]
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct WindowsFlags: u16 {

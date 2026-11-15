@@ -82,8 +82,8 @@ pub(crate) fn dump_order(buntest: &BunTest) -> JsResult<()> {
                 sequence_index, sequence.remaining_repeat_count.get(),
             ));
 
-            for (_, step) in buntest.steps_from(sequence.first_entry) {
-                let entry = buntest.entry(step.entry);
+            for (_, sequence_entry) in buntest.sequence_entries_from(sequence.first_entry) {
+                let entry = buntest.entry(sequence_entry.entry);
                 group::log(format_args!(
                     "ExecutionEntry \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
                     bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)")),

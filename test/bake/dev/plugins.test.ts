@@ -1,5 +1,4 @@
 // Plugin tests concern plugins in development mode.
-import { expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts

@@ -690,6 +690,34 @@ const manualMocks = {
   `,
 };
 
+// A module that takes its names from three files with `export *`, for the tests of a mock that is laid over such a module.
+const inFolder = (folder: string, files: Record<string, string>) =>
+  Object.fromEntries(Object.entries(files).map(([name, text]) => [`${folder}/${name}`, text]));
+const leaves = {
+  "db.ts": `export const save = () => "real";`,
+  "mail.ts": `export const send = () => "real";`,
+  "log.ts": `export const log = () => "real";`,
+};
+const services = {
+  ...leaves,
+  "services.ts": `export * from "./mail"; export * from "./db"; export * from "./log";`,
+  "signup.ts": `import { save, send, log } from "./services"; export const signup = () => [save(), send(), log()];`,
+};
+const readsExports = `
+  import { expect, jest, mock, spyOn, test, vi } from "bun:test";
+  const read = exports => Object.keys(exports).sort().map(name => name + "=" + exports[name]());
+`;
+const mocksOfLeaves = (mock = "mock") => `
+  mock.module("./db", () => ({ save: () => "db ${mock}" }));
+  mock.module("./mail", () => ({ send: () => "mail ${mock}" }));
+  mock.module("./log", () => ({ log: () => "log ${mock}" }));
+`;
+const namesOfLeaves = (mock = "mock") => `["log=log ${mock}", "save=db ${mock}", "send=mail ${mock}"]`;
+const stubs = (...names: string[]) => `() => ({ ${names.map(name => `${name}: () => "stub"`).join(", ")} })`;
+// `bun test --aot` replaces an export only where the build saw a mock or a spy name it. This line never runs. It names the export for the build.
+const namesForBuild = (namespace: string, name: string) =>
+  `if (process.env.NEVER_SET_FOR_THIS_TEST) spyOn(${namespace}, "${name}");`;
+
 describe.concurrent("the original of a mocked module", () => {
   const logged = {
     "own.ts": `(globalThis.order ??= []).push("own"); export const value = "own";`,
@@ -970,6 +998,246 @@ describe.concurrent("the original of a mocked module", () => {
         `,
       },
       1,
+    );
+  });
+
+  test("keeps the names that a loaded module has behind each export * of a mocked module", async () => {
+    const patched = (name: string, path: string) => `
+      test("${name}", async () => {
+        await import("${path}");
+        mock.module("${path}", ${stubs("save", "send", "log")});
+        expect(read(await vi.importActual("${path}"))).toEqual(${namesOfLeaves()});
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...inFolder("stars", {
+          ...services,
+          "stars.test.ts": `${readsExports}${mocksOfLeaves()}
+            test("however the original is asked for, and under a second mock", async () => {
+              await import("./signup");
+              mock.module("./services", ${stubs("save", "send", "log")});
+              expect(read(await vi.importActual("./services"))).toEqual(${namesOfLeaves()});
+              expect(read(jest.requireActual("./services"))).toEqual(${namesOfLeaves()});
+              expect(Object.keys(jest.createMockFromModule("./services")).sort()).toEqual(["log", "save", "send"]);
+              let seen;
+              await mock.module("./services", async importOriginal => ({ ...(seen = await importOriginal()) }));
+              expect(read(seen)).toEqual(${namesOfLeaves()});
+              vi.doUnmock("./services");
+              mock.module("./services", ${stubs("save", "send", "log")});
+              expect(read(await vi.importActual("./services"))).toEqual(${namesOfLeaves()});
+            });
+          `,
+        }),
+        ...inFolder("chain", {
+          ...services,
+          "barrel.ts": `export * from "./services";`,
+          "chain.test.ts": `${readsExports}${mocksOfLeaves()}${patched("behind export * of a module that has them behind export *", "./barrel")}`,
+        }),
+        ...inFolder("named", {
+          ...services,
+          "named.ts": `export { save, send, log } from "./services";`,
+          "named.test.ts": `${readsExports}${mocksOfLeaves()}${patched("behind export { } from a module that has them behind export *", "./named")}`,
+        }),
+        ...inFolder("package", {
+          "node_modules/services/package.json": JSON.stringify({
+            name: "services",
+            type: "module",
+            main: "./index.js",
+          }),
+          "node_modules/services/index.js": `export * from "./mail.js"; export * from "./db.js"; export * from "./log.js";`,
+          "node_modules/services/db.js": leaves["db.ts"],
+          "node_modules/services/mail.js": leaves["mail.ts"],
+          "node_modules/services/log.js": leaves["log.ts"],
+          "package.test.ts": `${readsExports}
+            mock.module("services/db.js", () => ({ save: () => "db mock" }));
+            mock.module("services/mail.js", () => ({ send: () => "mail mock" }));
+            mock.module("services/log.js", () => ({ log: () => "log mock" }));
+            ${patched("of a package whose files are mocked", "services")}
+          `,
+        }),
+        ...inFolder("two-files", {
+          ...services,
+          "first.test.ts": `${readsExports}${mocksOfLeaves()}${patched("in a test file that lays a mock over the module", "./services")}`,
+          "second.test.ts": `${readsExports}${mocksOfLeaves("mock of the second file")}
+            test("and in the next test file, which mocks the three files again", async () => {
+              await import("./services");
+              mock.module("./services", ${stubs("save", "send", "log")});
+              expect(read(await vi.importActual("./services"))).toEqual(${namesOfLeaves("mock of the second file")});
+            });
+          `,
+        }),
+      },
+      6,
+    );
+  });
+
+  test("reads a name that a mock holds off that mock, also where the module has the same export under a second name", async () => {
+    await expectFixturesToPass(
+      {
+        ...inFolder("star", {
+          "x.ts": `export const x = () => "real";`,
+          "t.ts": `export const b = () => "real";`,
+          "renamed.ts": `export { b as a } from "./t";`,
+          "m.ts": `export * from "./x"; export * from "./t"; export * from "./renamed";`,
+          "star.test.ts": `${readsExports}
+            mock.module("./x", () => ({ x: () => "x mock" }));
+            test("behind export * of a module that was mocked after another file linked to it", async () => {
+              await import("./renamed");
+              vi.doMock("./t", () => ({ b: () => "t mock" }));
+              await import("./m");
+              mock.module("./m", ${stubs("a", "b", "x")});
+              expect(read(await vi.importActual("./m"))).toEqual(["a=real", "b=t mock", "x=x mock"]);
+            });
+          `,
+        }),
+        ...inFolder("export-from", {
+          ...services,
+          "outer.ts": `export { save, send, log } from "./services"; export { send as direct } from "./mail";`,
+          "export-from.test.ts": `${readsExports}
+            mock.module("./services", () => ({ save: () => "mock", send: () => "mock", log: () => "mock" }));
+            test("behind export { } from a mocked module", async () => {
+              const mail = await import("./mail");
+              await import("./outer");
+              mock.module("./outer", ${stubs("save", "send", "log", "direct")});
+              expect(mail.send()).toBe("stub");
+              expect(read(await vi.importActual("./outer"))).toEqual(["direct=real", "log=mock", "save=mock", "send=mock"]);
+            });
+          `,
+        }),
+        ...inFolder("two-stars-down", {
+          "front.ts": `export const front = () => "real";`,
+          "mocked.ts": `export const n = () => "real";`,
+          "a.ts": `export * from "./front"; export * from "./mocked";`,
+          "b.ts": `export const n = () => "real b";`,
+          "r.ts": `export * from "./a"; export * from "./b"; export { n as m } from "./b";`,
+          "two-stars-down.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            mock.module("./mocked", () => ({ n: () => "mock" }));
+            test("behind export * of a module that has it behind export * of the mocked module", async () => {
+              const b = await import("./b");
+              await import("./r");
+              mock.module("./r", ${stubs("n", "m", "front")});
+              expect(b.n()).toBe("stub");
+              expect(read(await vi.importActual("./r"))).toEqual(["front=front mock", "m=real b", "n=mock"]);
+            });
+          `,
+        }),
+        ...inFolder("listed", {
+          "front.ts": `export const front = () => "real"; export const save = () => "real";`,
+          "a.ts": `export * from "./front";`,
+          "b.ts": `export const save = () => "real b";`,
+          "x.ts": `export * from "./a"; export * from "./b"; export { save as direct } from "./b";`,
+          "listed.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock", save: () => "mock" }));
+            test("behind export * of a module whose only export * is of the mocked module", async () => {
+              const b = await import("./b");
+              await import("./x");
+              mock.module("./x", ${stubs("save", "front", "direct")});
+              expect(b.save()).toBe("stub");
+              expect(read(await vi.importActual("./x"))).toEqual(["direct=real b", "front=front mock", "save=mock"]);
+            });
+          `,
+        }),
+        ...inFolder("lacks-name", {
+          "x.ts": `export const x = () => "real";`,
+          "t.ts": `export const b = () => "real t";`,
+          "u.ts": `export const b = () => "real u";`,
+          "renamed.ts": `export { b as a } from "./t";`,
+          "m.ts": `export * from "./x"; export * from "./t"; export * from "./u"; export * from "./renamed";`,
+          "lacks-name.test.ts": `${readsExports}
+            mock.module("./x", () => ({ x: () => "x mock" }));
+            test("and past a mock that lacks the name, off the file that has it", async () => {
+              const [renamed, u] = [await import("./renamed"), await import("./u")];
+              ${namesForBuild("u", "b")}
+              vi.doMock("./t", () => ({ other: () => "t mock" }));
+              await import("./m");
+              mock.module("./m", ${stubs("a", "b", "x", "other")});
+              expect([read(u), read(renamed)]).toEqual([["b=stub"], ["a=stub"]]);
+              expect(read(await vi.importActual("./m"))).toEqual(["a=real t", "b=real u", "other=t mock", "x=x mock"]);
+              vi.doUnmock("./m");
+              expect([read(u), read(renamed)]).toEqual([["b=real u"], ["a=real t"]]);
+            });
+          `,
+        }),
+      },
+      5,
+    );
+  });
+
+  test("keeps those names where a preload loaded the module", async () => {
+    const patchedAfterPreload = (name: string, stub: string, before = "") => `${readsExports}
+      test("${name}", async () => {${before}
+        await import("./db");
+        const log = await import("./log");
+        mock.module("./services", () => ({ save: () => "${stub}", send: () => "${stub}", log: () => "${stub}" }));
+        const [save, , logged] = globalThis.signupOfPreload();
+        expect([save, logged, read(log)]).toEqual(["${stub}", "${stub}", ["log=${stub}"]]);
+        expect(read(await vi.importActual("./services"))).toEqual(["log=real", "save=real", "send=mail mock"]);
+        vi.doUnmock("./services");
+        expect([globalThis.signupOfPreload(), read(log)]).toEqual([["real", "mail mock", "real"], ["log=real"]]);
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...services,
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./mail", () => ({ send: () => "mail mock" }));
+          const { signup } = await import("./signup");
+          globalThis.signupOfPreload = signup;
+        `,
+        "first.test.ts": patchedAfterPreload(
+          "in a test file that mocks a file of the module and loads that file alone",
+          "first stub",
+          `
+        vi.doMock("./db", () => ({ save: () => "db mock" }));`,
+        ),
+        "second.test.ts": patchedAfterPreload("and in the next test file", "second stub"),
+      },
+      2,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  test("keeps those names where the files of the module load once", async () => {
+    await expectFixturesToPass(
+      {
+        ...services,
+        "real.ts": `export const kept = () => "real";`,
+        "inner.ts": `export * from "./real";`,
+        "outer.ts": `export * from "./inner";`,
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./db", () => ({ save: () => "db mock" }));
+          mock.module("./mail", () => ({ send: () => "mail mock" }));
+          mock.module("./log", () => ({ log: () => "log mock" }));
+          mock.module("./inner", () => ({ kept: () => "inner mock" }));
+        `,
+        "first.test.ts": `${readsExports}
+          import * as services from "./services";
+          test("behind each export *", async () => {
+            expect(read(services)).toEqual(${namesOfLeaves()});
+            mock.module("./services", ${stubs("save", "send", "log")});
+            let seen;
+            await mock.module("./services", async importOriginal => ({ ...(seen = await importOriginal()) }));
+            expect(read(seen)).toEqual(${namesOfLeaves()});
+          });
+        `,
+        "second.test.ts": `${readsExports}
+          import * as real from "./real";
+          import * as outer from "./outer";
+          test("and a mock laid over the module stores nothing in the file behind a mock", () => {
+            expect(read(outer)).toEqual(["kept=inner mock"]);
+            mock.module("./outer", ${stubs("kept")});
+            expect(read(real)).toEqual(["kept=real"]);
+            vi.doUnmock("./outer");
+            expect(read(real)).toEqual(["kept=real"]);
+          });
+        `,
+      },
+      2,
+      ["--isolate", "--preload", "./preload.ts"],
     );
   });
 
@@ -3419,6 +3687,448 @@ describe.concurrent("a mock behind a barrel", () => {
         `,
       },
       1,
+    );
+  });
+
+  test("a mock laid over the barrel stores nothing in a module that the barrel reads off a mock", async () => {
+    const mockTwoFilesDown = {
+      "front.ts": `export const front = () => "real"; export const save = () => "real";`,
+      "a.ts": `export * from "./front";`,
+      "b.ts": `export const save = () => "real b";`,
+    };
+    await expectFixturesToPass(
+      {
+        ...inFolder("loaded", {
+          ...services,
+          "loaded.test.ts": `${readsExports}
+            test("behind export *", async () => {
+              const [db, mail, log] = [await import("./db"), await import("./mail"), await import("./log")];
+              vi.doMock("./db", () => ({ save: () => "db mock" }));
+              vi.doMock("./mail", () => ({ send: () => "mail mock" }));
+              vi.doMock("./log", () => ({ log: () => "log mock" }));
+              await import("./signup");
+              mock.module("./services", ${stubs("save", "send", "log")});
+              expect([db.save(), mail.send(), log.log()]).toEqual(["real", "real", "real"]);
+              expect(read(await vi.importActual("./services"))).toEqual(${namesOfLeaves()});
+              expect([read(await vi.importActual("./db")), read(await vi.importActual("./log"))]).toEqual([["save=real"], ["log=real"]]);
+              vi.doUnmock("./services");
+              expect([db.save(), mail.send(), log.log()]).toEqual(["real", "real", "real"]);
+            });
+          `,
+        }),
+        ...inFolder("export-from", {
+          ...services,
+          "outer.ts": `export { save, send, log } from "./services";`,
+          "export-from.test.ts": `${readsExports}
+            mock.module("./services", () => ({ save: () => "mock", send: () => "mock", log: () => "mock" }));
+            mock.module("./db", () => ({ save: () => "db mock" }));
+            test("behind export { } from", async () => {
+              const [mail, log] = [await import("./mail"), await import("./log")];
+              await import("./outer");
+              mock.module("./outer", ${stubs("save", "send", "log")});
+              expect([mail.send(), log.log()]).toEqual(["real", "real"]);
+              expect(read(await vi.importActual("./outer"))).toEqual(["log=mock", "save=mock", "send=mock"]);
+            });
+          `,
+        }),
+        ...inFolder("first-mock", {
+          ...leaves,
+          "log.ts": `export const log = () => "real"; export const save = () => "real log";`,
+          "services.ts": services["services.ts"],
+          "first-mock.test.ts": `${readsExports}
+            mock.module("./db", () => ({ save: () => "db mock" }));
+            test("nor in a later export * that has the name too", async () => {
+              const log = await import("./log");
+              ${namesForBuild("log", "save")}
+              const services = await import("./services");
+              mock.module("./services", ${stubs("save", "send", "log")});
+              expect(read(log)).toEqual(["log=stub", "save=real log"]);
+              expect([services.log(), services.send()]).toEqual(["stub", "stub"]);
+              expect(read(await vi.importActual("./services"))).toEqual(["log=real", "save=db mock", "send=real"]);
+            });
+          `,
+        }),
+        ...inFolder("two-files-down", {
+          ...mockTwoFilesDown,
+          "named.ts": `export { save } from "./front";`,
+          "empty.ts": `export const nothing = () => "real";`,
+          "star.ts": `export * from "./a"; export * from "./b";`,
+          "export-from.ts": `export * from "./empty"; export * from "./named"; export * from "./b";`,
+          "two-files-down.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock", save: () => "mock" }));
+            mock.module("./empty", () => ({ nothing: () => "empty mock" }));
+            test("where the mock is two files down", async () => {
+              const b = await import("./b");
+              ${namesForBuild("b", "save")}
+              await import("./star");
+              await import("./export-from");
+              mock.module("./star", ${stubs("save", "front")});
+              expect(b.save()).toBe("real b");
+              expect(read(await vi.importActual("./star"))).toEqual(["front=front mock", "save=mock"]);
+              vi.doUnmock("./star");
+              mock.module("./export-from", ${stubs("save", "nothing")});
+              expect(b.save()).toBe("real b");
+              expect(read(await vi.importActual("./export-from"))).toEqual(["nothing=empty mock", "save=mock"]);
+            });
+          `,
+        }),
+        ...inFolder("lacks-name", {
+          ...mockTwoFilesDown,
+          "x.ts": `export * from "./a"; export * from "./b";`,
+          "lacks-name.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("and goes on to the next export * where the mock two files down lacks the name", async () => {
+              const b = await import("./b");
+              ${namesForBuild("b", "save")}
+              const x = await import("./x");
+              mock.module("./x", ${stubs("save", "front")});
+              expect([b.save(), x.save()]).toEqual(["stub", "stub"]);
+              expect(read(await vi.importActual("./x"))).toEqual(["front=front mock", "save=real b"]);
+              vi.doUnmock("./x");
+              expect(b.save()).toBe("real b");
+            });
+          `,
+        }),
+        ...inFolder("lacks-name-loaded", {
+          "front.ts": `export const front = () => "real";`,
+          "db.ts": leaves["db.ts"],
+          "log.ts": `export const log = () => "real"; export const save = () => "real log";`,
+          "services.ts": `export * from "./front"; export * from "./db"; export * from "./log";`,
+          "lacks-name-loaded.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("and goes on to the next export * where the mock behind an export * lacks the name", async () => {
+              const [db, log] = [await import("./db"), await import("./log")];
+              ${namesForBuild("log", "save")}
+              vi.doMock("./db", () => ({ other: () => "db mock" }));
+              const services = await import("./services");
+              mock.module("./services", ${stubs("save", "front", "other", "log")});
+              expect([db.save(), read(log)]).toEqual(["real", ["log=stub", "save=stub"]]);
+              expect([services.log(), services.save()]).toEqual(["stub", "stub"]);
+              expect(read(await vi.importActual("./services"))).toEqual(["front=front mock", "log=real", "other=db mock", "save=real log"]);
+              vi.doUnmock("./services");
+              expect([db.save(), read(log)]).toEqual(["real", ["log=real", "save=real log"]]);
+            });
+          `,
+        }),
+        ...inFolder("takes-original", {
+          "front.ts": `export const front = () => "real";`,
+          "db.ts": leaves["db.ts"],
+          "log.ts": `export const log = () => "real"; export const save = () => "real log";`,
+          "services.ts": `export * from "./front"; export * from "./db"; export * from "./log";`,
+          "takes-original.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("and ends at a mock whose factory takes the original and leaves the name out", async () => {
+              const [db, log] = [await import("./db"), await import("./log")];
+              ${namesForBuild("log", "save")}
+              vi.doMock("./db", async importOriginal => (await importOriginal(), { other: () => "db mock" }));
+              await import("./services");
+              mock.module("./services", ${stubs("save", "front", "other", "log")});
+              expect([db.save(), read(log)]).toEqual(["real", ["log=stub", "save=real log"]]);
+              const original = await vi.importActual("./services");
+              expect([Object.keys(original).sort(), original.save, original.log()]).toEqual([["front", "log", "save"], undefined, "real"]);
+              vi.doUnmock("./services");
+              expect([db.save(), read(log)]).toEqual(["real", ["log=real", "save=real log"]]);
+            });
+          `,
+        }),
+        ...inFolder("first-export-star", {
+          "d.ts": leaves["db.ts"],
+          "a.ts": `export * from "./d";`,
+          "n.ts": `export * from "./d"; export const other = () => "real";`,
+          "mock-first.ts": `export * from "./n"; export * from "./a";`,
+          "mock-last.ts": `export * from "./a"; export * from "./n";`,
+          "first-export-star.test.ts": `${readsExports}
+            test("where the mock is behind the first export * that brings the name", async () => {
+              vi.doMock("./n", () => ({ other: () => "n mock", save: () => "n mock" }));
+              const d = await import("./d");
+              await import("./mock-first");
+              mock.module("./mock-first", ${stubs("save", "other")});
+              expect(d.save()).toBe("real");
+              expect(read(await vi.importActual("./mock-first"))).toEqual(["other=n mock", "save=n mock"]);
+              vi.doUnmock("./mock-first");
+              expect(d.save()).toBe("real");
+            });
+            test("and stores in the file behind an export * before it where the mock lacks the name", async () => {
+              vi.doMock("./n", () => ({ other: () => "n mock" }));
+              const d = await import("./d");
+              await import("./mock-last");
+              mock.module("./mock-last", ${stubs("save", "other")});
+              expect(d.save()).toBe("stub");
+              expect(read(await vi.importActual("./mock-last"))).toEqual(["other=n mock", "save=real"]);
+              vi.doUnmock("./mock-last");
+              expect(d.save()).toBe("real");
+            });
+          `,
+        }),
+        ...inFolder("ambiguous", {
+          "front.ts": `export const front = () => "real"; export const save = () => "real front";`,
+          "a.ts": `export const save = () => "real a";`,
+          "b.ts": `export const save = () => "real b";`,
+          "x.ts": `export * from "./front"; export * from "./a"; export * from "./b";`,
+          "ambiguous.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("nor where the mock lacks the name and two later files both have it", async () => {
+              const [a, b] = [await import("./a"), await import("./b")];
+              ${namesForBuild("a", "save")}
+              const x = await import("./x");
+              expect(read(x)).toEqual(["front=front mock"]);
+              mock.module("./x", ${stubs("save", "front")});
+              expect([a.save(), b.save()]).toEqual(["real a", "real b"]);
+              expect(read(await vi.importActual("./x"))).toEqual(["front=front mock"]);
+              vi.doUnmock("./x");
+              expect([a.save(), b.save()]).toEqual(["real a", "real b"]);
+            });
+          `,
+        }),
+      },
+      10,
+    );
+  });
+
+  test("a mock laid over the barrel reaches a module behind a file that was mocked after the barrel linked to it", async () => {
+    const barrelOfBarrel = {
+      "a.ts": `export const first = () => "real";`,
+      "b.ts": `export const second = () => "real";`,
+      "db.ts": leaves["db.ts"],
+      "inner.ts": `export * from "./b"; export * from "./db";`,
+      "outer.ts": `export * from "./a"; export * from "./inner";`,
+      "user.ts": `import { save } from "./outer"; export const use = () => save();`,
+    };
+    const mocksOfFirstFiles = `
+      mock.module("./a", () => ({ first: () => "a mock" }));
+      mock.module("./b", () => ({ second: () => "b mock" }));
+    `;
+    await expectFixturesToPass(
+      {
+        ...inFolder("behind-star", {
+          ...barrelOfBarrel,
+          "behind-star.test.ts": `${readsExports}${mocksOfFirstFiles}
+            test("where that file has the name behind export *", async () => {
+              const { use } = await import("./user");
+              const db = await import("./db");
+              vi.doMock("./inner", () => ({ second: () => "inner mock", save: () => "inner mock" }));
+              expect(read(await import("./inner"))).toEqual(["save=inner mock", "second=inner mock"]);
+              mock.module("./outer", ${stubs("first", "second", "save")});
+              expect([use(), db.save()]).toEqual(["stub", "stub"]);
+              expect(read(await import("./inner"))).toEqual(["save=inner mock", "second=inner mock"]);
+              expect(read(await vi.importActual("./outer"))).toEqual(["first=a mock", "save=real", "second=b mock"]);
+              vi.doUnmock("./outer");
+              expect([use(), db.save()]).toEqual(["real", "real"]);
+            });
+          `,
+        }),
+        ...inFolder("added", {
+          "front.ts": `export const front = () => "real";`,
+          "t.ts": `export const own = () => "real";`,
+          "u.ts": `export const extra = () => "real";`,
+          "barrel.ts": `export * from "./front"; export * from "./t"; export * from "./u";`,
+          "user.ts": `import { extra } from "./barrel"; export const use = () => extra();`,
+          "added.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("where the mock of that file adds the name", async () => {
+              const { use } = await import("./user");
+              const u = await import("./u");
+              vi.doMock("./t", () => ({ own: () => "t mock", extra: () => "t mock" }));
+              expect(read(await import("./t"))).toEqual(["extra=t mock", "own=t mock"]);
+              mock.module("./barrel", ${stubs("front", "own", "extra")});
+              expect([use(), u.extra()]).toEqual(["stub", "stub"]);
+              expect(read(await import("./t"))).toEqual(["extra=t mock", "own=t mock"]);
+              expect(read(await vi.importActual("./barrel"))).toEqual(["extra=real", "front=front mock", "own=real"]);
+              vi.doUnmock("./barrel");
+              expect([use(), u.extra()]).toEqual(["real", "real"]);
+            });
+          `,
+        }),
+        ...inFolder("spy", {
+          ...barrelOfBarrel,
+          "spy.test.ts": `${readsExports}${mocksOfFirstFiles}
+            test("and so does a spy on the barrel", async () => {
+              const { use } = await import("./user");
+              const db = await import("./db");
+              const outer = await import("./outer");
+              vi.doMock("./inner", () => ({ second: () => "inner mock", save: () => "inner mock" }));
+              await import("./inner");
+              const spy = spyOn(outer, "save").mockImplementation(() => "spied");
+              expect([use(), db.save(), outer.save(), spy.mock.calls.length]).toEqual(["spied", "spied", "spied", 3]);
+              spy.mockRestore();
+              expect([use(), db.save(), outer.save()]).toEqual(["real", "real", "real"]);
+            });
+          `,
+        }),
+        ...inFolder("export-from", {
+          "front.ts": `export const front = () => "real";`,
+          "db.ts": leaves["db.ts"],
+          "inner.ts": `export * from "./front"; export * from "./db";`,
+          "outer.ts": `export { save, front } from "./inner";`,
+          "user.ts": barrelOfBarrel["user.ts"],
+          "export-from.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("where the barrel has the name by export { } from that file", async () => {
+              const { use } = await import("./user");
+              const db = await import("./db");
+              vi.doMock("./inner", () => ({ save: () => "inner mock", front: () => "inner mock", extra: () => "inner mock" }));
+              await import("./inner");
+              mock.module("./outer", ${stubs("save", "front")});
+              expect([use(), db.save()]).toEqual(["stub", "stub"]);
+              expect(read(await vi.importActual("./outer"))).toEqual(["front=front mock", "save=real"]);
+              vi.doUnmock("./outer");
+              expect([use(), db.save()]).toEqual(["real", "real"]);
+            });
+          `,
+        }),
+        ...inFolder("by-name", {
+          "cfg.ts": `export const level = "real";`,
+          "db.ts": leaves["db.ts"],
+          "mail.ts": `import { level } from "./cfg"; const load = { level }; export const send = () => load.level;`,
+          "services.ts": `export * from "./mail"; export * from "./db";`,
+          "named.ts": `export { save } from "./db";`,
+          "outer.ts": `export { save } from "./named"; export { send } from "./services";`,
+          "user.ts": barrelOfBarrel["user.ts"],
+          "first.test.ts": `${readsExports}
+            mock.module("./named", () => ({ save: () => "named mock" }));
+            test("in a test file that mocks the file in the middle", async () => {
+              expect(read(await import("./named"))).toEqual(["save=named mock"]);
+            });
+          `,
+          "second.test.ts": `${readsExports}
+            mock.module("./cfg", () => ({ level: "mock" }));
+            test("and in the next one, where the barrel has its names by export { } from", async () => {
+              const { use } = await import("./user");
+              const [db, outer] = [await import("./db"), await import("./outer")];
+              mock.module("./outer", ${stubs("save", "send")});
+              expect([use(), db.save(), outer.send()]).toEqual(["stub", "stub", "stub"]);
+              expect(read(await vi.importActual("./outer"))).toEqual(["save=real", "send=mock"]);
+            });
+          `,
+        }),
+      },
+      6,
+    );
+  });
+
+  test("a mock laid over a barrel whose two export * reach two loads of one file reaches the file of the second", async () => {
+    await expectFixturesToPass(
+      {
+        "leaf.ts": `export const n = () => "real";`,
+        "inner.ts": `export * from "./leaf";`,
+        "j.ts": `globalThis.loadsOfJ = (globalThis.loadsOfJ ?? 0) + 1; export * from "./inner";`,
+        "p.ts": `export * from "./j";`,
+        "x.ts": `export * from "./p"; export * from "./j";`,
+        "preload.ts": `
+          import { mock } from "bun:test";
+          mock.module("./inner", () => ({ other: () => "inner mock" }));
+          await import("./p");
+        `,
+        "a.test.ts": `${readsExports}
+          test("by mock.module()", async () => {
+            vi.doUnmock("./inner");
+            vi.doMock("./j", () => ({ n: () => "j mock" }));
+            await import("./j");
+            vi.doUnmock("./j");
+            const [x, leaf] = [await import("./x"), await import("./leaf")];
+            expect([globalThis.loadsOfJ, read(x)]).toEqual([2, ["n=real", "other=inner mock"]]);
+            mock.module("./x", ${stubs("n")});
+            expect([x.n(), leaf.n()]).toEqual(["stub", "stub"]);
+            expect(read(await vi.importActual("./x"))).toEqual(["n=real", "other=inner mock"]);
+            vi.doUnmock("./x");
+            expect([x.n(), leaf.n()]).toEqual(["real", "real"]);
+          });
+          test("and by a spy on its namespace", async () => {
+            const [x, leaf] = [await import("./x"), await import("./leaf")];
+            const spy = spyOn(x, "n").mockImplementation(() => "spied");
+            expect([x.n(), leaf.n(), spy.mock.calls.length]).toEqual(["spied", "spied", 2]);
+            spy.mockRestore();
+            expect([x.n(), leaf.n()]).toEqual(["real", "real"]);
+          });
+        `,
+      },
+      2,
+      ["--preload", "./preload.ts"],
+    );
+  });
+
+  test("a spy on the namespace of an earlier load of the barrel spies on the files of that load", async () => {
+    const loadedTwice = {
+      "cfg.ts": `export const level = "real";`,
+      "db.ts": leaves["db.ts"],
+      "mail.ts": `import { level } from "./cfg"; const load = { level }; export const send = () => load;`,
+      "log.ts": `import { level } from "./cfg"; const load = { level }; export const log = () => load;`,
+      "services.ts": services["services.ts"],
+      "outer.ts": `export { save, send, log } from "./services";`,
+    };
+    const spiesOnEarlierLoad = (name: string, path: string) => `${readsExports}
+      mock.module("./cfg", () => ({ level: "mock" }));
+      mock.module("./db", () => ({ save: () => "db mock" }));
+      test("${name}", async () => {
+        const first = await import("${path}");
+        const [earlierMail, earlierLog] = [first.send(), first.log()];
+        vi.doUnmock("./cfg");
+        const second = await import("${path}");
+        const [laterMail, laterLog] = [second.send(), second.log()];
+        expect([second === first, laterMail === earlierMail, laterLog === earlierLog]).toEqual([false, false, false]);
+        for (const [exported, earlier, later] of [["send", earlierMail, laterMail], ["log", earlierLog, laterLog]] as const) {
+          const spy = spyOn(first, exported).mockImplementation(() => "spied");
+          expect([first[exported](), second[exported]() === later]).toEqual(["spied", true]);
+          spy.mockRestore();
+          expect([first[exported]() === earlier, second[exported]() === later]).toEqual([true, true]);
+        }
+      });
+    `;
+    await expectFixturesToPass(
+      {
+        ...inFolder("star", { ...loadedTwice, "star.test.ts": spiesOnEarlierLoad("behind export *", "./services") }),
+        ...inFolder("export-from", {
+          ...loadedTwice,
+          "export-from.test.ts": spiesOnEarlierLoad("behind export { } from", "./outer"),
+        }),
+        ...inFolder("commonjs", {
+          ...loadedTwice,
+          "mail.cjs": `const { level } = require("./cfg.ts"); const load = { level }; exports.send = () => load;`,
+          "services.ts": `export * from "./mail.cjs"; export * from "./db"; export * from "./log";`,
+          "commonjs.test.ts": spiesOnEarlierLoad("behind export * of a CommonJS file", "./services"),
+        }),
+        ...inFolder("left-laid", {
+          "cfg.ts": loadedTwice["cfg.ts"],
+          "mail.ts": leaves["mail.ts"],
+          "legacy.cjs": `const { level } = require("./cfg.ts"); exports.save = () => "saved at " + level;`,
+          "services.ts": `export * from "./mail"; export * from "./legacy.cjs";`,
+          "left-laid.test.ts": `${readsExports}
+            mock.module("./mail", () => ({ send: () => "mail mock" }));
+            mock.module("./cfg", () => ({ level: "mock" }));
+            test("a spy that the test leaves laid", async () => {
+              const services = await import("./services");
+              const spy = spyOn(services, "save");
+              expect([services.save(), spy.mock.calls.length]).toEqual(["saved at mock", 1]);
+            });
+            test("is restored after the CommonJS file behind it loaded again", async () => {
+              vi.doUnmock("./cfg");
+              const services = await import("./services");
+              expect(services.save()).toBe("saved at real");
+            });
+          `,
+        }),
+        ...inFolder("mocked-afterwards", {
+          "front.ts": `export const front = () => "real";`,
+          "mail.ts": leaves["mail.ts"],
+          "services.ts": `export * from "./front"; export * from "./mail";`,
+          "signup.ts": `import { send } from "./services"; export const signup = () => send();`,
+          "mocked-afterwards.test.ts": `${readsExports}
+            mock.module("./front", () => ({ front: () => "front mock" }));
+            test("also after a mock replaced the barrel", async () => {
+              const first = await import("./services");
+              const { signup } = await import("./signup");
+              const mail = await import("./mail");
+              vi.doMock("./services", () => ({ send: () => "services mock", front: () => "services mock", extra: () => "services mock" }));
+              const second = await import("./services");
+              const spy = spyOn(first, "send").mockImplementation(() => "spied");
+              expect([first.send(), signup(), mail.send(), second.send(), spy.mock.calls.length]).toEqual(["spied", "spied", "spied", "services mock", 3]);
+              spy.mockRestore();
+              expect([first.send(), signup(), mail.send(), second.send()]).toEqual(["real", "real", "real", "services mock"]);
+            });
+          `,
+        }),
+      },
+      6,
     );
   });
 });

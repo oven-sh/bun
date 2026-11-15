@@ -551,8 +551,8 @@ macro_rules! delegate_host_to_disk {
         ) -> hir::File<'s> {
             self.0.parse(arena, path, text, atoms, options)
         }
-        fn parse_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-            self.0.parse_package_json(arena, text)
+        fn parse_package_json(&self, text: &[u8]) -> Option<Json> {
+            self.0.parse_package_json(text)
         }
         fn extended_config(&self, path: &[u8]) -> Option<CachedConfig> {
             self.0.extended_config(path)
@@ -603,11 +603,11 @@ macro_rules! delegate_host_to_disk {
 
 macro_rules! delegate_parsers_to_disk {
     () => {
-        fn parse_runtime_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-            self.0.parse_runtime_package_json(arena, text)
+        fn parse_runtime_package_json(&self, text: &[u8]) -> Option<Json> {
+            self.0.parse_runtime_package_json(text)
         }
-        fn parse_runtime_tsconfig(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-            self.0.parse_runtime_tsconfig(arena, text)
+        fn parse_runtime_tsconfig(&self, text: &[u8]) -> Option<Json> {
+            self.0.parse_runtime_tsconfig(text)
         }
         fn parse_code<'s>(
             &self,

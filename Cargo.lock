@@ -886,7 +886,6 @@ name = "bun_install_jsc"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_ast",
  "bun_core",
  "bun_dotenv",
@@ -1095,7 +1094,6 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_ast",
  "bun_collections",
  "bun_core",

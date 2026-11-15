@@ -1568,7 +1568,7 @@ fn overrides_field(
     else {
         return Field::Overrides;
     };
-    Field::of(&entry.root).map_or(Field::Overrides, |(field, _)| field)
+    Field::of(bun_ast::JsonView::from(&entry.root)).map_or(Field::Overrides, |(field, _)| field)
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {

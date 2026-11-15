@@ -1,9 +1,8 @@
 use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
-use bun_alloc::Arena as Bump;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
-use bun_ast::{self as js_ast, Binding, ExportsKind, Expr, ExprNodeList, Stmt};
+use bun_ast::{self as js_ast, AstArena, Binding, ExportsKind, Expr, ExprNodeList, Stmt};
 use bun_ast::{B, E, G, S};
 use bun_collections::VecExt;
 use bun_core::FeatureFlags;
@@ -51,7 +50,7 @@ pub(crate) fn convert_stmts_for_chunk(
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     chunk: &Chunk,
-    bump: &Bump,
+    bump: &AstArena,
     wrap: WrapKind,
     ast: &JSAst<'_>,
 ) -> Result<(), crate::Error> {
@@ -625,7 +624,7 @@ pub(crate) fn convert_stmts_for_chunk(
 }
 
 /// `module.exports = value;`
-fn assign_module_exports(bump: &Bump, module_ref: bun_ast::Ref, value: Expr, loc: Loc) -> Stmt {
+fn assign_module_exports(bump: &AstArena, module_ref: bun_ast::Ref, value: Expr, loc: Loc) -> Stmt {
     Stmt::alloc(
         S::SExpr {
             value: Expr::init(

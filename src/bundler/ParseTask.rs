@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as AnyError;
 use bun_alloc::Arena as Bump; // bumpalo::Bump re-export
 use bun_ast::ImportRecord;
-use bun_ast::{Loc, Location, Log, Msg, Source};
+use bun_ast::{AstArena, Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
@@ -610,7 +610,7 @@ pub mod parse_worker {
         log: &Log,
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
-        bump: &'static Bump,
+        bump: &'static AstArena,
         source: &'static Source<'static>,
         stylesheet: &mut Option<Box<bun_css::BundlerStyleSheet<'static>>>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
@@ -629,7 +629,7 @@ pub mod parse_worker {
         log: &Log,
         transpiler: *mut Transpiler,
         opts: ParserOptions<'static>,
-        bump: &'static Bump,
+        bump: &'static AstArena,
         source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
@@ -748,18 +748,13 @@ pub mod parse_worker {
     // getAST
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut`. The caller may pass
-    // `resolver = &transpiler.resolver`, so
-    // the two may point into the same allocation. Taking `&mut Transpiler` +
-    // `&mut Resolver` would be aliased-`&mut` UB. We instead reborrow only the
-    // disjoint `(*transpiler).options` field, never the whole struct.
+    // `transpiler` is raw: `opts.import_meta_glob` may point at its `resolver`, so only `options` is reborrowed.
     #[allow(clippy::too_many_arguments)]
     fn get_ast(
         log: &Log,
         transpiler: *mut Transpiler,
         mut opts: ParserOptions<'static>,
-        bump: &'static Bump,
-        resolver: *mut Resolver,
+        bump: &'static AstArena,
         source: &'static Source<'static>,
         loader: Loader,
         unique_key_prefix: u64,
@@ -771,7 +766,7 @@ pub mod parse_worker {
 
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`.
         // `options` and `resolver` are disjoint fields of `Transpiler`; reborrowing
-        // `options` here does not overlap any access through `resolver` below.
+        // `options` here does not overlap any access through `opts.import_meta_glob`.
         let topts = unsafe { &mut (*transpiler).options };
 
         match loader {
@@ -811,16 +806,15 @@ pub mod parse_worker {
             }
             Loader::Json | Loader::Jsonc => {
                 let _trace = perf::trace("Bundler.ParseJSON");
-                let mode = if matches!(loader, Loader::Jsonc) {
-                    bun_resolver::tsconfig_json::JsonMode::Jsonc
+                let temp_log = Log::init();
+                let root = if matches!(loader, Loader::Jsonc) {
+                    bun_parsers::json::parse_ts_config(source, &temp_log, bump)
                 } else {
-                    bun_resolver::tsconfig_json::JsonMode::Json
+                    bun_parsers::json::parse_utf8(source, &temp_log, bump)
                 };
-                // SAFETY: `resolver` is a live `*mut Resolver`;
-                // `caches` is disjoint from `(*transpiler).options` reborrowed above.
-                let root: Expr = unsafe { &mut (*resolver).caches.json }
-                    .parse_json(log, source, mode)?
-                    .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
+                temp_log.append_to(log);
+                let root: Expr =
+                    root.unwrap_or_else(|_| Expr::allocate(bump, E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
                     js_parser::new_lazy_export_ast(
                         bump,
@@ -2087,7 +2081,7 @@ pub mod parse_worker {
         this: &mut crate::Worker,
         step: &mut Step,
         log: &mut Log,
-        bump: &'static Bump,
+        bump: &'static AstArena,
         contents: &'static [u8],
     ) -> core::result::Result<Success<'static>, AnyError> {
         // reshaped for borrowck — `transpiler_for_target` borrows `this`
@@ -2099,7 +2093,7 @@ pub mod parse_worker {
         // call (server-components/browser branch) must NOT autoref `&mut *this`
         // directly — that retag of the parent `&mut` pops the SharedRW tag chain
         // backing the first `transpiler` (and the `resolver` field-projection
-        // derived from it), making the later `(*resolver)` derefs in `get_ast` UB.
+        // derived from it), making the later derefs of `resolver` UB.
         // `transpiler` may be rebound below while `resolver` keeps
         // pointing into the original;
         // both calls' `&mut self` must be children of the same raw so neither pops
@@ -2444,7 +2438,6 @@ pub mod parse_worker {
                     transpiler,
                     opts,
                     bump,
-                    resolver,
                     source,
                     loader,
                     task_ctx.unique_key,

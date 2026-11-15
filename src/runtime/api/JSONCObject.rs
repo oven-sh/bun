@@ -16,7 +16,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
             bun_removable_features::Feature::Jsonc,
         ));
     }
-    super::with_text_format_source(global, input, b"input.jsonc", |_, log, source| {
+    super::with_text_format_source(global, input, b"input.jsonc", |arena, log, source| {
         // parse_jsonc maps empty input to {}; the public API rejects it like JSON.parse.
         if source.contents.is_empty() {
             return Err(
@@ -26,7 +26,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
             );
         }
         let parsed =
-            match json::ParsedJson::parse_jsonc(source, log) {
+            match json::ParsedJson::parse_jsonc(source, log, arena) {
                 Ok(v) => v,
                 Err(bun_parsers::Error::StackOverflow) => {
                     return Err(global.throw_stack_overflow());
@@ -56,7 +56,7 @@ pub(crate) fn parse(heap: &JsHeap<'_>, input: &[u8]) -> JsResult<JSValue> {
             };
 
         parsed
-            .root
+            .root_expr(arena)
             .to_js(global)
             .map_err(|e| bun_js_parser_jsc::to_js_error(e, global))
     })

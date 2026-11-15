@@ -86,10 +86,10 @@ impl Timings {
         if contents.is_empty() {
             return;
         }
-        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(path, &contents[..]);
         let log = bun_ast::Log::init();
-        let parsed = match bun_json::ParsedJson::parse_json(&source, &log) {
+        let arena = bun_ast::AstArena::new();
+        let parsed = match bun_json::ParsedJson::parse_json(&source, &log, &arena) {
             Ok(p) => p,
             Err(_) => {
                 let _ = log.print(Output::error_writer());
@@ -100,9 +100,9 @@ impl Timings {
                 bun_core::Global::exit(1);
             }
         };
-        let root = &parsed.root;
+        let root = parsed.root();
         let files = Some(root)
-            .filter(|r| r.as_property(b"version").and_then(|v| v.expr.as_number()) == Some(1.0))
+            .filter(|r| r.as_property(b"version").and_then(|v| v.value.as_number()) == Some(1.0))
             .and_then(|r| r.get_object(b"files"));
         let Some(files) = files else {
             bun_core::pretty_errorln!(
@@ -125,14 +125,12 @@ impl Timings {
             });
         }
         let count = root.as_property(b"workers");
-        if let Some(count) = count.and_then(|count| count.expr.as_number())
+        if let Some(count) = count.and_then(|count| count.value.as_number())
             && count.is_finite()
             && count >= 0.0
         {
             *workers = (*workers).max(count.round().min(u32::MAX as f64) as u32);
         }
-        bun_ast::Expr::data_store_reset();
-        bun_ast::Stmt::data_store_reset();
     }
 
     pub(crate) fn workers(&self) -> u32 {

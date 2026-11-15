@@ -34,7 +34,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
-    let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
+    let arena: &'static bun_ast::AstArena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
     let unresolved_view = options.framework.as_bundler_view();
     let log: &'static Log = arena.alloc(Log::init());
     // The arena does not run `Drop`.

@@ -20,11 +20,11 @@ use std::borrow::Cow;
 pub type HostPayload = Box<dyn Any + Send + Sync>;
 
 pub trait CodeHost: Host {
-    fn parse_runtime_package_json(&self, arena: &Arena, text: &[u8]) -> Option<Json> {
-        self.parse_package_json(arena, text)
+    fn parse_runtime_package_json(&self, text: &[u8]) -> Option<Json> {
+        self.parse_package_json(text)
     }
 
-    fn parse_runtime_tsconfig(&self, _arena: &Arena, _text: &[u8]) -> Option<Json> {
+    fn parse_runtime_tsconfig(&self, _text: &[u8]) -> Option<Json> {
         None
     }
 

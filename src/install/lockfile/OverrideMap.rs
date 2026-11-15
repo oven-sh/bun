@@ -24,7 +24,7 @@ use super::package::PackageColumns as _;
 use super::package::workspace_map::{WorkspaceMap, package_json_dir};
 use super::package::{DependencyGroup, value_loc_of};
 use super::{CatalogMap, Lockfile, StringBuilder, package::Package};
-use crate::bun_json::Expr;
+use crate::bun_json::JsonView;
 
 declare_scope!(OverrideMap, visible);
 
@@ -159,7 +159,7 @@ pub(crate) enum Field {
 
 impl Field {
     /// Only one of the two fields is read: `"resolutions"` is ignored if `"overrides"` exists.
-    pub(crate) fn of(root: &Expr) -> Option<(Field, bun_ast::expr::Query)> {
+    pub(crate) fn of<'t>(root: JsonView<'t>) -> Option<(Field, bun_ast::json::Query<'t>)> {
         [Field::Overrides, Field::Resolutions]
             .into_iter()
             .find_map(|field| Some((field, root.as_property(field.json_name().as_bytes())?)))
@@ -471,7 +471,7 @@ impl OverrideMap {
         buf: &[u8],
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        root: &Expr,
+        root: JsonView<'_>,
         has_workspaces: bool,
     ) {
         for dep in self.values() {
@@ -744,11 +744,11 @@ impl OverrideMap {
         log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
-        expr: Expr,
+        expr: JsonView<'_>,
         builder: &mut StringBuilder,
     ) {
-        if let Some((field, property)) = Field::of(&expr) {
-            property.expr.for_each_property(|key, _key_loc, value| {
+        if let Some((field, property)) = Field::of(expr) {
+            property.value.for_each_property(|key, _key_loc, value| {
                 if is_comment_key(key) {
                     return;
                 }
@@ -763,7 +763,7 @@ impl OverrideMap {
                         }
                     }
                     builder.count(value);
-                    count_ref_value(pm, log, json_source, workspace_names, &expr, value, builder);
+                    count_ref_value(pm, log, json_source, workspace_names, expr, value, builder);
                     return;
                 }
                 if field != Field::Overrides || !value.is_object() {
@@ -788,7 +788,7 @@ impl OverrideMap {
                             log,
                             json_source,
                             workspace_names,
-                            &expr,
+                            expr,
                             child_value,
                             builder,
                         );
@@ -806,11 +806,11 @@ impl OverrideMap {
         log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
-        expr: Expr,
+        expr: JsonView<'_>,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0 && self.scoped.is_empty()); // only call parse once
-        let Some((field, rules)) = Field::of(&expr) else {
+        let Some((field, rules)) = Field::of(expr) else {
             return Ok(());
         };
         let mut ctx = ParseContext {
@@ -824,8 +824,8 @@ impl OverrideMap {
             builder,
         };
         match field {
-            Field::Overrides => self.parse_from_overrides(&mut ctx, rules.expr)?,
-            Field::Resolutions => self.parse_from_resolutions(&mut ctx, rules.expr)?,
+            Field::Overrides => self.parse_from_overrides(&mut ctx, rules.value)?,
+            Field::Resolutions => self.parse_from_resolutions(&mut ctx, rules.value)?,
         }
         scoped_log!(
             OverrideMap,
@@ -840,7 +840,7 @@ impl OverrideMap {
     fn parse_from_overrides(
         &mut self,
         ctx: &mut ParseContext<'_, '_>,
-        expr: Expr,
+        expr: JsonView<'_>,
     ) -> Result<(), Error> {
         if !expr.is_object() {
             return Err(not_an_object(ctx, expr.loc));
@@ -861,8 +861,11 @@ impl OverrideMap {
             if is_comment_key(k) {
                 return Ok(());
             }
-            let value_loc =
-                crate::bun_json::value_loc_of_property(&ctx.source.contents, key_loc, &value_expr);
+            let value_loc = crate::bun_json::value_loc_of_property(
+                &ctx.source.contents,
+                key_loc,
+                value_expr.loc,
+            );
             if let Some(value) = value_expr.as_utf8_string_literal() {
                 return self.parse_string_rule(ctx, k, key_loc, value, value_loc);
             }
@@ -896,7 +899,7 @@ impl OverrideMap {
                 let child_value_loc = crate::bun_json::value_loc_of_property(
                     &ctx.source.contents,
                     child_key_loc,
-                    &child_value_expr,
+                    child_value_expr.loc,
                 );
                 if child_value_expr.is_object() {
                     warn_selector_error(ctx, child_key, child_key_loc, SelectorError::TooDeep);
@@ -958,7 +961,7 @@ impl OverrideMap {
     fn parse_from_resolutions(
         &mut self,
         ctx: &mut ParseContext<'_, '_>,
-        expr: Expr,
+        expr: JsonView<'_>,
     ) -> Result<(), Error> {
         if !expr.is_object() {
             return Err(not_an_object(ctx, expr.loc));
@@ -976,8 +979,11 @@ impl OverrideMap {
             if is_comment_key(k) {
                 return Ok(());
             }
-            let value_loc =
-                crate::bun_json::value_loc_of_property(&ctx.source.contents, key_loc, &value_expr);
+            let value_loc = crate::bun_json::value_loc_of_property(
+                &ctx.source.contents,
+                key_loc,
+                value_expr.loc,
+            );
             let Some(value) = value_expr.as_utf8_string_literal() else {
                 ctx.log.add_warning_fmt(
                     Some(ctx.source),
@@ -1070,9 +1076,9 @@ impl OverrideMap {
 
 /// The location of the top-level rule for `name` in the root package.json. If there is none, the
 /// location of the `"overrides"` or `"resolutions"` field.
-fn rule_loc(root: &Expr, name: &[u8]) -> bun_ast::Loc {
+fn rule_loc(root: JsonView<'_>, name: &[u8]) -> bun_ast::Loc {
     Field::of(root).map_or(bun_ast::Loc::EMPTY, |(_, rules)| {
-        (rules.expr.as_property(name)).map_or(rules.loc, |rule| rule.loc)
+        (rules.value.as_property(name)).map_or(rules.loc, |rule| rule.loc)
     })
 }
 
@@ -1370,7 +1376,7 @@ fn parse_override_value(
 }
 
 /// First string-valued entry for `name` across the four dependency sections of a package.json object.
-fn declared_dependency(root: &Expr, name: &[u8]) -> Option<Expr> {
+fn declared_dependency<'t>(root: JsonView<'t>, name: &[u8]) -> Option<JsonView<'t>> {
     DependencyGroup::FOUR.iter().find_map(|group| {
         root.get(group.prop)
             .and_then(|deps| deps.get(name))
@@ -1383,7 +1389,7 @@ fn count_ref_value(
     log: &bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
-    root_json: &Expr,
+    root_json: JsonView<'_>,
     value: &[u8],
     builder: &mut StringBuilder,
 ) {
@@ -1428,14 +1434,12 @@ fn workspace_ref_literal(
             log,
             abs_package_json_path,
             GetJSONOptions {
-                init_reset_store: false,
                 guess_indentation: true,
-                ..Default::default()
             },
         ) else {
             continue;
         };
-        let Some(declared) = declared_dependency(&entry.root, ref_name) else {
+        let Some(declared) = declared_dependency(JsonView::from(&entry.root), ref_name) else {
             continue;
         };
         let Some(literal) = declared.as_utf8_string_literal() else {

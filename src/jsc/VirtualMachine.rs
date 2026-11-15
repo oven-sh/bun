@@ -7342,11 +7342,7 @@ impl VirtualMachine {
                             } else {
                                 let msg_chars = message.latin1();
                                 msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(
-                                        &msg_chars[..code.len()],
-                                        code,
-                                        false,
-                                    )
+                                    && bun_core::strings::eql_long(&msg_chars[..code.len()], code)
                                     && msg_chars[code.len()] == b':'
                                     && msg_chars[code.len() + 1] == b' '
                             };

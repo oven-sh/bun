@@ -1629,7 +1629,7 @@ fn string_pointer_from_strings(parent: &[u8], in_: &[u8]) -> api::StringPointer 
         return api::StringPointer { offset, length };
     } else {
         if let Some(i) = strings::index_of(parent, in_) {
-            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_, false));
+            debug_assert!(strings::eql_long(&parent[i..][..in_.len()], in_));
 
             return api::StringPointer {
                 offset: u32::try_from(i).unwrap(),

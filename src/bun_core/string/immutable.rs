@@ -504,7 +504,7 @@ pub(crate) use crate::strings_impl::{
 
 pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
     for (i, str) in in_.iter().enumerate() {
-        if eql_long(str, target, true) {
+        if eql_long(str, target) {
             return Some(i);
         }
     }
@@ -764,7 +764,6 @@ const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 impl StringOrTinyString {
     const MAX: usize = 31;
     const TINY_TAG: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
-    pub const EMPTY: Self = Self(StringOrTinyStringRepr::Static(b""));
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
@@ -851,7 +850,7 @@ pub fn starts_with(self_: &[u8], str: &[u8]) -> bool {
     if str.len() > self_.len() {
         return false;
     }
-    eql_long(&self_[0..str.len()], str, false)
+    eql_long(&self_[0..str.len()], str)
 }
 
 /// Transliterated from:
@@ -939,12 +938,7 @@ pub fn ends_with_any(self_: &[u8], str: &[u8]) -> bool {
 }
 
 pub fn eql_any_comptime(self_: &[u8], list: &'static [&'static [u8]]) -> bool {
-    for item in list {
-        if eql_comptime_check_len_with_type::<u8, true>(self_, item) {
-            return true;
-        }
-    }
-    false
+    list.contains(&self_)
 }
 
 /// Count the occurrences of a character in an ASCII byte array
@@ -973,14 +967,11 @@ pub fn count(self_: &[u8], needle: &[u8]) -> usize {
 }
 
 pub fn eql(self_: &[u8], other: &[u8]) -> bool {
-    if self_.len() != other.len() {
-        return false;
-    }
-    eql_long(self_, other, false)
+    eql_long(self_, other)
 }
 
 pub fn eql_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    eql_comptime_check_len_with_type::<u8, true>(self_, alt)
+    self_ == alt
 }
 
 pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
@@ -995,17 +986,12 @@ pub fn eql_comptime_utf16(self_: &[u16], alt: &[u8]) -> bool {
             .all(|(&u, &b)| u == u16::from(b))
 }
 
-pub fn eql_comptime_ignore_len(self_: &[u8], alt: &[u8]) -> bool {
-    eql_comptime_check_len_with_type::<u8, false>(self_, alt)
-}
-
 // `const fn` equality for const-context callers (clap param-name lookup,
 // MultiArrayList field-name reflection). Runtime callers should prefer `eql`.
 pub use crate::strings_impl::{const_bytes_eq, const_str_eq};
 
 pub fn has_prefix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<u8, false>(&self_[0..alt.len()], alt)
+    self_.starts_with(alt)
 }
 
 pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
@@ -1017,53 +1003,8 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
             .all(|(&u, &b)| u == u16::from(b))
 }
 
-pub fn has_prefix_comptime_type<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
-    // Callers must pass the correctly-typed literal (use `crate::string::w!` for u16).
-    self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
-}
-
 pub fn has_suffix_comptime(self_: &[u8], alt: &'static [u8]) -> bool {
-    self_.len() >= alt.len()
-        && eql_comptime_check_len_with_type::<u8, false>(&self_[self_.len() - alt.len()..], alt)
-}
-
-fn eql_comptime_check_len_u8(a: &[u8], b: &[u8], check_len: bool) -> bool {
-    // Slice equality compiles to memcmp; for short literals LLVM emits
-    // unrolled fixed-size compares.
-    if check_len {
-        return a == b;
-    }
-    debug_assert!(a.len() >= b.len());
-    // SAFETY: when `check_len`, the early-return above gives `a.len()==b.len()`.
-    // When `!check_len`, callers guarantee `a.len() >= b.len()` (debug-asserted
-    // above). LLVM cannot prove the latter, so
-    // a checked slice would emit a real bounds check on this hot path
-    // (lexer keyword/prefix matching) — keep the unchecked index.
-    unsafe { a.get_unchecked(..b.len()) == b }
-}
-
-fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
-    a: &[T],
-    b: &[T],
-) -> bool {
-    eql_comptime_check_len_u8(
-        crate::slice_as_bytes(a),
-        crate::slice_as_bytes(b),
-        CHECK_LEN,
-    )
-}
-
-/// Check if two strings are equal with one of the strings being a compile-time-known value
-///
-///   strings.eql_comptime(input, b"hello world");
-///   strings.eql_comptime(input, b"hai");
-pub(crate) fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN: bool>(
-    a: &[T],
-    b: &[T],
-) -> bool {
-    // Accepts any slice; callers are still expected to pass literals.
-    eql_comptime_check_len_with_known_type::<T, CHECK_LEN>(a, b)
+    self_.ends_with(alt)
 }
 
 pub fn eql_case_insensitive_ascii_ignore_length(a: &[u8], b: &[u8]) -> bool {
@@ -1131,76 +1072,22 @@ pub fn has_prefix_case_insensitive(str: &[u8], prefix: &[u8]) -> bool {
     has_prefix_case_insensitive_t(str, prefix)
 }
 
-// same rationale as `eql_case_insensitive_ascii` — `check_len` is a runtime
-// 3rd arg to match the dominant call shape (`eql_long(a, b, true)`).
+/// [`eql`], expanded at the call site.
 #[inline]
-pub fn eql_long(a_str: &[u8], b_str: &[u8], check_len: bool) -> bool {
-    let len = b_str.len();
-
-    if check_len {
-        if len == 0 {
-            return a_str.is_empty();
-        }
-        if a_str.len() != len {
-            return false;
-        }
-    } else if cfg!(debug_assertions) {
-        debug_assert!(b_str.len() <= a_str.len());
+pub fn eql_long(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
     }
-
-    // SAFETY: a_str.len() >= b_str.len() by contract above (checked when
-    // `check_len`, debug-asserted otherwise), so the word-chunked raw-pointer
-    // walk below never reads past either slice.
-    unsafe {
-        let end = b_str.as_ptr().add(len);
-        let mut a = a_str.as_ptr();
-        let mut b = b_str.as_ptr();
-
-        if a == b {
-            return true;
-        }
-
-        {
-            let mut dword_length = len >> 3;
-            while dword_length > 0 {
-                if a.cast::<usize>().read_unaligned() != b.cast::<usize>().read_unaligned() {
-                    return false;
-                }
-                b = b.add(core::mem::size_of::<usize>());
-                if b == end {
-                    return true;
-                }
-                a = a.add(core::mem::size_of::<usize>());
-                dword_length -= 1;
-            }
-        }
-
-        if core::mem::size_of::<usize>() == 8 {
-            if (len & 4) != 0 {
-                if a.cast::<u32>().read_unaligned() != b.cast::<u32>().read_unaligned() {
-                    return false;
-                }
-                b = b.add(core::mem::size_of::<u32>());
-                if b == end {
-                    return true;
-                }
-                a = a.add(core::mem::size_of::<u32>());
-            }
-        }
-
-        if (len & 2) != 0 {
-            if a.cast::<u16>().read_unaligned() != b.cast::<u16>().read_unaligned() {
-                return false;
-            }
-            b = b.add(core::mem::size_of::<u16>());
-            if b == end {
-                return true;
-            }
-            a = a.add(core::mem::size_of::<u16>());
-        }
-
-        (len & 1) == 0 || *a == *b
+    if a.as_ptr() == b.as_ptr() {
+        return true;
     }
+    let ((a8, a), (b8, b)) = (a.as_chunks::<8>(), b.as_chunks::<8>());
+    if !a8.iter().zip(b8).all(|(a, b)| a == b) {
+        return false;
+    }
+    let ((a4, a), (b4, b)) = (a.as_chunks::<4>(), b.as_chunks::<4>());
+    let ((a2, a), (b2, b)) = (a.as_chunks::<2>(), b.as_chunks::<2>());
+    a4.first() == b4.first() && a2.first() == b2.first() && a.first() == b.first()
 }
 
 #[inline]
@@ -1611,15 +1498,8 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
 }
 
 /// prefix is of type &[u8] or &[u16]
-pub fn trim_prefix_comptime<'a, T: crate::NoUninit + Eq>(
-    buffer: &'a [T],
-    prefix: &'static [T],
-) -> &'a [T] {
-    if has_prefix_comptime_type(buffer, prefix) {
-        &buffer[prefix.len()..]
-    } else {
-        buffer
-    }
+pub fn trim_prefix_comptime<'a, T: Eq>(buffer: &'a [T], prefix: &'static [T]) -> &'a [T] {
+    buffer.strip_prefix(prefix).unwrap_or(buffer)
 }
 
 /// Runtime variants — prefix/suffix may borrow from a non-static

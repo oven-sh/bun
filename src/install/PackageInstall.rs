@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 use bun_collections::{ArrayHashMap, DynamicBitSet};
@@ -8,12 +9,13 @@ use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, walker_skippable};
-use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
-use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
-use bun_threading::{IntrusiveWorkTask, WaitGroup};
+use bun_threading::WaitGroup;
+use bun_threading::thread_pool::Batch;
+use bun_threading::work_pool::{OwnedTask, Task as WorkPoolTask};
 
 use crate::package_installer::NodeModulesFolder;
+use crate::package_manager::{INBOX, THREAD_POOL};
 use crate::{
     BuntagHashBuf, DependencyID, Integrity, Lockfile, Npm, PackageID, PackageManager, Resolution,
     TruncatedPackageNameHash, bun_fs, bun_json, buntaghashbuf_make, initialize_store, resolution,
@@ -23,7 +25,7 @@ bun_output::declare_scope!(install, hidden);
 
 pub struct PackageInstall<'a> {
     /// Borrowed view of the cache directory fd. The owner is either
-    /// `PackageManager`'s cached directory handle, the cwd sentinel, or a
+    /// the `CacheDirectory`, the cwd sentinel, or a
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
@@ -35,6 +37,7 @@ pub struct PackageInstall<'a> {
 
     pub(crate) node_modules: &'a NodeModulesFolder,
     pub lockfile: &'a Lockfile,
+    pub(crate) total_tasks: &'a Cell<u32>,
 }
 
 /// The file work of a `PackageInstall`. No lockfile and no manager, so any thread can do it.
@@ -801,18 +804,12 @@ impl<TaskType> NewTaskQueue<TaskType> {
         self.wait_group.finish();
     }
 
-    /// Hands `task` to the thread pool; the worker reclaims the `Box` in its callback.
     pub(crate) fn push(&self, task: Box<TaskType>)
     where
-        TaskType: IntrusiveWorkTask + Send + 'static,
+        TaskType: OwnedTask,
     {
         self.wait_group.add_one();
-        // SAFETY: `into_raw` yields a live allocation, and projecting through it keeps its provenance.
-        PackageManager::get()
-            .thread_pool
-            .schedule(Batch::from(unsafe {
-                TaskType::field_of(bun_core::heap::into_raw(task))
-            }));
+        THREAD_POOL.schedule(Batch::from_owned(task));
     }
 
     pub(crate) fn wait(&self) {
@@ -837,6 +834,21 @@ struct HardLinkWindowsInstallTask {
 
 #[cfg(windows)]
 bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
+
+#[cfg(windows)]
+impl OwnedTask for HardLinkWindowsInstallTask {
+    fn run(mut self: Box<Self>) {
+        match self.link() {
+            Some(err) => {
+                self.err = Some(err);
+                // Only the first error is kept.
+                HARDLINK_QUEUE.errored_task.lock().get_or_insert(self);
+            }
+            None => drop(self),
+        }
+        HARDLINK_QUEUE.complete_one();
+    }
+}
 
 #[cfg(windows)]
 type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
@@ -868,34 +880,12 @@ impl HardLinkWindowsInstallTask {
             bytes: combined,
             src_len: src.len(),
             basename: basename.len() as u16, // @truncate
-            task: WorkPoolTask {
-                callback: Self::run_from_thread_pool,
-                node: ThreadPoolNode::default(),
-            },
+            task: WorkPoolTask::default(),
             err: None,
         })
     }
 
-    fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        let queue = &HARDLINK_QUEUE;
-        scopeguard::defer! { queue.complete_one(); }
-
-        // SAFETY: `task` is the `task` field of the `Box` that `NewTaskQueue::push` handed over,
-        // and the pool runs each scheduled task once.
-        let mut this = unsafe { bun_core::heap::take(Self::from_task_ptr(task)) };
-        if let Some(err) = this.run() {
-            this.err = Some(err);
-            // First-write-wins: keep only the first error. Any later failing task
-            // simply drops its Box (leaking it would also leak the inner
-            // `Box<[u16]>` per failed file).
-            let mut slot = queue.errored_task.lock();
-            if slot.is_none() {
-                *slot = Some(this);
-            }
-        }
-    }
-
-    fn run(&mut self) -> Option<crate::Error> {
+    fn link(&mut self) -> Option<crate::Error> {
         use bun_sys::windows;
         // Read scalar fields before borrowing `bytes` so no `&mut self` reborrow
         // overlaps the slice borrows below.
@@ -965,49 +955,25 @@ impl HardLinkWindowsInstallTask {
 
 // ───────────────────────────── UninstallTask ─────────────────────────────
 
-fn wake_main_thread() {
-    // SAFETY: the manager lives as long as the process. `wake_raw` is the documented
-    // thread-safe wake path that never forms `&mut PackageManager` (the main thread
-    // holds the install borrow).
-    unsafe { PackageManager::wake_raw(crate::package_manager::get()) };
-}
-
-struct PendingTaskDone;
-
-impl Drop for PendingTaskDone {
-    fn drop(&mut self) {
-        PackageManager::get()
-            .pending_tasks
-            .fetch_sub(1, Ordering::Release);
-        wake_main_thread();
-    }
-}
-
 struct UninstallTask {
     absolute_path: Box<[u8]>,
     task: WorkPoolTask,
 }
 
-impl UninstallTask {
-    fn run(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of an UninstallTask.
-        let uninstall_task: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+bun_threading::intrusive_work_task!(UninstallTask, task);
 
-        // declared *before* the Box is reclaimed so it drops *after* the
-        // Box — Rust drops locals in reverse declaration order. The task must be freed
-        // before the main thread can observe pending_tasks==0.
-        let _done = PendingTaskDone;
-
-        // SAFETY: heap-allocated in uninstall_before_install; reclaim ownership here.
-        let uninstall_task = unsafe { bun_core::heap::take(uninstall_task) };
-
-        let dirname =
-            path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
+impl OwnedTask for UninstallTask {
+    fn run(self: Box<Self>) {
+        let dirname = path::resolve_path::dirname::<path::platform::Auto>(&self.absolute_path);
         if !dirname.is_empty()
             && let Ok(dir) = open_dir(Fd::cwd(), dirname)
         {
-            let _ = dir.delete_tree(bun_paths::basename(&uninstall_task.absolute_path));
+            let _ = dir.delete_tree(bun_paths::basename(&self.absolute_path));
         }
+        // Freed before the main thread can see that no task is pending.
+        drop(self);
+        INBOX.decrement_pending_tasks();
+        INBOX.wake();
     }
 }
 
@@ -1087,7 +1053,7 @@ impl LinkBatch {
         if let [job] = self.jobs.as_slice() {
             return self.link(job);
         }
-        let pool = &PackageManager::get().thread_pool;
+        let pool = &*THREAD_POOL;
         // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
         // run.
         pool.warm(1);
@@ -1103,7 +1069,7 @@ impl LinkBatch {
                     batch.link(job);
                 }
                 if batch.remaining.fetch_sub(1, Ordering::AcqRel) == 1 {
-                    wake_main_thread();
+                    INBOX.wake();
                 }
             },
             &vec![(); threads],
@@ -1130,7 +1096,7 @@ pub(crate) const BUN_TAG: &[u8] = b".bun-tag";
 /// Returns true if an installed tarball's `.bun-tag` matches the integrity in bun.lock.
 pub(crate) fn tarball_tag_matches(tag: &[u8], integrity: &Integrity, skips_verify: bool) -> bool {
     // A copy installed with `--no-verify` has an empty tag.
-    strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag, true)
+    strings::eql_long(integrity.sri(&mut [0; Integrity::MAX_SRI_LEN]), tag)
         || (skips_verify && tag.is_empty())
 }
 
@@ -1205,7 +1171,7 @@ impl<'a> PackageInstall<'a> {
                     .resolved
                     .slice(&lockfile.buffers.string_bytes);
                 self.verify_bun_tag(
-                    &|tag| strings::eql_long(resolved, tag, true),
+                    &|tag| strings::eql_long(resolved, tag),
                     root_node_modules_dir,
                 )
             }
@@ -2101,7 +2067,7 @@ impl<'a> PackageInstall<'a> {
         };
         // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
         // run.
-        let pool = &PackageManager::get().thread_pool;
+        let pool = &*THREAD_POOL;
         pool.warm(1);
         if !pool.has_workers() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
@@ -2113,27 +2079,13 @@ impl<'a> PackageInstall<'a> {
             bun_fs::FileSystem::get().top_level_dir(),
             &[&self.node_modules.path, temp_path.as_bytes()],
         );
-        let task = bun_core::heap::into_raw(Box::new(UninstallTask {
+        let task = Box::new(UninstallTask {
             absolute_path: absolute_path.to_vec().into_boxed_slice(),
-            task: WorkPoolTask {
-                callback: UninstallTask::run,
-                node: ThreadPoolNode::default(),
-            },
-        }));
-        let pm = crate::package_manager::get();
-        // SAFETY: `uninstall_before_install` runs on the install main thread.
-        // Raw-pointer field projection avoids forming `&mut PackageManager`
-        // (the caller `PackageInstaller` already holds one); `total_tasks` is
-        // main-thread-only state, `pending_tasks` is atomic. Mirrors
-        // `increment_pending_tasks`.
-        unsafe {
-            *core::ptr::addr_of_mut!((*pm).total_tasks) += 1;
-            (*pm).pending_tasks.fetch_add(1, Ordering::Relaxed);
-        }
-        // SAFETY: task is a valid heap allocation; .task is the intrusive node.
-        pool.schedule(Batch::from(unsafe {
-            core::ptr::addr_of_mut!((*task).task)
-        }));
+            task: WorkPoolTask::default(),
+        });
+        self.total_tasks.update(|total| total + 1);
+        INBOX.pending_tasks.fetch_add(1, Ordering::Relaxed);
+        pool.schedule(Batch::from_owned(task));
     }
 
     fn is_dangling_symlink(path: &ZStr) -> bool {

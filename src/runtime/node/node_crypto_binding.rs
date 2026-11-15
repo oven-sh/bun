@@ -415,8 +415,6 @@ fn random_int<'a>(
 }
 
 pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> BunString {
-    let (str, bytes) = BunString::create_uninitialized_latin1(36);
-
     let uuid = if options.disable_entropy_cache {
         UUID::init()
     } else {
@@ -425,12 +423,7 @@ pub(crate) fn random_uuid(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> Bun
         global.bun_vm().rare_data().next_uuid()
     };
 
-    uuid.print(
-        (&mut bytes[..36])
-            .try_into()
-            .expect("infallible: size matches"),
-    );
-    str
+    uuid.to_bun_string()
 }
 
 pub(crate) fn random_uuid_v7(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> BunString {
@@ -447,14 +440,7 @@ pub(crate) fn random_uuid_v7(heap: &JsHeap<'_>, options: &RandomUUIDOptions) -> 
         entropy = global.bun_vm().rare_data().entropy();
     }
     let uuid = UUID7::init(now_ms, entropy, bun_jsc::uuid::TimestampSource::Clock);
-
-    let (str, bytes) = BunString::create_uninitialized_latin1(36);
-    uuid.print(
-        (&mut bytes[..36])
-            .try_into()
-            .expect("infallible: size matches"),
-    );
-    str
+    uuid.to_bun_string()
 }
 
 fn assert_offset(

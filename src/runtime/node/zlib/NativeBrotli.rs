@@ -31,7 +31,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::{CStr, c_uint};
 
-    use bun_core::compress::Ranges;
+    use bun_core::compress::RawBuffers;
     use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
     use bun_jsc::{ErrorCode, JsResult};
 
@@ -89,7 +89,7 @@ mod _impl {
         ) -> JsResult<bool> {
             let global_this = cx.global();
             let this_value = this_value.to_js();
-            let mode = self.take_idle_stream(global_this)?.context.mode;
+            let mode = self.borrow_idle_stream(global_this)?.context.mode;
             let feature = if mode == bun_zlib::NodeMode::BROTLI_ENCODE {
                 bun_removable_features::Feature::BrotliEncoder
             } else {
@@ -181,7 +181,7 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global_this),
             );
 
-            let mut stream = self.take_idle_stream(global_this)?;
+            let mut stream = self.borrow_idle_stream(global_this)?;
             if let Err(err) = stream.context.init(dictionary) {
                 drop(stream);
                 self.emit_error(global_this, this_value, &err);
@@ -294,24 +294,24 @@ mod _impl {
             };
         }
 
-        fn do_work(&mut self, mut ranges: Ranges<'_>) {
+        fn do_work(&mut self, mut buffers: RawBuffers<'_>) {
             match &mut self.state {
                 // Driven before `init()`.
                 None => {}
                 Some(State::Encoder(encoder)) => {
-                    let (_, ok) = encoder.step(&mut ranges, self.flush);
+                    let (_, ok) = encoder.step(&mut buffers, self.flush);
                     self.last_result = c_int::from(ok);
                 }
                 Some(State::Decoder(decoder)) => {
-                    let (_, result) = decoder.step(&mut ranges);
+                    let (_, result) = decoder.step(&mut buffers);
                     self.last_result = result as c_int;
                     if result == c::BrotliDecoderResult::err {
                         self.error = decoder.error_code();
                     }
                 }
             }
-            self.avail_in = ranges.input_len();
-            self.avail_out = ranges.out_len();
+            self.avail_in = buffers.avail_in();
+            self.avail_out = buffers.avail_out();
         }
 
         fn write_result(&mut self) -> Result<[u32; 2], Error> {

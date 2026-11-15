@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, Ordering};
 use std::collections::VecDeque;
-use std::sync::{Arc, LazyLock};
+use std::sync::{Arc, OnceLock};
 
 use crate::Error;
 use crate::bun_fs as fs;
@@ -478,12 +478,14 @@ impl Inbox {
     }
 }
 
-pub(crate) static THREAD_POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
-    ThreadPool::init(thread_pool::Config {
+pub(crate) static THREAD_POOL: OnceLock<ThreadPool> = OnceLock::new();
+
+pub(crate) fn install_pool() -> &'static ThreadPool {
+    ThreadPool::get_or_init(&THREAD_POOL, || thread_pool::Config {
         max_threads: u32::from(bun_core::get_thread_count()),
         ..Default::default()
     })
-});
+}
 
 pub struct PackageManager {
     pub root_dir: &'static fs::DirEntry,

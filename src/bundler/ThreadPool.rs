@@ -7,6 +7,7 @@
 //! bitwise struct copy).
 
 use core::ops::{Deref, DerefMut};
+use core::pin::Pin;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -61,7 +62,7 @@ pub struct ThreadPool {
 }
 
 enum WorkerPool {
-    Owned(AliasableBox<ThreadPoolLib::ThreadPool>),
+    Owned(Pin<Box<ThreadPoolLib::ThreadPool>>),
     Lent(BackRef<ThreadPoolLib::ThreadPool>),
 }
 
@@ -88,12 +89,12 @@ impl ThreadPool {
             None => {
                 let cpu_count = bun_core::get_thread_count();
                 bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
-                WorkerPool::Owned(AliasableBox::new(ThreadPoolLib::ThreadPool::init(
+                WorkerPool::Owned(ThreadPoolLib::ThreadPool::new_boxed(
                     ThreadPoolLib::Config {
                         max_threads: u32::from(cpu_count),
                         ..Default::default()
                     },
-                )))
+                ))
             }
         };
         ThreadPool {
@@ -163,16 +164,19 @@ impl ThreadPool {
             .filter(|_| matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode));
 
         let parse_task = bun_core::heap::into_raw(parse_task);
-        let (pool, task) = match io_pool {
-            Some(io) => {
-                self.io_tasks_in_flight.add_one();
-                // SAFETY: a field of the box above, which the task's callback takes back.
-                (io, unsafe { &raw mut (*parse_task).io_task })
-            }
-            // SAFETY: as above.
-            None => (self.worker_pool(), unsafe { &raw mut (*parse_task).task }),
+        // SAFETY: a field of the box above, which the task's callback takes back. What the task
+        // borrows lives until the bundle is dropped; see `get_worker_slow`.
+        let (pool, batch) = unsafe {
+            let (pool, task) = match io_pool {
+                Some(io) => {
+                    self.io_tasks_in_flight.add_one();
+                    (io, &raw mut (*parse_task).io_task)
+                }
+                None => (self.worker_pool(), &raw mut (*parse_task).task),
+            };
+            (pool, ThreadPoolLib::Batch::from_raw(task))
         };
-        schedule_fn(pool, ThreadPoolLib::Batch::from(task));
+        schedule_fn(pool, batch);
     }
 
     pub(crate) fn schedule(&self, parse_task: Box<ParseTask<'_>>) {
@@ -242,8 +246,9 @@ impl Drop for ThreadPool {
             // One without a pool thread drops here: this thread made it, or one that has been joined.
             if let Some(thread) = worker.thread {
                 let worker = worker.into_raw();
-                // SAFETY: a field of the box above, which the task's callback takes back.
-                thread.push_idle_task(unsafe { &raw mut (*worker).drop_task });
+                // SAFETY: a field of the box above, which the task's callback takes back on `thread`.
+                let batch = unsafe { ThreadPoolLib::Batch::from_raw(&raw mut (*worker).drop_task) };
+                thread.push_idle_task(batch);
             }
         }
         self.wake_for_idle_events();

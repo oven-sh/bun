@@ -121,8 +121,8 @@ impl MiniEventLoop {
         // SAFETY: no task runs in this borrow.
         let tasks = unsafe { &mut *self.tasks.get() };
         let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
+        let count = concurrent.len();
+        if concurrent.is_empty() {
             return tasks.readable_length();
         }
 
@@ -176,11 +176,24 @@ impl MiniEventLoop {
         self.on_after_event_loop();
     }
 
-    /// `task` must outlive the queued work item; ownership of the intrusive
-    /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
-        self.concurrent_tasks.push(task);
+    /// # Safety
+    /// `task` is not queued and stays valid until its callback is called. The callback is sound to
+    /// call once on this loop's thread, with the context passed to `tick_once`.
+    pub unsafe fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+        // SAFETY: fn contract. Only this loop's thread pops.
+        unsafe { self.concurrent_tasks.push(task) };
         self.loop_.wakeup();
+    }
+
+    /// Calls `callback(value, context)` on this loop's thread.
+    pub fn enqueue_callback_concurrent<T: Send + 'static>(
+        &self,
+        value: T,
+        callback: fn(T, *mut c_void),
+    ) {
+        let task = AnyTaskWithExtraContext::from_callback_auto_deinit(value, callback);
+        // SAFETY: a new allocation, which its callback frees. `T` is `Send`.
+        unsafe { self.enqueue_task_concurrent(task) };
     }
 
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
@@ -201,11 +214,9 @@ impl MiniEventLoop {
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
-        // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.concurrent_tasks
-            .push(unsafe { NonNull::new_unchecked(task) });
-
-        self.loop_.wakeup();
+        // SAFETY: `task` was just initialized above, is non-null (derived from `ctx`) and
+        // lives as long as `ctx`.
+        unsafe { self.enqueue_task_concurrent(NonNull::new_unchecked(task)) };
     }
 }
 

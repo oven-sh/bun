@@ -33,7 +33,7 @@ use bun_threading::{Guarded, OwnedTask, thread_pool};
 use crate::bun_fs::FileSystem;
 use crate::cache_publish::UnfinishedEntry;
 use crate::integrity::{self, Integrity};
-use crate::package_manager_real::{INBOX, PackageManager, THREAD_POOL};
+use crate::package_manager_real::{INBOX, PackageManager, install_pool};
 use crate::{ExtractTarball, NetworkTask};
 
 type OSPathZ<'a> = &'a OSPathSliceZ;
@@ -254,7 +254,7 @@ impl OwnedTask for DrainTask {
 impl DrainTask {
     fn schedule(mut self: Box<Self>, incoming: Arc<Guarded<Incoming>>) {
         self.incoming = Some(incoming);
-        THREAD_POOL.schedule(thread_pool::Batch::from_owned(self));
+        install_pool().schedule(thread_pool::Batch::from_owned(self));
     }
 
     fn is_decoding(&self) -> bool {

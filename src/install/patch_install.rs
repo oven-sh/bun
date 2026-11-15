@@ -35,7 +35,7 @@ pub struct PatchTask {
 
 bun_threading::intrusive_work_task!(PatchTask, task);
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
+// SAFETY: `next` is the sole intrusive link for `OwnedQueue<Box<PatchTask>>`.
 unsafe impl bun_threading::Linked for PatchTask {
     #[inline]
     unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {

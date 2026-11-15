@@ -6,26 +6,19 @@
 //!
 //! Example:
 //! ```ignore
-//! static M: Mutex = Mutex::new();
+//! static PREDICATE: Guarded<bool> = Guarded::new(false);
 //! static C: Condition = Condition::new();
-//! static PREDICATE: AtomicBool = AtomicBool::new(false);
 //!
 //! fn consumer() {
-//!     M.lock();
-//!     // (unlock on scope exit)
+//!     let mut predicate = PREDICATE.lock();
 //!
-//!     while !PREDICATE.load(Relaxed) {
-//!         C.wait(&M);
+//!     while !*predicate {
+//!         C.wait(&mut predicate);
 //!     }
-//!     M.unlock();
 //! }
 //!
 //! fn producer() {
-//!     {
-//!         M.lock();
-//!         PREDICATE.store(true, Relaxed);
-//!         M.unlock();
-//!     }
+//!     *PREDICATE.lock() = true;
 //!     C.signal();
 //! }
 //!
@@ -37,11 +30,11 @@
 //! Note that condition variables can only reliably unblock threads that are sequenced before them using the same Mutex.
 //! This means that the following is allowed to deadlock:
 //! ```text
-//! thread-1: mutex.lock()
-//! thread-1: condition.wait(&mutex)
+//! thread-1: guarded.lock()
+//! thread-1: condition.wait(&mut guard)
 //!
-//! thread-2: // mutex.lock() (without this, the following signal may not see the waiting thread-1)
-//! thread-2: // mutex.unlock() (this is optional for correctness once locked above, as signal can be called while holding the mutex)
+//! thread-2: // guarded.lock() (without this, the following signal may not see the waiting thread-1)
+//! thread-2: // drop(guard) (this is optional for correctness once locked above, as signal can be called while holding the mutex)
 //! thread-2: condition.signal()
 //! ```
 
@@ -52,7 +45,7 @@ use core::sync::atomic::Ordering;
 
 #[cfg(not(windows))]
 use crate::Futex;
-use crate::Mutex;
+use crate::MutexGuard;
 use crate::guarded::GuardedLock;
 
 #[derive(Default)]
@@ -81,19 +74,19 @@ impl Condition {
     /// Atomically releases the Mutex, blocks the caller thread, then re-acquires the Mutex on return.
     /// "Atomically" here refers to accesses done on the Condition after acquiring the Mutex.
     ///
-    /// The Mutex must be locked by the caller's thread when this function is called.
+    /// `guard` is `&mut` so the protected `T` cannot be observed while the Mutex is released.
     /// A Mutex can have multiple Conditions waiting with it concurrently, but not the opposite.
-    /// It is undefined behavior for multiple threads to wait ith different mutexes using the same Condition concurrently.
+    /// Threads that wait with different mutexes using the same Condition concurrently can miss a signal.
     /// Once threads have finished waiting with one Mutex, the Condition can be used to wait with another Mutex.
     ///
-    /// A blocking call to wait() is unblocked from one of the following conditions:
+    /// A blocking call to `wait()` is unblocked from one of the following conditions:
     /// - a spurious ("at random") wake up occurs
     /// - a future call to `signal()` or `broadcast()` which has acquired the Mutex and is sequenced after this `wait()`.
     ///
-    /// Given wait() can be interrupted spuriously, the blocking condition should be checked continuously
+    /// Given `wait()` can be interrupted spuriously, the blocking condition should be checked continuously
     /// irrespective of any notifications from `signal()` or `broadcast()`.
-    pub fn wait(&self, mutex: &Mutex) {
-        match self.impl_.wait(mutex, None) {
+    pub fn wait<T>(&self, guard: &mut GuardedLock<'_, T>) {
+        match self.impl_.wait(&mut guard.mutex_guard, None) {
             Ok(()) => {}
             Err(TimeoutError::Timeout) => unreachable!(), // no timeout provided so we shouldn't have timed-out
         }
@@ -102,9 +95,9 @@ impl Condition {
     /// Atomically releases the Mutex, blocks the caller thread, then re-acquires the Mutex on return.
     /// "Atomically" here refers to accesses done on the Condition after acquiring the Mutex.
     ///
-    /// The Mutex must be locked by the caller's thread when this function is called.
+    /// `guard` is `&mut` so the protected `T` cannot be observed while the Mutex is released.
     /// A Mutex can have multiple Conditions waiting with it concurrently, but not the opposite.
-    /// It is undefined behavior for multiple threads to wait ith different mutexes using the same Condition concurrently.
+    /// Threads that wait with different mutexes using the same Condition concurrently can miss a signal.
     /// Once threads have finished waiting with one Mutex, the Condition can be used to wait with another Mutex.
     ///
     /// A blocking call to `timed_wait()` is unblocked from one of the following conditions:
@@ -114,8 +107,12 @@ impl Condition {
     ///
     /// Given `timed_wait()` can be interrupted spuriously, the blocking condition should be checked continuously
     /// irrespective of any notifications from `signal()` or `broadcast()`.
-    pub(crate) fn timed_wait(&self, mutex: &Mutex, timeout_ns: u64) -> Result<(), TimeoutError> {
-        self.impl_.wait(mutex, Some(timeout_ns))
+    pub fn timed_wait<T>(
+        &self,
+        guard: &mut GuardedLock<'_, T>,
+        timeout_ns: u64,
+    ) -> Result<(), TimeoutError> {
+        self.impl_.wait(&mut guard.mutex_guard, Some(timeout_ns))
     }
 
     /// Unblocks at least one thread blocked in a call to `wait()` or `timed_wait()` with a given Mutex.
@@ -130,32 +127,6 @@ impl Condition {
     /// `broadcast()` can be called with or without the relevant Mutex being acquired and have no "effect" if there's no observable blocked threads.
     pub fn broadcast(&self) {
         self.impl_.wake(Notify::All);
-    }
-
-    // ── parking_lot::Condvar parity (guard-style API) ─────────────────────
-    //
-    // The base `wait` takes a bare `&Mutex`. Callers that hold a
-    // `GuardedLock<'_, T>` instead use these overloads, which peel the inner
-    // `&Mutex` out of the guard and forward. The mutex is unlocked for the
-    // duration of the OS wait and re-locked before return, so the guard's
-    // `Drop` (which unlocks once) remains balanced.
-    //
-    // `guard` is `&mut` so the protected `T` cannot be observed while the
-    // mutex is released inside the wait — same contract as
-    // `parking_lot::Condvar::wait(&mut MutexGuard<T>)`.
-
-    /// [`wait`](Self::wait) for callers holding a [`GuardedLock`].
-    pub fn wait_guarded<T>(&self, guard: &mut GuardedLock<'_, T, Mutex>) {
-        self.wait(guard.mutex())
-    }
-
-    /// [`timed_wait`](Self::timed_wait) for callers holding a [`GuardedLock`].
-    pub fn timed_wait_guarded<T>(
-        &self,
-        guard: &mut GuardedLock<'_, T, Mutex>,
-        timeout_ns: u64,
-    ) -> Result<(), TimeoutError> {
-        self.timed_wait(guard.mutex(), timeout_ns)
     }
 
     /// Alias for [`signal`](Self::signal) — `parking_lot::Condvar` spelling.
@@ -228,7 +199,12 @@ mod windows_impl {
             }
         }
 
-        pub(super) fn wait(&self, mutex: &Mutex, timeout: Option<u64>) -> Result<(), TimeoutError> {
+        pub(super) fn wait(
+            &self,
+            guard: &mut MutexGuard<'_>,
+            timeout: Option<u64>,
+        ) -> Result<(), TimeoutError> {
+            let mutex = guard.mutex();
             let mut timeout_overflowed = false;
             let mut timeout_ms: windows::DWORD = windows::INFINITE;
 
@@ -252,7 +228,7 @@ mod windows_impl {
             }
             // SAFETY: `condition` and `srwlock` are UnsafeCell-wrapped OS sync primitives;
             // kernel32 mutates them internally and provides its own synchronization. The
-            // mutex is locked by the caller per this function's contract.
+            // guard holds the mutex on this thread.
             let rc = unsafe {
                 kernel32::SleepConditionVariableSRW(
                     self.condition.get(),
@@ -322,7 +298,8 @@ impl FutexImpl {
     const ONE_SIGNAL: u32 = 1 << 16;
     const SIGNAL_MASK: u32 = 0xffff << 16;
 
-    fn wait(&self, mutex: &Mutex, timeout: Option<u64>) -> Result<(), TimeoutError> {
+    fn wait(&self, guard: &mut MutexGuard<'_>, timeout: Option<u64>) -> Result<(), TimeoutError> {
+        let mutex = guard.mutex();
         // Observe the epoch, then check the state again to see if we should wake up.
         // The epoch must be observed before we check the state or we could potentially miss a wake() and deadlock:
         //
@@ -338,7 +315,8 @@ impl FutexImpl {
         debug_assert!(state & Self::WAITER_MASK != Self::WAITER_MASK);
         state += Self::ONE_WAITER;
 
-        mutex.unlock();
+        // SAFETY: the guard holds the mutex on this thread, and is borrowed until it is locked again.
+        unsafe { crate::Mutex::unlock_raw(mutex) };
         // Re-acquire on every exit path (Ok and Err).
         // Condvar wait semantics (unlock, block, re-lock) are the inverse of MutexGuard,
         // so the re-lock is expressed as a one-off defer rather than an RAII guard type.

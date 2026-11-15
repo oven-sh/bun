@@ -20,7 +20,7 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{Mutex, Semaphore};
+use crate::{Mutex, MutexGuard, Semaphore};
 
 // ── raw state machine ──────────────────────────────────────────────────────
 
@@ -56,9 +56,9 @@ impl RawRwLock {
         }
     }
 
-    fn lock(&self) {
+    fn lock(&self) -> RawWriteGuard<'_> {
         let _ = self.state.fetch_add(WRITER, Ordering::SeqCst);
-        self.mutex.lock();
+        let mutex_guard = self.mutex.lock_guard();
 
         // Wrapping sub so the single fetch_add both sets IS_WRITING and clears
         // the pending-writer reservation.
@@ -68,11 +68,10 @@ impl RawRwLock {
         if state & READER_MASK != 0 {
             self.semaphore.wait();
         }
-    }
-
-    fn unlock(&self) {
-        let _ = self.state.fetch_and(!IS_WRITING, Ordering::SeqCst);
-        self.mutex.unlock();
+        RawWriteGuard {
+            state: &self.state,
+            _mutex_guard: mutex_guard,
+        }
     }
 
     fn lock_shared(&self) {
@@ -89,9 +88,8 @@ impl RawRwLock {
             }
         }
 
-        self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         let _ = self.state.fetch_add(READER, Ordering::SeqCst);
-        self.mutex.unlock();
     }
 
     fn unlock_shared(&self) {
@@ -100,6 +98,19 @@ impl RawRwLock {
         if (state & READER_MASK == READER) && (state & IS_WRITING != 0) {
             self.semaphore.post();
         }
+    }
+}
+
+/// Returned by [`RawRwLock::lock`]. Unlocks on `Drop`.
+struct RawWriteGuard<'a> {
+    state: &'a AtomicUsize,
+    _mutex_guard: MutexGuard<'a>,
+}
+
+impl Drop for RawWriteGuard<'_> {
+    #[inline]
+    fn drop(&mut self) {
+        let _ = self.state.fetch_and(!IS_WRITING, Ordering::SeqCst);
     }
 }
 
@@ -141,10 +152,9 @@ impl<T> RwLock<T> {
     /// other writer have released.
     #[inline]
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
-        self.raw.lock();
         RwLockWriteGuard {
             lock: self,
-            _not_send: PhantomData,
+            _raw_guard: self.raw.lock(),
         }
     }
 }
@@ -177,11 +187,11 @@ impl<'a, T> Drop for RwLockReadGuard<'a, T> {
 
 /// RAII exclusive-write guard. `Deref` + `DerefMut`.
 ///
-/// `!Send`: dropping on another thread would call `Mutex::unlock()` off the
+/// `!Send`: dropping on another thread would call `Mutex::unlock_raw()` off the
 /// locking thread, which Darwin `os_unfair_lock` / Windows `SRWLOCK` forbid.
 pub struct RwLockWriteGuard<'a, T> {
     lock: &'a RwLock<T>,
-    _not_send: PhantomData<*const ()>,
+    _raw_guard: RawWriteGuard<'a>,
 }
 
 impl<'a, T> Deref for RwLockWriteGuard<'a, T> {
@@ -198,13 +208,6 @@ impl<'a, T> DerefMut for RwLockWriteGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: exclusive lock held; this is the only live reference.
         unsafe { &mut *self.lock.value.get() }
-    }
-}
-
-impl<'a, T> Drop for RwLockWriteGuard<'a, T> {
-    #[inline]
-    fn drop(&mut self) {
-        self.lock.raw.unlock();
     }
 }
 
@@ -235,8 +238,7 @@ mod tests {
     fn raw_internal_state() {
         // Regression test: the WRITER flag must be cleared (not subtracted) by lock().
         let raw = RawRwLock::new();
-        raw.lock();
-        raw.unlock();
+        drop(raw.lock());
         assert_eq!(raw.state.load(Ordering::SeqCst), 0);
     }
 }

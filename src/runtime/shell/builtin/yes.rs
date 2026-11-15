@@ -63,12 +63,12 @@ impl Yes {
             filled += to_copy;
             copies -= 1;
         }
+        buf.truncate(filled);
 
         Self::state_mut(interp, cmd).task = Some(Box::new(YesTask {
             interp: None,
             cmd,
             buffer: buf,
-            buffer_used: filled,
             concurrent_task: AnyTaskWithExtraContext::default(),
         }));
 
@@ -95,7 +95,7 @@ impl Yes {
             let chunk = Self::extract(&mut me.impl_).chunk();
             let mut err = None;
             for _ in 0..4 {
-                if let Err(e) = (me.stdout).write_no_io_to(&mut interp.shells, shell, chunk) {
+                if let Err(e) = me.stdout.write_no_io_to(&mut interp.shells, shell, chunk) {
                     err = Some(e);
                     break;
                 }
@@ -169,8 +169,7 @@ impl Yes {
     }
 
     fn chunk(&self) -> &[u8] {
-        let task = self.task.as_deref().expect("YesTask is not queued");
-        &task.buffer[..task.buffer_used]
+        &self.task.as_deref().expect("YesTask is not queued").buffer
     }
 }
 
@@ -182,7 +181,6 @@ pub(crate) struct YesTask {
     cmd: NodeId,
     /// The output line (`"y\n"` or joined argv + `'\n'`), tiled out to ~BUFSIZ.
     buffer: Vec<u8>,
-    buffer_used: usize,
     /// For the mini loop.
     concurrent_task: AnyTaskWithExtraContext,
 }

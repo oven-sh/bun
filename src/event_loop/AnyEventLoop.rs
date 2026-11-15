@@ -4,7 +4,6 @@ use bun_dotenv::Loader as DotEnvLoader;
 use bun_ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
-use crate::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use crate::ConcurrentTask::ConcurrentTask;
 use crate::MiniEventLoop::MiniEventLoop;
 use crate::{JsEventLoop, JsEventLoopKind};
@@ -176,12 +175,6 @@ pub enum EventLoopHandle {
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant.
     Mini(BackRef<MiniEventLoop>),
-}
-
-/// Owned storage for either kind of concurrent task.
-pub enum EventLoopTask {
-    Js(ConcurrentTask),
-    Mini(AnyTaskWithExtraContext),
 }
 
 /// RAII pairing for [`EventLoopHandle::enter`] / [`EventLoopHandle::exit`].

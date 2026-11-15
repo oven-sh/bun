@@ -108,9 +108,5 @@ impl ShellGlobTask {
     }
 }
 
-/// A child node in the
-/// recursive rm tree-walk; posts back to main when its subtree is empty.
-/// Re-export: the real DirTask lives in `builtins::rm` (full recursive
-/// tree-walk node). `dispatch.rs` calls `ShellRmDirTask::run_from_main_thread`
-/// for the verbose-write bounce-back.
+/// Posted for `-v` output, and by the root when the operand is done.
 pub(crate) use crate::shell::builtins::rm::DirTask as ShellRmDirTask;

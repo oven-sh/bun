@@ -15,7 +15,7 @@ use bun_ast::{
 /// Returns the optimized expression if successful, None otherwise
 fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     e_: &mut E::Binary,
-    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+    p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
     replacement_op: js_ast::op::Code,
 ) -> Option<Expr> {
     if p.options.features.is_library {
@@ -84,7 +84,7 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
 fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
     left: &ExprData,
     right: &ExprData,
-    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+    p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
 ) -> Equality {
     if STRICT {
         ExprData::eql::<_, StrictEql>(left, right, p)
@@ -108,7 +108,7 @@ pub struct BinaryExpressionVisitor {
 impl BinaryExpressionVisitor {
     pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+        p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
     ) -> Expr {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
@@ -722,7 +722,7 @@ impl BinaryExpressionVisitor {
 
     pub(crate) fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
-        p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+        p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
     ) -> Option<Expr> {
         // Snapshot the `Copy` arena handle before taking the working `&mut`
         // via `StoreRef::DerefMut`, so the early-return re-wrap below does not

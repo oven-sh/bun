@@ -436,6 +436,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_create_string_utf16", () => {
+    it("reads from an odd address", async () => {
+      const output = await checkSameOutput("test_napi_create_string_utf16_unaligned", []);
+      expect(output.split(/\r?\n/)).toEqual(["odd", "odd address"]);
+    });
+  });
+
+  describe("napi_get_boolean", () => {
+    // Node reads out of bounds here.
+    it("takes every byte but zero for true", async () => {
+      const output = await runOn(bunExe(), "test_napi_get_boolean_bytes", []);
+      expect(output.match(/^\d+: \d/gm)).toEqual(["0: 0", "1: 1", "2: 1", "128: 1", "255: 1"]);
+    });
+  });
+
   describe("napi_create_external_buffer", () => {
     it("handles empty/null data without throwing", async () => {
       const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);

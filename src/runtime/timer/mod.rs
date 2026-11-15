@@ -542,7 +542,7 @@ impl All {
             fake_timers: FakeTimers::default(),
             maps: UnsafeCell::default(),
             date_header_timer: DateHeaderTimer::default(),
-            wtf_timers: Guarded::init(TimerHeap::default()),
+            wtf_timers: Guarded::new(TimerHeap::default()),
         }
     }
 

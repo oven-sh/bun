@@ -70,9 +70,12 @@ impl RawRwLock {
         }
     }
 
-    fn unlock(&self) {
+    /// # Safety
+    /// This thread called [`lock`](Self::lock).
+    unsafe fn unlock(&self) {
         let _ = self.state.fetch_and(!IS_WRITING, Ordering::SeqCst);
-        self.mutex.unlock();
+        // SAFETY: `lock` returns with `mutex` locked (fn contract).
+        unsafe { Mutex::unlock_raw(&raw const self.mutex) };
     }
 
     fn lock_shared(&self) {
@@ -89,9 +92,8 @@ impl RawRwLock {
             }
         }
 
-        self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
         let _ = self.state.fetch_add(READER, Ordering::SeqCst);
-        self.mutex.unlock();
     }
 
     fn unlock_shared(&self) {
@@ -177,7 +179,7 @@ impl<'a, T> Drop for RwLockReadGuard<'a, T> {
 
 /// RAII exclusive-write guard. `Deref` + `DerefMut`.
 ///
-/// `!Send`: dropping on another thread would call `Mutex::unlock()` off the
+/// `!Send`: dropping on another thread would call `Mutex::unlock_raw()` off the
 /// locking thread, which Darwin `os_unfair_lock` / Windows `SRWLOCK` forbid.
 pub struct RwLockWriteGuard<'a, T> {
     lock: &'a RwLock<T>,
@@ -204,7 +206,8 @@ impl<'a, T> DerefMut for RwLockWriteGuard<'a, T> {
 impl<'a, T> Drop for RwLockWriteGuard<'a, T> {
     #[inline]
     fn drop(&mut self) {
-        self.lock.raw.unlock();
+        // SAFETY: `write` locked it on this thread, and the guard is `!Send`.
+        unsafe { self.lock.raw.unlock() };
     }
 }
 
@@ -236,7 +239,8 @@ mod tests {
         // Regression test: the WRITER flag must be cleared (not subtracted) by lock().
         let raw = RawRwLock::new();
         raw.lock();
-        raw.unlock();
+        // SAFETY: locked just above.
+        unsafe { raw.unlock() };
         assert_eq!(raw.state.load(Ordering::SeqCst), 0);
     }
 }

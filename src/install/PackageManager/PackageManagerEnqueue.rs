@@ -354,7 +354,7 @@ fn enqueue_tarball_for_reading(
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
 
     let alias = this.lockfile.buffers.dependencies[dependency_id as usize].name;
-    let task = enqueue_local_tarball(
+    enqueue_local_tarball(
         this,
         task_id,
         dependency_id,
@@ -362,9 +362,6 @@ fn enqueue_tarball_for_reading(
         &resolution,
         Some(&integrity),
     );
-    this.state
-        .task_batch
-        .push(ThreadPool::Batch::from_owned(task));
     Ok(())
 }
 
@@ -2446,17 +2443,14 @@ fn bind_row_without_manifest(
                     .state
                     .has_created_network_task(task_id, dependency.behavior.is_required())
                 {
-                    let task = enqueue_local_tarball(
-                        &this.install_fields(),
+                    enqueue_local_tarball(
+                        &mut this.install_fields(),
                         task_id,
                         id,
                         dependency.name,
                         &res,
                         None,
                     );
-                    this.state
-                        .task_batch
-                        .push(ThreadPool::Batch::from_owned(task));
                 }
                 return Ok(());
             }
@@ -2872,14 +2866,14 @@ pub(crate) fn enqueue_git_checkout(
 }
 
 fn enqueue_local_tarball(
-    this: &InstallFields<'_>,
+    this: &mut InstallFields<'_>,
     task_id: Task::Id,
     dependency_id: DependencyID,
     name: SemverString,
     resolution: &Resolution,
     // Of the package in the loaded lockfile.
     locked_integrity: Option<&Integrity>,
-) -> HiveBox<Task::Task> {
+) {
     let temp_dir = get_temporary_directory(this);
     let path = this.lockfile.str(resolution.local_tarball());
     // Resolve the on-disk tarball path here on the main thread. The task
@@ -2923,7 +2917,10 @@ fn enqueue_local_tarball(
         },
         data: None,
     };
-    Task::Task::create(task_id, job)
+    let task = Task::Task::create(task_id, job);
+    this.state
+        .task_batch
+        .push(ThreadPool::Batch::from_owned(task));
 }
 
 /// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.

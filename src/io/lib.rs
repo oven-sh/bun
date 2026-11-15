@@ -639,13 +639,20 @@ impl IoRequestLoop {
     ///
     /// Callers must call `ensure_init()` and handle its error before scheduling
     /// an operation's first request.
-    pub fn schedule(request: &mut Request) {
+    ///
+    /// # Safety
+    /// `request` is not queued, and stays valid and unaliased until its callback is called.
+    pub unsafe fn schedule(request: *mut Request) {
         let this = LOOP
             .get()
             .expect("ensure_init() succeeded before schedule()");
-        debug_assert!(!request.scheduled);
-        request.scheduled = true;
-        this.pending.push(core::ptr::NonNull::from(request));
+        // SAFETY: fn contract.
+        unsafe {
+            debug_assert!(!(*request).scheduled);
+            (*request).scheduled = true;
+            this.pending
+                .push(core::ptr::NonNull::new_unchecked(request));
+        }
         this.waker.wake();
     }
 
@@ -793,8 +800,9 @@ impl IoRequestLoop {
 
             // Process pending requests
             {
-                let mut pending = self.pending.pop_batch().iterator();
-                events_list.reserve(pending.batch.count);
+                let batch = self.pending.pop_batch();
+                events_list.reserve(batch.len());
+                let mut pending = batch.iterator();
                 // `reserve` above ⇒ no realloc; apply_kqueue
                 // fully overwrites the slot so the zero is a safe placeholder.
                 #[inline(always)]

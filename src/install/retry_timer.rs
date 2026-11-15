@@ -205,9 +205,9 @@ fn run() {
         match timer.deadlines.iter().min().copied() {
             Some(next) => {
                 let ns = u64::try_from((next - now).as_nanos()).unwrap_or(u64::MAX);
-                let _ = CHANGED.timed_wait_guarded(&mut timer, ns);
+                let _ = CHANGED.timed_wait(&mut timer, ns);
             }
-            None => CHANGED.wait_guarded(&mut timer),
+            None => CHANGED.wait(&mut timer),
         }
     }
 }

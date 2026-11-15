@@ -18,8 +18,8 @@ use crate::hir::environment::{Environment, OutputMode};
 use crate::hir::object_shape::HookKind;
 use crate::hir::visitors;
 use crate::hir::{
-    ArrayPatternElement, AstAlloc, BlockId, BlockKind, HirFunction, HirVec, IdentifierId,
-    IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
+    ArrayPatternElement, AstAlloc, BasicBlock, BlockId, BlockKind, HirFunction, HirVec,
+    IdentifierId, IdentifierName, Instruction, InstructionId, InstructionKind, InstructionValue,
     ObjectPropertyOrSpread, Pattern, Terminal,
 };
 use crate::optimization::prune_maybe_throws::value_may_throw;
@@ -31,7 +31,7 @@ use crate::optimization::prune_maybe_throws::value_may_throw;
 /// Corresponds to TS `deadCodeElimination(fn: HIRFunction): void`.
 pub(crate) fn dead_code_elimination(func: &mut HirFunction, env: &Environment) {
     // Phase 1: Find/mark all referenced identifiers
-    let state = find_referenced_identifiers(func, env, true);
+    let state = find_referenced_identifiers(func, env, Keeps::BlockValuesAndCaughtThrows);
 
     // Phase 2: Prune / sweep unreferenced identifiers and instructions
     let instructions = &mut func.instructions;
@@ -188,13 +188,20 @@ fn is_caught(terminal: &Terminal) -> bool {
     )
 }
 
+/// What a walk marks though nothing reads it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Keeps {
+    /// What dead code elimination keeps: the value of a block that is not a `Block`, as upstream, and what a
+    /// handler sees throw. Upstream takes `try { props.a.b; } catch { return null; }` for nothing.
+    BlockValuesAndCaughtThrows,
+    BlockValues,
+    Nothing,
+}
+
 /// Phase 1: Find all referenced identifiers via fixed-point iteration.
-/// `preserve_caught_throws`: upstream takes `try { props.a.b; } catch { return null; }` for nothing.
-fn find_referenced_identifiers(
-    func: &HirFunction,
-    env: &Environment,
-    preserve_caught_throws: bool,
-) -> State {
+fn find_referenced_identifiers(func: &HirFunction, env: &Environment, keeps: Keeps) -> State {
+    let preserve_caught_throws = keeps == Keeps::BlockValuesAndCaughtThrows;
+    let preserve_block_values = keeps != Keeps::Nothing;
     let has_loop = has_back_edge(func);
     let mut state = State::new(env);
     let mut size;
@@ -216,7 +223,8 @@ fn find_referenced_identifiers(
                 let instr_id = block.instructions[i];
                 let instr = &func.instructions[instr_id.0 as usize];
 
-                let is_block_value = block.kind != BlockKind::Block && i == instr_count - 1;
+                let is_block_value =
+                    preserve_block_values && block.kind != BlockKind::Block && i == instr_count - 1;
 
                 if is_block_value {
                     // Last instr of a value block is never eligible for pruning
@@ -278,10 +286,16 @@ fn find_referenced_identifiers(
     state
 }
 
-/// By id: kept only because a handler sees it throw. A scope's guard is outside the `try`: only the root is read there.
-pub(crate) fn find_semantic_only_caught_instructions(
+/// By id: what is kept while nothing reads what it gives. A scope's guard is outside the `try` or the function
+/// that holds the instruction: only the root of each operand is read there.
+/// - Kept because a handler sees it throw.
+/// - `unread_reads`, not in upstream: a read of a property kept only as the value of its block (`el?.x;`,
+///   `d && el?.x;`). Upstream leaves the dependency of a read to what reads it. Nothing reads this one, so the
+///   function that holds it is made once, or again only when what the read gives is another value.
+pub(crate) fn find_semantic_only_instructions(
     func: &HirFunction,
     env: &Environment,
+    unread_reads: bool,
 ) -> Option<Vec<bool>> {
     let mut candidates = Vec::new();
     for block in func.body.blocks.values() {
@@ -293,17 +307,250 @@ pub(crate) fn find_semantic_only_caught_instructions(
             );
         }
     }
-    if candidates.is_empty() {
+    if candidates.is_empty() && !unread_reads {
         return None;
     }
 
-    let state = find_referenced_identifiers(func, env, false);
-    let mut semantic_only = vec![false; func.instructions.len()];
-    for instr_id in candidates {
-        let lvalue = func.instructions[instr_id.0 as usize].lvalue.identifier;
-        semantic_only[instr_id.0 as usize] = !is_id_or_name_used(&state, &env.identifiers, lvalue);
+    let mut semantic_only = Vec::new();
+    let mut has_unread_caught_throw = false;
+    let kept = (!candidates.is_empty())
+        .then(|| find_referenced_identifiers(func, env, Keeps::BlockValues));
+    if let Some(kept) = &kept {
+        semantic_only = vec![false; func.instructions.len()];
+        for instr_id in candidates {
+            let lvalue = func.instructions[instr_id.0 as usize].lvalue.identifier;
+            let is_unread = !is_id_or_name_used(kept, &env.identifiers, lvalue);
+            semantic_only[instr_id.0 as usize] = is_unread;
+            has_unread_caught_throw |= is_unread;
+        }
     }
-    Some(semantic_only)
+
+    let can_keep_an_unread_read =
+        unread_reads && can_keep_an_unread_read(func, env, has_unread_caught_throw);
+    // A debug build always looks, and asserts what it finds.
+    if can_keep_an_unread_read || (unread_reads && cfg!(debug_assertions)) {
+        let read = find_referenced_identifiers(func, env, Keeps::Nothing);
+        for block in func.body.blocks.values() {
+            for instr_id in &block.instructions {
+                let instr = &func.instructions[instr_id.0 as usize];
+                let given = instr.lvalue.identifier;
+                if is_member_read(&instr.value)
+                    && !is_id_or_name_used(&read, &env.identifiers, given)
+                    // What only a caught throw keeps is a candidate, or what a candidate reads: as on main.
+                    && (kept.as_ref())
+                        .is_none_or(|it| is_id_or_name_used(it, &env.identifiers, given))
+                {
+                    debug_assert!(
+                        can_keep_an_unread_read,
+                        "an unread read behind no block value"
+                    );
+                    if semantic_only.is_empty() {
+                        semantic_only = vec![false; func.instructions.len()];
+                    }
+                    semantic_only[instr_id.0 as usize] = true;
+                }
+            }
+        }
+    }
+    (!semantic_only.is_empty()).then_some(semantic_only)
+}
+
+/// A read of a property, which can run a getter.
+fn is_member_read(value: &InstructionValue) -> bool {
+    matches!(
+        value,
+        InstructionValue::PropertyLoad { .. } | InstructionValue::ComputedLoad { .. }
+    )
+}
+
+/// How many stores, phis or blocks `can_keep_an_unread_read` follows for one value. Then it takes the answer
+/// that runs the walk.
+const HOLDER_STEPS: u32 = 16;
+
+/// The test before the second walk of `find_semantic_only_instructions`: false only where that walk marks no
+/// read. A block that is not a `Block` keeps what it gives. That can be a read of a property, or be made of one,
+/// and be unread.
+fn can_keep_an_unread_read(
+    func: &HirFunction,
+    env: &Environment,
+    has_unread_caught_throw: bool,
+) -> bool {
+    let mut has_read_holder = false;
+    for block in func.body.blocks.values() {
+        if block.kind == BlockKind::Block {
+            continue;
+        }
+        let Some(last) = (block.instructions.last()).map(|id| &func.instructions[id.0 as usize])
+        else {
+            continue;
+        };
+        let given = match &last.value {
+            // What was thrown.
+            InstructionValue::StoreLocal { lvalue, .. }
+                if lvalue.kind == InstructionKind::Catch =>
+            {
+                continue;
+            }
+            InstructionValue::StoreLocal { lvalue, .. } => lvalue.place.identifier,
+            _ => last.lvalue.identifier,
+        };
+        if !holds_a_read(func, block, given, HOLDER_STEPS) {
+            continue;
+        }
+        if !is_read_next(func, env, block, given) {
+            return true;
+        }
+        has_read_holder = true;
+    }
+    // What reads a holder can be unread too: a read kept only for its throw, or in a loop the holder itself.
+    has_read_holder && (has_unread_caught_throw || has_loop(func))
+}
+
+/// Whether `id`, at the end of `block`, can be a read of a property or be made of one. It follows what a store
+/// or a phi gave: `d && el?.x` stores the phi of `el?.x`. Where it cannot follow, the answer is yes.
+fn holds_a_read(func: &HirFunction, block: &BasicBlock, id: IdentifierId, steps: u32) -> bool {
+    if steps == 0 {
+        return true;
+    }
+    for instr_id in block.instructions.iter().rev() {
+        let instr = &func.instructions[instr_id.0 as usize];
+        let gives = instr.lvalue.identifier == id;
+        if gives || visitors::value_lvalues(&instr.value).any(|place| place.identifier == id) {
+            return match &instr.value {
+                // An assignment gives what it stores. `d && f()` stores its `d`, which the branch reads.
+                InstructionValue::StoreLocal { value, .. } => {
+                    let is_value = |place: &crate::hir::Place| place.identifier == value.identifier;
+                    let is_branched_on = block.preds.iter().any(|pred| {
+                        (func.body.blocks.get(pred)).is_some_and(|pred| {
+                            visitors::terminal_operands(&pred.terminal).any(is_value)
+                        })
+                    });
+                    !is_branched_on && holds_a_read(func, block, value.identifier, steps - 1)
+                }
+                value => can_hold_a_read(value),
+            };
+        }
+    }
+    let before = |pred: &BlockId, id: IdentifierId| {
+        (func.body.blocks.get(pred)).is_none_or(|pred| holds_a_read(func, pred, id, steps - 1))
+    };
+    match (block.phis.iter()).find(|phi| phi.place.identifier == id) {
+        Some(phi) => (phi.operands.iter()).any(|(pred, place)| before(pred, place.identifier)),
+        // One block before this one, so no phi: `d && (f(), el?.x)` stores what the block of the comma stored.
+        None => match block.preds.len() {
+            // A parameter or a captured variable.
+            0 => false,
+            1 => block.preds.iter().any(|pred| before(pred, id)),
+            _ => true,
+        },
+    }
+}
+
+/// Whether what this instruction gives, or the variable that it assigns, can be a read of a property or be made
+/// of one while nothing reads it.
+fn can_hold_a_read(value: &InstructionValue) -> bool {
+    match value {
+        InstructionValue::PropertyLoad { .. } | InstructionValue::ComputedLoad { .. } => true,
+        // These only make a value of their operands, or of the variable that they name.
+        InstructionValue::UnaryExpression { .. }
+        | InstructionValue::BinaryExpression { .. }
+        | InstructionValue::TemplateLiteral { .. }
+        | InstructionValue::TypeCastExpression { .. }
+        | InstructionValue::ArrayExpression { .. }
+        | InstructionValue::ObjectExpression { .. }
+        | InstructionValue::JsxExpression { .. }
+        | InstructionValue::JsxFragment { .. }
+        | InstructionValue::LoadLocal { .. }
+        | InstructionValue::StoreLocal { .. }
+        | InstructionValue::Destructure { .. }
+        | InstructionValue::PrefixUpdate { .. }
+        | InstructionValue::PostfixUpdate { .. }
+        | InstructionValue::FunctionExpression { .. }
+        | InstructionValue::ObjectMethod { .. } => true,
+        // These have no operand.
+        InstructionValue::Primitive { .. }
+        | InstructionValue::JSXText { .. }
+        | InstructionValue::RegExpLiteral { .. }
+        | InstructionValue::MetaProperty { .. }
+        | InstructionValue::LoadGlobal { .. }
+        | InstructionValue::DeclareLocal { .. }
+        | InstructionValue::DeclareContext { .. }
+        | InstructionValue::Debugger { .. } => false,
+        // `pruneable_value` keeps these in client output, so what they read is read.
+        InstructionValue::CallExpression { .. }
+        | InstructionValue::MethodCall { .. }
+        | InstructionValue::NewExpression { .. }
+        | InstructionValue::TaggedTemplateExpression { .. }
+        | InstructionValue::Await { .. }
+        | InstructionValue::PropertyStore { .. }
+        | InstructionValue::ComputedStore { .. }
+        | InstructionValue::PropertyDelete { .. }
+        | InstructionValue::ComputedDelete { .. }
+        | InstructionValue::StoreGlobal { .. }
+        | InstructionValue::LoadContext { .. }
+        | InstructionValue::StoreContext { .. }
+        | InstructionValue::GetIterator { .. }
+        | InstructionValue::IteratorNext { .. }
+        | InstructionValue::NextPropertyOf { .. }
+        | InstructionValue::StartMemoize { .. }
+        | InstructionValue::FinishMemoize { .. }
+        | InstructionValue::UnsupportedNode { .. } => false,
+    }
+}
+
+/// Whether the terminal of `block`, a block that it goes to, or a block where the code goes on behind it names
+/// `id`, which the last instruction of `block` gives. That is where the value of a block is read.
+fn is_read_next(
+    func: &HirFunction,
+    env: &Environment,
+    block: &BasicBlock,
+    id: IdentifierId,
+) -> bool {
+    let is_id = |place: &crate::hir::Place| place.identifier == id;
+    let names = |block: &BasicBlock| {
+        (block.phis.iter()).any(|phi| phi.operands.values().any(is_id))
+            || block.instructions.iter().any(|instr_id| {
+                let value = &func.instructions[instr_id.0 as usize].value;
+                visitors::operands(value, &env.functions).any(is_id)
+            })
+            || visitors::terminal_operands(&block.terminal).any(is_id)
+    };
+    if visitors::terminal_operands(&block.terminal).any(is_id)
+        || (visitors::each_terminal_successor(&block.terminal).into_iter())
+            .any(|next| func.body.blocks.get(&next).is_some_and(names))
+    {
+        return true;
+    }
+    let mut at = block;
+    for _ in 0..HOLDER_STEPS {
+        let next = match &at.terminal {
+            Terminal::Goto { block, .. } => Some(*block),
+            Terminal::MaybeThrow { continuation, .. } => Some(*continuation),
+            terminal => visitors::terminal_fallthrough(terminal),
+        };
+        let Some(next) = next.and_then(|next| func.body.blocks.get(&next)) else {
+            return false;
+        };
+        if names(next) {
+            return true;
+        }
+        at = next;
+    }
+    false
+}
+
+/// A value that only its own loop reads is unread.
+fn has_loop(func: &HirFunction) -> bool {
+    func.body.blocks.values().any(|block| {
+        matches!(
+            block.terminal,
+            Terminal::DoWhile { .. }
+                | Terminal::While { .. }
+                | Terminal::For { .. }
+                | Terminal::ForOf { .. }
+                | Terminal::ForIn { .. }
+        )
+    })
 }
 
 /// Rewrite a retained instruction (destructuring cleanup, StoreLocal -> DeclareLocal).

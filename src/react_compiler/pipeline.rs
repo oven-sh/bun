@@ -759,7 +759,7 @@ pub(crate) fn run_reactive_scope_passes(
         "PruneUnusedScopes",
         crate::reactive_scopes::prune_unused_scopes(&mut reactive_fn, env)
     )?;
-    pass!(
+    let last_usage = pass!(
         env,
         "MergeReactiveScopesThatInvalidateTogether",
         crate::reactive_scopes::merge_reactive_scopes_that_invalidate_together(
@@ -775,8 +775,8 @@ pub(crate) fn run_reactive_scope_passes(
     pass!(
         env,
         "PropagateEarlyReturns",
-        crate::reactive_scopes::propagate_early_returns(&mut reactive_fn, env)
-    );
+        crate::reactive_scopes::propagate_early_returns(&mut reactive_fn, env, last_usage)
+    )?;
     pass!(
         env,
         "PruneUnusedLValues",

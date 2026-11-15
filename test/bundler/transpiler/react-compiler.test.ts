@@ -894,6 +894,390 @@ describe("bundler", () => {
     },
   });
 
+  // DeadCodeElimination keeps the value of a block, so a read of a property that nothing reads stays where it is one:
+  // `el?.offsetHeight;` (there to flush the layout), the update of a `for`, the last statement of a handler. A read
+  // leaves its dependency to what reads it, and nothing reads this one. A function whose only use of `el` it was, was
+  // made once and kept the `el` of the first render. babel-plugin-react-compiler 1.0.0 does the same. A nested
+  // function now depends on the variable that such a read is on. The guard reads the variable and not a path: a
+  // path at render would be a read that the source does not have there.
+  //
+  // A row is the log of each render of a function, then the size of its memo cache ("-": it has none). The build
+  // without the compiler prints the same log, but for the rows that have a log of their own.
+  {
+    const files = {
+      // What a function that renders has, by the order of its hooks. An effect runs at once, when it has no
+      // list or the list is another.
+      "/node_modules/react/index.js": `
+        const hooks = new Map();
+        const hook = make => {
+          const list = hooks.get(globalThis.rendering) ?? hooks.set(globalThis.rendering, []).get(globalThis.rendering);
+          const at = globalThis.hook++;
+          return at in list ? list[at] : (list[at] = make());
+        };
+        const changed = deps => {
+          const slot = hook(() => ({}));
+          const same = slot.deps && deps && slot.deps.length === deps.length && deps.every((it, i) => Object.is(it, slot.deps[i]));
+          slot.deps = deps;
+          return !same;
+        };
+        exports.useEffect = (f, deps) => { if (changed(deps)) { const cleanup = f(); if (typeof cleanup === "function") cleanup(); } };
+        exports.useLayoutEffect = exports.useEffect;
+        exports.useCallback = (f, deps) => { const slot = hook(() => ({})); if (changed(deps)) slot.f = f; return slot.f; };
+        exports.useRef = current => hook(() => ({ current }));
+      `,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx; exports.Fragment = "fragment";`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p }); exports.Fragment = "fragment";`,
+      "/node_modules/react/compiler-runtime.js": `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+        exports.size = fn => caches.get(fn)?.length ?? "-";
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+    };
+    const entry = /* jsx */ `
+      import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+      import { size } from "react/compiler-runtime";
+      let log = [];
+      // A getter gives the same value for each element, so a guard on what a read gives cannot tell them apart.
+      const mk = name => ({
+        get x() { log.push(name + ".x"); return 0; },
+        get y() { log.push(name + ".y"); return 0; },
+        get a() { log.push(name + ".a"); return { get b() { log.push(name + ".a.b"); return 0; } }; },
+        flush() { log.push(name + ".flush()"); },
+      });
+      const a = mk("a"), b = mk("b");
+      const sink = () => {};
+      const thrower = () => { throw new Error("thrown"); };
+      const useNothing = () => 0;
+      const count = (...lists) => lists.length;
+      const mutate = value => value;
+
+      // An optional chain that nothing reads.
+      function useOptional(el) { useEffect(() => { el?.x; }); }
+      function useOptionalDeep(el) { useEffect(() => { el?.a.b; }); }
+      function useOptionalInner(el) { useEffect(() => { el.a?.b; }); }
+      function useOptionalTwice(el) { useEffect(() => { el?.a?.b; }); }
+      function useOptionalOfProps(props) { useEffect(() => { props.el?.x; }); }
+      function useVoid(el) { useEffect(() => { void el?.x; }); }
+      function useUnusedConst(el) { useEffect(() => { const unused = el?.x; }); }
+      function useTwoReads(el) { useEffect(() => { el?.x; el?.y; }); }
+      function useStatementAfter(el, d) { useEffect(() => { el?.x; sink(d); }); }
+      function useUsedToo(el) { useEffect(() => { el?.x; sink(el?.x); }); }
+      function useComputed(el, k) { useEffect(() => { el.a?.[k]; }); }
+      function useComputedKey(el, o) { useEffect(() => { el?.[o?.y]; }); }
+      // It is the value of a comma, \`&&\`, \`||\` or \`?:\` that nothing reads. In a bundle with \`minify.syntax\` the parser
+      // makes one comma expression of the statements of a function before the compiler sees them.
+      function useCommaFirst(el, d) { useEffect(() => { el?.x, sink(d); }); }
+      function useCommaLast(el, d) { useEffect(() => { sink(d), el?.x; }); }
+      function useCommaLastDeep(el, d) { useEffect(() => { sink(d), el?.a.b; }); }
+      function useCommaComputed(el, k) { useEffect(() => { sink(k), el.a[k]; }); }
+      function useAnd(el, d) { useEffect(() => { d && el?.x; }); }
+      function useOr(el, d) { useEffect(() => { !d || el?.x; }); }
+      function useTernaryArms(el, d) { useEffect(() => { d ? el?.x : el?.y; }); }
+      function useAndComma(el, d) { useEffect(() => { d && (sink(d), el?.x); }); }
+      function useAndDeep(el, d) { useEffect(() => { d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && (d && el?.x))))))))))))))))); }); }
+      // A read with no \`?.\` that ends a block: the update of a \`for\`, the last statement of a handler.
+      function useForUpdate(el) { useEffect(() => { for (let i = 0; i < 1; el.x) i++; }); }
+      function useCatchTail(el) { useEffect(() => { try { thrower(); } catch { el.x; } }); }
+      function useCatchTailOptional(el) { useEffect(() => { try { thrower(); } catch { el?.x; } }); }
+      function useCatchTailInATry(el) { useEffect(() => { try { try { thrower(); } catch { el.x; } } catch {} }); }
+      function useForUpdateInATry(el) { useEffect(() => { try { for (let i = 0; i < 1; el.x) i++; } catch {} }); }
+      // What reads the value is kept only for its throw.
+      function useUnderACaughtRead(el, d) { useEffect(() => { try { (d && el?.x).y; } catch {} }); }
+      // It is stored in a variable that nothing reads, or a pattern reads it.
+      function useCommaStore(el, d) { useEffect(() => { let p; sink(d), p = el?.x; }); }
+      function useStatementsStore(el, d) { useEffect(() => { let p; sink(d); p = el?.x; }); }
+      function useAndStore(el, d) { useEffect(() => { let p; d && (p = el?.x); }); }
+      function useForInitPattern(el, d) { useEffect(() => { for (const { b } = el.a; d; ) break; }); }
+      // In a loop, what reads it can be what it is stored in. A variable can hold it.
+      function useForUpdateSum(el) { useEffect(() => { let sum = 0; for (let i = 0; i < 1; sum += el?.x) i++; }); }
+      function useDoWhileSum(el) { useEffect(() => { let sum = 0, i = 0; do { i++; } while ((sum = sum + el?.x), i < 1); }); }
+      function useForUpdateOfAConst(el) { useEffect(() => { const v = el?.x; for (let i = 0; i < 1; v) i++; }); }
+      function useForUpdateOfAFunction(el) { useEffect(() => { const v = el?.x; for (let i = 0; ; () => v) { if (i++) break; } }); }
+      function useCommaIncrement(el, d) { useEffect(() => { let p = el?.x; sink(d), p++; }); }
+      // It is under what only makes a value of it, and nothing reads that value.
+      function useStatementsPlus(el, d) { useEffect(() => { sink(d); el?.x + 1; }); }
+      function useCommaPlus(el, d) { useEffect(() => { sink(d), el?.x + 1; }); }
+      function useForUpdateVoid(el) { useEffect(() => { for (let i = 0; i < 1; void el?.x) i++; }); }
+      function useForUpdatePlus(el) { useEffect(() => { for (let i = 0; i < 1; el?.x + 1) i++; }); }
+      function useForUpdateTemplate(el) { useEffect(() => { for (let i = 0; i < 1; \`\${el?.x}\`) i++; }); }
+      function useForUpdateArray(el) { useEffect(() => { for (let i = 0; i < 1; [el?.x]) i++; }); }
+      function useForUpdateObject(el) { useEffect(() => { for (let i = 0; i < 1; { x: el?.x }) i++; }); }
+      function useForUpdateElement(el) { useEffect(() => { for (let i = 0; i < 1; <i x={el?.x} />) i++; }); }
+      function useForUpdateFragment(el) { useEffect(() => { for (let i = 0; i < 1; <>{el?.x}</>) i++; }); }
+      // Where the read is, and what holds the function.
+      function useUnderIf(el, d) { useEffect(() => { if (d) { el?.x; } }); }
+      function useUnderWhile(el) { useEffect(() => { let i = 0; while (i++ < 1) { el?.x; } }); }
+      function useUnderLabel(el, d) { useEffect(() => { out: { if (!d) break out; el?.x; } }); }
+      function useCleanup(el) { useEffect(() => () => { el?.x; }); }
+      function useDeclaration(el) { function flush() { el?.x; } useEffect(flush); }
+      function useAsync(el) { useEffect(() => { (async () => { el?.x; })(); }); }
+      function useMethod(el) { const o = { m() { el?.x; } }; useEffect(o.m); }
+      function useInner(el) { useEffect(() => { const g = () => { el?.x; }; g(); }); }
+      function Handler({ el }) { return <div onClick={() => { el?.x; }} />; }
+      function useLayout(node) { useLayoutEffect(() => { node?.x; }, [node]); }
+      // A ref that the function gets is a variable like another.
+      function useRefParameter(ref) { useLayoutEffect(() => { ref.current?.x; }); }
+      function RefProp({ innerRef }) { useLayoutEffect(() => { innerRef.current?.x; }); return <div />; }
+      // No getter: the handler of the first render holds the \`list\` that was null.
+      function HandlerOfAList({ list }) { return <div onClick={() => { list[0]?.id; log.push("read"); }} />; }
+      // The guard reads the variable and no path: this handler is not called, and \`node.inner\` is undefined.
+      function HandlerThatIsNotCalled({ node }) { const onClick = () => { node.inner.deep?.x; }; return <div onClick={onClick} />; }
+      // The function is made again only when \`el\` is another: each number is a function.
+      function useSame(el) { useNothing(); return () => { el?.x; }; }
+      // What else the function reads keeps its path: the props of the second render are another object.
+      function useSameWithAPath(props, el) { useNothing(); return () => { sink(props.a.b); el?.x; }; }
+      // What the function depends on is declared in a memo block before it: \`ReferenceError: el is not defined\`.
+      function useRest({ el, ...rest }) { useEffect(() => { el?.x; }); return rest; }
+      // A store into another local after memo blocks that merge.
+      function MethodNextToAStore({ c }) {
+        let w = [c];
+        const info = [w[0]];
+        count(w), count(info);
+        const v = { a: [c] };
+        count(v);
+        const o = { m() { v?.length; return "read"; } };
+        const stored = [(w = ["k"])];
+        mutate(stored);
+        return <div state={o.m()} info={info} />;
+      }
+      // The body reads, for nothing, another variable of the memo block that the variable of the function is from.
+      function BodyReadBesideAFunction({ c }) {
+        const { node, rows } = measure(c);
+        count(node, rows);
+        useLayoutEffect(() => { node?.x; });
+        const firstId = rows[0]?.id;
+        return <div state="read" />;
+      }
+      function BodyForUpdateBesideAFunction({ c }) {
+        let w = [c];
+        const v = [c, 1];
+        count(w, v);
+        const f = () => { w?.length; return "read"; };
+        for (let i = 0; i < 2; v) i++;
+        return <div state={f()} />;
+      }
+      // A dependency array that names the variable.
+      function useCallbackOfEl(el) { useNothing(); return useCallback(() => { el?.x; }, [el]); }
+      function useCallbackOfAPathAndEl(props, el) { useNothing(); return useCallback(() => { sink(props.a.b); el?.x; }, [props.a.b, el]); }
+      // Left as written, as with a read that is used: the array does not name the variable that the compiler infers.
+      // Main compiles the first two, and they log what the source logs. Its third keeps the first element.
+      function useCallbackOfNothing(el) { useNothing(); return useCallback(() => { el?.x; }, []); }
+      function useCallbackOfWhatIsRead(el) { useNothing(); return useCallback(() => { el?.x; }, [el?.x]); }
+      function useCallbackOfAPath(props) { useNothing(); return useCallback(() => { props.el?.x; }, [props.el]); }
+      // A read with no \`?.\` that ends a statement is removed, as on main. Where the parser joins it to the statement
+      // before it (above), it is the value of a comma: it stays, and the function follows the variable. An array that
+      // names the path is then not what the compiler infers, and the hook is left as written.
+      function useStatementsPlain(el, d) { useEffect(() => { sink(d); el.x; }); }
+      function useCallbackOfAPlainPath(el, d) { useNothing(); return useCallback(() => { sink(d); el.x; }, [d, el.x]); }
+      // As before: what is read is not a variable of the component.
+      function useRefCurrent(el) { const ref = useRef(el); useEffect(() => { ref.current?.x; }); }
+      function useOwnParameter(list) { useEffect(() => { list.forEach(item => { item?.x; }); }); }
+      // As before: a call, a read in a \`try\`, a read that is used, a render body.
+      function useCall(el) { useEffect(() => { el?.flush(); }); }
+      function useTry(el) { useEffect(() => { try { el?.x; } catch {} }); }
+      function useUsed(el) { useEffect(() => { sink(el?.x); }); }
+      function RenderBody({ el, k }) { const list = []; el?.x; list.push(k); return <div>{list}</div>; }
+      // As before: a store in a \`try\` of a render body, which only the update of a \`for\` reads.
+      function StoreInATry({ k }) {
+        let x = [];
+        const before = count(x);
+        let state = "not run";
+        try { x = {}, sink(k), state = "ran"; } catch (e) { state = "caught " + e.name; }
+        for (let i = 0; i < 1; x.probe) i++;
+        return <div before={before} state={state} />;
+      }
+
+      // A read that nothing reads is compiled as a use of its variable: \`if (el) sink()\` beside it changes nothing.
+      function useOptionalAndUse(el) { useEffect(() => { el?.x; if (el) sink(); }); }
+      function useCommaLastAndUse(el, d) { useEffect(() => { sink(d), el?.x; if (el) sink(); }); }
+      function useForUpdateAndUse(el) { useEffect(() => { for (let i = 0; i < 1; el.x) i++; if (el) sink(); }); }
+      function HandlerAndUse({ el }) { return <div onClick={() => { el?.x; if (el) sink(); }} />; }
+      function useRestAndUse({ el, ...rest }) { useEffect(() => { el?.x; if (el) sink(); }); return rest; }
+
+      const measure = c => ({ node: c === 1 ? a : b, rows: [{ id: c }] });
+      const render = (fn, args, then) => {
+        globalThis.rendering = fn;
+        globalThis.hook = 0;
+        log = [];
+        try { const out = fn(...args); if (then) then(out); } catch (e) { log.push("throws " + e.name); }
+        return log.join(" ") || "-";
+      };
+      const logs = (fn, renders, then) => renders.map(args => render(fn, args, then)).join(" | ") + " [" + size(fn) + "]";
+      const row = (fn, renders, then) => console.log(fn.name + ": " + logs(fn, renders, then));
+      const call = callback => callback();
+      const click = element => { try { element.p.onClick(); } catch (e) { log.push("throws " + e.name); } };
+      const same = (seen = []) => f => { if (!seen.includes(f)) seen.push(f); log.push(seen.indexOf(f)); };
+      const state = element => log.push(element.p.state);
+      const els = [[a, true], [a, true], [b, true]];
+      const renderedWith = [[{ c: 1 }], [{ c: 1 }], [{ c: 2 }]];
+      const keyed = [[a, "b"], [a, "b"], [b, "b"]];
+      const props = [[{ el: a, k: 1 }], [{ el: a, k: 1 }], [{ el: b, k: 1 }]];
+      const one = { a: { b: 1 } }, two = { a: { b: 2 } };
+      const paths = [[one, a], [{ ...one }, a], [one, b], [two, b]];
+      for (const fn of [useOptional, useOptionalDeep, useOptionalInner, useOptionalTwice]) row(fn, els);
+      row(useOptionalOfProps, props);
+      for (const fn of [useVoid, useUnusedConst, useTwoReads, useStatementAfter, useUsedToo]) row(fn, els);
+      row(useComputed, keyed);
+      row(useComputedKey, [[a, a], [a, a], [b, b]]);
+      for (const fn of [useCommaFirst, useCommaLast, useCommaLastDeep]) row(fn, els);
+      row(useCommaComputed, keyed);
+      for (const fn of [useAnd, useOr, useTernaryArms, useAndComma, useAndDeep]) row(fn, els);
+      for (const fn of [useForUpdate, useCatchTail, useCatchTailOptional, useCatchTailInATry, useForUpdateInATry, useUnderACaughtRead]) row(fn, els);
+      for (const fn of [useCommaStore, useStatementsStore, useAndStore]) row(fn, els);
+      row(useForInitPattern, els);
+      for (const fn of [useForUpdateSum, useDoWhileSum, useForUpdateOfAConst, useForUpdateOfAFunction, useCommaIncrement]) row(fn, els);
+      for (const fn of [useStatementsPlus, useCommaPlus, useForUpdateVoid, useForUpdatePlus, useForUpdateTemplate, useForUpdateArray, useForUpdateObject, useForUpdateElement, useForUpdateFragment]) row(fn, els);
+      for (const fn of [useUnderIf, useUnderWhile, useUnderLabel, useCleanup, useDeclaration, useAsync, useMethod, useInner]) row(fn, els);
+      row(Handler, props, click);
+      row(useLayout, [[null], [a], [a], [b]]);
+      const refA = { current: a }, refB = { current: b };
+      row(useRefParameter, [[refA], [refA], [refB]]);
+      row(RefProp, [[{ innerRef: refA }], [{ innerRef: refA }], [{ innerRef: refB }]]);
+      row(HandlerOfAList, [[{ list: null }], [{ list: [1] }], [{ list: [2] }]], click);
+      row(HandlerThatIsNotCalled, [[{ node: {} }], [{ node: {} }]]);
+      row(useSame, [a, a, b, b, a, null, a].map(el => [el]), same());
+      row(useSameWithAPath, paths, same());
+      row(useRest, props);
+      row(MethodNextToAStore, renderedWith, state);
+      row(BodyReadBesideAFunction, renderedWith, state);
+      row(BodyForUpdateBesideAFunction, renderedWith, state);
+      row(useCallbackOfEl, els, call);
+      row(useCallbackOfAPathAndEl, paths, call);
+      row(useCallbackOfNothing, els, call);
+      row(useCallbackOfWhatIsRead, els, call);
+      row(useCallbackOfAPath, props, call);
+      row(useStatementsPlain, els);
+      row(useCallbackOfAPlainPath, els, call);
+      row(useRefCurrent, els);
+      row(useOwnParameter, [[[a]], [[a]], [[b]]]);
+      for (const fn of [useCall, useTry, useUsed]) row(fn, els);
+      row(RenderBody, props);
+      row(StoreInATry, [[{ k: 1 }], [{ k: 1 }], [{ k: 2 }]], state);
+      const twins = [
+        [useOptional, useOptionalAndUse, els],
+        [useCommaLast, useCommaLastAndUse, els],
+        [useForUpdate, useForUpdateAndUse, els],
+        [Handler, HandlerAndUse, props, click],
+        [useRest, useRestAndUse, props],
+      ];
+      console.log("twins: " + twins.map(([fn, twin, renders, then]) => (logs(fn, renders, then) === logs(twin, renders, then) ? "same" : fn.name)).join(" | ") + " [-]");
+    `;
+    const followed = "a.x | a.x | b.x";
+    const followedDeep = "a.a a.a.b | a.a a.a.b | b.a b.a.b";
+    // The fourth column: what the compiled build logs, where that is another log. The fifth: the log and the size
+    // of the compiled build with `minify.syntax`, where they are others.
+    type Size = number | "-";
+    const rows: [name: string, log: string, size: Size, compiled?: string, minified?: [string, Size]][] = [
+      ["useOptional", followed, 2],
+      ["useOptionalDeep", followedDeep, 2],
+      ["useOptionalInner", followedDeep, 2],
+      ["useOptionalTwice", followedDeep, 2],
+      ["useOptionalOfProps", followed, 2],
+      ["useVoid", followed, 2],
+      ["useUnusedConst", followed, 2],
+      ["useTwoReads", "a.x a.y | a.x a.y | b.x b.y", 2],
+      ["useStatementAfter", followed, 3],
+      ["useUsedToo", "a.x a.x | a.x a.x | b.x b.x", 2],
+      ["useComputed", followedDeep, 3],
+      ["useComputedKey", "a.y | a.y | b.y", 3],
+      ["useCommaFirst", followed, 3],
+      ["useCommaLast", followed, 3],
+      ["useCommaLastDeep", followedDeep, 3],
+      ["useCommaComputed", followedDeep, 3],
+      ["useAnd", followed, 3],
+      ["useOr", followed, 3],
+      ["useTernaryArms", followed, 3],
+      ["useAndComma", followed, 3],
+      ["useAndDeep", followed, 3],
+      ["useForUpdate", followed, 2],
+      ["useCatchTail", followed, 2],
+      ["useCatchTailOptional", followed, 2],
+      ["useCatchTailInATry", followed, 2],
+      ["useForUpdateInATry", followed, 2],
+      ["useUnderACaughtRead", followed, 3],
+      ["useCommaStore", followed, 3],
+      ["useStatementsStore", followed, 3],
+      ["useAndStore", followed, 3],
+      ["useForInitPattern", followedDeep, 3],
+      ["useForUpdateSum", followed, 2],
+      ["useDoWhileSum", followed, 2],
+      ["useForUpdateOfAConst", followed, 2],
+      ["useForUpdateOfAFunction", followed, 2],
+      ["useCommaIncrement", followed, 3],
+      ["useStatementsPlus", followed, 3],
+      ["useCommaPlus", followed, 3],
+      ["useForUpdateVoid", followed, 2],
+      ["useForUpdatePlus", followed, 2],
+      ["useForUpdateTemplate", followed, 2],
+      ["useForUpdateArray", followed, 2],
+      ["useForUpdateObject", followed, 2],
+      ["useForUpdateElement", followed, 2],
+      ["useForUpdateFragment", followed, 2],
+      ["useUnderIf", followed, 3],
+      ["useUnderWhile", followed, 2],
+      ["useUnderLabel", followed, 3],
+      ["useCleanup", followed, 2],
+      ["useDeclaration", followed, 2],
+      ["useAsync", followed, 2],
+      ["useMethod", followed, 2],
+      ["useInner", followed, 2],
+      ["Handler", followed, 2],
+      ["useLayout", "- | a.x | - | b.x", 3],
+      ["useRefParameter", followed, 2],
+      ["RefProp", followed, 3],
+      ["HandlerOfAList", "throws TypeError | read | read", 2],
+      ["HandlerThatIsNotCalled", "- | -", 2],
+      ["useSame", "0 | 1 | 2 | 3 | 4 | 5 | 6", 2, "0 | 0 | 1 | 1 | 2 | 3 | 4"],
+      ["useSameWithAPath", "0 | 1 | 2 | 3", 3, "0 | 0 | 1 | 2"],
+      ["useRest", followed, 5],
+      ["MethodNextToAStore", "read | read | read", 11],
+      ["BodyReadBesideAFunction", "a.x read | a.x read | b.x read", 6],
+      ["BodyForUpdateBesideAFunction", "read | read | read", 5],
+      ["useCallbackOfEl", followed, 2],
+      ["useCallbackOfAPathAndEl", "a.x | a.x | b.x | b.x", 3],
+      ["useCallbackOfNothing", "a.x | a.x | a.x", "-"],
+      ["useCallbackOfWhatIsRead", "a.x a.x | a.x a.x | b.x a.x", "-"],
+      ["useCallbackOfAPath", followed, "-"],
+      ["useStatementsPlain", followed, 2, "- | - | -", [followed, 3]],
+      ["useCallbackOfAPlainPath", "a.x a.x | a.x a.x | b.x a.x", 2, "- | - | -", ["a.x a.x | a.x a.x | b.x a.x", "-"]],
+      ["useRefCurrent", "a.x | a.x | a.x", 1],
+      ["useOwnParameter", followed, 2],
+      ["useCall", "a.flush() | a.flush() | b.flush()", 2],
+      ["useTry", followed, 2],
+      // The guard reads `el?.x` at render, and takes `a` and `b` for the same: upstream's rule for a read that is used.
+      ["useUsed", followed, 2, "a.x a.x a.x | a.x a.x | b.x a.x"],
+      // Render code is pure for upstream: the read is in the memo block of `list`, which `k` alone guards.
+      ["RenderBody", followed, 2, "a.x | - | -"],
+      ["StoreInATry", "ran | ran | ran", 6],
+      ["twins", "same | same | same | same | same", "-"],
+    ];
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/FunctionThatKeepsAnUnreadRead-plain-syntax=${minifySyntax}`, {
+        files: { "/entry.jsx": entry, ...files },
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        run: { stdout: rows.map(([name, log]) => `${name}: ${log} [-]`).join("\n") },
+      });
+      const compiled = rows.map(([name, log, size, compiled = log, minified]) =>
+        minifySyntax && minified ? `${name}: ${minified[0]} [${minified[1]}]` : `${name}: ${compiled} [${size}]`,
+      );
+      itBundled(`react-compiler/FunctionThatKeepsAnUnreadRead-compiled-syntax=${minifySyntax}`, {
+        files: { "/entry.jsx": entry, ...files },
+        reactCompiler: true,
+        target: "browser",
+        backend: "cli",
+        minifySyntax,
+        run: { stdout: compiled.join("\n") },
+      });
+    }
+  }
+
   // A `try` body that can't throw loses its handler and `try` terminal, but the code after the `try` must be kept.
   itBundled("react-compiler/DeadTryBodyKeepsTheCodeAfterIt", {
     files: {
@@ -2505,6 +2889,824 @@ describe("bundler", () => {
       expect(out.match(/const t\d = x = p\.n;/g)).toHaveLength(4);
     },
   });
+
+  // A read that nothing uses can stay in the output: an operand of a comma expression in front of a `?:`, a `&&` or a
+  // `?.`, a statement or an operand in a `try`, the update of a `for`, the last statement of a handler, an optional
+  // chain. A memo block declares a variable, and then its `let` is printed before the block, when something uses a
+  // read of the variable after the block. Nothing uses such a read, so it was printed after the block of its `let`:
+  // `ReferenceError: w is not defined`. Upstream has the same bug (facebook/react#37540), but for
+  // `DeclaredAndReadInATry`, which was right before #44805.
+  {
+    // The scope of `w` ends at `count(w)`. Each body below follows it. The bodies differ in what keeps the read.
+    const afterTheScope = ([name, body]: [string, string]) =>
+      `export function ${name}({ c }) { let w = [c]; const info = { first: w[0] }; count(w); ${body} }`;
+    const element = (state: string) => `return <div state=${state} info={info} />;`;
+    const inTry = (statements: string) => `
+      let state = "read";
+      try {
+        ${statements}
+      } catch (e) {
+        state = "caught " + e.name + ": " + e.message;
+      }
+      ${element("{state}")}
+    `;
+    const readsAfterTheScope = {
+      CommaInTry: inTry(`state = (w[0], "read");`),
+      StatementInTry: inTry(`w.length; note(1);`),
+      CommaBeforeTernary: `const state = (w[0], c ? note(1) : note(2), "read"); ${element("{state}")}`,
+      ForUpdate: `for (let i = 0; i < 2; w.length) i++; ${element(`"read"`)}`,
+      ForUpdateOfTheVariable: `for (let i = 0; i < 2; w) i++; ${element(`"read"`)}`,
+      LastStatementOfAHandler: `try { count(null); } catch (e) { w.length; } ${element(`"read"`)}`,
+      InAClosure: `const f = () => { for (let i = 0; i < 2; w.length) i++; return "read"; }; ${element("{f()}")}`,
+      OptionalChainInAClosure: `const f = () => { const unused = w?.length; return "read"; }; ${element("{f()}")}`,
+      InAMethod: `const o = { m() { w?.length; return "read"; } }; ${element("{o.m()}")}`,
+      InAHandler: `const onClick = () => { const unused = w?.length; return "read"; }; return <div onClick={onClick} info={info} />;`,
+      AfterAMergedScope: `const y = [c]; w?.length; return <div state="read" info={info} y={y} />;`,
+    };
+    const files = {
+      "/entry.js": /* js */ `
+        import * as forms from "./forms";
+        import { slots } from "react/compiler-runtime";
+        const users = [{ id: 1, name: "a", active: true }, { id: 2, name: "b", active: false }];
+        // The third render has other \`users\` only. The fourth takes each early return.
+        const renders = [{ c: 1, users }, { c: 1, users }, { c: 1, users: [...users] }, { c: 3, users }, { c: 2, users }];
+        const stateOf = props => {
+          if ("onClick" in props) return props.onClick();
+          // ReadThenStore: as written, \`u\` holds the \`w\` that the element gets.
+          if ("u" in props) return props.u[0] === props.w ? "read" : "stale";
+          return props.state;
+        };
+        for (const [name, Form] of Object.entries(forms)) {
+          globalThis.rendering = Form;
+          let states;
+          try {
+            states = renders.map(props => stateOf(Form(props).p)).join(" | ");
+          } catch (e) {
+            states = "threw " + e.name + ": " + e.message;
+          }
+          console.log(name + ": " + states + " [" + slots(Form) + "]");
+        }
+      `,
+      "/forms.jsx": /* jsx */ `
+        import { useState } from "react";
+        const count = list => list.length;
+        const note = value => value;
+        const mutate = value => value;
+        const make = w => ({ n: w.length, w });
+        const pair = c => ({ a: [c], b: [c, c] });
+        const CONFIG = { unit: 8 };
+        ${Object.entries(readsAfterTheScope).map(afterTheScope).join("\n")}
+
+        // A closure reads \`w\` and the component assigns it again, so what reads it is a LoadContext.
+        export function CapturedAndAssignedAgain({ c }) {
+          let w = [c];
+          const f = () => w.length;
+          w = [c, c];
+          const info = { first: w[0] };
+          count(w);
+          w.length;
+          return <div state="read" info={info} f={f} />;
+        }
+        export function CapturedAndAssignedAgainInAClosure({ c }) {
+          let w = [c];
+          const g = () => w.length;
+          w = [c, c];
+          const info = { first: w[0] };
+          count(w);
+          const f = () => {
+            const unused = w.length;
+            return "read";
+          };
+          return <div state={f()} info={info} g={g} />;
+        }
+        // \`let w\` has no value and is in the memo block of \`outer\`.
+        export function DeclaredWithoutAValue({ c }) {
+          const outer = [];
+          let w;
+          w = [c];
+          const info = { first: c };
+          count(w);
+          outer.push(info);
+          count(outer);
+          for (let i = 0; i < 2; w.length) i++;
+          return <div state="read" outer={outer} />;
+        }
+        export function DeclaredWithoutAValueAndCaptured({ c }) {
+          let w;
+          const g = () => w;
+          w = [c];
+          const info = { first: c };
+          count(w);
+          for (let i = 0; i < 2; w.length) i++;
+          return <div state="read" info={info} g={g} />;
+        }
+        // The read is of the second value of \`visible\`.
+        export function UserListAssignedAgain({ users, c }) {
+          let visible = users.filter(user => user.active);
+          if (c > 1) visible = visible.filter(user => user.id > 0);
+          const items = visible.map(user => <li key={user.id}>{user.name}</li>);
+          const firstId = visible[0]?.id;
+          return <ul state="read">{items}</ul>;
+        }
+        // A closure calls \`g\` after its declaration.
+        export function LocalFunctionThatALaterClosureCalls({ c }) {
+          const w = [c];
+          function g() { return 1; }
+          const h = () => g();
+          const info = { first: w[0], h };
+          count(w);
+          for (let i = 0; i < 2; g.length) i++;
+          return <div state="read" info={info} />;
+        }
+        // Both names are declared in the memo block and one is read after it.
+        export function OneOfTwoDestructuredNames({ c }) {
+          const { a, b } = pair(c);
+          const info = { first: a[0] };
+          count(a);
+          for (let i = 0; i < 2; b.length) i++;
+          return <div state="read" info={info} />;
+        }
+        // The declaration and the read are statements of one \`try\`. The pattern declares \`list\`.
+        export function DeclaredAndReadInATry(props) {
+          let state;
+          try {
+            const rows = [];
+            const { users: list } = props;
+            rows.push(props.c);
+            state = "read".slice(0, 3 + rows.length);
+            const first = list[0].id;
+          } catch (e) {
+            state = "caught " + e.name + ": " + e.message;
+          }
+          return <div state={state} />;
+        }
+        // The memo block of \`w\` is in the memo block of \`t\`, which has another input. The read is after both.
+        export function NestedScopes({ c, users }) {
+          const t = [];
+          const w = [c];
+          const info = [w];
+          w.push(1);
+          t.push(info, users);
+          for (let i = 0; i < 2; w.length) i++;
+          return <div state="read" t={t} />;
+        }
+        // The scope of \`w\` is in the memo block of \`t\` and is no memo block itself.
+        export function NestedScopeWithoutAnotherOutput({ c, users }) {
+          const t = [];
+          const w = [c];
+          count(w);
+          t.push(users);
+          for (let i = 0; i < 2; w.length) i++;
+          return <div state="read" t={t} />;
+        }
+        // The read is in the memo block of \`y\`, which is after the memo block of \`w\`.
+        export function InALaterScope({ c, users }) {
+          const w = [c];
+          const info = [w];
+          count(w);
+          const y = [];
+          w?.length;
+          y.push(users);
+          return <div state="read" info={info} y={y} />;
+        }
+        // The scope of \`y\` and the scope of \`w\` are one memo block. One read is in it and one is after it.
+        export function InAMergedScopeAndAfterIt({ c }) {
+          const w = [c];
+          const info = { first: w[0] };
+          const x = make(w);
+          mutate(x);
+          count(w);
+          const y = [];
+          w?.length;
+          y.push(x, info);
+          w?.length;
+          return <div state="read" y={y} />;
+        }
+        // The scope of \`w\` is the second one of a memo block.
+        export function DeclaredInAMergedScope({ c }) {
+          const y = [c];
+          const w = [c];
+          const info = { first: w[0] };
+          count(w);
+          w?.length;
+          return <div state="read" info={info} y={y} />;
+        }
+        // The scope of \`cells\` is merged into the scope of \`header\`, and that one into the scope of \`rows\`.
+        export function InAScopeMergedTwice({ c, users }) {
+          const rows = [];
+          const header = [];
+          const labels = [];
+          labels.push(c);
+          const unit = CONFIG.unit;
+          const first = [c];
+          const cells = [];
+          const width = unit * 2;
+          cells.push(first);
+          const firstId = cells[0]?.id;
+          header.push(labels, width, users);
+          rows.push(header, users);
+          return <div state="read" rows={rows} />;
+        }
+        export function AfterAScopeMergedTwice({ c, users }) {
+          const rows = [];
+          const header = [];
+          const labels = [];
+          labels.push(c);
+          const unit = CONFIG.unit;
+          const first = [c];
+          const cells = [];
+          const width = unit * 2;
+          cells.push(first);
+          header.push(labels, width, users);
+          rows.push(header, users);
+          for (let i = 0; i < 2; cells.length) i++;
+          return <div state="read" rows={rows} />;
+        }
+        // The scope of \`w\` has an early return in it.
+        export function ScopeWithAnEarlyReturn({ c }) {
+          let w = [c];
+          if (c === 3) return <div state="read" />;
+          count(w);
+          w?.length;
+          return <div state="read" />;
+        }
+        // The early return gives a value of that scope.
+        export function ScopeThatReturnsItsValueEarly({ c }) {
+          let w = [c];
+          const early = [c];
+          count(w);
+          if (c === 3) return <div state="read" early={early} />;
+          early.push(c);
+          w?.length;
+          return <div state="read" />;
+        }
+
+        // These components stay as written. The compiler cannot print a memo block that declares a function which
+        // its own body or earlier code names. And a \`let\` in front of the memo block would end the TDZ of a variable
+        // that a closure names above its declaration: \`f()\` would give \`undefined\` where it throws. Nothing calls
+        // \`later\`, and before this fix \`FunctionCalledAboveItsDeclaration\` and \`ReadAboveTheLetIsCaught\` were
+        // compiled.
+        export function FunctionThatCallsItself({ c }) {
+          function g(n) { return n > 0 ? g(n - 1) : [c]; }
+          const w = g(1);
+          const info = { first: w[0] };
+          count(w);
+          for (let i = 0; i < 2; g.length) i++;
+          return <div state="read" info={info} />;
+        }
+        export function FunctionCalledAboveItsDeclaration({ c }) {
+          const w = g();
+          function g() { return [c]; }
+          const info = { first: w[0] };
+          count(w);
+          const later = () => { for (let i = 0; i < 2; g.length) i++; };
+          return <div state="read" info={info} later={later} />;
+        }
+        export function ClosureAboveTheLet({ c }) {
+          const f = () => w;
+          const info = { f };
+          count([c]);
+          let w = [c];
+          for (let i = 0; i < 2; w.length) i++;
+          return <div state="read" info={info} />;
+        }
+        export function ReadAboveTheLetIsCaught({ c }) {
+          let state;
+          const f = () => rows;
+          try {
+            f();
+            state = "no error";
+          } catch (e) {
+            state = "read";
+          }
+          let rows = [c];
+          const info = { first: rows[0] };
+          count(rows);
+          const later = () => { for (let i = 0; i < 2; rows.length) i++; };
+          return <div state={state} info={info} later={later} />;
+        }
+
+        export function UserList({ users }) {
+          const visible = users.filter(user => user.active);
+          const items = visible.map(user => <li key={user.id}>{user.name}</li>);
+          const firstId = visible[0]?.id;
+          return <ul state="read">{items}</ul>;
+        }
+
+        // The component of facebook/react#37540.
+        const TABLE = { a: { slug: "a", icon: "icon" } };
+        const useLocation = () => "/a";
+        const detect = pathname => pathname.slice(1);
+        const routesFor = slug => [slug];
+        const nameOf = key => key;
+        export function Sidebar({ navigation }) {
+          const pathname = useLocation();
+          const key = detect(pathname);
+          const active = key ? TABLE[key] : null;
+          const contextNavigation = active ? routesFor(active.slug) : [];
+          const effective = navigation ?? contextNavigation;
+          const title = key ? nameOf(key) : "home";
+          // unused, kept for a later design change
+          const Icon = active?.icon;
+          return <aside state="read" title={title}>{effective.length}</aside>;
+        }
+
+        // The forms from here on were right before this fix, and they stay as they are.
+
+        // Which scope is a memo block is only known after the passes that prune and merge scopes, so the variable of
+        // the read is declared after them. A declaration at the read changes what those passes do with each of the
+        // next six forms.
+
+        // A method reads \`v\` and nothing uses the read. \`w\` is stored to after its scope.
+        export function ReadInAMethodNextToAStore({ c }) {
+          let w = [c];
+          const info = [w[0]];
+          count(w);
+          count(info);
+          const v = { a: [c] };
+          count(v);
+          const o = { m() { v?.length; return "read"; } };
+          const a = [(w = ["k"])];
+          mutate(a);
+          return <div state={o.m()} info={info} />;
+        }
+        // \`u\` holds the \`w\` of the store, which the element gets too.
+        export function ReadThenStore({ c }) {
+          const x = [];
+          let w = [];
+          x.push(c);
+          w.push(0);
+          w?.length;
+          w = [];
+          const [, setState] = useState(0);
+          w.push(setState);
+          const u = [w];
+          return <div u={u} w={w} x={x} />;
+        }
+        export function UsedReadThenStore({ c }) {
+          const x = [];
+          let w = [];
+          x.push(c);
+          w.push(0);
+          const pair = [w.length, (w = [])];
+          const [, setState] = useState(0);
+          w.push(setState);
+          const u = [w];
+          return <div u={u} w={w} x={x} pair={pair} />;
+        }
+        // A hook call is in the scope of \`w\`, so that scope is no memo block.
+        export function ScopeWithAHookCall({ c }) {
+          const w = [];
+          const inner = [w.length];
+          const [state] = useState(0);
+          w.push(1);
+          w?.length;
+          return <div state="read" inner={inner} c={c} s={state} />;
+        }
+        // The scope of \`w\` and the scope of \`y\`, which holds the read, are one memo block.
+        export function ReadInTheScopeThatFollows({ c }) {
+          const w = [c];
+          const info = { first: w[0] };
+          const x = make(w);
+          mutate(x);
+          count(w);
+          const y = [];
+          w?.length;
+          y.push(x, info);
+          return <div state="read" y={y} />;
+        }
+        // Nothing else comes out of the scope of \`w\`, so it is no memo block.
+        export function ScopeWithoutAnotherOutput({ c }) {
+          let w = [c];
+          count(w);
+          const f = () => { for (let i = 0; i < 2; w.length) i++; return "read"; };
+          return <div state={f()} />;
+        }
+        // The memo block assigns \`w\` and does not declare it.
+        export function AssignedInTheScope({ c }) {
+          let w;
+          const info = [];
+          w = [c];
+          info.push(w[0]);
+          count(w);
+          w?.length;
+          return <div state="read" info={info} />;
+        }
+        // Nothing declares \`w\` in the memo block of \`info\`: its \`const\` is after the \`return\`.
+        export function HoistedAboveAnUnreachableConst({ c }) {
+          const f = () => w;
+          let state = "read";
+          try {
+            f();
+            state = "no error";
+          } catch (e) {}
+          const info = { first: c, f };
+          const later = () => w;
+          return <div state={state} info={info} later={later} />;
+          const w = [c];
+        }
+      `,
+      ...stubReact,
+      // One cache for each component, so the second render loads what the first one saved.
+      "/node_modules/react/compiler-runtime.js": /* js */ `
+        const caches = new Map();
+        exports.c = n => {
+          if (!caches.has(globalThis.rendering))
+            caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+          return caches.get(globalThis.rendering);
+        };
+        exports.slots = component => caches.get(component)?.length ?? "as written";
+      `,
+    };
+
+    // Each form renders what it renders as written. The number is the size of its memo cache.
+    const stdout = `
+      AfterAMergedScope: read | read | read | read | read [7]
+      AfterAScopeMergedTwice: read | read | read | read | read [10]
+      AssignedInTheScope: read | read | read | read | read [5]
+      CapturedAndAssignedAgain: read | read | read | read | read [7]
+      CapturedAndAssignedAgainInAClosure: read | read | read | read | read [9]
+      ClosureAboveTheLet: read | read | read | read | read [as written]
+      CommaBeforeTernary: read | read | read | read | read [5]
+      CommaInTry: read | read | read | read | read [5]
+      DeclaredAndReadInATry: read | read | read | read | read [5]
+      DeclaredInAMergedScope: read | read | read | read | read [8]
+      DeclaredWithoutAValue: read | read | read | read | read [5]
+      DeclaredWithoutAValueAndCaptured: read | read | read | read | read [7]
+      ForUpdate: read | read | read | read | read [5]
+      ForUpdateOfTheVariable: read | read | read | read | read [5]
+      FunctionCalledAboveItsDeclaration: read | read | read | read | read [as written]
+      FunctionThatCallsItself: read | read | read | read | read [as written]
+      HoistedAboveAnUnreachableConst: read | read | read | read | read [7]
+      InAClosure: read | read | read | read | read [6]
+      InAHandler: read | read | read | read | read [2]
+      InALaterScope: read | read | read | read | read [8]
+      InAMergedScopeAndAfterIt: read | read | read | read | read [5]
+      InAMethod: read | read | read | read | read [6]
+      InAScopeMergedTwice: read | read | read | read | read [7]
+      LastStatementOfAHandler: read | read | read | read | read [5]
+      LocalFunctionThatALaterClosureCalls: read | read | read | read | read [7]
+      NestedScopeWithoutAnotherOutput: read | read | read | read | read [6]
+      NestedScopes: read | read | read | read | read [9]
+      OneOfTwoDestructuredNames: read | read | read | read | read [5]
+      OptionalChainInAClosure: read | read | read | read | read [6]
+      ReadAboveTheLetIsCaught: read | read | read | read | read [as written]
+      ReadInAMethodNextToAStore: read | read | read | read | read [11]
+      ReadInTheScopeThatFollows: read | read | read | read | read [2]
+      ReadThenStore: read | read | read | read | read [3]
+      ScopeThatReturnsItsValueEarly: read | read | read | read | read [4]
+      ScopeWithAHookCall: read | read | read | read | read [5]
+      ScopeWithAnEarlyReturn: read | read | read | read | read [5]
+      ScopeWithoutAnotherOutput: read | read | read | read | read [4]
+      Sidebar: read | read | read | read | read [10]
+      StatementInTry: read | read | read | read | read [5]
+      UsedReadThenStore: read | read | read | read | read [3]
+      UserList: read | read | read | read | read [5]
+      UserListAssignedAgain: read | read | read | read | read [6]
+    `;
+
+    for (const [backend, minifySyntax] of [
+      ["cli", false],
+      ["api", true],
+    ] as const) {
+      itBundled(`react-compiler/UnusedReadAfterTheScopeOfItsVariable-${backend}-minifySyntax=${minifySyntax}`, {
+        files,
+        reactCompiler: true,
+        minifySyntax,
+        backend,
+        target: "browser",
+        run: { stdout },
+      });
+    }
+
+    // A read that nothing uses makes the closure that holds it depend on its variable: `onClick` is built again
+    // for another `list`. See `react-compiler/FunctionThatKeepsAnUnreadRead`.
+    itBundled("react-compiler/UnusedReadIsAnInputOfItsClosure", {
+      files: {
+        "/entry.jsx": /* jsx */ `
+          function Handler({ list }) {
+            const onClick = () => {
+              const unused = list[0]?.id;
+              return "read";
+            };
+            return <div onClick={onClick} />;
+          }
+          const call = list => {
+            globalThis.rendering = Handler;
+            try {
+              return Handler({ list }).p.onClick();
+            } catch (e) {
+              return e.name;
+            }
+          };
+          console.log([null, [1], [2]].map(call).join(", "));
+        `,
+        ...stubReact,
+        "/node_modules/react/compiler-runtime.js": files["/node_modules/react/compiler-runtime.js"],
+      },
+      reactCompiler: true,
+      backend: "cli",
+      target: "browser",
+      run: { stdout: "TypeError, read, read" },
+    });
+  }
+
+  // The scope of `w` and the scope of the array after it depend on `c` alone,
+  // so they merge into one memo block. The merge drops each output of the
+  // block that nothing uses after it, and a store was no use. `let w` went
+  // back into the block, with the store outside it:
+  // `ReferenceError: w is not defined`.
+  //
+  // With `minify.syntax` the statements of a nested block reach the compiler
+  // as one comma expression, and a store that ends it stays in the output.
+  // The last three entries of `stores` are wrong only then.
+  {
+    // Where the store is. Each one assigns `pair` to `w` and sets `n`.
+    const stores: Record<string, string> = {
+      Member: `const n = (w = pair).length;`,
+      Element: `const n = [(w = pair)].length + 1;`,
+      JsxChild: `const n = 2; count([<i>{(w = pair).length}</i>]);`,
+      Conditional: `const n = flag ? (w = pair).length : 0;`,
+      ConditionalBranch: `const n = (flag ? (w = pair) : pair).length;`,
+      LogicalAnd: `const n = flag && (w = pair).length;`,
+      Optional: `const n = (w = pair)?.length;`,
+      Chained: `let u; const n = (u = w = pair).length;`,
+      Twice: `const n = (w = pair).length + (w = [c]).length - 1;`,
+      ArrayPattern: `const n = ([w] = [pair]).length + 1;`,
+      ObjectPattern: `const n = ({ w } = { w: pair }).w.length;`,
+      IfTest: `let n = 0; if ((w = pair)) n = 2;`,
+      SwitchCase: `let n = 0; switch (c) { case 1: n = (w = pair).length; }`,
+      WhileTest: `let n = 0; while ((w = pair) && n < 2) n++;`,
+      DoWhileTest: `let n = 0; do n++; while ((w = pair) && n < 2);`,
+      ForInit: `let n = 0; for (let i = (w = pair).length; i > 0; i--) n++;`,
+      ForTest: `let n = 0; for (let i = 0; (w = pair) && i < 2; i++) n++;`,
+      // The whole update: a value with no instruction around it.
+      ForUpdate: `let n = 0; for (let i = 0; i < 2; w = pair) n += ++i;`,
+      ForOfCollection: `let n = 0; for (const it of (w = pair)) n++;`,
+      Handler: `let n = 2; try { risky(); } catch { w = pair; }`,
+      Label: `let n = 2; skip: { if (!flag) break skip; n = (w = pair).length; }`,
+      Return: `const n = 2; if (!flag) return <div>{(w = pair).length}</div>;`,
+      CommaInABranch: `let n = 0; if (flag) (n = 2), (w = pair);`,
+      StatementInABranch: `let n = 0; if (flag) { n = 2; w = pair; }`,
+      PatternStatementInABranch: `let n = 0; if (flag) { n = 2; [w] = [pair]; }`,
+      StatementInALoop: `let n = 0; while (n < 2) { n++; w = pair; }`,
+    };
+    const position = (name: string, directive: string, store: string) => `
+      export function ${name}({ c, flag, risky }) {
+        ${directive}
+        let w = [c];
+        const info = { first: w.length };
+        count(w);
+        const pair = [c, c];
+        ${store}
+        return <div>{info.first}{pair.length}{n}</div>;
+      }
+    `;
+
+    for (const minifySyntax of [false, true] as const) {
+      itBundled(`react-compiler/DeadStoreAfterScopesThatMerge-syntax=${minifySyntax}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import * as forms from "./forms";
+            import * as positions from "./positions";
+            import { size } from "react/compiler-runtime";
+            const risky = () => {
+              throw new Error("risky");
+            };
+            // The second render loads every memo block from the cache. In the
+            // third one only \`d\` is new.
+            const render = form => {
+              globalThis.rendering = form;
+              const renders = [[1, 2], [1, 2], [1, 5], [3, 5]].map(([c, d]) => {
+                try {
+                  return JSON.stringify(form({ c, d, flag: c === 1, risky }).p.children);
+                } catch (e) {
+                  return "threw " + e;
+                }
+              });
+              return renders.join(" ");
+            };
+            // The size of the memo cache of a form, or that it was left as written.
+            const lines = Object.entries(forms).map(
+              ([name, form]) => name + "=" + render(form) + (size(form) ? " [" + size(form) + "]" : " as written"),
+            );
+            // Each position against the same function with "use no memo".
+            const names = Object.keys(positions).filter(name => !name.endsWith("AsWritten"));
+            const differ = names.filter(name => render(positions[name]) !== render(positions[name + "AsWritten"]));
+            const asWritten = names.filter(name => !size(positions[name]));
+            lines.push("positions that differ: " + (differ.join(" ") || "none"));
+            lines.push("positions left as written: " + (asWritten.join(" ") || "none"));
+            console.log(lines.join("\\n"));
+          `,
+          "/positions.jsx":
+            `const count = x => x.length;` +
+            Object.entries(stores)
+              .map(([name, store]) => position(name, "", store) + position(name + "AsWritten", `"use no memo";`, store))
+              .join(""),
+          "/forms.jsx": /* jsx */ `
+            import { useMemo, useRef } from "react";
+            const count = x => x.length;
+            const next = i => (i < 3 ? [i] : null);
+            const useThing = x => x;
+
+            export function ExpressionValue({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [c, c]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // Four scopes merge: \`w\`, the two inner arrays, the outer array.
+            export function ThreeMerges({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [[c], [c, c]]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // \`w\` is declared in the second of the merged scopes.
+            export function DeclaredInTheSecondScope({ c }) {
+              let w = [[c]];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [c, c]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // The store is in the scope of \`box\`, which saves \`w\` and loads it.
+            export function LaterScope({ c, d }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [c, c];
+              const box = {};
+              box.v = w = [d];
+              return <div>{info.first}{pair.length}{box.v[0]}</div>;
+            }
+            // The read in the scope of \`pair\` declared \`w\`, not the store.
+            export function ReadByTheNextScope({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [w];
+              const n = (w = [c]).length;
+              return <div>{info.first}{pair.length}{n}</div>;
+            }
+            // The whole body is the callback of a \`useMemo\`.
+            export function StoreInAMemoCallback({ c }) {
+              return useMemo(() => {
+                let w = [c];
+                const info = { first: w.length };
+                count(w);
+                const n = (w = [c, c]).length;
+                return <div>{info.first}{n}</div>;
+              }, [c]);
+            }
+            // The merged block is in the block of \`x\`, which declares \`w\` too.
+            // Both blocks save \`w\`: one more slot than before.
+            export function Nested({ c, d }) {
+              const x = [d];
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [c, c];
+              x.push(info, pair);
+              const n = (w = pair).length;
+              return <div>{x[0]}{n}</div>;
+            }
+            // \`o\` is made in each render, so the scope of \`x\` has no memo
+            // block. Only the merged block declares \`w\`.
+            export function NestedInAScopeWithNoBlock({ c, d }) {
+              const o = [];
+              o.push(useThing(d));
+              const x = [o];
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const pair = [c, c];
+              x.push(info, pair);
+              const n = (w = pair).length;
+              return <div>{x.length}{n}</div>;
+            }
+            // \`both\` reads \`k\` and the inner array, the outputs of the merged
+            // block. With \`w\` a third output it no longer merges into that
+            // block: four more slots than before.
+            export function NextScopeKeepsItsBlock({ c, d }) {
+              const x = [d];
+              let w = [c];
+              const k = w.length + c;
+              count(w);
+              const both = [[c, c], k];
+              x.push(both);
+              const n = (w = both).length;
+              return <div>{x[0]}{k}{n}</div>;
+            }
+            // In the same way the scope of \`memo\` keeps its own block. The
+            // check of \`useMemo\` then passes, and the function is compiled.
+            export function MemoAfterTheMergedBlock({ c }) {
+              let w = [c];
+              const v = w.length;
+              count(w);
+              const pair = [];
+              pair.push(c);
+              const x = {};
+              const memo = useMemo(() => [pair], [pair]);
+              x.memo = memo;
+              x.v = v;
+              const n = count((w = pair));
+              return <div>{v}{n}{x.memo.length}</div>;
+            }
+            // Here that check reports \`m\`, which the loop test assigns: the
+            // function is left as written. Before, it was compiled and threw.
+            export function LoopTestStoreInAMemoCallback({ c }) {
+              return useMemo(() => {
+                let w = [c];
+                const v = w.length;
+                count(w);
+                const pair = [];
+                let m;
+                let k = 0;
+                while ((m = next(k)) && k < c) {
+                  pair.push(m);
+                  k++;
+                }
+                const u = [pair, m, v];
+                let u2;
+                const n = (u2 = w = pair).length;
+                return <div>{v}{n}{u.length}</div>;
+              }, [c]);
+            }
+            // Nothing reads \`x\`, and its store is in the merged block. The block
+            // declared \`x\` before, and still does.
+            export function NeverRead({ c }) {
+              const ref = useRef(null);
+              const r = [];
+              let x = c;
+              r.push(c);
+              const y = [];
+              if ((x = ref.current) == null) {
+                y.push(c);
+              }
+              y.push(c);
+              return <div>{r.length}{y.length}</div>;
+            }
+            // The next scope depends on \`d\`, so the two do not merge.
+            export function NoMerge({ c, d }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [d, d]).length;
+              return <div>{info.first}{n}</div>;
+            }
+            // A read after the store kept the declaration.
+            export function ReadAfterTheStore({ c }) {
+              let w = [c];
+              const info = { first: w.length };
+              count(w);
+              const n = (w = [c, c]).length;
+              return <div>{info.first}{n}{w.length}</div>;
+            }
+          `,
+          "/node_modules/react/index.js": `exports.useRef = current => ({ current }); exports.useMemo = make => make();`,
+          "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+          "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+          "/node_modules/react/compiler-runtime.js": `
+            const caches = new Map();
+            exports.c = n => {
+              if (!caches.has(globalThis.rendering))
+                caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+              return caches.get(globalThis.rendering);
+            };
+            exports.size = component => caches.get(component)?.length;
+          `,
+          "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+        },
+        reactCompiler: true,
+        backend: "cli",
+        target: "browser",
+        minifySyntax,
+        run: {
+          stdout: `
+            DeclaredInTheSecondScope=[1,2] [1,2] [1,2] [1,2] [9]
+            ExpressionValue=[1,2] [1,2] [1,2] [1,2] [9]
+            LaterScope=[1,2,2] [1,2,2] [1,2,5] [1,2,5] [13]
+            LoopTestStoreInAMemoCallback=[1,1,3] [1,1,3] [1,1,3] [1,3,3] as written
+            MemoAfterTheMergedBlock=[1,1,1] [1,1,1] [1,1,1] [1,1,1] [15]
+            Nested=[2,2] [2,2] [5,2] [5,2] [14]
+            NestedInAScopeWithNoBlock=[3,2] [3,2] [3,2] [3,2] [6]
+            NeverRead=[1,2] [1,2] [1,2] [1,2] [7]
+            NextScopeKeepsItsBlock=[2,2,2] [2,2,2] [5,2,2] [5,4,2] [17]
+            NoMerge=[1,2] [1,2] [1,2] [1,2] [10]
+            ReadAfterTheStore=[1,2,2] [1,2,2] [1,2,2] [1,2,2] [10]
+            ReadByTheNextScope=[1,1,1] [1,1,1] [1,1,1] [1,1,1] [12]
+            StoreInAMemoCallback=[1,2] [1,2] [1,2] [1,2] [9]
+            ThreeMerges=[1,2] [1,2] [1,2] [1,2] [9]
+            positions that differ: none
+            positions left as written: none
+          `,
+        },
+      });
+    }
+  }
 
   // Outside the compiler, the bundler binds a local that holds a `require()` /
   // `import()` export to the export itself: `const { a } = require("./m")`
@@ -4783,6 +5985,49 @@ test("react-compiler does not end the process on a try in which nothing but a re
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(stdout).toContain("function Component(props)");
+  expect(exitCode).toBe(0);
+});
+
+// `bun test --react-compiler` compiles what a test imports. See `react-compiler/FunctionThatKeepsAnUnreadRead`.
+test("bun test --react-compiler makes a function that keeps an unread read again for another element", async () => {
+  using dir = tempDir("react-compiler-unread-read", {
+    "node_modules/react/package.json": JSON.stringify({
+      name: "react",
+      version: "19.0.0",
+      exports: { ".": "./index.js", "./compiler-runtime": "./compiler-runtime.js" },
+    }),
+    "node_modules/react/index.js": `export const useEffect = effect => { effect(); };`,
+    "node_modules/react/compiler-runtime.js": `
+      let cache;
+      export const c = size => (cache ??= Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "useFlush.jsx": `
+      import { useEffect } from "react";
+      export function useFlush(el) { useEffect(() => { el?.offsetHeight; }); }
+    `,
+    "flush.test.js": `
+      import { expect, test } from "bun:test";
+      import { useFlush } from "./useFlush";
+      test("each render reads the element that it got", () => {
+        const log = [];
+        const element = name => ({ get offsetHeight() { log.push(name); return 0; } });
+        const a = element("a"), b = element("b");
+        for (const el of [a, a, b]) useFlush(el);
+        expect(String(useFlush)).toMatch(/\\$\\[\\d+\\]/);
+        expect(log).toEqual(["a", "a", "b"]);
+      });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--react-compiler", "./flush.test.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  expect(stderr).toContain(" 0 fail");
   expect(exitCode).toBe(0);
 });
 

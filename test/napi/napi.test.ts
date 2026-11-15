@@ -13,6 +13,7 @@ import {
   mergeWindowEnvs,
   nodeExeMatchingAbi,
   tempDir,
+  withoutAsanQuarantine,
 } from "harness";
 import { dirname, join } from "path";
 
@@ -2241,11 +2242,12 @@ describe.skipIf(!canBuildNodeAddons())("napi_create_string_latin1", () => {
       process.exit(growthMB > Number(process.env.THRESHOLD_MB) ? 1 : 0);
     `;
     // 300 iterations * 256 KiB = 75 MB if every WTFStringImpl leaks.
-    // ASAN's quarantine inflates RSS; widen the threshold there.
+    // ASAN's quarantine would hold all 75 MB of what was freed, as if it had leaked: it is off.
+    // What is left of ASAN inflates RSS; widen the threshold there.
     const thresholdMB = isASAN ? 48 : 24;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--smol", "-e", fixture],
-      env: { ...bunEnv, THRESHOLD_MB: String(thresholdMB) },
+      env: { ...withoutAsanQuarantine(bunEnv), THRESHOLD_MB: String(thresholdMB) },
       stdout: "pipe",
       stderr: "pipe",
     });

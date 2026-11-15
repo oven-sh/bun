@@ -159,15 +159,6 @@ impl<K, V, C> HashMap<K, V, C> {
         self.available = ((self.metadata.len() as u64 * MAX_LOAD_PERCENTAGE) / 100) as u32;
     }
 
-    /// Debug-mode pointer-stability assertion. No-op stub kept so callers can
-    /// keep their lock/unlock bracketing without `#[cfg]` noise at every call
-    /// site (see `SavedSourceMap`).
-    #[inline]
-    pub fn lock_pointers(&self) {}
-    /// See [`lock_pointers`](Self::lock_pointers).
-    #[inline]
-    pub fn unlock_pointers(&self) {}
-
     pub fn iter(&self) -> Iter<'_, K, V> {
         Iter {
             metadata: &self.metadata,
@@ -672,10 +663,6 @@ impl<'a, K, V, C> OccupiedEntry<'a, K, V, C> {
     #[inline]
     pub fn get(&self) -> &V {
         &self.map.slots[self.idx].as_ref().unwrap().1
-    }
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut V {
-        &mut self.map.slots[self.idx].as_mut().unwrap().1
     }
     #[inline]
     pub fn into_mut(self) -> &'a mut V {

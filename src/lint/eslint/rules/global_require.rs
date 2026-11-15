@@ -4,7 +4,7 @@ use bun_lint::utils::ancestor_memo::AncestorMemo;
 /// Require `require()` calls to be placed at top-level module scope.
 pub struct GlobalRequire;
 
-const UNEXPECTED: Message = Message::new("unexpected", "Unexpected require().");
+const UNEXPECTED: &Message = &Message::new("unexpected", "Unexpected require().");
 
 /// ESLint's `ACCEPTABLE_PARENTS`.
 fn is_acceptable_parent(node: Node<'_>) -> bool {

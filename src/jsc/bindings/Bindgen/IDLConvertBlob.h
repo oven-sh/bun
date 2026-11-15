@@ -2,7 +2,7 @@
 #include "Bindgen/IDLTypes.h"
 #include "BunIDLConvertBase.h"
 #include "blob.h"
-#include "ZigGeneratedClasses.h"
+#include "GeneratedBlob.h"
 
 namespace Bun::Bindgen {
 struct IDLBlobRef : IDLRef<WebCore::BlobImpl, WebCore::BlobImplRefDerefTraits> {};
@@ -17,10 +17,8 @@ template<> struct WebCore::Converter<Bun::Bindgen::IDLBlobRef> : Bun::DefaultTry
         JSC::JSValue value,
         Ctx& ctx)
     {
-        if (auto* jsBlob = dynamicDowncast<WebCore::JSBlob>(value)) {
-            if (void* wrapped = jsBlob->wrapped())
-                return static_cast<BlobImpl*>(wrapped);
-        }
+        if (auto* jsBlob = dynamicDowncast<Bun::Bindgen::Generated::JSBlob>(value))
+            return static_cast<BlobImpl*>(jsBlob->wrapped());
         return std::nullopt;
     }
 

@@ -9,13 +9,13 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::Version;
 use bun_sys::{self as sys, Dir, Fd};
 
+use bun_archive::{ArchiveAppender, ExtractOptions};
 use bun_install::install::{self as Install, DependencyID, ExtractData};
 use bun_install::integrity::Integrity;
 use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 
 use crate::cache_publish::{self, StagedEntry};
@@ -88,30 +88,29 @@ impl ExtractTarball {
 
 pub(crate) fn build_url(
     registry_: &[u8],
-    full_name_: &StringOrTinyString,
+    full_name: &[u8],
     version: Version,
     string_buf: &[u8],
 ) -> Result<&'static [u8], bun_alloc::AllocError> {
     build_url_with_printer(
         registry_,
-        full_name_,
+        full_name,
         version,
         string_buf,
         // Format directly into the store's tail; no intermediate `String`.
-        |args| FileSystem::instance().dirname_store().print(args),
+        |args| FileSystem::get().dirname_store().print(args),
     )
 }
 
 /// Generic URL builder; the closure carries its own context.
 pub fn build_url_with_printer<R, E>(
     registry_: &[u8],
-    full_name_: &StringOrTinyString,
+    full_name: &[u8],
     version: Version,
     string_buf: &[u8],
     mut print: impl FnMut(fmt::Arguments<'_>) -> Result<R, E>,
 ) -> Result<R, E> {
     let registry = strings::trim_right(registry_, b"/");
-    let full_name = full_name_.slice();
 
     let mut name = full_name;
     if name[0] == b'@' {
@@ -232,6 +231,17 @@ impl ExtractTarball {
         (name, basename)
     }
 
+    pub(crate) fn warn_about_skipped_header(&self, log: &mut bun_ast::Log) {
+        log.add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "Skipped entries with an invalid header in the tarball for \"{}\"",
+                bun_fmt::for_terminal(bstr::BStr::new(self.name_and_basename().0)),
+            ),
+        );
+    }
+
     fn extract(
         &self,
         log: &mut bun_ast::Log,
@@ -291,7 +301,7 @@ impl ExtractTarball {
                 }
             };
 
-            use bun_libarchive::Archiver;
+            use bun_archive::Archiver;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
@@ -302,7 +312,7 @@ impl ExtractTarball {
                 0
             };
 
-            // libarchive gunzips on the fly (`BufferReadStream::open_read`),
+            // `extract_to_dir` gunzips on the fly,
             // so hand it the compressed bytes and never buffer the full tar.
             // Small tarballs still try libdeflate first for speed; the gzip
             // ISIZE trailer (size mod 2^32) is only trusted when small.
@@ -321,7 +331,7 @@ impl ExtractTarball {
                     }
                     if zlib_pool.list.capacity() > 16 {
                         use bun_libdeflate_sys::libdeflate;
-                        if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
+                        if let Some(decompressor) = libdeflate::OwnedDecompressor::new() {
                             zlib_pool.list.clear();
                             let result = decompressor.decompress_to_vec(
                                 tgz_bytes,
@@ -329,9 +339,10 @@ impl ExtractTarball {
                                 libdeflate::Encoding::Gzip,
                             );
                             // libdeflate only reads the first gzip member, so a tarball with more
-                            // than one member is left to libarchive.
+                            // than one member is left to `extract_to_dir`, which also counts the layers.
                             if result.status == libdeflate::Status::Success
                                 && result.read == tgz_bytes.len()
+                                && !bun_archive::tar::gzip::starts_like_header(&zlib_pool.list)
                             {
                                 decompressed_in_memory = true;
                             }
@@ -371,7 +382,7 @@ impl ExtractTarball {
                         fn on_first_directory_name(&mut self, first_dirname: &[u8]) {
                             debug_assert!(self.needs_first_dirname);
                             self.needs_first_dirname = false;
-                            *self.outdirname = FileSystem::instance()
+                            *self.outdirname = FileSystem::get()
                                 .dirname_store()
                                 .append(first_dirname)
                                 .expect("unreachable");
@@ -392,13 +403,14 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
                             skip_symlinks: true,
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
 
                     let lockfile_tag = self.github_resolved.slice();
                     if !lockfile_tag.is_empty() {
-                        resolved = FileSystem::instance()
+                        resolved = FileSystem::get()
                             .dirname_store()
                             .append(lockfile_tag)
                             .expect("unreachable");
@@ -429,20 +441,33 @@ impl ExtractTarball {
                     }
                 }
                 _ => {
+                    struct SkippedHeader(bool);
+                    impl ArchiveAppender for SkippedHeader {
+                        fn on_skipped_header(&mut self) {
+                            self.0 = true;
+                        }
+                    }
+                    let mut skipped_header = SkippedHeader(false);
+
                     let _ = Archiver::extract_to_dir(
                         tar_input,
                         extract_destination.fd(),
                         None,
-                        &mut (),
+                        &mut skipped_header,
                         ExtractOptions {
                             // packages usually have root directory `package/`, and scoped packages usually have root `<scopename>/`
                             // https://github.com/npm/cli/blob/93883bb6459208a916584cad8c6c72a315cf32af/node_modules/pacote/lib/fetcher.js#L442
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
+                            new_destination: true,
                             ..Default::default()
                         },
                     )?;
+
+                    if skipped_header.0 {
+                        self.warn_about_skipped_header(log);
+                    }
                 }
             }
 
@@ -685,7 +710,7 @@ impl ExtractTarball {
                 }
             };
 
-            let url = FileSystem::instance()
+            let url = FileSystem::get()
                 .dirname_store()
                 .append(self.url.slice())?;
 
@@ -725,11 +750,8 @@ impl ExtractTarball {
                 );
             }
 
-            let ret_json_path = FileSystem::instance().dirname_store().append(json_path)?;
+            let ret_json_path = FileSystem::get().dirname_store().append(json_path)?;
 
-            // Lands in `Task.data.*` (untagged `ManuallyDrop` union); freed by
-            // `Task::deinit_payload()` at the `runTasks.rs` re-pool site, which
-            // calls it before `preallocated_resolve_tasks.put()`.
             Ok(ExtractData {
                 url: url.into(),
                 resolved: resolved.into(),

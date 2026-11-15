@@ -1,0 +1,11 @@
+export const mode = (function () { return this === undefined ? "strict" : "sloppy"; })();
+export const set = function (object) { object.count = 2; return object.count; };
+export const bump = function (object) { object.count++; return object.count; };
+export const addTo = function (object) { object.count += 5; return object.count; };
+export const extend = function (object) { object.extra = 1; return object.extra; };
+export const remove = function (object) { return [delete object.count, object.count]; };
+export const push = function (object) { return [object.list.push(2), object.list.length]; };
+export const setElement = function (object) { object.list[0] = 9; return object.list[0]; };
+export const setPastTheEnd = function (object) { object.list[3] = 9; return object.list.length; };
+export const cut = function (object) { object.list.length = 0; return object.list.length; };
+export const pop = function (object) { return [object.list.pop(), object.list.length]; };

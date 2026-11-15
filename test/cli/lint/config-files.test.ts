@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { autoInstallTempDir, bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import {
   chmodSync,
   existsSync,
@@ -49,7 +49,7 @@ type Options = {
  * code. It uses a format that's the same with either tool's config.
  */
 async function lint(files: Record<string, string>, args: string[] = ["."], options: Options = {}) {
-  using dir = tempDir("bun-lint-config-files", files);
+  using dir = (options.env?.BUN_CONFIG_REGISTRY ? autoInstallTempDir : tempDir)("bun-lint-config-files", files);
   options.before?.(String(dir));
   await using proc = spawn({
     cmd: [...command, "--threads", "2", "-f", "json-with-metadata", ...args, ...(options.args?.(String(dir)) ?? [])],
@@ -2977,6 +2977,57 @@ describe.concurrent("an .oxlintrc.json", () => {
     const { problems } = await lint(files);
     const expected = rows.flatMap(([, lines], at) => lines.map(line => `r${at}/a.ts:${line}:1 no-restricted-imports`));
     expect(problems).toEqual(expected.sort());
+  });
+
+  test("-A, -W and -D reach a rule that's configured under two names, in a file or in the files it extends", async () => {
+    const [short, long] = ["no-array-constructor", "typescript/no-array-constructor"];
+    const config = (rules: Record<string, string>, ...extended: string[]) =>
+      JSON.stringify({ "extends": extended, rules });
+    // What oxlint 1.87.0 reports for a.ts with these flags.
+    type Row = [files: Record<string, string>, flags: string[], severity: "off" | "warn" | "error"];
+    const inOneFile = (severity: string) => ({
+      ".oxlintrc.json": config({}, "./base.json"),
+      "base.json": config({ [long]: severity, [short]: severity }),
+    });
+    const inTheFileAndInItsBase = (severity: string) => ({
+      ".oxlintrc.json": config({ [long]: severity }, "./base.json"),
+      "base.json": config({ [short]: severity }),
+    });
+    const inTwoFiles = (first: Record<string, string>, second: Record<string, string>) => ({
+      ".oxlintrc.json": config({}, "./first.json", "./second.json"),
+      "first.json": config(first),
+      "second.json": config(second),
+    });
+    const rows: Row[] = [
+      [inOneFile("warn"), [], "warn"],
+      [inOneFile("warn"), ["-D", short], "error"],
+      [inOneFile("warn"), ["-D", `eslint/${short}`], "error"],
+      // oxlint has the rule in `eslint` only, so this name selects nothing.
+      [inOneFile("warn"), ["-D", long], "warn"],
+      [inOneFile("warn"), ["-A", short], "off"],
+      [inOneFile("warn"), ["-A", short, "-D", short], "error"],
+      [inOneFile("warn"), ["-A", "all"], "off"],
+      [inOneFile("warn"), ["-A", "all", "-D", short], "error"],
+      [inOneFile("error"), ["-W", short], "warn"],
+      [inOneFile("error"), ["-A", short], "off"],
+      [inOneFile("error"), ["-W", "pedantic"], "warn"],
+      [inTheFileAndInItsBase("warn"), ["-D", short], "error"],
+      [inTheFileAndInItsBase("error"), ["-W", short], "warn"],
+      [inTheFileAndInItsBase("error"), ["-A", short], "off"],
+      [inTwoFiles({ [short]: "warn" }, { [long]: "warn" }), ["-D", short], "error"],
+      // A flag for another rule changes nothing.
+      [inTwoFiles({ [long]: "error" }, { [short]: "off" }), [], "off"],
+      [inTwoFiles({ [long]: "error" }, { [short]: "off" }), ["-D", "eqeqeq"], "off"],
+      [inTwoFiles({ [long]: "off" }, { [short]: "error" }), [], "error"],
+      [inTwoFiles({ [long]: "off" }, { [short]: "error" }), ["-D", "eqeqeq"], "error"],
+    ];
+    const run = async ([files, flags]: Row) => {
+      const source = { "a.ts": "export const a = new Array(1, 2, 3);\n" };
+      const { problems, exitCode } = await lint({ ...files, ...source }, [...flags, "a.ts"]);
+      return [problems, exitCode];
+    };
+    const expected = { "off": [[], 0], "warn": [[`a.ts:1:18 ${short}`], 0], "error": [[`a.ts:1:18 ${short}`], 1] };
+    expect(await Promise.all(rows.map(run))).toEqual(rows.map(([, , severity]) => expected[severity]));
   });
 
   test("`plugins` in an override apply only to that override", async () => {

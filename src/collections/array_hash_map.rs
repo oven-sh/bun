@@ -539,31 +539,6 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Bulk-resize the backing columns so callers can
-    /// `keys_mut().copy_from_slice(...)` / `values_mut().copy_from_slice(...)`
-    /// and then `re_index()`.
-    ///
-    /// # Safety
-    /// `n` must not exceed reserved capacity, and every element in
-    /// `old_len..n` of each column must be fully written before any read
-    /// (including `re_index`, which reads `keys`). For `Copy` POD keys/values
-    /// (the only callers today) the intermediate uninit window is sound as
-    /// long as it is filled immediately.
-    pub unsafe fn set_entries_len(&mut self, n: usize) {
-        debug_assert!(n <= self.keys.capacity());
-        debug_assert!(n <= self.values.capacity());
-        debug_assert!(n <= self.hashes.capacity());
-        // SAFETY: caller contract above — `n` is within reserved capacity and
-        // the uninit window is filled before any read.
-        unsafe {
-            self.keys.set_len(n);
-            self.values.set_len(n);
-            self.hashes.set_len(n);
-        }
-        // Caller is about to overwrite keys/values then `re_index()`.
-        self.drop_index();
-    }
-
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
     /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
@@ -806,7 +781,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     }
 
     /// Invalidate the accelerator. Called by operations that permute entry
-    /// indices wholesale (`sort`, `re_index`, bulk `set_entries_len`); paired
+    /// indices wholesale (`sort`, `re_index`); paired
     /// with an immediate `rebuild_index()` when the map is past the threshold
     /// so subsequent lookups never silently fall back to O(n) linear scan.
     /// Point removals (`pop`/`swap_remove`) instead patch the index in place
@@ -991,6 +966,22 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
             self.rebuild_index();
         }
         Ok(())
+    }
+
+    /// Replaces the entries. No two of `keys` are equal.
+    pub fn set_entries(&mut self, keys: &[K], values: impl Iterator<Item = V>)
+    where
+        K: Copy,
+    {
+        self.clear_retaining_capacity();
+        self.values.extend(values);
+        assert_eq!(keys.len(), self.values.len());
+        self.keys.extend_from_slice(keys);
+        self.hashes
+            .extend(keys.iter().map(|key| self.ctx.hash(key)));
+        if keys.len() > INDEX_THRESHOLD {
+            self.rebuild_index();
+        }
     }
 
     pub fn put(&mut self, key: K, value: V) -> Result<(), AllocError> {
@@ -1196,15 +1187,9 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
     ) -> Result<GetOrPutResult<'_, K, V>, AllocError> {
         let gop = self.get_or_put(key)?;
         if !gop.found_existing {
-            // SAFETY: re-borrow at same index — `gop` borrows `self` so go
-            // through the slot it already points at.
             *gop.value_ptr = value;
         }
-        // Can't return `gop` while it borrows in the branch above without
-        // NLL gymnastics; recompute via index.
-        let i = gop.index;
-        let found = gop.found_existing;
-        Ok(self.gop_at(i, found))
+        Ok(gop)
     }
 }
 
@@ -1512,11 +1497,8 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// slice by reference; never freed on drop.
     #[inline]
     pub(crate) const fn borrowed(s: &'static [u8]) -> Self {
-        // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
-        // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         Self {
-            ptr,
+            ptr: core::ptr::NonNull::from_ref(s).cast(),
             len_tag: s.len(),
             _alloc: PhantomData,
         }
@@ -1533,13 +1515,9 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         );
         // Discard the stored `A` — for every `A` in use (`Global`,
         // `DefaultAlloc`, `AstAlloc`) it is a ZST, so `A::default()` in `Drop`
-        // is the same instance. `into_raw_with_allocator` because on current
-        // nightly `Box::into_raw` is restricted to `Box<T, Global>`.
-        let (raw, _alloc) = Box::into_raw_with_allocator(b);
-        // SAFETY: `Box::into_raw_with_allocator` never returns null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
+        // is the same instance.
         Self {
-            ptr,
+            ptr: Box::into_non_null_with_allocator(b).0.cast(),
             len_tag: len | SHMK_OWNED_BIT,
             _alloc: PhantomData,
         }
@@ -1724,6 +1702,22 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
             }
         }
         Ok(())
+    }
+
+    /// `get_or_put` for a `V` without a default: on a miss, returns what puts the value.
+    pub fn get_or_vacant(&mut self, key: &[u8]) -> Result<&mut V, impl FnOnce(V)> {
+        use hashbrown::hash_map::RawEntryMut;
+        let hash = self.hash_key(key);
+        match self
+            .inner
+            .raw_entry_mut()
+            .from_key_hashed_nocheck(hash, key)
+        {
+            RawEntryMut::Occupied(e) => Ok(e.into_mut()),
+            RawEntryMut::Vacant(e) => Err(move |value| {
+                e.insert_hashed_nocheck(hash, owned_key::<A>(key), value);
+            }),
+        }
     }
 
     /// Insert `value` under `key` **without copying the key bytes**. This is

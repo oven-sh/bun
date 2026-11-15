@@ -1,0 +1,9 @@
+# the control: the same program without the word that --trim says: the records are what they were
+# -- source: without-the-word-of-the-trim-no-record-is-named-at-run-time.ts
+# declare const input: any;
+# new Function(input)();
+# -- end of source
+# RUN: features
+# CHECK: by BunServe unnamed
+# RUN(NEVER): features
+# NEVER-NOT: named-at-run-time

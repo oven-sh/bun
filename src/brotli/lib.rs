@@ -1,19 +1,137 @@
-use core::ptr;
+use core::ops::{Deref, DerefMut};
+use core::ptr::{self, NonNull};
 
 pub mod error;
 pub use error::{Error, Result};
 
 pub use bun_brotli_sys::brotli_c as c;
-use c::BrotliDecoder;
+use c::{BrotliDecoder, BrotliEncoder};
 
 // ──────────────────────────────────────────────────────────────────────────
 // BrotliAllocator
 // ──────────────────────────────────────────────────────────────────────────
 
 #[allow(non_snake_case)]
-pub mod BrotliAllocator {
-    bun_alloc::c_thunks_for_zone!("brotli");
-    pub use malloc_size as alloc;
+mod BrotliAllocator {
+    bun_alloc::c_thunks_for_zone!(c"brotli");
+    pub(crate) use malloc_size as alloc;
+}
+
+/// What a decoder or an encoder allocates with.
+#[derive(Clone, Copy)]
+pub enum Allocator {
+    Bun,
+    Libc,
+}
+
+impl Allocator {
+    fn hooks(self) -> (c::brotli_alloc_func, c::brotli_free_func) {
+        match self {
+            Self::Bun => (Some(BrotliAllocator::alloc), Some(BrotliAllocator::free)),
+            Self::Libc => (None, None),
+        }
+    }
+}
+
+pub struct OwnedDecoder(NonNull<BrotliDecoder>);
+
+impl OwnedDecoder {
+    pub fn new(allocator: Allocator) -> Option<Self> {
+        let (alloc, free) = allocator.hooks();
+        // SAFETY: the hooks match and ignore `opaque`.
+        NonNull::new(unsafe { c::BrotliDecoderCreateInstance(alloc, free, ptr::null_mut()) })
+            .map(Self)
+    }
+}
+
+impl Deref for OwnedDecoder {
+    type Target = BrotliDecoder;
+    fn deref(&self) -> &BrotliDecoder {
+        BrotliDecoder::opaque_ref(self.0.as_ptr())
+    }
+}
+
+impl DerefMut for OwnedDecoder {
+    fn deref_mut(&mut self) -> &mut BrotliDecoder {
+        BrotliDecoder::opaque_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for OwnedDecoder {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, destroyed once.
+        unsafe { c::BrotliDecoderDestroyInstance(self.0.as_ptr()) }
+    }
+}
+
+pub struct OwnedEncoder(NonNull<BrotliEncoder>);
+
+impl OwnedEncoder {
+    pub fn new(allocator: Allocator) -> Option<Self> {
+        let (alloc, free) = allocator.hooks();
+        // SAFETY: the hooks match and ignore `opaque`.
+        NonNull::new(unsafe { c::BrotliEncoderCreateInstance(alloc, free, ptr::null_mut()) })
+            .map(Self)
+    }
+}
+
+impl Deref for OwnedEncoder {
+    type Target = BrotliEncoder;
+    fn deref(&self) -> &BrotliEncoder {
+        BrotliEncoder::opaque_ref(self.0.as_ptr())
+    }
+}
+
+impl DerefMut for OwnedEncoder {
+    fn deref_mut(&mut self) -> &mut BrotliEncoder {
+        BrotliEncoder::opaque_mut(self.0.as_ptr())
+    }
+}
+
+impl Drop for OwnedEncoder {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, destroyed once.
+        unsafe { c::BrotliEncoderDestroyInstance(self.0.as_ptr()) }
+    }
+}
+
+/// A raw dictionary prepared for an encoder, and the bytes it points into.
+pub struct PreparedDictionary {
+    prepared: NonNull<c::BrotliEncoderPreparedDictionary>,
+    _bytes: Vec<u8>,
+}
+
+impl PreparedDictionary {
+    pub fn new(bytes: Vec<u8>) -> Option<Self> {
+        let (alloc, free) = Allocator::Bun.hooks();
+        // SAFETY: `bytes` drops after `prepared` is destroyed; the hooks match and ignore `opaque`.
+        let prepared = unsafe {
+            c::BrotliEncoderPrepareDictionary(
+                c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
+                bytes.len(),
+                bytes.as_ptr(),
+                c::BROTLI_MAX_QUALITY,
+                alloc,
+                free,
+                ptr::null_mut(),
+            )
+        };
+        Some(Self {
+            prepared: NonNull::new(prepared)?,
+            _bytes: bytes,
+        })
+    }
+
+    pub fn as_ptr(&self) -> *const c::BrotliEncoderPreparedDictionary {
+        self.prepared.as_ptr()
+    }
+}
+
+impl Drop for PreparedDictionary {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, destroyed once.
+        unsafe { c::BrotliEncoderDestroyPreparedDictionary(self.prepared.as_ptr()) }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -53,7 +171,7 @@ use bun_core::compress::State as ReaderState;
 /// [`decompress`](Self::decompress) per call, so callers can hold the decoder across multiple body chunks
 /// without lifetime erasure.
 pub struct StreamingDecoder {
-    brotli: ptr::NonNull<c::BrotliDecoder>,
+    brotli: OwnedDecoder,
     pub(crate) state: ReaderState,
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
@@ -65,40 +183,29 @@ impl StreamingDecoder {
         if !BrotliDecoder::initialize_brotli() {
             return Err(crate::Error::BrotliFailedToLoad);
         }
-        // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
-        // fns and opaque is null (unused by our allocator).
-        let brotli = unsafe {
-            BrotliDecoder::create_instance(
-                Some(BrotliAllocator::alloc),
-                Some(BrotliAllocator::free),
-                ptr::null_mut(),
-            )
-        }
-        .ok_or(crate::Error::BrotliFailedToCreateInstance)?;
+        let mut brotli =
+            OwnedDecoder::new(Allocator::Bun).ok_or(crate::Error::BrotliFailedToCreateInstance)?;
 
         if options.params.large_window {
-            let _ =
-                BrotliDecoder::set_parameter(brotli, c::BrotliDecoderParameter::LARGE_WINDOW, 1);
+            let _ = BrotliDecoder::set_parameter(
+                &mut brotli,
+                c::BrotliDecoderParameter::LARGE_WINDOW,
+                1,
+            );
         }
         if options.params.disable_ring_buffer_reallocation {
             let _ = BrotliDecoder::set_parameter(
-                brotli,
+                &mut brotli,
                 c::BrotliDecoderParameter::DISABLE_RING_BUFFER_REALLOCATION,
                 1,
             );
         }
 
         Ok(Self {
-            brotli: ptr::NonNull::from(brotli),
+            brotli,
             state: ReaderState::Uninitialized,
             max_output_size: usize::MAX,
         })
-    }
-
-    #[inline]
-    fn brotli_mut(&mut self) -> &mut c::BrotliDecoder {
-        // SAFETY: non-null, exclusively owned, freed only in Drop.
-        unsafe { self.brotli.as_mut() }
     }
 
     #[inline]
@@ -146,7 +253,7 @@ impl StreamingDecoder {
 
             // https://github.com/google/brotli/blob/fef82ea10435abb1500b615b1b2c6175d429ec6c/go/cbrotli/reader.go#L15-L27
             let result = BrotliDecoder::decompress_stream(
-                self.brotli_mut(),
+                &mut self.brotli,
                 &mut in_remaining,
                 &mut next_in_ptr,
                 &mut out_remaining,
@@ -174,7 +281,7 @@ impl StreamingDecoder {
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
                     return Err(
-                        if c::BrotliDecoderGetErrorCode(self.brotli_mut()).is_alloc_failure() {
+                        if c::BrotliDecoderGetErrorCode(&self.brotli).is_alloc_failure() {
                             crate::Error::OutOfMemory
                         } else {
                             crate::Error::BrotliDecompressionError
@@ -184,7 +291,7 @@ impl StreamingDecoder {
                 c::BrotliDecoderResult::needs_more_input => {
                     self.state = ReaderState::Inflating;
                     // Brotli reports `needs_more_input` even with output left in its ring buffer.
-                    if bytes_written > 0 && BrotliDecoder::has_more_output(self.brotli_mut()) {
+                    if bytes_written > 0 && BrotliDecoder::has_more_output(&self.brotli) {
                         continue;
                     }
                     if is_done {
@@ -203,12 +310,6 @@ impl StreamingDecoder {
             }
         }
         Ok(total_in)
-    }
-}
-
-impl Drop for StreamingDecoder {
-    fn drop(&mut self) {
-        BrotliDecoder::destroy_instance(self.brotli_mut());
     }
 }
 

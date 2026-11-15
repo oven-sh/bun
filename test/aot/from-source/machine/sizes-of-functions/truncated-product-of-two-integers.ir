@@ -1,0 +1,12 @@
+# f1 = product
+# -- source: truncated-product-of-two-integers.ts
+# function product(a: number, b: number): number { return (a * b) | 0; }
+# declare const input: any;
+# (globalThis as any).answer = product(input | 0, input | 0);
+# -- end of source
+# The compiler before this one: 3 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 12, patches 0, moves 1, unlikely or rare 7.
+# RUN(X64): steps most:13 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 13

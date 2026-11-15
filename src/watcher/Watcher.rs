@@ -295,14 +295,13 @@ impl Watcher {
             // ends before the free below.
             let me = unsafe { &*this };
             // `thread_body` clears `watchloop_handle` under this mutex when it returns ownership.
-            me.mutex.lock();
+            let guard = me.mutex.lock_guard();
             if me.watchloop_handle.load() {
                 me.close_descriptors.store(close_descriptors);
                 me.running.store(false);
-                me.mutex.unlock();
                 false
             } else {
-                me.mutex.unlock();
+                drop(guard);
                 if close_descriptors && me.running.load() {
                     let fds = me.watchlist.items_fd();
                     for &fd in fds {
@@ -396,7 +395,7 @@ impl Watcher {
         // handed out for reads: a reader that copied the number before this
         // ran would hit `EBADF`/`EISDIR` after (see `snapshot_package_json`).
         //
-        // We do NOT lock here: the only callers are deferred from
+        // We do NOT lock here: the only callers run inside
         // `WatcherContext::on_file_update`, which is itself invoked from
         // `dispatch_file_updates` while `self.mutex` is already held.
         // `bun_threading::Mutex` is non-recursive — re-locking here is
@@ -412,9 +411,7 @@ impl Watcher {
         // So if we just sort the list by the biggest index first, that should be fine
         index_sort::sort_slice_by(&mut self.evict_list[0..evict_list_i], |a, b| b.cmp(a));
 
-        // reshaped for borrowck — capture fds.len() before loop
-        let slice = self.watchlist.slice();
-        let fds = slice.items_fd();
+        let fds = self.watchlist.items_fd();
         let fds_len = fds.len();
         let mut last_item = NO_WATCH_ITEM;
 
@@ -517,7 +514,8 @@ impl Watcher {
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        let _ = bun_sys::kevent(self.platform.fd, &[event], &mut [], None);
+        // SAFETY: only `watch_loop_cycle` waits on this kqueue, and it reads `udata` as an index.
+        let _ = unsafe { bun_sys::kevent(self.platform.fd, &[event], &mut [], None) };
     }
 
     fn append_file_assume_capacity<const CLONE_FILE_PATH: bool>(
@@ -585,7 +583,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
@@ -672,7 +669,6 @@ impl Watcher {
             file_path: file_path_,
             fd,
             hash,
-            count: 0,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
@@ -707,17 +703,15 @@ impl Watcher {
         let autowatch_parent_dir =
             feature_flags::WATCH_DIRECTORIES && self.is_eligible_directory(parent_dir);
         if autowatch_parent_dir {
-            let watchlist_slice = self.watchlist.slice();
-
             if dir_fd.is_valid() {
-                let fds = watchlist_slice.items_fd();
+                let fds = self.watchlist.items_fd();
                 if let Some(i) = fds.iter().position(|f| *f == dir_fd) {
                     parent_watch_item = Some(i as WatchItemIndex);
                 }
             }
 
             if parent_watch_item.is_none() {
-                let hashes = watchlist_slice.items_hash();
+                let hashes = self.watchlist.items_hash();
                 if let Some(i) = hashes.iter().position(|h| *h == parent_dir_hash) {
                     parent_watch_item = Some(i as WatchItemIndex);
                 }
@@ -840,7 +834,7 @@ impl Watcher {
 
         // Only open fd if we might need it
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        let fd: Fd = {
+        let file = {
             let mut path_z = bun_paths::path_buffer_pool::get();
             if file_path.len() >= path_z.len() {
                 return false;
@@ -850,31 +844,31 @@ impl Watcher {
             // `path_z[file_path.len()] == 0` written above; `from_buf` borrows
             // `path_z[..len]` as a `&ZStr` with the NUL debug-asserted in-bounds.
             let z = ZStr::from_buf(&path_z[..], file_path.len());
-            match bun_sys::open(z, WATCH_OPEN_FLAGS, 0) {
-                Ok(opened) => opened,
+            match sys::File::open(z, WATCH_OPEN_FLAGS, 0) {
+                Ok(opened) => Some(opened),
                 Err(_) => return false,
             }
         };
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-        let fd: Fd = Fd::INVALID;
+        let file = None;
 
-        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, None);
-        match res {
-            Ok(ownership) => {
-                // Not adopted (another thread won the add race); close the
-                // fd opened above.
-                if ownership == FdOwnership::Caller && fd.is_valid() {
-                    let _ = bun_sys::close(fd);
-                }
-                true
-            }
-            Err(_) => {
-                if fd.is_valid() {
-                    let _ = bun_sys::close(fd);
-                }
-                false
-            }
+        self.add_owned_file(file, file_path, hash, None).is_ok()
+    }
+
+    /// [`Self::add_file`] that closes `file` unless the watchlist keeps it.
+    pub fn add_owned_file(
+        &mut self,
+        file: Option<sys::File>,
+        file_path: &[u8],
+        hash: HashType,
+        package_json: Option<&'static PackageJSON>,
+    ) -> sys::Result<()> {
+        let fd = file.as_ref().map_or(Fd::INVALID, sys::File::fd);
+        let owner = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, package_json)?;
+        if owner == FdOwnership::Watcher {
+            let _ = file.map(sys::File::into_raw);
         }
+        Ok(())
     }
 
     pub fn add_file<const CLONE_FILE_PATH: bool>(
@@ -886,7 +880,7 @@ impl Watcher {
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
         // This must lock due to concurrent transpiler
-        self.mutex.lock();
+        let _guard = self.mutex.lock_guard();
 
         if let Some(index) = self.index_of(hash) {
             let mut ownership = FdOwnership::Caller;
@@ -902,19 +896,16 @@ impl Watcher {
                     ownership = FdOwnership::Watcher;
                 }
             }
-            self.mutex.unlock();
             return Ok(ownership);
         }
 
-        let r = self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
+        self.append_file_maybe_lock::<CLONE_FILE_PATH, false>(
             fd,
             file_path,
             hash,
             dir_fd,
             package_json,
-        );
-        self.mutex.unlock();
-        r
+        )
     }
 
     pub fn index_of(&self, hash: HashType) -> Option<u32> {
@@ -1062,7 +1053,6 @@ pub struct WatchItem {
     // filepath hash for quick comparison
     pub hash: u32,
     pub fd: Fd,
-    pub count: u32,
     pub parent_hash: u32,
     pub kind: WatchItemKind,
     pub package_json: Option<&'static PackageJSON>,
@@ -1091,8 +1081,6 @@ pub enum FdOwnership {
 
 /// Typed SoA column accessors — thin safe wrappers over the reflection-backed
 /// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
-/// Implemented locally so callers can write `watchlist.items_fd()` instead of
-/// the unsafe generic `Slice::items::<F>(field)`.
 pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];
@@ -1105,31 +1093,6 @@ pub trait WatchItemColumns {
 }
 
 impl WatchItemColumns for WatchList {
-    fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
-        self.items::<"file_path", Cow<'static, [u8]>>()
-    }
-    fn items_hash(&self) -> &[u32] {
-        self.items::<"hash", u32>()
-    }
-    fn items_fd(&self) -> &[Fd] {
-        self.items::<"fd", Fd>()
-    }
-    fn items_fd_mut(&mut self) -> &mut [Fd] {
-        self.items_mut::<"fd", Fd>()
-    }
-    fn items_parent_hash(&self) -> &[u32] {
-        self.items::<"parent_hash", u32>()
-    }
-    fn items_kind(&self) -> &[WatchItemKind] {
-        self.items::<"kind", WatchItemKind>()
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
-        self.items::<"eventlist_index", platform::EventListIndex>()
-    }
-}
-
-impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
     }

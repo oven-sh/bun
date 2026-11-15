@@ -97,7 +97,6 @@ impl OutputFileList {
         c: &LinkerContext,
         chunks: &[Chunk],
     ) -> (u32, u32) {
-        let parse_graph = c.parse_graph();
         let source_map_count: usize = if c.options.source_maps.has_external_files() {
             'brk: {
                 let mut count: usize = 0;
@@ -133,7 +132,7 @@ impl OutputFileList {
         let additional_output_files_count: usize = if c.options.compile_mode.is_standalone_html() {
             0
         } else {
-            parse_graph.additional_output_files.len()
+            c.graph.additional_output_files.len()
         };
         (
             u32::try_from(

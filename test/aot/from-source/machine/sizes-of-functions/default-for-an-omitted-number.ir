@@ -1,0 +1,14 @@
+# f1 = orOne
+# -- source: default-for-an-omitted-number.ts
+# function orOne(value?: number): number {
+#   return value ?? 1;
+# }
+# declare const input: any;
+# (globalThis as any).answer = orOne(input ? +input : undefined);
+# -- end of source
+# The compiler before this one: 5 instructions, 0 of them patches.
+# When the bound was taken: steps: operations 11, patches 0, moves 1, unlikely or rare 0.
+# RUN(X64): steps most:12 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: steps: at most 12

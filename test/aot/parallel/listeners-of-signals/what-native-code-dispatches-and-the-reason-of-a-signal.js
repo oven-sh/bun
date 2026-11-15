@@ -1,0 +1,23 @@
+const said = [];
+const controller = new AbortController();
+controller.signal.addEventListener("abort", event => said.push(`${event.type} ${event.constructor.name} ${event.target === controller.signal} ${event.isTrusted}`));
+controller.signal.addEventListener("abort", { handleEvent(event) { said.push(`handled ${event.type}`); } });
+controller.abort();
+said.push(`${controller.signal.reason.name} ${controller.signal.reason.code} ${controller.signal.reason instanceof DOMException}`);
+const own = { made: "up" };
+said.push(`${AbortSignal.abort(own).reason === own}`);
+const late = AbortSignal.timeout(1);
+await new Promise(resolve => late.addEventListener("abort", resolve));
+said.push(`${late.reason.name} ${late.reason.code}`);
+const channel = new MessageChannel();
+const heard = new Promise(resolve => channel.port1.addEventListener("message", resolve));
+channel.port1.start();
+channel.port2.postMessage({ made: ["up"] });
+const event = await heard;
+said.push(`${event.constructor.name} ${event.data.made[0]} ${event.ports.length} ${event instanceof MessageEvent}`);
+channel.port1.close();
+const target = new EventTarget();
+class Own extends Event { extra = "own"; }
+target.addEventListener("made", event => said.push(`${event.extra} ${event instanceof Own}`));
+target.dispatchEvent(new Own("made"));
+console.log(`${said.join(" | ")}`);

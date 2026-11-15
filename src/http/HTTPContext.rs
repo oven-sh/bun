@@ -10,7 +10,7 @@ use crate::{
     get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
-use bun_boringssl_sys::{OwnedSslCtx, SSL_CTX};
+use bun_boringssl_sys::OwnedSslCtx;
 use bun_collections::{HiveArray, TaggedPtrUnion};
 use bun_core::strings;
 use bun_ptr::RefPtr;
@@ -93,9 +93,7 @@ pub(crate) type ActiveSocket<const SSL: bool> = TaggedPtrUnion<ActiveSocketTypes
 pub(crate) struct ActiveSocketTypes<const SSL: bool>;
 
 // Note: tags assigned 1024 - i, descending.
-impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
-    const MIN_TAG: bun_ptr::tagged_pointer::TagType = 1024 - 3;
-}
+impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {}
 impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL>> for DeadSocket {
     const TAG: bun_ptr::tagged_pointer::TagType = 1024;
 }
@@ -123,14 +121,14 @@ impl<const SSL: bool> bun_ptr::tagged_pointer::UnionMember<ActiveSocketTypes<SSL
 /// INVARIANT (single point of unsafe): a tagged pointer stored in a live
 /// socket's ext slot identifies an object that is alive for the duration of
 /// the dispatched callback — `HTTPClient` until its terminal result callback,
-/// `h2::ClientSession` while the slot holds its socket-ext ref, `PooledSocket`
+/// `h2::ClientSession` while it is in `active_h2_sessions`, `PooledSocket`
 /// while its HiveArray bit is set. All accesses are HTTP-thread-only, so no
 /// concurrent `&mut` exists. Callers obtain the tagged value via
 /// [`HTTPContext::get_tagged`] / [`HTTPContext::get_tagged_from_socket`] and
 /// must not retain the returned reference past the callback.
 ///
 /// An h2 session is handed out as a [`h2::SessionPtr`] rather than a `&mut`:
-/// its entry points release the slot's ref themselves (the socket closing, or
+/// its entry points release the registry's ref themselves (the socket closing, or
 /// the last request finishing on an unpoolable connection), so a `&mut`
 /// argument to them could be freed while still live.
 pub(crate) trait ActiveSocketExt<const SSL: bool>: Copy {
@@ -159,8 +157,7 @@ impl<const SSL: bool> ActiveSocketExt<SSL> for ActiveSocket<SSL> {
     }
     #[inline]
     fn session(self) -> Option<h2::SessionPtr> {
-        // INVARIANT: see the trait doc — while tagged as the session the slot
-        // holds the socket-ext ref, which is what `this_ptr` requires.
+        // INVARIANT: see the trait doc.
         self.get::<h2::ClientSession>()
             .and_then(NonNull::new)
             .map(h2::ClientSession::this_ptr)
@@ -254,8 +251,7 @@ pub struct PooledSocket<const SSL: bool> {
 ///
 /// INVARIANT: the holder owns one ref on the session, a distinct heap
 /// allocation; HTTP-thread-only, so no concurrent `&mut`. Each call re-derives
-/// a fresh `&mut`, so callers may interleave raw `as_ptr()` reads (e.g.
-/// `register_h2`) without a spanning Unique tag.
+/// a fresh `&mut`, so callers may interleave raw `as_ptr()` reads.
 #[inline]
 #[allow(clippy::mut_from_ref)]
 fn h2_session_mut(s: &RefPtr<h2::ClientSession>) -> &mut h2::ClientSession {
@@ -276,21 +272,6 @@ fn h2_session_mut(s: &RefPtr<h2::ClientSession>) -> &mut h2::ClientSession {
 fn pooled_socket_mut<'a, const SSL: bool>(p: *mut PooledSocket<SSL>) -> &'a mut PooledSocket<SSL> {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *p }
-}
-
-impl<const SSL: bool> PooledSocket<SSL> {
-    /// Drop the strong refs the pool holds while a socket is parked
-    /// (proxy_tunnel / h2_session) and clear the heap-owned
-    /// `target_hostname`. Called from `Drop` and `add_memory_back_to_pool`
-    /// before the slot is recycled or its socket force-closed.
-    ///
-    /// Centralises the intrusive-rc `deref` so each caller doesn't repeat the
-    /// pair of `unsafe { …::deref(nn.as_ptr()) }`.
-    fn release_parked_refs(&mut self) {
-        self.target_hostname = Box::default();
-        self.proxy_tunnel = None;
-        self.h2_session = None;
-    }
 }
 
 #[derive(Clone, Copy)]
@@ -321,6 +302,11 @@ struct ExistingSocket<const SSL: bool> {
     /// Present if the socket negotiated "h2"; ownership transferred.
     h2_session: Option<RefPtr<h2::ClientSession>>,
     verification: PeerVerification,
+}
+
+#[inline(never)]
+fn need_socket_handlers() {
+    core::hint::black_box(uws::SocketKind::HttpClient);
 }
 
 impl<const SSL: bool> HTTPContext<SSL> {
@@ -414,40 +400,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
         )
     }
 
-    /// Tail of [`Self::unregister_h2_raw`]: swap-remove the entry at `idx`
-    /// from `list`, fix up the swapped-in entry's index, and release the ref
-    /// taken in [`Self::register_h2`] through the pointer the registry held.
-    /// `session` only identifies the entry being removed.
-    fn h2_swap_remove_and_deref(
-        list: &mut Vec<RefPtr<h2::ClientSession>>,
-        idx: u32,
-        session: *const h2::ClientSession,
-    ) {
-        debug_assert!(
-            (idx as usize) < list.len()
-                && core::ptr::eq(list[idx as usize].as_ptr().cast_const(), session)
-        );
-        let _removed = list.swap_remove(idx as usize);
-        if (idx as usize) < list.len() {
-            // The swapped-in entry is a distinct allocation from `session`
-            // (the entry at `idx` was just removed); `set_registry_index`
-            // only touches a `Cell<u32>`.
-            list[idx as usize].set_registry_index(idx);
-        }
-    }
-
-    pub(crate) fn register_h2(&mut self, session: *mut h2::ClientSession) {
-        if !SSL {
-            return;
-        }
-        let s = Self::h2_session_ref(session);
-        if s.registry_index() != u32::MAX {
-            return;
-        }
-        s.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
-        // SAFETY: `session` is live (caller contract).
-        self.active_h2_sessions
-            .push(unsafe { RefPtr::init_ref(session) });
+    pub(crate) fn register_h2(&mut self, session: RefPtr<h2::ClientSession>) -> h2::SessionPtr {
+        debug_assert!(SSL && session.registry_index() == u32::MAX);
+        session.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
+        let this = session.this_ptr();
+        self.active_h2_sessions.push(session);
+        this
     }
 
     /// Called from drainQueuedShutdowns when the abort-tracker lookup
@@ -479,7 +437,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         false
     }
 
-    /// Take `session` out of `active_h2_sessions`, releasing the registry's
+    /// Take `session` out of `active_h2_sessions`, returning the registry's
     /// ref. Takes the context as a raw pointer because it is reached on
     /// re-entrant call paths (`connect` → `adopt` → `maybe_release` /
     /// `fail_all` → `fail_streams`) where an ancestor stack frame already
@@ -493,33 +451,32 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// hold a `&mut` to it but must not be mid-iteration over
     /// `active_h2_sessions` (this swap_removes from that Vec). `session` must
     /// be live for the duration of the call; it is only used to find and
-    /// identify the registry entry, which is what gets released.
-    pub(crate) unsafe fn unregister_h2_raw(ctx: *mut Self, session: *const h2::ClientSession) {
-        if !SSL {
-            return;
-        }
+    /// identify the registry entry, which is what gets returned.
+    #[must_use]
+    pub(crate) unsafe fn unregister_h2_raw(
+        ctx: *mut Self,
+        session: *const h2::ClientSession,
+    ) -> Option<RefPtr<h2::ClientSession>> {
         let s = Self::h2_session_ref(session);
         let idx = s.registry_index();
         if idx == u32::MAX {
-            return;
+            return None;
         }
         s.set_registry_index(u32::MAX);
         // SAFETY: `ctx` is live per caller contract. Project the field via raw
         // place expression — no intermediate `&mut Self` is formed, so we do
         // not alias an ancestor frame's `&mut HTTPContext`.
         let list = unsafe { &mut (*ctx).active_h2_sessions };
-        Self::h2_swap_remove_and_deref(list, idx, session);
+        let removed = list.swap_remove(idx as usize);
+        debug_assert!(core::ptr::eq(removed.as_ptr(), session));
+        if let Some(swapped_in) = list.get(idx as usize) {
+            swapped_in.set_registry_index(idx);
+        }
+        Some(removed)
     }
 
     pub(crate) fn tag_as_h2(socket: HTTPSocket<SSL>, session: *const h2::ClientSession) {
         Self::set_socket_ext(socket, ActiveSocket::<SSL>::init(session));
-    }
-
-    fn ssl_ctx(&self) -> *mut SSL_CTX {
-        if !SSL {
-            unreachable!();
-        }
-        self.secure.as_ref().unwrap().as_ptr()
     }
 
     pub(crate) fn init_with_client_config(
@@ -544,8 +501,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
-        self.secure = match opts.create_ssl_context(&mut err) {
-            Some(ctx) => Some(ctx),
+        let ctx = match opts.create_ssl_context(&mut err) {
+            Some(ctx) => ctx,
             None => {
                 return Err(match err {
                     uws::create_bun_socket_error_t::load_ca_file => InitError::LoadCAFile,
@@ -560,11 +517,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 });
             }
         };
-        // SAFETY: secure was just set to Some.
-        unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+        ssl_ctx_setup(self.secure.insert(ctx));
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         Ok(())
     }
 
@@ -581,7 +536,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
             },
             ca_count: u32::try_from(init_opts.ca.len()).expect("int cast"),
             ca_file_name: if !init_opts.abs_ca_file_name.is_empty() {
-                init_opts.abs_ca_file_name.as_ptr().cast()
+                init_opts.abs_ca_file_name.as_ptr()
             } else {
                 core::ptr::null()
             },
@@ -593,11 +548,10 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn init(&mut self) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(uws::Loop::get(), None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
-            self.secure = Some(
+            let ctx = self.secure.insert(
                 uws::SocketContext::BunSocketContextOptions {
                     // we request the cert so we load root certs and can verify it
                     request_cert: 1,
@@ -608,8 +562,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 .create_ssl_context(&mut err)
                 .unwrap(),
             );
-            // SAFETY: secure was just set to Some.
-            unsafe { ssl_ctx_setup(self.ssl_ctx()) };
+            ssl_ctx_setup(ctx);
         }
     }
 
@@ -944,13 +897,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
                 // Transfer tunnel ownership (the parked strong ref) to the caller.
                 let tunnel: Option<RefPtr<ProxyTunnel>> = socket.proxy_tunnel.take();
-                socket.target_hostname = Box::default();
                 let h2_session = socket.h2_session.take();
                 let verification = socket.verification;
-                // SAFETY: `socket_ptr` is a fully-initialized hive slot; the
-                // owned-heap fields (tunnel/target_hostname/h2_session)
-                // were just moved out / cleared, so the in-place drop in `put`
-                // touches only trivially-droppable residuals.
+                // SAFETY: `socket_ptr` is a fully-initialized hive slot.
                 let ok = unsafe { pool.put(socket_ptr) };
                 debug_assert!(ok);
                 bun_core::scoped_log!(
@@ -1024,8 +973,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_unix_group(
-            &mut self.group,
+            &self.group,
             Self::KIND,
             if SSL {
                 self.secure.as_ref().map(OwnedSslCtx::as_ptr)
@@ -1047,23 +997,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
         Ok(Some(socket))
     }
 
-    pub(crate) fn connect(
+    pub(crate) fn connect<'a>(
         &mut self,
-        client: &mut HTTPClient,
-        hostname: &[u8],
+        client: &mut HTTPClient<'a>,
+        hostname: &'a [u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
         client.connected_url = client
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
-        // URL.hostname is a borrowed slice — assigning a local would not
-        // satisfy the field's lifetime, so this uses raw lifetime erasure.
-        client.connected_url.hostname =
-            // SAFETY: hostname borrows `client.url` or `client.http_proxy`,
-            // which outlive `connected_url` for the duration of the connect
-            // attempt.
-            unsafe { bun_ptr::detach_lifetime(hostname) };
+        client.connected_url.hostname = hostname;
 
         if SSL {
             if client.can_offer_h2() {
@@ -1154,13 +1098,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 if let Some(session) = found.h2_session.take() {
                     debug_assert!(SSL);
                     h2_session_mut(&session).socket = sock.assume_ssl();
-                    // The pool's ref becomes the socket ext's; `adopt` goes
+                    // The pool's ref becomes the registry's; `adopt` goes
                     // through that handle and may release it again if the
                     // session turns out to be unusable, so nothing touches
                     // `session` afterwards.
-                    let session = session.into_this_ptr();
+                    let session = self.register_h2(session);
                     Self::tag_as_h2(sock, session.as_ptr());
-                    self.register_h2(session.as_ptr());
                     h2::ClientSession::adopt(session, client);
                     return Ok(None);
                 }
@@ -1185,8 +1128,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
             }
         }
 
+        bun_removable_features::call_removable!(HttpClient, Abort, need_socket_handlers);
         let socket = HTTPSocket::<SSL>::connect_group(
-            &mut self.group,
+            &self.group,
             Self::KIND,
             if SSL {
                 self.secure.as_ref().map(OwnedSslCtx::as_ptr)
@@ -1271,7 +1215,8 @@ impl<const SSL: bool> HTTPContext<SSL> {
         while let Some(idx) = iter.next() {
             let pooled = pooled_socket_mut(pool.at(u16::try_from(idx).expect("int cast")));
             // Not shutdown(): its close callback would deref the freed HTTPClient in the ext slot.
-            pooled.release_parked_refs();
+            pooled.proxy_tunnel = None;
+            pooled.h2_session = None;
             pooled.http_socket.close(uws::CloseKind::Failure);
         }
     }
@@ -1312,14 +1257,10 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
         // cache-miss error path frees the half-init context); tolerate that
         // here by skipping group teardown when it was never linked into the
         // loop.
-        if !self.group.loop_.is_null() {
+        if !self.group.loop_.get().is_null() {
             // Force-close any remaining sockets before unlinking the group so
             // the loop never dereferences a freed `*Context` via `group->ext`.
             self.group.close_all();
-            // Note: SocketGroup deinit must run before the embedding struct
-            // is freed (it unlinks from the loop's group list).
-            // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
-            unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
         }
     }
 }
@@ -1483,16 +1424,7 @@ impl<const SSL: bool> Handler<SSL> {
 
     unsafe fn add_memory_back_to_pool(pooled_ptr: *mut PooledSocket<SSL>) {
         // SAFETY: caller guarantees `pooled_ptr` points at a live HiveArray slot.
-        // Hoist `owner` and clear the slot's owned resources first; the
-        // `&mut HiveArray` receiver formed by `pending_sockets.put` (covering
-        // this very slot) is created only after the `&mut PooledSocket` borrow
-        // is dropped — avoids Stacked Borrows invalidation of the slot pointer.
-        // SAFETY: see fn-level contract.
-        let (owner, transport) = unsafe {
-            let slot = &mut *pooled_ptr;
-            slot.release_parked_refs();
-            (slot.owner, slot.transport)
-        };
+        let (owner, transport) = unsafe { ((*pooled_ptr).owner, (*pooled_ptr).transport) };
         // SAFETY: owner is the HiveArray backing this slot; address-stable
         // (static or Box-allocated) and outlives any pooled entry.
         let ok = unsafe {

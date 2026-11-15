@@ -185,7 +185,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
         object->putDirect(vm, vm.propertyNames->name, name, 0);
         object->putDirect(vm, Bun::builtinNames(vm).pathPublicName(), path, 0);
         object->putDirect(vm, Bun::builtinNames(vm).dataPrivateName(), type, 0);
-        object->putDirect(vm, Identifier::fromString(vm, "parentPath"_s), path, 0);
+        Bun::putDirectNamed(vm, object, "parentPath"_s, path);
     } else {
         object->putDirectOffset(vm, 0, name);
         object->putDirectOffset(vm, 1, path);

@@ -1,0 +1,16 @@
+# under a private name the slot itself says who has the name: a value that does not fit has nowhere to go, so the walk builds no typed form under a name that some store may move out of its slot, and what is closed there is a call of the run time.
+# so the slot of a private name is held to nothing, and its definition and its stores stay typed though nothing is known of `raw`. `label` beside it is the control: it is written, and held.
+# f1 = Context
+# -- source: private-name-is-held-to-nothing.ts
+# declare function sink(...values: unknown[]): void;
+# class Context { #raw: string; label: string; constructor(raw: string, other: string) { this.#raw = raw; this.label = raw; this.#raw = other; } read(): string { return this.#raw; } }
+# sink(Context, new Context("a", "b"));
+# -- end of source
+# RUN: facts enforced mechanisms=all
+# CHECK: field {{*}} "label" source=written type=undefined|null|string {{*}}held=undefined|null|string
+# RUN(NEVER): facts enforced mechanisms=all
+# NEVER-NOT: #raw
+# NEVER-NOT: differs-from-table
+# RUN(WALK): walk f1 mechanisms=all
+# WALK: = PutSlotOrAdd {{*}}key=#"#raw"
+# WALK: = PutSlot {{*}}key=#"#raw"

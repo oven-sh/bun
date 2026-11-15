@@ -1,0 +1,13 @@
+# f1 = add, f2 = sum
+# -- source: main.ts
+# function add(tree: number[], i: number, d: number): void { for (i = (i | 0) + 1 | 0; i < tree.length; i += i & -i) tree[i] += d; }
+# function sum(tree: number[], i: number): number { let s = 0; for (i = i | 0; i > 0; i -= i & -i) s += tree[i]; return s; }
+# const tree: number[] = []; for (let i = 0; i < 17; i++) tree.push(0);
+# for (let i = 0; i < 16; i++) add(tree, i, i & 3);
+# print(sum(tree, 16), sum(tree, 7), tree.join());
+# -- end of source
+# A word that comes round by its bits is an int32: the version of the loop asks the list in its preheader.
+# RUN: walk f1 mechanisms=all
+# CHECK: HasArrayStorage {{*}} arrayStorage=Int32 [isWritable]
+# RUN(ANSWERS): run-in-shell mechanisms=all
+# ANSWERS: 24 9 0,0,1,2,6,0,1,2,12,0,1,2,6,0,1,2,24

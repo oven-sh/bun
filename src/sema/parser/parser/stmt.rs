@@ -1,6 +1,7 @@
 //! Statements and declarations.
 
 use super::declared::Declares;
+use super::runtime_syntax::Prologue;
 use super::{ListKind, Parser, ctx, oxc, take_span};
 use crate::token::T;
 use crate::{Goal, Rejection};
@@ -251,7 +252,18 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `isStartOfDeclaration`
     pub(crate) fn is_start_of_declaration(&mut self) -> bool {
         // Fast path for the most common case, where the text is enough to know the scan's answer.
-        if self.token() == T::Import && self.is_followed_by(b" {") {
+        let is_known_by_text = match self.token() {
+            T::Import => self.is_followed_by_bytes(b" {"),
+            T::Export => {
+                self.is_followed_by_bytes(b" const ")
+                    || self.is_followed_by_bytes(b" function ")
+                    || self.is_followed_by_bytes(b" class ")
+                    || self.is_followed_by_bytes(b" default ")
+                    || self.is_followed_by_bytes(b" {")
+            }
+            _ => false,
+        };
+        if is_known_by_text {
             return true;
         }
         // The scan steps over one modifier at a time and keeps no state, so it gives the same answer from each of them.
@@ -339,8 +351,12 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     }
                 }
                 T::Global => {
+                    // `bun run` reads a `global` that begins a statement of code that runs as a name, and the next line as a statement of its own.
+                    let is_name_at_end_of_line =
+                        *last == first && self.options.compiles && !self.has_context(ctx::AMBIENT);
                     self.next();
                     return !self.is_ecmascript
+                        && !(is_name_at_end_of_line && self.newline_before())
                         && matches!(self.token(), T::OpenBrace | T::Identifier | T::Export);
                 }
                 T::Import => {
@@ -753,6 +769,121 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         id
     }
 
+    /// Adds `statement` to the list that is parsed. In compiled JavaScript `a, b;` is the statements `a;` and `b;`.
+    #[inline]
+    pub(crate) fn push_statement(&mut self, statement: StmtId) {
+        self.s.ids.push(statement.0);
+        if self.is_ecmascript
+            && self.options.compiles
+            && let Some(StmtKind::Expr(expression)) =
+                self.f.stmts.get(statement.idx()).map(|it| it.kind)
+            && self.is_comma(expression)
+        {
+            self.split_comma_statement(statement, expression);
+        }
+    }
+
+    fn is_comma(&self, expression: ExprId) -> bool {
+        let written = self.f.exprs.get(expression.idx()).map(|it| it.kind);
+        matches!(
+            written,
+            Some(ExprKind::Binary {
+                op: BinOp::Comma,
+                ..
+            })
+        )
+    }
+
+    /// `bun run` leaves out what only reads, and the text of a function and the module format go by the whole list.
+    fn is_kept(&self, operand: ExprId) -> bool {
+        let mut waiting = vec![operand];
+        while let Some(part) = waiting.pop() {
+            // An operand that is missing has been reported as a syntax error.
+            let Some(expression) = self.f.exprs.get(part.idx()) else {
+                continue;
+            };
+            match expression.kind {
+                ExprKind::Call(_)
+                | ExprKind::Assign { .. }
+                | ExprKind::Await(_)
+                | ExprKind::Yield { .. }
+                | ExprKind::Unary {
+                    op: UnOp::Delete | UnOp::PreInc | UnOp::PreDec | UnOp::PostInc | UnOp::PostDec,
+                    ..
+                } => return true,
+                ExprKind::Unary { operand, .. } => waiting.push(operand),
+                ExprKind::Binary { left, right, .. } => waiting.extend([left, right]),
+                ExprKind::Cond { test, branches } => {
+                    let Branches { yes, no } = self.f.branches(branches);
+                    waiting.extend([test, yes, no]);
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    fn keeps_all_operands(&self, expression: ExprId) -> bool {
+        let mut waiting = vec![expression];
+        while let Some(operand) = waiting.pop() {
+            let Some(part) = self.f.exprs.get(operand.idx()) else {
+                return false;
+            };
+            match part.kind {
+                ExprKind::Binary {
+                    op: BinOp::Comma,
+                    left,
+                    right,
+                } => waiting.extend([left, right]),
+                _ if self.is_kept(operand) => {}
+                _ => return false,
+            }
+        }
+        true
+    }
+
+    fn split_comma_statement(&mut self, statement: StmtId, expression: ExprId) {
+        if !self.keeps_all_operands(expression) {
+            return;
+        }
+        let end = self.f.stmts[statement.idx()].loc.end;
+        let mut waiting = vec![expression];
+        let mut last = statement;
+        let mut is_first = true;
+        while let Some(operand) = waiting.pop() {
+            if let Expr {
+                kind:
+                    ExprKind::Binary {
+                        op: BinOp::Comma,
+                        left,
+                        right,
+                    },
+                ..
+            } = self.f.exprs[operand.idx()]
+            {
+                self.f.exprs[operand.idx()].kind = ExprKind::Null;
+                // An operand that is missing has been reported as a syntax error.
+                waiting.extend([right, left].into_iter().filter(|it| it.is_some()));
+                continue;
+            }
+            let Expr { pos, end, .. } = self.f.exprs[operand.idx()];
+            if std::mem::take(&mut is_first) {
+                let first = &mut self.f.stmts[statement.idx()];
+                first.kind = StmtKind::Expr(operand);
+                first.loc.end = end;
+                continue;
+            }
+            last = StmtId(self.f.stmts.len() as u32);
+            self.f.stmts.push(Stmt {
+                kind: StmtKind::Expr(operand),
+                start: pos,
+                loc: TextRange { pos, end },
+            });
+            self.s.ids.push(last.0);
+        }
+        self.f.stmts[last.idx()].loc.end = end;
+    }
+
     /// Parses `Options::part`, at its first token, into the file's only statement. Nothing after it is read.
     pub(crate) fn part(&mut self, goal: Goal) -> StmtId {
         let start = self.start();
@@ -813,7 +944,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                 self.f.rare_syntax |= rare::AWAIT_USING | rare::ODD_DECLARATION;
                 // Same as for an `await` expression: see `operand_of_await_outside_async`.
                 if self.options.dialect.oxc && !self.has_context(ctx::AWAIT) {
-                    self.flag(DiagnosticKind::Grammar, 1308, (self.pos(), 0), &[]);
+                    self.flag_early_error(1308, (self.pos(), 0), &[]);
                 }
                 let keyword = self.pos();
                 self.next();
@@ -1150,6 +1281,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             has_body,
             specifies_module,
+            is_erased: flags.contains(Flags::AMBIENT),
             stmt: StmtId::NONE,
         });
         let modifiers = self.take_modifiers(base);
@@ -1208,6 +1340,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             body,
             has_body: true,
             specifies_module,
+            is_erased: self.f.erases_namespace(flags, body),
             stmt: StmtId::NONE,
         });
         let statement = self.add_stmt(StmtKind::Module(declaration), start, modifiers);
@@ -1229,7 +1362,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         };
         self.context = self.context & !(ctx::IN_LOOP | ctx::IN_SWITCH) | ctx::IN_NAMESPACE;
         self.open_scope_for_vars();
-        let list = self.statements_until_close_brace();
+        let list = self.statements_until_close_brace(Prologue::None);
         self.close_scope();
         self.context = saved;
         self.expect(T::CloseBrace);
@@ -1241,21 +1374,25 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     /// `parseList(PCBlockStatements, parseStatement)`. Always inlined, so an open `{` doesn't cost
     /// an extra stack frame.
     #[inline(always)]
-    pub(crate) fn statements_until_close_brace(&mut self) -> IdList<StmtId> {
+    pub(crate) fn statements_until_close_brace(&mut self, prologue: Prologue) -> IdList<StmtId> {
         let base = self.s.ids.len();
         // Only a top-level statement makes the file a module.
         let was_module = self.f.has_module_syntax;
         let lists = self.enter_list(ListKind::BlockStatements);
         let reparsed = self.jsdoc.reparsed.len();
         let strays = self.s.stray_decorators.len();
+        let mut is_in_prologue = prologue == Prologue::Directives;
         while self.is_in_list(T::CloseBrace) && self.is_at_element(ListKind::BlockStatements) {
             let statement = self.statement();
+            if is_in_prologue {
+                is_in_prologue = self.take_directive(statement);
+            }
             self.take_stray_decorators(strays);
             if self.reads_jsdoc() {
                 self.statement_jsdoc(statement);
                 self.list_reparsed(reparsed);
             }
-            self.s.ids.push(statement.0);
+            self.push_statement(statement);
         }
         self.leave_list(lists);
         self.f.has_module_syntax = was_module;
@@ -1277,7 +1414,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if !self.expect(T::OpenBrace) {
             return self.add_stmt(StmtKind::Block(IdList::EMPTY), start, Span::EMPTY);
         }
-        let list = self.statements_until_close_brace();
+        let list = self.statements_until_close_brace(Prologue::None);
         self.expect_matching((T::OpenBrace, T::CloseBrace), Some(start.pos));
         if self.token() == T::Equals {
             self.equals_after_block();
@@ -1343,26 +1480,20 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.add_stmt(StmtKind::While { test, body }, start, Span::EMPTY)
     }
 
-    /// `parseWithStatement`. Stored as a block that holds the expression (as a statement) and the body.
+    /// `parseWithStatement`
     #[inline(never)]
     fn with_statement(&mut self) -> StmtId {
         let start = self.start();
         self.next();
         let open = self.pos();
         let open = self.expect(T::OpenParen).then_some(open);
-        let full = self.full_start();
         let object = self.expression_allowing_in();
-        let object = self.add_stmt(StmtKind::Expr(object), start, Span::EMPTY);
-        if let Some(statement) = self.f.stmts.get_mut(object.idx()) {
-            statement.loc.pos = full;
-        }
         let close = self.pos();
         self.expect_matching((T::OpenParen, T::CloseParen), open);
         let body = self.embedded_statement();
         let end = self.f.stmts.get(body.idx()).map_or(0, |it| it.loc.end);
         self.f.with_bodies.push((close + 1, end));
-        let list = self.f.list(&[object, body]);
-        self.add_stmt(StmtKind::Block(list), start, Span::EMPTY)
+        self.add_stmt(StmtKind::With { object, body }, start, Span::EMPTY)
     }
 
     /// `parseForOrForInOrForOfStatement`
@@ -1622,7 +1753,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             // `checkSwitchStatement` reports the second one, up to its `:`.
             if defaults == 2 && test.is_none() {
                 defaults += 1;
-                self.flag(DiagnosticKind::Grammar, 1113, (pos, self.prev_end()), &[]);
+                self.flag_early_error(1113, (pos, self.prev_end()), &[]);
             }
             let ids = self.s.ids.len();
             let reparsed = self.jsdoc.reparsed.len();
@@ -1764,8 +1895,6 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if self.is_flow() {
             return self.flow_declaration_after_expression(start, expression);
         }
-        // `parseErrorForMissingSemicolonAfter`: "If a declared node failed to parse, it would have
-        // emitted a diagnostic already."
         if !self.is_ecmascript
             && !self.options.dialect.oxc
             && let Some(&Expr {
@@ -1775,6 +1904,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
             && self.lx.text_of(name) == b"declare"
             && !self.is_parenthesized(expression)
         {
+            self.missing_semicolon_after_declare();
             return self.add_stmt(StmtKind::Expr(expression), start, Span::EMPTY);
         }
         if self.recovers() {

@@ -1,8 +1,40 @@
 import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, fileDescriptorLeakChecker, isLinux, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, getMaxFD, isLinux, isMacOS, isPosix, isWindows, tempDir, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
+
+const descriptorsOfProcess = isLinux ? "/proc/self/fd" : isMacOS ? "/dev/fd" : undefined;
+
+// How many descriptors of this process are open on the file, whatever else the process opens meanwhile. Where they are
+// not listed: the lowest number that is free.
+function openDescriptors(path: string) {
+  if (!descriptorsOfProcess) return getMaxFD();
+  const { dev, ino } = fs.statSync(path, { bigint: true });
+  return fs.readdirSync(descriptorsOfProcess).filter(fd => {
+    try {
+      const file = fs.fstatSync(Number(fd), { bigint: true });
+      return file.dev === dev && file.ino === ino;
+    } catch {
+      // Closed since, like the one that the list was read from.
+      return false;
+    }
+  }).length;
+}
+
+// end() does not wait for the descriptor of the sink, which another thread closes.
+function fileDescriptorLeakChecker(path: string) {
+  const initial = descriptorsOfProcess ? 0 : getMaxFD();
+  return {
+    async [Symbol.asyncDispose]() {
+      const start = performance.now();
+      while (openDescriptors(path) > initial) {
+        if (performance.now() - start > 4000) throw new Error(`${path} is still open 4 seconds after the test.`);
+        await Bun.sleep(1);
+      }
+    },
+  };
+}
 
 describe("FileSink", () => {
   const fixturesInput = [
@@ -84,18 +116,12 @@ describe("FileSink", () => {
 
         it(`${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          {
-            using _ = fileDescriptorLeakChecker();
-
-            const sink = Bun.file(path).writer();
-            for (let i = 0; i < input.length; i++) {
-              sink.write(input[i]);
-            }
-            await sink.end();
-
-            // For the file descriptor leak checker.
-            await Bun.sleep(10);
+          await using _ = fileDescriptorLeakChecker(path);
+          const sink = Bun.file(path).writer();
+          for (let i = 0; i < input.length; i++) {
+            sink.write(input[i]);
           }
+          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
@@ -112,19 +138,13 @@ describe("FileSink", () => {
 
         it(`flushing -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-
-          {
-            using _ = fileDescriptorLeakChecker();
-            const sink = Bun.file(path).writer();
-            for (let i = 0; i < input.length; i++) {
-              sink.write(input[i]);
-              await sink.flush();
-            }
-            await sink.end();
-
-            // For the file descriptor leak checker.
-            await Bun.sleep(10);
+          await using _ = fileDescriptorLeakChecker(path);
+          const sink = Bun.file(path).writer();
+          for (let i = 0; i < input.length; i++) {
+            sink.write(input[i]);
+            await sink.flush();
           }
+          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
@@ -140,16 +160,13 @@ describe("FileSink", () => {
 
         it(`highWaterMark -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          {
-            using _ = fileDescriptorLeakChecker();
-            const sink = Bun.file(path).writer({ highWaterMark: 1 });
-            for (let i = 0; i < input.length; i++) {
-              sink.write(input[i]);
-              await sink.flush();
-            }
-            await sink.end();
-            await Bun.sleep(10); // For the file descriptor leak checker.
+          await using _ = fileDescriptorLeakChecker(path);
+          const sink = Bun.file(path).writer({ highWaterMark: 1 });
+          for (let i = 0; i < input.length; i++) {
+            sink.write(input[i]);
+            await sink.flush();
           }
+          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
@@ -174,9 +191,9 @@ import type { Readable } from "node:stream";
 import util from "node:util";
 
 it("end doesn't close when backed by a file descriptor", async () => {
-  using _ = fileDescriptorLeakChecker();
-  const x = tmpdirSync();
-  const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
+  const x = path.join(tmpdirSync(), "test.txt");
+  await using _ = fileDescriptorLeakChecker(x);
+  const fd = await util.promisify(fs.open)(x, "w");
   const chunk = Buffer.from("1 Hello, world!");
   const file = Bun.file(fd);
   const writer = file.writer();
@@ -187,19 +204,18 @@ it("end doesn't close when backed by a file descriptor", async () => {
 });
 
 it("end does close when not backed by a file descriptor", async () => {
-  using _ = fileDescriptorLeakChecker();
-  const x = tmpdirSync();
-  const file = Bun.file(path.join(x, "test.txt"));
+  const x = path.join(tmpdirSync(), "test.txt");
+  await using _ = fileDescriptorLeakChecker(x);
+  const file = Bun.file(x);
   const writer = file.writer();
   await writer.write(Buffer.from("1 Hello, world!"));
   await writer.end();
-  await Bun.sleep(10); // For the file descriptor leak checker.
 });
 
 it("write result is not cumulative", async () => {
-  using _ = fileDescriptorLeakChecker();
-  const x = tmpdirSync();
-  const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
+  const x = path.join(tmpdirSync(), "test.txt");
+  await using _ = fileDescriptorLeakChecker(x);
+  const fd = await util.promisify(fs.open)(x, "w");
   const file = Bun.file(fd);
   const writer = file.writer();
   expect(await writer.write("1 ")).toBe(2);
@@ -247,6 +263,27 @@ it.skipIf(!isPosix)("a backpressured write() resolves to the chunk's byte count"
 
 // Strings are buffered as UTF-8, so the count the Promise reports is the
 // encoded byte count, which is what a non-pending write() returns too.
+// `bun repl -e` protects the value of the script until the event loop is empty.
+it.skipIf(!isPosix)("settling a backpressured write() leaves another holder's protection of its promise", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "repl",
+      "-e",
+      `const [readFd, writeFd] = require("bun:internal-for-testing").createSocketPair();
+       const write = Bun.file(writeFd).writer().write(Buffer.alloc(4 * 1024 * 1024));
+       write.catch(() => console.log(require("bun:jsc").heapStats().protectedObjectTypeCounts.Promise));
+       require("fs").closeSync(readFd);
+       write`,
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("1\n");
+  expect(exitCode).toBe(0);
+});
+
 it.skipIf(!isPosix)("a backpressured string write() resolves to its encoded byte count", async () => {
   const [readFd, writeFd] = createSocketPair();
   const sink = Bun.file(writeFd).writer();
@@ -466,7 +503,7 @@ if (isWindows) {
 }
 
 // When a write to a pollable fd returns `.pending`, FileSink takes a
-// `must_be_kept_alive_until_eof` ref on itself so it survives until the
+// `keep_alive_ref` on itself so it survives until the
 // buffered data is drained. If the write later fails (e.g. EPIPE because the
 // reader closed), neither `onError` nor `onClose` released that ref, so the
 // native FileSink (and its buffers) leaked for the rest of the process even
@@ -509,15 +546,14 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   }
 
   // Before the fix, every iteration leaked one native FileSink because the
-  // `must_be_kept_alive_until_eof` ref was never released on error/close.
+  // `keep_alive_ref` was never released on error/close.
   // One straggler whose JS wrapper has not yet been finalized is acceptable;
   // more than that indicates a native leak.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
-// The generated ${name}__doClose detached m_sinkPtr and then called __close,
-// so the wrapper's destructor skipped __finalize and the wrapper's +1 on the
-// native FileSink was never released.
+// close() takes the sink from the JS object, whose destructor then has none to
+// finalize, so close() itself has to release the object's +1 on the native FileSink.
 it("close() does not leak the native FileSink", async () => {
   const dir = tmpdirSync();
   const baseline = fileSinkInternals.liveCount();
@@ -555,6 +591,35 @@ it.skipIf(isWindows)("close() while a write() promise is pending still settles i
   await expect(p).resolves.toBeGreaterThanOrEqual(0);
   const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
   if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
+// A worker runs its "exit" listeners with the VM already shutting down, and then releases the tasks that are queued.
+it.skipIf(!isPosix)("close() in a worker's exit listener leaves the sink to the task that it queued", async () => {
+  using dir = tempDir("filesink-worker-exit", {
+    "main.mjs": `
+      import { createSocketPair, fileSinkInternals } from "bun:internal-for-testing";
+      import fs from "node:fs";
+      import { Worker, isMainThread } from "node:worker_threads";
+      const before = fileSinkInternals.liveCount();
+      const report = when => fs.writeSync(1, when + ": " + (fileSinkInternals.liveCount() - before) + "\\n");
+      if (isMainThread) {
+        new Worker(import.meta.filename).on("exit", () => report("after the worker"));
+      } else {
+        const [readFd, writeFd] = createSocketPair();
+        const writer = Bun.file(writeFd).writer();
+        process.on("exit", () => {
+          writer.write(Buffer.alloc(4 * 1024 * 1024));
+          fs.closeSync(readFd);
+          writer.close();
+          report("after close()");
+        });
+      }
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "main.mjs"], cwd: String(dir), env: bunEnv, stderr: "inherit" });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("after close(): 1\nafter the worker: 0\n");
   expect(exitCode).toBe(0);
 });
 
@@ -1060,7 +1125,9 @@ describe("FileSink on a pipe stays alive until end() has drained the buffer", ()
           }
         `,
       ],
-      env: bunEnv,
+      // The CI runner sets BUN_FEATURE_FLAG_NO_ORPHANS on ASAN lanes. It kills the child, which prints its count after
+      // its parent is gone.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -1423,7 +1490,7 @@ it.skipIf(isWindows)("throws on invalid writer options instead of crashing", asy
     if (fileSinkInternals.liveCount() <= baseline) break;
     await Bun.sleep(10);
   }
-  // Each early return in get_writer must release the sink's +1 ref; a missing
+  // Each early return in Blob::writer must release the sink's +1 ref; a missing
   // deref leaks one native FileSink per failed call.
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });

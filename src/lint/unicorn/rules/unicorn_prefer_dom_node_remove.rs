@@ -5,8 +5,8 @@ use bun_lint::rule::Plugin;
 /// Prefers the use of `child.remove()` over `parentNode.removeChild(child)`.
 pub struct PreferDomNodeRemove;
 
-const PREFER_DOM_NODE_REMOVE: Message =
-    Message::new("", "Prefer `childNode.remove()` over `parentNode.removeChild(childNode)`.");
+const PREFER_DOM_NODE_REMOVE: &Message =
+    &Message::new("", "Prefer `childNode.remove()` over `parentNode.removeChild(childNode)`.");
 
 /// True for an expression that can never be a DOM node.
 fn is_non_dom_node(e: Expr) -> bool {

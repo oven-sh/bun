@@ -16,14 +16,6 @@ use super::protocol_jsc::{resp_value_to_js, valkey_error_to_js};
 use super::valkey_command_body as command;
 use super::valkey_command_body::{Args, Command};
 
-/// Codegen target name. `valkey.classes.ts` declares `name: "RedisClient"`, so
-/// `generate-classes.ts` resolves the native backing struct to
-/// `crate::valkey_jsc::valkey::RedisClient` and emits ~200
-/// `RedisClient::method(…)` thunks against it. The actual host type is
-/// `JSValkeyClient` (sibling `js_valkey.rs`); re-export it under the codegen
-/// spelling here so the generated `pub use` and prototype thunks resolve.
-pub(crate) use super::js_valkey_body::JSValkeyClient as RedisClient;
-
 bun_output::define_scoped_log!(debug, Redis, visible);
 
 /// Connection flags to track Valkey client state
@@ -203,7 +195,7 @@ impl Address {
     pub(crate) fn connect<Owner>(
         &self,
         owner: *mut Owner,
-        group: &mut SocketGroup,
+        group: &SocketGroup,
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, crate::Error> {
@@ -320,19 +312,16 @@ impl DeferredFailure {
     fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         VirtualMachine::get()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::from_boxed(self));
     }
 }
 
-impl bun_event_loop::Taskable for DeferredFailure {
+impl bun_event_loop::BoxedTask for DeferredFailure {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredFailure;
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — boxed at the enqueue site.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// Enters no context.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+    fn context(&self) -> bun_event_loop::ContextId {
         bun_event_loop::ContextId::NONE
     }
 }
@@ -916,8 +905,6 @@ impl ValkeyClient {
         let global_this = self.global_object();
 
         debug!("Handling a subscribe response: {}", value);
-        // SAFETY: `event_loop()` returns the live VM-owned `*mut EventLoop`; the guard holds the
-        // raw pointer (no long-lived `&mut`) and calls `exit()` on drop.
         let _exit = self.vm.enter_event_loop_scope();
 
         match value {

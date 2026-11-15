@@ -1,0 +1,23 @@
+# -- source: a-list-made-in-front-of-a-loop-that-counts-down-a-list-is-known-where-the-copy-for-another-kind-of-list-begins.js
+# const rows = JSON.parse("[3,1,3,3]");
+# function walk(a) {
+#   const out = [];
+#   let seen = 0;
+#   a.slice;
+#   for (let i = a.length; i > -3; i--)
+#     if (a[i] === 3) seen++;
+#   return seen + " " + out.length;
+# }
+# print(walk(rows));
+# -- end of source
+# The everyday form: the loop ends, and `out` is read behind it. The tests in front of the typed turns lead, where a list has another kind of storage, to a block that is begun late, behind the walks of the other copies, when nothing is left of what met there. Its copy was walked with nothing known, it and the purchases inside it handed over to the closed copy without what is believed there, and a purchase failed.
+# With a line on the screen as users build; under a check the build stopped. The copy for the other kind of storage is kept now: one loop more is built twice.
+# RUN: compile LoopVersioningAttemptsFailed mechanisms=all
+# CHECK: statistic LoopVersioningAttemptsFailed 0
+# RUN(SHELL): run-in-shell mechanisms=all
+# SHELL: 3 0
+# SHELL-NEXT: exited with 0
+# SHELL-NEXT: the source prints the same
+# RUN(HELD): run-in-shell mechanisms=all testing=CheckProofsAtRunTime
+# HELD: 3 0
+# HELD-NEXT: exited with 0

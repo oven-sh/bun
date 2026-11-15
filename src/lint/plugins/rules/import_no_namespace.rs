@@ -14,8 +14,8 @@ pub struct NoNamespace {
     ignore: Vec<(Box<[u8]>, Glob)>,
 }
 
-const NO_NAMESPACE: Message = Message::new("", "Unexpected namespace import.");
-const OXLINT: Message = Message::new("", "Usage of namespaced aka wildcard \"*\" imports prohibited");
+const NO_NAMESPACE: &Message = &Message::new("", "Unexpected namespace import.");
+const OXLINT: &Message = &Message::new("", "Usage of namespaced aka wildcard \"*\" imports prohibited");
 
 impl Rule for NoNamespace {
     const META: Meta = Meta::plugin(Plugin::Import, "no-namespace", Kind::Suggestion).fixable(Fixable::Code);

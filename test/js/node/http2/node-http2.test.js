@@ -1,5 +1,17 @@
+import { dlopen } from "bun:ffi";
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isCI,
+  isDebug,
+  isLinux,
+  libcPathForDlopen,
+  nodeExe,
+  nodeExeAtLeast,
+  tempDir,
+} from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -12,6 +24,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { PerformanceObserver } from "node:perf_hooks";
 import tls from "node:tls";
+import { Worker } from "node:worker_threads";
 import { Duplex, duplexPair } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
@@ -5007,6 +5020,9 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
 { remoteCustomSettings: "x", strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
     every entry point
+{ strictSingleValueFields: "yes", maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
 { remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
   Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
     every entry point
@@ -5021,9 +5037,7 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
     connect(https), createServer, createSecureServer, performServerHandshake
 { unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
-    connect(http), connect(https), connect(createConnection)
-  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
-    createServer, createSecureServer, performServerHandshake
+    every entry point
 other calls
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
     connect("not a url", { strictSingleValueFields: "yes" })
@@ -5044,13 +5058,8 @@ other calls
   rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
     promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
 `;
-// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
-const optionChecksNode = (() => {
-  const node = nodeExe();
-  if (!node) return null;
-  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
-})();
+// Before v26.11.0 node checked the options in another order.
+const optionChecksNode = nodeExeAtLeast("26.11.0");
 
 for (const [name, runtime] of [
   ["bun", bunExe()],
@@ -6225,6 +6234,92 @@ it("delivers the reserved push stream and fails the session when its headers can
   }
 });
 
+it.skipIf(!isLinux)("a send that the kernel refuses, and takes in the same turn, hides no session error", async () => {
+  const { symbols: libc } = dlopen(libcPathForDlopen(), {
+    close: { args: ["int"], returns: "int" },
+    dup: { args: ["int"], returns: "int" },
+    dup2: { args: ["int", "int"], returns: "int" },
+    socket: { args: ["int", "int", "int"], returns: "int" },
+  });
+  const server = http2.createServer();
+  const accepted = [];
+  let client, neighbor;
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    stream.respond();
+    stream.end("ok");
+  });
+  server.on("session", session => {
+    session.on("error", () => {});
+    accepted.push(session);
+  });
+  try {
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address();
+    const socket = net.connect(port, "127.0.0.1");
+    client = http2.connect(`http://127.0.0.1:${port}`, {
+      createConnection: () => socket,
+      maxSendHeaderBlockLength: 100000,
+    });
+    // What it writes takes the cork: the client sends what it has corked.
+    neighbor = http2.connect(`http://127.0.0.1:${port}`);
+    await Promise.all([client, neighbor].map(session => once(session, "remoteSettings")));
+    await Promise.all([client, neighbor].map(session => new Promise(resolve => session.ping(resolve))));
+
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(`${err.code}: ${err.message}`));
+    let closes = 0;
+    const closed = new Promise(resolve => client.on("close", () => resolve(closes++)));
+    const peer = accepted.find(session => session.socket.remotePort === socket.localPort);
+    const goaways = [];
+    peer.on("goaway", code => goaways.push(code));
+    const peerClosed = new Promise(resolve => peer.on("close", resolve));
+    const request = headers => {
+      const errors = [];
+      const req = client.request(headers);
+      req.on("error", err => errors.push(err.code));
+      req.resume();
+      req.end();
+      return new Promise(resolve => req.on("close", () => resolve(errors)));
+    };
+
+    const { fd } = socket._handle;
+    const connection = libc.dup(fd);
+    const unconnected = libc.socket(2 /* AF_INET */, 1 /* SOCK_STREAM */, 0);
+    if (Math.min(fd, connection, unconnected) <= 2) throw new Error("no descriptors");
+    // A send on a socket without a connection is EPIPE.
+    libc.dup2(unconnected, fd);
+    const encodable = request({ ":path": "/encodable" });
+    neighbor.ping(() => {});
+    libc.dup2(connection, fd);
+    // A copy that outlives the socket would keep its connection open.
+    libc.close(connection);
+    libc.close(unconnected);
+    const unencodable = request({ ":path": "/", "test-header": Buffer.alloc(90000, "A").toString() });
+    client.ping(() => {});
+    neighbor.ping(() => {});
+
+    expect({ encodable: await encodable, unencodable: await unencodable, sessionErrors }).toEqual({
+      encodable: ["ERR_HTTP2_SESSION_ERROR"],
+      unencodable: ["ERR_HTTP2_SESSION_ERROR"],
+      sessionErrors: ["ERR_HTTP2_SESSION_ERROR: Session closed with error code 9"],
+    });
+    await Promise.all([closed, peerClosed]);
+    neighbor.close();
+    // Calls back only once every session is closed.
+    await new Promise(resolve => server.close(resolve));
+    expect({ goaways, closes, sessionErrors: sessionErrors.length }).toEqual({
+      goaways: [http2.constants.NGHTTP2_INTERNAL_ERROR],
+      closes: 1,
+      sessionErrors: 1,
+    });
+  } finally {
+    client?.destroy();
+    neighbor?.destroy();
+    server.close();
+  }
+});
+
 it("PerformanceObserver receives http2 session and stream entries", async () => {
   const entries = [];
   // Two streams (client+server) + two sessions (client+server): resolve once
@@ -6669,32 +6764,46 @@ for (const secure of [true, false]) {
         if (++streams === 10) allStreams.resolve();
       });
       await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-      // In a process of its own: each client is gone by the time this loop answers it.
-      await using clients = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const bytes = Buffer.from("${bytes.toString("hex")}", "hex");
-          for (let i = 0; i < 10; i++) {
-            await new Promise(done => {
-              const socket = require("node:${secure ? "tls" : "net"}").connect(
-                { port: ${server.address().port}, host: "127.0.0.1", ALPNProtocols: ["h2"], rejectUnauthorized: false },
-                () => {
-                  socket.write(bytes);
-                  socket.destroy();
-                },
-              );
-              socket.on("error", () => {}).on("close", done);
-            });
-          }`,
-        ],
-        env: bunEnv,
-        stdout: "inherit",
-        stderr: "inherit",
-      });
-      const exitCode = await clients.exited;
-      // The clients can be done before this loop has accepted them, and close() drops the rest.
+      const clientsAreGone = new Int32Array(new SharedArrayBuffer(4));
+      const clients = new Worker(
+        `const { parentPort, workerData } = require("node:worker_threads");
+        const { port, secure, bytes, clientsAreGone } = workerData;
+        const connect = () => new Promise(resolve => {
+          const socket = require(secure ? "node:tls" : "node:net").connect({
+            port,
+            host: "127.0.0.1",
+            ALPNProtocols: ["h2"],
+            rejectUnauthorized: false,
+          });
+          // The server's settings. Their send is the last one that the kernel takes.
+          socket.once("data", () => resolve(socket)).on("error", () => {});
+        });
+        const leave = socket => new Promise(resolve => {
+          socket.on("close", resolve).write(bytes, () => socket.resetAndDestroy());
+        });
+        Promise.all(Array.from({ length: 10 }, connect)).then(sockets => {
+          parentPort.once("message", async () => {
+            await Promise.all(sockets.map(leave));
+            Atomics.store(clientsAreGone, 0, 1);
+            Atomics.notify(clientsAreGone, 0);
+          });
+          parentPort.postMessage("connected");
+        });`,
+        { eval: true, workerData: { port: server.address().port, secure, bytes, clientsAreGone } },
+      );
+      const exited = once(clients, "exit");
+      // Rejects with an error of the worker. An exit that comes first answers with its code.
+      expect(await Promise.race([once(clients, "message"), exited])).toEqual(["connected"]);
+      clients.postMessage("write and leave");
+      // This loop reads nothing meanwhile, so each client is gone by the time it answers.
+      const waited = Atomics.wait(clientsAreGone, 0, 0, 30_000);
+      if (waited === "timed-out") {
+        server.close();
+        await clients.terminate();
+      }
+      expect(["ok", "not-equal"]).toContain(waited);
       await allStreams.promise;
+      const [exitCode] = await exited;
       // Calls back only once every session is closed.
       await new Promise(resolve => server.close(resolve));
       expect({ exitCode, streams, streamErrors }).toEqual({ exitCode: 0, streams: 10, streamErrors: [] });

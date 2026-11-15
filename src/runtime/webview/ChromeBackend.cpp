@@ -7,6 +7,7 @@
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
 #include "BunString.h"
+#include "GeneratedBlob.h"
 #include "../bindings/webcore/WebSocket.h"
 #include "../bindings/webcore/MessageEvent.h"
 #include <JavaScriptCore/ConsoleClient.h>
@@ -93,7 +94,6 @@ extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
 // Unpublishes and kills the spawned Chrome without reporting its exit back here.
 extern "C" void Bun__Chrome__retire();
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
@@ -1030,7 +1030,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
         void* impl = Blob__fromBytesWithType(g, decoded->span().data(), decoded->size(),
             screenshotMimeType(view->m_screenshotFormat));
         settle(g, view, entry.slot, true,
-            JSValue::decode(Blob__create(defaultGlobalObject(g), impl)));
+            Bun::Bindgen::createWrapper<Bun::Bindgen::Generated::JSBlob>(g, impl));
         return;
     }
 

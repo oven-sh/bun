@@ -81,6 +81,8 @@
 #include <JavaScriptCore/StrongSet.h>
 #include <wtf/Ref.h>
 #include <wtf/ThreadSafeRefCounted.h>
+#include "RemovableFeatures.h"
+#include "BunWithoutAOT.h"
 #endif
 
 #define ENABLE_WEB_CRYPTO 1
@@ -93,6 +95,12 @@
 #else
 #define BUN_DECLARE_HOST_FUNCTION(name) extern "C" JSC_DECLARE_HOST_FUNCTION(name)
 #define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
+#endif
+
+#ifdef __cplusplus
+namespace Bun {
+void putDirectNamed(JSC::VM&, JSC::JSObject*, WTF::ASCIILiteral name, JSC::JSValue);
+}
 #endif
 
 // can be nothrow | zero_is_throw | check_slow

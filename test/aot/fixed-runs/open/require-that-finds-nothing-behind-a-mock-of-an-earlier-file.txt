@@ -1,0 +1,26 @@
+A test file mocks a module and loads it. In the next one a require that finds nothing throws require's error, with require's code, not import()'s.
+#### a-mocks.test.mjs
+import { mock, test } from "bun:test";
+test("a", () => {
+  mock.module("./flat.mjs", () => ({ a: "mocked" }));
+  console.log("| CASE", require("./flat.mjs").a);
+});
+#### b-finds-nothing.test.js
+import { test } from "bun:test";
+import { createRequire } from "node:module";
+const made = createRequire(import.meta.url);
+const ask = async (label, load) => {
+  try { console.log("| CASE", label, typeof (await load())); }
+  catch (error) { console.log("| CASE", label, "THROWS", error?.constructor?.name, error?.code, String(error?.message).split("\n")[0].replaceAll(import.meta.dirname, "<here>")); }
+};
+test("b", async () => {
+  await ask("what createRequire made, a package", () => made("nothing-of-this-name"));
+  await ask("what createRequire made, a path", () => made("./nothing-of-this-name.cjs"));
+  await ask("import.meta.require", () => import.meta.require("nothing-of-this-name"));
+  await ask("require.call", () => require.call(null, "nothing-of-this-name"));
+  await ask("require in try", () => { try { return require("nothing-of-that-name"); } catch (error) { if (error.code !== "MODULE_NOT_FOUND") return "ANOTHER CODE " + error.code; throw error; } });
+  await ask("import()", () => import("nothing-of-this-name"));
+  await ask("import() of a path", () => import("./nothing-of-this-name.mjs"));
+});
+#### flat.mjs
+export const a = "real";

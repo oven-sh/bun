@@ -159,6 +159,11 @@ impl AstAllocState {
 #[thread_local]
 static AST_ALLOC: Cell<Option<Box<AstAllocState>>> = Cell::new(None);
 
+/// Unique among running threads.
+pub(crate) fn thread_key() -> usize {
+    core::ptr::from_ref(&AST_ALLOC).addr()
+}
+
 // One-slot recycler so a per-job `acquire_state`/`release_state` pair doesn't
 // pay a 16 KB malloc each time. Uses `thread_local!` (unlike `AST_ALLOC`) so
 // the destructor frees a parked box at thread exit; only touched on scope
@@ -272,22 +277,6 @@ impl ScopedAstAlloc {
         Self {
             prev: swap_state(Some(state)),
         }
-    }
-
-    /// Uninstall the scope's state and return it **without** bulk-freeing it,
-    /// restoring the previous occupant exactly as `drop` would. For callers
-    /// that hand the parsed AST to an async consumer: small `AstVec`s live in
-    /// the state's inline chunk, so the returned box must be kept alive until
-    /// the consumer is done with the AST.
-    #[inline]
-    pub fn take_state(self) -> Option<Box<AstAllocState>> {
-        let mut this = core::mem::ManuallyDrop::new(self);
-        let installed = swap_state(this.prev.take());
-        debug_assert!(
-            installed.is_some(),
-            "ScopedAstAlloc state was uninstalled by someone else"
-        );
-        installed
     }
 }
 impl Drop for ScopedAstAlloc {
@@ -519,10 +508,7 @@ impl AstAlloc {
         v
     }
 
-    /// Move `items` element-wise into a fresh AST-heap allocation. Replaces
-    /// both `VecExt::from_owned_slice` (`Box<[T]>` → `Vec`) and
-    /// `VecExt::from_bump_slice` (leaked `&mut [T]` → `Vec`): in either case
-    /// the source storage is on the wrong heap, so a copy is unavoidable.
+    /// Moves the items of `iter` into a fresh AST-heap allocation.
     #[inline]
     pub fn vec_from_iter<T, I: IntoIterator<Item = T>>(iter: I) -> AstVec<T> {
         let iter = iter.into_iter();

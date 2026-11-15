@@ -18,13 +18,12 @@ pub mod shared {
     #[path = "SSLMode.rs"]
     pub mod ssl_mode;
     #[path = "StackReader.rs"]
-    pub mod stack_reader;
+    pub(crate) mod stack_reader;
     #[path = "StatementStatus.rs"]
     pub mod statement_status;
 
     pub use column_identifier::ColumnIdentifier;
     pub use connection_flags::ConnectionFlags;
-    pub use data::Data;
     pub use sql_query_result_mode::SQLQueryResultMode;
     pub use ssl_mode::SSLMode;
 }
@@ -89,8 +88,6 @@ pub mod mysql {
         pub mod result_set_header;
         #[path = "SSLRequest.rs"]
         pub mod ssl_request;
-        #[path = "StackReader.rs"]
-        pub mod stack_reader;
         #[path = "StmtPrepareOKPacket.rs"]
         pub mod stmt_prepare_ok_packet;
 
@@ -187,13 +184,10 @@ pub mod postgres {
         pub mod sasl_initial_response;
         #[path = "SASLResponse.rs"]
         pub mod sasl_response;
-        #[path = "StackReader.rs"]
-        pub mod stack_reader;
         #[path = "StartupMessage.rs"]
         pub mod startup_message;
 
-        // ── flat re-exports for `bun_sql_jsc` (Decode/Write trait surface) ──
-        pub use new_reader::ReaderContext;
+        // ── flat re-exports for `bun_sql_jsc` (Write trait surface) ──
         pub use new_writer::WriterContext;
     }
 

@@ -1,0 +1,39 @@
+# `target` is given by a maker on which twenty others build, `name` and `label` by one on which a single other builds.
+# A name that few of the makers give takes less room in the extensions of their objects than in the cells of all.
+# -- source: names-of-few-makers-leave-cells.ts
+# declare function sink(...values: unknown[]): void;
+# class Mark { tag: string; constructor(tag: string) { this.tag = tag; } }
+# interface Thing { flags: number; id: number; name?: Mark; label?: Mark; fresh?: Mark; target?: Mark; extra0?: Mark; extra1?: Mark; extra2?: Mark; extra3?: Mark; extra4?: Mark; extra5?: Mark; extra6?: Mark; extra7?: Mark; extra8?: Mark; extra9?: Mark; extra10?: Mark; extra11?: Mark; extra12?: Mark; extra13?: Mark; extra14?: Mark; extra15?: Mark; extra16?: Mark; extra17?: Mark; extra18?: Mark; extra19?: Mark; }
+# function ThingMaker(this: Thing, flags: number) { this.flags = flags; }
+# declare function makerFromOutside(): new (flags: number) => Thing;
+# let count = 0;
+# function makeThing(flags: number): Thing { const made = new (makerFromOutside())(flags); made.id = ++count; return made; }
+# function makeNamed(name: Mark, label: Mark): Thing { const made = makeThing(1); made.name = name; made.label = label; return made; }
+# function makeFresh(name: Mark): Thing { const made = makeNamed(name, name); made.fresh = name; return made; }
+# function makeTarget(target: Mark): Thing { const made = makeThing(2); made.target = target; return made; }
+# function make0(mark: Mark): Thing { const made = makeTarget(mark); made.extra0 = mark; return made; }
+# function make1(mark: Mark): Thing { const made = makeTarget(mark); made.extra1 = mark; return made; }
+# function make2(mark: Mark): Thing { const made = makeTarget(mark); made.extra2 = mark; return made; }
+# function make3(mark: Mark): Thing { const made = makeTarget(mark); made.extra3 = mark; return made; }
+# function make4(mark: Mark): Thing { const made = makeTarget(mark); made.extra4 = mark; return made; }
+# function make5(mark: Mark): Thing { const made = makeTarget(mark); made.extra5 = mark; return made; }
+# function make6(mark: Mark): Thing { const made = makeTarget(mark); made.extra6 = mark; return made; }
+# function make7(mark: Mark): Thing { const made = makeTarget(mark); made.extra7 = mark; return made; }
+# function make8(mark: Mark): Thing { const made = makeTarget(mark); made.extra8 = mark; return made; }
+# function make9(mark: Mark): Thing { const made = makeTarget(mark); made.extra9 = mark; return made; }
+# function make10(mark: Mark): Thing { const made = makeTarget(mark); made.extra10 = mark; return made; }
+# function make11(mark: Mark): Thing { const made = makeTarget(mark); made.extra11 = mark; return made; }
+# function make12(mark: Mark): Thing { const made = makeTarget(mark); made.extra12 = mark; return made; }
+# function make13(mark: Mark): Thing { const made = makeTarget(mark); made.extra13 = mark; return made; }
+# function make14(mark: Mark): Thing { const made = makeTarget(mark); made.extra14 = mark; return made; }
+# function make15(mark: Mark): Thing { const made = makeTarget(mark); made.extra15 = mark; return made; }
+# function make16(mark: Mark): Thing { const made = makeTarget(mark); made.extra16 = mark; return made; }
+# function make17(mark: Mark): Thing { const made = makeTarget(mark); made.extra17 = mark; return made; }
+# function make18(mark: Mark): Thing { const made = makeTarget(mark); made.extra18 = mark; return made; }
+# function make19(mark: Mark): Thing { const made = makeTarget(mark); made.extra19 = mark; return made; }
+# sink(makeFresh, make0, make1, make2, make3, make4, make5, make6, make7, make8, make9, make10, make11, make12, make13, make14, make15, make16, make17, make18, make19, new (ThingMaker as any)(0));
+# -- end of source
+# RUN: plan layouts mechanisms=all
+# CHECK: "name" appended JSValue OutOfLine
+# CHECK: "label" appended JSValue OutOfLine
+# CHECK: "target" appended OptionalCell32 Inline

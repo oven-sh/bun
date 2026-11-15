@@ -174,15 +174,11 @@ impl List {
     }
 
     pub(crate) fn sort(&mut self) {
-        // `MultiArrayList::sort(&mut self, ctx)` swaps the `generated` column
-        // in place, so the comparator cannot hold a `&[LineColumnOffset]` over
-        // it (that aliased the swap before this rewrite). Instead capture the
-        // raw column base + len; the column is never reallocated during sort.
         both_lists!(&mut self.r#impl, |list| {
-            let generated: *const LineColumnOffset =
-                list.items_raw::<"generated", LineColumnOffset>();
-            let len = list.len();
-            list.sort(&SortContext { generated, len });
+            list.sort_by::<"generated", LineColumnOffset>(|a, b| {
+                (a.lines.zero_based(), a.columns.zero_based())
+                    < (b.lines.zero_based(), b.columns.zero_based())
+            });
         })
     }
 
@@ -274,29 +270,6 @@ impl List {
     }
 }
 
-struct SortContext {
-    generated: *const LineColumnOffset,
-    len: usize,
-}
-
-impl bun_collections::multi_array_list::SortContext for SortContext {
-    fn less_than(&self, a_index: usize, b_index: usize) -> bool {
-        debug_assert!(a_index < self.len && b_index < self.len);
-        // SAFETY: indices are `< len`; `generated` is the column base pointer
-        // captured before sort, which swaps elements in place but never
-        // reallocates, so it remains valid for `len` reads throughout.
-        let (a, b) = unsafe { (*self.generated.add(a_index), *self.generated.add(b_index)) };
-
-        if a.lines.zero_based() != b.lines.zero_based() {
-            return a.lines.zero_based() < b.lines.zero_based();
-        }
-        if a.columns.zero_based() != b.columns.zero_based() {
-            return a.columns.zero_based() < b.columns.zero_based();
-        }
-        a_index < b_index
-    }
-}
-
 pub struct Lookup {
     pub mapping: Mapping,
     pub source_map: Option<std::sync::Arc<ParsedSourceMap>>,
@@ -324,20 +297,18 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
-            return Some(bun_core::String::clone_utf8(name));
-        }
-
-        if bun_paths::is_absolute(base_filename) {
+        let display = if source_map.standalone_module_graph.is_none()
+            && bun_paths::is_absolute(base_filename)
+        {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
-            ));
-        }
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
+        } else {
+            name
+        };
 
-        Some(bun_core::String::borrow_utf8(name))
+        Some(bun_core::String::clone_utf8(display))
     }
 
     /// Only valid if `lookup.source_map.is_external()`
@@ -354,26 +325,21 @@ impl Lookup {
             let source_map = self.source_map.as_deref()?;
             debug_assert!(source_map.is_external());
 
-            let provider = source_map.underlying_provider.provider()?;
-
             let index = usize::try_from(self.mapping.source_index).ok()?;
 
             // Standalone module graph source maps are stored (in memory) compressed.
             // They are decompressed on demand.
-            if source_map.is_standalone_module_graph {
-                let serialized = source_map.standalone_module_graph_data();
+            if let Some(serialized) = source_map.standalone_module_graph {
                 if index >= source_map.external_source_names.len() {
                     return None;
                 }
 
-                // SAFETY: `standalone_module_graph_data` returns a pointer
-                // owned by the standalone module graph trailer; lifetime is
-                // process-static (mmapped). `source_file_contents` fills the
-                // per-index decompression cache through a `OnceLock`.
-                let code = unsafe { (*serialized).source_file_contents(index) };
+                let code = serialized.source_file_contents(index);
 
                 return Some(Utf8Bytes::Borrowed(code?));
             }
+
+            let provider = source_map.underlying_provider.provider()?;
 
             if let Some(parsed) = provider.get_source_map(
                 base_filename,

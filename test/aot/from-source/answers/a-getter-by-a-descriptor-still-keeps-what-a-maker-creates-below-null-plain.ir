@@ -1,0 +1,14 @@
+# -- source: main.cjs
+# "use strict";
+# const names = Object.create(null);
+# names.size = 2;
+# Object.defineProperty(names, "twice", { get() { return this.size * 2; }, set(given) {} });
+# function read(t) { let s = 0; for (let i = 0; i < t; i++) s += names.twice; return s; }
+# print(read(5));
+# -- end of source
+# The other side of what-a-maker-creates-below-null-and-written-descriptors-lay-values-on-is-a-record.ir and of a-written-descriptor-that-lays-a-getter-counts-for-the-maker.ir: a value counts, a getter alone counts; a getter WITH A SETTER BESIDE IT does not: the call stays a call.
+# RUN(VARIABLE): link variables mechanisms=all
+# VARIABLE: proven=Object
+# RUN(ANSWER): run-in-shell
+# ANSWER: 20
+# ANSWER-NEXT: exited with 0

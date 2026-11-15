@@ -32,13 +32,15 @@
 //! watchdog closes both gaps from Bun's side without requiring the shim to
 //! cooperate.
 
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use core::ffi::c_int;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
 use bun_core::env_var;
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
+use bun_spawn_sys::ffi::kill;
+#[cfg(target_os = "macos")]
 use bun_sys::Fd;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_sys::O;
@@ -151,9 +153,6 @@ unsafe extern "C" {
     safe fn getpid() -> libc::pid_t;
     #[cfg(target_os = "macos")]
     safe fn getppid() -> libc::pid_t;
-    // safe: by-value `pid_t`/`c_int` only; bad pid → `ESRCH`, bad sig →
-    // `EINVAL`, never UB. Async-signal-safe.
-    safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
     // safe: out-param is `&mut c_int` (non-null, valid for write); kernel only
     // writes the slot and reports failure via the return value — bad pid →
     // `ECHILD`, never UB. Async-signal-safe.
@@ -291,16 +290,15 @@ pub fn install_on_event_loop(handle: EventLoopCtx) {
 
         // INSTANCE is a 'static ZST singleton; `RacyCell::get()` yields a stable `*mut`.
         let instance_ptr: *mut ParentDeathWatchdog = INSTANCE.get();
-        let poll = FilePoll::init(
+        let mut poll = FilePoll::init(
             handle,
             Fd::from_native(original_ppid),
-            Default::default(),
             Owner::new(poll_tag::PARENT_DEATH_WATCHDOG, instance_ptr.cast()),
         );
         // SAFETY: `poll` was just allocated by `FilePoll::init`; sole `&mut`
         // borrow; `register` does not re-derive the loop.
-        match unsafe { &mut *poll }.register(
-            handle.loop_mut(),
+        match unsafe { poll.as_mut() }.register(
+            handle.loop_(),
             crate::file_poll::Flags::Process,
             true,
         ) {
@@ -634,20 +632,13 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         &path_buf[..n]
     };
 
-    let task_fd = match bun_sys::open_dir_for_iteration_os_path(Fd::cwd(), task_path) {
-        Ok(fd) => fd,
-        Err(_) => return None,
-    };
-    // `Fd` is Copy and does not impl Drop, so close explicitly via a guard.
-    let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
+    let tasks = bun_sys::Dir::open(task_path).ok()?;
 
     let mut written: usize = 0;
     // Sized so a single read can saturate the 4096-pid `out` buffer
     // (~8 bytes per "1234567 " entry × 4096).
     let mut read_buf = [0u8; 32 * 1024];
-    let mut it = bun_sys::dir_iterator::iterate(task_fd);
+    let mut it = bun_sys::dir_iterator::iterate(tasks.fd());
     loop {
         let entry = match it.next() {
             Ok(Some(e)) => e,
@@ -689,22 +680,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
 /// we don't need.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_file_once<'a>(path: &ZStr, buf: &'a mut [u8]) -> Option<&'a [u8]> {
-    let fd = match bun_sys::open(path, O::RDONLY, 0) {
-        Ok(fd) => fd,
-        Err(_) => return None,
-    };
-    let _guard = scopeguard::guard(fd, |fd| {
-        let _ = bun_sys::close(fd);
-    });
-    // Fixed-buffer read-until-EOF-or-full. `File::read_all` grows a `Vec`,
-    // which would allocate; do the loop here.
-    let mut written = 0usize;
-    while written < buf.len() {
-        match bun_sys::read(fd, &mut buf[written..]) {
-            Ok(0) => break,
-            Ok(n) => written += n,
-            Err(_) => return None,
-        }
-    }
+    let file = bun_sys::CloseOnDrop::new(bun_sys::open(path, O::RDONLY, 0).ok()?);
+    let written = file.read_all(buf).ok()?;
     Some(&buf[..written])
 }

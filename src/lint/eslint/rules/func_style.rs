@@ -19,8 +19,8 @@ enum Style {
     Ignore,
 }
 
-const EXPRESSION: Message = Message::new("expression", "Expected a function expression.");
-const DECLARATION: Message = Message::new("declaration", "Expected a function declaration.");
+const EXPRESSION: &Message = &Message::new("expression", "Expected a function expression.");
+const DECLARATION: &Message = &Message::new("declaration", "Expected a function declaration.");
 
 #[derive(Default)]
 pub struct State<'a> {

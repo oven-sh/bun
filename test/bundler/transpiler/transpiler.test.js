@@ -2758,6 +2758,11 @@ export const after = { a: 1 };
     });
   });
 
+  it("Array.prototype as external is an empty array", () => {
+    const transform = external => new Bun.Transpiler({ external }).transformSync('import "a"; 1');
+    expect(transform(Array.prototype)).toBe(transform([]));
+  });
+
   it("define errors after an earlier config error don't corrupt the log", async () => {
     // An `external` with two `*` logs one error without aborting the constructor.
     // The four define-key errors that follow make the log's buffer grow.
@@ -2864,7 +2869,7 @@ console.log(<div {...obj} key="after" />);`),
     );
   });
 
-  // Non-bundle transpile without `minify.identifiers` uses NoOpRenamer
+  // Non-bundle transpile without `minify.identifiers` uses `Renamer::no_op`
   // (prints symbol.original_name verbatim), so the `generatedSymbolName`
   // hash suffix on the automatic JSX runtime import is the sole collision
   // guard against a user local of the same name in the first JSX element's

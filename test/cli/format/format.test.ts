@@ -1,6 +1,7 @@
 import { dlopen } from "bun:ffi";
 import { afterAll, describe, expect, test } from "bun:test";
 import {
+  autoInstallTempDir,
   bunEnv,
   bunExe,
   isASAN,
@@ -81,7 +82,7 @@ type Options = {
 };
 
 async function format(files: Record<string, string>, args: string[], options: Options = {}) {
-  using dir = tempDir("bun-format", files);
+  using dir = (options.env?.BUN_CONFIG_REGISTRY ? autoInstallTempDir : tempDir)("bun-format", files);
   options.before?.(String(dir));
   await using proc = spawn({
     cmd: [...command, ...args],

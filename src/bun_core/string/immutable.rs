@@ -2,6 +2,8 @@
 //! SIMD-accelerated immutable string utilities operating on `&[u8]` (NOT `&str`).
 
 use core::cmp::Ordering;
+use core::mem::MaybeUninit;
+use core::num::NonZeroU8;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
@@ -311,31 +313,6 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     highway::memmem(haystack, needle)
 }
 
-/// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
-/// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
-/// don't, which keep a scalar arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
-/// initialized; the `u16` view additionally requires `T`'s own alignment.
-enum Lanes<'a> {
-    U8(&'a [u8]),
-    U16(&'a [u16]),
-    Wide,
-}
-
-#[inline(always)]
-fn lanes<T: crate::NoUninit>(s: &[T]) -> Lanes<'_> {
-    match (core::mem::size_of::<T>(), core::mem::align_of::<T>()) {
-        (1, _) => Lanes::U8(crate::cast_slice::<T, u8>(s)),
-        (2, 2) => Lanes::U16(crate::cast_slice::<T, u16>(s)),
-        _ => Lanes::Wide,
-    }
-}
-
-/// `bun.reinterpretSlice` — `&[T]` → `&[u8]` byte view (any width).
-#[inline]
-fn reinterpret_to_u8<T: crate::NoUninit>(s: &[T]) -> &[u8] {
-    crate::cast_slice::<T, u8>(s)
-}
-
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Encoding {
     Ascii,
@@ -376,11 +353,10 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 
 /// `char` is an ASCII byte compared against each (possibly wider) element.
 #[inline]
-pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
-    match lanes(self_) {
-        Lanes::U8(s) => contains_char(s, char),
-        Lanes::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
-        Lanes::Wide => self_.iter().any(|c| (*c).into() == u32::from(char)),
+pub fn contains_char_t<T: PathByte>(self_: &[T], char: u8) -> bool {
+    match T::units(self_) {
+        CodeUnits::U8(s) => contains_char(s, char),
+        CodeUnits::U16(s) => highway::memmem16(s, &[u16::from(char)]).is_some(),
     }
 }
 
@@ -441,8 +417,8 @@ pub fn index_of_any16(self_: &[u16], chars: &[u16]) -> Option<usize> {
     index_of_any_t(self_, chars)
 }
 
-pub fn index_of_any_t<T: crate::NoUninit + Eq>(str: &[T], chars: &[T]) -> Option<usize> {
-    if let (Lanes::U8(s), Lanes::U8(c)) = (lanes(str), lanes(chars)) {
+pub fn index_of_any_t<T: PathByte>(str: &[T], chars: &[T]) -> Option<usize> {
+    if let (CodeUnits::U8(s), CodeUnits::U8(c)) = (T::units(str), T::units(chars)) {
         return index_of_any(s, c);
     }
     // No multi-needle highway kernel for u16; `chars` is a short constant set.
@@ -560,12 +536,8 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
 
 /// Width-generic [`last_index_of_char`].
 #[inline]
-pub fn last_index_of_char_t<T: crate::NoUninit + Eq>(self_: &[T], char: T) -> Option<usize> {
-    match (lanes(self_), lanes(core::slice::from_ref(&char))) {
-        (Lanes::U8(s), Lanes::U8(c)) => last_index_of_char(s, c[0]),
-        (Lanes::U16(s), Lanes::U16(c)) => highway::memrmem16(s, c),
-        _ => self_.iter().rposition(|c| *c == char),
-    }
+pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> {
+    T::last_index_of_unit(self_, char)
 }
 
 /// Start index of the last occurrence of `str`. Empty needle → `Some(len)`.
@@ -574,21 +546,10 @@ pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     highway::memrmem(self_, str)
 }
 
-/// Width-generic reverse substring search (last occurrence of `needle`).
-/// Empty needle → `Some(len)`.
-pub fn last_index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (lanes(haystack), lanes(needle)) {
-        (Lanes::U8(h), Lanes::U8(n)) => last_index_of(h, n),
-        (Lanes::U16(h), Lanes::U16(n)) => highway::memrmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len())
-                .rev()
-                .find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
-    }
+/// [`last_index_of`] over UTF-16 code units.
+#[inline]
+pub fn last_index_of_utf16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    highway::memrmem16(haystack, needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -782,136 +743,60 @@ pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
 
 // 31 character string or a slice
 //
-// PERF NOTE: `remainder_buf` is `MaybeUninit` because `init`/`init_lower_case`
-// only write `[0..len]` (or `[0..16]` for the slice case) and `slice()` only
-// reads `[0..remainder_len]`. Zeroing `[0; 31]` on every call showed up as
+// PERF NOTE: `buf` is `MaybeUninit`. Zeroing `[0; 31]` on every call showed up as
 // ~0.45% of cycles in the next-lint profile (~6M calls × ~24B avg waste).
 // Tail bytes have no validity requirement, so we leave them uninit.
-#[repr(C)]
 #[derive(Copy, Clone)]
-pub struct StringOrTinyString {
-    remainder_buf: core::mem::MaybeUninit<[u8; StringOrTinyString::MAX]>,
-    meta: StringOrTinyStringMeta,
-}
+pub struct StringOrTinyString(StringOrTinyStringRepr);
 
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-struct StringOrTinyStringMeta(u8);
-
-impl StringOrTinyStringMeta {
-    #[inline]
-    fn remainder_len(self) -> u8 {
-        self.0 & 0x7f
-    }
-    #[inline]
-    fn is_tiny_string(self) -> u8 {
-        self.0 >> 7
-    }
-    #[inline]
-    fn new(remainder_len: u8, is_tiny_string: u8) -> Self {
-        Self((remainder_len & 0x7f) | (is_tiny_string << 7))
-    }
+#[derive(Copy, Clone)]
+enum StringOrTinyStringRepr {
+    Tiny {
+        buf: [MaybeUninit<u8>; StringOrTinyString::MAX],
+        /// The length, with the top bit set so that zero is free to be the tag of `Static`.
+        tagged_len: NonZeroU8,
+    },
+    Static(&'static [u8]),
 }
 
 const _: () = assert!(core::mem::size_of::<StringOrTinyString>() == 32);
 
 impl StringOrTinyString {
-    pub(crate) const MAX: usize = 31;
+    const MAX: usize = 31;
+    const TINY: NonZeroU8 = NonZeroU8::new(0x80).unwrap();
+    pub const EMPTY: Self = Self(StringOrTinyStringRepr::Static(b""));
 
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        let buf = self.remainder_buf.as_ptr().cast::<u8>();
-        // This is a switch expression instead of a statement to make sure it uses the faster assembly
-        match self.meta.is_tiny_string() {
-            1 => {
-                // SAFETY: init()/init_lower_case() wrote exactly remainder_len bytes
-                // into the start of remainder_buf; tail bytes are uninit but unread.
-                unsafe { core::slice::from_raw_parts(buf, self.meta.remainder_len() as usize) }
+        match &self.0 {
+            StringOrTinyStringRepr::Tiny { buf, tagged_len } => {
+                let len = tagged_len.get() as usize & Self::MAX;
+                // SAFETY: `init_append_if_needed` wrote `buf[..len]`.
+                unsafe { buf[..len].assume_init_ref() }
             }
-            0 => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let mut ptr_bytes = [0u8; USZ];
-                let mut len_bytes = [0u8; USZ];
-                // SAFETY: init() wrote ptr.to_le_bytes() at [0..USZ] and len at [USZ..USZ*2].
-                unsafe {
-                    core::ptr::copy_nonoverlapping(buf, ptr_bytes.as_mut_ptr(), USZ);
-                    core::ptr::copy_nonoverlapping(buf.add(USZ), len_bytes.as_mut_ptr(), USZ);
-                }
-                let ptr = usize::from_le_bytes(ptr_bytes) as *const u8;
-                let len = usize::from_le_bytes(len_bytes);
-                // SAFETY: ptr/len were stored from a live &[u8] in init(); caller keeps it alive.
-                unsafe { core::slice::from_raw_parts(ptr, len) }
-            }
-            _ => unreachable!(),
+            StringOrTinyStringRepr::Static(slice) => slice,
         }
     }
 
-    // plain `#[inline]` (not `#[inline(always)]`). These are tiny
-    // generic delegators: a length check plus a tail call into the non-generic
-    // `init`/`init_lower_case` or the `Appender` method. `#[inline]` lets the
-    // small fast path fold into callers (and lets duplicate `A` instantiations
-    // be ICF'd at link time / clustered by the symbol-ordering file) without
-    // forcing the cold `append*` arm into every call site.
     #[inline]
     pub fn init_append_if_needed<A: Appender>(
         stringy: &[u8],
         appendy: &mut A,
     ) -> Result<StringOrTinyString, AllocError> {
-        if stringy.len() <= StringOrTinyString::MAX {
-            return Ok(StringOrTinyString::init(stringy));
+        if stringy.len() > Self::MAX {
+            let appended = appendy.append(stringy)?;
+            return Ok(Self(StringOrTinyStringRepr::Static(appended)));
         }
-        Ok(StringOrTinyString::init(appendy.append(stringy)?))
-    }
-
-    pub fn init(stringy: &[u8]) -> StringOrTinyString {
-        let mut buf = core::mem::MaybeUninit::<[u8; Self::MAX]>::uninit();
-        match stringy.len() {
-            0 => StringOrTinyString {
-                remainder_buf: buf,
-                meta: StringOrTinyStringMeta::new(0, 1),
-            },
-            1..=Self::MAX => {
-                // SAFETY: stringy.len() ∈ 1..=31, fits in buf; src/dst can't overlap (dst is local).
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        stringy.as_ptr(),
-                        buf.as_mut_ptr().cast::<u8>(),
-                        stringy.len(),
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(stringy.len() as u8, 1),
-                }
-            }
-            _ => {
-                const USZ: usize = core::mem::size_of::<usize>();
-                let dst = buf.as_mut_ptr().cast::<u8>();
-                // SAFETY: 2*USZ <= 16 <= 31 == MAX; src/dst don't overlap.
-                unsafe {
-                    core::ptr::copy_nonoverlapping(
-                        (stringy.as_ptr() as usize).to_le_bytes().as_ptr(),
-                        dst,
-                        USZ,
-                    );
-                    core::ptr::copy_nonoverlapping(
-                        stringy.len().to_le_bytes().as_ptr(),
-                        dst.add(USZ),
-                        USZ,
-                    );
-                }
-                StringOrTinyString {
-                    remainder_buf: buf,
-                    meta: StringOrTinyStringMeta::new(0, 0),
-                }
-            }
-        }
+        let mut buf = [MaybeUninit::uninit(); Self::MAX];
+        buf[..stringy.len()].write_copy_of_slice(stringy);
+        let tagged_len = Self::TINY | stringy.len() as u8;
+        Ok(Self(StringOrTinyStringRepr::Tiny { buf, tagged_len }))
     }
 }
 
-/// Trait for the `Appender` parameter on `StringOrTinyString::init*_append_if_needed`.
+/// Trait for the `Appender` parameter on `StringOrTinyString::init_append_if_needed`.
 pub trait Appender {
-    fn append(&mut self, s: &[u8]) -> Result<&[u8], AllocError>;
+    fn append(&mut self, s: &[u8]) -> Result<&'static [u8], AllocError>;
 }
 
 pub use crate::strings_impl::{ascii_lowercase_buf, copy_lowercase};
@@ -1162,11 +1047,11 @@ fn eql_comptime_check_len_with_known_type<T: crate::NoUninit + Eq, const CHECK_L
     a: &[T],
     b: &[T],
 ) -> bool {
-    if core::mem::size_of::<T>() != 1 {
-        return eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN);
-    }
-    // T is u8-sized.
-    eql_comptime_check_len_u8(reinterpret_to_u8(a), reinterpret_to_u8(b), CHECK_LEN)
+    eql_comptime_check_len_u8(
+        crate::slice_as_bytes(a),
+        crate::slice_as_bytes(b),
+        CHECK_LEN,
+    )
 }
 
 /// Check if two strings are equal with one of the strings being a compile-time-known value
@@ -1209,7 +1094,7 @@ pub fn eql_case_insensitive_t<T: crate::NoUninit + Into<u32>>(a: &[T], b: &[u8])
         return false;
     }
     if core::mem::size_of::<T>() == 1 {
-        return eql_case_insensitive_ascii_ignore_length(reinterpret_to_u8(a), b);
+        return eql_case_insensitive_ascii_ignore_length(crate::slice_as_bytes(a), b);
     }
 
     debug_assert_eq!(a.len(), b.len());
@@ -1391,9 +1276,7 @@ pub fn is_valid_utf8(slice: &[u8]) -> bool {
 ///
 /// This is the codebase-wide replacement for `core::str::from_utf8` — every
 /// runtime UTF-8 validation goes through simdutf (~3-10× faster than std's
-/// scalar DFA on AVX2/NEON). NOT `const`: the one allowed exception is
-/// `crate::env::const_str_slice` (compile-time git-SHA slicing), which is
-/// the only place `core::str::from_utf8` may appear.
+/// scalar DFA on AVX2/NEON). NOT `const`: const evaluation (`crate::__runtime_embed_load`) uses `core::str::from_utf8`.
 #[inline]
 pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     if simdutf::validate::utf8(bytes) {
@@ -1465,6 +1348,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
 pub use highway::contains_newline_or_non_ascii_or_quote;
 pub use highway::line_starts;
 pub use highway::{ScannerStops, ScannerStopsBuffer};
+pub use highway::{pack_words, unpack_words};
 
 /// Supports:
 /// - `"`
@@ -1724,22 +1608,6 @@ pub fn trim_leading_char(slice: &[u8], char: u8) -> &[u8] {
         return &slice[i as usize..];
     }
     b""
-}
-
-/// Trim leading pattern of 2 bytes
-///
-/// e.g.
-/// `trim_leading_pattern2("abcdef", 'a', 'b') == "cdef"`
-pub fn trim_leading_pattern2(slice_: &[u8], byte1: u8, byte2: u8) -> &[u8] {
-    let mut slice = slice_;
-    while slice.len() >= 2 {
-        if slice[0] == byte1 && slice[1] == byte2 {
-            slice = &slice[2..];
-        } else {
-            break;
-        }
-    }
-    slice
 }
 
 /// prefix is of type &[u8] or &[u16]
@@ -2163,12 +2031,8 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 
 /// Width-generic [`index_of_char_usize`].
 #[inline]
-pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
-    match (lanes(input), lanes(core::slice::from_ref(&scalar))) {
-        (Lanes::U8(s), Lanes::U8(c)) => index_of_char_usize(s, c[0]),
-        (Lanes::U16(s), Lanes::U16(c)) => highway::memmem16(s, c),
-        _ => input.iter().position(|c| *c == scalar),
-    }
+pub fn index_of_scalar<T: PathByte>(input: &[T], scalar: T) -> Option<usize> {
+    T::index_of_unit(input, scalar)
 }
 
 pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {
@@ -2368,9 +2232,9 @@ unsafe extern "C" {
 // reach them without a same-tier cycle. Re-export here for callers that go
 // through `bun_core::strings`.
 pub use crate::strings_impl::{
-    allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8, convert_utf16_to_utf8_append,
-    encode_wtf8_rune, is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16,
-    to_utf8_alloc, to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
+    allocate_latin1_into_utf8_with_list, convert_utf16_to_utf8_append, encode_wtf8_rune,
+    is_all_ascii, latin1_to_codepoint_bytes_assume_not_ascii, narrow_ascii_u16, to_utf8_alloc,
+    to_utf8_alloc_from_le_bytes, to_utf8_append_to_list, to_utf8_from_latin1,
 };
 
 #[inline]
@@ -2464,7 +2328,7 @@ pub fn without_prefix<'a>(input: &'a [u8], prefix: &[u8]) -> &'a [u8] {
 // primitives that must live at tier-0 (`crate::strings_impl`) so `bun_paths`
 // itself can build on them.
 pub use crate::strings_impl::{
-    PathByte, basename, basename_posix, basename_windows,
+    CodeUnits, CodeUnitsMut, PathByte, basename, basename_posix, basename_windows,
     is_windows_absolute_path_missing_drive_letter, remove_leading_dot_slash,
     without_trailing_slash,
 };
@@ -2475,17 +2339,6 @@ pub use crate::strings_impl::convert_utf16_to_utf8_in_buffer;
 // `strings::convert_utf8_to_utf16_in_buffer_z` (used by the Windows profilers
 // to widen output paths for `File::write_file_os_path`).
 pub use unicode_draft::convert_utf8_to_utf16_in_buffer_z;
-
-/// `strings.startsWithWindowsDriveLetterT` — true for `[A-Za-z]:` prefix
-/// followed by at least one more byte (`s.len() > 2`).
-#[inline]
-pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool {
-    s.len() > 2 && s[1].into() == u32::from(b':') && {
-        let c = s[0].into();
-        (c >= u32::from(b'a') && c <= u32::from(b'z'))
-            || (c >= u32::from(b'A') && c <= u32::from(b'Z'))
-    }
-}
 
 /// `strings.convertUTF8toUTF16InBuffer` — UTF-8 → UTF-16LE into a caller-supplied
 /// buffer (capacity ≥ `input.len()` u16). SIMD fast path via simdutf; on invalid

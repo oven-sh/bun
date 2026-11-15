@@ -5,7 +5,8 @@ import type { SQLStatementDescription, TransactionCommands } from "./shared";
 type SQLResultArray<T> = import("./shared").SQLResultArray<T>;
 
 const { SQLResultArray } = require("internal/sql/shared");
-const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool");
+// The cast: the checker reports a class that extends a member of the generic `require` as its own base (TS2506).
+const { BaseSQLAdapter, addResult, onRejectQuery } = require("internal/sql/pool") as typeof import("./pool").default;
 const {
   symbols: { _results, _handle },
 } = require("internal/sql/query");
@@ -15,7 +16,7 @@ const {
   createConnection: createMySQLConnection,
   createQuery: createMySQLQuery,
   init: initMySQL,
-} = $rust("mysql.rs", "createBinding") as MySQLDotZig;
+} = $bindgen("mysql.bind.ts", "binding") as MySQLDotZig;
 
 initMySQL(function onResolveMySQLQuery(query, result, count, is_last, last_insert_rowid, affected_rows, statement) {
   $assert(result instanceof SQLResultArray, "Invalid result array");
@@ -52,10 +53,10 @@ interface MySQLDotZig {
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
   ) => void;
   createConnection: NativeCreateConnection<$Bindgen.MySQLConnection>;
-  createQuery: NativeCreateQuery<$ZigGeneratedClasses.MySQLQuery>;
+  createQuery: NativeCreateQuery<$Bindgen.MySQLQuery>;
 }
 
-class MySQLAdapter extends BaseSQLAdapter<$Bindgen.MySQLConnection, $ZigGeneratedClasses.MySQLQuery> {
+class MySQLAdapter extends BaseSQLAdapter<$Bindgen.MySQLConnection, $Bindgen.MySQLQuery> {
   readonly createNativeConnection = createMySQLConnection;
   protected readonly createNativeQuery = createMySQLQuery;
   readonly ErrorClass = MySQLError;

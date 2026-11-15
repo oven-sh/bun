@@ -10,9 +10,10 @@
 // Kept in its own file so the happy-path image.test.ts stays readable.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, rss, tempDir } from "harness";
+import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
+import { linesAtATime } from "./png-golden/check";
 
 // Several tests below force `backend = "bun"` to reach the static decoders
 // regardless of platform; restore after every test so a throw can't leak the
@@ -430,7 +431,7 @@ describe("malformed PNG structure", () => {
     expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
   });
 
-  test("IHDR CRC mismatch is tolerated (spng default ignores CRC)", async () => {
+  test("IHDR CRC mismatch is tolerated (checksums are skipped on decode)", async () => {
     const buf = Buffer.from(tinyPng);
     buf[29] ^= 0xff;
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });
@@ -473,17 +474,71 @@ describe("malformed PNG structure", () => {
     expect(meta.width).toBe(8);
   });
 
-  test("maxPixels also bounds what an iCCP chunk inflates to", async () => {
+  test("a color profile that inflates to too much is left out", async () => {
     const withProfile = (size: number) => {
       const iccp = Buffer.concat([Buffer.from("icc\0\0"), zlib.deflateSync(Buffer.alloc(size))]);
       return Buffer.concat([tinyPng.subarray(0, 33), pngChunk("iCCP", iccp), tinyPng.subarray(33)]);
     };
-    const png = withProfile(32 << 20);
-    expect(await rgbaOf(png)).toStrictEqual(await rgbaOf(tinyPng));
-    await expect(new Bun.Image(png, { maxPixels: 64 }).png().bytes()).rejects.toThrow(/decode failed/);
-    // A profile of an ordinary size is fine under any limit.
-    expect(await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).metadata()).toMatchObject({ format: "png" });
-    await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).png().bytes();
+    const hasProfile = async (png: Uint8Array) =>
+      Buffer.from(await new Bun.Image(png, { maxPixels: 64 }).png().bytes()).includes("iCCP");
+    const tooMuch = withProfile(32 << 20);
+    expect(await rgbaOf(tooMuch)).toStrictEqual(await rgbaOf(tinyPng));
+    expect(await hasProfile(tooMuch)).toBe(false);
+    expect(await hasProfile(withProfile(1 << 20))).toBe(true);
+  });
+
+  // 1 GiB of RGBA, the most the default maxPixels allows, and one row more than are inflated before any is looked at.
+  const firstRows = (line: number) => (linesAtATime(line) + 1) * line;
+  test.concurrent.each([
+    ["1-bit", 16383, 16383, 1, 0, 0, firstRows(1 + 2048)],
+    // Narrow, because the seven rows between two of the first pass are written with them: 16 MiB.
+    ["1-bit, interlaced", 8, Math.floor(16383 ** 2 / 8), 1, 0, 1, firstRows(1 + 1)],
+    ["RGBA", 16383, 16383, 8, 6, 0, firstRows(1 + 16383 * 4)],
+    ["RGB", 16383, 16383, 8, 2, 0, firstRows(1 + 16383 * 3)],
+    ["RGB, interlaced", 16383, 16383, 8, 2, 1, firstRows(1 + 2048 * 3)],
+    // A row of 512 MiB, and only its filter type.
+    ["one very wide row", 1 << 26, 1, 16, 6, 0, 1],
+  ])("memory is written to as the rows come, not when the header does: %s", async (_, ...args) => {
+    const [width, height, depth, colorType, interlace, bytes] = args;
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr.set([depth, colorType, 0, 0, interlace], 8);
+    const png = Buffer.concat([
+      tinyPng.subarray(0, 8),
+      pngChunk("IHDR", ihdr),
+      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(bytes))),
+    ]);
+    const fixture = `
+      const png = Buffer.from("${png.toString("base64")}", "base64");
+      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, "ERR_IMAGE_DECODE_FAILED"),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
+  });
+
+  // 448 MiB of it in a file of 450 KB.
+  test.concurrent("a color profile is not inflated beyond its limit", async () => {
+    const fixture = `
+      const zlib = require("node:zlib");
+      const tiny = Buffer.from("${Buffer.from(tinyPng).toString("base64")}", "base64");
+      const piece = zlib.deflateRawSync(Buffer.alloc(1 << 20), { finishFlush: zlib.constants.Z_SYNC_FLUSH });
+      const start = Buffer.from("key\\0\\0\\x78\\x9c", "latin1");
+      const data = Buffer.concat([start, ...Array(448).fill(piece), zlib.deflateRawSync(""), Buffer.alloc(4)]);
+      const head = Buffer.alloc(8);
+      head.writeUInt32BE(data.length);
+      head.write("iCCP", 4);
+      const png = Buffer.concat([tiny.subarray(0, 33), head, data, Buffer.alloc(4), tiny.subarray(33)]);
+      console.log(JSON.stringify(await new Bun.Image(png).png().bytes().then(() => "decoded", e => e.code)));
+    `;
+    const [fixtureMaxRSS, baselineMaxRSS] = await Promise.all([
+      runFixtureMaxRSS(fixture, "decoded"),
+      emptyProcessMaxRSS(),
+    ]);
+    expect((fixtureMaxRSS - baselineMaxRSS) / 1024 / 1024).toBeLessThan(isASAN || isDebug ? 256 : 64);
   });
 });
 

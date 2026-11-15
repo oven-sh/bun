@@ -1,0 +1,9 @@
+# two calls of one evaluator: under report=Uses each has a record at its place
+# -- source: each-call-of-an-evaluator-has-a-record-where-the-report-is-asked-for.ts
+# declare const input: any;
+# new Function(input);
+# Function(input);
+# -- end of source
+# OPTIONS: report=Uses
+# RUN: causes
+# CHECK-COUNT-2: cause EvaluatesText Function at f0 v

@@ -72,8 +72,7 @@ pub(crate) fn write_events(
         return;
     }
 
-    let watchlist_slice = watchlist.slice();
-    let file_paths = watchlist_slice.items_file_path();
+    let file_paths = watchlist.items_file_path();
 
     let mut first_file = true;
     for event in events {

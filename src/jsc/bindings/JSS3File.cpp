@@ -2,7 +2,6 @@
 #include "root.h"
 
 #include "ZigGlobalObject.h"
-#include "ZigGeneratedClasses.h"
 
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/JSObject.h"
@@ -22,8 +21,8 @@ using namespace WebCore;
 
 // External C functions declarations
 extern "C" {
-SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
-SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+SYSV_ABI EncodedJSValue JSS3File__presign(void* ptr, JSC::JSGlobalObject*, EncodedJSValue options);
+SYSV_ABI EncodedJSValue JSS3File__stat(void* ptr, JSC::JSGlobalObject*);
 SYSV_ABI EncodedJSValue JSS3File__bucket(void* ptr, JSC::JSGlobalObject*);
 }
 
@@ -49,68 +48,8 @@ static const HashTableValue JSS3FilePrototypeTableValues[] = {
     { "stat"_s, static_cast<unsigned>(PropertyAttribute::Function | PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::NativeFunctionType, functionS3File_stat, 1 } },
     { "bucket"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor | PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, getterS3File_bucket, 0 } },
 };
-class JSS3FilePrototype final : public WebCore::JSBlobPrototype {
-public:
-    using Base = WebCore::JSBlobPrototype;
-    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    static JSS3FilePrototype* create(
-        JSC::VM& vm,
-        JSC::JSGlobalObject* globalObject,
-        JSC::Structure* structure)
-    {
-        JSS3FilePrototype* prototype = new (NotNull, Bun::allocatePlainObjectCell(vm, sizeof(JSS3FilePrototype))) JSS3FilePrototype(vm, globalObject, structure);
-        prototype->finishCreation(vm, globalObject);
-        return prototype;
-    }
-
-    static JSC::Structure* createStructure(
-        JSC::VM& vm,
-        JSC::JSGlobalObject* globalObject,
-        JSC::JSValue prototype)
-    {
-        auto* structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
-        structure->setMayBePrototype(true);
-        return structure;
-    }
-
-    DECLARE_INFO;
-
-    template<typename CellType, JSC::SubspaceAccess>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSS3FilePrototype, Base);
-        return &vm.plainObjectSpace();
-    }
-
-protected:
-    JSS3FilePrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure)
-        : Base(vm, globalObject, structure)
-    {
-    }
-
-    void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
-    {
-        Base::finishCreation(vm, globalObject);
-        ASSERT(inherits(info()));
-        Bun::reifyStaticPropertyTable(vm, JSS3File::info(), JSS3FilePrototypeTableValues, *this);
-
-        this->putDirect(vm, vm.propertyNames->toStringTagSymbol, jsOwnedString(vm, "S3File"_s), 0);
-    }
-};
-
-// Implementation of JSS3File methods
-void JSS3File::destroy(JSCell* cell)
-{
-    static_cast<JSS3File*>(cell)->JSS3File::~JSS3File();
-}
-
-JSS3File::~JSS3File()
-{
-    // Base class destructor will be called automatically
-}
-
-JSS3File* JSS3File::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* ptr)
+JSS3File* JSS3File::create(JSC::VM& vm, JSC::Structure* structure, void* ptr)
 {
     JSS3File* thisObject = new (NotNull, JSC::allocateCell<JSS3File>(vm)) JSS3File(vm, structure, ptr);
     thisObject->finishCreation(vm);
@@ -124,17 +63,17 @@ JSValue constructS3FileInternal(JSC::JSGlobalObject* lexicalGlobalObject, void* 
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* structure = globalObject->m_JSS3FileStructure.getInitializedOnMainThread(lexicalGlobalObject);
-    return JSS3File::create(vm, globalObject, structure, ptr);
+    return JSS3File::create(vm, structure, ptr);
 }
 
 JSC::Structure* JSS3File::createStructure(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    JSC::JSObject* superPrototype = defaultGlobalObject(globalObject)->JSBlobPrototype();
-    auto* protoStructure = JSS3FilePrototype::createStructure(vm, globalObject, superPrototype);
-    auto* prototype = JSS3FilePrototype::create(vm, globalObject, protoStructure);
-    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(0b11101110), StructureFlags), info(), NonArray);
+    JSC::JSObject* superPrototype = Bun::Bindgen::prototypeForClass<Base>(globalObject);
+    auto* prototype = Bun::Bindgen::createClassPrototype(vm, globalObject, superPrototype, info(), JSS3FilePrototypeTableValues);
+    Bun::putToStringTagWithoutTransition(vm, prototype, info());
+    return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info(), NonArray);
 }
 
 Structure* createJSS3FileStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
@@ -152,7 +91,8 @@ JSC_DEFINE_HOST_FUNCTION(functionS3File_presign, (JSGlobalObject * globalObject,
         return {};
     }
 
-    return JSS3File__presign(thisObject->wrapped(), globalObject, callframe);
+    // `presign(undefined)` signs with the `acl` and `storageClass` of the store, `presign()` without.
+    return JSS3File__presign(thisObject->wrapped(), globalObject, JSValue::encode(callframe->argumentCount() ? callframe->uncheckedArgument(0) : JSValue()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionS3File_stat, (JSGlobalObject * globalObject, CallFrame* callframe))
@@ -164,10 +104,9 @@ JSC_DEFINE_HOST_FUNCTION(functionS3File_stat, (JSGlobalObject * globalObject, Ca
         Bun::throwError(globalObject, scope, Bun::ErrorCode::ERR_INVALID_THIS, "Expected a S3File instance"_s);
         return {};
     }
-    return JSS3File__stat(thisObject->wrapped(), globalObject, callframe);
+    return JSS3File__stat(thisObject->wrapped(), globalObject);
 }
 
-const JSC::ClassInfo JSS3FilePrototype::s_info = { "S3File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3FilePrototype) };
 const JSC::ClassInfo JSS3File::s_info = { "S3File"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSS3File) };
 
 extern "C" {

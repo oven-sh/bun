@@ -1,0 +1,14 @@
+# -- source: constructor-that-constructs-in-turn-is-copied-within-the-window-alone.js
+# function L0() { this.v = 1; }
+# function L1() { this.v = new L0().v + new L0().v + new L0().v + new L0().v + new L0().v + new L0().v + new L0().v + new L0().v; }
+# function L2() { this.v = new L1().v + new L1().v + new L1().v + new L1().v + new L1().v + new L1().v + new L1().v + new L1().v; }
+# function L3() { this.v = new L2().v + new L2().v + new L2().v + new L2().v + new L2().v + new L2().v + new L2().v + new L2().v; }
+# function L4() { this.v = new L3().v + new L3().v + new L3().v + new L3().v + new L3().v + new L3().v + new L3().v + new L3().v; }
+# sink(new L4().v);
+# -- end of source
+# The body of a constructor function is copied in the place of `new`, for the object that the walk has just made. If that were asked for no window in a copy, each level would be copied into each copy of the level above:
+# eight to the n frames: at eight levels the build ran for two minutes and stopped at a limit of the compiler. In a copy it is copied within the window of the call that the unit's own body writes, as every copy in a copy.
+# f5 = L4: 8 + 64 + 512 + 4,096 frames without the window
+# RUN: walk f5 mechanisms=all
+# CHECK: frame 8 callee=f4
+# CHECK-NOT: frame 100 callee=

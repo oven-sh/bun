@@ -12,24 +12,24 @@ pub struct NoUselessDefaultAssignment {
     allow_rule_to_run_without_strict_null_checks_i_know_what_i_am_doing: bool,
 }
 
-const NO_STRICT_NULL_CHECK: Message = Message::new(
+const NO_STRICT_NULL_CHECK: &Message = &Message::new(
     "noStrictNullCheck",
     "This rule requires the `strictNullChecks` compiler option to be turned on to function correctly.",
 );
-const PREFER_OPTIONAL_SYNTAX: Message = Message::new(
+const PREFER_OPTIONAL_SYNTAX: &Message = &Message::new(
     "preferOptionalSyntax",
     "Using `= undefined` to make a parameter optional adds unnecessary runtime logic.",
 );
-const REMOVE_DEFAULT_ASSIGNMENT: Message = Message::new("removeDefaultAssignment", "Remove the default value.");
-const USELESS_DEFAULT_ASSIGNMENT: Message = Message::new(
+const REMOVE_DEFAULT_ASSIGNMENT: &Message = &Message::new("removeDefaultAssignment", "Remove the default value.");
+const USELESS_DEFAULT_ASSIGNMENT: &Message = &Message::new(
     "uselessDefaultAssignment",
     "Default value is useless because the {{ type }} is not optional.",
 );
-const USELESS_UNDEFINED: Message = Message::new(
+const USELESS_UNDEFINED: &Message = &Message::new(
     "uselessUndefined",
     "Default value is useless because it is undefined. Optional {{ type }}s are already undefined by default.",
 );
-const USE_OPTIONAL_SYNTAX: Message = Message::new("useOptionalSyntax", "Use the `?` optional syntax instead.");
+const USE_OPTIONAL_SYNTAX: &Message = &Message::new("useOptionalSyntax", "Use the `?` optional syntax instead.");
 
 type Context<'a> = Cx<'a, NoUselessDefaultAssignment>;
 
@@ -196,7 +196,7 @@ fn is_simple_type_for_message(ty: Type) -> bool {
 }
 
 /// tsgolint reports the default including its parentheses.
-fn report_default<'a>(right: Expr<'a>, message: Message, cx: &Context<'a>) -> Report<'a> {
+fn report_default<'a>(right: Expr<'a>, message: &'static Message, cx: &Context<'a>) -> Report<'a> {
     match cx.language().is_oxlint && right.is_parenthesized() {
         true => cx.report(right.outer_span(), message),
         false => cx.report(right, message),
@@ -204,7 +204,7 @@ fn report_default<'a>(right: Expr<'a>, message: Message, cx: &Context<'a>) -> Re
 }
 
 /// `removal` runs from the end of the thing that has the default `right` to the end of the default.
-fn report_useless<'a>(message: Message, right: Expr<'a>, removal: Span, ty: &'static str, cx: &Context<'a>) {
+fn report_useless<'a>(message: &'static Message, right: Expr<'a>, removal: Span, ty: &'static str, cx: &Context<'a>) {
     let mut report = report_default(right, message, cx).data("type", ty);
     if cx.language().is_oxlint {
         report = report.data("types", if ty == "property" { "properties" } else { "parameters" });

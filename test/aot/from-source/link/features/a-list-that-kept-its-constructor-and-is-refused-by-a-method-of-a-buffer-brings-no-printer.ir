@@ -1,0 +1,9 @@
+# the control of a-list-that-lost-its-constructor-..: the refusal says "an instance of Array" and no formatter is asked
+# -- source: a-list-that-kept-its-constructor-and-is-refused-by-a-method-of-a-buffer-brings-no-printer.ts
+# const list = [new URL("http://made.up/a")]; (globalThis as any).kept = Buffer.alloc(1); try { (globalThis as any).kept.equals(list as any); } catch (error) { console.log(String(error)); }
+# -- end of source
+# OPTIONS: exclude=FeaturesNamedAtRunTime,CodeOutsideImage
+# RUN: features
+# CHECK: by URL
+# RUN(NEVER): features
+# NEVER-NOT: by NativeNewCppFunctionStringWidthCppJsFunctionBunStringWidth

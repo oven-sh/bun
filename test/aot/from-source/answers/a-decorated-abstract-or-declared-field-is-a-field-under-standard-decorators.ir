@@ -1,0 +1,61 @@
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const log: string[] = [];
+# function note(name: string): any {
+#     log.push("evaluated " + name);
+#     return function (_value: unknown, context: { kind: string; name: string | symbol }) {
+#         log.push("applied " + name + " as " + context.kind + " " + String(context.name));
+#         return function (value: unknown) {
+#             log.push("initialized " + name + " from " + String(value));
+#             return name;
+#         };
+#     };
+# }
+# function key(name: string) {
+#     log.push("key " + name);
+#     return name;
+# }
+# abstract class Kept {
+#     before = 1;
+#     // @ts-ignore
+#     @note("a") abstract a: string;
+#     // @ts-ignore
+#     @note("b") declare b: string;
+#     // @ts-ignore
+#     @note("c") abstract [key("c")]: string;
+#     // @ts-ignore
+#     @note("d") static declare d: string;
+#     abstract x: string;
+#     declare y: string;
+#     after = 2;
+# }
+# class Made extends (Kept as any) {}
+# class Own extends (Kept as any) {
+#     a = "own a";
+#     x = "own x";
+# }
+# const made: any = new Made();
+# print(log.join());
+# print(Object.keys(made).join());
+# print([made.a, made.b, made.c, (Kept as any).d].join());
+# print(Object.getOwnPropertyNames(Kept).join());
+# print(String("x" in made) + String("y" in made));
+# const own: any = new Own();
+# print(Object.keys(own).join());
+# print([own.a, own.b, own.x].join());
+# -- end of source
+# The transpiler keeps an abstract or declared field that has a decorator, and under standard decorators it prints it like any other field: it is defined on each object, or on the class, at its place among the members, with `undefined` run through the initializers that its decorators gave.
+# Without a decorator `x` and `y` are dropped. A class below may define the same name again: the key keeps its place.
+# RUN(ANSWER): run-in-shell globalThis.unused = 0;
+# ANSWER: evaluated a,evaluated b,evaluated c,key c,evaluated d,applied d as field d,applied a as field a,applied b as field b,applied c as field c,initialized d from undefined,initialized a from undefined,initialized b from undefined,initialized c from undefined
+# ANSWER-NEXT: before,a,b,c,after
+# ANSWER-NEXT: a,b,c,d
+# ANSWER-NEXT: length,name,prototype,d
+# ANSWER-NEXT: falsefalse
+# ANSWER-NEXT: before,a,b,c,after,x
+# ANSWER-NEXT: own a,b,own x
+# ANSWER-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime globalThis.unused = 0;
+# CHECKED: initialized c from undefined
+# CHECKED-NEXT: before,a,b,c,after
+# CHECKED-NEXT: a,b,c,d

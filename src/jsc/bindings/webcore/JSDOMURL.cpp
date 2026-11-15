@@ -24,6 +24,7 @@
 
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
+#include "GeneratedObjectURLRegistry.h"
 #include "IDLTypes.h"
 #include "JSDOMAttribute.h"
 #include "JSDOMBinding.h"
@@ -67,9 +68,6 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_canParse);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_inspectCustom);
-
-BUN_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
-BUN_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
 
 // Attributes
 
@@ -136,8 +134,8 @@ using JSDOMURLDOMConstructor = JSDOMConstructor<JSDOMURL>;
 static const HashTableValue JSDOMURLConstructorTableValues[] = {
     { "parse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_parse, 1 } },
     { "canParse"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDOMURLConstructorFunction_canParse, 1 } },
-    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun__createObjectURL, 1 } },
-    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun__revokeObjectURL, 1 } },
+    { "createObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun::Bindgen::Generated::ObjectURLRegistry::jsCreateObjectURL, 1 } },
+    { "revokeObjectURL"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, Bun::Bindgen::Generated::ObjectURLRegistry::jsRevokeObjectURL, 1 } },
 };
 
 size_t JSDOMURL::estimatedSize(JSC::JSCell* cell, JSC::VM& vm)

@@ -1,0 +1,34 @@
+# -- source: main.js
+# class Crate {
+#   #tag;
+#   constructor(tag) { this.#tag = tag; this.size = 1; }
+#   tag() { return this.#tag; }
+# }
+# class Shelf {
+#   #tag;
+#   constructor(tag) { this.#tag = tag; this.size = 1; }
+#   tag() { return this.#tag; }
+#   relabel(tag) { this.#tag = tag; }
+# }
+# function lay(item, name, value) { item[name] = value; }
+# const crate = new Crate("crate"), shelf = new Shelf("shelf");
+# lay(crate, JSON.parse('"size"'), 2);
+# lay(shelf, JSON.parse('"#tag"'), 3);
+# shelf.relabel("other");
+# print(crate.tag(), crate.size, shelf.tag(), shelf.size, shelf["#tag"]);
+# -- end of source
+# L0 = Crate, L1 = Shelf
+# `item[name] = value` behind the construction may store into any field that a text or a symbol names: never into one under a private name. The flow passes private names by at reads and stores under
+# computed keys; the writer of Link's tables said of every field of the layout, the private ones and the brand too, that it is written behind its construction.
+# Shelf is the other side: its own method stores under the private name behind the construction, and that is still said.
+# THE RED CONTROL: the two tests for a private name taken out of facts/AOTLinkLayouts.cpp again (noteWriteInto(), isWrittenLateThroughLost()): the first line below finds nothing.
+# RUN(LINK): link fields mechanisms=all
+# LINK: field L0.{{*}} #"#tag"@L0 {{*}}writers-known written-at-construction-alone
+# LINK-NOT: "size"{{*}}written-at-construction-alone
+# LINK-NOT: #"#tag"@L1 {{*}}written-at-construction-alone
+# RUN: run-in-shell mechanisms=all
+# CHECK: crate 2 other 1 3
+# CHECK-NEXT: exited with 0
+# RUN(CHECKED): run-in-shell testing=CheckProofsAtRunTime
+# CHECKED: crate 2 other 1 3
+# CHECKED-NEXT: exited with 0

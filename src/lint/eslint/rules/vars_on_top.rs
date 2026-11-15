@@ -4,7 +4,7 @@ use bun_lint::utils::oxlint::AmbientAncestors;
 /// Require `var` declarations be placed at the top of their containing scope.
 pub struct VarsOnTop;
 
-const TOP: Message = Message::new(
+const TOP: &Message = &Message::new(
     "top",
     "All 'var' declarations must be at the top of the function scope.",
 );

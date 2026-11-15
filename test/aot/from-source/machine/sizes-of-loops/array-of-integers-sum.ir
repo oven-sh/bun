@@ -1,0 +1,21 @@
+# f1 = turn
+# -- source: array-of-integers-sum.ts
+# const counts: number[] = [];
+# for (let k = 0; k < 1000; k++) counts.push(k * 3);
+# function turn(i: number): number {
+#   let sum = i & 1;
+#   for (let k = 0; k < counts.length; k++) sum += counts[k]!;
+#   return sum;
+# }
+# declare function sink(...values: unknown[]): void;
+# declare const input: any;
+# sink(turn(input));
+# -- end of source
+# The compiler before this one: 18 instructions, 0 of them patches, a turn of the written loop steps by 8.
+# When the bound was taken: loop: operations 52, patches 0, moves 0, unlikely 6 ; loop: operations 36, patches 0, moves 2, unlikely 12 ; loop: operations 18, patches 1, moves 1, unlikely 0.
+# RUN(X64): loops most:52,38,37 f1 mechanisms=all-Inlining
+# REQUIRES(X64): x86_64 not-windows unsanitized-code faulting-loop-polls as-written
+# X64-LABEL: unit f1:Body
+# X64-NEXT: loop: at most 52
+# X64-NEXT: loop: at most 38
+# X64-NEXT: loop: at most 37

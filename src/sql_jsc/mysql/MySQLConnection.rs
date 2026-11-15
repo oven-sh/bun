@@ -9,7 +9,7 @@ use bun_sql::mysql::capabilities::MariaDBCapabilities;
 use bun_sql::mysql::connection_state::ConnectionState;
 use bun_sql::mysql::mysql_request;
 use bun_sql::mysql::mysql_types::FieldType;
-use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
+use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use bun_sql::mysql::protocol::auth as Auth;
 use bun_sql::mysql::protocol::auth_switch_request::AuthSwitchRequest;
 use bun_sql::mysql::protocol::character_set::CharacterSet;
@@ -17,7 +17,7 @@ use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::eof_packet::EOFPacket;
 use bun_sql::mysql::protocol::handshake_response41::HandshakeResponse41;
 use bun_sql::mysql::protocol::handshake_v10::HandshakeV10;
-use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
+use bun_sql::mysql::protocol::new_reader::PacketReader;
 use bun_sql::mysql::protocol::new_writer::{NewWriterWrap as NewWriter, WriterContext};
 use bun_sql::mysql::protocol::ok_packet::OKPacket;
 use bun_sql::mysql::protocol::packet_header::PacketHeader;
@@ -25,14 +25,12 @@ use bun_sql::mysql::protocol::packet_type::PacketType;
 use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 use bun_sql::mysql::protocol::result_set_header::ResultSetHeader;
 use bun_sql::mysql::protocol::ssl_request::SSLRequest;
-use bun_sql::mysql::protocol::stack_reader::{PacketReader, StackReader};
 use bun_sql::mysql::protocol::stmt_prepare_ok_packet::StmtPrepareOKPacket;
 use bun_sql::mysql::status_flags::{StatusFlag, StatusFlags};
 use bun_sql::mysql::tls_status::TLSStatus;
 use bun_sql::postgres::socket_monitor as SocketMonitor;
 use bun_sql::shared::SSLMode;
 use bun_sql::shared::connection_flags::ConnectionFlags;
-use bun_sql::shared::data::Data;
 
 use crate::mysql::js_my_sql_connection::JSMySQLConnection;
 use crate::mysql::js_my_sql_query::JSMySQLQuery;
@@ -55,7 +53,8 @@ pub struct MySQLConnection {
 
     write_buffer: OffsetByteList,
     read_buffer: OffsetByteList,
-    last_message_start: usize,
+    /// The parser is not done: what is read while a handler runs the event loop is left to it.
+    reads_wait: bool,
     /// The one behind the last packet that was read.
     sequence_id: u8,
     /// The reply to the head of the queue has begun: its next packet has `sequence_id`. The first
@@ -99,7 +98,7 @@ impl Default for MySQLConnection {
             status: ConnectionState::Connecting,
             write_buffer: OffsetByteList::default(),
             read_buffer: OffsetByteList::default(),
-            last_message_start: 0,
+            reads_wait: false,
             sequence_id: 0,
             in_reply: false,
             queue: MySQLRequestQueue::init(),
@@ -400,95 +399,55 @@ impl MySQLConnection {
         false
     }
 
-    pub(crate) fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
-        self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
-        // The flag clear is hand-inlined before every return below
-        // (scopeguard would need &mut self.flags).
-
+    pub(crate) fn read_and_process_data(&mut self, mut data: &[u8]) -> Result<(), AnyMySQLError> {
         SocketMonitor::read(data);
-
-        if self.read_buffer.remaining().is_empty() {
-            // StackReader takes `&Cell<usize>` (interior mutability)
-            // so the post-error read of `offset`/`consumed` doesn't conflict.
-            let consumed = core::cell::Cell::new(0usize);
-            let offset = core::cell::Cell::new(0usize);
-            let reader = StackReader::init(data, &consumed, &offset);
-            match self.process_packets(reader) {
-                Ok(()) => {}
-                Err(err) => {
-                    debug!(
-                        "processPackets without buffer: {}",
-                        <&'static str>::from(err)
-                    );
-                    if err == any_mysql_error::Error::ShortRead {
-                        #[cfg(debug_assertions)]
-                        debug!(
-                            "Received short read: last_message_start: {}, head: {}, len: {}",
-                            offset.get(),
-                            consumed.get(),
-                            data.len()
-                        );
-
-                        self.read_buffer.head = 0;
-                        self.last_message_start = 0;
-                        self.read_buffer.byte_list.clear();
-                        self.read_buffer
-                            .write(&data[offset.get()..])
-                            .unwrap_or_else(|_| panic!("failed to write to read buffer"));
-                    } else {
-                        bun_core::handle_error_return_trace(err);
-                        self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
-                        return Err(err);
-                    }
-                }
-            }
-            self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
+        if self.reads_wait {
+            bun_core::handle_oom(self.read_buffer.write(data));
             return Ok(());
         }
+        self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
 
-        {
-            self.read_buffer.head = self.last_message_start;
-
-            self.read_buffer
-                .write(data)
-                .unwrap_or_else(|_| panic!("failed to write to read buffer"));
-            let reader = self.buffered_reader();
-            match self.process_packets(reader) {
-                Ok(()) => {}
-                Err(err) => {
-                    debug!("processPackets with buffer: {}", <&'static str>::from(err));
-                    if err != any_mysql_error::Error::ShortRead {
-                        bun_core::handle_error_return_trace(err);
-                        self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
-                        return Err(err);
-                    }
-
-                    if cfg!(debug_assertions) {
-                        bun_core::scoped_log!(
-                            MySQLConnection,
-                            "Received short read: last_message_start: {}, head: {}, len: {}",
-                            self.last_message_start,
-                            self.read_buffer.head,
-                            self.read_buffer.byte_list.len()
-                        );
-                    }
-
-                    self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
-                    return Ok(());
+        let mut buffer = core::mem::take(&mut self.read_buffer);
+        let result = loop {
+            let cursor = core::cell::Cell::new(0usize);
+            let message_start = core::cell::Cell::new(0usize);
+            let result;
+            if buffer.remaining().is_empty() {
+                result = self.process_packets(PacketReader::new(data, &cursor, &message_start));
+                if result == Err(AnyMySQLError::ShortRead) {
+                    bun_core::handle_oom(buffer.write(&data[message_start.get()..]));
                 }
+            } else {
+                bun_core::handle_oom(buffer.write(data));
+                let reader = PacketReader::new(buffer.remaining(), &cursor, &message_start);
+                result = self.process_packets(reader);
+                buffer.consume(message_start.get());
             }
+            let read_meanwhile = core::mem::take(&mut self.read_buffer);
+            if read_meanwhile.len() == 0 || result != Err(AnyMySQLError::ShortRead) {
+                break result;
+            }
+            bun_core::handle_oom(buffer.write(read_meanwhile.remaining()));
+            data = b"";
+        };
+        self.read_buffer = buffer;
+        self.reads_wait = false;
 
-            self.last_message_start = 0;
-            self.read_buffer.head = 0;
-        }
         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
-        Ok(())
+        match result {
+            Ok(()) | Err(AnyMySQLError::ShortRead) => Ok(()),
+            Err(err) => {
+                debug!("processPackets: {}", <&'static str>::from(err));
+                bun_core::handle_error_return_trace(err);
+                Err(err)
+            }
+        }
     }
 
     /// Frames the packets. `ShortRead` (wait for the socket) comes from here and from nowhere else.
-    pub(crate) fn process_packets<C: ReaderContext>(
+    pub(crate) fn process_packets(
         &mut self,
-        reader: NewReader<C>,
+        reader: PacketReader<'_>,
     ) -> Result<(), AnyMySQLError> {
         loop {
             reader.mark_message_start();
@@ -506,6 +465,7 @@ impl MySQLConnection {
             }
             let payload = &reader.peek()[PacketHeader::SIZE..packet_length];
             reader.set_offset_from_start(packet_length);
+            self.reads_wait = !reader.peek().is_empty();
             self.handle_packet(
                 payload,
                 header.sequence_id,
@@ -531,9 +491,9 @@ impl MySQLConnection {
         self.sequence_id = next_sequence_id;
         self.in_reply = self.status == ConnectionState::Connected;
 
-        let mut cursor: usize = 0;
-        let mut message_start: usize = 0;
-        let reader: PacketReader<'_> = StackReader::init(payload, &mut cursor, &mut message_start);
+        let cursor = core::cell::Cell::new(0usize);
+        let message_start = core::cell::Cell::new(0usize);
+        let reader = PacketReader::new(payload, &cursor, &message_start);
         match self.status {
             ConnectionState::Handshaking => self.handle_handshake(reader),
             ConnectionState::Authenticating | ConnectionState::AuthenticationAwaitingPk => {
@@ -556,10 +516,7 @@ impl MySQLConnection {
         }
         let mut handshake = HandshakeV10::default();
         handshake.decode_internal(reader)?;
-        self.server_version = handshake
-            .server_version
-            .to_owned()
-            .map_err(|_| AnyMySQLError::OutOfMemory)?;
+        self.server_version = handshake.server_version.to_vec();
         self.connection_id = handshake.connection_id;
         // Negotiate capabilities: only request capabilities that the server also supports.
         // Per MySQL protocol, the client MUST intersect its desired capabilities with the
@@ -590,8 +547,8 @@ impl MySQLConnection {
 
         self.auth_data = handshake.auth_plugin_data;
 
-        if !handshake.auth_plugin_name.slice().is_empty() {
-            self.auth_plugin = Some(self.auth_plugin_named(handshake.auth_plugin_name.slice())?);
+        if !handshake.auth_plugin_name.is_empty() {
+            self.auth_plugin = Some(self.auth_plugin_named(handshake.auth_plugin_name)?);
         }
 
         self.set_status(ConnectionState::Authenticating);
@@ -657,13 +614,14 @@ impl MySQLConnection {
         // revert back to authenticating since we received the public key
         self.set_status(ConnectionState::Authenticating);
 
+        let writer = self.writer();
         let encrypted_password = Auth::caching_sha2_password::EncryptedPassword {
-            password: bun_ptr::RawSlice::new(&self.password),
-            public_key: bun_ptr::RawSlice::new(response.data.slice()),
+            password: &self.password,
+            public_key: response.data,
             nonce: self.auth_data,
             sequence_id: self.sequence_id,
         };
-        encrypted_password.write(self.writer())?;
+        encrypted_password.write(writer)?;
         self.flush_data();
         Ok(())
     }
@@ -760,7 +718,7 @@ impl MySQLConnection {
                 let mut auth_switch = AuthSwitchRequest::default();
                 auth_switch.decode_internal(reader)?;
 
-                let auth_method = self.auth_plugin_named(auth_switch.plugin_name.slice())?;
+                let auth_method = self.auth_plugin_named(auth_switch.plugin_name)?;
 
                 // Bound a hostile server's auth ping-pong.
                 if self.auth_switch_count >= 2
@@ -777,7 +735,7 @@ impl MySQLConnection {
                 self.auth_switch_count += 1;
 
                 self.auth_plugin = Some(auth_method);
-                self.auth_data = Auth::nonce(auth_switch.plugin_data.slice())?;
+                self.auth_data = Auth::nonce(auth_switch.plugin_data)?;
 
                 self.send_auth_response(auth_method, false)?;
             }
@@ -881,11 +839,9 @@ impl MySQLConnection {
             mariadb_capability_flags: self.mariadb_capabilities,
             max_packet_size: 0, // 16777216,
             character_set: CharacterSet::default(),
-            username: Data::Temporary(bun_ptr::RawSlice::new(&self.user)),
-            database: Data::Temporary(bun_ptr::RawSlice::new(&self.database)),
-            auth_plugin_name: Data::Temporary(bun_ptr::RawSlice::new(
-                self.auth_plugin.map_or(&b""[..], AuthMethod::name),
-            )),
+            username: &self.user,
+            database: &self.database,
+            auth_plugin_name: self.auth_plugin.map_or(&b""[..], AuthMethod::name),
             auth_response,
             sequence_id: self.sequence_id,
             connect_attrs: Default::default(),
@@ -955,18 +911,7 @@ impl MySQLConnection {
         }
     }
 
-    pub(crate) fn buffered_reader(&mut self) -> NewReader<Reader> {
-        NewReader {
-            wrapped: Reader {
-                connection: std::ptr::from_mut::<Self>(self),
-            },
-        }
-    }
-
-    fn process_split_packet<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), AnyMySQLError> {
+    fn process_split_packet(&mut self, reader: PacketReader<'_>) -> Result<(), AnyMySQLError> {
         if self.status != ConnectionState::Connected {
             return Err(AnyMySQLError::UnexpectedPacket);
         }
@@ -1007,6 +952,7 @@ impl MySQLConnection {
         }
 
         reader.set_offset_from_start(wire_length);
+        self.reads_wait = !reader.peek().is_empty();
         self.handle_packet(&payload, first_sequence_id, sequence_id)
     }
 
@@ -1196,7 +1142,7 @@ impl MySQLConnection {
     fn on_request_error(
         &mut self,
         request: &JSMySQLQuery,
-        err: &ErrorPacket,
+        err: &ErrorPacket<'_>,
     ) -> Result<(), AnyMySQLError> {
         self.in_reply = false;
         self.js_connection_ref().on_error_packet(Some(request), err);
@@ -1361,6 +1307,8 @@ impl MySQLConnection {
                             statement
                                 .execution_flags
                                 .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+                            // The column transform runs before the rows can be read.
+                            self.reads_wait = true;
                             self.js_connection_ref().on_column_name(request, index)?;
                         }
                     }
@@ -1427,7 +1375,7 @@ pub enum FlushQueueError {
     AuthenticationFailed,
 }
 
-// The protocol layer's handles on the connection's two buffers. `Copy`, as its traits ask.
+// The protocol layer's handle on the write buffer. `Copy`, as its trait asks.
 #[derive(Clone, Copy)]
 pub struct Writer {
     pub(crate) connection: *mut MySQLConnection,
@@ -1444,7 +1392,7 @@ impl Writer {
         //
         // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
         // an intermediate `&mut MySQLConnection`, which could alias the
-        // caller's own `&mut self` (see the aliasing note on `Reader` below).
+        // caller's own `&mut self`.
         // Callers never touch `write_buffer` through `&mut self` while a
         // `Writer` is live, so no two `&mut OffsetByteList` coexist.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
@@ -1482,61 +1430,6 @@ impl WriterContext for Writer {
         buffer
             .byte_list
             .copy_within(head + src.start..head + src.end, head + dest);
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Reader {
-    pub(crate) connection: *mut MySQLConnection,
-}
-
-// Aliasing: `Reader` is constructed from `&mut MySQLConnection`
-// and then threaded through `process_packets(&mut self, reader)` — i.e. the
-// raw `*mut` and a live `&mut self` coexist. Materializing a whole-struct
-// `&mut MySQLConnection` here would alias that `&mut self` (Stacked Borrows
-// UB). Instead the accessors below project only the specific field(s) the
-// reader touches via `addr_of_mut!`, matching `Writer` above.
-impl Reader {
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn read_buffer(&self) -> &mut OffsetByteList {
-        // SAFETY: `self.connection` points at a live `MySQLConnection` for the
-        // duration of the read call (NewReader is constructed by
-        // `MySQLConnection::buffered_reader(&mut self)` and never stored).
-        // Raw-pointer field projection (`addr_of_mut!`) avoids materializing an
-        // intermediate `&mut MySQLConnection`, which would alias the caller's
-        // live `&mut self` in `process_packets`. `process_packets` never touches
-        // `read_buffer` through its own `&mut self` while a `Reader` is live, so
-        // no two `&mut OffsetByteList` coexist.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).read_buffer) }
-    }
-
-    #[inline]
-    #[allow(clippy::mut_from_ref)]
-    fn last_message_start(&self) -> &mut usize {
-        // SAFETY: same justification as `read_buffer()` — disjoint field
-        // projection from a non-null connection pointer that outlives the
-        // `Reader`; `process_packets` does not access `last_message_start`
-        // through `&mut self` while the reader is live.
-        unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).last_message_start) }
-    }
-}
-
-impl ReaderContext for Reader {
-    fn mark_message_start(self) {
-        *self.last_message_start() = self.read_buffer().head;
-    }
-
-    fn set_offset_from_start(self, offset: usize) {
-        self.read_buffer().head = *self.last_message_start() + offset;
-    }
-
-    fn peek(&self) -> &[u8] {
-        self.read_buffer().remaining()
-    }
-
-    fn ensure_capacity(self, count: usize) -> bool {
-        self.read_buffer().remaining().len() >= count
     }
 }
 

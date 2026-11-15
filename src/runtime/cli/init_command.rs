@@ -313,6 +313,7 @@ impl InitCommand {
 
         let mut template: Template = Template::Blank;
         let mut prev_flag_was_react = false;
+        let mut ca_store_flags: Vec<&[u8]> = Vec::new();
         for arg_ in init_args {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
@@ -351,6 +352,9 @@ impl InitCommand {
                     prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
+                    if Global::is_ca_store_flag(arg) {
+                        ca_store_flags.push(arg);
+                    }
                     prev_flag_was_react = false;
                 }
             } else {
@@ -361,6 +365,8 @@ impl InitCommand {
                 }
             }
         }
+
+        Global::set_ca_store_from_flags(|flag| ca_store_flags.contains(&flag));
 
         // The template picker reads single keystrokes from raw-mode stdin; on a
         // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
@@ -534,13 +540,10 @@ impl InitCommand {
                 }
 
                 // Find any source file
-                let Ok(dir) = bun_sys::open_dir_at(Fd::cwd(), b".") else {
+                let Ok(dir) = bun_sys::Dir::open(b".") else {
                     break 'infer;
                 };
-                let _close = scopeguard::guard(dir, |d| {
-                    let _ = bun_sys::close(d);
-                });
-                let mut it = bun_sys::iterate_dir(dir);
+                let mut it = bun_sys::iterate_dir(dir.fd());
                 while let Some(file) = it.next().map_err(crate::Error::from)? {
                     if file.kind != bun_sys::FileKind::File {
                         continue;
@@ -649,10 +652,8 @@ impl InitCommand {
             true
         };
 
-        // SAFETY: `fields.object` was set above either from the parsed JSON
-        // (arena-owned, lives for the duration of `exec`) or from a freshly
-        // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
+        let object = &mut *object;
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -799,16 +800,14 @@ impl InitCommand {
         }
 
         'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
+            let created;
+            let file: &bun_sys::File = match &package_json_file {
+                Some(file) => file,
                 None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
+                    created = bun_sys::File::create(Fd::cwd(), b"package.json", true)?;
+                    &created
                 }
             };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -835,7 +834,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+            if let Err(err) = file.write_all(written) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
@@ -844,7 +843,7 @@ impl InitCommand {
                 break 'write_package_json;
             }
             if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
+                bun_sys::ftruncate(file.fd(), i64::try_from(written.len()).expect("int cast"))
             {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
@@ -913,7 +912,6 @@ impl InitCommand {
                             (b"name", fields.name.as_slice()),
                             (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
                             (b"entryPoint", fields.entry_point.as_slice()),
-                            (b"tools", Assets::README_TOOLS),
                         ],
                     );
                     // suppressed
@@ -943,8 +941,7 @@ impl InitCommand {
 
                 if exists_z(b"package.json") && need_run_bun_install {
                     bun_core::prettyln!("");
-                    let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    let _ = bun::spawn_sync_inherit(&bun_install_argv()?)?;
                 }
             }
             _ => {}
@@ -952,6 +949,12 @@ impl InitCommand {
 
         Ok(())
     }
+}
+
+fn bun_install_argv() -> Result<Vec<&'static [u8]>, Error> {
+    let mut argv: Vec<&[u8]> = vec![bun::self_exe_path()?.as_bytes(), b"install"];
+    argv.extend(Global::ca_store_flag().map(ZStr::as_bytes));
+    Ok(argv)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -966,12 +969,6 @@ impl Assets {
     pub(crate) const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
     pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
-    /// `{[tools]s}` in both.
-    const README_TOOLS: &'static [u8] = if CLI::lint_command::IS_ENABLED {
-        b"Run `bun lint` to find problems in the code and `bun fmt` to format it."
-    } else {
-        b"Run `bun fmt` to format the code."
-    };
 
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -1381,15 +1378,14 @@ impl Template {
         fields: &mut PackageJSONFields,
         bump: &bun_alloc::Arena,
     ) -> Result<(), Error> {
-        type Rope = bun_ast::E::Rope;
+        use bun_ast::E::Rope;
         fields.name = self.name().to_vec();
         // Allocate in the process-lifetime CLI arena.
-        let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
+        let key: &mut Rope<'_> = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
-            next: core::ptr::null_mut(),
+            next: None,
         });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,
@@ -1476,7 +1472,6 @@ impl Template {
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
-        // SAFETY: FileSystem::instance() returns the process-global singleton.
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
@@ -1654,7 +1649,6 @@ impl Template {
                     &[
                         (b"name", self.name()),
                         (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
-                        (b"tools", Assets::README_TOOLS),
                     ],
                 )
             } else {
@@ -1687,8 +1681,7 @@ impl Template {
         bun_core::pretty!("\n");
         Output::flush();
 
-        let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&bun_install_argv()?)?;
 
         bun_core::prettyln!(
             "\n\

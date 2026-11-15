@@ -1,5 +1,6 @@
 #![warn(unused_must_use)]
 use core::ffi::{c_ulonglong, c_void};
+use core::ptr::NonNull;
 
 use bun_core::ZStr;
 
@@ -137,10 +138,10 @@ pub mod c {
         -> c_ulonglong;
 
         // ── streaming-compress / advanced API (used by NativeZstd) ───────
-        pub safe fn ZSTD_createCCtx() -> *mut ZSTD_CCtx;
-        pub fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
-        pub safe fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
-        pub fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
+        pub(crate) safe fn ZSTD_createCCtx() -> *mut ZSTD_CCtx;
+        pub(crate) fn ZSTD_freeCCtx(cctx: *mut ZSTD_CCtx) -> usize;
+        pub(crate) safe fn ZSTD_createDCtx() -> *mut ZSTD_DCtx;
+        pub(crate) fn ZSTD_freeDCtx(dctx: *mut ZSTD_DCtx) -> usize;
         pub fn ZSTD_CCtx_setPledgedSrcSize(
             cctx: *mut ZSTD_CCtx,
             pledged_src_size: c_ulonglong,
@@ -195,6 +196,44 @@ pub mod c {
 }
 
 // -----------------------------------
+
+pub struct OwnedCCtx(NonNull<c::ZSTD_CCtx>);
+
+impl OwnedCCtx {
+    pub fn new() -> Option<Self> {
+        NonNull::new(c::ZSTD_createCCtx()).map(Self)
+    }
+
+    pub fn as_ptr(&self) -> *mut c::ZSTD_CCtx {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedCCtx {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, freed once.
+        unsafe { c::ZSTD_freeCCtx(self.0.as_ptr()) };
+    }
+}
+
+pub struct OwnedDCtx(NonNull<c::ZSTD_DCtx>);
+
+impl OwnedDCtx {
+    pub fn new() -> Option<Self> {
+        NonNull::new(c::ZSTD_createDCtx()).map(Self)
+    }
+
+    pub fn as_ptr(&self) -> *mut c::ZSTD_DStream {
+        self.0.as_ptr()
+    }
+}
+
+impl Drop for OwnedDCtx {
+    fn drop(&mut self) {
+        // SAFETY: created in `new`, freed once.
+        unsafe { c::ZSTD_freeDCtx(self.0.as_ptr()) };
+    }
+}
 
 pub enum Result {
     Success(usize),
@@ -381,28 +420,27 @@ pub fn decompress_alloc_with_prefix(
     output
         .try_reserve_exact(size)
         .map_err(|_| ZstdError::OutOfMemory)?;
-    let dctx = c::ZSTD_createDCtx();
-    if dctx.is_null() {
-        return Err(ZstdError::OutOfMemory);
-    }
+    let dctx = OwnedDCtx::new().ok_or(ZstdError::OutOfMemory)?;
     let spare = output.spare_capacity_mut();
-    // SAFETY: `dctx` is live until it is freed below. `prefix`, `src` and `spare` are valid for
-    // their lengths and outlive the calls, and at most `spare.len()` bytes are written to `spare`.
+    // SAFETY: `prefix`, `src` and `spare` are valid for their lengths and outlive the calls, and
+    // at most `spare.len()` bytes are written to `spare`.
     let rc = unsafe {
-        let rc = c::ZSTD_DCtx_refPrefix(dctx, prefix.as_ptr().cast::<c_void>(), prefix.len());
-        let rc = if c::ZSTD_isError(rc) != 0 {
+        let rc = c::ZSTD_DCtx_refPrefix(
+            dctx.as_ptr(),
+            prefix.as_ptr().cast::<c_void>(),
+            prefix.len(),
+        );
+        if c::ZSTD_isError(rc) != 0 {
             rc
         } else {
             c::ZSTD_decompressDCtx(
-                dctx,
+                dctx.as_ptr(),
                 spare.as_mut_ptr().cast::<c_void>(),
                 spare.len(),
                 src.as_ptr().cast::<c_void>(),
                 src.len(),
             )
-        };
-        c::ZSTD_freeDCtx(dctx);
-        rc
+        }
     };
     if c::ZSTD_isError(rc) != 0 {
         return Err(ZstdError::for_decompression(
@@ -609,7 +647,7 @@ impl Drop for ZstdReaderArrayList<'_> {
 /// per call, so callers can hold the decoder across multiple body chunks
 /// without lifetime erasure.
 pub struct StreamingDecoder {
-    stream: core::ptr::NonNull<c::ZSTD_DStream>,
+    stream: OwnedDCtx,
     pub(crate) state: State,
     /// Decompression-bomb guard: `decompress` errors instead of growing the
     /// output past this many bytes. Defaults to unbounded.
@@ -620,8 +658,7 @@ pub struct StreamingDecoder {
 
 impl StreamingDecoder {
     pub fn new() -> core::result::Result<Self, ZstdError> {
-        let stream = core::ptr::NonNull::new(c::ZSTD_createDStream())
-            .ok_or(ZstdError::ZstdFailedToCreateInstance)?;
+        let stream = OwnedDCtx::new().ok_or(ZstdError::ZstdFailedToCreateInstance)?;
         // SAFETY: stream is a freshly created non-null DStream.
         let _ = unsafe { c::ZSTD_initDStream(stream.as_ptr()) };
         Ok(Self {
@@ -745,13 +782,6 @@ impl StreamingDecoder {
             }
         }
         Ok(total_in)
-    }
-}
-
-impl Drop for StreamingDecoder {
-    fn drop(&mut self) {
-        // SAFETY: stream was created by ZSTD_createDStream; freed once here.
-        let _ = unsafe { c::ZSTD_freeDStream(self.stream.as_ptr()) };
     }
 }
 

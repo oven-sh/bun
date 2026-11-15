@@ -851,7 +851,7 @@ impl TranspilerJob {
             // `&ImportWatcher` is live here, and `add_file` is
             // thread-safe via watcher mutex.
             let iw = unsafe { iw.assume_mut() };
-            let _ = iw.add_owned_file(input_file, path.text, hash, package_json);
+            let _ = iw.add_file(input_file, path.text, hash, package_json);
         }
 
         let Some(mut parse_result) = parse_result else {

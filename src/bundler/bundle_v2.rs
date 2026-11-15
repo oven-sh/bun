@@ -342,6 +342,7 @@ pub mod bv2_impl {
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
     use bun_resolver::DataURL;
+    use bun_resolver::cache::SourceFd;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
@@ -4541,7 +4542,7 @@ pub mod bv2_impl {
                             };
 
                             // Failures to watch are intentionally ignored.
-                            let _ = this.bun_watcher_mut().unwrap().add_owned_file(
+                            let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
                                 file,
                                 path.text,
                                 bun_wyhash::hash(path.text) as u32,
@@ -6794,7 +6795,7 @@ pub mod bv2_impl {
 
             // To minimize contention, watchers are appended on the bundle thread.
             if this.bun_watcher.is_some() {
-                if let Some(file) = parse_result.watcher_data.file.take() {
+                if let Some(file) = parse_result.file_to_watch.take() {
                     let source_index = parse_result.value.source_index();
                     // borrowck — read the source path before
                     // `should_add_watcher(&self)` so the column borrow is released.
@@ -6802,27 +6803,30 @@ pub mod bv2_impl {
                         .path
                         .text;
                     if this.should_add_watcher(source_path) {
-                        let fd = file.fd();
-                        let dir_fd = parse_result.watcher_data.dir_fd;
-                        let hash = bun_wyhash::hash(source_path) as u32;
                         let bun_watcher = this.bun_watcher_mut().unwrap();
-                        // The watcher keeps the path past this bundle; borrow it
-                        // only when it is interned for the process lifetime
-                        // (`dupe_alloc` leaves other paths in the bundle arena).
-                        let added = if Fs::as_interned_path(source_path).is_some() {
-                            bun_watcher.add_file::<{ cfg!(windows) }>(
-                                fd,
-                                source_path,
-                                hash,
-                                dir_fd,
-                                None,
-                            )
-                        } else {
-                            bun_watcher.add_file::<true>(fd, source_path, hash, dir_fd, None)
-                        };
-                        // A file that's already watched keeps its first descriptor.
-                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                            let _ = file.into_raw();
+                        match file {
+                            SourceFd::Borrowed(_) => {
+                                let _ = bun_watcher.add_file_by_path_slow(source_path);
+                            }
+                            SourceFd::Owned(file) => {
+                                let hash = bun_wyhash::hash(source_path) as u32;
+                                // Only an interned path outlives this bundle.
+                                let _ = if Fs::as_interned_path(source_path).is_some() {
+                                    bun_watcher.add_file::<{ cfg!(windows) }>(
+                                        Some(file),
+                                        source_path,
+                                        hash,
+                                        None,
+                                    )
+                                } else {
+                                    bun_watcher.add_file::<true>(
+                                        Some(file),
+                                        source_path,
+                                        hash,
+                                        None,
+                                    )
+                                };
+                            }
                         }
                     }
                 }

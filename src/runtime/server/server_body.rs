@@ -35,7 +35,7 @@ use bun_jsc::{
     Node, PendingAbortSignal, StringJsc as _, VirtualMachine, host_fn,
 };
 use bun_paths as paths;
-use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr};
+use bun_ptr::{AsCtxPtr, CellExt as _, RefPtr, ThisPtr};
 use bun_removable_features::{Feature, is_removed};
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph;
@@ -2231,15 +2231,19 @@ where
 
     /// Route handler for the HTTP/2 and HTTP/3 apps (`R` = `uws::H2::Response`
     /// or `uws::H3::Response`); both hand us the same decoded-header request.
-    pub(super) fn on_mux_request<R: RespLike>(&self, req: &mut uws::H3::Request, resp: &mut R) {
-        if self.config.get().on_request.is_empty() {
-            return Self::on_mux_404(self, req, resp);
+    pub(super) fn on_mux_request<R: RespLike>(
+        this: ThisPtr<Self>,
+        req: &mut uws::H3::Request,
+        resp: &mut R,
+    ) {
+        if this.config.get().on_request.is_empty() {
+            return Self::on_mux_404(this, req, resp);
         }
-        self.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
+        this.on_request_for::<ServerMuxRequestContext<SSL, DEBUG>, _>(req, resp);
     }
 
     pub(super) fn on_mux_user_route_request<R: RespLike>(
-        user_route: &UserRoute<SSL, DEBUG>,
+        user_route: ThisPtr<UserRoute<SSL, DEBUG>>,
         req: &mut uws::H3::Request,
         resp: &mut R,
     ) {
@@ -2248,7 +2252,11 @@ where
         );
     }
 
-    pub(super) fn on_mux_404<R: RespLike>(_this: &Self, _req: &mut uws::H3::Request, resp: &mut R) {
+    pub(super) fn on_mux_404<R: RespLike>(
+        _this: ThisPtr<Self>,
+        _req: &mut uws::H3::Request,
+        resp: &mut R,
+    ) {
         resp.write_status(b"404 Not Found");
         resp.end_without_body(false);
     }
@@ -2309,7 +2317,7 @@ where
     // been removed.
 
     fn on_user_route_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        user_route: &UserRoute<SSL, DEBUG>,
+        user_route: ThisPtr<UserRoute<SSL, DEBUG>>,
         req: &mut Ctx::Req,
         resp: &mut R,
     ) {
@@ -2623,7 +2631,7 @@ where
     }
 
     fn upgrade_web_socket_user_route(
-        this: &UserRoute<SSL, DEBUG>,
+        this: ThisPtr<UserRoute<SSL, DEBUG>>,
         resp: &mut uws_sys::NewAppResponse<SSL>,
         req: &mut uws::Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
@@ -2691,12 +2699,8 @@ where
     ) {
         jsc::mark_binding!();
         if id == 1 {
-            // SAFETY: for `id == 1` the registered user-data IS
-            // `*mut UserRoute<SSL,DEBUG>` (mod.rs `app.ws(path, ud, 1, ..)`);
-            // live for the request's duration. Raw-ptr cast only — no
-            // intermediate `&mut Self` was ever created; shared suffices (the
-            // route entry is only read).
-            let user_route = unsafe { &*this.cast::<UserRoute<SSL, DEBUG>>() };
+            // SAFETY: `app.ws(path, ud, 1, ..)` registered a `UserRoute`, which lives until the handler reloads.
+            let user_route = unsafe { ThisPtr::new(this.cast::<UserRoute<SSL, DEBUG>>()) };
             Self::upgrade_web_socket_user_route(user_route, resp, req, upgrade_ctx, None);
             return;
         }

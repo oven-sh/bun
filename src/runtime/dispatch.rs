@@ -586,11 +586,18 @@ pub(crate) fn run_task(
                 unsafe { napi_async_work::run_from_js(work, global) }
             }
         )?,
-        task_tag::ThreadSafeFunction => {
-            feature_arm!([NativeAddons], |function: ThreadSafeFunction| {
-                ThreadSafeFunction::on_dispatch(function);
-            })
-        }
+        task_tag::ThreadSafeFunction => in_features!(
+            [NativeAddons],
+            (
+                function: *mut ThreadSafeFunction = cast_ptr!(ThreadSafeFunction),
+                el: &EventLoop = el,
+                vm: &VirtualMachine = vm,
+            ) {
+                // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                let function = unsafe { std::sync::Arc::from_raw(function) };
+                ThreadSafeFunction::on_dispatch(function, el, vm);
+            }
+        ),
         task_tag::NapiFinalizerTask => boxed_arm!(
             task,
             [NativeAddons],

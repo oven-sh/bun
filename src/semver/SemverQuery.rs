@@ -24,7 +24,7 @@ pub struct Query {
     pub range: Range,
 
     // AND
-    pub next: Option<Box<Query>>,
+    pub(crate) next: Option<Box<Query>>,
 }
 
 impl Clone for Query {
@@ -88,6 +88,12 @@ impl Query {
             query: self,
             buffer: buf,
         }
+    }
+
+    /// The comparators that are AND'd together, unset ones included.
+    pub fn comparators(&self) -> impl Iterator<Item = Comparator> {
+        core::iter::successors(Some(self), |query| query.next.as_deref())
+            .flat_map(|query| [query.range.left, query.range.right])
     }
 
     /// The version when this AND chain is one `=version` comparator.
@@ -162,12 +168,12 @@ impl Query {
 /// That is two List
 #[derive(Default)]
 pub struct List {
-    pub head: Query,
+    head: Query,
     // BACKREF: alias into self.head.next chain
-    pub(crate) tail: Option<NonNull<Query>>,
+    tail: Option<NonNull<Query>>,
 
     // OR
-    pub next: Option<Box<List>>,
+    next: Option<Box<List>>,
 }
 
 // SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
@@ -349,9 +355,9 @@ impl Flags {
 }
 
 pub struct Group {
-    pub head: List,
+    head: List,
     // BACKREF: alias into self.head.next chain
-    pub(crate) tail: Option<NonNull<List>>,
+    tail: Option<NonNull<List>>,
 
     pub flags: FlagsBitSet,
 }
@@ -427,6 +433,15 @@ impl Group {
 
     // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
     // iterative `Drop` impls on `Query` and `List`.
+
+    /// The AND chains that are OR'd together.
+    pub fn alternatives(&self) -> impl Iterator<Item = &Query> {
+        core::iter::successors(Some(&self.head), |list| list.next.as_deref()).map(|list| &list.head)
+    }
+
+    pub fn first_comparator(&self) -> Comparator {
+        self.head.head.range.left
+    }
 
     pub fn get_exact_version(&self) -> Option<Version> {
         if self.head.next.is_some() {

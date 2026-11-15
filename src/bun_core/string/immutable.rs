@@ -294,7 +294,7 @@ pub use crate::strings_impl::{
     EncodeIntoResult, copy_latin1_into_utf8, copy_utf16_into_utf8,
     copy_utf16_into_utf8_with_utf8_len, element_length_latin1_into_utf8,
     element_length_utf16_into_utf8, encode_surrogate_pair, push_codepoint_utf16, to_utf8_alloc_z,
-    to_utf8_from_latin1_z, u16_lead, u16_trail,
+    to_utf8_from_latin1_z, u16_lead, u16_trail, write_latin1_as_utf8, write_utf16_as_utf8,
 };
 
 /// memmem — `highway_memmem` (HWY_DYNAMIC_DISPATCH MemMemImpl), same on all platforms.

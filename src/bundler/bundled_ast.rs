@@ -7,11 +7,14 @@
 //! So we make a slimmer version of Ast for bundling that doesn't allocate as much memory
 
 use bun_ast::import_record;
+use bun_collections::MultiArrayList;
 use bun_core::strings;
 
 use crate::options::ModuleType;
 use bun_ast::ast_result::Ast;
-use bun_ast::{AstBox, AstVec, CharFreq, ExportsKind, Ref, Scope, SlotCounts, StoreStr, TlaCheck};
+use bun_ast::{
+    AstBox, AstVec, CharFreq, ExportsKind, ImportRecord, Ref, Scope, SlotCounts, StoreStr, TlaCheck,
+};
 use bun_ast::{part, symbol};
 
 pub(crate) type CommonJSNamedExports = bun_ast::ast_result::CommonJSNamedExports;
@@ -111,6 +114,48 @@ bun_collections::multi_array_columns! {
     }
 }
 
+/// The fields of one `BundledAst` in a `MultiArrayList` that printing a chunk reads.
+pub(crate) struct BundledAstRow<'a> {
+    pub(crate) exports_kind: ExportsKind,
+    pub(crate) module_type: ModuleType,
+    pub(crate) import_records: &'a [ImportRecord<'a>],
+    pub(crate) exports_ref: Ref,
+    pub(crate) module_ref: Ref,
+    pub(crate) wrapper_ref: Ref,
+    pub(crate) dynamic_import_aliases: &'a bun_ast::ast_result::DynamicImportAliases,
+    pub(crate) commonjs_named_exports: &'a CommonJSNamedExports,
+    pub(crate) target: bun_ast::Target,
+    pub(crate) flags: Flags,
+    pub(crate) printer_view: bun_js_printer::BundledAstView<'a>,
+}
+
+impl<'a> BundledAstRow<'a> {
+    pub(crate) fn new(list: &'a MultiArrayList<BundledAst<'_>>, index: usize) -> Self {
+        let exports_kind = list.items_exports_kind()[index];
+        let flags = list.items_flags()[index];
+        Self {
+            exports_kind,
+            module_type: list.items_module_type()[index],
+            import_records: &list.items_import_records()[index],
+            exports_ref: list.items_exports_ref()[index],
+            module_ref: list.items_module_ref()[index],
+            wrapper_ref: list.items_wrapper_ref()[index],
+            dynamic_import_aliases: &list.items_dynamic_import_aliases()[index],
+            commonjs_named_exports: &list.items_commonjs_named_exports()[index],
+            target: list.items_target()[index],
+            flags,
+            printer_view: bun_js_printer::BundledAstView {
+                approximate_newline_count: list.items_approximate_newline_count()[index] as usize,
+                has_lazy_export: flags.contains(Flags::HAS_LAZY_EXPORT),
+                has_top_level_await: !list.items_top_level_await_keyword()[index].is_empty(),
+                exports_kind,
+                named_exports: &list.items_named_exports()[index],
+                export_star_import_records: &list.items_export_star_import_records()[index],
+            },
+        }
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq)]
     pub struct Flags: u16 {
@@ -165,17 +210,6 @@ impl<'arena> BundledAst<'arena> {
             target: bun_ast::Target::Browser,
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
             flags: Flags::empty(),
-        }
-    }
-
-    pub(crate) fn as_printer_view(&self) -> bun_js_printer::BundledAstView<'_> {
-        bun_js_printer::BundledAstView {
-            approximate_newline_count: self.approximate_newline_count as usize,
-            has_lazy_export: self.flags.contains(Flags::HAS_LAZY_EXPORT),
-            has_top_level_await: !self.top_level_await_keyword.is_empty(),
-            exports_kind: self.exports_kind,
-            named_exports: &self.named_exports,
-            export_star_import_records: &self.export_star_import_records,
         }
     }
 

@@ -145,8 +145,6 @@ impl Default for InputFile<'_> {
 }
 
 // SoA column accessors on `MultiArrayList<InputFile>`.
-// Field name + type are checked against `InputFile`'s reflected layout at
-// compile time by the underlying `items::<"name", T>()`.
 bun_collections::multi_array_columns! {
     pub trait InputFileColumns ['a] for InputFile<'a> {
         source: bun_ast::Source<'a>,

@@ -1235,7 +1235,7 @@ impl Store {
     /// Counts fired one-shot polls awaiting rearm. They're still in the JS loop's `num_polls` but can't fire.
     pub fn disarmed_count(&self) -> i32 {
         let mut count = 0;
-        let mut used = self.hive.hive.used.iter_set();
+        let mut used = self.hive.hive.used().iter_set();
         while let Some(index) = used.next() {
             // SAFETY: slots are only claimed through `get_init`, so a used slot is initialized.
             let poll = unsafe { &*self.hive.hive.ptr_at(index) };

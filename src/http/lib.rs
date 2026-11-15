@@ -52,7 +52,7 @@ pub mod websocket;
 pub use async_http::{AsyncHTTP, HTTPClientResultHandler, OwnedRequest};
 pub use certificate_info::CertificateInfo;
 pub use decompressor::Decompressor;
-pub use header_builder::HeaderBuilder;
+pub use header_builder::{HeaderBuilder, HeaderCounter};
 pub use headers::{Headers, HeadersExt};
 pub(crate) use http_cert_error::HTTPCertError;
 pub use http_context::{HTTPContext, HTTPSocket, PeerVerification};
@@ -3980,13 +3980,13 @@ impl<'a> HTTPClient<'a> {
         let mut builder = picohttp::StringBuilder::default();
         response.count(&mut builder);
         builder.count(self.url.href);
-        let _ = builder.allocate();
+        let mut builder = builder.allocate();
         self.state.cloned_metadata = Some(HTTPResponseMetadata {
             status_code: response.status_code,
             status_text: builder.append_count(response.status),
             headers: response.clone_headers(&mut builder),
             url: builder.append_count(self.url.href),
-            owned_buf: builder.move_to_slice(),
+            owned_buf: builder.into_boxed_slice(),
         });
     }
 
@@ -5022,7 +5022,7 @@ impl<'a> HTTPClient<'a> {
                             }
                         }
 
-                        string_builder.allocate()?;
+                        let mut string_builder = string_builder.allocate();
 
                         if is_protocol_relative {
                             if is_http {
@@ -5034,9 +5034,9 @@ impl<'a> HTTPClient<'a> {
 
                         let _ = string_builder.append(location);
 
-                        debug_assert!(string_builder.cap == string_builder.len);
+                        debug_assert!(string_builder.capacity() == string_builder.len());
 
-                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::borrow_utf8(string_builder.written_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
@@ -5076,7 +5076,7 @@ impl<'a> HTTPClient<'a> {
 
                         string_builder.count(location);
 
-                        string_builder.allocate()?;
+                        let mut string_builder = string_builder.allocate();
 
                         if is_http {
                             let _ = string_builder.append(b"http:");
@@ -5086,9 +5086,9 @@ impl<'a> HTTPClient<'a> {
 
                         let _ = string_builder.append(location);
 
-                        debug_assert!(string_builder.cap == string_builder.len);
+                        debug_assert!(string_builder.capacity() == string_builder.len());
 
-                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::borrow_utf8(string_builder.written_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);

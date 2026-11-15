@@ -1437,20 +1437,15 @@ fn encode_text_module(
         };
         return (string_builder.append_count_z(utf8), Encoding::Latin1, hash);
     }
-    if !string_builder.len.is_multiple_of(align_of::<u16>()) {
-        string_builder.writable()[0] = 0;
-        string_builder.len += 1;
-    }
-    let start = string_builder.len;
+    align_next_append(string_builder, align_of::<u16>());
+    let start = string_builder.len();
     // `to_bytes` reserved `2 * utf8.len() + 4` bytes for this file.
-    let dst: &mut [u16] =
-        bun_core::cast_slice_mut(&mut string_builder.writable()[..2 * utf8.len() + 2]);
-    let len = strings::convert_utf8_to_utf16_in_buffer(dst, utf8).len();
-    dst[len] = 0;
-    // SAFETY: `dst` starts with `len` initialized units.
-    let hash = unsafe { Bun__WTFStringHashUTF16(dst.as_ptr(), len) };
-    let byte_len = 2 * len;
-    string_builder.len += byte_len + 2;
+    string_builder.append_with(|cursor| strings::write_wtf8_as_utf16le(utf8, cursor));
+    let utf16: &[u16] = bun_core::cast_slice(&string_builder.written_slice()[start..]);
+    // SAFETY: `utf16` is readable for `utf16.len()` units.
+    let hash = unsafe { Bun__WTFStringHashUTF16(utf16.as_ptr(), utf16.len()) };
+    let byte_len = size_of_val(utf16);
+    string_builder.append_zeros(size_of::<u16>());
     (
         StringPointer {
             offset: start as u32,
@@ -1532,34 +1527,35 @@ pub(crate) fn to_bytes(
                 // enough memory for the source-map contents. Calculating
                 // the exact amount is not possible without allocating as it
                 // involves a JSON parser.
-                string_builder.cap += bytes.len() * 2;
+                string_builder.count_len(bytes.len() * 2);
             } else if output_file.output_kind == options::OutputKind::Bytecode
                 || output_file.output_kind == options::OutputKind::BuiltinBytecode
                 || output_file.output_kind == options::OutputKind::BytecodeStringTable
                 || output_file.output_kind == options::OutputKind::BytecodePayload
             {
                 // Allocate up to 256 byte alignment for bytecode (+ a table record for builtin bytecode)
-                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
+                string_builder.count_len(bytes.len().div_ceil(256) * 256 + 256 + 16);
             } else if output_file.output_kind == options::OutputKind::ModuleInfo {
-                string_builder.cap += bytes.len();
+                string_builder.count(bytes);
             } else if output_file.output_kind == options::OutputKind::ModuleInfoStringTable {
                 // 4-byte aligned (JSC reads the slots in place), then its record: pointer.
-                string_builder.cap += bytes.len() + 3 + 2 * size_of::<u32>();
+                string_builder.count_len(bytes.len() + 3 + 2 * size_of::<u32>());
             } else if output_file.output_kind == options::OutputKind::PrelinkedModuleGraph {
                 // Aligned like bytecode (JSC reads it in place as u32 arrays), then its record: pointer, count,
                 // and one file index per graph module (at most one per output file).
-                string_builder.cap += bytes.len().div_ceil(256) * 256 + 256 + 16;
-                string_builder.cap += 3 * size_of::<u32>() + output_files.len() * size_of::<u32>();
+                string_builder.count_len(bytes.len().div_ceil(256) * 256 + 256 + 16);
+                string_builder
+                    .count_len(3 * size_of::<u32>() + output_files.len() * size_of::<u32>());
             } else {
                 has_entry_point |= is_entry_point(output_file);
 
                 string_builder.count_z(bytes);
                 if bytes.len() >= bun_sys::private_copy::MIN_MAPPED_BYTES {
-                    string_builder.cap += bun_sys::private_copy::ALIGNMENT - 1;
+                    string_builder.count_len(bun_sys::private_copy::ALIGNMENT - 1);
                 }
                 if is_stored_as_string(output_file) {
                     // UTF-16 worst case: 2 bytes per byte, padding, 2-byte NUL.
-                    string_builder.cap += bytes.len() + 3;
+                    string_builder.count_len(bytes.len() + 3);
                 }
                 module_count += 1;
             }
@@ -1570,18 +1566,18 @@ pub(crate) fn to_bytes(
         return Ok(GraphBytes::default());
     }
 
-    string_builder.cap +=
-        (size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len();
-    string_builder.cap += TRAILER.len();
-    string_builder.cap += 16 + 4 * size_of::<u32>();
-    string_builder.cap += (2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>();
-    string_builder.cap += size_of::<Offsets>();
+    string_builder
+        .count_len((size_of::<CompiledModuleGraphFile>() + size_of::<u32>()) * output_files.len());
+    string_builder.count(TRAILER);
+    string_builder.count_len(16 + 4 * size_of::<u32>());
+    string_builder.count_len((2 + bun_bundler::bytecode_order::REGION_COUNT) * size_of::<u32>());
+    string_builder.count_len(size_of::<Offsets>());
     string_builder.count_z(compile_exec_argv);
     if let Some(program) = program {
-        string_builder.cap += compiled_program::capacity(program);
+        string_builder.count_len(compiled_program::capacity(program));
     }
 
-    string_builder.allocate()?;
+    let mut string_builder = string_builder.allocate();
 
     let mut module_files: Vec<&OutputFile> = Vec::with_capacity(module_count);
     let mut entry_point_file: Option<&OutputFile> = None;
@@ -1727,14 +1723,7 @@ pub(crate) fn to_bytes(
                     output_file.value.as_slice().len(),
                     bytecode.length
                 );
-                let offset = string_builder.len;
-                let writable = string_builder.writable();
-                writable[0..mi_bytes.len()].copy_from_slice(&mi_bytes[0..mi_bytes.len()]);
-                string_builder.len += mi_bytes.len();
-                break 'brk StringPointer {
-                    offset: offset as u32,
-                    length: mi_bytes.len() as u32,
-                };
+                break 'brk string_builder.append_count(mi_bytes);
             }
             break 'brk StringPointer::default();
         };
@@ -1991,7 +1980,7 @@ pub(crate) fn to_bytes(
 
     // Every region above is addressed by a `StringPointer`, so `len` itself has to fit in u32
     // or the `as u32` casts that built those pointers have wrapped.
-    if string_builder.len > max_graph_bytes() {
+    if string_builder.len() > max_graph_bytes() {
         return Err(crate::Error::ModuleGraphTooLarge);
     }
 
@@ -1999,23 +1988,22 @@ pub(crate) fn to_bytes(
         entry_point_id: entry_point_id as u32,
         modules_ptr,
         compile_exec_argv_ptr,
-        byte_count: string_builder.len,
+        byte_count: string_builder.len(),
         flags: flags.bits(),
     };
 
     let _ = string_builder.append(bun_core::bytes_of(&offsets));
     let _ = string_builder.append(TRAILER);
+    let mut bytes = string_builder.into_vec();
 
-    #[cfg(debug_assertions)]
-    {
+    if cfg!(debug_assertions) {
         // An expensive sanity check: round-trip
         // the serialized bytes and verify the module count survives. The graph
-        // only borrows the builder's buffer transiently — it is unlocked and
+        // only borrows the buffer transiently — it is unlocked and
         // dropped before the buffer is moved out below.
-        let base = string_builder.ptr.unwrap().as_ptr();
-        // SAFETY: nothing touches the builder, and nothing read from `graph` is kept, until `graph`
+        // SAFETY: nothing touches `bytes`, and nothing read from `graph` is kept, until `graph`
         // is dropped. Everything but the room of an `ImagePlace::OutsideGraph` image was written.
-        let payload = unsafe { RawPayload::from_raw_parts(base, string_builder.len, None) };
+        let payload = unsafe { RawPayload::from_raw_parts(bytes.as_mut_ptr(), bytes.len(), None) };
         let graph = StandaloneModuleGraph::from_bytes(payload, offsets)?;
         debug_assert_eq!(graph.files.count(), modules.len());
         debug_assert_eq!(graph.compiled_program.is_some(), program.is_some());
@@ -2045,15 +2033,8 @@ pub(crate) fn to_bytes(
         }
     }
 
-    // StringBuilder owns the buffer; hand it back without copying. `cap` may
-    // exceed `len` (sourcemap capacity is over-estimated above), so truncate
-    // the reconstituted Vec down to the written prefix — the `[len, cap)` tail
-    // is never read.
-    let len = string_builder.len;
-    let mut output = string_builder.move_to_slice().into_vec();
-    output.truncate(len);
     Ok(GraphBytes {
-        bytes: output,
+        bytes,
         image: image_ptr.map(|pointer| ImageRange {
             offset: pointer.offset,
             length: pointer.length,
@@ -3493,10 +3474,8 @@ fn append_shared_bytecode(
         .iter()
         .find(|f| f.output_kind == options::OutputKind::ModuleInfoStringTable)
     {
-        // 4-byte aligned at runtime (the section payload starts 8 bytes past a page boundary): JSC reads the slots in place.
-        let padding = (4 - string_builder.len % 4) % 4;
-        string_builder.writable()[0..padding].fill(0);
-        string_builder.len += padding;
+        // JSC reads the slots in place.
+        align_next_append(string_builder, 4);
         module_info_string_table_ptr = string_builder.append_count(table.value.as_slice());
     }
     let mut prelinked_module_graph_ptr = StringPointer::default();
@@ -3518,36 +3497,18 @@ fn append_shared_bytecode(
 }
 
 /// What is appended next starts at a multiple of `alignment` once mapped. The section data begins 8 bytes after a page-aligned address (the length header).
-fn align_next_append(string_builder: &mut bun_core::StringBuilder, alignment: usize) {
-    let padding = (string_builder.len + size_of::<u64>()).next_multiple_of(alignment)
-        - (string_builder.len + size_of::<u64>());
-    string_builder.writable()[..padding].fill(0);
-    string_builder.len += padding;
+pub(crate) fn align_next_append(string_builder: &mut bun_core::StringBuilder, alignment: usize) {
+    let unaligned_start = string_builder.len() + size_of::<u64>();
+    string_builder.append_zeros(unaligned_start.next_multiple_of(alignment) - unaligned_start);
 }
 
-/// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped. The section data begins
-/// 8 bytes after a page-aligned address (the length header), so the offset must be 120 mod 128.
+/// JSC reads cached bytecode in place and expects its start 128-byte aligned once mapped.
 fn append_bytecode_aligned(
     string_builder: &mut bun_core::StringBuilder,
     bytecode: &[u8],
 ) -> StringPointer {
-    let target_mod: usize = 128 - size_of::<u64>();
-    let current_mod = string_builder.len % 128;
-    let padding = if current_mod <= target_mod {
-        target_mod - current_mod
-    } else {
-        128 - current_mod + target_mod
-    };
-    let writable = string_builder.writable();
-    writable[0..padding].fill(0);
-    string_builder.len += padding;
-    let aligned_offset = string_builder.len;
-    string_builder.writable()[0..bytecode.len()].copy_from_slice(bytecode);
-    string_builder.len += bytecode.len();
-    StringPointer {
-        offset: aligned_offset as u32,
-        length: bytecode.len() as u32,
-    }
+    align_next_append(string_builder, 128);
+    string_builder.append_count(bytecode)
 }
 
 /// Source map serialization in the bundler is specially designed to be

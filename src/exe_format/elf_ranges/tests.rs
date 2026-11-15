@@ -469,6 +469,28 @@ fn file_that_was_cut_is_cut_again_beside_its_holes() {
 }
 
 #[test]
+fn cut_beside_an_unsplit_segment_takes_a_header() {
+    for_each_toy(|toy| {
+        let unsplit = whole_pages(toy, ".rodata", 3..4);
+        let original = edited(toy, |elf| {
+            edit_segment(elf, STACK_INDEX, |segment| {
+                segment.p_type = PT_GNU_EH_FRAME;
+                segment.p_offset = unsplit.start - BASE_ADDRESS;
+                segment.p_vaddr = unsplit.start;
+                segment.p_filesz = unsplit.len();
+            });
+        });
+        let cuts = [2..3, 4..5].map(|pages| whole_pages(&original, ".rodata", pages));
+        let model = cut_model(&original);
+        assert_eq!(cuts.map(|cut| model.slots_for(cut)), [1, 1]);
+
+        let trimmed = remove_and_verify(&original, &cuts);
+        let count_segments = |elf: &[u8]| segments_of_type(elf, PT_LOAD).len();
+        assert_eq!(count_segments(&trimmed), count_segments(&original) + 2);
+    });
+}
+
+#[test]
 fn full_table_takes_what_needs_no_header() {
     for_each_toy(|toy| {
         let header_count = TOY_SEGMENT_COUNT as usize + PAYLOAD_SEGMENT_COUNT + 1;

@@ -98,6 +98,18 @@ static inline void *us_xcalloc(size_t count, size_t size) {
     return p;
 }
 
+/* A data callback can tick the loop. A read that starts under it finds the slot empty and gets a buffer of its own. */
+static inline char *us_internal_take_recv_buf(char **slot) {
+    char *buf = *slot;
+    *slot = NULL;
+    return LIKELY(buf) ? buf : (char *) us_xmalloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+}
+
+static inline void us_internal_put_recv_buf(char **slot, char *buf) {
+    if (UNLIKELY(*slot)) us_free(*slot);
+    *slot = buf;
+}
+
 /* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
  * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
  * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The

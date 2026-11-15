@@ -755,13 +755,14 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     #endif
 
                     int length;
+                    char *recv_buf = us_internal_take_recv_buf(&loop->data.recv_buf);
                     #if !defined(_WIN32)
                     if(s->flags.is_ipc) {
                         struct msghdr msg = {0};
                         struct iovec iov = {0};
                         char cmsg_buf[CMSG_SPACE(sizeof(int))];
 
-                        iov.iov_base = loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING;
+                        iov.iov_base = recv_buf + LIBUS_RECV_BUFFER_PADDING;
                         iov.iov_len = LIBUS_RECV_BUFFER_LENGTH;
 
                         msg.msg_flags = 0;
@@ -806,20 +807,25 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                             if (fd != -1) {
                                 s = us_dispatch_fd(s, fd);
                                 if (!s || us_socket_is_closed(s)) {
+                                    us_internal_put_recv_buf(&loop->data.recv_buf, recv_buf);
                                     break;
                                 }
                             }
                         }
                     }else{
                     #endif
-                        length = bsd_recv(us_poll_fd(&s->p), loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
+                        length = bsd_recv(us_poll_fd(&s->p), recv_buf + LIBUS_RECV_BUFFER_PADDING, LIBUS_RECV_BUFFER_LENGTH, recv_flags);
                     #if !defined(_WIN32)
                     }
                     #endif
 
                     if (length > 0) {
-                        s = s->ssl ? us_internal_ssl_on_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
-                                   : us_dispatch_data(s, loop->data.recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                        s = s->ssl ? us_internal_ssl_on_data(s, recv_buf + LIBUS_RECV_BUFFER_PADDING, length)
+                                   : us_dispatch_data(s, recv_buf + LIBUS_RECV_BUFFER_PADDING, length);
+                    }
+                    us_internal_put_recv_buf(&loop->data.recv_buf, recv_buf);
+
+                    if (length > 0) {
                         /* After socket adoption, track the new socket; the old one becomes invalid */
                         s = us_internal_socket_follow_adopted(s);
                         // loop->num_ready_polls isn't accessible on Windows.
@@ -1113,11 +1119,15 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                 do {
                     struct udp_recvbuf recvbuf;
-                    bsd_udp_setup_recvbuf(&recvbuf, u->loop->data.recv_buf, LIBUS_RECV_BUFFER_LENGTH);
+                    char *recv_buf = us_internal_take_recv_buf(&u->loop->data.recv_buf);
+                    bsd_udp_setup_recvbuf(&recvbuf, recv_buf, LIBUS_RECV_BUFFER_LENGTH);
                     int npackets = bsd_recvmmsg(us_poll_fd(p), &recvbuf, MSG_DONTWAIT, u->shared_fd ? 1 : LIBUS_UDP_RECV_COUNT);
                     if (npackets > 0) {
                         u->on_data(u, &recvbuf, npackets);
-                    } else {
+                    }
+                    us_internal_put_recv_buf(&u->loop->data.recv_buf, recv_buf);
+
+                    if (npackets <= 0) {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {
 #if defined(_WIN32)

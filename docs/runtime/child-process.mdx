@@ -251,6 +251,10 @@ therefore exceed `maxBuffer` only by the single read that passed it, never by
 whatever the process manages to write before the kill lands. This matches
 Node.js.
 
+`stdout` and `stderr` each have this limit. `spawnSync`, `execSync` and
+`execFileSync` of `node:child_process` count both against one limit, as Node.js
+does.
+
 ## Inter-process communication (IPC)
 
 Bun supports a direct inter-process communication channel between two `bun` processes. To receive messages from a spawned Bun subprocess, specify an `ipc` handler.

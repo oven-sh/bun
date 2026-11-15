@@ -191,6 +191,9 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// A sync spawn of `node:child_process`: `stdout_maxbuf` is the one budget of stdout and
+        /// stderr, and the read that passes it closes the other reader (`on_close_io`).
+        const SHARED_MAX_BUFFER            = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const IS_STDIN_A_READABLE_STREAM   = 1 << 5;
@@ -378,6 +381,13 @@ impl Subprocess<'_> {
                         PipeReader::State::Pending => {}
                     }
                 }
+                // Node.js closes every pipe of a sync spawn inside the read that passes
+                // `maxBuffer` (`SyncProcessRunner::Kill()`): the other one is not read again.
+                if self.flags.get().contains(Flags::SHARED_MAX_BUFFER)
+                    && self.exited_due_to_maxbuf.get().is_some()
+                {
+                    self.close_readable_pipes();
+                }
             }
         }
 
@@ -528,7 +538,8 @@ impl Subprocess<'_> {
 
     /// Close still-open stdout/stderr pipe readers after a timeout/maxBuffer
     /// kill; a grandchild may still hold the write end (Node.js
-    /// `SyncProcessRunner::Kill()`). Called outside any reader callback.
+    /// `SyncProcessRunner::Kill()`). A reader that is ending has left its
+    /// `Readable::Pipe` by the time `on_close_io` calls this, so only the other one closes.
     pub(crate) fn close_readable_pipes(&self) {
         if matches!(self.stdout.get(), Readable::Pipe(_)) {
             self.stdout.with_mut(|s| s.close());

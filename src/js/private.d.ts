@@ -126,6 +126,8 @@ declare module "bun" {
     > {
       cmd: string[];
       stdio: NodeStdio;
+      // Private name: stdout and stderr count against the one `maxBuffer`, as node's `spawnSync` counts them.
+      $sharedMaxBuffer: true;
     }
   }
   function spawn(options: Spawn.NodeSpawnOptions): Subprocess;

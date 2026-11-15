@@ -194,6 +194,7 @@ using namespace JSC;
     macro(self) \
     macro(setColumnNameTransform) \
     macro(sharedFd) \
+    macro(sharedMaxBuffer) \
     macro(signal) \
     macro(size) \
     macro(specifier) \

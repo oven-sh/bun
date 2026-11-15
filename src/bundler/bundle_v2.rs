@@ -5173,10 +5173,11 @@ pub mod bv2_impl {
 
             // Separate non-failing files into two lists: JS and CSS
             let js_reachable_files: &[Index] = 'reachable_files: {
-                let mut css_total_files: Vec<Index> = Vec::with_capacity(self.graph.css_file_count);
-                start.css_entry_points.reserve(self.graph.css_file_count);
+                let css_file_count = self.graph.css_file_count as usize;
+                let mut css_total_files: Vec<Index> = Vec::with_capacity(css_file_count);
+                start.css_entry_points.reserve(css_file_count);
                 let mut js_files: Vec<Index> =
-                    Vec::with_capacity(self.graph.ast.len() - self.graph.css_file_count - 1);
+                    Vec::with_capacity(self.graph.ast.len() - css_file_count - 1);
 
                 for index in 1..self.graph.ast.len() {
                     let ast = self.graph.ast.split_mut();

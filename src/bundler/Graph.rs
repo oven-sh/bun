@@ -75,11 +75,11 @@ pub struct Graph<'a> {
     /// OutputPiece.Kind.HTMLManifest corresponds to indices into the array.
     pub(crate) html_imports: Vec<IndexInt>,
 
-    pub(crate) estimated_file_loader_count: usize,
+    pub(crate) estimated_file_loader_count: u32,
 
     /// For Bake, a count of the CSS asts is used to make precise
     /// pre-allocations without re-iterating the file listing.
-    pub(crate) css_file_count: usize,
+    pub(crate) css_file_count: u32,
 
     pub(crate) kit_referenced_server_data: bool,
     pub(crate) kit_referenced_client_data: bool,

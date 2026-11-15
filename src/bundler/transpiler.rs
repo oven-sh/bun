@@ -208,8 +208,7 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Wire the aliases of `log` and the self-referential `macro_context`
-    /// after this `Transpiler` has reached its final address (post-move into
-    /// `Worker` / arena slot).
+    /// after this `Transpiler` has reached its final address.
     pub(crate) fn wire_after_move(&mut self) {
         // `self.log` was already set inside `for_worker` via direct field
         // init; re-thread into `options.log` / `resolver.log` /

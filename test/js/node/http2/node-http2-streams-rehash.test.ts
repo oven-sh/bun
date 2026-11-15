@@ -387,10 +387,8 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
         session.ping(() => {});
       };`,
     ],
-  ])(
-    "does not free the stream that %s",
-    async (_, setup) => {
-      const result = await run(/* js */ `
+  ])("does not free the stream that %s", async (_, setup) => {
+    const result = await run(/* js */ `
       const { session, duplex, encrypt, close } = await connectTls();
       const controller = new AbortController();
       const other = session.request(post).on("error", () => {});
@@ -411,15 +409,25 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(pings, isAllocated(session, 3));
       close();
     `);
-      expect(result).toEqual({ stdout: "1 true\n2 false", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "1 true\n2 false", stderr: "", exitCode: 0 });
+  });
 
-  test(
-    "does not free the TLS socket that is writing",
-    async () => {
-      const result = await run(/* js */ `
+  test("frees finished streams of a peer that only answers during a write", async () => {
+    const result = await run(/* js */ `
+      const { session, duplex, frames } = await connect();
+      for (let id = 1; id <= 7; id += 2) {
+        duplex.inNextWrite = () => duplex.push(frame(1, 5, id, Buffer.from([0x88])));
+        await once(session.request().resume(), "close");
+        await tick();
+      }
+      console.log(isAllocated(session, 1), isAllocated(session, 3), frames(1).length);
+      session.destroy();
+    `);
+    expect(result).toEqual({ stdout: "false false 4", stderr: "", exitCode: 0 });
+  });
+
+  test("does not free the TLS socket that is writing", async () => {
+    const result = await run(/* js */ `
       const { session, socket, duplex, close } = await connectTls();
       duplex.inNextWrite = () => {
         socket.destroy();
@@ -430,15 +438,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log("closed");
       close();
     `);
-      expect(result).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
+  });
 
-  test(
-    "can still write to a stream that the peer reset during that write",
-    async () => {
-      const result = await run(/* js */ `
+  test("can still write to a stream that the peer reset during that write", async () => {
+    const result = await run(/* js */ `
       const { session, duplex, frames } = await connect();
       const req = session.request(post);
       await until(() => frames(1).length === 1);
@@ -452,15 +456,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(error.code);
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "ERR_HTTP2_STREAM_ERROR", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "ERR_HTTP2_STREAM_ERROR", stderr: "", exitCode: 0 });
+  });
 
-  test(
-    "does not leave DATA queued on a stream it aborts",
-    async () => {
-      const result = await run(/* js */ `
+  test("does not leave DATA queued on a stream it aborts", async () => {
+    const result = await run(/* js */ `
       const { session, duplex, frames } = await connect();
       const controller = new AbortController();
       const aborted = session.request(post, { signal: controller.signal });
@@ -479,15 +479,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(frames(0).at(-1).body.toString());
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "0\nhello", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "0\nhello", stderr: "", exitCode: 0 });
+  });
 
-  test(
-    "can reopen the window that the write used up",
-    async () => {
-      const result = await run(/* js */ `
+  test("can reopen the window that the write used up", async () => {
+    const result = await run(/* js */ `
       const { session, duplex, frames } = await connect();
       const req = session.request(post).on("error", () => {});
       await until(() => frames(1).length === 1);
@@ -500,18 +496,14 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(frames(0).map(frame => frame.flags).join());
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "true\n0,0,0,0,0,1", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "true\n0,0,0,0,0,1", stderr: "", exitCode: 0 });
+  });
 
   test.each([
     ["_write", "req.end(Buffer.alloc(70000));"],
     ["_writev", "req.write(Buffer.alloc(35000)); req.end(Buffer.alloc(35000));"],
-  ])(
-    "can reopen the window for a request made before the connection (%s)",
-    async (_, send) => {
-      const result = await run(/* js */ `
+  ])("can reopen the window for a request made before the connection (%s)", async (_, send) => {
+    const result = await run(/* js */ `
       const written = [];
       const duplex = transport({}, chunk => written.push(Buffer.from(chunk)));
       duplex.minLength = 65535;
@@ -524,15 +516,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(data.map(frame => frame.flags).join());
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "0,0,0,0,0,1", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "0,0,0,0,0,1", stderr: "", exitCode: 0 });
+  });
 
-  test(
-    "echoes more than a window over duplexPair()",
-    async () => {
-      const result = await run(/* js */ `
+  test("echoes more than a window over duplexPair()", async () => {
+    const result = await run(/* js */ `
       const [clientSide, serverSide] = require("node:stream").duplexPair();
       http2.performServerHandshake(serverSide).on("stream", stream => {
         stream.respond();
@@ -546,15 +534,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(received, req.rstCode);
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "70000 0", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "70000 0", stderr: "", exitCode: 0 });
+  });
 
-  test(
-    "can feed a session that is reopening the window of a resumed stream",
-    async () => {
-      const result = await run(/* js */ `
+  test("can feed a session that is reopening the window of a resumed stream", async () => {
+    const result = await run(/* js */ `
       const { session, duplex, frames } = await connect({}, { initialWindowSize: 1 << 20 });
       const req = session.request({ ":path": "/" }).on("error", () => {});
       const other = session.request(post).on("error", () => {});
@@ -572,16 +556,12 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log("pinged");
       session.destroy();
     `);
-      expect(result).toEqual({ stdout: "pinged", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+    expect(result).toEqual({ stdout: "pinged", stderr: "", exitCode: 0 });
+  });
 
-  test.skipIf(!isASAN)(
-    "can exit the process without a leak report",
-    async () => {
-      const result = await run(
-        /* js */ `
+  test.skipIf(!isASAN)("can exit the process without a leak report", async () => {
+    const result = await run(
+      /* js */ `
       const { session, duplex } = await connect();
       duplex.inNextWrite = () => {
         console.log("exiting");
@@ -589,17 +569,15 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       };
       session.ping(() => {});
     `,
-        {
-          ...bunEnv,
-          BUN_DESTRUCT_VM_ON_EXIT: "1",
-          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
-        },
-      );
-      expect(result).toEqual({ stdout: "exiting", stderr: "", exitCode: 0 });
-    },
-    10_000 * ASAN_MULTIPLIER,
-  );
+      {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../../leaksan.supp")}`,
+      },
+    );
+    expect(result).toEqual({ stdout: "exiting", stderr: "", exitCode: 0 });
+  });
 
   // Sessions share one cork buffer. b has a frame in it when a starts to write.
   describe("of another session", () => {
@@ -636,10 +614,8 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       const write = () => req.sendTrailers({});`,
       ],
       ["has its queued DATA flushed", withQueuedBody],
-    ])(
-      "does not free the stream that %s",
-      async (_, setup) => {
-        const result = await run(/* js */ `
+    ])("does not free the stream that %s", async (_, setup) => {
+      const result = await run(/* js */ `
       ${setup}
       b.duplex.inNextWrite = () => {
         controller.abort();
@@ -654,15 +630,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "true\nfalse", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "true\nfalse", stderr: "", exitCode: 0 });
+    });
 
-    test(
-      "does not reorder queued DATA",
-      async () => {
-        const result = await run(/* js */ `
+    test("does not reorder queued DATA", async () => {
+      const result = await run(/* js */ `
       ${withQueuedBody}
       b.duplex.inNextWrite = () => a.duplex.push(ping());
       b.session.ping(() => {});
@@ -673,10 +645,8 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "true", stderr: "", exitCode: 0 });
+    });
 
     // The block that adds the field to the dynamic table has to go out before the one that indexes it.
     test.each([
@@ -704,10 +674,8 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       const nested = () => streams[1].respond({ ...field });
       const write = () => streams[0].respond({ ...field });`,
       ],
-    ])(
-      "does not overtake the header block of %s",
-      async (_, setup) => {
-        const result = await run(/* js */ `
+    ])("does not overtake the header block of %s", async (_, setup) => {
+      const result = await run(/* js */ `
       const field = { "x-field": Buffer.alloc(200, "a").toString() };
       ${setup}
       const b = await connect();
@@ -721,15 +689,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "3,1 true false", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "3,1 true false", stderr: "", exitCode: 0 });
+    });
 
-    test(
-      "does not run when a has no window to flush into",
-      async () => {
-        const result = await run(/* js */ `
+    test("does not run when a has no window to flush into", async () => {
+      const result = await run(/* js */ `
       const a = await connect();
       const b = await connect();
       a.session.request(post).on("error", () => {}).write(Buffer.alloc(70000));
@@ -740,15 +704,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "0", stderr: "", exitCode: 0 });
+    });
 
-    test(
-      "can reset the stream that is responding",
-      async () => {
-        const result = await run(/* js */ `
+    test("can reset the stream that is responding", async () => {
+      const result = await run(/* js */ `
       const a = await accept();
       const b = await connect();
       const opened = once(a.session, "stream");
@@ -766,15 +726,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "false", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "false", stderr: "", exitCode: 0 });
+    });
 
-    test.each(["GET", "POST"])(
-      "can abort the %s request that is being made",
-      async method => {
-        const result = await run(/* js */ `
+    test.each(["GET", "POST"])("can abort the %s request that is being made", async method => {
+      const result = await run(/* js */ `
       const a = await connect();
       const b = await connect();
       const controller = new AbortController();
@@ -787,18 +743,14 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "ABORT_ERR true 1,3", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "ABORT_ERR true 1,3", stderr: "", exitCode: 0 });
+    });
 
     test.each([
       ["destroy()", "ERR_HTTP2_STREAM_CANCEL 8"],
       ["destroy(Object.assign(new Error(), { code: 'MINE' }))", "MINE 2"],
-    ])(
-      "can %s the session that is making a request",
-      async (destroy, expected) => {
-        const result = await run(/* js */ `
+    ])("can %s the session that is making a request", async (destroy, expected) => {
+      const result = await run(/* js */ `
       const a = await connect();
       const b = await connect();
       a.session.on("error", () => {});
@@ -809,15 +761,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(error.code, req.rstCode);
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
 
-    test.each([0, 2])(
-      "can deliver GOAWAY(%d) to the session that is making a request",
-      async code => {
-        const result = await run(/* js */ `
+    test.each([0, 2])("can deliver GOAWAY(%d) to the session that is making a request", async code => {
+      const result = await run(/* js */ `
       const a = await connect();
       const b = await accept();
       a.session.on("error", () => {});
@@ -829,19 +777,15 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       a.session.destroy();
       b.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "ERR_HTTP2_GOAWAY_SESSION 7", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "ERR_HTTP2_GOAWAY_SESSION 7", stderr: "", exitCode: 0 });
+    });
 
     test.each([
       ["a", { a: ["reenter!", "a-outer."], b: ["b-first."], c: [] }],
       ["b", { a: ["a-outer."], b: ["b-first.", "reenter!"], c: [] }],
       ["c", { a: ["a-outer."], b: ["b-first."], c: ["reenter!"] }],
-    ])(
-      "does not lose the frame it sends on %s",
-      async (target, expected) => {
-        const result = await run(/* js */ `
+    ])("does not lose the frame it sends on %s", async (target, expected) => {
+      const result = await run(/* js */ `
       const peers = { a: await connect(), b: await connect(), c: await connect() };
       const pings = peer => peer.frames(6).map(frame => frame.body.toString());
       peers.b.duplex.inNextWrite = () => peers.${target}.session.ping(Buffer.from("reenter!"), () => {});
@@ -851,15 +795,11 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(JSON.stringify({ a: pings(peers.a), b: pings(peers.b), c: pings(peers.c) }));
       for (const { session } of Object.values(peers)) session.destroy();
     `);
-        expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: JSON.stringify(expected), stderr: "", exitCode: 0 });
+    });
 
-    test.each(["connect", "accept"])(
-      "gets b's frame before b is destroyed (%s)",
-      async open => {
-        const result = await run(/* js */ `
+    test.each(["connect", "accept"])("gets b's frame before b is destroyed (%s)", async open => {
+      const result = await run(/* js */ `
       const a = await connect();
       const b = await ${open}();
       b.session.ping(Buffer.from("b-first."), () => {});
@@ -868,9 +808,7 @@ describe.concurrent("JS that runs under a write to a user-supplied Duplex", () =
       console.log(b.frames(6).map(frame => frame.body.toString()).join());
       a.session.destroy();
     `);
-        expect(result).toEqual({ stdout: "b-first.", stderr: "", exitCode: 0 });
-      },
-      10_000 * ASAN_MULTIPLIER,
-    );
+      expect(result).toEqual({ stdout: "b-first.", stderr: "", exitCode: 0 });
+    });
   });
 });

@@ -1073,6 +1073,8 @@ pub(crate) struct H2FrameParser {
     /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
     /// Drained into Connection::close_stream on the next rewrite_read batch.
     pending_engine_stream_closes: Cell<Vec<u32>>,
+    /// A read came while streams were borrowed, as all later ones may: the deferred tick evicts.
+    eviction_overdue: Cell<bool>,
     max_rejected_streams: Cell<u32>,
     max_session_invalid_frames: Cell<u32>,
     strict_field_whitespace: Cell<bool>,
@@ -2664,9 +2666,12 @@ impl H2FrameParser {
             return;
         }
         // A write that drains the buffer must not cancel the deferred tick that a pending session
-        // error or the close of a rejected transport is waiting on; on_auto_flush releases the
-        // registration.
-        if self.pending_header_compression_error.get() || self.transport_write_fatal.get() {
+        // error, the close of a rejected transport or an eviction is waiting on; on_auto_flush
+        // releases the registration.
+        if self.pending_header_compression_error.get()
+            || self.transport_write_fatal.get()
+            || self.eviction_overdue.get()
+        {
             return;
         }
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
@@ -2781,6 +2786,12 @@ impl H2FrameParser {
             // map entry it owns.
             self.auto_flush_ref.set(None);
             return false;
+        }
+        if self.eviction_overdue.replace(false)
+            && let Ok(mut engine) = self.engine.try_borrow_mut()
+            && let Some(engine) = engine.as_mut()
+        {
+            self.evict_closed_streams(engine);
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
@@ -3268,6 +3279,26 @@ impl H2FrameParser {
         }
     }
 
+    /// Streams whose legacy lifecycle finished since the last batch: evict the engine
+    /// entry and free the legacy slot. free_resources already ran for these (it is the
+    /// only producer of this queue); duplicate ids are fine.
+    fn evict_closed_streams(&self, engine: &mut crate::api::h2::connection::Connection) {
+        if self.pending_engine_stream_closes.is_empty() {
+            return;
+        }
+        let Ok(mut streams) = self.streams.try_borrow_mut() else {
+            self.eviction_overdue.set(true);
+            self.register_auto_flush();
+            return;
+        };
+        self.pending_engine_stream_closes.with_taken(|v| {
+            for id in v.drain(..) {
+                engine.close_stream(id);
+                streams.remove(id);
+            }
+        });
+    }
+
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
@@ -3339,19 +3370,7 @@ impl H2FrameParser {
                     }
                 });
             }
-            // Streams whose legacy lifecycle finished since the last batch: evict the engine
-            // entry and free the legacy slot. free_resources already ran for these (it is the
-            // only producer of this queue); duplicate ids are fine.
-            if !self.pending_engine_stream_closes.is_empty()
-                && let Ok(mut streams) = self.streams.try_borrow_mut()
-            {
-                self.pending_engine_stream_closes.with_taken(|v| {
-                    for id in v.drain(..) {
-                        engine.close_stream(id);
-                        streams.remove(id);
-                    }
-                });
-            }
+            self.evict_closed_streams(engine);
         }
         let streams = self.streams.borrow();
         let sink = Inbound {
@@ -6965,6 +6984,7 @@ impl H2FrameParser {
             pending_send_window_consumed: Cell::new(0),
             pending_stream_send_consumed: Cell::new(Vec::new()),
             pending_engine_stream_closes: Cell::new(Vec::new()),
+            eviction_overdue: Cell::new(false),
             pending_settings_window_submissions: Cell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
             max_session_invalid_frames: Cell::new(1000),
@@ -7206,6 +7226,7 @@ impl H2FrameParser {
     pub(crate) fn detach(&self) {
         self.uncork();
         self.transport_write_fatal.set(false);
+        self.eviction_overdue.set(false);
         self.unregister_auto_flush();
         self.detach_native_socket();
 
@@ -7235,6 +7256,7 @@ impl H2FrameParser {
         // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
         self.transport_write_fatal.set(false);
         self.pending_header_compression_error.set(false);
+        self.eviction_overdue.set(false);
         self.unregister_auto_flush();
     }
 }

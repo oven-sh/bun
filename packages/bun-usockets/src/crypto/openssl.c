@@ -2632,7 +2632,7 @@ static struct us_socket_t *ssl_report_finished_handshake(struct us_socket_t *s, 
 
 /* What came before the failure goes first, like node's ClearOut. Whatever the owner does with the report, the connection closes here. */
 static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, struct loop_ssl_data *loop_ssl_data,
-                                                        int read) {
+                                                        char *output, int read) {
   /* Taken now: the JS below can change the thread's queue. */
   char reason[US_SSL_FATAL_ERROR_REASON_MAX];
   int has_reason = us_ssl_take_error_reason(reason, sizeof(reason));
@@ -2642,7 +2642,7 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   ssl_flush_pending_events(s);
   if (ssl_gone(s)) return NULL;
   if (read) {
-    s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+    s = us_dispatch_data(s, output, read);
     if (!s || ssl_gone(s)) return NULL;
   }
   s->ssl_fatal_error = 1;
@@ -2654,9 +2654,7 @@ static struct us_socket_t *ssl_fail_established_session(struct us_socket_t *s, s
   return NULL;
 }
 
-struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *socket, char *data, int length) {
-  /* The parameter is _Nonnull in release builds, and the helpers below return NULL for a socket that is gone. */
-  struct us_socket_t *s = socket;
+static struct us_socket_t *ssl_decrypt_and_dispatch(struct us_socket_t *s, char *data, int length, char *output) {
   /* See ssl_update_handshake: start this socket's SSL processing with a clean
    * per-thread error queue so a captured reason cannot belong to another
    * socket on the same thread. */
@@ -2714,9 +2712,7 @@ restart:
     if (hs_batching) loop_ssl_data->ssl_write_batching = 1;
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
-    int just_read = SSL_read(s_ssl(s),
-                             loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING + read,
-                             LIBUS_RECV_BUFFER_LENGTH - read);
+    int just_read = SSL_read(s_ssl(s), output + read, LIBUS_RECV_BUFFER_LENGTH - read);
     s->ssl_in_use = ssl_was_in_use;
     if (hs_batching) {
       loop_ssl_data->ssl_write_batching = 0;
@@ -2756,7 +2752,7 @@ restart:
           if (ssl_renegotiate(s)) continue;
           /* After our own close_notify or FIN the request has no answer: that is the end of our close. */
           if (us_internal_ssl_is_shut_down(s)) ERR_clear_error();
-          return ssl_fail_established_session(s, loop_ssl_data, read);
+          return ssl_fail_established_session(s, loop_ssl_data, output, read);
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           /* The close_notify can share a read with the peer's Finished: the owner hears of the handshake before the close below. */
           s = ssl_report_finished_handshake(s, loop_ssl_data, 0);
@@ -2769,7 +2765,7 @@ restart:
           ssl_flush_pending_events(s);
           if (ssl_gone(s)) return NULL;
           if (read) {
-            s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+            s = us_dispatch_data(s, output, read);
             if (!s || ssl_gone(s)) return NULL;
           }
           /* close_notify only closed the PEER's write side; when it rides in
@@ -2805,7 +2801,7 @@ restart:
         }
 
         if (s->ssl_handshake_state != HANDSHAKE_PENDING || SSL_is_init_finished(s_ssl(s))) {
-          return ssl_fail_established_session(s, loop_ssl_data, read);
+          return ssl_fail_established_session(s, loop_ssl_data, output, read);
         }
         /* SSL_read's name for a close_notify in place of a handshake message: https://github.com/oven-sh/bun/issues/44517 */
         if (ERR_peek_error() == ERR_PACK(ERR_LIB_SSL, SSL_R_SSL_HANDSHAKE_FAILURE)) {
@@ -2846,7 +2842,7 @@ restart:
          * clobber pending ciphertext. */
         ssl_flush_pending_events(s);
         if (ssl_gone(s)) return NULL;
-        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+        s = us_dispatch_data(s, output, read);
         if (!s || ssl_gone(s)) return NULL;
         break;
       }
@@ -2871,7 +2867,7 @@ restart:
        * JS the session handler runs. */
       ssl_flush_pending_events(s);
       if (ssl_gone(s)) return NULL;
-      s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+      s = us_dispatch_data(s, output, read);
       if (!s || ssl_gone(s)) return NULL;
       loop_ssl_data->ssl_read_input = saved_input;
       loop_ssl_data->ssl_read_input_length = saved_length;
@@ -2896,6 +2892,14 @@ restart:
   if (ssl_gone(s)) return NULL;
 
   return s;
+}
+
+struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, int length) {
+  struct loop_ssl_data *loop_ssl_data = (struct loop_ssl_data *)s->group->loop->data.ssl_data;
+  char *output = us_internal_take_recv_buf(&loop_ssl_data->ssl_read_output);
+  struct us_socket_t *result = ssl_decrypt_and_dispatch(s, data, length, output + LIBUS_RECV_BUFFER_PADDING);
+  us_internal_put_recv_buf(&loop_ssl_data->ssl_read_output, output);
+  return result;
 }
 
 /* Throttle reading for sockets still in TLS init — the kernel buffers for us

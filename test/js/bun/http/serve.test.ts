@@ -5733,3 +5733,45 @@ it("Proxy-Connection: close does not end a Bun.serve connection", async () => {
     socket.destroy();
   }
 });
+
+it.each([false, true])("a handler that runs the event loop keeps the bytes of its own read (tls: %p)", async secure => {
+  const seen: object[] = [];
+  const nested = Promise.withResolvers<void>();
+  let built: Promise<unknown> | undefined;
+  using server = serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    tls: secure ? tls : undefined,
+    async fetch(req) {
+      if (req.method === "POST") {
+        // Bun.build() runs the event loop until an async setup() settles.
+        const setup = () => {
+          other.write(`GET /other HTTP/1.1\r\nHost: y\r\nCookie: ${Buffer.alloc(200, "o")}\r\n\r\n`);
+          return nested.promise;
+        };
+        built = Bun.build({ entrypoints: ["/a.js"], files: { "/a.js": "" }, plugins: [{ name: "wait", setup }] });
+      }
+      if (req.headers.get("host") === "y") nested.resolve();
+      else seen.push({ path: new URL(req.url).pathname, cookie: req.headers.get("cookie"), body: await req.text() });
+      return new Response("ok");
+    },
+  });
+  const open = async () => {
+    const options = { port: server.port!, host: "127.0.0.1", ca: tls.cert };
+    const socket = secure ? nodeTls.connect(options) : connect(options);
+    await once(socket, secure ? "secureConnect" : "connect");
+    return socket.resume();
+  };
+  const [first, other] = [await open(), await open()];
+  try {
+    first.write(
+      "POST /first HTTP/1.1\r\nHost: x\r\nCookie: mine\r\nConnection: close\r\nContent-Length: 4\r\n\r\nbody",
+    );
+    await once(first, "close");
+    expect(seen).toEqual([{ path: "/first", cookie: "mine", body: "body" }]);
+    await built;
+  } finally {
+    first.destroy();
+    other.destroy();
+  }
+});

@@ -10,10 +10,29 @@ pub struct Mmap {
 }
 
 impl Mmap {
+    /// Panics if `flags` has `MAP_FIXED`.
     pub fn new(len: usize, prot: i32, flags: i32, fd: Fd, offset: i64) -> Maybe<Mmap> {
-        let ptr = crate::mmap(core::ptr::null_mut(), len, prot, flags, fd, offset)?;
+        #[cfg(unix)]
+        assert!(flags & libc::MAP_FIXED == 0);
+        // SAFETY: no `MAP_FIXED`.
+        let ptr = unsafe { crate::mmap(core::ptr::null_mut(), len, prot, flags, fd, offset) }?;
         let ptr = NonNull::new(ptr).ok_or_else(|| Error::from_code(E::ENOMEM, Tag::mmap))?;
         Ok(Mmap { ptr, len })
+    }
+
+    /// SAFETY: `pages` is an `mmap` region, and nothing else unmaps it.
+    pub unsafe fn from_raw(pages: *mut [u8]) -> Mmap {
+        Mmap {
+            // SAFETY: the caller's contract.
+            ptr: unsafe { NonNull::new_unchecked(pages.cast()) },
+            len: pages.len(),
+        }
+    }
+
+    /// The pages stay mapped.
+    pub fn into_raw(self) -> *mut [u8] {
+        let this = ManuallyDrop::new(self);
+        core::ptr::slice_from_raw_parts_mut(this.as_ptr(), this.len)
     }
 
     pub fn as_ptr(&self) -> *mut u8 {
@@ -46,6 +65,7 @@ impl Mmap {
 
 impl Drop for Mmap {
     fn drop(&mut self) {
-        let _ = crate::munmap(self.as_ptr(), self.len);
+        // SAFETY: `self` owns the pages, and every slice of them borrows `self`.
+        let _ = unsafe { crate::munmap(self.as_ptr(), self.len) };
     }
 }

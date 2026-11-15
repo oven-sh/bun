@@ -1,5 +1,6 @@
 use core::cell::Cell;
 use core::mem::ManuallyDrop;
+use std::collections::VecDeque;
 
 pub trait CellExt<T> {
     /// The cell holds `T::default()` while `f` runs, and what is stored in it meanwhile is dropped.
@@ -34,6 +35,118 @@ impl<T> OptionCellExt for Cell<Option<T>> {
     }
 }
 
+/// Reads and changes the `Vec` without the copies and the drop glue of `with_taken`.
+pub trait VecCellExt<T> {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn capacity(&self) -> usize;
+
+    fn push(&self, value: T);
+
+    fn pop(&self) -> Option<T>;
+
+    fn extend_from_slice(&self, values: &[T])
+    where
+        T: Copy;
+}
+
+impl<T> VecCellExt<T> for Cell<Vec<T>> {
+    fn len(&self) -> usize {
+        // SAFETY: a shared `Cell` lends no reference to its value.
+        unsafe { &*self.as_ptr() }.len()
+    }
+
+    fn capacity(&self) -> usize {
+        // SAFETY: as in `len`.
+        unsafe { &*self.as_ptr() }.capacity()
+    }
+
+    fn push(&self, value: T) {
+        loop {
+            // SAFETY: as in `len`, and with spare capacity `push` only moves a `T`.
+            let vec = unsafe { &mut *self.as_ptr() };
+            if vec.len() < vec.capacity() {
+                return vec.push(value);
+            }
+            reserve_vec(self, 1);
+        }
+    }
+
+    fn pop(&self) -> Option<T> {
+        // SAFETY: as in `len`, and `pop` only moves a `T`.
+        unsafe { &mut *self.as_ptr() }.pop()
+    }
+
+    fn extend_from_slice(&self, values: &[T])
+    where
+        T: Copy,
+    {
+        loop {
+            // SAFETY: as in `len`, and the new length covers what was just written.
+            unsafe {
+                let vec = &mut *self.as_ptr();
+                if let Some(spare) = vec.spare_capacity_mut().get_mut(..values.len()) {
+                    spare.write_copy_of_slice(values);
+                    return vec.set_len(vec.len() + values.len());
+                }
+            }
+            reserve_vec(self, values.len());
+        }
+    }
+}
+
+/// Taken, because the panic hook runs if this fails.
+#[cold]
+fn reserve_vec<T>(cell: &Cell<Vec<T>>, additional: usize) {
+    cell.with_taken(|vec| vec.reserve(additional));
+}
+
+/// As [`VecCellExt`].
+pub trait VecDequeCellExt<T> {
+    fn len(&self) -> usize;
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn push_back(&self, value: T);
+
+    fn pop_front(&self) -> Option<T>;
+}
+
+impl<T> VecDequeCellExt<T> for Cell<VecDeque<T>> {
+    fn len(&self) -> usize {
+        // SAFETY: a shared `Cell` lends no reference to its value.
+        unsafe { &*self.as_ptr() }.len()
+    }
+
+    fn push_back(&self, value: T) {
+        loop {
+            // SAFETY: as in `len`, and with spare capacity `push_back` only moves a `T`.
+            let deque = unsafe { &mut *self.as_ptr() };
+            if deque.len() < deque.capacity() {
+                return deque.push_back(value);
+            }
+            reserve_vec_deque(self, 1);
+        }
+    }
+
+    fn pop_front(&self) -> Option<T> {
+        // SAFETY: as in `len`, and `pop_front` only moves a `T`.
+        unsafe { &mut *self.as_ptr() }.pop_front()
+    }
+}
+
+/// As [`reserve_vec`].
+#[cold]
+fn reserve_vec_deque<T>(cell: &Cell<VecDeque<T>>, additional: usize) {
+    cell.with_taken(|deque| deque.reserve(additional));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -48,5 +161,53 @@ mod tests {
         cell.set(None);
         assert!(cell.is_none());
         assert_eq!(Rc::strong_count(&counted), 1);
+    }
+
+    #[test]
+    fn vec_changes_in_place() {
+        let cell = Cell::new(Vec::new());
+        assert!(cell.is_empty());
+        cell.push(1u8);
+        cell.extend_from_slice(&[2, 3]);
+        assert_eq!(cell.pop(), Some(3));
+        assert_eq!(cell.len(), 2);
+        assert!(cell.capacity() >= 3);
+        assert_eq!(cell.take(), [1, 2]);
+    }
+
+    #[test]
+    fn vec_deque_changes_in_place() {
+        let cell = Cell::new(VecDeque::new());
+        assert!(cell.is_empty());
+        cell.push_back(Box::new(1));
+        cell.push_back(Box::new(2));
+        assert_eq!(cell.len(), 2);
+        assert_eq!(cell.pop_front(), Some(Box::new(1)));
+        assert_eq!(cell.take(), [Box::new(2)]);
+    }
+
+    #[test]
+    fn extend_from_slice_does_not_call_clone() {
+        #[derive(Copy)]
+        struct Panics;
+        impl Clone for Panics {
+            fn clone(&self) -> Self {
+                unreachable!()
+            }
+        }
+        let cell = Cell::new(Vec::new());
+        cell.extend_from_slice(&[Panics, Panics]);
+        assert_eq!(cell.len(), 2);
+    }
+
+    #[test]
+    fn the_panic_hook_can_use_a_cell_that_cannot_grow() {
+        thread_local!(static FULL: Cell<Vec<()>> = const { Cell::new(Vec::new()) });
+        FULL.set(vec![(); usize::MAX]);
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| drop(FULL.take())));
+        let result = std::panic::catch_unwind(|| FULL.with(|cell| cell.push(())));
+        std::panic::set_hook(previous);
+        assert!(result.is_err());
     }
 }

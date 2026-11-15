@@ -14,7 +14,7 @@ use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_ptr::{CellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, RefPtr, VecCellExt as _};
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
@@ -428,13 +428,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             0
         };
-        let bytes = &self.buffered_data_for_node_net.bytes;
-        bytes.with_taken(|b| b.capacity()) + ssl_cost
+        self.buffered_data_for_node_net.bytes.capacity() + ssl_cost
     }
 
     fn buffered_len(&self) -> usize {
-        let bytes = &self.buffered_data_for_node_net.bytes;
-        bytes.with_taken(|b| b.len()) + self.in_flight_len()
+        self.buffered_data_for_node_net.bytes.len() + self.in_flight_len()
     }
 
     /// Nonzero only for JS that runs during a write, and a plain TCP write on POSIX runs none.
@@ -2548,9 +2546,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
             // slower-path: clone the data, do one write.
             let buffered = &self.buffered_data_for_node_net;
-            buffered
-                .bytes
-                .with_taken(|b| b.append_slice(buffer.slice()));
+            buffered.bytes.extend_from_slice(buffer.slice());
             if self.in_flight_len() > 0 {
                 buffered.needs_flush.set(true);
                 break 'brk 0;

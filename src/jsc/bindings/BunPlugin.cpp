@@ -9193,11 +9193,18 @@ __attribute__((minsize)) static bool isLoadedByOriginalOfFile(Zig::GlobalObject*
 
 __attribute__((minsize)) String keyOfModuleMockAtRequirePath(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
+    ASSERT(!globalObject->onLoadPlugins.moduleMockKeysByRequirePath.isEmpty());
     auto* mock = Zig::moduleMockOfRequirePath(globalObject, key);
     if (!mock) {
         // The other way around: what the original of the file that require() loads has loaded gets the file that an import loads as it is on disk.
         auto* ofName = Zig::registeredModuleMock(globalObject, key);
-        if (ofName && ofName->requirePath && Zig::withoutOriginalModuleQuery(importer) != key && isLoadedByOriginalOfFile(globalObject, ofName->requirePath->tryGetValue().data, importer))
+        if (!ofName || !ofName->requirePath)
+            return key;
+        String requirePath = ofName->requirePath->tryGetValue().data;
+        // Only while the mock answers require() of that file. Once a later mock has that path, this one stands for one file, like a mock of a name that has one.
+        if (Zig::moduleMockOfRequirePath(globalObject, requirePath) != ofName)
+            return key;
+        if (Zig::withoutOriginalModuleQuery(importer) != key && isLoadedByOriginalOfFile(globalObject, requirePath, importer))
             return Zig::originalModuleKey(key);
         return key;
     }

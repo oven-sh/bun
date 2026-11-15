@@ -129,7 +129,7 @@ public:
      * no later uncork or gate: true. */
     bool uncorkCompletedResponse() {
         HttpContext<SSL> *httpContext = HttpContext<SSL>::fromSocket((us_socket_t *) this);
-        const bool parsingThis = httpContext->getSocketContextData()->parsingSocket == (us_socket_t *) this;
+        const bool parsingThis = httpContext->getSocketContextData()->isParsing((us_socket_t *) this);
         if (!Super::isCorked()) {
             /* A write larger than the cork buffer released the cork. The rest of this read can hold the body of a node:http request. */
             return !(parsingThis && httpContext->isNodeHttp());
@@ -529,8 +529,8 @@ private:
         LoopData *loopData = Super::getLoopData();
         int corkedSlot = loopData->findCorkSlot(this);
 
-        /* Read before the adoption below, which can move this socket. An upgrade of another connection must leave the parsed socket alone. */
-        const bool upgradingParsedSocket = httpContextData->isParsing((us_socket_t *) this);
+        /* A parse of this socket can be on the stack. It tells the upgrade by the kind of the socket, so that has to stay in place. */
+        static_assert(sizeof(WebSocketData) + sizeof(UserData) <= sizeof(HttpResponseData<SSL>));
 
         /* Adopting a socket invalidates it, do not rely on it directly to carry any data */
         /* The old ext size is only used as an upper bound to keep the block in
@@ -553,12 +553,6 @@ private:
         webSocket->init(perMessageDeflate, compressOptions, std::move(backpressure), socketData, httpContextData->onSocketClosed);
         if (httpContextData->onSocketUpgraded) {
             httpContextData->onSocketUpgraded(socketData, SSL, usSocket);
-        }
-
-        /* We should only mark this if inside the parser; if upgrading "async" we cannot set this */
-        if (upgradingParsedSocket) {
-            /* We need to tell the Http parser that we changed socket */
-            httpContextData->upgradedWebSocket = webSocket;
         }
 
         /* Arm maxLifetime timeout */

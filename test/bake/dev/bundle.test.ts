@@ -455,7 +455,7 @@ devTest("repairing a missing import in a framework without server components", {
 // Regression test: DirectoryWatchStore.Dep.source_file_path borrows the key
 // string from IncrementalGraph.bundled_files. When a client-component boundary
 // is demoted (its "use client" directive is removed) the server graph calls
-// client_graph.disconnectAndDeleteFile which frees that key. Previously the
+// disconnect_and_delete_client_file which frees that key. Previously the
 // Dep was left pointing at freed memory, and the next directory-watch event
 // that re-resolved that Dep read it (use-after-free, caught by ASAN).
 devTest("removing 'use client' from a component with a pending resolution failure", {
@@ -513,8 +513,8 @@ devTest("removing 'use client' from a component with a pending resolution failur
     );
 
     // Drop the directive and the failing import so the server parse
-    // succeeds. server_graph.receiveChunk now sees scb=false with
-    // was_ccb=true and calls client_graph.disconnectAndDeleteFile, which
+    // succeeds. The server graph now sees scb=false with
+    // was_ccb=true and calls disconnect_and_delete_client_file, which
     // frees the key string that the Comp.ts Dep still references.
     await dev.write(
       "components/Comp.ts",

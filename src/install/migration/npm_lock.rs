@@ -168,7 +168,7 @@ struct Migrator<'a> {
 /// Returns the packages that still have no integrity. An empty URL does not find them all, because
 /// an `unverifiable` entry that was merged into a bundled copy's package has that copy's URL.
 fn unverified_packages(migrator: &Migrator<'_>) -> Vec<PackageID> {
-    let packages = migrator.this.packages.slice();
+    let packages = &migrator.this.packages;
     let (resolutions, metas) = (packages.items_resolution(), packages.items_meta());
     let without_url = (0..resolutions.len() as PackageID).filter(|&id| {
         let res = &resolutions[id as usize];

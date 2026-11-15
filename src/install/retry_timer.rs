@@ -92,13 +92,14 @@ impl PackageManager {
     /// Do not use this for a request that the registry must not get twice, like `bun publish`'s.
     pub fn send_with_retries(
         &self,
-        request: &mut AsyncHTTP<'_>,
+        mut request: Box<AsyncHTTP<'_>>,
         response_buffer: &mut MutableString,
     ) -> bun_http::Result<HTTPResponseMetadata> {
         let mut attempt: u16 = 0;
         loop {
             response_buffer.reset();
-            let response = request.send_sync_for_result(response_buffer)?;
+            let response;
+            (request, response) = request.send_sync_for_result(response_buffer)?;
             let (_, retry) = download_outcome(&response, true);
             if !retry || attempt >= self.options.max_retry_count {
                 return response.into_metadata();

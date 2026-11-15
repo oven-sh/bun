@@ -1,5 +1,5 @@
 use super::mention_use::MentionUse;
-use super::mentions::mentioned_id;
+use super::mentions::{keeps_what_is_laid_over_it, mentioned_id};
 use super::module_cache::{is_module_cache, name_of_module_cache};
 use super::resolver::{ExprState, ResolvedValue, Resolver};
 use super::{
@@ -25,6 +25,10 @@ const HOLDER_ESCAPED: (ModuleObjectOwner, ModuleObjectUse) = (
 fn leads_to_main_module(global: BuiltinId) -> bool {
     table::has_flag(global, BuiltinFlags::IS_GLOBAL_OBJECT)
         || table::canonical_id(global) == BuiltinId::Process
+}
+
+fn is_method_or_slot(member: BuiltinId) -> bool {
+    table::is_callable(member) || keeps_what_is_laid_over_it(member)
 }
 
 fn field_of(member: BuiltinId) -> Option<ModuleField> {
@@ -432,6 +436,54 @@ impl Resolver<'_, '_> {
         }
     }
 
+    fn stores_method_that_may_read_receiver(&self, member: ExprId, holder: BuiltinId) -> bool {
+        let (hir, bound) = (self.input.hir, self.input.bound);
+        let stored_to = self.outermost_assertion_of(member);
+        let is_process = holder == BuiltinId::Process;
+        let Parent::Expr(store) = bound.parent_of_expr(stored_to) else {
+            return is_process;
+        };
+        match hir[store].kind {
+            ExprKind::Assign { target, value, .. } if target == stored_to => match is_process {
+                true => self.may_read_this(value),
+                false => self.is_function_reading_this(value),
+            },
+            _ => is_process,
+        }
+    }
+
+    fn find_holder_that_member_hands_on(
+        &self,
+        member: ExprId,
+    ) -> Option<(ModuleObjectOwner, ModuleObjectUse)> {
+        let hir = self.input.hir;
+        let id = mentioned_id(self.state(member));
+        if id.is_some_and(|id| self.find_global_handed_out(member, id).is_some()) {
+            return Some(HOLDER_ESCAPED);
+        }
+        let (holder, key) = hir.member_key(member)?;
+        let holder = mentioned_id(self.state(hir.skip_type_assertions(holder)))?;
+        let holder = table::canonical_id(holder);
+        let handed = match holder {
+            BuiltinId::ModuleRequire => (ModuleObjectOwner::EntryPoint, ModuleObjectUse::Escaped),
+            holder if leads_to_main_module(holder) => HOLDER_ESCAPED,
+            _ => return None,
+        };
+        let is_handed_on = if self.input.bound.is_stored_to(hir, member) {
+            let may_be_method = match id {
+                Some(id) => is_method_or_slot(id),
+                None => holder == BuiltinId::Process && matches!(key, MemberKey::Computed(_)),
+            };
+            may_be_method && self.stores_method_that_may_read_receiver(member, holder)
+        } else {
+            id.is_some_and(|id| {
+                self.find_receiver_handed_to_operands(member, id).is_some()
+                    || self.find_receiver_held_as_answer(member, id).is_some()
+            })
+        };
+        is_handed_on.then_some(handed)
+    }
+
     fn find_module_object_mention(
         &self,
         e: ExprId,
@@ -622,7 +674,7 @@ impl Resolver<'_, '_> {
             });
             return may_store_path;
         }
-        if matches!(hir[expr].kind, ExprKind::This) {
+        if matches!(hir[expr].kind, ExprKind::This | ExprKind::Super) {
             let is_evaluated = matches!(state, ExprState::Unresolved);
             let global = self.find_global_out_of_sight_through(expr);
             if is_evaluated && global.is_some_and(leads_to_main_module) {
@@ -643,7 +695,9 @@ impl Resolver<'_, '_> {
             return may_store_path;
         }
         let found = self.find_module_object_mention(expr).into_iter();
-        for (owner, object_use) in found.chain(self.find_way_that_computed_key_reads(expr)) {
+        let read_under_key = self.find_way_that_computed_key_reads(expr);
+        let handed_on = self.find_holder_that_member_hands_on(expr);
+        for (owner, object_use) in found.chain(read_under_key).chain(handed_on) {
             mentions.push(ModuleObjectMention {
                 expr,
                 owner,

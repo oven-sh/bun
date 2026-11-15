@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use bun_core::ZStr;
+use bun_core::{ZBox, ZStr};
 use bun_sys::{self as sys, Dir, E, Fd, O};
 
 /// A cache entry being built under a name no other process knows. Deleted on drop if unpublished.
@@ -67,7 +67,7 @@ impl<'a> StagedEntry<'a> {
                 // Emptied through its own handle. `rmdir` only removes an empty folder.
                 Ok(incomplete) => {
                     emptying_err = incomplete.delete_children().err();
-                    incomplete.close();
+                    drop(incomplete);
                     let _ = sys::rmdirat(cache_dir, to);
                 }
                 // It isn't a folder, or it's gone by now. `unlink` never removes a folder.
@@ -83,6 +83,43 @@ impl Drop for StagedEntry<'_> {
     fn drop(&mut self) {
         if !self.renamed {
             let _ = Dir::borrow(&self.parent).delete_tree(self.name.as_bytes());
+        }
+    }
+}
+
+/// A [`StagedEntry`] that takes more than one task to build. Deleted on drop.
+pub(crate) struct UnfinishedEntry {
+    parent: Fd,
+    /// `None` once a `StagedEntry` has taken over.
+    name: Option<ZBox>,
+}
+
+impl UnfinishedEntry {
+    pub(crate) fn new(parent: Fd, name: &[u8]) -> Self {
+        Self {
+            parent,
+            name: Some(ZBox::from_bytes(name)),
+        }
+    }
+
+    pub(crate) fn parent(&self) -> Fd {
+        self.parent
+    }
+
+    pub(crate) fn name(&self) -> &[u8] {
+        (self.name.as_ref().expect("only `finish` takes the name")).as_bytes()
+    }
+
+    pub(crate) fn finish<R>(mut self, publish: impl FnOnce(StagedEntry<'_>) -> R) -> R {
+        let name = self.name.take().expect("only `finish` takes the name");
+        publish(StagedEntry::new(self.parent, &name))
+    }
+}
+
+impl Drop for UnfinishedEntry {
+    fn drop(&mut self) {
+        if let Some(name) = &self.name {
+            drop(StagedEntry::new(self.parent, name));
         }
     }
 }

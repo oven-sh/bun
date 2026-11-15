@@ -160,6 +160,7 @@ impl Shared {
     fn loop_of(&self, kind: LoopKind) -> &EventLoop {
         // SAFETY: caller holds a ticket or is inside the weak gate before
         // `Closed`; the VM and both embedded loops are alive.
+        // Callers keep to what `EventLoop` allows other threads.
         unsafe {
             match kind {
                 LoopKind::Regular => &(*self.hot.vm).regular_event_loop,
@@ -235,7 +236,12 @@ impl Ticket {
     /// The JS thread may consume `task` — and free whatever it points into —
     /// before this returns, so `self` must not live inside that memory: move
     /// the ticket out of the work's struct first, post, then drop it.
-    pub fn post(&self, task: NonNull<ConcurrentTaskItem>) {
+    pub fn post(&self, task: Box<ConcurrentTaskItem>) {
+        self.post_intrusive(bun_core::heap::into_raw_nn(task));
+    }
+
+    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    pub fn post_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
         test_gate::before_ticket_post(self);
         debug_assert!(
             self.shared.state() != State::Closed,
@@ -263,6 +269,13 @@ impl Ticket {
     #[inline]
     pub fn cancelled(&self) -> bool {
         self.shared.state() >= State::Draining
+    }
+}
+
+impl bun_event_loop::PostToJs for Ticket {
+    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
+        Ticket::post(self, task);
+        Posted::Queued
     }
 }
 
@@ -336,10 +349,23 @@ impl VmHandle {
     /// Queue `task` on the VM's `kind` loop and wake it, or hand it back if
     /// the VM is closed. For posters that hold no ticket (their payload is
     /// their own to free on refusal).
-    pub fn post(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted {
-        test_gate::weak_post(&self.0, task, |task| {
+    pub fn post(&self, kind: LoopKind, task: Box<ConcurrentTaskItem>) -> Posted {
+        test_gate::weak_post(&self.0, task.task.tag(), || {
             let Some(_a) = self.enter() else {
                 return Posted::Refused(task);
+            };
+            self.0.deliver(kind, bun_core::heap::into_raw_nn(task));
+            Posted::Queued
+        })
+    }
+
+    /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
+    pub fn post_intrusive(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) -> Posted<()> {
+        // SAFETY: handed over by the caller and not yet queued anywhere.
+        let tag = unsafe { task.as_ref() }.task.tag();
+        test_gate::weak_post(&self.0, tag, || {
+            let Some(_a) = self.enter() else {
+                return Posted::Refused(());
             };
             self.0.deliver(kind, task);
             Posted::Queued
@@ -357,12 +383,9 @@ impl VmHandle {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
         let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
-        if let Posted::Refused(ct) = self.post(kind, ct) {
-            // SAFETY: refused ⇒ we own both boxes.
-            unsafe {
-                drop(bun_core::heap::take(ct.as_ptr()));
-                Bun__deleteEventLoopTask(task);
-            }
+        if let Posted::Refused(_) = self.post(kind, ct) {
+            // SAFETY: refused ⇒ `task` is still ours (fn contract).
+            unsafe { Bun__deleteEventLoopTask(task) };
         }
     }
 
@@ -396,7 +419,7 @@ impl VmHandle {
             // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
             // `notify_need_termination` is thread-safe (VMTraps). Raw field
             // read, no `&VirtualMachine` formed off-thread.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
+            unsafe { (*(*self.0.hot.vm).jsc_vm.get().cast_const()).notify_need_termination() };
             self.0.loop_of(LoopKind::Regular).wakeup();
         }
     }
@@ -558,7 +581,7 @@ pub extern "C" fn Bun__VM__currentLoopKind(vm: &VirtualMachine) -> LoopKind {
 #[cfg(debug_assertions)]
 mod test_gate {
     use super::{Ordering, Posted, Shared, State, Ticket, VmHandle};
-    type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
+    use bun_event_loop::TaskTag;
 
     impl VmHandle {
         pub(crate) fn arm_test_gate(&self) {
@@ -606,14 +629,16 @@ mod test_gate {
             ));
         }
     }
-    pub(super) fn weak_post(s: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
+    pub(super) fn weak_post<T>(
+        s: &Shared,
+        tag: TaskTag,
+        post: impl FnOnce() -> Posted<T>,
+    ) -> Posted<T> {
         if !armed(s) {
-            return post(task);
+            return post();
         }
         park_until_draining(s);
-        // SAFETY: handed over by the caller and not yet queued anywhere.
-        let tag = unsafe { task.as_ref() }.task.tag;
-        let r = post(task);
+        let r = post();
         let outcome = match r {
             Posted::Queued => "released by the wait",
             Posted::Refused(_) => "refused",
@@ -636,7 +661,7 @@ mod test_gate {
 #[cfg(not(debug_assertions))]
 mod test_gate {
     use super::{Posted, Shared, Ticket, VmHandle};
-    type Task = core::ptr::NonNull<super::ConcurrentTaskItem>;
+    use bun_event_loop::TaskTag;
     impl VmHandle {
         #[inline(always)]
         pub(crate) fn arm_test_gate(&self) {}
@@ -644,8 +669,12 @@ mod test_gate {
     #[inline(always)]
     pub(super) fn before_ticket_post(_: &Ticket) {}
     #[inline(always)]
-    pub(super) fn weak_post(_: &Shared, task: Task, post: impl FnOnce(Task) -> Posted) -> Posted {
-        post(task)
+    pub(super) fn weak_post<T>(
+        _: &Shared,
+        _: TaskTag,
+        post: impl FnOnce() -> Posted<T>,
+    ) -> Posted<T> {
+        post()
     }
     #[inline(always)]
     pub(super) fn draining(_: &VmHandle) {}
@@ -740,9 +769,9 @@ pub unsafe extern "C" fn Bun__VmHandle__postAndRelease(
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__eventLoop__refKeepAlive(vm: &VirtualMachine, delta: core::ffi::c_int) {
     if delta > 0 {
-        vm.event_loop_shared().ref_keep_alive();
+        vm.event_loop().ref_keep_alive();
     } else {
-        vm.event_loop_shared().unref_keep_alive();
+        vm.event_loop().unref_keep_alive();
     }
 }
 
@@ -800,7 +829,7 @@ const _: () = assert!(State::Open as u8 == 0);
 /// takes one more ticket.
 pub enum ConcurrentPoster {
     Js(Ticket),
-    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop, bun_ptr::Mut>),
+    Mini(bun_ptr::BackRef<bun_event_loop::MiniEventLoop::MiniEventLoop>),
 }
 
 impl Clone for ConcurrentPoster {
@@ -834,9 +863,14 @@ impl ConcurrentPoster {
     }
 
     /// Post a JS-loop `ConcurrentTask`. Panics (debug) if this poster is `Mini`.
-    pub fn post_js(&self, task: NonNull<ConcurrentTaskItem>) {
+    pub fn post_js(&self, task: Box<ConcurrentTaskItem>) {
+        self.post_js_intrusive(bun_core::heap::into_raw_nn(task));
+    }
+
+    /// As [`Ticket::post_intrusive`].
+    pub fn post_js_intrusive(&self, task: NonNull<ConcurrentTaskItem>) {
         match self {
-            ConcurrentPoster::Js(t) => t.post(task),
+            ConcurrentPoster::Js(t) => t.post_intrusive(task),
             ConcurrentPoster::Mini(_) => debug_assert!(false, "post_js on a Mini poster"),
         }
     }
@@ -855,41 +889,24 @@ impl ConcurrentPoster {
 
 // ── Erased form for crates below bun_jsc (spawn, bundler) ─────────────────
 
-struct PosterData {
+struct VmPoster {
     handle: VmHandle,
     kind: LoopKind,
 }
 
-unsafe fn poster_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
-    // SAFETY: `data` is a leaked `Arc<PosterData>` pointer (see `to_js_poster`).
-    let d = unsafe { &*data.cast::<PosterData>() };
-    d.handle.post(d.kind, task)
+impl bun_event_loop::PostToJs for VmPoster {
+    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
+        self.handle.post(self.kind, task)
+    }
 }
-unsafe fn poster_clone(data: *const ()) -> *const () {
-    // SAFETY: as above; bump the Arc count and hand out the same pointer.
-    unsafe { Arc::increment_strong_count(data.cast::<PosterData>()) };
-    data
-}
-unsafe fn poster_drop(data: *const ()) {
-    // SAFETY: as above; balances `into_raw`/`increment_strong_count`.
-    unsafe { drop(Arc::from_raw(data.cast::<PosterData>())) };
-}
-static POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
-    post: poster_post,
-    clone: poster_clone,
-    drop: poster_drop,
-};
 
 impl VmHandle {
     /// An erased weak poster for `kind`, for code that cannot name `VmHandle`.
-    pub fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
-        let data = Arc::into_raw(Arc::new(PosterData {
+    fn to_js_poster(&self, kind: LoopKind) -> bun_event_loop::JsPoster {
+        Arc::new(VmPoster {
             handle: self.clone(),
             kind,
-        }))
-        .cast::<()>();
-        // SAFETY: `data`/vtable pair as documented on `JsPoster::from_raw`.
-        unsafe { bun_event_loop::JsPoster::from_raw(data, &POSTER_VTABLE) }
+        })
     }
 }
 
@@ -908,18 +925,18 @@ impl VirtualMachine {
 // weak poster with the same gate discipline, closed before the loop is freed.
 // The VM cannot tear down under it: its creator drives it synchronously.
 
-/// Opaque outside this crate: the poster of a spawnSync isolated loop.
-pub struct IsolatedPosterInner {
+/// The poster of a spawnSync isolated loop.
+pub(crate) struct IsolatedPoster {
     open: core::sync::atomic::AtomicBool,
     active: AtomicU32,
     event_loop: *const EventLoop,
 }
 // SAFETY: `event_loop` is dereferenced only under the gate (open && counted).
-unsafe impl Send for IsolatedPosterInner {}
+unsafe impl Send for IsolatedPoster {}
 // SAFETY: as above.
-unsafe impl Sync for IsolatedPosterInner {}
+unsafe impl Sync for IsolatedPoster {}
 
-impl IsolatedPosterInner {
+impl IsolatedPoster {
     pub(crate) fn new(event_loop: *const EventLoop) -> Arc<Self> {
         Arc::new(Self {
             open: core::sync::atomic::AtomicBool::new(true),
@@ -936,46 +953,21 @@ impl IsolatedPosterInner {
             core::hint::spin_loop();
         }
     }
+}
 
-    pub(crate) fn post(&self, task: NonNull<ConcurrentTaskItem>) -> Posted {
+impl bun_event_loop::PostToJs for IsolatedPoster {
+    fn post(&self, task: Box<ConcurrentTaskItem>) -> Posted {
         self.active.fetch_add(1, Ordering::SeqCst);
-        let open = self.open.load(Ordering::SeqCst);
-        if open {
+        let posted = if self.open.load(Ordering::SeqCst) {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.post(task);
+            el.post(bun_core::heap::into_raw_nn(task));
             el.wakeup();
-        }
-        self.active.fetch_sub(1, Ordering::SeqCst);
-        if open {
             Posted::Queued
         } else {
             Posted::Refused(task)
-        }
-    }
-
-    pub(crate) fn to_js_poster(this: &Arc<Self>) -> bun_event_loop::JsPoster {
-        let data = Arc::into_raw(Arc::clone(this)).cast::<()>();
-        // SAFETY: data/vtable pair per `JsPoster::from_raw`.
-        unsafe { bun_event_loop::JsPoster::from_raw(data, &ISOLATED_POSTER_VTABLE) }
+        };
+        self.active.fetch_sub(1, Ordering::SeqCst);
+        posted
     }
 }
-
-unsafe fn isolated_post(data: *const (), task: NonNull<ConcurrentTaskItem>) -> Posted {
-    // SAFETY: leaked Arc<IsolatedPosterInner>.
-    unsafe { &*data.cast::<IsolatedPosterInner>() }.post(task)
-}
-unsafe fn isolated_clone(data: *const ()) -> *const () {
-    // SAFETY: as above.
-    unsafe { Arc::increment_strong_count(data.cast::<IsolatedPosterInner>()) };
-    data
-}
-unsafe fn isolated_drop(data: *const ()) {
-    // SAFETY: as above.
-    unsafe { drop(Arc::from_raw(data.cast::<IsolatedPosterInner>())) };
-}
-static ISOLATED_POSTER_VTABLE: bun_event_loop::JsPosterVTable = bun_event_loop::JsPosterVTable {
-    post: isolated_post,
-    clone: isolated_clone,
-    drop: isolated_drop,
-};

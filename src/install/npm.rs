@@ -9,8 +9,7 @@ use bun_collections::{HashMap, IdentityContext, index_sort};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
-use bun_http::{self as http, AsyncHTTP, HeaderBuilder};
-use bun_picohttp as picohttp;
+use bun_http::{self as http, HeaderBuilder};
 use bun_semver::{self as Semver, ExternalString, SlicedString, String as SemverString};
 use bun_sys::{self, Fd, File};
 use bun_url::{OwnedURL, URL};
@@ -94,12 +93,12 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     let mut response_buf = MutableString::init(1024)?;
     let url = URL::parse(&print_buf);
+    let href = url.href;
     let header_buf: &[u8] = headers.content.written_slice();
 
-    let mut req =
-        manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
+    let req = manager.registry_request(http::Method::GET, url, headers.entries, header_buf, b"");
 
-    let res = match manager.send_with_retries(&mut req, &mut response_buf) {
+    let res = match manager.send_with_retries(req, &mut response_buf) {
         Ok(res) => res,
         Err(bun_http::Error::Alloc(bun_alloc::AllocError)) => {
             return Err(WhoamiError::OutOfMemory);
@@ -112,7 +111,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     if res.status_code() >= 400 {
         const OTP_RESPONSE: bool = false;
-        response_error::<OTP_RESPONSE>(&req, &res, None, &mut response_buf)?;
+        response_error::<OTP_RESPONSE>(href, &res, None, &mut response_buf)?;
     }
 
     if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
@@ -151,7 +150,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 }
 
 pub fn response_error<const OTP_RESPONSE: bool>(
-    req: &AsyncHTTP,
+    url: &[u8],
     res: &bun_http::HTTPResponseMetadata,
     // `<name>@<version>`
     pkg_id: Option<(&[u8], &[u8])>,
@@ -184,7 +183,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
             ""
         },
         bun_fmt::escape_control_chars(res.status_text()),
-        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(req.url.href)),
+        bun_fmt::EscapeControlChars(bun_fmt::redacted_npm_url(url)),
     );
 
     if res.status_code() == 404
@@ -708,9 +707,9 @@ pub mod registry {
             && expiry > seconds_from_now(MAX_MANIFEST_AGE)
     }
 
-    pub(crate) fn manifest_expiry(headers: &picohttp::HeaderList) -> u32 {
+    pub(crate) fn manifest_expiry(response: &http::HTTPResponseMetadata) -> u32 {
         let mut max_age = u64::from(MAX_MANIFEST_AGE);
-        for directive in strings::split(headers.get(b"cache-control").unwrap_or(b""), b",") {
+        for directive in strings::split(response.header(b"cache-control").unwrap_or(b""), b",") {
             let directive = directive.trim_ascii();
             if strings::eql_case_insensitive_ascii(directive, b"no-cache", true)
                 || strings::eql_case_insensitive_ascii(directive, b"no-store", true)
@@ -726,7 +725,7 @@ pub mod registry {
 
     pub(crate) fn get_package_metadata(
         scope: &Scope,
-        response: picohttp::Response,
+        response: &bun_http::HTTPResponseMetadata,
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],
@@ -734,7 +733,7 @@ pub mod registry {
         package_manager: &mut PackageManager,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
-        match response.status_code {
+        match response.status_code() {
             400 => return Err(crate::Error::BadRequest),
             429 => return Err(crate::Error::TooManyRequests),
             404 => return Ok(PackageVersionResponse::NotFound),
@@ -746,8 +745,8 @@ pub mod registry {
             _ => {}
         }
 
-        let newly_last_modified: &[u8] = response.headers.get(b"last-modified").unwrap_or(b"");
-        let mut new_etag: &[u8] = response.headers.get(b"etag").unwrap_or(b"");
+        let newly_last_modified: &[u8] = response.header(b"last-modified").unwrap_or(b"");
+        let mut new_etag: &[u8] = response.header(b"etag").unwrap_or(b"");
 
         let mut new_etag_buf = [0u8; 64];
 
@@ -763,7 +762,7 @@ pub mod registry {
             package_name,
             newly_last_modified,
             new_etag,
-            manifest_expiry(&response.headers),
+            manifest_expiry(response),
             is_extended_manifest,
         )? {
             // If the cache cannot be written, the manifest is still used. It is just not saved.
@@ -1351,11 +1350,7 @@ pub mod package_manifest {
                         &mut realpath2_buf[..],
                         &[cache_dir_abs, outpath.as_bytes()],
                     );
-                // The close error is discarded — the renameat immediately
-                // below surfaces a usable error if the temp file is in a
-                // bad state, and on POSIX the close cannot fail for a
-                // regular-file fd we just wrote.
-                let _ = file.close();
+                drop(file);
                 bun_sys::renameat(
                     Fd::cwd(),
                     path_to_use_for_opening_file,

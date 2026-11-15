@@ -289,14 +289,10 @@ fn read_package_json_from_disk(
             body.reset();
             match File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0) {
                 Ok(file) => {
-                    let read_result = file
-                        .read_to_end_with_array_list(
-                            &mut body.list,
-                            bun_sys::SizeHint::ProbablySmall,
-                        )
-                        .map(|_| ());
-                    let _ = file.close();
-                    read_result?;
+                    file.read_to_end_with_array_list(
+                        &mut body.list,
+                        bun_sys::SizeHint::ProbablySmall,
+                    )?;
                 }
                 // Like in Yarn, the directory of a `link:<path>` doesn't need a package.json.
                 Err(err)

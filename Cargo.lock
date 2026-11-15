@@ -243,7 +243,6 @@ dependencies = [
  "bun_sys",
  "bun_tar",
  "bun_wyhash",
- "scopeguard",
  "thiserror",
 ]
 
@@ -466,11 +465,11 @@ dependencies = [
  "bun_alloc",
  "bun_core",
  "bun_ptr",
- "bun_simdutf_sys",
  "bun_wyhash",
  "hashbrown 0.15.5",
  "paste",
  "rustc-hash",
+ "scopeguard",
  "smallvec",
 ]
 
@@ -643,9 +642,7 @@ dependencies = [
  "bun_dispatch",
  "bun_dotenv",
  "bun_io",
- "bun_paths",
  "bun_ptr",
- "bun_sys",
  "bun_threading",
  "bun_uws",
  "strum",
@@ -750,7 +747,6 @@ dependencies = [
  "bun_brotli",
  "bun_collections",
  "bun_core",
- "bun_dns",
  "bun_dotenv",
  "bun_errno",
  "bun_event_loop",
@@ -866,7 +862,6 @@ dependencies = [
  "bun_patch",
  "bun_paths",
  "bun_perf",
- "bun_picohttp",
  "bun_ptr",
  "bun_removable_features",
  "bun_resolver",
@@ -876,7 +871,6 @@ dependencies = [
  "bun_spawn",
  "bun_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_which",
@@ -904,7 +898,6 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sys",
- "scopeguard",
 ]
 
 [[package]]
@@ -938,7 +931,6 @@ dependencies = [
  "bun_uws_sys",
  "enumset",
  "libc",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -968,7 +960,6 @@ dependencies = [
  "criterion",
  "enumset",
  "regex",
- "scopeguard",
  "smallvec",
  "strum",
  "thiserror",
@@ -1007,7 +998,6 @@ dependencies = [
  "bun_crash_handler",
  "bun_io",
  "bun_options_types",
- "bun_ptr",
  "bun_sourcemap",
  "bun_wyhash",
  "const_format",
@@ -1056,6 +1046,7 @@ dependencies = [
  "bun_resolver",
  "bun_s3_signing",
  "bun_sha_hmac",
+ "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_spawn",
  "bun_sys",
@@ -1320,7 +1311,6 @@ dependencies = [
  "bun_paths",
  "bun_sys",
  "bun_url",
- "scopeguard",
  "strum",
 ]
 
@@ -1490,7 +1480,6 @@ name = "bun_ptr"
 version = "0.0.0"
 dependencies = [
  "bstr",
- "bun_alloc",
  "bun_core",
  "bun_core_macros",
 ]
@@ -1798,7 +1787,7 @@ dependencies = [
  "bun_alloc",
  "bun_boringssl_sys",
  "bun_core",
- "bun_js_parser",
+ "bun_crash_handler",
  "bun_sema",
  "bun_sema_baselines",
  "bun_sema_driver",
@@ -1957,11 +1946,9 @@ version = "0.0.0"
 dependencies = [
  "bitflags",
  "bstr",
- "bun_alloc",
  "bun_boringssl",
  "bun_collections",
  "bun_core",
- "bun_ptr",
  "bun_sha_hmac",
  "bun_sys",
  "strum",
@@ -1982,9 +1969,9 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_event_loop",
+ "bun_http",
  "bun_io",
  "bun_jsc",
- "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
  "bun_sql",
@@ -2083,7 +2070,6 @@ dependencies = [
  "bun_core",
  "bun_opaque",
  "bun_ptr",
- "scopeguard",
  "strum",
  "thiserror",
 ]
@@ -2102,7 +2088,6 @@ name = "bun_threading"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_ptr",
  "bun_safety",
@@ -2111,13 +2096,6 @@ dependencies = [
  "scopeguard",
  "strum",
  "thiserror",
-]
-
-[[package]]
-name = "bun_transpiler"
-version = "0.0.0"
-dependencies = [
- "bun_bundler",
 ]
 
 [[package]]
@@ -2239,7 +2217,6 @@ name = "bun_zlib"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_collections",
  "bun_core",
  "bun_zlib_sys",
  "strum",

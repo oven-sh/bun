@@ -939,7 +939,7 @@ pub(crate) fn migrate_yarn_berry_lockfile(
                     let registry = registry_for(manager, log, &yarnrc, name)?;
                     let url = crate::extract_tarball::build_url(
                         &registry,
-                        &strings::StringOrTinyString::init(name),
+                        name,
                         version,
                         string_bytes!(this),
                     )?;

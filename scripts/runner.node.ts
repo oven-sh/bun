@@ -2453,6 +2453,8 @@ async function spawnBun(
 ): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
   const tmpdirPath = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "buntmp-")));
+  // See test/aot/harness/without-installing-packages.ts.
+  mkdirSync(join(tmpdirPath, "node_modules"));
   const { username, homedir } = userInfo();
   const shellPath = getShell();
   const bunEnv: SpawnEnv = {

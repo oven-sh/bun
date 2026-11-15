@@ -1,8 +1,8 @@
 use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    PoolTask, ShellTask, ShellWork, parse_flags,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -110,13 +110,14 @@ impl Touch {
                     exec.tasks_count = argc - args_start;
                 }
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                let evtloop = Builtin::event_loop(interp, cmd);
-                let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
                 for i in args_start..argc {
-                    let path = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task = ShellTouchTask::create(cmd, path, cwd.clone(), evtloop, interp_ptr);
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellTask::schedule(task) };
+                    let task = ShellTouchTask {
+                        cmd,
+                        filepath: Builtin::of(interp, cmd).arg_bytes(i).to_vec(),
+                        cwd_path: cwd.clone(),
+                        err: None,
+                    };
+                    PoolTask::schedule(interp, task);
                 }
                 Yield::suspended()
             }
@@ -143,7 +144,8 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    fn on_shell_touch_task_done(interp: &Interpreter, cmd: NodeId, task: &mut ShellTouchTask) {
+    fn on_shell_touch_task_done(interp: &Interpreter, task: &mut ShellTouchTask) -> Yield {
+        let cmd = task.cmd;
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
@@ -153,10 +155,9 @@ impl Touch {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
-            OutputTask::<Touch>::start(output_task, interp, Some(&errstr)).run(interp);
-            return;
+            return OutputTask::<Touch>::start(output_task, interp, Some(&errstr));
         }
-        Self::next(interp, cmd).run(interp);
+        Self::next(interp, cmd)
     }
 }
 
@@ -233,45 +234,27 @@ pub(crate) struct ShellTouchTask {
     pub(crate) filepath: Vec<u8>,
     pub(crate) cwd_path: Vec<u8>,
     pub(crate) err: Option<bun_sys::Error>,
-    pub task: ShellTask,
 }
 
-impl ShellTouchTask {
-    pub(crate) fn create(
-        cmd: NodeId,
-        filepath: Vec<u8>,
-        cwd_path: Vec<u8>,
-        evtloop: EventLoopHandle,
-        interp: *mut Interpreter,
-    ) -> *mut ShellTouchTask {
-        let mut task = Box::new(ShellTouchTask {
-            cmd,
-            filepath,
-            cwd_path,
-            err: None,
-            task: ShellTask::new(evtloop),
-        });
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
-    }
+impl ShellWork for ShellTouchTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
 
     /// utimes() the path; on ENOENT
     /// fall back to `open(O_CREAT|O_WRONLY, 0o664)`.
-    pub(crate) fn run_from_thread_pool(this: &mut ShellTouchTask) {
+    fn run_from_thread_pool(&mut self, _: &ShellTask) {
         use bun_paths::resolve_path::{self, Platform, platform};
-        use bun_sys::FdExt as _;
         // We have to give an absolute path. An operand that does not fit the
         // path buffer is still passed on whole, so the OS reports ENAMETOOLONG
         // for it like for any other operand.
         let mut spill = Vec::new();
-        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {
+        let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.filepath) {
             // Re-terminate (`filepath` is the bare argv bytes without the
             // trailing NUL).
-            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&this.filepath])
+            resolve_path::join_z_spill::<platform::Auto>(&mut spill, &[&self.filepath])
         } else {
             resolve_path::join_z_spill::<platform::Auto>(
                 &mut spill,
-                &[&this.cwd_path, &this.filepath],
+                &[&self.cwd_path, &self.filepath],
             )
         };
 
@@ -294,61 +277,21 @@ impl ShellTouchTask {
                 if err.get_errno() == bun_sys::E::ENOENT {
                     const PERM: bun_sys::Mode = 0o664;
                     let flags = bun_sys::O::CREAT | bun_sys::O::WRONLY;
-                    match bun_sys::open(filepath, flags, PERM) {
-                        Ok(fd) => {
-                            fd.close();
-                            break 'out;
-                        }
+                    match bun_sys::File::open(filepath, flags, PERM) {
+                        Ok(_) => break 'out,
                         Err(e) => {
-                            this.err = Some(e.with_path(filepath.as_bytes()));
+                            self.err = Some(e.with_path(filepath.as_bytes()));
                             break 'out;
                         }
                     }
                 }
-                this.err = Some(err.with_path(filepath.as_bytes()));
+                self.err = Some(err.with_path(filepath.as_bytes()));
             }
         }
-        // Worker→main bounce-back is posted by `shell_task_trampoline` after
-        // this returns.
     }
 
-    /// # Safety
-    /// `this` must be a live heap allocation produced by [`Self::create`];
-    /// ownership is reclaimed here.
-    fn run_from_main_thread(this: *mut ShellTouchTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task.
-        let mut task = unsafe { bun_core::heap::take(this) };
-        let cmd = task.cmd;
-        Touch::on_shell_touch_task_done(interp, cmd, &mut task);
-    }
-}
-
-impl bun_event_loop::Taskable for ShellTouchTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
-    }
-    /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
-    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
-        bun_event_loop::ContextId::NONE
-    }
-}
-
-impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {
-    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
-    fn run_from_thread_pool(this: &mut Self) {
-        Self::run_from_thread_pool(this)
-    }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
-        // SAFETY: `ShellTaskCtx` callers guarantee `this` is the live
-        // heap-allocated task posted via `ShellTask::schedule`.
-        Self::run_from_main_thread(this, interp)
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+        Touch::on_shell_touch_task_done(interp, self)
     }
 }
 

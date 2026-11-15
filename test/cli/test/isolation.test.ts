@@ -2608,6 +2608,32 @@ test.concurrent(
   },
 );
 
+test.concurrent("--isolate: a queued watchFile timer update does not re-arm the last file's scheduler", async () => {
+  // The first sleep makes the scheduler's timer due along with `due`. The second lets the stat pass
+  // it started queue its timer update, which the file then ends without running.
+  const fixture = `
+    import { test } from "bun:test";
+    import fs from "node:fs";
+
+    test("leaves a watcher behind", async () => {
+      Bun.gc(true);
+      const polled = Promise.withResolvers();
+      fs.watchFile(import.meta.dir + "/missing", { interval: 5 }, polled.resolve);
+      await polled.promise;
+      const due = Promise.withResolvers();
+      setTimeout(due.resolve, 6);
+      Bun.sleepSync(10);
+      await due.promise;
+      Bun.sleepSync(10);
+    });
+  `;
+  const files = ["./a.test.js", "./b.test.js", "./c.test.js", "./d.test.js"];
+  using dir = tempDir("isolate-statwatcher-update", Object.fromEntries(files.map(file => [file, fixture])));
+  const { stderr, exitCode } = await runTests(String(dir), ["--isolate"], files);
+  expect(stderr).toContain("4 pass");
+  expect(exitCode).toBe(0);
+});
+
 // The synchronous module-load path (require(esm), importSync) must attach the
 // transpiler's ESM-record analysis (module_info) to the ResolvedSource under
 // --isolate, exactly like the async path does. module_info is what turns the

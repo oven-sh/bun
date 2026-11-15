@@ -24,9 +24,13 @@ pub struct RuntimeUses {
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct AsksOfText {
     pub members_read: Vec<BuiltinName>,
+    pub members_named: Vec<BuiltinId>,
+    pub escaped_objects: Vec<BuiltinId>,
     pub reads_by_unknown_key: bool,
     pub syntax: SyntaxWithHelpers,
     pub may_hand_values_to_natives: bool,
+    pub roads_to_namespaces: RoadsToNamespaces,
+    pub namespace_names_read: Vec<BuiltinName>,
 }
 
 impl AsksOfText {
@@ -39,10 +43,51 @@ impl AsksOfText {
 
     pub fn add(&mut self, other: &AsksOfText) {
         self.members_read.extend_from_slice(&other.members_read);
+        self.members_named.extend_from_slice(&other.members_named);
+        self.escaped_objects
+            .extend_from_slice(&other.escaped_objects);
         self.reads_by_unknown_key |= other.reads_by_unknown_key;
         self.syntax |= other.syntax;
         self.may_hand_values_to_natives |= other.may_hand_values_to_natives;
+        self.roads_to_namespaces |= other.roads_to_namespaces;
+        self.namespace_names_read
+            .extend_from_slice(&other.namespace_names_read);
     }
+
+    fn names_read_off_escaped_objects(&self) -> Vec<BuiltinName> {
+        let mut escaped = self.escaped_objects.clone();
+        escaped.sort_unstable();
+        escaped.dedup();
+        let is_escaped =
+            |object: BuiltinId| escaped.binary_search(&table::canonical_id(object)).is_ok();
+        let members = self.members_named.iter().copied();
+        members
+            .filter(|&member| holders_of(member).any(is_escaped))
+            .map(|member| table::entry(member).name)
+            .collect()
+    }
+}
+
+fn holders_of(member: BuiltinId) -> impl Iterator<Item = BuiltinId> {
+    std::iter::successors(table::entry(member).holder, |&object| {
+        table::entry(object).holder
+    })
+}
+
+pub(super) fn holds_name_of_member_with_code(object: BuiltinId) -> bool {
+    static HOLDERS: OnceLock<Box<[bool]>> = OnceLock::new();
+    let holders = HOLDERS.get_or_init(|| {
+        let mut holders = vec![false; BuiltinId::COUNT as usize];
+        for member in BuiltinId::ALL {
+            if is_name_of_language_member_with_code(table::entry(member).name) {
+                for object in holders_of(member) {
+                    holders[table::canonical_id(object).to_wire() as usize] = true;
+                }
+            }
+        }
+        holders.into_boxed_slice()
+    });
+    holders[table::canonical_id(object).to_wire() as usize]
 }
 
 struct Collected {
@@ -220,6 +265,21 @@ bitflags::bitflags! {
         const IMPORT_CALL = 1 << 5;
         const ASYNC_DISPOSAL = 1 << 6;
     }
+
+    #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
+    pub struct RoadsToNamespaces: u8 {
+        const HANDS_ON_BUILTIN = 1 << 0;
+        const CLIMBS_PROTOTYPES = 1 << 1;
+    }
+}
+
+const HAND_OUT_PROTOTYPES: [BuiltinId; 2] = [
+    BuiltinId::ObjectGetPrototypeOf,
+    BuiltinId::ObjectPrototype__proto__,
+];
+
+pub fn is_name_of_prototype_property(name: BuiltinName) -> bool {
+    (HAND_OUT_PROTOTYPES.iter()).any(|&id| table::entry(id).name == name)
 }
 
 fn reads_member_under_key_it_is_handed(id: BuiltinId) -> bool {
@@ -413,6 +473,29 @@ pub fn is_name_under_which_evaluator_hangs(name: BuiltinName) -> bool {
     names[name.0 as usize]
 }
 
+fn namespace_members_with_code() -> impl Iterator<Item = BuiltinId> {
+    let is_member_of_namespace = |id: &BuiltinId| {
+        let holder = table::entry(*id).holder.map(table::canonical_id);
+        holder.is_some_and(|holder| {
+            is_of_language(holder) && table::entry(holder).kind == BuiltinKind::Namespace
+        })
+    };
+    let entries = language_entries_with_code().iter().copied();
+    entries.filter(is_member_of_namespace)
+}
+
+pub fn is_name_of_namespace_member_with_code(name: BuiltinName) -> bool {
+    static NAMES: OnceLock<Box<[bool]>> = OnceLock::new();
+    let names = NAMES.get_or_init(|| {
+        let mut names = vec![false; BuiltinName::COUNT as usize];
+        for id in namespace_members_with_code() {
+            names[table::entry(id).name.0 as usize] = true;
+        }
+        names.into_boxed_slice()
+    });
+    names[name.0 as usize]
+}
+
 pub fn is_name_of_language_member_with_code(name: BuiltinName) -> bool {
     static NAMES: OnceLock<Box<[bool]>> = OnceLock::new();
     let names = NAMES.get_or_init(|| {
@@ -536,12 +619,18 @@ impl Collector {
     }
 
     fn add_members_of_namespaces(&mut self) {
-        for &id in language_entries_with_code() {
-            let holder = table::entry(id).holder.map(table::canonical_id);
-            if holder.is_some_and(|holder| {
-                is_of_language(holder) && table::entry(holder).kind == BuiltinKind::Namespace
-            }) {
+        for id in namespace_members_with_code() {
+            self.add_entry_called_without_other_code(id);
+        }
+    }
+
+    fn add_members_of_named_namespaces(&mut self, names: &[BuiltinName]) {
+        for id in namespace_members_with_code() {
+            if names.contains(&table::entry(id).name) {
                 self.add_entry_called_without_other_code(id);
+                if reads_member_under_key_it_is_handed(id) {
+                    self.add_language();
+                }
             }
         }
     }
@@ -771,12 +860,15 @@ pub struct Mentions<'a> {
     pub exposed: &'a [BuiltinId],
     pub linked_functions: &'a [RuntimeFunction],
     pub members_read: &'a [BuiltinName],
+    pub escaped_objects: &'a [BuiltinId],
     pub reads_by_unknown_key: bool,
     pub may_call_evaluator: bool,
     pub global_object_may_be_looked_through: bool,
     pub aliases_global_object: bool,
     pub syntax: SyntaxWithHelpers,
     pub may_hand_values_to_natives: bool,
+    pub roads_to_namespaces: RoadsToNamespaces,
+    pub namespace_names_read: &'a [BuiltinName],
     pub called: &'a [BuiltinId],
     pub is_of_program: bool,
     pub holds_language: bool,
@@ -789,7 +881,9 @@ impl RuntimeUses {
     }
 
     pub fn of_asks(asks: &AsksOfText, platform: Platforms) -> RuntimeUses {
-        let mut members_read = asks.members_read.clone();
+        let mut members_read = asks.names_read_off_escaped_objects();
+        let asks_operands = asks.asks_operands() || !members_read.is_empty();
+        members_read.extend_from_slice(&asks.members_read);
         members_read.sort_unstable();
         members_read.dedup();
         let mentions = Mentions {
@@ -800,8 +894,11 @@ impl RuntimeUses {
         };
         let mut collector =
             Collector::of_mentions(&mentions, platform).unwrap_or_else(|| Collector::new(platform));
-        if asks.asks_operands() {
+        if asks_operands {
             collector.add_functions(table::FUNCTIONS_FOUND_ON_ANY_OPERAND);
+        }
+        if asks.roads_to_namespaces.is_all() {
+            collector.add_members_of_named_namespaces(&asks.namespace_names_read);
         }
         collector.finish()
     }
@@ -838,12 +935,15 @@ impl Collector {
             exposed,
             linked_functions,
             members_read,
+            escaped_objects,
             reads_by_unknown_key,
             may_call_evaluator,
             global_object_may_be_looked_through,
             aliases_global_object,
             syntax,
             may_hand_values_to_natives,
+            mut roads_to_namespaces,
+            namespace_names_read,
             called,
             is_of_program,
             holds_language,
@@ -858,7 +958,9 @@ impl Collector {
             && !may_call_evaluator
             && !global_object_may_be_looked_through
             && !aliases_global_object
-            && !may_hand_values_to_natives;
+            && !may_hand_values_to_natives
+            && roads_to_namespaces.is_empty()
+            && namespace_names_read.is_empty();
         if names_nothing {
             return None;
         }
@@ -917,17 +1019,28 @@ impl Collector {
             return Some(collector);
         }
         if is_of_program {
+            let has_code =
+                |id: &BuiltinId| is_name_of_language_member_with_code(table::entry(*id).name);
+            let members = mentioned.iter().map(|&id| table::canonical_id(id));
+            if (mentioned.iter()).any(|&id| HAND_OUT_PROTOTYPES.contains(&table::canonical_id(id)))
+            {
+                roads_to_namespaces |= RoadsToNamespaces::CLIMBS_PROTOTYPES;
+            }
             collector.asks = AsksOfText {
                 members_read: match reads_by_unknown_key {
                     true => Vec::new(),
                     false => members_read.to_vec(),
                 },
+                members_named: members.filter(has_code).collect(),
+                escaped_objects: escaped_objects.to_vec(),
                 reads_by_unknown_key,
                 syntax,
                 may_hand_values_to_natives: may_hand_values_to_natives
                     || !exposed.is_empty()
                     || collector.collected.functions.count() > 0
                     || collector.collected.modules.count() > 0,
+                roads_to_namespaces,
+                namespace_names_read: namespace_names_read.to_vec(),
             };
         } else if reads_by_unknown_key {
             collector.add_language();

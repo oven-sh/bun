@@ -4092,6 +4092,17 @@ declare module "bun" {
      */
     aotHarden?: string | string[];
     /**
+     *
+     *
+     *
+     *
+     */
+    aotOrder?: string | string[];
+    /**
+     *
+     */
+    aotRecordOrder?: boolean;
+    /**
      * Profile-guided layout for the executable's bytecode. Requires `bytecode: true`.
      *
      * Run an executable built with `bytecode: true` with `BUN_BYTECODE_ORDER_OUT=<path>`

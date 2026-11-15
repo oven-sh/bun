@@ -1041,35 +1041,12 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__bunVM(self)
     }
 
-    /// What [`Self::bun_vm`] and [`Self::bun_vm_ptr`] assert: this global object
+    /// What [`Self::bun_vm`] asserts: this global object
     /// names `vm`, the calling thread's VM. Not asked once teardown has gone on
     /// to destroy the JSC VM: finalizers still come here, and the global object
     /// goes in no particular order with them.
-    fn names_bun_vm(&self, vm: *mut VirtualMachine) -> bool {
-        // SAFETY: the calling thread's VM, which outlives its JSC VM.
-        let global_is_going = unsafe { (*vm).regular_event_loop.global_is_going() };
-        global_is_going || self.bun_vm_unsafe() == vm.cast::<c_void>()
-    }
-
-    /// Raw-pointer variant of [`Self::bun_vm`]. Returns the per-thread
-    /// `*mut VirtualMachine` so callers that need to mutate VM fields don't
-    /// launder provenance through `&VirtualMachine -> *mut` (UB under Stacked
-    /// Borrows).
-    ///
-    /// Reads the thread-local directly (one `mov fs:[OFF]`) instead of calling
-    /// `JSC__JSGlobalObject__bunVM`: cross-language LTO does not inline that
-    /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
-    /// release binary), and
-    /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. JS thread only; another thread reaches a VM
-    /// through its [`VmHandle`](crate::VmHandle), never through a global.
-    #[inline]
-    pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
-        debug_assert!(
-            self.names_bun_vm(VirtualMachine::get_mut_ptr()),
-            "bun_vm_ptr called off the JS thread",
-        );
-        VirtualMachine::get_mut_ptr()
+    fn names_bun_vm(&self, vm: &VirtualMachine) -> bool {
+        vm.regular_event_loop.global_is_going() || core::ptr::eq(self.bun_vm_unsafe().cast(), vm)
     }
 
     /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of
@@ -1082,19 +1059,15 @@ impl JSGlobalObject {
     /// Returns the Bun `VirtualMachine` owning this global as a safe
     /// `&'static`. The VM is a per-thread singleton allocated once in
     /// `VirtualMachine::init` and never freed while a global exists, so the
-    /// `'static` lifetime is sound. Mutation goes through
-    /// [`JsCell`](crate::JsCell)-wrapped fields or
-    /// [`VirtualMachine::as_mut`]; legacy raw-pointer paths use
-    /// [`Self::bun_vm_ptr`].
+    /// `'static` lifetime is sound.
     ///
     /// Reads the thread-local directly instead of calling
     /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
     /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). JS thread only (see [`Self::bun_vm_ptr`]).
+    /// debug builds). JS thread only; another thread uses a [`VmHandle`](crate::VmHandle).
     #[inline]
     pub fn bun_vm(&self) -> &'static VirtualMachine {
-        #[cfg(debug_assertions)]
-        {
+        if cfg!(debug_assertions) {
             // if this fails
             // you most likely need to run
             //   make clean-jsc-bindings

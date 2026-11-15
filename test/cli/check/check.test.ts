@@ -2595,6 +2595,63 @@ ${[...notRelative, ...twoStars].join(",\n")} } }, "files": ["a.ts"] }`,
       expect([timed.stdout, timed.exitCode]).toEqual(["", 0]);
     });
 
+    test("--timing lists the ten files that took longest to check, the longest first", async () => {
+      const files = Object.fromEntries(
+        Array.from({ length: 12 }, (_, i) => [`src/a${i}.ts`, `export const a${i} = ${i};\n`]),
+      );
+      const literals = Array.from({ length: 200 }, (_, i) => `"${i}"`).join(" | ");
+      using dir = project({
+        ...files,
+        "src/slow.ts": `type A = ${literals};\nexport declare const a: \`\${A}\${A}\`;\n`,
+      });
+      const [timed, plain] = await Promise.all([check(dir, ["--timing"]), check(dir)]);
+      const [, list] = timed.stderr.split("  slowest files:\n");
+      const lines = list.trimEnd().split("\n");
+      const listed = lines.map(line => /^ +([\d.]+)ms  (src\/\w+\.ts)$/.exec(line)!.slice(1));
+      expect(listed[0][1]).toBe("src/slow.ts");
+      const times = listed.map(([time]) => Number(time));
+      expect(times).toEqual(times.toSorted((a, b) => b - a));
+      expect(new Set(listed.map(([, path]) => path)).size).toBe(10);
+      expect(plain.stderr).not.toContain("slowest files");
+      expect([timed.stdout, plain.stdout, timed.exitCode, plain.exitCode]).toEqual(["", "", 0, 0]);
+    });
+
+    // From 512 members of the target on, the two lists are gone through side by side.
+    test.each([511, 512, 700])("relates unions of literals to a union of %d members", async count => {
+      const union = (members: string[]) => members.join(" | ");
+      const all = Array.from({ length: count }, (_, i) => `"k${String(i).padStart(4, "0")}"`);
+      const cases: [error: number | null, source: string[], target: string[]][] = [
+        [null, all.slice(0, -1), all],
+        [null, all.slice(1), all],
+        [null, all.filter((_, i) => i % 3 === 0), all],
+        [null, all.filter((_, i) => i < 100 || i > 300), all],
+        [2322, [`"a"`, ...all.slice(1)], all],
+        // Both are printed alike, because the member that differs is left out.
+        [2719, [...all.slice(0, 200), `"k0200x"`, ...all.slice(201)], all],
+        [2322, [...all.slice(0, -1), `"z"`], all],
+        [2322, [...all, "1"], all],
+        [null, [...all.slice(5), "1", "true"], [...all.slice(2), "1", "boolean"]],
+        [null, [...all.slice(9), "undefined"], [...all.slice(1), "undefined"]],
+        [2322, [...all.slice(9), "undefined"], [...all.slice(1), "null"]],
+        [null, [...all.slice(9), `"x1"`], [...all.slice(1), "`x${number}`"]],
+        [2322, [...all.slice(9), `"xy"`], [...all.slice(1), "`x${number}`"]],
+        [null, [...all.slice(9), "{ a: 1; b: 2 }"], [...all.slice(1), "{ a: 1 }"]],
+        [2322, [...all.slice(9), "{ b: 2 }"], [...all.slice(1), "{ a: 1 }"]],
+      ];
+      const lines = cases.flatMap(([, source, target], i) => [
+        `export const one${i}: ${union(target)} = null! as ${union(source)};`,
+        `export const many${i}: (${union(target)})[] = null! as (${union(source)})[];`,
+      ]);
+      using dir = project({ "a.ts": lines.join("\n") + "\n" });
+      const { stdout, exitCode } = await check(dir);
+      expect(stdout.match(/^\S.*?error TS\d+/gm)).toEqual(
+        cases.flatMap(([error], i) =>
+          error ? [`a.ts(${2 * i + 1},14): error TS${error}`, `a.ts(${2 * i + 2},14): error TS${error}`] : [],
+        ),
+      );
+      expect(exitCode).toBe(1);
+    });
+
     // TypeScript 7.0.2 reports no errors here. `Pick` and `Omit` look up the properties they keep by name. Creating a
     // union's property resolves the types of the properties it combines, and `shape`'s is still being resolved.
     test.each([`Pick<N, "id">`, `Omit<N, "shape">`, `Pick<N, Exclude<keyof N, "shape">>`])(

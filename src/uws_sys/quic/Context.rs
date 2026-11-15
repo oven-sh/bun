@@ -5,23 +5,17 @@
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 
 use crate::Loop;
-use crate::quic::{PendingConnect, Socket, Stream};
+use crate::quic::{OwnedPendingConnect, Socket, Stream};
 
 bun_opaque::opaque_ffi! { pub struct Context; }
 
 unsafe extern "C" {
     fn us_create_quic_client_context(
-        loop_: *mut Loop,
+        loop_: &Loop,
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,
     ) -> *mut Context;
-
-    // `Context` is an `opaque_ffi!` ZST (`UnsafeCell<[u8; 0]>`), so
-    // `&mut Context` is ABI-identical to a non-null `*mut Context` with no
-    // `noalias`/`readonly` attribute. Shims taking only the handle + value
-    // types (incl. fn-pointer callbacks) are `safe fn`.
-    safe fn us_quic_socket_context_loop(ctx: &mut Context) -> *mut Loop;
 
     fn us_quic_socket_context_connect(
         ctx: *mut Context,
@@ -30,10 +24,11 @@ unsafe extern "C" {
         sni: *const c_char,
         reject_unauthorized: c_int,
         out_qs: *mut *mut Socket,
-        out_pending: *mut *mut PendingConnect,
+        out_pending: *mut Option<OwnedPendingConnect>,
         user: *mut c_void,
     ) -> c_int;
 
+    // `Context` is an `opaque_ffi!` ZST: shims that take only it and a callback are `safe fn`.
     safe fn us_quic_socket_context_on_hsk_done(
         ctx: &mut Context,
         cb: unsafe extern "C" fn(*mut Socket, c_int),
@@ -73,19 +68,16 @@ pub enum ConnectResult {
     Socket(*mut Socket),
     /// DNS cache miss: caller must register a `Bun__addrinfo` callback on
     /// `pending.addrinfo()` and call `pending.resolved()` when it fires.
-    Pending(*mut PendingConnect),
+    Pending(OwnedPendingConnect),
     Err,
 }
 
 impl Context {
     /// # Safety
-    /// `loop_` must point to a live `us_loop_t`. Takes a raw pointer (not `&mut Loop`)
-    /// because the Loop is shared across every context/socket/timer on the thread,
-    /// so requiring `&mut` would force callers to assert uniqueness that does not
-    /// hold.
+    /// `global_init` has run.
     #[inline]
     pub unsafe fn create_client(
-        loop_: *mut Loop,
+        loop_: &'static Loop,
         ext_size: c_uint,
         conn_ext: c_uint,
         stream_ext: c_uint,
@@ -93,15 +85,6 @@ impl Context {
         // SAFETY: thin FFI forward; all args are POD, return is nullable.
         let p = unsafe { us_create_quic_client_context(loop_, ext_size, conn_ext, stream_ext) };
         if p.is_null() { None } else { Some(p) }
-    }
-
-    #[inline]
-    pub fn r#loop(&mut self) -> *mut Loop {
-        // Returns a raw pointer because the Loop is shared across every
-        // context/socket/timer on the thread —
-        // materializing `&mut Loop` here would assert uniqueness we cannot
-        // guarantee.
-        us_quic_socket_context_loop(self)
     }
 
     pub fn connect(
@@ -113,7 +96,7 @@ impl Context {
         user: *mut c_void,
     ) -> ConnectResult {
         let mut qs: *mut Socket = core::ptr::null_mut();
-        let mut pc: *mut PendingConnect = core::ptr::null_mut();
+        let mut pc = None;
         // SAFETY: self is a live us_quic_socket_context_t; out-params are valid for write.
         let rc = unsafe {
             us_quic_socket_context_connect(
@@ -127,10 +110,10 @@ impl Context {
                 user,
             )
         };
-        match rc {
-            1 => ConnectResult::Socket(qs),
-            0 => ConnectResult::Pending(pc),
-            _ => ConnectResult::Err,
+        match pc {
+            Some(pc) => ConnectResult::Pending(pc),
+            None if rc == 1 => ConnectResult::Socket(qs),
+            None => ConnectResult::Err,
         }
     }
 

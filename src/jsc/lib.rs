@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
@@ -131,8 +132,6 @@ pub mod console_object;
 pub mod counters;
 #[path = "DecodedJSValue.rs"]
 pub mod decoded_js_value;
-#[path = "DeprecatedStrong.rs"]
-pub mod deprecated_strong;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -158,6 +157,8 @@ pub mod js_type;
 pub mod js_value;
 #[path = "rare_data.rs"]
 pub mod rare_data;
+#[path = "SpawnSyncEventLoop.rs"]
+pub mod spawn_sync_event_loop;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]
@@ -343,7 +344,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
-pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
 pub use self::js_ref::{JsCellRefExt, JsRef};
 pub use self::string_builder::StringBuilder;
@@ -351,7 +351,7 @@ pub use self::uuid::{UUID, UUID5, UUID7};
 
 pub use self::js_function::JSFunction;
 pub use self::js_module_loader::JSModuleLoader;
-pub use self::strong::{Optional as StrongOptional, Strong};
+pub use self::strong::{Optional as StrongOptional, Strong, StrongCell};
 pub use self::weak::{Weak, WeakRefType};
 
 pub use self::exception::Exception;
@@ -455,8 +455,6 @@ pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
 
-#[path = "AsyncModule.rs"]
-pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[cfg(debug_assertions)]
@@ -507,13 +505,12 @@ pub fn initialize(options: InitializeOptions) {
     if options.runs_compiled_code {
         bindgen::hold_results_to_declared_types();
     }
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the
-    // call; `on_jsc_invalid_env_var` is `extern "C"` and only reads the (ptr,len)
-    // it is handed. JSCInitialize is called exactly once at startup.
+    // SAFETY: nothing changes the environment during the call, which is made once at startup;
+    // `on_jsc_invalid_env_var` only reads the (ptr,len) it is handed.
     unsafe {
+        let env = bun_sys::environ();
         JSCInitialize(
-            env.as_ptr(),
+            env.as_ptr().cast(),
             env.len(),
             on_jsc_invalid_env_var,
             options.eval_mode,
@@ -529,9 +526,11 @@ pub fn initialize(options: InitializeOptions) {
 /// `bun lint` with plugins in JavaScript: there are going to be many VMs, each busy on a thread of its own. After [`initialize`], and before the
 /// first VM, which freezes JSC's options.
 pub fn expect_vm_per_thread() {
-    let env = bun_sys::environ();
-    // SAFETY: `env` borrows the libc `environ` global for the duration of the call.
-    unsafe { JSC__useOptionsForVMPerThread(env.as_ptr(), env.len()) };
+    // SAFETY: nothing changes the environment during the call, which is made before the first VM.
+    unsafe {
+        let env = bun_sys::environ();
+        JSC__useOptionsForVMPerThread(env.as_ptr().cast(), env.len());
+    }
 }
 
 /// Whether this process was launched as `bun -e <code>` / `bun --eval <code>` /
@@ -699,7 +698,7 @@ pub use self::dom_form_data::DOMFormData;
 pub use self::url::{URL, URLJsc};
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
-pub use abort_signal::{AbortSignal, AbortSignalRef};
+pub use abort_signal::{AbortSignal, AbortSignalRef, PendingAbortSignal};
 pub use script_execution_context::{
     AbortCause, AbortHandle, AbortHandleOwner, ContextId, ContextTimer, ScriptExecutionContext,
     StopReason,
@@ -945,7 +944,7 @@ pub use self::js_promise::Status as PromiseStatus;
 pub use bun_core::String;
 
 /// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
+/// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
@@ -1023,7 +1022,7 @@ pub struct ValidateObjectOpts {
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "JSObject.rs"]
 pub mod js_object;
-pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, JSObject};
+pub use self::js_object::{ExternColumnIdentifier, JSObject};
 
 // ──────────────────────────────────────────────────────────────────────────
 // CallFrame / ArgumentsSlice (real module in CallFrame.rs).
@@ -1129,10 +1128,6 @@ impl FromJsEnum for bun_http_types::FetchCacheMode::FetchCacheMode {
 pub mod js_string;
 pub use self::js_string::{JSString, JSStringView};
 
-#[path = "RefString.rs"]
-pub mod ref_string;
-pub use self::ref_string as RefString;
-
 pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
@@ -1196,7 +1191,7 @@ pub use self::event_loop::{
     DeferredTaskQueue, EventLoopHandle, EventLoopTask, GarbageCollectionController, MiniEventLoop,
     PosixSignalTask, Stopped, Task, WorkPool, WorkPoolTask,
 };
-pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread, Protected};
+pub use self::job::{Completion, Job, JobContext, JsPtr, JsThread};
 #[cfg(unix)]
 pub type PlatformEventLoop = bun_uws::Loop;
 #[cfg(not(unix))]
@@ -1400,24 +1395,30 @@ pub trait JsClass: Sized {
 /// Track whether an object should keep the event loop alive
 #[derive(Default)]
 pub struct Ref {
-    pub has: bool,
+    pub has: core::cell::Cell<bool>,
 }
 
 impl Ref {
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if !self.has {
+    pub fn unref(&self, vm: &virtual_machine::VirtualMachine) {
+        if !self.has.get() {
             return;
         }
-        self.has = false;
-        vm.active_tasks -= 1;
+        self.has.set(false);
+        vm.active_tasks.update(|n| n - 1);
     }
 
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if self.has {
+    pub fn r#ref(&self, vm: &virtual_machine::VirtualMachine) {
+        if self.has.get() {
             return;
         }
-        self.has = true;
-        vm.active_tasks += 1;
+        self.has.set(true);
+        vm.active_tasks.update(|n| n + 1);
+    }
+}
+
+impl Drop for Ref {
+    fn drop(&mut self) {
+        self.unref(virtual_machine::VirtualMachine::get());
     }
 }
 

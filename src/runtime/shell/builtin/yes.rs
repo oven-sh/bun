@@ -93,7 +93,7 @@ impl Yes {
         // which matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell_mut();
+            let shell = &mut *cmd_node.shell;
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };
@@ -224,7 +224,7 @@ impl YesTask {
                     owner.enqueue_task_after_yield(bun_jsc::Task::init(this));
                 }
                 EventLoopHandle::Mini(mini) => {
-                    (*mini.loop_).tick();
+                    mini.loop_.tick();
                     let at =
                         core::ptr::NonNull::new_unchecked(match &mut (*this).concurrent_task {
                             EventLoopTask::Mini(at) => {

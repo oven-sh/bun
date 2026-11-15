@@ -130,7 +130,6 @@ members = [
   "src/runtime",
   "src/simdutf_sys",
   "src/which",
-  "src/transpiler",
   "src/react_compiler",
   "src/spawn",
   "src/spawn_sys",
@@ -512,7 +511,6 @@ bun_bunfig = { path = "src/bunfig" }
 bun_output = { path = "src/output" }
 bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
-bun_transpiler = { path = "src/transpiler" }
 
 # Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
 # checks stay on. scripts/build/flags.ts does the same for highway_png.cpp.

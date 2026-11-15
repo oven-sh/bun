@@ -1007,15 +1007,14 @@ pub(crate) fn make_native_promise_context(cx: &mut JsScope<'_>) -> JSValue {
     // Only the destructor of a cell that still has its pointer reads the tag, and the test takes the pointer.
     Bun__NativePromiseContext__create(
         cx.global(),
-        PROMISE_CONTEXT.as_ptr().cast(),
+        TestRefCounted::constructor(42).cast(),
         0,
         JSValue::ZERO,
     )
 }
 
-pub(crate) fn read_native_promise_context(context: Option<NonNull<AtomicI32>>) -> Option<i32> {
-    // SAFETY: `make_native_promise_context` made the cell of a static.
-    context.map(|context| unsafe { context.as_ref() }.load(Ordering::Relaxed))
+pub(crate) fn read_native_promise_context(context: Option<RefPtr<TestRefCounted>>) -> Option<i32> {
+    context.map(|context| context.get_value())
 }
 
 pub(crate) fn primes() -> [u32; 3] {

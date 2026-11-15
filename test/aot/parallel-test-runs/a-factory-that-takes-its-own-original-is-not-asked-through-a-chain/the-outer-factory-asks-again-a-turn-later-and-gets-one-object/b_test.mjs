@@ -1,5 +1,6 @@
 import { test, vi } from "bun:test";
 const keys = it => Object.keys(it).sort().join();
+globalThis.originalMayLoad = new Promise(done => { globalThis.letOriginalLoad = done; });
 test("b", async () => {
   vi.doMock("./warp.mjs", async () => {
     const real = await vi.importActual("./warp.mjs");
@@ -10,6 +11,7 @@ test("b", async () => {
     const first = import("./warp.mjs");
     await new Promise(done => setImmediate(done));
     const second = import("./warp.mjs");
+    globalThis.letOriginalLoad();
     const [one, two] = await Promise.all([first, second]);
     console.log("SAID the outer has one object " + (one === two) + " | " + keys(one) + " | " + keys(two));
     globalThis.one = one; globalThis.two = two;

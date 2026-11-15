@@ -24,15 +24,6 @@ const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 // heap-compare path. Consider denormalizing `epoch` into `EventLoopTimer`
 // to drop the cross-crate call if profiling shows it matters.
 unsafe extern "Rust" {
-    /// Runtime owns the tag→variant `match`; `vm` is an erased
-    /// `*mut VirtualMachine`. Defined in `bun_runtime::dispatch`.
-    ///
-    /// SAFETY (genuine FFI precondition — NOT a `safe fn` candidate): impl
-    /// derefs `t`, recovers the tier-6 container via `container_of`
-    /// keyed on `(*t).tag`, and may free that container. Caller must pass a
-    /// live timer just popped from `All.timers` and must not touch `t` after.
-    fn __bun_fire_timer(t: *mut EventLoopTimer, now: &timespec, vm: *mut ())
-    -> crate::JsResult<()>;
     /// Returns the JS-timer epoch (TimerObjectInternals.flags.epoch) for
     /// TimeoutObject/ImmediateObject/AbortSignalTimeout, else `None`.
     /// Defined in `bun_runtime::dispatch`.
@@ -41,6 +32,9 @@ unsafe extern "Rust" {
     /// recovers the parent struct via `container_of` keyed on `tag`; `t` must
     /// be the `event_loop_timer` field of that container (tag invariant).
     fn __bun_js_timer_epoch(tag: Tag, t: *const EventLoopTimer) -> Option<u32>;
+
+    /// Defined in `bun_runtime::jsc_hooks`.
+    safe fn __bun_remove_timer(timer: &EventLoopTimer);
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -69,6 +63,35 @@ impl bun_io::heap::HeapNode for EventLoopTimer {
     }
 }
 
+/// An [`EventLoopTimer`] that leaves the heap when it drops.
+#[repr(transparent)]
+pub struct OwnedTimer(EventLoopTimer);
+
+impl OwnedTimer {
+    pub fn init_paused(tag: Tag) -> Self {
+        Self(EventLoopTimer::init_paused(tag))
+    }
+
+    /// The pointer to link, with the provenance of `this`.
+    pub const fn node(this: *const Self) -> *const EventLoopTimer {
+        this.cast()
+    }
+}
+
+impl core::ops::Deref for OwnedTimer {
+    type Target = EventLoopTimer;
+
+    fn deref(&self) -> &EventLoopTimer {
+        &self.0
+    }
+}
+
+impl Drop for OwnedTimer {
+    fn drop(&mut self) {
+        self.disarm();
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum InHeap {
     None,
@@ -85,6 +108,13 @@ impl EventLoopTimer {
             heap: IntrusiveField::default(),
             in_heap: Cell::new(InHeap::None),
             is_due_when_idle: Cell::new(false),
+        }
+    }
+
+    /// Unlinks an armed timer from the heap of this thread's VM. A `WTFTimer` is in another.
+    pub fn disarm(&self) {
+        if self.state.get() == State::ACTIVE {
+            __bun_remove_timer(self);
         }
     }
 
@@ -150,32 +180,6 @@ impl EventLoopTimer {
         // SAFETY: `self` is a live timer; the extern impl reads `tag` and
         // recovers the container via `offset_of`.
         unsafe { __bun_js_timer_epoch(self.tag, self) }
-    }
-
-    /// Fire the timer's callback.
-    ///
-    /// The `match self.tag { … container_of … }` body is
-    /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
-    /// PostgresSQLConnection, …). That match lives in
-    /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
-    /// the erased `*mut VirtualMachine`.
-    ///
-    /// Takes a pointer because the handler recovers the container from it and may free it.
-    ///
-    /// The owner returns the exception its handler left pending as `Err` and
-    /// never reports it itself; the drain loop that called `fire` folds it.
-    ///
-    /// # Safety
-    /// `this` is a live timer just popped from `All.timers`; `now` is the
-    /// snapshot taken by `All::next`; `vm` is the per-thread VM. The handler
-    /// may free the container — caller must not touch `this` after.
-    pub unsafe fn fire(
-        this: *mut Self,
-        now: &timespec,
-        vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
-    ) -> crate::JsResult<()> {
-        // SAFETY: per fn contract.
-        unsafe { __bun_fire_timer(this, now, vm) }
     }
 }
 
@@ -266,7 +270,7 @@ impl Tag {
 /// to the named intrusive [`EventLoopTimer`] slot (typed container_of).
 ///
 /// The accessor layer exists only as a cross-crate visibility shim: the
-/// `__bun_fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
+/// `fire_timer` tag-dispatch in `bun_runtime` cannot name private timer
 /// fields on owners defined elsewhere, so each owner exports a named thunk per
 /// slot. The input is `*const` (so `*mut` / `&mut` / `&` all coerce at the
 /// call site); the field may be a bare `EventLoopTimer` or any

@@ -6933,17 +6933,17 @@ describe.concurrent("a handler that closes its socket and then waits for a promi
       const polls = () => require("bun:internal-for-testing").getEventLoopStats().numPolls;
       const sockets = await Promise.all(Array.from({ length: 50 }, () => Bun.udpSocket({ hostname: "127.0.0.1" })));
       setImmediate(async () => {
-        const open = polls();
         for (const socket of sockets) socket.close();
+        const closed = polls();
         const built = Bun.build({
           entrypoints: ["/wait.js"],
           files: { "/wait.js": "" },
           plugins: [{ name: "wait", setup: () => Bun.sleep(20) }],
         });
-        const kept = polls() > open - 25;
+        const kept = polls() > closed - 25;
         await built;
         await Bun.sleep(1);
-        console.log(JSON.stringify({ kept, freed: polls() < open - 25 }));
+        console.log(JSON.stringify({ kept, freed: polls() < closed - 25 }));
       });`;
     await using proc = Bun.spawn({ cmd: [bunExe(), "-e", source], env: bunEnv, stdout: "pipe", stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

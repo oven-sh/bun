@@ -667,37 +667,53 @@ describe("Bun.build env", () => {
     ]);
   });
 
-  // An HTML entry point of a build for bun is a page too. When a plugin's onResolve sees that entry point, Bun builds
-  // the page with the options of the server, with or without `env`. Such a page follows the server.
-  test.concurrent('"disable" for bun and an HTML entry point that a plugin sees', async () => {
+  // An HTML entry point of a build for bun is a page too. The page gets the mode of the build on every path that an
+  // entry point can take: from the disk, through a plugin's onResolve, and from `files`.
+  test.concurrent('"disable" for bun does not change the page of an HTML entry point', async () => {
     using dir = tempDir("bun-build-env-disable-html-entry", {
       "index.html": `<!DOCTYPE html><html><body><script type="module" src="./page.js"></script></body></html>`,
-      "page.js": `console.log("page:", process.env.NODE_ENV);`,
+      "page.js": `console.log("page:", process.env.NODE_ENV, process.env.BUN_ENV);`,
       "build-fixture.ts": /* ts */ `
+        import { readFileSync } from "node:fs";
+        import { join } from "node:path";
         ${buildEachVariant}
-        const passThrough = { name: "pass-through", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } };
+        const declines = { name: "declines", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } };
+        const answers = { name: "answers", setup(build) { build.onResolve({ filter: /^page:/ }, () => ({ path: join(import.meta.dir, "index.html") })); } };
+        const inMemory = join(import.meta.dir, "in-memory.html");
         const pageLog = async result => {
           for (const output of result.outputs) {
             const line = firstLog(await output.text());
             if (line) return line;
           }
         };
-        const out = await buildEach({ entrypoints: ["./index.html"], target: "bun" }, {
-          "absent": {},
-          '"disable"': { env: "disable" },
-          "absent, a plugin sees the entry point": { plugins: [passThrough] },
-          '"disable", a plugin sees the entry point': { env: "disable", plugins: [passThrough] },
-        }, pageLog);
+        const paths = {
+          "from the disk": {},
+          "a plugin declines the entry point": { plugins: [declines] },
+          "a plugin answers the entry point": { entrypoints: ["page:index"], plugins: [answers] },
+          "files gives the entry point": { entrypoints: [inMemory], files: { [inMemory]: readFileSync("./index.html", "utf8") } },
+        };
+        const out = {};
+        for (const [name, options] of Object.entries(paths)) {
+          Object.assign(out, await buildEach({ entrypoints: ["./index.html"], target: "bun", ...options }, {
+            [name]: {},
+            [name + ', "disable"']: { env: "disable" },
+          }, pageLog));
+        }
         console.log(JSON.stringify(out));
       `,
     });
 
+    const page = `console.log("page:", "development", "development");`;
     expect(await runBuildScript(String(dir))).toEqual({
       printed: {
-        "absent": `console.log("page:", "development");`,
-        '"disable"': `console.log("page:", "development");`,
-        "absent, a plugin sees the entry point": `console.log("page:", "development");`,
-        '"disable", a plugin sees the entry point': `console.log("page:", process.env.NODE_ENV);`,
+        "from the disk": page,
+        'from the disk, "disable"': page,
+        "a plugin declines the entry point": page,
+        'a plugin declines the entry point, "disable"': page,
+        "a plugin answers the entry point": page,
+        'a plugin answers the entry point, "disable"': page,
+        "files gives the entry point": page,
+        'files gives the entry point, "disable"': page,
       },
       stderr: "",
       exitCode: 0,

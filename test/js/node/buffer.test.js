@@ -1,4 +1,4 @@
-import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
+import { Buffer, isAscii, isUtf8, kMaxLength, SlowBuffer } from "buffer";
 import { CString, ptr } from "bun:ffi";
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";

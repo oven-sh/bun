@@ -12,25 +12,6 @@ use crate::linker_context_mod::{LinkerContext, debug};
 use crate::options::Loader;
 use crate::{Chunk, CompileResult};
 
-/// Rrewrite the HTML with the following transforms:
-/// 1. Remove all <script> and <link> tags which were not marked as
-///    external. This is defined by the source_index on the ImportRecord,
-///    when it's not Index.invalid then we update it accordingly. This will
-///    need to be a reference to the chunk or asset.
-/// 2. For all other non-external URLs, update the "src" or "href"
-///    attribute to point to the asset's unique key. Later, when joining
-///    chunks, we will rewrite these to their final URL or pathname,
-///    including the public_path.
-/// 3. If a JavaScript chunk exists, add a <script type="module" crossorigin> tag that contains
-///    the JavaScript for the entry point which uses the "src" attribute
-///    to point to the JavaScript chunk's unique key.
-/// 4. If a CSS chunk exists, add a <link rel="stylesheet" href="..." crossorigin> tag that contains
-///    the CSS for the entry point which uses the "href" attribute to point to the
-///    CSS chunk's unique key.
-/// 5. For each imported module or chunk within the JavaScript code, add
-///    a <link rel="modulepreload" href="..." crossorigin> tag that
-///    points to the module or chunk's unique key so that we tell the
-///    browser to preload the user's code.
 struct HTMLLoader<'r, 'a> {
     linker: &'r LinkerContext<'r, 'a>,
     import_records: &'r [ImportRecord<'a>],
@@ -325,6 +306,25 @@ impl HTMLLoader<'_, '_> {
     }
 }
 
+/// Rewrite the HTML with the following transforms:
+/// 1. Remove all <script> and <link> tags which were not marked as
+///    external. This is defined by the source_index on the ImportRecord,
+///    when it's not Index.invalid then we update it accordingly. This will
+///    need to be a reference to the chunk or asset.
+/// 2. For all other non-external URLs, update the "src" or "href"
+///    attribute to point to the asset's unique key. Later, when joining
+///    chunks, we will rewrite these to their final URL or pathname,
+///    including the public_path.
+/// 3. If a JavaScript chunk exists, add a <script type="module" crossorigin> tag that contains
+///    the JavaScript for the entry point which uses the "src" attribute
+///    to point to the JavaScript chunk's unique key.
+/// 4. If a CSS chunk exists, add a <link rel="stylesheet" href="..." crossorigin> tag that contains
+///    the CSS for the entry point which uses the "href" attribute to point to the
+///    CSS chunk's unique key.
+/// 5. For each imported module or chunk within the JavaScript code, add
+///    a <link rel="modulepreload" href="..." crossorigin> tag that
+///    points to the module or chunk's unique key so that we tell the
+///    browser to preload the user's code.
 pub(crate) fn generate_compile_result_for_html_chunk<'a>(
     c: &LinkerContext<'_, 'a>,
     chunk: &Chunk<'a>,

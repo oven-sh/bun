@@ -6,7 +6,7 @@ use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use crate::generated_bindgen::js_my_sql_connection::js_MySQLConnection as js;
 use crate::jsc::api::server_config::SSLConfig;
 use crate::jsc::{
-    AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult,
+    AutoFlush, EventLoopTimerTag, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, OwnedTimer,
     VirtualMachine, VirtualMachineSqlExt as _, run_callback,
 };
 use crate::shared::cached_structure::{column_name_to_js, transform_name};
@@ -95,19 +95,17 @@ pub struct JSMySQLConnection {
     flags: Cell<ConnectionFlags>,
 
     auto_flush_registered: Cell<bool>,
-    timers: ConnectionTimers,
+    timers: Timers,
 }
 
-bun_event_loop::impl_timer_owner!(JSMySQLConnection;
-    from_timer_ptr => timers.timer,
-    from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
+const TIMEOUT: EventLoopTimerTag = EventLoopTimerTag::MySQLConnectionTimeout;
+const MAX_LIFETIME: EventLoopTimerTag = EventLoopTimerTag::MySQLConnectionMaxLifetime;
+type Timers = ConnectionTimers<TIMEOUT, MAX_LIFETIME>;
+
+bun_event_loop::impl_timer_owner!(JSMySQLConnection, drop = Self::unregister_auto_flusher;
+    (timers: Timers).timer: OwnedTimer<MySQLConnectionTimeout>,
+    (timers: Timers).max_lifetime_timer: OwnedTimer<MySQLConnectionMaxLifetime>,
 );
-
-impl Drop for JSMySQLConnection {
-    fn drop(&mut self) {
-        self.unregister_auto_flusher();
-    }
-}
 
 impl JSMySQLConnection {
     /// Hold a ref on `self` for the guard's lifetime (across re-entrant calls).
@@ -128,8 +126,8 @@ impl JSMySQLConnection {
     }
 }
 
-impl TimedConnection for JSMySQLConnection {
-    fn timers(&self) -> &ConnectionTimers {
+impl TimedConnection<TIMEOUT, MAX_LIFETIME> for JSMySQLConnection {
+    fn timers(&self) -> &Timers {
         &self.timers
     }
 
@@ -385,10 +383,10 @@ impl JSMySQLConnection {
                 args.idle_timeout_ms,
                 args.connection_timeout_ms,
                 args.max_lifetime_ms,
-                EventLoopTimerTag::MySQLConnectionTimeout,
-                EventLoopTimerTag::MySQLConnectionMaxLifetime,
             ),
         });
+        OwnedTimer::<TIMEOUT>::mark_pinned(this.as_pin_ref());
+        OwnedTimer::<MAX_LIFETIME>::mark_pinned(this.as_pin_ref());
         let ptr = this.as_ptr();
 
         {

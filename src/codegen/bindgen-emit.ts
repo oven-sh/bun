@@ -2179,7 +2179,7 @@ function rustForClass(type: ClassType, scope: RustScope): string {
   type Receiver = keyof typeof receiverArgument;
   const takeThis = (receiver: Receiver, passThis: boolean) => {
     if (receiver === "static") return "";
-    const wrapped = `let wrapped = bindgen::class_ref_from_extern::<${rustPath}>(*this.byte_add(${offsetOfPayload(type)}).cast(), &cx.heap);\n`;
+    const wrapped = `let wrapped = bindgen::class_ref_ptr_from_extern::<${rustPath}>(this.byte_add(${offsetOfPayload(type)}), &cx.heap);\n`;
     const wrapper = `let this = bindgen::JsWrapper::<${rustPath}>::from_extern(core::ptr::NonNull::new_unchecked(this), &cx.heap);\n`;
     return (refCounted ? wrapped : "") + (passThis || !refCounted ? wrapper : "");
   };

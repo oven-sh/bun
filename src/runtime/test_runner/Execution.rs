@@ -42,7 +42,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, Strong, StrongCell};
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
-use bun_ptr::CellExt as _;
+use bun_ptr::{CellExt as _, VecCellExt as _};
 
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
@@ -291,7 +291,7 @@ impl ExecutionSequence {
             ..Default::default()
         };
         let entry = buntest.create_sequence_entry(Some(callback), cfg, AddedInPhase::Execution);
-        self.deferred.with_taken(|deferred| deferred.push((when, entry)));
+        self.deferred.push((when, entry));
     }
 
     fn take_deferred(&self, buntest: &BunTest) -> Option<SequenceEntryId> {
@@ -812,7 +812,7 @@ impl Execution {
                 )
             })
             .unwrap_or_default();
-        sequence.earlier_failures.with_taken(|failures| failures.push(failure));
+        sequence.earlier_failures.push(failure);
     }
 
     fn reset_sequence(buntest: &BunTest, sequence: &ExecutionSequence) {

@@ -835,8 +835,7 @@ fn generate_instruction_types(
                 for prop in &object_pattern.properties {
                     if let ObjectPropertyOrSpread::Property(obj_prop) = prop {
                         match &obj_prop.key {
-                            ObjectPropertyKey::Identifier { name }
-                            | ObjectPropertyKey::String { name } => {
+                            ObjectPropertyKey::String { name } => {
                                 let prop_place_type =
                                     get_type(obj_prop.place.identifier, identifiers);
                                 let value_type = get_type(value.identifier, identifiers);
@@ -849,7 +848,23 @@ fn generate_instruction_types(
                                     shapes,
                                 )?;
                             }
-                            _ => {}
+                            // Not in upstream, where this key is a name: a shape names an index, and no other number.
+                            ObjectPropertyKey::Number { name } => {
+                                let index = name.value() as u32;
+                                let property = if f64::from(index) == name.value() {
+                                    index_property_literal(index as usize)
+                                } else {
+                                    PropertyLiteral::Number(*name)
+                                };
+                                unifier.unify_property(
+                                    get_type(obj_prop.place.identifier, identifiers),
+                                    &get_type(value.identifier, identifiers),
+                                    get_name(names, value.identifier),
+                                    PropertyName::Literal(&property),
+                                    shapes,
+                                )?;
+                            }
+                            ObjectPropertyKey::Computed { .. } => {}
                         }
                     }
                 }

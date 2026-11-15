@@ -2443,19 +2443,9 @@ fn codegen_object_expression(
                 match obj_prop.property_type {
                     ObjectPropertyType::Property => {
                         let value = codegen_place_to_expression(cx, &obj_prop.place)?;
-                        let is_shorthand =
-                            matches!(obj_prop.key, ObjectPropertyKey::Identifier { .. })
-                                && matches!(
-                                    (key.data, value.data),
-                                    (ExprData::EString(k), ExprData::EIdentifier(_v))
-                                        if name_matches_ref(cx, k.get(), value)
-                                );
                         let mut prop_flags = flags::PROPERTY_NONE;
                         if computed {
                             prop_flags |= flags::Property::IsComputed;
-                        }
-                        if is_shorthand {
-                            prop_flags |= flags::Property::WasShorthand;
                         }
                         ast_properties.push(G::Property {
                             kind: G::PropertyKind::Normal,
@@ -2545,29 +2535,12 @@ fn codegen_object_expression(
     ))
 }
 
-fn name_matches_ref(cx: &Context, key: &E::EString, value: Expr) -> bool {
-    let ExprData::EIdentifier(id) = value.data else {
-        return false;
-    };
-    if !key.is_utf8() {
-        return false;
-    }
-    let symbols = cx.cg.host.symbols();
-    let idx = id.ref_.inner_index() as usize;
-    symbols
-        .get(idx)
-        .is_some_and(|s| s.original_name.slice() == key.data.slice())
-}
-
 fn codegen_object_property_key(
     cx: &mut Context,
     key: &ObjectPropertyKey,
 ) -> Result<Expr, CompilerError> {
     match key {
         ObjectPropertyKey::String { name } => {
-            Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
-        }
-        ObjectPropertyKey::Identifier { name } => {
             Ok(Expr::init(E::EString::init(name.slice()), Loc::EMPTY))
         }
         ObjectPropertyKey::Computed { name } => codegen_place_to_expression(cx, name),

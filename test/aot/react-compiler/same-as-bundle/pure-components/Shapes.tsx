@@ -33,6 +33,22 @@ export function Objects({ a, text, list }: Props) {
   return { ...rest, renamed, list: [...list, a], first: list[0], last: list.at(-1), has: "text" in base };
 }
 
+// The engine names a numeric key: "1e+21", "1e-7", "Infinity".
+export function NumericKeys({ a, text }: Props) {
+  "use memo";
+  const keyed = { 1e21: a, 1e-7: a, 1e999: a, 1795928673356736.2: a, "1000000000000000000000": text };
+  const { 1e21: large, 1e-7: small } = keyed;
+  const methods = {
+    1e21() {
+      return a;
+    },
+    inf() {
+      return text;
+    },
+  };
+  return { keyed, large, small, methods: Object.keys(methods) };
+}
+
 export function Loops({ a, list }: Props) {
   "use memo";
   const out: (number | string)[] = [];

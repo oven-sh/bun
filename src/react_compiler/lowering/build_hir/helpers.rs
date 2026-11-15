@@ -1,4 +1,4 @@
-//! Port of build_hir.rs lines 1–662 and 4362–5509 — see mod.rs.
+//! Port of build_hir.rs lines 1–662, 4362–5509 and 6514–6552 — see mod.rs.
 
 use crate::diagnostics::{CompilerError, CompilerErrorDetail, ErrorCategory, cold_todo};
 use crate::hir::*;
@@ -13,15 +13,6 @@ use super::lower_expression;
 #[inline]
 pub(super) fn arena_str(bytes: &[u8]) -> StoreStr {
     StoreStr::new(ast::data_store_dupe_str(bytes))
-}
-
-struct WriteBytes<'a>(&'a mut HirVec<u8>);
-impl core::fmt::Write for WriteBytes<'_> {
-    #[inline]
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.0.extend_from_slice(s.as_bytes());
-        Ok(())
-    }
 }
 
 // =============================================================================
@@ -1157,13 +1148,10 @@ pub(super) fn lower_object_property_key(
             };
             Ok(Some(ObjectPropertyKey::String { name }))
         }
-        Data::ENumber(n) if !computed => {
-            let mut buf: HirVec<u8> = AstAlloc::vec_with_capacity(24);
-            let _ = core::fmt::write(&mut WriteBytes(&mut buf), format_args!("{}", n.value()));
-            Ok(Some(ObjectPropertyKey::Identifier {
-                name: StoreStr::new(buf.leak()),
-            }))
-        }
+        // Unlike upstream, which names the key: a name prints as a string key here, and `1e21` is the key "1e+21".
+        Data::ENumber(n) if !computed => Ok(Some(ObjectPropertyKey::Number {
+            name: FloatValue::new(n.value()),
+        })),
         _ if computed => {
             let place = lower_expression_to_temporary(builder, key)?;
             Ok(Some(ObjectPropertyKey::Computed { name: place }))

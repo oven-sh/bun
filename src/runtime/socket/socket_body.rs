@@ -3049,6 +3049,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.upgrade_tls_impl(global, options.to_js(), false)
     }
 
+    /// `Connected` also holds a socket whose `connect()` is still pending.
+    fn established_us_socket(&self) -> Option<*mut uws::us_socket_t> {
+        let socket = self.socket.get();
+        socket.socket.get().filter(|_| socket.is_established())
+    }
+
     /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
     /// (`checkServerIdentity`), so its internal entry point sets it; the public
     /// `upgradeTLS` never does.
@@ -3061,12 +3067,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if SSL {
             return Ok(JSValue::UNDEFINED);
         }
-        // adoptTLS needs a real `*us_socket_t`. `.connecting` (DNS /
-        // happy-eyeballs in flight) and `.upgradedDuplex` have no fd to
-        // adopt; the old `isDetached()/isNamedPipe()` guard let those
-        // through and the `.connected` payload read below would then be
-        // illegal-union-access on a `.connecting` socket.
-        if !matches!(self.socket.get().socket, uws::InternalSocket::Connected(_)) {
+        if self.established_us_socket().is_none() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
@@ -3184,8 +3185,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             default_data.ensure_still_alive();
         }
 
-        // An option getter can close this socket, or re-enter upgradeTLS and adopt its fd.
-        let uws::InternalSocket::Connected(raw_socket) = self.socket.get().socket else {
+        // An option getter can close or reconnect this socket, or re-enter upgradeTLS and adopt its fd.
+        let Some(raw_socket) = self.established_us_socket() else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "upgradeTLS requires an established socket"
             )));
@@ -3256,8 +3257,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             unsafe { bun_jsc::rare_data::SocketGroups::of((*raw_socket).group()) }
         };
         let group = groups.bun_connect_group::<true>(loop_);
-        // SAFETY: `raw_socket` is the live `*mut us_socket_t` extracted from
-        // `InternalSocket::Connected` above.
+        // SAFETY: `established_us_socket` returned `raw_socket`, and no JavaScript ran since.
         let new_raw: NonNull<uws::us_socket_t> = match unsafe {
             (*raw_socket).adopt_tls(
                 group,

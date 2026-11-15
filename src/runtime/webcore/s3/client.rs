@@ -7,7 +7,7 @@ use bun_collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult};
+use bun_jsc::{GlobalRef, JSValue, JsCell, JsResult, WeakGlobalRef};
 use bun_ptr::{AliasableBox, RefPtr};
 
 // Re-exports (thin aliases)
@@ -1197,7 +1197,7 @@ fn download_stream(
 pub struct S3DownloadStreamWrapper {
     stream: crate::webcore::byte_stream::ProducerHold,
     pub path: Box<[u8]>,
-    pub global: bun_jsc::StrongGlobal,
+    global: WeakGlobalRef,
     /// Non-owning. The task frees itself on the main thread once `has_more == false`,
     /// which first drops this wrapper (clearing the stream's producer handle), so this
     /// pointer is never observed dangling from `on_stream_cancelled`.
@@ -1227,6 +1227,9 @@ impl S3DownloadStreamWrapper {
         });
         // SAFETY: live until the guard runs, which is after the last use of this borrow.
         let self_ = unsafe { &*this };
+        let Some(global) = self_.global.get() else {
+            return self_.on_stream_cancelled();
+        };
 
         if let Some(err) = request_err {
             let Some(bytes) = self_.stream.take() else {
@@ -1234,8 +1237,8 @@ impl S3DownloadStreamWrapper {
             };
             bytes.on_data(crate::webcore::streams::StreamResult::Err(
                 crate::webcore::streams::StreamError::JSValue(bun_jsc::strong::Optional::create(
-                    s3_error_to_js(&err, &self_.global, Some(&self_.path)),
-                    &self_.global,
+                    s3_error_to_js(&err, &global, Some(&self_.path)),
+                    &global,
                 )),
             ));
             return;
@@ -1377,7 +1380,7 @@ pub(crate) fn readable_stream(
     let wrapper = S3DownloadStreamWrapper::new(S3DownloadStreamWrapper {
         stream: Default::default(),
         path: Box::<[u8]>::from(path),
-        global: bun_jsc::StrongGlobal::new(cx.global()),
+        global: WeakGlobalRef::new(cx.global()),
         task: Cell::new(core::ptr::null_mut()),
     });
     // SAFETY: `reader` is the live source made above; `wrapper` the live heap allocation.

@@ -210,10 +210,6 @@ impl Process {
         self.exit_handler.set(Some(h));
     }
 
-    pub fn set_exit_handler_default(&self) {
-        self.exit_handler.set(None);
-    }
-
     /// `None` while it runs.
     pub fn status(&self) -> Option<&Status> {
         self.status.get()

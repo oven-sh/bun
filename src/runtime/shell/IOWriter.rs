@@ -25,8 +25,10 @@ use bun_ptr::AliasableBox;
 use bun_sys::{self as sys, E, Fd};
 
 use crate::shell::builtin::IoKind;
-use crate::shell::interpreter::{BufioId, EventLoopHandle, Interpreter, NodeId, ShellExecEnvs};
-use crate::shell::yield_::Yield;
+use crate::shell::interpreter::{
+    BufioId, EventLoopHandle, Interpreter, NodeId, ShellExecEnvs, ShellInterpreter,
+};
+use crate::shell::yield_::{Deferred, DeferredStack, Yield};
 
 // ──────────────────────────────────────────────────────────────────────────
 // ChildPtr
@@ -147,13 +149,13 @@ pub(crate) struct IOWriter<'a> {
     is_writing: bool,
     started: bool,
     flags: Flags,
-    /// Keeps it inside its `Interpreter<'a>`.
+    /// Ties it to `Interpreter<'a>`, so it cannot leave a `with_interp` closure.
     _interp: PhantomData<&'a ()>,
 }
 
 impl IOWriter<'_> {
     /// Read-only accessor for the `is_socket` flag (used by
-    /// `ShellSubprocess::spawn` to decide `no_sigpipe`).
+    /// `SubprocExec::init` to decide `no_sigpipe`).
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn is_socket(&self) -> bool {
@@ -162,7 +164,7 @@ impl IOWriter<'_> {
 
     /// The caller removes it from `interp.io_writers`, which closes `fd`.
     pub(crate) fn init(interp: &mut Interpreter<'_>, fd: Fd, flags: Flags) -> IOWriterId {
-        let (shell_interp, evtloop) = (interp.as_ctx_ptr(), interp.event_loop);
+        let (shell_interp, evtloop) = (interp.shell_interp, interp.event_loop);
         interp.io_writers.insert_with(|id| {
             // `Drop` closes the file descriptor.
             let writer = BufferedWriter::borrowing_fd();
@@ -206,14 +208,8 @@ impl IOWriter<'_> {
         cost
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
-    /// vtable can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; vtable consumers treat the pointee as read-only
         self.evtloop.as_event_loop_ctx()
     }
 
@@ -223,8 +219,9 @@ impl IOWriter<'_> {
         crate::shell_log!("IOWriter(fd={}) __start()", self.fd);
         // An empty buffer, because Windows writes from `start`.
         let handler = Handler::default();
-        let started =
-            (self.writer).start(&handler, self.io_evtloop(), self.fd, self.flags.pollable);
+        let started = self
+            .writer
+            .start(&handler, self.io_evtloop(), self.fd, self.flags.pollable);
         if let Err(e) = started {
             #[cfg(not(windows))]
             {
@@ -266,7 +263,8 @@ impl IOWriter<'_> {
                     self.flags.pollable = false;
                     self.flags.nonblock = false;
                     self.flags.is_socket = false;
-                    (self.writer).start_with_file(&handler, self.io_evtloop(), self.fd);
+                    self.writer
+                        .start_with_file(&handler, self.io_evtloop(), self.fd);
                     return Ok(());
                 }
             }
@@ -348,7 +346,8 @@ impl IOWriter<'_> {
             }
             let handler = Handler::default();
             let started =
-                (self.writer).start(&handler, self.io_evtloop(), self.fd, self.flags.pollable);
+                self.writer
+                    .start(&handler, self.io_evtloop(), self.fd, self.flags.pollable);
             if let Err(e) = started {
                 return WriteOutcome::Failed(e);
             }
@@ -449,7 +448,6 @@ impl IOWriter<'_> {
         self.writers[idx].written += amt;
     }
 
-    /// POSIX-only.
     #[cfg(not(windows))]
     fn do_file_write(&mut self, shells: &mut ShellExecEnvs<'_>) -> Yield {
         debug_assert!(!self.flags.pollable);
@@ -497,7 +495,7 @@ impl IOWriter<'_> {
     // ── poll callback ───────────────────────────────────────────────────
 
     /// The caller runs the result, and then [`Self::write_pending`].
-    pub(crate) fn on_io(&mut self, shells: &mut ShellExecEnvs<'_>, event: IoEvent) -> Yield {
+    fn on_io(&mut self, shells: &mut ShellExecEnvs<'_>, event: IoEvent) -> Yield {
         // On Windows the current chunk was already written, dead or not.
         #[cfg(not(windows))]
         self.skip_dead();
@@ -702,6 +700,18 @@ impl IOWriter<'_> {
             captured,
         });
         self.enqueue_internal(shells)
+    }
+}
+
+impl ShellInterpreter {
+    pub(crate) fn on_writer_io(&self, id: IOWriterId, event: IoEvent) {
+        if let Some(y) =
+            self.with_interp(|interp| interp.io_writers[id].on_io(&mut interp.shells, event))
+        {
+            let mut stack = DeferredStack::new();
+            stack.push(Deferred::WritePending(id));
+            self.run_yield(y, stack);
+        }
     }
 }
 

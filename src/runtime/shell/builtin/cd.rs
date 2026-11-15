@@ -3,9 +3,9 @@
 //! - `cd -` will put the user in the previous directory
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
-use crate::shell::interpreter::{Interpreter, Node, NodeId};
+use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
-use crate::shell::states::cmd::{Cmd, Exec};
+use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
 #[derive(Default)]
@@ -23,15 +23,11 @@ enum State {
 
 impl Cd {
     pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
-        let Node::Cmd(Cmd {
-            shell,
-            exec: Exec::Builtin(bltn),
-            ..
-        }) = &interp.nodes[cmd.idx()]
-        else {
+        let cmd_node = interp.nodes[cmd.idx()].as_cmd();
+        let Exec::Builtin(bltn) = &cmd_node.exec else {
             unreachable!()
         };
-        let shell = &mut interp.shells[shell.id()];
+        let shell = &mut interp.shells[cmd_node.shell.id()];
         let args = bltn.args_slice();
         if args.len() > 1 {
             return Self::write_stderr_non_blocking(

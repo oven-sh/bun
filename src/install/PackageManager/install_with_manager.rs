@@ -660,7 +660,7 @@ pub fn install_with_manager(
     };
 
     if manager.lockfile.packages.len() > 0 {
-        root = *manager.lockfile.packages.get(0);
+        root = manager.lockfile.packages.get(0);
 
         // prevent redundant errors
         if manager.update_requests.iter().any(|request| request.failed) {
@@ -675,7 +675,7 @@ pub fn install_with_manager(
             // Removes the registry packages that were resolved for rows that now link a workspace.
             manager.lockfile.mark_loaded_packages()?;
             clean_lockfile(manager, log_level)?;
-            root = *manager.lockfile.packages.get(0);
+            root = manager.lockfile.packages.get(0);
         }
         // A frozen install takes the versions that the lockfile has.
         let is_frozen = manager.options.enable.frozen_lockfile()
@@ -2476,7 +2476,7 @@ fn reresolve_rows_outside_overrides(
     redirect_moved_edges(&mut manager.lockfile, &moved, false);
 
     let before_clean = clean_lockfile(manager, log_level)?;
-    *root = *manager.lockfile.packages.get(0);
+    *root = manager.lockfile.packages.get(0);
     manager.verify_resolutions(log_level);
     Ok(moved_targets_after_clean(
         &before_clean,

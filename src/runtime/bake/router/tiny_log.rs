@@ -60,8 +60,7 @@ impl TinyLog {
             }
         };
         self.msg.clear();
-        self.msg.resize(len).unwrap();
-        self.msg.slice().copy_from_slice(&buf[..len]);
+        self.msg.append_slice_assume_capacity(&buf[..len]);
     }
 
     pub(crate) fn print(&self, rel_path: &[u8]) {

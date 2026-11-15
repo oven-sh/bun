@@ -719,40 +719,14 @@ pub enum WatchItemKind {
     Directory,
 }
 
-/// Typed SoA column accessors — thin safe wrappers over the reflection-backed
-/// `MultiArrayList::items::<"name", T>()` so callers don't repeat the type.
-pub trait WatchItemColumns {
-    fn items_file_path(&self) -> &[Cow<'static, [u8]>];
-    fn items_hash(&self) -> &[u32];
-    fn items_file(&self) -> &[Option<CloseOnDrop>];
-    fn items_file_mut(&mut self) -> &mut [Option<CloseOnDrop>];
-    fn items_parent_hash(&self) -> &[u32];
-    fn items_kind(&self) -> &[WatchItemKind];
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn items_eventlist_index(&self) -> &[platform::EventListIndex];
-}
-
-impl WatchItemColumns for WatchList {
-    fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
-        self.items::<"file_path", Cow<'static, [u8]>>()
-    }
-    fn items_hash(&self) -> &[u32] {
-        self.items::<"hash", u32>()
-    }
-    fn items_file(&self) -> &[Option<CloseOnDrop>] {
-        self.items::<"file", Option<CloseOnDrop>>()
-    }
-    fn items_file_mut(&mut self) -> &mut [Option<CloseOnDrop>] {
-        self.items_mut::<"file", Option<CloseOnDrop>>()
-    }
-    fn items_parent_hash(&self) -> &[u32] {
-        self.items::<"parent_hash", u32>()
-    }
-    fn items_kind(&self) -> &[WatchItemKind] {
-        self.items::<"kind", WatchItemKind>()
-    }
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn items_eventlist_index(&self) -> &[platform::EventListIndex] {
-        self.items::<"eventlist_index", platform::EventListIndex>()
+bun_collections::multi_array_columns! {
+    pub trait WatchItemColumns for WatchItem {
+        file_path: Cow<'static, [u8]>,
+        hash: u32,
+        file: Option<CloseOnDrop>,
+        parent_hash: u32,
+        kind: WatchItemKind,
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        eventlist_index: platform::EventListIndex,
     }
 }

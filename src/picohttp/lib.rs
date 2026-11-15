@@ -10,6 +10,7 @@ use bun_core::pretty_fmt;
 
 // `Header::clone` uses `append_raw`: callers keep the builder, or its moved-out buffer, alive.
 pub use bun_core::StringBuilder;
+use bun_core::string::string_builder::Counting;
 
 // FFI surface over vendor/picohttpparser. Hand-written rather than
 // bindgen-generated.
@@ -131,7 +132,7 @@ impl Header {
         self.name_len == 0
     }
 
-    pub(crate) fn count(&self, builder: &mut StringBuilder) {
+    pub(crate) fn count(&self, builder: &mut StringBuilder<Counting>) {
         builder.count(self.name());
         builder.count(self.value());
     }
@@ -422,7 +423,7 @@ pub struct Response<'a> {
 }
 
 impl<'a> Response<'a> {
-    pub fn count(&self, builder: &mut StringBuilder) {
+    pub fn count(&self, builder: &mut StringBuilder<Counting>) {
         builder.count(self.status);
 
         for header in self.headers.list {

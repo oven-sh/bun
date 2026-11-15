@@ -5181,6 +5181,66 @@ console.log(foo, array);
       );
     });
 
+    describe.concurrent("a macro that calls the transpiler that is running it", () => {
+      const names = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+      async function run(index) {
+        using dir = tempDir("macro-reenters-transpiler", {
+          "many.ts": names.map(name => `export const ${name} = () => 1;`).join("\n"),
+          "macros.ts": `
+            export function scans(context) {
+              transpiler.scan("1");
+              return context?.name;
+            }
+            export function scansMacros() {
+              transpiler.scan('import { ${names} } from "./many.ts" with { type: "macro" }; ${names.join("();")}();');
+              return new Error("from the macro");
+            }
+          `,
+          "index.ts": `
+            globalThis.transpiler = new Bun.Transpiler({ loader: "ts" });
+            const imports = 'import { scans, scansMacros } from "./macros.ts" with { type: "macro" };';
+            ${index}
+          `,
+        });
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "index.ts"],
+          env: bunEnv,
+          cwd: String(dir),
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        // Debug builds print "[macro] call <name>" first.
+        return { lastLine: stdout.trim().split("\n").pop(), stderr, exitCode };
+      }
+
+      it("can make it load other macros", async () => {
+        expect(await run(`console.log(transpiler.transformSync(imports + "f(scansMacros())"));`)).toEqual({
+          lastLine: `f(scansMacros());`,
+          stderr: expect.stringContaining("error: from the macro"),
+          exitCode: 1,
+        });
+      });
+
+      it("leaves the context argument for the next macro", async () => {
+        const code = `imports + "f(scans(), scans())"`;
+        expect(await run(`console.log(transpiler.transformSync(${code}, { name: "context" }));`)).toEqual({
+          lastLine: `f("context", "context");`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+
+      it.each(["transformSync", "scan"])("%s still throws its parse error", async method => {
+        const code = `imports + "scans(); const c = 1; c = 2;"`;
+        expect(await run(`try { transpiler.${method}(${code}); } catch (e) { console.log(e.message); }`)).toEqual({
+          lastLine: `This assignment will throw because "c" is a constant`,
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    });
+
     it("special identifier in import statement", () => {
       const out = transpiler.transformSync(`
         import {ɵtest} from 'foo'

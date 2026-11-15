@@ -141,8 +141,8 @@ pub use init_error::InitError;
 
 /// Ownership transfers to the user once the headers phase completes.
 pub struct HTTPResponseMetadata {
-    pub url: Box<[u8]>,
-    pub response: Response,
+    response: Response,
+    url: Box<[u8]>,
 }
 
 impl HTTPResponseMetadata {
@@ -154,9 +154,15 @@ impl HTTPResponseMetadata {
     pub fn status_text(&self) -> &[u8] {
         self.response.status_text()
     }
+    pub fn url(&self) -> &[u8] {
+        &self.url
+    }
+    pub fn headers(&self) -> &Headers {
+        &self.response.headers
+    }
     #[inline]
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        self.response.headers.get(name)
+        self.headers().get(name)
     }
     #[inline]
     pub fn header_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&[u8]> {

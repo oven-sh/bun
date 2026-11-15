@@ -129,7 +129,7 @@ describe.concurrent("an unknown flag that starts with --aot is an error", () => 
 `,
     });
     expect((await bun(String(dir), "build.ts")).stdout).toBe(
-      `compile.${key} is not a valid option.${meant ? ` Did you mean compile.${meant}?` : ""} Options that start with "aot": aot, aotCheck, aotExplain, aotHarden, aotOut, aotTesting\n`,
+      `compile.${key} is not a valid option.${meant ? ` Did you mean compile.${meant}?` : ""} Options that start with "aot": aot, aotCheck, aotExplain, aotHarden, aotOrder, aotOut, aotRecordOrder, aotTesting\n`,
     );
   });
 

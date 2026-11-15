@@ -5,10 +5,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, String as BunString};
-use bun_event_loop::{
-    ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    Task, Taskable,
-};
+use bun_event_loop::{ConcurrentTask::ConcurrentTask, Task, Taskable};
 use bun_http as http;
 use bun_http::Method;
 use bun_http::{
@@ -1172,7 +1169,7 @@ impl FetchTasklet {
         if fail == http::Error::ProxyConnectFailed {
             if let Some(metadata) = &self.result.proxy_connect_response {
                 let global_this = self.global_this;
-                let error = Self::proxy_connect_error(&global_this, &metadata.response)
+                let error = Self::proxy_connect_error(&global_this, metadata)
                     .unwrap_or_else(|e| global_this.take_exception(e));
                 return BodyValueError::JSValue(StrongOptional::create(error, &global_this));
             }
@@ -1197,7 +1194,7 @@ impl FetchTasklet {
         // some times we don't have metadata so we also check the request's URL
         // Without the URL's userinfo: errors get logged.
         let href = match &self.metadata {
-            Some(metadata) => &metadata.url,
+            Some(metadata) => metadata.url(),
             None => &self.url_proxy_buffer[..self.url_len],
         };
         let path = BunString::clone_utf8(&ZigURL::parse(href).href_without_userinfo());
@@ -1477,14 +1474,14 @@ impl FetchTasklet {
     /// proxy's reply to CONNECT.
     fn proxy_connect_error(
         global_this: &JSGlobalObject,
-        response: &bun_http::Response,
+        response: &HTTPResponseMetadata,
     ) -> JsResult<JSValue> {
         let error = global_this
             .err(
                 jsc::ErrorCode::PROXY_TUNNEL,
                 format_args!(
                     "Proxy refused to open a tunnel: {} {}",
-                    response.status_code,
+                    response.status_code(),
                     bstr::BStr::new(response.status_text()),
                 ),
             )
@@ -1492,7 +1489,7 @@ impl FetchTasklet {
         error.put(
             global_this,
             b"status".as_slice(),
-            JSValue::js_number_from_int32(response.status_code as i32),
+            JSValue::js_number_from_int32(response.status_code() as i32),
         );
         error.put(
             global_this,
@@ -1501,7 +1498,7 @@ impl FetchTasklet {
         );
         // SAFETY: `create_from_headers` returns a fresh refcount=1 FetchHeaders*.
         let mut headers =
-            unsafe { HeadersRef::adopt(FetchHeaders::create_from_headers(&response.headers)) };
+            unsafe { HeadersRef::adopt(FetchHeaders::create_from_headers(response.headers())) };
         error.put(
             global_this,
             b"headers".as_slice(),
@@ -1700,20 +1697,19 @@ impl FetchTasklet {
         debug_assert!(self.metadata.is_some());
         // at this point we always should have metadata
         let metadata = self.metadata.as_ref().unwrap();
-        let http_response = &metadata.response;
         // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
-        let headers = FetchHeaders::create_from_headers(&http_response.headers);
-        let status_code = http_response.status_code as u16;
+        let headers = FetchHeaders::create_from_headers(metadata.headers());
+        let status_code = metadata.status_code() as u16;
         // Fast path: when the wire reason phrase matches the canonical text for
         // this status code, store a StaticEncodedSlice and skip the WTF allocation.
         let status_text = match crate::server::http_status_text::get(status_code)
             .map(|t| &t[4..])
-            .filter(|canon| *canon == http_response.status_text())
+            .filter(|canon| *canon == metadata.status_text())
         {
             Some(canon) => BunString::static_(canon),
-            None => BunString::clone_utf8(http_response.status_text()),
+            None => BunString::clone_utf8(metadata.status_text()),
         };
-        let url = BunString::clone_utf8(&metadata.url);
+        let url = BunString::clone_utf8(metadata.url());
         let redirected = self.result.redirected;
         let body = if self.response_body_is_null(status_code) {
             self.null_body_value()
@@ -2391,15 +2387,11 @@ impl FetchTasklet {
                 return;
             }
         }
-        let ct = core::ptr::NonNull::from(
-            task_ref
-                .concurrent_task
-                .from(task, AutoDeinit::ManualDeinit),
-        );
+        let ct = core::ptr::NonNull::from(task_ref.concurrent_task.from(task));
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link. This thread's ref keeps the
         // tasklet (and the ticket in it) alive across the post.
-        task_ref.ticket().post(ct);
+        task_ref.ticket().post_intrusive(ct);
     }
 }
 
@@ -2521,16 +2513,12 @@ impl FetchTaskletPromiseSettle {
     }
 }
 
-impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
+impl bun_event_loop::BoxedTask for FetchTaskletPromiseSettle {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletPromiseSettle;
     /// Drop the held value and promise handle without settling.
-    unsafe fn release_unrun(this: *mut Self) {
-        // SAFETY: fn contract — the box the completion queued.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
+    fn release_unrun(self: Box<Self>) {}
     /// The fetch() promise is settled for the script that fetched.
-    unsafe fn context(this: *const Self) -> bun_event_loop::ContextId {
-        // SAFETY: fn contract — the box the completion queued.
-        unsafe { (*this).context }
+    fn context(&self) -> bun_event_loop::ContextId {
+        self.context
     }
 }

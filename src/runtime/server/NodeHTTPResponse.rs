@@ -775,7 +775,7 @@ impl NodeHTTPResponse {
         if flags.contains(Flags::SOCKET_CLOSED) {
             return true;
         }
-        // The connection outlives the socket of a done request: do not read it.
+        // After the request is done, the uWS state may describe the next request.
         if flags.is_done() || flags.contains(Flags::UPGRADED) {
             return false;
         }
@@ -1404,10 +1404,7 @@ impl NodeHTTPResponse {
                 // synchronous `set_closed()` from `JSNodeHTTPServerSocket::
                 // onClose` has already flipped SOCKET_CLOSED, so
                 // `should_request_be_pending()` is now false; let the gate
-                // re-evaluate. Release the connection first so the
-                // `clear_on_data_callback` reached from `mark_request_as_done`
-                // can't touch the dead socket.
-                self.connection.release();
+                // re-evaluate.
                 self.mark_request_as_done_if_necessary();
             }
             return;
@@ -1452,10 +1449,6 @@ impl NodeHTTPResponse {
             self.on_data_or_aborted(b"", true, AbortEvent::Abort, js_this);
         }
 
-        // The connection is released before the guard's release because
-        // `mark_request_as_done_if_necessary()` + that release can drop the
-        // last ref when the JS wrapper has already finalized; nothing between
-        // them reads the connection, so releasing first avoids a post-destroy write.
         if EVENT == AbortEvent::Abort {
             if self.flags.get().contains(Flags::ENDED) {
                 // An ended response that was still draining is over now: `finished` reads true, as after a drain.
@@ -1463,7 +1456,6 @@ impl NodeHTTPResponse {
             } else {
                 self.mark_request_as_done_if_necessary();
             }
-            self.connection.release();
         }
     }
 
@@ -1505,6 +1497,7 @@ impl NodeHTTPResponse {
 
     #[uws::uws_callback(export = "Bun__NodeHTTPResponse_setClosed", no_catch)]
     pub(crate) fn set_closed(&self) {
+        self.connection.release();
         self.mark_socket_closed();
     }
 
@@ -2052,16 +2045,18 @@ impl NodeHTTPResponse {
         }
 
         // Like Node's _writeRaw on a destroyed socket: 'close' has not been emitted yet, so the write is dropped.
-        if self.writer().is_none() || self.is_socket_closed_or_closing() {
+        let Some(raw_response) = self
+            .writer()
+            .filter(|_| !self.is_socket_closed_or_closing())
+        else {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
             } else {
                 JSValue::js_number_from_int32(0)
             });
-        }
+        };
 
-        // Re-read the connection at each use site: methods that re-enter may release it.
-        let state = self.writer().unwrap().state();
+        let state = raw_response.state();
         if !state.is_response_pending() {
             return err_throw(
                 global_object,
@@ -2121,7 +2116,6 @@ impl NodeHTTPResponse {
                     global_object,
                     callback_value.with_async_context_if_needed(global_object),
                 );
-                let raw_response = self.writer().unwrap();
                 raw_response.on_writable(on_drain_shim, self.as_ctx_ptr());
             }
             // -0 would not read as negative (backpressure) in JS.
@@ -2138,12 +2132,10 @@ impl NodeHTTPResponse {
                 js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
             }
 
-            let raw_response = self.writer().unwrap();
             raw_response.clear_aborted();
             raw_response.clear_on_writable();
             raw_response.clear_timeout();
             self.update_flags(|f| f.insert(Flags::ENDED));
-            let raw_response = self.writer().unwrap();
             if !state.is_http_write_called() || !bytes.is_empty() {
                 raw_response.end(bytes, state.is_http_connection_close());
             } else {
@@ -2164,8 +2156,6 @@ impl NodeHTTPResponse {
 
             Ok(JSValue::js_number_from_uint64(bytes.len() as u64))
         } else {
-            let raw_response = self.writer().unwrap();
-
             // Zero-copy path: for writes large enough to spill past the kernel
             // send buffer, hold the user's bytes by reference (pinned
             // ArrayBuffer or WTFStringImpl-backed slice) instead of copying

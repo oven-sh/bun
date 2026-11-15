@@ -568,6 +568,7 @@ struct us_socket_t *us_socket_group_connect_resolved_dns(struct us_socket_group_
 
     struct us_socket_t *socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(socket, group, kind, options);
+    us_internal_socket_clear_ext(socket, socket_ext_size);
 
     /* Fast path has no us_connecting_socket_t to stash ssl_ctx on, so attach
      * the SSL state now; on_open will see s->ssl != NULL and route through the
@@ -681,6 +682,7 @@ struct us_socket_t *us_socket_group_connect_unix(struct us_socket_group_t *group
 
     struct us_socket_t *connect_socket = (struct us_socket_t *) p;
     us_internal_init_connect_socket(connect_socket, group, kind, options);
+    us_internal_socket_clear_ext(connect_socket, socket_ext_size);
 
     if (ssl_ctx) {
         us_internal_ssl_attach(connect_socket, ssl_ctx, 1, NULL, NULL);

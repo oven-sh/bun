@@ -8,6 +8,7 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use core::ops::DerefMut;
 use core::ptr;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use std::rc::Rc;
 
 use bun_collections::{ArrayHashMap, BoundedArray, IntegerBitSet};
 #[cfg(not(windows))]
@@ -27,7 +28,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult, SystemError,
 };
-use bun_ptr::RefPtr;
+use bun_ptr::{CellExt as _, OptionCellExt as _, RefPtr};
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
@@ -1958,7 +1959,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount,
-    channel: JsCell<Option<c_ares::OwnedChannel>>,
+    channel: Cell<Option<Rc<c_ares::OwnedChannel>>>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
@@ -2090,9 +2091,19 @@ impl bun_event_loop::Taskable for UvDnsPoll {
     }
 }
 
+/// Keeps the channel open during a call into it, which can run script that stops the resolver.
+pub(crate) struct ChannelGuard<'a>(Rc<c_ares::OwnedChannel>, PhantomData<&'a Resolver>);
+
+impl core::ops::Deref for ChannelGuard<'_> {
+    type Target = c_ares::Channel;
+    fn deref(&self) -> &c_ares::Channel {
+        &self.0
+    }
+}
+
 pub(crate) enum ChannelResult<'a> {
     Err(c_ares::Error),
-    Result(&'a mut c_ares::Channel), // BORROW_FIELD — borrows the resolver's `channel` field
+    Result(ChannelGuard<'a>),
 }
 
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
@@ -2161,7 +2172,7 @@ impl Resolver {
     pub(crate) fn setup(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
-            channel: JsCell::new(None),
+            channel: Cell::new(None),
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
@@ -2208,7 +2219,8 @@ impl Resolver {
 
         if let Ok(channel) = self.get_channel_or_error(vm.global()) {
             if self.any_requests_pending() {
-                c_ares::ares_process_fd(channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
+                c_ares::ares_process_fd(&channel, c_ares::ARES_SOCKET_BAD, c_ares::ARES_SOCKET_BAD);
+                drop(channel);
                 // See `on_dns_poll` — c-ares detaches post-callback, so re-check.
                 if self.any_requests_pending() {
                     let _ = self.add_timer(Some(now), CARES_TIMEOUT_CHECK_INTERVAL_MS);
@@ -2230,13 +2242,11 @@ impl Resolver {
         // A query that found its cache full has no slot; c-ares' own
         // queue length covers those too. Its channel lock is recursive, so this
         // is safe from inside a completion callback.
-        if let Some(channel) = self.channel_ptr() {
-            // SAFETY: `channel` is the live c-ares channel owned by `self`.
-            if c_ares::ares_queue_active_queries(unsafe { &*channel }) != 0 {
-                return true;
-            }
-        }
-        false
+        self.channel.with_taken(|channel| {
+            channel
+                .as_ref()
+                .is_some_and(|channel| c_ares::ares_queue_active_queries(channel) != 0)
+        })
     }
 
     fn request_sent(&self, _vm: &VirtualMachine) {
@@ -2287,43 +2297,60 @@ impl Resolver {
         self.timer_ref.set(None);
     }
 
-    fn channel_ptr(&self) -> Option<*mut c_ares::Channel> {
-        let channel = self.channel.get().as_ref();
-        channel.map(c_ares::OwnedChannel::as_ptr)
+    fn channel(&self) -> Option<ChannelGuard<'_>> {
+        let channel = self.channel.with_taken(|channel| channel.clone())?;
+        Some(ChannelGuard(channel, PhantomData))
+    }
+
+    fn ensure_channel(&self) -> Result<(), c_ares::Error> {
+        if self.channel.is_none() {
+            // SAFETY: a resolver does not move, and neither `channel` nor a `ChannelGuard` outlives it.
+            self.set_channel(unsafe { c_ares::OwnedChannel::new(self, self.options.get()) }?);
+        }
+        Ok(())
     }
 
     pub(crate) fn get_channel(&self) -> ChannelResult<'_> {
-        if self.channel.get().is_none() {
-            // SAFETY: a resolver is reached through its `RefPtr`, and its `Drop` ends the channel.
-            match unsafe { c_ares::OwnedChannel::new(self, self.options.get()) } {
-                Ok(channel) => self.set_channel(channel),
-                Err(err) => return ChannelResult::Err(err),
-            }
+        match self.ensure_channel() {
+            Ok(()) => ChannelResult::Result(self.channel().unwrap()),
+            Err(err) => ChannelResult::Err(err),
         }
-        // SAFETY: set above
-        ChannelResult::Result(unsafe { &mut *self.channel_ptr().unwrap() })
     }
 
-    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<&mut c_ares::Channel> {
+    fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<ChannelGuard<'_>> {
         global_resolver(global_this).get_channel_or_error(global_this)
     }
 
     pub(crate) fn get_channel_or_error(
         &self,
         global_this: &JSGlobalObject,
-    ) -> JsResult<&mut c_ares::Channel> {
-        match self.get_channel() {
-            ChannelResult::Result(result) => Ok(result),
-            ChannelResult::Err(err) => {
-                let system_error = SystemError {
-                    errno: -1,
-                    code: bun_core::String::static_(err.code()),
-                    message: bun_core::String::static_(err.label()),
-                    ..Default::default()
-                };
-                Err(global_this.throw_value(system_error.to_error_instance(global_this)))
-            }
-        }
+    ) -> JsResult<ChannelGuard<'_>> {
+        self.ensure_channel_or_error(global_this)?;
+        Ok(self.channel().unwrap())
+    }
+
+    /// For a call that runs no callback: the resolver has no channel while `f` runs.
+    fn with_channel<R>(
+        &self,
+        global_this: &JSGlobalObject,
+        f: impl FnOnce(&c_ares::Channel) -> R,
+    ) -> JsResult<R> {
+        self.ensure_channel_or_error(global_this)?;
+        Ok(self
+            .channel
+            .with_taken(|channel| f(channel.as_ref().unwrap())))
+    }
+
+    fn ensure_channel_or_error(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        self.ensure_channel().map_err(|err| {
+            let system_error = SystemError {
+                errno: -1,
+                code: bun_core::String::static_(err.code()),
+                message: bun_core::String::static_(err.label()),
+                ..Default::default()
+            };
+            global_this.throw_value(system_error.to_error_instance(global_this))
+        })
     }
 
     // ───────────── poll callbacks ─────────────
@@ -2352,18 +2379,19 @@ impl Resolver {
                 // SAFETY: `parent` is the live heap-allocated Resolver back-ptr.
                 let _guard = RefPtr::init_ref(parent);
                 // channel must be non-null here as c_ares must have been initialized if we're receiving callbacks
-                let channel = (*parent).channel_ptr().unwrap();
+                let channel = (*parent).channel().unwrap();
                 if status < 0 {
                     // an error occurred. just pretend that the socket is both readable and writable.
                     // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
-                    (*channel).process((*poll).socket, true, true);
+                    channel.process((*poll).socket, true, true);
                 } else {
-                    (*channel).process(
+                    channel.process(
                         (*poll).socket,
                         events & libuv::UV_READABLE != 0,
                         events & libuv::UV_WRITABLE != 0,
                     );
                 }
+                drop(channel);
 
                 // See `on_dns_poll` for why this re-check follows `ares_process_fd`.
                 if !(*parent).any_requests_pending() {
@@ -2408,16 +2436,14 @@ impl Resolver {
     pub(crate) fn on_dns_poll(&self, fd: c_ares::ares_socket_t, readable: bool, writable: bool) {
         let vm = self.vm();
         let _exit = vm.enter_event_loop_scope();
-        let Some(channel) = self.channel_ptr() else {
+        let Some(channel) = self.channel() else {
             return;
         };
 
         let _guard = self.ref_guard();
 
-        // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
-        // to `*self` is held across this re-entrant call (all fields are
-        // UnsafeCell-backed).
-        unsafe { (*channel).process(fd, readable, writable) };
+        channel.process(fd, readable, writable);
+        drop(channel);
 
         // c-ares detaches a query only *after* its callback returns, so
         // `request_completed` may have seen it still counted; re-check now.
@@ -2614,6 +2640,7 @@ impl Resolver {
             return Ok(promise);
         };
         channel.get_host_by_addr(ip, Box::new(query));
+        drop(channel);
 
         // SAFETY: `bun_vm()` returns the live VM back-ptr.
         self.request_sent(global_this.bun_vm());
@@ -2756,7 +2783,7 @@ impl c_ares::ChannelContainer for Resolver {
 
 impl Resolver {
     fn set_channel(&self, channel: c_ares::OwnedChannel) {
-        self.channel.set(Some(channel));
+        self.channel.set(Some(Rc::new(channel)));
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
         let context = match self.made_in {
@@ -2777,7 +2804,7 @@ impl Resolver {
         };
         self.abort_handle.leave();
         drop(channel);
-        // Called from inside c-ares, `ares_destroy` reports no socket as closed.
+        // If a call still holds the channel, `drop` closed no socket.
         self.polls.with_mut(PollsMap::clear_retaining_capacity);
         true
     }
@@ -2879,6 +2906,7 @@ impl Resolver {
             _record: PhantomData,
         };
         channel.resolve(name, Box::new(request));
+        drop(channel);
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -2914,6 +2942,7 @@ impl Resolver {
         };
         let request = Box::new(pending);
         channel.get_addr_info(&query.name, query.port, &[query.to_cares()], request);
+        drop(channel);
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
@@ -2922,11 +2951,10 @@ impl Resolver {
 
     // ───────── servers / local address ─────────
 
-    fn get_channel_servers(
-        channel: &mut c_ares::Channel,
-        global_this: &JSGlobalObject,
-    ) -> JsResult<JSValue> {
-        let servers = channel.servers().map_err(|err| {
+    pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let servers = self.with_channel(global_this, c_ares::Channel::servers)?;
+        let servers = servers.map_err(|err| {
             global_this.throw_value(global_this.create_error_instance(format_args!(
                 "ares_get_servers_ports error: {}",
                 err.label()
@@ -3003,13 +3031,7 @@ impl Resolver {
     }
 
     pub(crate) fn get_global_servers(cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global_this = cx.global();
-        Self::get_channel_servers(Self::get_channel_from_vm(global_this)?, global_this)
-    }
-
-    pub(crate) fn get_servers(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global_this = cx.global();
-        Self::get_channel_servers(self.get_channel_or_error(global_this)?, global_this)
+        global_resolver(cx.global()).get_servers(cx)
     }
 
     pub(crate) fn set_local_address(
@@ -3019,27 +3041,13 @@ impl Resolver {
         second: Option<bun_core::String>,
     ) -> JsResult<()> {
         let global_this = cx.global();
-        Self::set_channel_local_addresses(
-            self.get_channel_or_error(global_this)?,
-            global_this,
-            first,
-            second,
-        )
-    }
-
-    fn set_channel_local_addresses(
-        channel: &mut c_ares::Channel,
-        global_this: &JSGlobalObject,
-        first: &bun_core::String,
-        second: Option<bun_core::String>,
-    ) -> JsResult<()> {
-        let first_af = Self::set_channel_local_address(channel, global_this, first)?;
+        let first_af = self.set_channel_local_address(global_this, first)?;
 
         let Some(second) = second else {
             return Ok(());
         };
 
-        let second_af = Self::set_channel_local_address(channel, global_this, &second)?;
+        let second_af = self.set_channel_local_address(global_this, &second)?;
 
         if first_af != second_af {
             return Ok(());
@@ -3055,20 +3063,24 @@ impl Resolver {
     }
 
     fn set_channel_local_address(
-        channel: &mut c_ares::Channel,
+        &self,
         global_this: &JSGlobalObject,
         value: &bun_core::String,
     ) -> JsResult<c_int> {
         let address = value.to_owned_slice_z();
 
         if let Some(addr) = bun_cares_sys::pton(&address) {
-            c_ares::ares_set_local_ip4(channel, u32::from_be_bytes(addr));
+            self.with_channel(global_this, |channel| {
+                c_ares::ares_set_local_ip4(channel, u32::from_be_bytes(addr))
+            })?;
             return Ok(c_ares::AF::INET);
         }
 
         if let Some(addr) = bun_cares_sys::pton::<16>(&address) {
-            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
-            unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
+            // SAFETY: `addr` is the 16-byte in6_addr.
+            self.with_channel(global_this, |channel| unsafe {
+                c_ares::ares_set_local_ip6(channel, addr.as_ptr())
+            })?;
             return Ok(c_ares::AF::INET6);
         }
 
@@ -3082,12 +3094,12 @@ impl Resolver {
     }
 
     fn set_channel_servers(
-        channel: &mut c_ares::Channel,
+        channel: &c_ares::Channel,
         global_this: &JSGlobalObject,
         argument: JSValue,
     ) -> JsResult<()> {
         // It's okay to call dns.setServers with active queries, but not dns.Resolver.setServers
-        if !core::ptr::eq(channel, Self::get_channel_from_vm(global_this)?)
+        if !core::ptr::eq(channel, &raw const *Self::get_channel_from_vm(global_this)?)
             && c_ares::ares_queue_active_queries(channel) != 0
         {
             return Err(global_this
@@ -3105,7 +3117,7 @@ impl Resolver {
         let mut triples_iterator = argument.array_iterator(global_this)?;
 
         if triples_iterator.len == 0 {
-            // SAFETY: FFI; channel is a live initialized ares_channel; null clears the server list.
+            // SAFETY: FFI; null clears the server list.
             let r = unsafe { c_ares::ares_set_servers_ports(channel, ptr::null_mut()) };
             if r != c_ares::ARES_SUCCESS {
                 let err = c_ares::Error::get(r).unwrap();
@@ -3182,7 +3194,7 @@ impl Resolver {
             entries[i - 1].next = next;
         }
 
-        // SAFETY: FFI; channel is live; entries form a valid singly-linked list (next ptrs set above)
+        // SAFETY: FFI; entries form a valid singly-linked list (next ptrs set above)
         // and remain alive for the duration of the call (c-ares copies them internally).
         let r = unsafe { c_ares::ares_set_servers_ports(channel, entries.as_mut_ptr()) };
         if r != c_ares::ARES_SUCCESS {
@@ -3205,7 +3217,7 @@ impl Resolver {
     pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
         let result = Self::set_channel_servers(
-            self.get_channel_or_error(global_this)?,
+            &*self.get_channel_or_error(global_this)?,
             global_this,
             servers.to_js(),
         );
@@ -3232,7 +3244,7 @@ impl Resolver {
     }
 
     pub(crate) fn cancel(&self, cx: &mut JsScope<'_>) -> JsResult<()> {
-        c_ares::ares_cancel(self.get_channel_or_error(cx.global())?);
+        c_ares::ares_cancel(&*self.get_channel_or_error(cx.global())?);
         self.request_completed();
         Ok(())
     }
@@ -3288,6 +3300,7 @@ impl Resolver {
             return Ok(promise);
         };
         channel.get_name_info(&sa, Box::new(query));
+        drop(channel);
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         resolver.request_sent(global_this.bun_vm());

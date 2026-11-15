@@ -144,7 +144,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     let pending_reload_event = PendingReloadEvent::new(p);
     let watch_context = Box::new(watch::WatchContext {
-        pending_reload_event: std::sync::Arc::clone(&pending_reload_event),
+        pending_reload_event: Arc::clone(&pending_reload_event),
         vm_handle: options.vm.handle(),
     });
     let bun_watcher = match Watcher::init(watch_context, top_level_dir) {
@@ -242,7 +242,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         ));
     }
 
-    let watcher = Some(std::sync::Arc::clone(&dev.bun_watcher));
+    let watcher = Some(Arc::clone(&dev.bun_watcher));
     dev.server_transpiler.options.dev_server = dev_ptr as *const ();
     dev.server_transpiler.resolver.watcher.clone_from(&watcher);
     dev.client_transpiler.options.dev_server = dev_ptr as *const ();

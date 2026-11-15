@@ -647,6 +647,7 @@ pub(crate) fn run_task(
 
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
+            drop(boxed!(task, hot_reloader::HotReloadTask));
             in_features!([HotReload], (vm: &VirtualMachine = vm) {
                 hot_reloader::HotReloadTask::run(vm);
             });

@@ -162,7 +162,7 @@ use crate::node::node_fs_watcher::FSWatchTask;
 use crate::dns_jsc::Resolver as DNSResolver;
 use crate::server::{FileResponseStream, ServePluginsLoadTask, ServerAllConnectionsClosedTask};
 
-use crate::cli::test::parallel::worker::Worker as TestWorker;
+use crate::cli::test::parallel::worker::Worker as TestParallelWorker;
 use crate::cli::{filter_run, multi_run};
 use bun_install::git_runner::GitSubprocess;
 use bun_install::{LifecycleScriptSubprocess, SecurityScanSubprocess};
@@ -897,11 +897,11 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
 
     /// `$body` through [`in_features!`], with the owner as `$cast` makes it of a `*mut $Ty`.
     macro_rules! io_arm {
-        ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $key:pat, $event:ident| $body:expr) => {
+        ($features:tt, $cast:expr, $Ty:ty, |$this:ident, $kind:pat, $event:ident| $body:expr) => {
             in_features!($features, (owner: Owner = owner, $event: IoEvent = event) {
                 // SAFETY: the contract of `__bun_run_io`.
                 let $this = unsafe { $cast(owner.ptr().cast::<$Ty>()) };
-                let $key = owner.key();
+                let $kind = owner.kind();
                 $body
             })
         };
@@ -1030,23 +1030,23 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         }
 
         // Neither JS nor a nested tick runs under these.
-        PollTag::FilterRun => io_arm!(
+        PollTag::FilterRunHandle => io_arm!(
             [Tools],
             <*mut _>::as_mut_unchecked,
             filter_run::ProcessHandle<'_>,
-            |this, key, event| this.read(key, Some(event))
+            |this, kind, event| this.read(kind, Some(event))
         ),
-        PollTag::MultiRun => io_arm!(
+        PollTag::MultiRunPipeReader => io_arm!(
             [Tools],
             <*mut _>::as_mut_unchecked,
             multi_run::PipeReader<'_>,
             |this, _, event| this.read(Some(event))
         ),
-        PollTag::TestWorker => io_arm!(
+        PollTag::TestParallelWorker => io_arm!(
             [TestCommand],
             <*mut _>::as_mut_unchecked,
-            TestWorker,
-            |this, key, event| this.on_io(key, event)
+            TestParallelWorker,
+            |this, kind, event| this.on_io(kind, event)
         ),
         PollTag::SecurityScanReader => io_arm!(
             [Install],
@@ -1060,7 +1060,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
             [Install],
             bun_ptr::ThisPtr::new,
             GitSubprocess,
-            |this, key, event| GitSubprocess::on_io(this, key, event)
+            |this, kind, event| GitSubprocess::on_io(this, kind, event)
         ),
         PollTag::SubprocessPipeReader => {
             in_features!([Spawn], (owner: Owner = owner, event: IoEvent = event) {
@@ -1071,7 +1071,7 @@ unsafe fn __bun_run_io(owner: Owner, event: IoEvent) {
         PollTag::LifecycleScript => {
             in_features!([Install], (owner: Owner = owner, event: IoEvent = event) {
                 // SAFETY: the contract of `__bun_run_io`.
-                unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.key(), event) };
+                unsafe { LifecycleScriptSubprocess::on_io(owner.ptr().cast(), owner.kind(), event) };
             })
         }
         PollTag::CronRegister | PollTag::CronRemove => {

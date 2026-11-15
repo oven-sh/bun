@@ -5,7 +5,7 @@ use crate::webcore::ReadableStream;
 #[cfg(unix)]
 use bun_io::PosixFlags;
 use bun_io::max_buf;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult};
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSValue, JsResult};
 use bun_ptr::{ParentRef, RefCount, RefPtr};
@@ -21,7 +21,7 @@ pub(crate) struct PipeReader {
     // Backref to owning Subprocess; cleared when `Readable::Pipe` lets go of this reader.
     // `ParentRef` encapsulates the single unsafe deref behind a safe `Deref`/`get()`;
     // the Subprocess owns this PipeReader (via `Readable::Pipe`) and is guaranteed
-    // live whenever `process.is_some()` — see `on_read_status`/`finalize` ordering.
+    // live whenever `process.is_some()` — see `on_read_result`/`finalize` ordering.
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     process: Cell<Option<ParentRef<Subprocess<'static>>>>,
     event_loop: bun_io::EventLoopCtx,
@@ -30,7 +30,7 @@ pub(crate) struct PipeReader {
     start_ref: Cell<Option<RefPtr<PipeReader>>>,
     /// Until `start()`.
     #[cfg(unix)]
-    file: Cell<StdioResult>,
+    stdio_result: Cell<StdioResult>,
 }
 
 // The end of the read releases `start_ref` and the ref in `Readable::Pipe`.
@@ -56,7 +56,7 @@ impl PipeReader {
             reader,
             event_loop: event_loop.event_loop_ctx(),
             #[cfg(unix)]
-            file: Cell::new(result),
+            stdio_result: Cell::new(result),
         });
         let owner = Owner::new(PollTag::SubprocessPipeReader, this.as_ptr().cast());
         // SAFETY: a field of its owner.
@@ -71,23 +71,23 @@ impl PipeReader {
     /// SAFETY: `this` is live. It may be freed.
     pub(crate) unsafe fn on_io(this: *mut Self, event: IoEvent) {
         // SAFETY: fn contract. Filling the buffer releases no ref.
-        let status = unsafe { (*this).reader.read((*this).event_loop, Some(event)) };
-        if !matches!(status, ReadStatus::Pending) {
+        let result = unsafe { (*this).reader.read((*this).event_loop, Some(event)) };
+        if !matches!(result, ReadResult::Pending) {
             // SAFETY: fn contract.
-            Self::on_read_status(&unsafe { RefPtr::init_ref(this) }, status);
+            Self::on_read_result(&unsafe { RefPtr::init_ref(this) }, result);
         }
     }
 
     pub(crate) fn read_all(this: &RefPtr<Self>) {
         if this.process.get().is_some() {
-            Self::on_read_status(this, this.reader.read(this.event_loop, None));
+            Self::on_read_result(this, this.reader.read(this.event_loop, None));
         }
     }
 
     /// `read_all` for a reader that may be paused.
     pub(crate) fn resume(this: &RefPtr<Self>) {
         if !this.reader.is_done() {
-            Self::on_read_status(this, this.reader.unpause());
+            Self::on_read_result(this, this.reader.unpause());
             Self::read_all(this);
         }
     }
@@ -104,27 +104,28 @@ impl PipeReader {
             }
             if let bun_sys::Result::Err(err) = this.reader.start_with_current_pipe() {
                 // As a read error, so that the caller proceeds to the sibling pipe.
-                Self::on_read_status(this, ReadStatus::Failed(err));
+                Self::on_read_result(this, ReadResult::Err(err));
             }
         }
 
         #[cfg(not(windows))]
         {
             // No poll until JS first pulls, so that the child blocks on the pipe.
-            this.reader.set_flags(PosixFlags::IS_PAUSED, lazy);
             this.reader
-                .set_flags(PosixFlags::SOCKET | PosixFlags::NONBLOCKING, true);
-            let fd = this.file.take().unwrap().into_raw();
+                .update_flags(|f| f.set(PosixFlags::IS_PAUSED, lazy));
+            this.reader
+                .update_flags(|f| f.insert(PosixFlags::SOCKET | PosixFlags::NONBLOCKING));
+            let fd = this.stdio_result.take().unwrap().into_raw();
             let started = this.reader.start(this.event_loop, fd, true);
-            Self::on_read_status(this, started.unwrap_or_else(ReadStatus::Failed));
+            Self::on_read_result(this, started.unwrap_or_else(ReadResult::Err));
         }
     }
 
-    fn on_read_status(this: &RefPtr<Self>, status: ReadStatus) {
-        let output = match status {
-            ReadStatus::Pending => return,
-            ReadStatus::Done => Readable::Buffer(this.reader.take_buffer().into_boxed_slice()),
-            ReadStatus::Failed(err) => {
+    fn on_read_result(this: &RefPtr<Self>, result: ReadResult) {
+        let output = match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => Readable::Buffer(this.reader.take_buffer().into_boxed_slice()),
+            ReadResult::Err(err) => {
                 let bytes = this.reader.take_buffer().into_boxed_slice();
                 // Release the fd now, as EOF does, so a child still writing gets EPIPE.
                 this.reader.deinit();
@@ -140,12 +141,12 @@ impl PipeReader {
     #[cfg(windows)]
     pub(super) fn inject_error(this: &RefPtr<Self>, err: bun_sys::Error) {
         this.reader.pause();
-        Self::on_read_status(this, this.reader.fail(err));
+        Self::on_read_result(this, this.reader.fail(err));
     }
 
     #[cfg(unix)]
     pub(super) fn inject_error(this: &RefPtr<Self>, err: bun_sys::Error) {
-        Self::on_read_status(this, ReadStatus::Failed(err));
+        Self::on_read_result(this, ReadResult::Err(err));
     }
 
     pub(crate) fn update_ref(&self, add: bool) {
@@ -154,12 +155,12 @@ impl PipeReader {
 
     pub(crate) fn watch(this: &RefPtr<Self>) {
         if !this.reader.is_done() {
-            Self::on_read_status(this, this.reader.watch(this.event_loop));
+            Self::on_read_result(this, this.reader.watch(this.event_loop));
         }
     }
 
     pub(crate) fn close(this: &RefPtr<Self>) {
-        Self::on_read_status(this, this.reader.close());
+        Self::on_read_result(this, this.reader.close());
     }
 
     pub(crate) fn to_js(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {

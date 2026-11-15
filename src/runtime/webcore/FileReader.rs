@@ -3,8 +3,8 @@ use core::cell::Cell;
 use bun_collections::VecExt;
 #[cfg(not(windows))]
 use bun_io::FileType;
-use bun_io::pipe_reader::Flags as ReaderFlags;
-use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadState, ReadStatus};
+use bun_io::pipe_reader::ReaderFlags;
+use bun_io::{BufferedReader, Chunk, IoEvent, Owner, PollTag, ReadResult, ReadState};
 use bun_jsc::JsCell;
 use bun_ptr::RefPtr;
 use bun_sys::{self as sys, Fd, FdExt};
@@ -235,7 +235,7 @@ impl FileReader {
         unsafe { RefPtr::init_ref(self.parent()) }
     }
 
-    pub(crate) fn own_reader(&self) {
+    pub(crate) fn set_reader_owner(&self) {
         let owner = Owner::new(PollTag::FileReader, self.parent().cast());
         // SAFETY: see `parent()`. The reader is a field of `self`.
         unsafe { self.reader.set_owner(owner) };
@@ -248,22 +248,22 @@ impl FileReader {
     /// `this` pins the JS wrapper too: a consumer (JS, or a native sink such as HTMLRewriter) can drop the stream's last GC root.
     pub(crate) fn read(this: &RefPtr<Source>, event: Option<IoEvent>) {
         let this = &this.context;
-        let status = (this.reader).read_chunks(this.event_loop_ctx(), event, |chunk, state| {
+        let result = (this.reader).read_chunks(this.event_loop_ctx(), event, |chunk, state| {
             this.on_read_chunk(chunk, state)
         });
-        this.on_read_status(status);
+        this.on_read_result(result);
     }
 
-    fn on_read_status(&self, status: ReadStatus) {
-        match status {
-            ReadStatus::Pending => {}
-            ReadStatus::Done => self.on_reader_done(),
-            ReadStatus::Failed(err) => self.on_reader_error(err),
+    fn on_read_result(&self, result: ReadResult) {
+        match result {
+            ReadResult::Pending => {}
+            ReadResult::Done => self.on_reader_done(),
+            ReadResult::Err(err) => self.on_reader_error(err),
         }
     }
 
     pub(crate) fn on_start(&self) -> streams::Start {
-        self.own_reader();
+        self.set_reader_owner();
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
         #[cfg(unix)]
@@ -294,8 +294,11 @@ impl FileReader {
                             {
                                 file_type = opened.file_type;
                             }
-                            (self.reader).set_flags(ReaderFlags::NONBLOCKING, opened.nonblocking);
-                            self.reader.set_flags(ReaderFlags::POLLABLE, pollable);
+                            (self.reader).update_flags(|f| {
+                                f.set(ReaderFlags::NONBLOCKING, opened.nonblocking)
+                            });
+                            self.reader
+                                .update_flags(|f| f.set(ReaderFlags::POLLABLE, pollable));
                         }
                     }
                 }
@@ -341,7 +344,7 @@ impl FileReader {
                 self.reader.start(event_loop, fd, pollable)
             };
             match start_result {
-                Ok(status) => self.on_read_status(status),
+                Ok(result) => self.on_read_result(result),
                 Err(e) => {
                     self.io_ref.set(None);
                     return streams::Start::Err(e);
@@ -375,7 +378,7 @@ impl FileReader {
 
         #[cfg(unix)]
         if file_type == FileType::Socket {
-            self.reader.set_flags(ReaderFlags::SOCKET, true);
+            self.reader.update_flags(|f| f.insert(ReaderFlags::SOCKET));
         }
 
         self.started.set(true);
@@ -391,7 +394,7 @@ impl FileReader {
                 if !was_lazy && self.reader.has_flag(ReaderFlags::POLLABLE) {
                     // A from_pipe() reader may arrive with IS_PAUSED set (lazy
                     // subprocess stdio); clear it so read() does not no-op.
-                    self.on_read_status(self.reader.unpause());
+                    self.on_read_result(self.reader.unpause());
                     Self::read(&self.ref_guard(), None);
                 }
             }
@@ -480,7 +483,7 @@ impl FileReader {
         }
         if !self.reader.has_pending_read() {
             let this = self.ref_guard();
-            self.on_read_status(self.reader.unpause());
+            self.on_read_result(self.reader.unpause());
             Self::read(&this, None);
         }
     }
@@ -517,7 +520,7 @@ impl FileReader {
             .with_mut(|p| p.clear_without_deallocation());
         self.reader.update_ref(false);
         if !self.reader.is_done() {
-            self.on_read_status(self.reader.close());
+            self.on_read_result(self.reader.close());
         }
     }
 
@@ -530,7 +533,7 @@ impl FileReader {
         );
 
         if self.done.get() {
-            self.on_read_status(self.reader.close());
+            self.on_read_result(self.reader.close());
             return false;
         }
         let has_more = state != ReadState::Eof;
@@ -788,7 +791,7 @@ impl FileReader {
         self.flowing.set(flag);
 
         if flag {
-            self.on_read_status(self.reader.unpause());
+            self.on_read_result(self.reader.unpause());
             if !self.reader.is_done() && !self.reader.has_pending_read() {
                 // Kick off a new read if needed
                 Self::read(&self.ref_guard(), None);
@@ -859,9 +862,9 @@ impl readable_stream::SourceContext for FileReader {
 
         if !self.reader.has_pending_read() && self.flowing.get() {
             // A consumer is pulling again: undo the highwater pause from `on_read_chunk`.
-            self.on_read_status(self.reader.unpause());
-            let (amount_read, state, status) = self.reader.read_into(self.event_loop_ctx(), buffer);
-            self.on_read_status(status);
+            self.on_read_result(self.reader.unpause());
+            let (amount_read, state, result) = self.reader.read_into(self.event_loop_ctx(), buffer);
+            self.on_read_result(result);
             bun_core::scoped_log!(FileReader, "onPull({}) = {}", buffer.len(), amount_read);
             let done = state == ReadState::Eof || self.reader_finished();
             if amount_read > 0 {
@@ -894,7 +897,7 @@ impl readable_stream::SourceContext for FileReader {
         self.pending_value.with_mut(|p| p.set(global, array));
         #[cfg(windows)]
         if self.flowing.get() {
-            self.on_read_status(self.reader.unpause());
+            self.on_read_result(self.reader.unpause());
         }
 
         bun_core::scoped_log!(FileReader, "onPull({}) = pending", buffer_len);

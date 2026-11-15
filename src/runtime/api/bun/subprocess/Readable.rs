@@ -48,9 +48,15 @@ impl Readable {
         matches!(self, Readable::Pipe(_))
     }
 
-    pub(crate) fn update_ref(&self, add: bool) {
+    pub(crate) fn ref_(&self) {
         if let Readable::Pipe(pipe) = self {
-            pipe.update_ref(add);
+            pipe.update_ref(true);
+        }
+    }
+
+    pub(crate) fn unref(&self) {
+        if let Readable::Pipe(pipe) = self {
+            pipe.update_ref(false);
         }
     }
 

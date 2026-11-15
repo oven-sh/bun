@@ -10,7 +10,7 @@ use bun_sys::{self as sys, Fd};
 use crate::max_buf::MaxBuf;
 use crate::pipes::{Chunk, ReadState};
 #[cfg(unix)]
-use crate::pipes::{FileType, PollOrFd};
+use crate::pipes::{FileType, PipeHandle};
 #[cfg(windows)]
 use crate::posix_event_loop::__bun_run_io;
 #[cfg(windows)]
@@ -30,11 +30,11 @@ use bun_sys::windows::libuv as uv;
 
 /// What a call on a `BufferedReader` leaves its caller to report.
 #[must_use]
-pub enum ReadStatus {
+pub enum ReadResult {
     /// Nothing: more may come, or the end was reported before.
     Pending,
     Done,
-    Failed(sys::Error),
+    Err(sys::Error),
 }
 
 /// Bytes the reader may still take out of its source (a blob slice window; `None` reads to EOF): reads are cut to it and using it up is reported as EOF.
@@ -65,21 +65,23 @@ impl ReadLimit {
 }
 
 impl BufferedReader {
-    pub fn has_flag(&self, flag: Flags) -> bool {
+    pub fn has_flag(&self, flag: ReaderFlags) -> bool {
         self.flags.get().contains(flag)
     }
 
-    pub fn set_flags(&self, flags: Flags, value: bool) {
-        self.flags.update(|mut all| {
-            all.set(flags, value);
-            all
-        });
+    pub fn update_flags(&self, f: impl FnOnce(&mut ReaderFlags)) {
+        let mut flags = self.flags.get();
+        f(&mut flags);
+        self.flags.set(flags);
     }
 
     #[inline]
     pub fn is_done(&self) -> bool {
-        (self.flags.get())
-            .intersects(Flags::IS_DONE | Flags::RECEIVED_EOF | Flags::CLOSED_WITHOUT_REPORTING)
+        (self.flags.get()).intersects(
+            ReaderFlags::IS_DONE
+                | ReaderFlags::RECEIVED_EOF
+                | ReaderFlags::CLOSED_WITHOUT_REPORTING,
+        )
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -101,9 +103,9 @@ impl BufferedReader {
         fd: Fd,
         poll: bool,
         offset: usize,
-    ) -> sys::Result<ReadStatus> {
+    ) -> sys::Result<ReadResult> {
         self.offset.set(offset);
-        self.set_flags(Flags::USE_PREAD, true);
+        self.update_flags(|f| f.insert(ReaderFlags::USE_PREAD));
         self.start(ev, fd, poll)
     }
 
@@ -151,7 +153,7 @@ impl BufferedReader {
         if let Some(maxbuf) = other.maxbuf.get() {
             let _ = self.maxbuf.set(maxbuf.clone());
         }
-        other.set_flags(Flags::IS_DONE, true);
+        other.update_flags(|f| f.insert(ReaderFlags::IS_DONE));
     }
 
     /// How much of `len` the limit and the byte budget leave to one read.
@@ -173,7 +175,7 @@ impl BufferedReader {
 /// Shared borrows only: a consumer of a chunk can reach the reader again.
 #[cfg(unix)]
 pub struct PosixBufferedReader {
-    handle: PollOrFd,
+    handle: PipeHandle,
     /// Set once `preadv2(RWF_NOWAIT)` said this fd's file type does not support it (tty), so we stop asking.
     rwf_unsupported: Cell<bool>,
     buffer: Cell<Vec<u8>>,
@@ -214,7 +216,7 @@ impl PosixFlags {
 impl PosixBufferedReader {
     pub fn init() -> PosixBufferedReader {
         PosixBufferedReader {
-            handle: PollOrFd::closed(),
+            handle: PipeHandle::closed(),
             rwf_unsupported: Cell::new(false),
             buffer: Cell::default(),
             offset: Cell::new(0),
@@ -244,7 +246,7 @@ impl PosixBufferedReader {
 
     pub fn update_ref(&self, value: bool) {
         // For a poll that is created later.
-        self.set_flags(PosixFlags::KEEP_ALIVE, value);
+        self.update_flags(|f| f.set(PosixFlags::KEEP_ALIVE, value));
         self.handle.with_poll(|poll| {
             // An unarmed poll delivers nothing; `register_poll` applies KEEP_ALIVE when it arms.
             if !value || poll.is_watching() {
@@ -262,7 +264,7 @@ impl PosixBufferedReader {
     }
 
     pub fn start_memfd(&self, fd: Fd) {
-        self.set_flags(PosixFlags::MEMFD, true);
+        self.update_flags(|f| f.insert(PosixFlags::MEMFD));
         self.handle.set_fd(fd);
     }
 
@@ -283,13 +285,13 @@ impl PosixBufferedReader {
         FileType::File
     }
 
-    pub fn close(&self) -> ReadStatus {
+    pub fn close(&self) -> ReadResult {
         if self.has_flag(PosixFlags::CLOSED_WITHOUT_REPORTING)
             || (self.has_flag(PosixFlags::CLOSE_HANDLE) && !self.handle.is_closed())
         {
             return self.done();
         }
-        ReadStatus::Pending
+        ReadResult::Pending
     }
 
     /// Explicit teardown with nothing to report (unlike
@@ -304,7 +306,7 @@ impl PosixBufferedReader {
     fn close_without_reporting(&self) {
         if !self.handle.is_closed() {
             debug_assert!(!self.has_flag(PosixFlags::CLOSED_WITHOUT_REPORTING));
-            self.set_flags(PosixFlags::CLOSED_WITHOUT_REPORTING, true);
+            self.update_flags(|f| f.insert(PosixFlags::CLOSED_WITHOUT_REPORTING));
             if self.has_flag(PosixFlags::CLOSE_HANDLE) {
                 self.handle.close();
             }
@@ -324,7 +326,7 @@ impl PosixBufferedReader {
         if self.has_flag(PosixFlags::IS_PAUSED) {
             return;
         }
-        self.set_flags(PosixFlags::IS_PAUSED, true);
+        self.update_flags(|f| f.insert(PosixFlags::IS_PAUSED));
 
         // Unregister the FilePoll if it's registered
         self.handle.with_poll(|poll| {
@@ -334,10 +336,10 @@ impl PosixBufferedReader {
         });
     }
 
-    pub fn unpause(&self) -> ReadStatus {
-        self.set_flags(PosixFlags::IS_PAUSED, false);
+    pub fn unpause(&self) -> ReadResult {
+        self.update_flags(|f| f.remove(PosixFlags::IS_PAUSED));
         // The next read() call will re-register the poll if needed
-        ReadStatus::Pending
+        ReadResult::Pending
     }
 
     fn read_memfd(&self) {
@@ -355,37 +357,37 @@ impl PosixBufferedReader {
         }
     }
 
-    fn done(&self) -> ReadStatus {
+    fn done(&self) -> ReadResult {
         if self.has_flag(PosixFlags::CLOSE_HANDLE) {
             self.handle.close();
         }
-        self.set_flags(PosixFlags::CLOSED_WITHOUT_REPORTING, false);
+        self.update_flags(|f| f.remove(PosixFlags::CLOSED_WITHOUT_REPORTING));
         if self.handle.is_closed() {
             debug_assert!(!self.has_flag(PosixFlags::IS_DONE));
-            self.set_flags(PosixFlags::IS_DONE, true);
+            self.update_flags(|f| f.insert(PosixFlags::IS_DONE));
             self.with_buffer(Vec::shrink_to_fit);
         }
-        ReadStatus::Done
+        ReadResult::Done
     }
 
     /// `done`, unless a consumer of the final chunk got there first.
-    fn done_once(&self) -> ReadStatus {
+    fn done_once(&self) -> ReadResult {
         if self.has_flag(PosixFlags::IS_DONE) {
-            return ReadStatus::Pending;
+            return ReadResult::Pending;
         }
         self.done()
     }
 
-    fn register_poll(&self, ev: EventLoopHandle) -> ReadStatus {
+    fn register_poll(&self, ev: EventLoopHandle) -> ReadResult {
         // pause() may land from inside a chunk's JS re-entry while the
         // loop's own re-arm is still ahead on the stack.
         if self.has_flag(PosixFlags::IS_PAUSED) {
-            return ReadStatus::Pending;
+            return ReadResult::Pending;
         }
         if !self.handle.has_poll() {
             let fd = self.get_fd();
             if fd == Fd::INVALID || !self.has_flag(PosixFlags::POLLABLE) {
-                return ReadStatus::Pending;
+                return ReadResult::Pending;
             }
             self.handle.set_poll(ev, fd);
         }
@@ -396,27 +398,27 @@ impl PosixBufferedReader {
         }
 
         match self.handle.register(FilePollFlag::Readable) {
-            sys::Result::Err(err) => ReadStatus::Failed(err),
-            sys::Result::Ok(()) => ReadStatus::Pending,
+            sys::Result::Err(err) => ReadResult::Err(err),
+            sys::Result::Ok(()) => ReadResult::Pending,
         }
     }
 
     /// Always takes `fd`: a poll that cannot be armed is a read that failed. `Err` is for Windows.
-    pub fn start(&self, ev: EventLoopHandle, fd: Fd, is_pollable: bool) -> sys::Result<ReadStatus> {
+    pub fn start(&self, ev: EventLoopHandle, fd: Fd, is_pollable: bool) -> sys::Result<ReadResult> {
         if !is_pollable {
             self.with_buffer(Vec::clear);
-            self.set_flags(PosixFlags::IS_DONE, false);
+            self.update_flags(|f| f.remove(PosixFlags::IS_DONE));
             self.handle.close();
             self.handle.set_fd(fd);
-            return sys::Result::Ok(ReadStatus::Pending);
+            return sys::Result::Ok(ReadResult::Pending);
         }
-        self.set_flags(PosixFlags::POLLABLE, true);
+        self.update_flags(|f| f.insert(PosixFlags::POLLABLE));
         if self.get_fd() != fd {
             self.handle.set_fd(fd);
         }
         // With nothing left to read the fd is never waited on: like a non-pollable source, the parent's first read request ends the reader.
         if self.limit.reached() {
-            return sys::Result::Ok(ReadStatus::Pending);
+            return sys::Result::Ok(ReadResult::Pending);
         }
 
         sys::Result::Ok(self.register_poll(ev))
@@ -431,23 +433,23 @@ impl PosixBufferedReader {
         self.handle.is_watching()
     }
 
-    pub fn watch(&self, ev: EventLoopHandle) -> ReadStatus {
+    pub fn watch(&self, ev: EventLoopHandle) -> ReadResult {
         if self.has_flag(PosixFlags::POLLABLE) && !self.handle.is_watching() {
             return self.register_poll(ev);
         }
-        ReadStatus::Pending
+        ReadResult::Pending
     }
 
     /// Reads what is there into the buffer. `event` is the one the owner was handed, if any.
-    pub fn read(&self, ev: EventLoopHandle, event: Option<IoEvent>) -> ReadStatus {
+    pub fn read(&self, ev: EventLoopHandle, event: Option<IoEvent>) -> ReadResult {
         let mut read = match ReadLoop::begin(self, &ev, event, false) {
             Ok(read) => read,
-            Err(status) => return status,
+            Err(result) => return result,
         };
         loop {
             read.fill();
-            if let Some(status) = read.advance(true) {
-                return status;
+            if let Some(result) = read.advance(true) {
+                return result;
             }
         }
     }
@@ -458,15 +460,15 @@ impl PosixBufferedReader {
         ev: EventLoopHandle,
         event: Option<IoEvent>,
         mut on_chunk: impl FnMut(Chunk<'_>, ReadState) -> bool,
-    ) -> ReadStatus {
+    ) -> ReadResult {
         let mut read = match ReadLoop::begin(self, &ev, event, true) {
             Ok(read) => read,
-            Err(status) => return status,
+            Err(result) => return result,
         };
         loop {
             let keep_going = (read.fill()).is_none_or(|(chunk, state)| on_chunk(chunk, state));
-            if let Some(status) = read.advance(keep_going) {
-                return status;
+            if let Some(result) = read.advance(keep_going) {
+                return result;
             }
         }
     }
@@ -505,7 +507,7 @@ impl PosixBufferedReader {
                 #[cfg(any(target_os = "linux", target_os = "android"))]
                 {
                     if !self.rwf_unsupported.get() {
-                        match sys::read_nowait(fd, buf.reborrow()) {
+                        match sys::read_nowait_buf(fd, buf.reborrow()) {
                             Ok(None) => self.rwf_unsupported.set(true),
                             Ok(Some(n)) => return Ok(n),
                             Err(e) => return Err(e),
@@ -546,7 +548,7 @@ impl PosixBufferedReader {
             }
             sys::Result::Err(err) if err.is_retry() => ReadOnce::Stop(Stop::WouldBlock),
             sys::Result::Err(err) => {
-                self.set_flags(PosixFlags::READ_FAILED, true);
+                self.update_flags(|f| f.insert(PosixFlags::READ_FAILED));
                 ReadOnce::Stop(Stop::Error(err))
             }
         }
@@ -607,9 +609,9 @@ impl PosixBufferedReader {
     }
 
     /// One non-blocking read straight into `dst` for a consumer pulling synchronously; arms the poll when nothing is available.
-    pub fn read_into(&self, ev: EventLoopHandle, dst: &mut [u8]) -> (usize, ReadState, ReadStatus) {
+    pub fn read_into(&self, ev: EventLoopHandle, dst: &mut [u8]) -> (usize, ReadState, ReadResult) {
         let Some((fd, file_type)) = self.begin_read().filter(|_| !dst.is_empty()) else {
-            return (0, ReadState::Progress, ReadStatus::Pending);
+            return (0, ReadState::Progress, ReadResult::Pending);
         };
         if let bun_core::Pollable::NotReady = self.readiness(file_type, fd) {
             return (0, ReadState::Progress, self.register_poll(ev));
@@ -619,16 +621,16 @@ impl PosixBufferedReader {
             ReadOnce::Stop(stop) => (0, Some(stop)),
         };
         match stop {
-            None => (n, ReadState::Progress, ReadStatus::Pending),
+            None => (n, ReadState::Progress, ReadResult::Pending),
             Some(Stop::Eof | Stop::OverBudget) => {
                 self.close_without_reporting();
                 (n, ReadState::Eof, self.done_once())
             }
             Some(Stop::WouldBlock) if file_type == FileType::File => {
-                (0, ReadState::Drained, ReadStatus::Pending)
+                (0, ReadState::Drained, ReadResult::Pending)
             }
             Some(Stop::WouldBlock) => (0, ReadState::Drained, self.register_poll(ev)),
-            Some(Stop::Error(err)) => (0, ReadState::Progress, ReadStatus::Failed(err)),
+            Some(Stop::Error(err)) => (0, ReadState::Progress, ReadResult::Err(err)),
         }
     }
 }
@@ -656,8 +658,8 @@ impl<'a> ReadLoop<'a> {
         ev: &'a EventLoopHandle,
         event: Option<IoEvent>,
         streaming: bool,
-    ) -> Result<Self, ReadStatus> {
-        let (fd, file_type) = reader.begin_read().ok_or(ReadStatus::Pending)?;
+    ) -> Result<Self, ReadResult> {
+        let (fd, file_type) = reader.begin_read().ok_or(ReadResult::Pending)?;
         let received_hup = match event {
             Some(event) => {
                 bun_sys::syslog!("onPoll({}) = {}", fd, event.size_or_offset);
@@ -689,7 +691,7 @@ impl<'a> ReadLoop<'a> {
         let mut from_scratch: &[u8] = &[];
         match &mut self.scratch {
             Some(scratch) if buffer.is_empty() && (streaming || buffer.capacity() == 0) => {
-                let scratch = scratch.bytes();
+                let scratch = scratch.as_mut_slice();
                 let filled;
                 (filled, self.stop) = reader.fill_scratch(self.file_type, self.fd, scratch);
                 from_scratch = &scratch[..filled];
@@ -722,30 +724,30 @@ impl<'a> ReadLoop<'a> {
     }
 
     /// `None` to `fill` again.
-    fn advance(&mut self, keep_going: bool) -> Option<ReadStatus> {
+    fn advance(&mut self, keep_going: bool) -> Option<ReadResult> {
         let reader = self.reader;
         if let Some(lent) = self.lent.take() {
             reader.reuse_buffer(lent);
         }
         let would_block = match self.stop.take() {
             Some(Stop::Eof | Stop::OverBudget) => return Some(reader.done_once()),
-            Some(Stop::Error(err)) => return Some(ReadStatus::Failed(err)),
+            Some(Stop::Error(err)) => return Some(ReadResult::Err(err)),
             Some(Stop::WouldBlock) => true,
             None => false,
         };
         // Re-entrant JS inside the consumer can close the reader (nested on_pull -> read -> EOF); the captured `fd` is then stale.
         if reader.is_done() {
-            return Some(ReadStatus::Pending);
+            return Some(ReadResult::Pending);
         }
         if would_block {
             if self.file_type == FileType::File {
                 bun_core::debug_warn!("Received EAGAIN while reading from a file. This is a bug.");
-                return Some(ReadStatus::Pending);
+                return Some(ReadResult::Pending);
             }
             return Some(reader.register_poll(*self.ev));
         }
         if !keep_going && !self.received_hup {
-            return Some(ReadStatus::Pending);
+            return Some(ReadResult::Pending);
         }
         if self.file_type != FileType::Pipe {
             return None;
@@ -841,7 +843,7 @@ enum Completion {
         state: ReadState,
         read_file_again: bool,
     },
-    Ended(ReadStatus),
+    Ended(ReadResult),
 }
 
 #[cfg(windows)]
@@ -854,7 +856,7 @@ impl Completion {
 
     /// SAFETY: `owner` is the one a reader has.
     unsafe fn dispatch(self, owner: Owner) {
-        if !matches!(self, Completion::Ended(ReadStatus::Pending)) {
+        if !matches!(self, Completion::Ended(ReadResult::Pending)) {
             // SAFETY: `set_owner`'s contract.
             unsafe { __bun_run_io(owner, IoEvent::Read(ReadEvent(self))) };
         }
@@ -910,22 +912,22 @@ impl WindowsBufferedReader {
         self.take_state_from(other);
         // Ownership of the handle (or listed file) moves with the source.
         self.source.set(other.source.take());
-        self.claim_source();
+        self.set_source_owner();
     }
 
     pub fn get_fd(&self) -> Fd {
         (self.with_source(|source| source.get_fd())).unwrap_or(Fd::INVALID)
     }
 
-    pub fn watch(&self, _: EventLoopHandle) -> ReadStatus {
+    pub fn watch(&self, _: EventLoopHandle) -> ReadResult {
         // No-op on windows.
-        ReadStatus::Pending
+        ReadResult::Pending
     }
 
     /// SAFETY: see `PosixBufferedReader::set_owner`.
     pub unsafe fn set_owner(&self, owner: Owner) {
         self.owner.set(owner);
-        self.claim_source();
+        self.set_source_owner();
     }
 
     /// `self` for libuv to keep: the owner's pointer outlasts this borrow.
@@ -936,7 +938,7 @@ impl WindowsBufferedReader {
     }
 
     /// From now on a VM teardown stops the source through this reader, whether or not it ever reads.
-    fn claim_source(&self) {
+    fn set_source_owner(&self) {
         self.with_source(|source| source.set_owner(self.as_uv_data(), Self::stop_for_vm_teardown));
     }
 
@@ -951,20 +953,20 @@ impl WindowsBufferedReader {
     }
 
     fn finish(&self) {
-        self.set_flags(WindowsFlags::HAS_INFLIGHT_READ, false);
-        self.set_flags(WindowsFlags::IS_DONE, true);
+        self.update_flags(|f| f.remove(WindowsFlags::HAS_INFLIGHT_READ));
+        self.update_flags(|f| f.insert(WindowsFlags::IS_DONE));
         self.with_buffer(Vec::shrink_to_fit);
     }
 
-    pub fn fail(&self, err: sys::Error) -> ReadStatus {
+    pub fn fail(&self, err: sys::Error) -> ReadResult {
         self.finish();
-        ReadStatus::Failed(err)
+        ReadResult::Err(err)
     }
 
     pub fn start_with_current_pipe(&self) -> sys::Result<()> {
         debug_assert!(self.has_open_source());
         self.with_buffer(Vec::clear);
-        self.set_flags(WindowsFlags::IS_DONE, false);
+        self.update_flags(|f| f.remove(WindowsFlags::IS_DONE));
         // Debug-only fault injection for test/js/bun/spawn/spawn-pipe-start-error.test.ts:
         // a real uv_read_start failure on a freshly-spawned stdio pipe cannot be
         // triggered from JS, so the test exercises the consumer's error path this way.
@@ -990,22 +992,22 @@ impl WindowsBufferedReader {
             uv::open_handles::add_file(file);
         }
         self.source.set(Some(source));
-        self.claim_source();
+        self.set_source_owner();
     }
 
     /// `uv::open_handles` closes this reader's stream through here at teardown.
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
-        // SAFETY: recorded by `claim_source`; the slot is replaced or dropped before the reader
+        // SAFETY: recorded by `set_source_owner`; the slot is replaced or dropped before the reader
         // goes away (`from`, `close_source`). Not used once the owner runs, which may free it.
         let this = unsafe { &*this.cast::<WindowsBufferedReader>() };
         // SAFETY: the reader's owner.
         unsafe { Completion::Ended(this.close()).dispatch(this.owner.get()) };
     }
 
-    pub fn start(&self, ev: EventLoopHandle, fd: Fd, _: bool) -> sys::Result<ReadStatus> {
+    pub fn start(&self, ev: EventLoopHandle, fd: Fd, _: bool) -> sys::Result<ReadResult> {
         self.set_source(Source::open(ev.loop_(), fd)?);
         self.start_with_current_pipe()?;
-        sys::Result::Ok(ReadStatus::Pending)
+        sys::Result::Ok(ReadResult::Pending)
     }
 
     pub fn set_raw_mode(&self, value: bool) -> sys::Result<()> {
@@ -1026,7 +1028,7 @@ impl WindowsBufferedReader {
     ) {
         // SAFETY: `start_reading` set `data`, and the reader stops reading before it lets go of the handle.
         let (this, kind) = unsafe { (&*(*handle).data.cast::<Self>(), (*handle).type_) };
-        this.set_flags(WindowsFlags::HAS_INFLIGHT_READ, true);
+        this.update_flags(|f| f.insert(WindowsFlags::HAS_INFLIGHT_READ));
         // Never empty: reads are only issued while the limit has not been reached (`start_reading`, `begin`), and libuv treats an empty buffer as an error.
         debug_assert!(!this.limit.reached());
         let size = this.limit.clamp_len(suggested_size);
@@ -1119,7 +1121,7 @@ impl WindowsBufferedReader {
         };
         bun_sys::syslog!("onFileRead() = {}", result.int());
 
-        // SAFETY: what `claim_source` set, which dropping the file clears.
+        // SAFETY: what `set_source_owner` set, which dropping the file clears.
         // Not used once the owner runs, which may free it.
         let this = unsafe { &*this.cast::<Self>() };
         this.buffer.set(buffer);
@@ -1136,32 +1138,32 @@ impl WindowsBufferedReader {
         let nread_int = result.int();
 
         // Mark no longer in flight
-        self.set_flags(WindowsFlags::HAS_INFLIGHT_READ, false);
+        self.update_flags(|f| f.remove(WindowsFlags::HAS_INFLIGHT_READ));
 
         // `close()` was asked for while this read was out (the
         // cancel need not have won): finish the close, deliver nothing.
         if self.has_flag(WindowsFlags::DEFER_DONE_CALLBACK) {
-            self.set_flags(WindowsFlags::DEFER_DONE_CALLBACK, false);
+            self.update_flags(|f| f.remove(WindowsFlags::DEFER_DONE_CALLBACK));
             return Completion::Ended(self.close_now());
         }
 
         if nread_int == uv::UV_ECANCELED as i64 {
             self.with_buffer(Vec::clear);
-            return Completion::Ended(ReadStatus::Pending);
+            return Completion::Ended(ReadResult::Pending);
         }
 
         if self.has_flag(WindowsFlags::IS_DONE) {
-            return Completion::Ended(ReadStatus::Pending);
+            return Completion::Ended(ReadResult::Pending);
         }
 
         // 0 actually means EOF too
         if nread_int == 0 || nread_int == uv::UV_EOF as i64 {
-            self.set_flags(WindowsFlags::IS_PAUSED, true);
+            self.update_flags(|f| f.insert(WindowsFlags::IS_PAUSED));
             return Completion::EOF;
         }
 
         if let Some(err) = result.to_error(sys::Tag::read) {
-            self.set_flags(WindowsFlags::IS_PAUSED, true);
+            self.update_flags(|f| f.insert(WindowsFlags::IS_PAUSED));
             return Completion::Ended(self.fail(err));
         }
 
@@ -1191,7 +1193,7 @@ impl WindowsBufferedReader {
             let max_len = self.clamp_len(usize::MAX);
             file.submit_read(buffer, max_len, offset, Self::on_file_read)
         })?;
-        self.set_flags(WindowsFlags::HAS_INFLIGHT_READ, true);
+        self.update_flags(|f| f.insert(WindowsFlags::HAS_INFLIGHT_READ));
         sys::Result::Ok(())
     }
 
@@ -1203,7 +1205,7 @@ impl WindowsBufferedReader {
         {
             return sys::Result::Ok(());
         }
-        self.set_flags(WindowsFlags::IS_PAUSED, false);
+        self.update_flags(|f| f.remove(WindowsFlags::IS_PAUSED));
 
         let started = self.with_source(|source| {
             debug_assert!(!source.is_closed());
@@ -1235,7 +1237,7 @@ impl WindowsBufferedReader {
         if self.has_flag(WindowsFlags::IS_DONE) || self.has_flag(WindowsFlags::IS_PAUSED) {
             return;
         }
-        self.set_flags(WindowsFlags::IS_PAUSED, true);
+        self.update_flags(|f| f.insert(WindowsFlags::IS_PAUSED));
         self.with_source(|source| match source.file() {
             Some(file) => file.stop(),
             // SAFETY: stream handle is live (not a file source).
@@ -1255,31 +1257,31 @@ impl WindowsBufferedReader {
                 file.stop();
             }
             Source::Tty(tty) => {
-                self.set_flags(WindowsFlags::IS_PAUSED, true);
+                self.update_flags(|f| f.insert(WindowsFlags::IS_PAUSED));
                 // The one for stdin stays open.
                 tty.stop_reading_for(core::ptr::from_ref(self).cast());
             }
-            Source::Pipe(_) => self.set_flags(WindowsFlags::IS_PAUSED, true),
+            Source::Pipe(_) => self.update_flags(|f| f.insert(WindowsFlags::IS_PAUSED)),
         }
         true
     }
 
-    fn close_now(&self) -> ReadStatus {
+    fn close_now(&self) -> ReadResult {
         if !self.close_source() {
-            return ReadStatus::Pending;
+            return ReadResult::Pending;
         }
         self.finish();
-        ReadStatus::Done
+        ReadResult::Done
     }
 
     /// With a file read in progress, `Done` comes with the event of its completion.
-    pub fn close(&self) -> ReadStatus {
+    pub fn close(&self) -> ReadResult {
         self.pause();
 
         // Defer done if operation is in progress (whether cancel succeeded or failed)
         if self.is_file_busy() {
-            self.set_flags(WindowsFlags::DEFER_DONE_CALLBACK, true);
-            return ReadStatus::Pending;
+            self.update_flags(|f| f.insert(WindowsFlags::DEFER_DONE_CALLBACK));
+            return ReadResult::Pending;
         }
 
         self.close_now()
@@ -1294,11 +1296,11 @@ impl WindowsBufferedReader {
     }
 
     /// Returns the state of the chunk in the buffer, and whether `advance` reads the file again.
-    fn begin(&self, event: Option<IoEvent>) -> Result<(ReadState, bool), ReadStatus> {
+    fn begin(&self, event: Option<IoEvent>) -> Result<(ReadState, bool), ReadResult> {
         let (amount, mut state, read_file_again) = match event {
             // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
             None => return Err(self.unpause()),
-            Some(IoEvent::Read(ReadEvent(Completion::Ended(status)))) => return Err(status),
+            Some(IoEvent::Read(ReadEvent(Completion::Ended(result)))) => return Err(result),
             Some(IoEvent::Read(ReadEvent(Completion::Read {
                 amount,
                 state,
@@ -1312,47 +1314,47 @@ impl WindowsBufferedReader {
             state = ReadState::Eof;
         }
         if state == ReadState::Eof {
-            self.set_flags(WindowsFlags::RECEIVED_EOF, true);
+            self.update_flags(|f| f.insert(WindowsFlags::RECEIVED_EOF));
         }
 
         // Before the delivery, which may start the next read.
-        self.set_flags(WindowsFlags::HAS_INFLIGHT_READ, false);
+        self.update_flags(|f| f.remove(WindowsFlags::HAS_INFLIGHT_READ));
         Ok((state, read_file_again))
     }
 
-    fn advance(&self, state: ReadState, read_file_again: bool) -> ReadStatus {
+    fn advance(&self, state: ReadState, read_file_again: bool) -> ReadResult {
         if state == ReadState::Eof {
             return self.close();
         }
         // if we are not paused we keep reading until EOF or err
         if !read_file_again || self.has_flag(WindowsFlags::IS_PAUSED) {
-            return ReadStatus::Pending;
+            return ReadResult::Pending;
         }
         match self.with_source(|source| source.file().map(|file| self.read_file(file))) {
             Some(Some(Err(err))) => {
-                self.set_flags(WindowsFlags::IS_PAUSED, true);
+                self.update_flags(|f| f.insert(WindowsFlags::IS_PAUSED));
                 // we should inform the error if we are unable to keep reading
                 self.fail(err)
             }
-            _ => ReadStatus::Pending,
+            _ => ReadResult::Pending,
         }
     }
 
-    pub fn unpause(&self) -> ReadStatus {
+    pub fn unpause(&self) -> ReadResult {
         if self.limit.reached() && !self.is_done() {
             // Nothing was ever there to read: report EOF the way a completed read does instead of issuing one.
-            self.set_flags(WindowsFlags::RECEIVED_EOF, true);
+            self.update_flags(|f| f.insert(WindowsFlags::RECEIVED_EOF));
             return self.close();
         }
         let _ = self.start_reading();
-        ReadStatus::Pending
+        ReadResult::Pending
     }
 
     /// See `PosixBufferedReader::read`.
-    pub fn read(&self, _: EventLoopHandle, event: Option<IoEvent>) -> ReadStatus {
+    pub fn read(&self, _: EventLoopHandle, event: Option<IoEvent>) -> ReadResult {
         match self.begin(event) {
             Ok((state, read_file_again)) => self.advance(state, read_file_again),
-            Err(status) => status,
+            Err(result) => result,
         }
     }
 
@@ -1362,10 +1364,10 @@ impl WindowsBufferedReader {
         _: EventLoopHandle,
         event: Option<IoEvent>,
         mut on_chunk: impl FnMut(Chunk<'_>, ReadState) -> bool,
-    ) -> ReadStatus {
+    ) -> ReadResult {
         let (state, read_file_again) = match self.begin(event) {
             Ok(read) => read,
-            Err(status) => return status,
+            Err(result) => return result,
         };
         let mut buffer = self.buffer.take();
         // Parents that want the reader paused call `pause()` themselves.
@@ -1379,7 +1381,7 @@ impl WindowsBufferedReader {
     }
 
     /// Windows reads complete through libuv, never synchronously; this just makes sure one is in flight.
-    pub fn read_into(&self, _: EventLoopHandle, _dst: &mut [u8]) -> (usize, ReadState, ReadStatus) {
+    pub fn read_into(&self, _: EventLoopHandle, _dst: &mut [u8]) -> (usize, ReadState, ReadResult) {
         (0, ReadState::Progress, self.unpause())
     }
 }
@@ -1401,10 +1403,10 @@ impl Drop for WindowsBufferedReader {
 #[cfg(unix)]
 pub type BufferedReader = PosixBufferedReader;
 #[cfg(unix)]
-pub type Flags = PosixFlags;
+pub type ReaderFlags = PosixFlags;
 #[cfg(windows)]
 pub type BufferedReader = WindowsBufferedReader;
 #[cfg(windows)]
-pub type Flags = WindowsFlags;
+pub type ReaderFlags = WindowsFlags;
 #[cfg(not(any(unix, windows)))]
 compile_error!("Unsupported platform");

@@ -20,7 +20,7 @@ use bun_core::EncodedSlice;
 use bun_core::SignalCode;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadStatus, StreamingWriter, WriteStatus};
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag, ReadResult, StreamingWriter, WriteStatus};
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
@@ -43,7 +43,7 @@ pub(crate) use crate::generated_bindgen::terminal::js_Terminal as js;
 /// Reference counting for Terminal.
 /// Refs are held by:
 /// 1. The JS wrapper (released when it is collected)
-/// 2. Reader (released in `on_read_status`)
+/// 2. Reader (released in `on_read_result`)
 /// 3. Writer (released in onWriterClose)
 ///
 // Every JS-exposed method takes `&self`; per-field
@@ -408,20 +408,22 @@ impl Terminal {
 
         // Start reader with the read fd - adds a ref.
         let event_loop = terminal.event_loop_handle.as_event_loop_ctx();
-        let Ok(status) = (terminal.reader).start(event_loop, pty_result.read.fd(), true) else {
+        let Ok(result) = (terminal.reader).start(event_loop, pty_result.read.fd(), true) else {
             // The reader did not take the fd.
             drop(pty_result.read);
             return Err(terminal.fail_reader_start());
         };
         pty_result.read.into_raw();
         terminal.reader_ref.set(Some(terminal.clone()));
-        terminal.on_read_status(status);
+        terminal.on_read_result(result);
         if terminal.is_reader_done() {
             return Err(terminal.fail_reader_start());
         }
         // PTY behaves like a pipe, not a socket
         #[cfg(unix)]
-        terminal.reader.set_flags(PosixFlags::NONBLOCKING, true);
+        terminal
+            .reader
+            .update_flags(|f| f.insert(PosixFlags::NONBLOCKING));
         terminal.update_flags(|f| f.insert(Flags::READER_STARTED));
 
         // Start reading data
@@ -693,7 +695,7 @@ impl Terminal {
                 // broken-pipe once libuv's deferred close runs.
                 let flags = self.flags.get();
                 if flags.contains(Flags::READER_STARTED) && !self.is_reader_done() {
-                    self.on_read_status(self.reader.close());
+                    self.on_read_result(self.reader.close());
                 }
             }
         }
@@ -1506,7 +1508,7 @@ impl Terminal {
 
         // Close reader (closes its fd)
         if self.flags.get().contains(Flags::READER_STARTED) {
-            self.on_read_status(self.reader.close());
+            self.on_read_result(self.reader.close());
         }
 
         #[cfg(unix)]
@@ -1577,21 +1579,21 @@ impl Terminal {
 
     pub(crate) fn read(&self, event: Option<IoEvent>) {
         let event_loop = self.event_loop_handle.as_event_loop_ctx();
-        let status = self.reader.read_chunks(event_loop, event, |chunk, _| {
+        let result = self.reader.read_chunks(event_loop, event, |chunk, _| {
             self.on_read_chunk(&chunk);
             true
         });
-        self.on_read_status(status);
+        self.on_read_result(result);
     }
 
     /// Takes `reader_ref` before the exit callback so re-entry (`terminal.close()` from the
     /// callback) finds it gone and no-ops.
-    fn on_read_status(&self, status: ReadStatus) {
+    fn on_read_result(&self, result: ReadResult) {
         // Of the PTY stream, not of the subprocess.
-        let exit_code = match status {
-            ReadStatus::Pending => return,
-            ReadStatus::Done => 0,
-            ReadStatus::Failed(err) => {
+        let exit_code = match result {
+            ReadResult::Pending => return,
+            ReadResult::Done => 0,
+            ReadResult::Err(err) => {
                 bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
                 1
             }
@@ -1620,7 +1622,7 @@ impl Terminal {
     fn finish_io_after_eof(&self) {
         // EOF closes the reader itself, a read error does not.
         if !self.reader.is_done() {
-            self.on_read_status(self.reader.close());
+            self.on_read_result(self.reader.close());
         }
         // `end()` dispatches `on_writer_close`.
         if !self.is_writer_done() {

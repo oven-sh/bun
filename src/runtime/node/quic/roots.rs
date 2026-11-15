@@ -5,7 +5,7 @@ use core::cell::Cell;
 use core::marker::PhantomData;
 
 use bun_jsc::bindgen::{BorrowedWrapper, JsPayload, StrongWrapper};
-use bun_ptr::{CellExt as _, OptionCellExt as _};
+use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _};
 
 /// An optional `StrongWrapper` that is set and taken through `&self`.
 pub(super) struct StrongWrapperCell<T>(Cell<Option<StrongWrapper<T>>>);
@@ -80,7 +80,7 @@ impl<T: JsPayload, V: Borrow<StrongWrapper<T>>> StrongWrapperMap<T, V> {
     }
 
     pub(super) fn len(&self) -> usize {
-        self.entries.with_taken(|entries| entries.len())
+        self.entries.len()
     }
 
     pub(super) fn is_empty(&self) -> bool {

@@ -9,7 +9,7 @@ use bun_io::KeepAlive;
 use bun_jsc::bindgen::{BorrowedWrapper, JsLocal, JsScope, JsStructure, JsWrapper, StrongWrapper};
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, StringJsc};
 use bun_lsquic_sys as lsquic;
-use bun_ptr::{CellExt as _, RefPtr};
+use bun_ptr::{CellExt as _, RefPtr, VecCellExt as _};
 use bun_uws as uws;
 
 use crate::jsc_hooks::{runtime_state, timer_all};
@@ -1146,9 +1146,7 @@ impl QuicEndpoint {
         // and an idle engine stops advising a tick -- so without a poll the
         // sweep never runs and an announced session never settles.
         const SWEEP_POLL_MS: u64 = 250;
-        if !self.pending_verneg.with_taken(|v| v.is_empty())
-            || !self.provisional.with_taken(|v| v.is_empty())
-        {
+        if !self.pending_verneg.is_empty() || !self.provisional.is_empty() {
             ms = Some(ms.map_or(SWEEP_POLL_MS, |m| m.min(SWEEP_POLL_MS)));
         }
         if self.followup_due.get() {
@@ -1232,13 +1230,11 @@ impl QuicEndpoint {
         );
         let (key, session) = Self::create_server_session(this)?;
         this.add_server_session(key, session);
-        this.provisional.with_taken(|v| {
-            v.push(ProvisionalSession {
-                dcid: dcid.to_vec(),
-                peer: *peer,
-                created_ns: now_ns(),
-                session: key,
-            })
+        this.provisional.push(ProvisionalSession {
+            dcid: dcid.to_vec(),
+            peer: *peer,
+            created_ns: now_ns(),
+            session: key,
         });
         Ok(())
     }
@@ -1264,7 +1260,7 @@ impl QuicEndpoint {
 
     fn add_server_session(&self, key: Key, session: StrongCtx<QuicSession>) {
         self.sessions.insert(key, session);
-        self.pending_new_sessions.with_taken(|v| v.push(key));
+        self.pending_new_sessions.push(key);
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
     }
 
@@ -1464,8 +1460,7 @@ impl QuicEndpoint {
                 if p.session != session {
                     return true;
                 }
-                self.dead_provisional_peers
-                    .with_taken(|d| d.push((p.peer, now)));
+                self.dead_provisional_peers.push((p.peer, now));
                 false
             })
         });
@@ -1619,8 +1614,7 @@ impl QuicEndpoint {
     }
 
     pub(super) fn buffer_early_keylog(&self, ssl: usize, peer: StoredAddr, line: &[u8]) {
-        self.early_keylog
-            .with_taken(|v| v.push((ssl, peer, line.to_vec())));
+        self.early_keylog.push((ssl, peer, line.to_vec()));
     }
 
     /// Without this, buffered lines outlive the freed `SSL*` and a later
@@ -1897,8 +1891,7 @@ impl QuicEndpoint {
         session.verneg.set(Some((version, min_version)));
         session.remote_addr.set(remote);
         let handle = strong.to_js();
-        self.pending_verneg
-            .with_taken(|v| v.push((key, scid, now_ns())));
+        self.pending_verneg.push((key, scid, now_ns()));
         // A probe has no engine, so nothing else would ever arm the timer that
         // runs the sweep expiring it.
         self.schedule_process();
@@ -1918,7 +1911,7 @@ impl QuicEndpoint {
 
     /// The VN packet's DCID echoes the probe's SCID — RFC 8999 sec 6.
     fn handle_version_negotiation(&self, payload: &[u8]) -> bool {
-        if self.pending_verneg.with_taken(|v| v.is_empty()) {
+        if self.pending_verneg.is_empty() {
             return false;
         }
         let mut off = LONG_HEADER_DCID_LEN_OFFSET;

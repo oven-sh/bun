@@ -23,7 +23,7 @@ use bun_options_types::context::{JunitSuites, ReactCompilerScope, TestEnvironmen
 use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_ptr::{CellExt as _, Interned};
+use bun_ptr::{CellExt as _, Interned, VecCellExt as _};
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
@@ -2202,7 +2202,7 @@ impl CommandLineReporter {
                 bun_test::BasicResult::Pass | bun_test::BasicResult::Pending => None,
             };
             if let Some(to_repeat) = to_repeat {
-                to_repeat.with_taken(|buf| buf.extend_from_slice(formatted_line));
+                to_repeat.extend_from_slice(formatted_line);
             }
         }
 

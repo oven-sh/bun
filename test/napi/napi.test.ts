@@ -928,6 +928,44 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       );
     });
 
+    it("delivers every item when the worker exits in a microtask between two calls", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_queued_items_at_worker_exit_in_microtask", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "call_js: item 1, env live, js_callback set",
+        "worker: js callback ran",
+        "call_js: item 1, call_function 0",
+        ...[2, 3].flatMap(item => [
+          `call_js: item ${item}, env live, js_callback set`,
+          `call_js: item ${item}, call_function 23`,
+        ]),
+        "finalize: env live",
+        "worker exited with 0",
+        "resolved to undefined",
+      ]);
+    });
+
+    it("runs no further item after an abort in a microtask between two calls", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_abort_in_microtask", []);
+      expect(result.split(/\r?\n/)).toEqual([
+        "call_js: item 1, env live, js_callback set",
+        "call_js: item 1, call_function 0",
+        "abort: 0",
+        ...[2, 3].map(item => `call_js: item ${item}, env null, js_callback null`),
+        "finalize: env live",
+      ]);
+    });
+
+    it("survives a ref and an unref from a thread of the addon", async () => {
+      const result = await checkSameOutput("test_threadsafe_function_unref_and_ref_from_addon_thread", []);
+      expect(result.split(/\r?\n/)).toEqual(["unref: 0, ref: 0", "finalize: env live"]);
+    });
+
+    // Node races with its main loop here.
+    it("survives an unref from another worker", async () => {
+      const result = await runOn(bunExe(), "test_threadsafe_function_unref_from_worker", []);
+      expect(result.match(/^(finalize|resolved).+\w/gm)!.sort()).toEqual(["finalize: env live", "resolved to 0"]);
+    });
+
     // After napi_tsfn_abort nothing queued runs any more: each item goes back
     // to call_js with a null env and js_callback (the documented "free this"
     // signal), then the function finalizes.

@@ -384,8 +384,17 @@ void reportOwnCrash(int signalNumber, siginfo_t* info, void* context)
 static void endProcessUnlessOwnCrash(int signalNumber, siginfo_t* info, void* context)
 {
     reportOwnCrash(signalNumber, info, context);
-    if (getpid() != 1)
+    if (getpid() != 1) {
         Bun__raiseDefaultAction(signalNumber);
+        return;
+    }
+    if (info->si_code <= 0)
+        return;
+    setSignalHandler(signalNumber, SIG_DFL);
+#if OS(LINUX) && CPU(X86_64)
+    if (signalNumber == SIGTRAP && info->si_code == SI_KERNEL)
+        static_cast<ucontext_t*>(context)->uc_mcontext.gregs[REG_RIP]--;
+#endif
 }
 
 void setDefaultSignalAction(int signalNumber)

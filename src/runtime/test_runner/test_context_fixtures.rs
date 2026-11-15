@@ -131,7 +131,7 @@ impl TestFixtures {
     /// Drops state left by an earlier file, since several files can share a helper module's fixtures.
     #[optimize(size)]
     fn enter_file(&self, this_value: JSValue, global: &JSGlobalObject) -> JsResult<()> {
-        let generation = Jest::file_generation(global);
+        let generation = Jest::file_generation();
         if self.generation.replace(generation) == generation {
             return Ok(());
         }
@@ -380,7 +380,7 @@ impl TestFixtures {
             registrations: JsCell::new(registrations),
             overrides: JsCell::new(Vec::new()),
             scoped: JsCell::new(Vec::new()),
-            generation: Cell::new(Jest::file_generation(global)),
+            generation: Cell::new(Jest::file_generation()),
         }
         .to_js(global);
         js::values_set_cached(fixtures, global, values);
@@ -603,7 +603,7 @@ impl TestFixtures {
 
 impl ActiveFixture {
     fn create(global: &JSGlobalObject, fixtures: JSValue, context: JSValue, definition: usize, timeout: u32) -> JSValue {
-        let generation = Jest::file_generation(global);
+        let generation = Jest::file_generation();
         let this_value = ActiveFixture { definition, timeout, generation, state: Cell::new(State::NotStarted) }.to_js(global);
         active::fixtures_set_cached(this_value, global, fixtures);
         active::context_set_cached(this_value, global, context);
@@ -640,7 +640,7 @@ impl ActiveFixture {
                 (*test_context).defer_fixture(context, tear_down, self.timeout)
             },
             _ => {
-                self.generation == Jest::file_generation(global)
+                self.generation == Jest::file_generation()
                     && bun_test::clone_active_strong().is_some_and(|buntest| buntest.defer_to_file_end(tear_down, self.timeout))
             }
         };

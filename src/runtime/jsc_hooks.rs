@@ -811,7 +811,7 @@ fn load_preloads(vm: &VirtualMachine) -> bun_jsc::CrateResult<*mut JSInternalPro
         let _protected = JSValue::from_cell(promise).protected();
 
         // ── wait ────────────────────────────────────────────────────────
-        if vm.is_main_thread.get() && crate::test_runner::jest::Jest::runner_ptr().is_some() {
+        if crate::test_runner::jest::Jest::runner().is_some() {
             let never_loads = vm.wait_for_test_runner_load(format_args!(
                 "preload {}",
                 bun_core::fmt::format_json_string_latin1(preload_slice),
@@ -1619,15 +1619,11 @@ fn retroactively_report_discovered_tests(
     agent: &mut bun_jsc::debugger::TestReporterHandle,
     next_test_id: i32,
 ) -> i32 {
-    use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry};
+    use crate::test_runner::bun_test::{Phase, ScopeId, TestScheduleEntry, clone_active_strong};
     use crate::test_runner::cells::CellExt as _;
-    use crate::test_runner::jest::Jest;
     use bun_jsc::debugger::TestType;
 
-    let Some(runner) = Jest::runner() else {
-        return next_test_id;
-    };
-    let Some(active_file) = runner.bun_test_root.clone_active_file() else {
+    let Some(active_file) = clone_active_strong() else {
         return next_test_id;
     };
 
@@ -1639,11 +1635,7 @@ fn retroactively_report_discovered_tests(
     }
 
     // Get the file path for source location info.
-    use crate::test_runner::jest::FileColumns as _;
-    let file_path = runner.files.items_source()[active_file.file_id as usize]
-        .path
-        .text();
-    let source_url = bun_core::StringView::from_bytes(file_path);
+    let source_url = bun_core::StringView::from_bytes(active_file.file.path);
 
     let mut max_id: i32 = next_test_id;
 

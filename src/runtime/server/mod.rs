@@ -426,7 +426,7 @@ impl Drop for DispatchedRequest {
 /// path is private to `set_routes`.
 pub(crate) struct PreparedRequest<const SSL: bool, const DEBUG: bool> {
     pub(crate) request: DispatchedRequest,
-    pub ctx: *mut ServerRequestContext<SSL, DEBUG>,
+    pub ctx: request_context::Dispatch<NewServer<SSL, DEBUG>, SSL, DEBUG, false>,
 }
 
 impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
@@ -438,19 +438,16 @@ impl<const SSL: bool, const DEBUG: bool> PreparedRequest<SSL, DEBUG> {
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
     ) -> SavedRequest {
+        let ctx = AnyRequestContext::init(&raw const *self.ctx);
         // Before `to_async`, which releases the context of a request that is already aborted.
-        let ctx = any_request_context::AnyRequestContextRef::new(AnyRequestContext::init(self.ctx));
+        let ctx = any_request_context::AnyRequestContextRef::new(ctx);
         // By saving a request, all information from `req` must be
         // copied since the provided uws.Request will be re-used for
         // future requests (stack allocated).
-        // SAFETY: `ctx` is the freshly-allocated `RequestContext` slot produced by
-        // `prepare_js_request_context` for this frame.
-        unsafe {
-            (*self.ctx).to_async(
-                std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
-                &self.request.native,
-            );
-        }
+        self.ctx.to_async(
+            std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
+            &self.request.native,
+        );
 
         SavedRequest {
             js_request: jsc::Strong::create(self.request.js, global),
@@ -801,7 +798,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         &self,
         req: &mut uws_sys::Request,
         resp: *mut uws_sys::NewAppResponse<SSL>,
-        should_deinit_context: Option<request_context::DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<bun_http_types::Method::Method>,
     ) -> Option<PreparedRequest<SSL, DEBUG>> {
@@ -873,11 +869,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             self,
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             any_response_from::<SSL>(resp),
-            should_deinit_context,
             method,
         );
         // SAFETY: fully initialized by `create()`.
-        let ctx_ref = unsafe { ctx_slot.assume_init().as_ref() };
+        let ctx_ref = request_context::Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
 
         self.vm()
             .jsc_vm()
@@ -970,7 +965,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         Some(PreparedRequest {
             request: DispatchedRequest::new(request, create_js_request, global)?,
-            ctx,
+            ctx: ctx_ref,
         })
     }
 
@@ -1003,7 +998,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                     bun_opaque::opaque_deref_mut(r),
                     resp,
-                    None,
                     CreateJsRequest::Bake,
                     None,
                 ) {
@@ -1016,23 +1010,23 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     js: data.js_request.get(),
                     native: data.request,
                 },
-                // SAFETY: `SavedRequest` was produced by `PreparedRequest::save`
-                // for this exact (SSL,DEBUG) monomorphization, so the erased
-                // `AnyRequestContext` payload is `ServerRequestContext<SSL,DEBUG>`.
-                ctx: data
-                    .ctx
-                    .get::<ServerRequestContext<SSL, DEBUG>>()
-                    .expect("ctx tag mismatch"),
+                // SAFETY: `data.ctx` holds a ref.
+                ctx: request_context::Dispatch::new(unsafe {
+                    &*data
+                        .ctx
+                        .get::<ServerRequestContext<SSL, DEBUG>>()
+                        .expect("ctx tag mismatch")
+                }),
             },
         };
-        let ctx = prepared.ctx;
+        let PreparedRequest { request, ctx } = prepared;
 
         debug_assert!(!callback.is_empty());
         // PERF: stable Rust forbids `ARG_COUNT + 1` in const-generic array lengths.
         // The conservative GC scan reaches the heap allocation as well as the
         // stack, so a small Vec is sound.
         let mut args: Vec<JSValue> = Vec::with_capacity(ARG_COUNT + 1);
-        args.push(prepared.request.js);
+        args.push(request.js);
         args.extend_from_slice(&extra_args);
 
         let _entered = self.vm().enter_event_loop_scope_without_checkpoint();
@@ -1042,38 +1036,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             Err(err) => global.take_exception(err),
         };
 
-        // SAFETY: `ctx` was just allocated (or saved) by this server; the
-        // `defer_deinit_...` flag set below keeps it alive across `on_response`.
-        let ctx_ref = unsafe { &*ctx };
-        let original_state = ctx_ref.defer_deinit_until_callback_completes.get();
-        let should_deinit_context = core::cell::Cell::new(false);
-        ctx_ref
-            .defer_deinit_until_callback_completes
-            .set(Some(bun_ptr::BackRef::new(&should_deinit_context)));
-        ctx_ref.on_response(self, prepared.request.js, response_value);
-        ctx_ref
-            .defer_deinit_until_callback_completes
-            .set(original_state);
-
-        if should_deinit_context.get() {
-            ctx_ref.deinit();
+        let Some(ctx) = ServerRequestContext::respond(ctx, self, request.js, response_value) else {
             return;
-        }
-
-        if ctx_ref.should_render_missing() {
-            ctx_ref.render_missing();
-            return;
-        }
+        };
 
         // The request is asynchronous, and all information from `req` must be copied
         // since the provided uws.Request will be re-used for future requests (stack allocated).
         match req {
             SavedRequestUnion::Stack(r) => {
-                ctx_ref.to_async(
+                ctx.to_async(
                     std::ptr::from_ref::<uws::Request>(r)
                         .cast_mut()
                         .cast::<c_void>(),
-                    &prepared.request.native,
+                    &request.native,
                 );
             }
             SavedRequestUnion::Saved(_) => {} // info already copied
@@ -1084,41 +1059,21 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `on_user_route_request`: hand the user-handler's return value to the
     /// `RequestContext`, then either tear down synchronously or transition to
     /// the async path.
-    ///
-    /// `should_deinit_context` is the same `Cell<bool>` already stored in
-    /// `ctx.defer_deinit_until_callback_completes` by
-    /// `prepare_js_request_context`; `&Cell` (shared) and the stored `BackRef`
-    /// can coexist under Stacked Borrows, so no raw-pointer dance is needed.
     fn handle_request(
         &self,
-        should_deinit_context: &core::cell::Cell<bool>,
         prepared: PreparedRequest<SSL, DEBUG>,
         req: &mut uws_sys::Request,
         response_value: JSValue,
     ) {
         let PreparedRequest { request, ctx } = prepared;
-        // SAFETY: `ctx` was allocated by `prepare_js_request_context` for this
-        // frame and cannot be freed while `defer_deinit_...` is set (it is set
-        // by the caller until cleared below).
-        let ctx_ref = unsafe { &*ctx };
-        ctx_ref.on_response(self, request.js, response_value);
-
-        ctx_ref.defer_deinit_until_callback_completes.set(None);
-
-        if should_deinit_context.get() {
-            ctx_ref.deinit();
+        let Some(ctx) = ServerRequestContext::respond(ctx, self, request.js, response_value) else {
             return;
-        }
-
-        if ctx_ref.should_render_missing() {
-            ctx_ref.render_missing();
-            return;
-        }
+        };
 
         // The request is asynchronous, and all information from `req` must be
         // copied since the provided uws.Request will be re-used for future
         // requests (stack allocated).
-        ctx_ref.to_async(
+        ctx.to_async(
             std::ptr::from_mut::<uws_sys::Request>(req).cast::<c_void>(),
             &request.native,
         );
@@ -1136,14 +1091,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             server_body::respond_stopped_503(bun_opaque::opaque_deref_mut(resp));
             return;
         };
-        let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = self.prepare_js_request_context(
-            req,
-            resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            CreateJsRequest::Yes,
-            None,
-        ) else {
+        let Some(prepared) = self.prepare_js_request_context(req, resp, CreateJsRequest::Yes, None)
+        else {
             return;
         };
 
@@ -1160,7 +1109,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Err(err) => global.take_exception(err),
             };
 
-        self.handle_request(&should_deinit_context, prepared, req, response_value);
+        self.handle_request(prepared, req, response_value);
     }
 
     /// Dispatch a per-route handler
@@ -1187,11 +1136,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = server.prepare_js_request_context(
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             user_route.route.method.specific(),
         ) else {
@@ -1217,7 +1164,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         })
         .unwrap_or_else(|err| global.take_exception(err));
 
-        server.handle_request(&should_deinit_context, prepared, req, response_value);
+        server.handle_request(prepared, req, response_value);
     }
 
     /// Invoke the JS-side
@@ -3759,7 +3706,7 @@ impl AnyServer {
     ) -> jsc::JsResult<Option<SavedRequest>> {
         let req: &mut uws_sys::Request = req;
         Ok(any_server_dispatch_resp!(self, resp, |s, r| {
-            let Some(p) = s.prepare_js_request_context(req, r, None, CreateJsRequest::Bake, method)
+            let Some(p) = s.prepare_js_request_context(req, r, CreateJsRequest::Bake, method)
             else {
                 return Ok(None);
             };

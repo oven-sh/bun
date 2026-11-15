@@ -34,12 +34,6 @@ use crate::webcore::{
 // after `end()` until its `onAborted` fires to say the stream is gone.
 pub(crate) type Req<const SSL_ENABLED: bool, const MUX: bool> = c_void;
 
-/// Back-reference to a stack-local "should this RequestContext defer its
-/// deinit until the JS callback returns" flag. The dispatching frame owns the
-/// `Cell<bool>`; `RequestContext` stores a `BackRef` to it (cleared before the
-/// frame unwinds), so reads/writes are safe `Cell` ops — no raw `*mut bool`.
-pub(crate) type DeferDeinitFlag = bun_ptr::BackRef<core::cell::Cell<bool>>;
-
 pub(crate) type ResponseStream<const SSL_ENABLED: bool> =
     crate::webcore::streams::HTTPServerWritable<SSL_ENABLED>;
 
@@ -134,6 +128,8 @@ pub(crate) struct RequestContext<
     root: Cell<*mut Self>,
     pub(crate) ref_count: Cell<u8>,
     pub(crate) pin_count: Cell<u8>,
+    /// The [`Dispatch`]es on the stack.
+    dispatch_count: Cell<u8>,
 
     /// Weak: for plain Blob/InternalBlob bodies the Response JSValue is
     /// not protected (hot path), so GC may finalize it while we're parked
@@ -173,14 +169,6 @@ pub(crate) struct RequestContext<
     /// When the response body is a temporary value
     pub(crate) response_buf_owned: JsCell<Vec<u8>>,
 
-    /// Defer finalization until after the request handler task is completed?
-    ///
-    /// BORROW_PARAM: points at a `Cell<bool>` on the dispatching frame's
-    /// stack. `BackRef` encodes the outlives-holder invariant (the field is
-    /// always cleared before that frame returns) so reads/writes are safe
-    /// `Cell::get`/`set` instead of raw `*mut bool` deref.
-    pub(crate) defer_deinit_until_callback_completes: Cell<Option<DeferDeinitFlag>>,
-
     /// The dev server's record of this request. The response has room for one abort handler only.
     pub(crate) deferred_request: Cell<Option<crate::bake::dev_server::deferred_request::Handle>>,
 
@@ -218,7 +206,7 @@ where
 
     #[inline]
     pub(crate) fn is_async(&self) -> bool {
-        self.defer_deinit_until_callback_completes.get().is_none()
+        self.dispatch_count.get() == 0
     }
 
     /// The context of the script that made the server, for what answering the request starts.
@@ -286,6 +274,49 @@ where
     #[inline]
     fn drop(&mut self) {
         self.ctx.pin_count.set(self.ctx.pin_count.get() - 1);
+    }
+}
+
+/// A handler's frame. A context that completes under it keeps its pool slot until this drops.
+pub(crate) struct Dispatch<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>(
+    bun_ptr::BackRef<RequestContext<ThisServer, SSL, DBG, MUX>>,
+)
+where
+    ThisServer: ServerLike + 'static;
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool>
+    Dispatch<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: ServerLike + 'static,
+{
+    pub(crate) fn new(ctx: &RequestContext<ThisServer, SSL, DBG, MUX>) -> Self {
+        ctx.dispatch_count.update(|count| count + 1);
+        Self(bun_ptr::BackRef::new(ctx))
+    }
+}
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> core::ops::Deref
+    for Dispatch<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: ServerLike + 'static,
+{
+    type Target = RequestContext<ThisServer, SSL, DBG, MUX>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<ThisServer, const SSL: bool, const DBG: bool, const MUX: bool> Drop
+    for Dispatch<ThisServer, SSL, DBG, MUX>
+where
+    ThisServer: ServerLike + 'static,
+{
+    fn drop(&mut self) {
+        self.dispatch_count.update(|count| count - 1);
+        if self.flags.has_marked_complete() {
+            self.deinit();
+        }
     }
 }
 
@@ -770,7 +801,7 @@ where
         self.ref_count.get() - self.pin_count.get()
     }
 
-    pub(crate) fn should_render_missing(&self) -> bool {
+    fn should_render_missing(&self) -> bool {
         // If we did not respond yet, we should render missing
         // To allow this all the conditions above should be true:
         // 1 - still has a response (not detached, socket still open)
@@ -843,16 +874,14 @@ where
         true
     }
 
-    /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
-    pub(crate) fn deinit(&self) {
+    fn deinit(&self) {
         ctx_log!("deinit");
         debug_assert!(self.resp.get().is_none());
+        debug_assert_eq!(self.ref_count.get(), 0);
         self.end_request_streaming_and_drain();
-        // TODO: has_marked_complete is doing something?
         self.flags.set_has_marked_complete(true);
 
-        if let Some(defer_deinit) = self.defer_deinit_until_callback_completes.get() {
-            defer_deinit.set(true);
+        if !self.is_async() {
             ctx_log!("deferred deinit <d> ({:p})<r>", self);
             return;
         }
@@ -1034,20 +1063,9 @@ where
         }
 
         if !has_responded {
-            let original_state = self.defer_deinit_until_callback_completes.get();
-            let should_deinit_context = core::cell::Cell::new(match original_state {
-                // BackRef::get() → &Cell<bool>; second .get() reads the bool.
-                Some(defer_deinit) => defer_deinit.get().get(),
-                None => false,
-            });
-            self.defer_deinit_until_callback_completes
-                .set(Some(bun_ptr::BackRef::new(&should_deinit_context)));
+            let _dispatch = Dispatch::new(self);
             self.run_error_handler(value);
-            self.defer_deinit_until_callback_completes
-                .set(original_state);
-            // we try to deinit inside runErrorHandler so we just return here and let it deinit
-            if should_deinit_context.get() {
-                self.deinit();
+            if self.flags.has_marked_complete() {
                 return;
             }
         }
@@ -1071,7 +1089,7 @@ where
         }
     }
 
-    pub(crate) fn render_missing(&self) {
+    fn render_missing(&self) {
         if let Some(resp) = self.resp.get() {
             resp.run_corked_with_type(Self::render_missing_corked, self);
         }
@@ -1369,7 +1387,6 @@ where
         server: &ThisServer,
         req: *mut Req<SSL_ENABLED, MUX>,
         resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<Method>,
     ) {
         let resolved_method = method
@@ -1387,7 +1404,6 @@ where
                 req: Cell::new(Some(req)),
                 method: resolved_method,
                 server: JsCell::new(Some(PendingRequest::new(bun_ptr::BackRef::new(server)))),
-                defer_deinit_until_callback_completes: Cell::new(should_deinit_context),
                 range,
                 if_range,
                 request_weakref: JsCell::new(request::WeakRef::EMPTY),
@@ -1398,6 +1414,7 @@ where
                 response_root: ResponseRoot::default(),
                 ref_count: Cell::new(1),
                 pin_count: Cell::new(0),
+                dispatch_count: Cell::new(0),
                 response_weakref: JsCell::new(response::WeakRef::EMPTY),
                 blob: JsCell::new(AnyBlob::Blob(Blob::default())),
                 sendfile: Cell::new(SendfileContext::default()),
@@ -2072,7 +2089,7 @@ where
         // wire, so the throw must not end the response again. `handle_reject()`
         // does nothing once the response has responded, which leaves the
         // request looking unanswered: the handler tail
-        // (`should_render_missing()` in `mod.rs`) then ends it a second time,
+        // (`should_render_missing()` in `respond`) then ends it a second time,
         // writing a second chunked last-chunk.
         if resp.has_responded() {
             stream_log!("done");
@@ -2515,6 +2532,26 @@ where
         self.set_abort_handler();
     }
 
+    /// Ends `dispatch` with what the handler returned. `Some`: the request goes on asynchronously.
+    pub(crate) fn respond(
+        dispatch: Dispatch<ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
+        server: &ThisServer,
+        request_value: JSValue,
+        response_value: JSValue,
+    ) -> Option<bun_ptr::BackRef<Self>> {
+        dispatch.on_response(server, request_value, response_value);
+        if dispatch.flags.has_marked_complete() {
+            return None;
+        }
+        let ctx = dispatch.0;
+        drop(dispatch);
+        if ctx.should_render_missing() {
+            ctx.render_missing();
+            return None;
+        }
+        Some(ctx)
+    }
+
     // Each HTTP request or TCP socket connection is effectively a "task".
     //
     // However, unlike the regular task queue, we don't drain the microtask
@@ -2531,12 +2568,7 @@ where
     // callback the handler dispatches synchronously through `enter()`/`exit()`
     // (`server.upgrade()` -> `open()`, `ws.close()` -> `close()`) does not
     // drain in the middle of the handler.
-    pub(crate) fn on_response(
-        &self,
-        this: &ThisServer,
-        request_value: JSValue,
-        response_value: JSValue,
-    ) {
+    fn on_response(&self, this: &ThisServer, request_value: JSValue, response_value: JSValue) {
         let ctx = self;
         request_value.ensure_still_alive();
         // For a promise, this also roots what it settled with.

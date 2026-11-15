@@ -64,7 +64,7 @@ pub(super) use super::any_request_context::AnyRequestContext;
 pub(super) use super::file_route::FileRoute;
 pub(super) use super::node_http_response::NodeHTTPResponse;
 pub(super) use super::request_context::{
-    DeferDeinitFlag, RequestContext as NewRequestContext, UpgradeState,
+    Dispatch, RequestContext as NewRequestContext, UpgradeState,
 };
 pub(super) use super::server_config::{self as server_config, ServerConfig};
 pub(super) use super::server_web_socket::ServerWebSocket;
@@ -107,21 +107,23 @@ where
 /// type. Implemented via blanket impl below for every `NewRequestContext<..>`.
 trait RequestCtxOps: RequestCtx {
     type Server;
+    type Dispatch;
     fn create_in(
         slot: *mut Self,
         server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     );
-    fn on_response(&self, server: &Self::Server, request_value: JSValue, response_value: JSValue);
-    fn deinit(&self);
-    fn should_render_missing(&self) -> bool;
-    fn render_missing(&self);
+    fn dispatch(&self) -> Self::Dispatch;
+    fn respond(
+        dispatch: Self::Dispatch,
+        server: &Self::Server,
+        request_value: JSValue,
+        response_value: JSValue,
+    ) -> Option<bun_ptr::BackRef<Self>>;
     fn to_async(&self, req: &mut Self::Req, request_object: &Request);
     fn ctx_method(&self) -> http::Method;
-    fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>);
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>);
     #[allow(
         clippy::mut_from_ref,
@@ -154,13 +156,13 @@ where
     ThisServer: super::ServerLike + 'static,
 {
     type Server = ThisServer;
+    type Dispatch = Dispatch<ThisServer, SSL, DBG, MUX>;
     #[inline]
     fn create_in(
         slot: *mut Self,
         server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
-        should_deinit_context: Option<DeferDeinitFlag>,
         method: Option<http::Method>,
     ) {
         // SAFETY: `slot` points at a fresh HiveArray pool entry; treat as
@@ -170,25 +172,21 @@ where
             server,
             std::ptr::from_mut(req).cast(),
             any_resp,
-            should_deinit_context,
             method,
         );
     }
     #[inline]
-    fn on_response(&self, server: &ThisServer, rq: JSValue, rv: JSValue) {
-        Self::on_response(self, server, rq, rv)
+    fn dispatch(&self) -> Self::Dispatch {
+        Dispatch::new(self)
     }
     #[inline]
-    fn deinit(&self) {
-        Self::deinit(self)
-    }
-    #[inline]
-    fn should_render_missing(&self) -> bool {
-        Self::should_render_missing(self)
-    }
-    #[inline]
-    fn render_missing(&self) {
-        Self::render_missing(self)
+    fn respond(
+        dispatch: Self::Dispatch,
+        server: &ThisServer,
+        rq: JSValue,
+        rv: JSValue,
+    ) -> Option<bun_ptr::BackRef<Self>> {
+        Self::respond(dispatch, server, rq, rv)
     }
     #[inline]
     fn to_async(&self, req: &mut Self::Req, ro: &Request) {
@@ -197,10 +195,6 @@ where
     #[inline]
     fn ctx_method(&self) -> http::Method {
         self.method
-    }
-    #[inline]
-    fn set_defer_deinit(&self, flag: Option<DeferDeinitFlag>) {
-        self.defer_deinit_until_callback_completes.set(flag)
     }
     #[inline]
     fn set_request_body(&self, body: Option<crate::webcore::body::BodyHiveHandle>) {
@@ -1306,9 +1300,9 @@ pub(super) use super::{
 /// `super::PreparedRequest<SSL,DEBUG>` is the HTTP/1-concrete instantiation
 /// used by the bake/saved-request path; the generic form here is only reached
 /// from the `_for<Ctx>` dispatch helpers below.
-pub(crate) struct PreparedRequestFor<Ctx> {
-    pub(crate) request: DispatchedRequest,
-    pub ctx: *mut Ctx,
+struct PreparedRequestFor<Ctx: RequestCtxOps> {
+    request: DispatchedRequest,
+    ctx: Ctx::Dispatch,
 }
 
 // `WebSocketUpgradeServer<SSL>` so `ServerWebSocket::behavior::<Self, SSL>` and
@@ -2396,11 +2390,9 @@ where
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
         let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx, R>(
             req,
             resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             CreateJsRequest::No,
             user_route.route.method.specific(),
         ) else {
@@ -2431,38 +2423,23 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
+        server.handle_request_for::<Ctx>(prepared, req, response_value);
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
         &self,
-        should_deinit_context: &core::cell::Cell<bool>,
         prepared: PreparedRequestFor<Ctx>,
         req: &mut Ctx::Req,
         response_value: JSValue,
     ) {
         let PreparedRequestFor { request, ctx } = prepared;
-        // SAFETY: `ctx` was allocated by `prepare_js_request_context_for`
-        // for this frame and cannot be freed while `defer_deinit_...` is set (set
-        // by the caller until cleared below).
-        let ctx = unsafe { &*ctx };
-        RequestCtxOps::on_response(ctx, self, request.js, response_value);
-
-        RequestCtxOps::set_defer_deinit(ctx, None);
-
-        if should_deinit_context.get() {
-            RequestCtxOps::deinit(ctx);
+        let Some(ctx) = Ctx::respond(ctx, self, request.js, response_value) else {
             return;
-        }
-
-        if RequestCtxOps::should_render_missing(ctx) {
-            RequestCtxOps::render_missing(ctx);
-            return;
-        }
+        };
 
         // The request is asynchronous, and all information from `req` must be copied
         // since the provided uws.Request will be re-used for future requests (stack allocated).
-        RequestCtxOps::to_async(ctx, req, &request.native);
+        ctx.to_async(req, &request.native);
     }
 
     fn on_request_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
@@ -2474,14 +2451,9 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = self.prepare_js_request_context_for::<Ctx, R>(
-            req,
-            resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            CreateJsRequest::Yes,
-            None,
-        ) else {
+        let Some(prepared) =
+            self.prepare_js_request_context_for::<Ctx, R>(req, resp, CreateJsRequest::Yes, None)
+        else {
             return;
         };
 
@@ -2496,14 +2468,13 @@ where
                 Err(err) => global.take_exception(err),
             };
 
-        self.handle_request_for::<Ctx>(&should_deinit_context, prepared, req, response_value);
+        self.handle_request_for::<Ctx>(prepared, req, response_value);
     }
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
         &self,
         req: &mut Ctx::Req,
         resp: &mut R,
-        should_deinit_context: Option<DeferDeinitFlag>,
         create_js_request: CreateJsRequest,
         method: Option<http::Method>,
     ) -> Option<PreparedRequestFor<Ctx>> {
@@ -2586,32 +2557,19 @@ where
                     "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
                 );
                 let slot = (*self.mux_request_pool.get()).claim();
-                Ctx::create_in(
-                    slot.addr().as_ptr().cast(),
-                    self,
-                    req,
-                    any_resp,
-                    should_deinit_context,
-                    method,
-                );
+                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
                 let slot = self.request_pool.claim();
-                Ctx::create_in(
-                    slot.addr().as_ptr().cast(),
-                    self,
-                    req,
-                    any_resp,
-                    should_deinit_context,
-                    method,
-                );
+                Ctx::create_in(slot.addr().as_ptr().cast(), self, req, any_resp, method);
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             }
         };
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &*ctx_slot };
+        let dispatch = ctx.dispatch();
 
         self.vm()
             .jsc_vm()
@@ -2726,7 +2684,7 @@ where
 
         Some(PreparedRequestFor {
             request: DispatchedRequest::new(request_object, create_js_request, &self.global())?,
-            ctx: ctx_slot,
+            ctx: dispatch,
         })
     }
 
@@ -2751,22 +2709,15 @@ where
             return;
         };
 
-        let should_deinit_context = core::cell::Cell::new(false);
-        let Some(mut prepared) = server.prepare_js_request_context(
-            req,
-            resp,
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
-            CreateJsRequest::No,
-            method,
-        ) else {
+        let Some(mut prepared) =
+            server.prepare_js_request_context(req, resp, CreateJsRequest::No, method)
+        else {
             return;
         };
-        // SAFETY: `prepared.ctx` is the freshly-allocated RequestContext slot.
-        unsafe {
-            (*prepared.ctx)
-                .upgrade_context
-                .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
-        };
+        prepared
+            .ctx
+            .upgrade_context
+            .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)));
         let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
@@ -2786,7 +2737,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        server.handle_request(&should_deinit_context, prepared, req, response_value);
+        server.handle_request(prepared, req, response_value);
     }
 
     /// # Safety
@@ -2840,17 +2791,15 @@ where
         req.set_yield(false);
         // `claim()` reserves a fresh slot whose `Drop` releases it on panic before init.
         let ctx_slot = this.request_pool.claim();
-        let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot.addr().as_ptr(),
             this,
             req,
             RespLike::to_any_response(resp),
-            Some(bun_ptr::BackRef::new(&should_deinit_context)),
             None,
         );
         // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
-        let ctx = unsafe { &*ctx_slot.assume_init().as_ptr() };
+        let ctx = Dispatch::new(unsafe { ctx_slot.assume_init().as_ref() });
 
         // Pooled body slot, ref_count = 1.
         let body_hive = crate::webcore::body::hive_alloc(BodyValue::Null);
@@ -2863,7 +2812,7 @@ where
         ctx.signal.set(Some(PendingAbortSignal::new(signal)));
         let request = RefPtr::new(Request::init(
             ctx.method,
-            AnyRequestContext::init(std::ptr::from_ref(ctx)),
+            AnyRequestContext::init(&raw const *ctx),
             SSL,
             Some(signal_for_req),
             body_hive,
@@ -2884,19 +2833,9 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        ctx.on_response(this, request.js, response_value);
-
-        ctx.defer_deinit_until_callback_completes.set(None);
-
-        if should_deinit_context.get() {
-            ctx.deinit();
+        let Some(ctx) = ServerRequestContext::respond(ctx, this, request.js, response_value) else {
             return;
-        }
-
-        if ctx.should_render_missing() {
-            ctx.render_missing();
-            return;
-        }
+        };
 
         ctx.to_async(
             std::ptr::from_mut::<uws::Request>(req).cast::<c_void>(),

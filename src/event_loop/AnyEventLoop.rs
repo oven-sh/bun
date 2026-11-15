@@ -184,15 +184,6 @@ pub enum EventLoopTask {
     Mini(AnyTaskWithExtraContext),
 }
 
-impl EventLoopTask {
-    pub fn from_event_loop(loop_: EventLoopHandle) -> EventLoopTask {
-        match loop_ {
-            EventLoopHandle::Js { .. } => EventLoopTask::Js(ConcurrentTask::default()),
-            EventLoopHandle::Mini(_) => EventLoopTask::Mini(AnyTaskWithExtraContext::default()),
-        }
-    }
-}
-
 /// RAII pairing for [`EventLoopHandle::enter`] / [`EventLoopHandle::exit`].
 /// Construct via [`EventLoopHandle::entered`]. `EventLoopHandle` is `Copy`, so
 /// the guard owns its own copy and the caller may keep using the handle.

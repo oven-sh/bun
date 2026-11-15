@@ -248,7 +248,7 @@ pub(crate) use super::node_fs_binding::Binding;
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
 use bun_jsc::JSPromiseStrong;
 
-use super::dir_iterator as DirIterator;
+use bun_sys::dir_iterator as DirIterator;
 
 // On POSIX the libuv-backed code paths (`UVFSRequest`, `uv_fs_*`) are absent:
 // `UVFSRequest` aliases `AsyncFSTask` and every `uv::*` reference is gated
@@ -1672,11 +1672,7 @@ mod _async_tasks {
         pub(crate) unsafe fn destroy(this: *mut Self) {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in create()).
-            let mut task = unsafe { bun_core::heap::take(this) };
-            // A result nobody took (the request's context stopped: released unrun).
-            if let Ok(result) = core::mem::replace(&mut task.result, Err(sys::Error::default())) {
-                result.discard();
-            }
+            let task = unsafe { bun_core::heap::take(this) };
             // `bun_sys::Error` frees its path on Drop.
             task.r#ref.unref(bun_io::js_vm_ctx());
         }
@@ -1855,14 +1851,6 @@ mod _async_tasks {
     /// Each `ret::*` type implements this by forwarding to its inherent method.
     pub(crate) trait FsReturn {
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue>;
-        /// The result is not going to be reported (the context of the script that asked has
-        /// stopped): release what only that script could have released.
-        #[inline]
-        fn discard(self)
-        where
-            Self: Sized,
-        {
-        }
         /// Returns how many bytes the job wrote into the caller's buffer.
         #[inline]
         fn bytes_read(&self) -> u64 {
@@ -1899,14 +1887,10 @@ mod _async_tasks {
             self.to_js_newly_created(global)
         }
     }
-    impl FsReturn for FD {
+    impl FsReturn for sys::File {
         #[inline]
         fn fs_to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(crate::node::types::FdJsc::to_js(self, global))
-        }
-        #[inline]
-        fn discard(self) {
-            self.close();
+            Ok(crate::node::types::FdJsc::to_js(self.into_raw(), global))
         }
     }
     impl FsReturn for StringOrBuffer<'_> {
@@ -1980,17 +1964,9 @@ mod _async_tasks {
 
     /// One `fs.promises.*` operation on the work pool. The arguments' JS-backed
     /// buffers are pinned and rooted (`ThreadIsolated`) and read under the job's ticket.
-    pub(crate) struct AsyncFSTask<R: FsReturn, A, const F: NodeFSFunctionEnum> {
-        pub args: ThreadIsolated<A>,
+    pub(crate) struct AsyncFSTask<R, A, const F: NodeFSFunctionEnum> {
         pub(crate) result: Maybe<R>,
-    }
-    impl<R: FsReturn, A, const F: NodeFSFunctionEnum> Drop for AsyncFSTask<R, A, F> {
-        /// A job whose context stopped is dropped with its result untaken.
-        fn drop(&mut self) {
-            if let Ok(result) = core::mem::replace(&mut self.result, Err(sys::Error::default())) {
-                result.discard();
-            }
-        }
+        pub args: ThreadIsolated<A>,
     }
     // SAFETY: results are plain data / owned buffers / WTF strings built off
     // thread for hand-off (`ret::*`); `ThreadIsolated<A>` is Send by its contract.
@@ -2131,36 +2107,32 @@ mod _async_tasks {
             Some(done)
         }
 
-        fn then(
-            mut this: Self,
-            js: AsyncFSJs,
-            cx: &bun_jsc::JsThread<'_>,
-        ) -> bun_jsc::JsResult<()> {
+        fn then(this: Self, js: AsyncFSJs, cx: &bun_jsc::JsThread<'_>) -> bun_jsc::JsResult<()> {
+            let Self { result, mut args } = this;
             let global_object = cx.global();
             let _dispatch = js.tracker.dispatch(global_object);
 
             move_waiting_descriptors();
-            if let Ok(result) = &this.result {
-                this.args.write_back(result.bytes_read());
+            if let Ok(result) = &result {
+                args.write_back(result.bytes_read());
             }
-            let success = this.result.is_ok();
+            let success = result.is_ok();
             let completion = &js.completion;
-            let converted = match core::mem::replace(&mut this.result, Err(sys::Error::default())) {
+            let converted = match result {
                 Err(err) => completion.error_to_js(global_object, &err),
                 Ok(res) => FsReturn::fs_to_js(res, global_object),
             };
             completion.ensure_still_alive();
 
             let aborted = if Self::HAVE_ABORT_SIGNAL && converted.is_ok() {
-                this.args
-                    .signal()
+                args.signal()
                     .and_then(|signal| signal.node_abort_error_if_aborted(global_object))
             } else {
                 None
             };
 
             // The arguments pin their buffers. A callback runs inside `resolve`/`reject`, and a pinned buffer cannot be transferred.
-            drop(this);
+            drop(args);
 
             match aborted {
                 Some(abort_error) => completion.reject(global_object, Ok(abort_error)),
@@ -2939,13 +2911,7 @@ mod _async_tasks {
             nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false)?;
             this_ref.on_copy(src, normdest);
 
-            // On POSIX directory entries are always UTF-8, so monomorphise the
-            // const-generic path type on `U8` and let the Windows branch (gated
-            // above) handle the wide path.
-            #[cfg(windows)]
-            let mut iterator = DirIterator::iterate::<true>(fd);
-            #[cfg(not(windows))]
-            let mut iterator = DirIterator::iterate::<false>(fd);
+            let mut iterator = DirIterator::iterate(fd);
             loop {
                 let current = match iterator.next() {
                     Err(err) => {
@@ -5268,7 +5234,7 @@ pub(crate) mod ret {
     pub(crate) type Lstat = StatOrNotFound;
     pub(crate) type Mkdir = StringOrUndefined;
     pub(crate) type Mkdtemp = StringOrBuffer<'static>;
-    pub(crate) type Open = FD;
+    pub(crate) type Open = sys::File;
     pub(crate) type WriteFile = ();
     pub(crate) type Readv = Read;
     pub(crate) type StatFS = node::StatFS;
@@ -6810,6 +6776,7 @@ impl NodeFS {
                 Ok(fd)
             }
         }
+        .map(sys::File::from_fd)
     }
 
     #[cfg(windows)]
@@ -6817,14 +6784,15 @@ impl NodeFS {
         if let Some(err) = rc.to_error(sys::Tag::open) {
             if err.get_errno() == E::ENOENT && compiled_program_graph().is_some() {
                 return open_embedded_path(args.flags.as_int(), args.path.slice())
-                    .unwrap_or_else(|| Err(err.with_path(args.path.slice())));
+                    .unwrap_or_else(|| Err(err.with_path(args.path.slice())))
+                    .map(sys::File::from_fd);
             }
             return Err(err.with_path(args.path.slice()));
         }
         if args.flags.as_int() & FLAGS_OF_WRITES != 0 {
             note_written_file(args.path.slice());
         }
-        Ok(FD::from_uv(rc.to_fd()))
+        Ok(sys::File::from_fd(FD::from_uv(rc.to_fd())))
     }
 
     #[cfg(windows)]
@@ -7166,9 +7134,7 @@ impl NodeFS {
         basename: &ZStr,
         entries: &mut Vec<T>,
     ) -> Maybe<()> {
-        // On Windows, String/Dirent results read native UTF-16 entry names via the
-        // wide iterator so surrogate pairs survive; Buffer results (and all POSIX)
-        // use the u8 iterator.
+        // On Windows, String and Dirent results are made from the UTF-16 names.
         #[cfg(windows)]
         if T::IS_U16 {
             return Self::readdir_with_entries_u16::<T>(args, fd, basename, entries);
@@ -7176,7 +7142,7 @@ impl NodeFS {
 
         let mut dirent_path = BunString::DEAD;
 
-        let mut iterator = DirIterator::WrappedIterator::init(fd);
+        let mut iterator = DirIterator::iterate(fd);
         loop {
             let current = match iterator.next() {
                 Err(err) => return Err(err.with_path(args.path.slice())),
@@ -7194,11 +7160,11 @@ impl NodeFS {
                 );
             }
 
-            let utf8_name = current.name.slice();
+            let utf8_name = current.name.slice_u8();
             // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
             // fall back to lstat to determine the real file kind.
             let kind = if T::IS_DIRENT && current.kind == sys::FileKind::Unknown {
-                match sys::lstatat(fd, current.name_assume_z()) {
+                match sys::lstatat(fd, current.name.as_zstr()) {
                     Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
                     Err(_) => current.kind,
                 }
@@ -7222,7 +7188,7 @@ impl NodeFS {
     ) -> Maybe<()> {
         let mut dirent_path = BunString::DEAD;
 
-        let mut iterator = DirIterator::WrappedIteratorW::init(fd);
+        let mut iterator = DirIterator::iterate(fd);
 
         // Only allocated when the requested encoding isn't
         // utf8: the wide name is transcoded to UTF-8 first (matching libuv) and
@@ -7344,7 +7310,7 @@ impl NodeFS {
         }
         let _subdir = (!is_root).then(|| sys::File::from_fd(fd));
 
-        let mut iterator = DirIterator::WrappedIterator::init(fd);
+        let mut iterator = DirIterator::iterate(fd);
         let mut dirent_path_prev = BunString::EMPTY;
         let mut spill: Vec<u8> = Vec::new();
         let mut dirent_spill: Vec<u8> = Vec::new();
@@ -7364,12 +7330,12 @@ impl NodeFS {
                     ));
                 }
             };
-            let utf8_name = current.name.slice();
+            let utf8_name = current.name.slice_u8();
 
             // The root subtask's basename *is* root_path; the caller passes
             // `is_root` explicitly.
             let name_to_copy_z: &ZStr = if is_root {
-                current.name_assume_z()
+                current.name.as_zstr()
             } else {
                 paths::resolve_path::join_z_buf_spill::<paths::platform::Auto>(
                     &mut buf[..],
@@ -7403,7 +7369,7 @@ impl NodeFS {
                     sys::FileKind::Unknown => {
                         if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                         // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
-                        match sys::lstatat(fd, current.name_assume_z()) {
+                        match sys::lstatat(fd, current.name.as_zstr()) {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
@@ -7493,7 +7459,7 @@ impl NodeFS {
             };
             let fd = subdir.as_ref().unwrap_or(&root).fd();
 
-            let mut iterator = DirIterator::WrappedIterator::init(fd);
+            let mut iterator = DirIterator::iterate(fd);
             let mut dirent_path_prev = BunString::DEAD;
 
             loop {
@@ -7505,7 +7471,7 @@ impl NodeFS {
                         return Err(err.with_path(args.path.slice()));
                     }
                 };
-                let utf8_name = current.name.slice();
+                let utf8_name = current.name.slice_u8();
 
                 let name_to_copy: &[u8] = if is_root {
                     utf8_name
@@ -7540,7 +7506,7 @@ impl NodeFS {
                         // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                         sys::FileKind::Unknown => {
                             if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                            match sys::lstatat(fd, current.name_assume_z()) {
+                            match sys::lstatat(fd, current.name.as_zstr()) {
                                 Ok(st) => {
                                     let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                     effective_kind = real_kind;
@@ -9220,12 +9186,7 @@ impl NodeFS {
             Ok(_) => {}
         }
 
-        // The OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
-        // this needs the wide (u16) iterator; the u8 path is correct for POSIX.
-        #[cfg(windows)]
-        let mut iterator = DirIterator::WrappedIteratorW::init(fd);
-        #[cfg(not(windows))]
-        let mut iterator = DirIterator::WrappedIterator::init(fd);
+        let mut iterator = DirIterator::iterate(fd);
 
         loop {
             let current = match iterator.next() {
@@ -10339,9 +10300,7 @@ impl ReaddirEntry for Buffer {
         _: Encoding,
         _: Option<&mut PathBuffer>,
     ) {
-        // Buffer never
-        // takes the u16 iterator (`IS_U16 = false`); the call site is gated on
-        // `T::IS_U16` so this arm is statically dead.
+        // The call site is gated on `T::IS_U16`.
         unreachable!()
     }
     fn append_entry_recursive(
@@ -10561,11 +10520,11 @@ struct OwnedDirIterator(DirIterator::WrappedIterator);
 
 impl OwnedDirIterator {
     fn new(dir: sys::Dir) -> Self {
-        Self(DirIterator::WrappedIterator::init(dir.into_raw()))
+        Self(DirIterator::iterate(dir.into_raw()))
     }
 
     fn fd(&self) -> FD {
-        self.0.iter.dir
+        self.0.dir()
     }
 }
 
@@ -10613,27 +10572,24 @@ pub(crate) fn zig_delete_tree(
 
     'process_stack: while !stack.is_empty() {
         let top_idx = stack.len() - 1;
+        let top_fd = stack[top_idx].iter.fd();
+        let has_room = stack.len() < stack.capacity();
         loop {
-            // Re-borrow `top` each iteration so pushing to `stack` below is allowed.
             let entry = match stack[top_idx].iter.0.next() {
                 Ok(Some(e)) => e,
                 Ok(None) => break,
                 Err(err) => return Err(dt_err(err.get_errno())),
             };
-            // `entry.name` borrows the iterator's internal buffer and
-            // is invalidated by the next `next()` call. Copy it once here so
-            // it survives both the push-onto-stack and the deleteDir-after-close
-            // paths.
-            let entry_name: Vec<u8> = entry.name.slice().to_vec();
+            let entry_name = entry.name.slice_u8();
             let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
             'handle_entry: loop {
                 if treat_as_dir {
-                    if stack.len() < stack.capacity() {
-                        let top_fd = stack[top_idx].iter.fd();
-                        match dt_open_dir(sys::Dir::borrow(&top_fd), &entry_name) {
+                    if has_room {
+                        match dt_open_dir(sys::Dir::borrow(&top_fd), entry_name) {
                             Ok(iterable_dir) => {
+                                let name = entry_name.to_vec();
                                 stack.push(DeleteTreeStackItem {
-                                    name: entry_name,
+                                    name,
                                     name_is_borrowed: false,
                                     parent_dir: top_fd,
                                     iter: OwnedDirIterator::new(iterable_dir),
@@ -10669,17 +10625,15 @@ pub(crate) fn zig_delete_tree(
                             Err(e) => return Err(dt_err(e)),
                         }
                     } else {
-                        let top_fd = stack[top_idx].iter.fd();
                         zig_delete_tree_min_stack_size_with_kind_hint(
                             sys::Dir::borrow(&top_fd),
-                            &entry_name,
+                            entry_name,
                             entry.kind,
                         )?;
                         break 'handle_entry;
                     }
                 } else {
-                    let top_fd = stack[top_idx].iter.fd();
-                    match dt_delete_file(sys::Dir::borrow(&top_fd), &entry_name) {
+                    match dt_delete_file(sys::Dir::borrow(&top_fd), entry_name) {
                         Ok(()) => break 'handle_entry,
                         Err(E::EISDIR) => {
                             treat_as_dir = true;
@@ -10871,18 +10825,18 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
         // Go through each entry and if it is not a directory, delete it. If it is a directory,
         // open it, and close the original directory. Repeat. Then start the entire operation over.
         let result: crate::Result<()> = 'scan_dir: loop {
-            let mut dir_it = DirIterator::WrappedIterator::init(dir.fd);
+            let mut dir_it = DirIterator::iterate(dir.fd);
             'dir_it: loop {
                 let entry = match dir_it.next() {
                     Ok(Some(e)) => e,
                     Ok(None) => break 'dir_it,
                     Err(err) => break 'scan_dir Err(dt_err(err.get_errno())),
                 };
-                let entry_name: Vec<u8> = entry.name.slice().to_vec();
+                let entry_name = entry.name.slice_u8();
                 let mut treat_as_dir = entry.kind == sys::FileKind::Directory;
                 'handle_entry: loop {
                     if treat_as_dir {
-                        match dt_open_dir(&dir, &entry_name) {
+                        match dt_open_dir(&dir, entry_name) {
                             Ok(new_dir) => {
                                 cleanup_dir_parent = Some(dir);
                                 dir = new_dir;
@@ -10903,7 +10857,7 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                             Err(e) => break 'scan_dir Err(dt_err(e)),
                         }
                     } else {
-                        match dt_delete_file(&dir, &entry_name) {
+                        match dt_delete_file(&dir, entry_name) {
                             Ok(()) => continue 'dir_it,
                             Err(E::ENOENT) => continue 'dir_it,
                             Err(E::EISDIR) => {

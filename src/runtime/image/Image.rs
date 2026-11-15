@@ -1202,6 +1202,12 @@ impl Image {
     }
 }
 
+fn into_buffer(out: codecs::Encoded, global: &JSGlobalObject) -> JsResult<JSValue> {
+    let (bytes, free) = out.into_raw();
+    // SAFETY: JSC takes the allocation and calls `free`, which ignores the null ctx, once.
+    unsafe { JSValue::create_buffer_with_ctx(global, bytes, core::ptr::null_mut(), free) }
+}
+
 // ───────────────────────────── worker task ──────────────────────────────────
 
 /// `.blob` source: ask the Blob for its bytes via the store-agnostic
@@ -1730,31 +1736,15 @@ impl PipelineTask {
         );
         match result {
             TaskResult::Encoded { out, format, .. } => {
-                // Ownership of `out.bytes` is transferred to JS below; suppress
-                // the codec `Drop` so the deallocator runs exactly once (via the
-                // ArrayBuffer/Buffer finalizer or explicit drop).
-                let out = mem::ManuallyDrop::new(out);
-                // SAFETY: `out.bytes` is a non-null fat pointer into a live
-                // codec allocation; valid until `out.free` runs.
-                let out_slice: &[u8] = unsafe { out.bytes.as_ref() };
                 match &mut js.deliver {
                     // The codec's own allocation is handed straight to JS with the
                     // codec's free as the finalizer — no dupe of the output.
                     Deliver::Uint8Array => {
-                        // SAFETY: see `out_slice` above; mutability is for the
-                        // `from_bytes` signature only — JS takes ownership.
-                        let mut_slice = unsafe {
-                            core::slice::from_raw_parts_mut(
-                                out.bytes.as_ptr().cast::<u8>(),
-                                out_slice.len(),
-                            )
-                        };
-                        // SAFETY: `out.bytes` is the codec-owned allocation
-                        // whose ownership transfers to JSC; `out.free` frees
-                        // it exactly once at GC and ignores the null ctx.
+                        let (mut bytes, free) = out.into_raw();
+                        // SAFETY: as in `into_buffer`.
                         let v = unsafe {
-                            ArrayBuffer::from_bytes(mut_slice, jsc::JSType::Uint8Array)
-                                .to_js_with_context(global, core::ptr::null_mut(), Some(out.free))
+                            ArrayBuffer::from_bytes(bytes.as_mut(), jsc::JSType::Uint8Array)
+                                .to_js_with_context(global, core::ptr::null_mut(), Some(free))
                         };
                         match v {
                             Ok(v) => promise.resolve(global, v)?,
@@ -1764,24 +1754,11 @@ impl PipelineTask {
                     // createBufferWithCtx returns plain JSValue (its C++ side asserts
                     // the no-throw contract), so the .uint8array catch is unmatched
                     // here by construction, not omission.
-                    Deliver::Buffer => promise.settle(
-                        global,
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
-                                out.bytes,
-                                core::ptr::null_mut(),
-                                out.free,
-                            )
-                        },
-                    )?,
+                    Deliver::Buffer => promise.settle(global, into_buffer(out, global))?,
                     Deliver::Blob => {
                         // Blob.Store owns a `Vec`; dupe for that path.
-                        let owned = out_slice.to_vec();
-                        drop(mem::ManuallyDrop::into_inner(out));
+                        let owned = out.to_vec();
+                        drop(out);
                         let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(crate::webcore::blob::BlobContentType::Static(
@@ -1791,10 +1768,6 @@ impl PipelineTask {
                         promise.resolve(global, blob.into_js(global))?;
                     }
                     tag @ (Deliver::Base64 | Deliver::DataUrl) => {
-                        // This arm copies the bytes out — re-arm `Encoded::drop` so
-                        // the codec allocation is freed at scope exit (RAII), not by
-                        // a JS finalizer.
-                        let _out = mem::ManuallyDrop::into_inner(out);
                         // `data:` and `;base64,` are both ASCII so the prefix
                         // length is exact; one buffer holds prefix+payload.
                         let mut pre_buf = [0u8; 40];
@@ -1812,9 +1785,9 @@ impl PipelineTask {
                         } else {
                             b""
                         };
-                        let mut buf = vec![0u8; pre.len() + base64::encode_len(out_slice)];
+                        let mut buf = vec![0u8; pre.len() + base64::encode_len(&out)];
                         buf[..pre.len()].copy_from_slice(pre);
-                        let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], out_slice);
+                        let wrote = pre.len() + base64::encode(&mut buf[pre.len()..], &out);
                         let str = match bun_string_jsc::create_utf8_for_js(global, &buf[..wrote]) {
                             Ok(s) => s,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
@@ -1829,17 +1802,7 @@ impl PipelineTask {
                     // accepts — and we don't reimplement any of it.
                     Deliver::WriteDest(dest) => {
                         let dest_js = dest.get();
-                        // SAFETY: `out.bytes` is the codec-owned allocation whose
-                        // ownership transfers to JSC; `ctx` is null and `out.free`
-                        // ignores it.
-                        let data = match unsafe {
-                            JSValue::create_buffer_with_ctx(
-                                global,
-                                out.bytes,
-                                core::ptr::null_mut(),
-                                out.free,
-                            )
-                        } {
+                        let data = match into_buffer(out, global) {
                             Ok(d) => d,
                             Err(e) => return promise.reject(global, Err(e)),
                         };

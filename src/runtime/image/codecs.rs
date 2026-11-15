@@ -474,10 +474,18 @@ impl Default for EncodeOptions {
 /// `free` matches `jsc::JSTypedArrayBytesDeallocator` (bytes, ctx) so it can
 /// be passed straight through; the `ctx` arg is unused.
 pub(crate) struct Encoded {
-    // SAFETY: fat pointer (ptr+len) owned by whichever C allocator produced
-    // it; `free` is the matching deallocator. Not a Box — drop must call `free`.
-    pub(crate) bytes: NonNull<[u8]>,
-    pub(crate) free: unsafe extern "C" fn(*mut c_void, *mut c_void),
+    bytes: NonNull<[u8]>,
+    free: Free,
+}
+
+type Free = unsafe extern "C" fn(*mut c_void, *mut c_void);
+
+impl core::ops::Deref for Encoded {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: live until `free` runs.
+        unsafe { self.bytes.as_ref() }
+    }
 }
 
 impl Drop for Encoded {
@@ -508,6 +516,21 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
+    /// SAFETY: `ptr` is null, or `free` releases it and nothing else does. It holds `len` bytes,
+    /// unless the result is only dropped.
+    pub(crate) unsafe fn from_raw(ptr: *mut u8, len: usize, free: Free) -> Option<Encoded> {
+        Some(Encoded {
+            bytes: NonNull::slice_from_raw_parts(NonNull::new(ptr)?, len),
+            free,
+        })
+    }
+
+    /// The caller releases the bytes with the function returned.
+    pub(crate) fn into_raw(self) -> (NonNull<[u8]>, Free) {
+        let this = core::mem::ManuallyDrop::new(self);
+        (this.bytes, this.free)
+    }
+
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let (ptr, len, _capacity) = bytes.into_parts();
         Encoded {

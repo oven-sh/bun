@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, it, spyOn } from "bun:test";
 import {
   bunEnv,
   bunExe,
+  bunRun,
   gc,
   getMaxFD,
   isASAN,
@@ -7319,6 +7320,35 @@ it("fs.promises.stat reads a Buffer path captured at call time when its resizabl
   expect(stdout).toBe("wrong: 0\n");
   expect(stderr).toBe("");
   expect(exitCode).toBe(0);
+});
+
+it.skipIf(isWindows)("fs.promises.symlink does not read past a Buffer path whose last byte changes", async () => {
+  using dir = tempDir("fs-path-last-byte", { links: {} });
+  mkfifo(join(String(dir), "a.fifo"));
+  mkfifo(join(String(dir), "b.fifo"));
+  const script = `
+    import fs from "node:fs";
+    const COUNT = 500;
+    const target = new TextEncoder().encode("targetX-past-the-view\\0").subarray(0, "targetX".length);
+    const flip = times => {
+      for (let i = 0; i < times; i++) Atomics.xor(target, target.length - 1, "X".charCodeAt(0));
+    };
+    // Both pool threads wait in open(2), so that the calls below are queued.
+    const readers = ["a.fifo", "b.fifo"].map(fifo => fs.promises.open(fifo, "r"));
+    const links = Array.from({ length: COUNT }, (_, i) => fs.promises.symlink(target, "links/" + i));
+    // Compiles flip() before the calls run.
+    for (let i = 0; i < 100; i++) flip(1000);
+    const writers = [fs.openSync("a.fifo", "w")];
+    for (let i = 0; i < 200 && fs.readdirSync("links").length < COUNT; i++) flip(500_000);
+    // Opened last: one thread takes longer over the calls, and leaves a core to flip().
+    writers.push(fs.openSync("b.fifo", "w"));
+    await Promise.all(links);
+    for (const reader of await Promise.all(readers)) await reader.close();
+    writers.forEach(fd => fs.closeSync(fd));
+    const targets = fs.readdirSync("links").map(name => fs.readlinkSync("links/" + name));
+    console.log(targets.length, JSON.stringify(targets.filter(t => t !== "target" && t !== "targetX")));
+  `;
+  expect(await bunRun(["--cwd", String(dir), "-e", script], { UV_THREADPOOL_SIZE: "2" })).toSpawn("500 []");
 });
 
 // The reader drains the fifo one pipe buffer at a time, so the pool thread is still inside `write(2)`

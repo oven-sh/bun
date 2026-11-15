@@ -42,7 +42,7 @@ pub(crate) unsafe fn generate_compile_result_for_css_chunk(task: *mut ThreadPool
     // `&mut` — to avoid aliased exclusive borrows across peer worker tasks.
     let result = generate_compile_result_for_css_chunk_impl(
         &mut worker,
-        ctx.c.get(),
+        ctx.c,
         ctx.chunk.get(),
         part_range.i,
     );
@@ -260,7 +260,8 @@ fn no_rules_to_css(conditions: &[CssImportCondition], dest: &mut Printer) -> Res
 
 /// An "@import" takes one set of conditions, so the inner ones go into nested data URL imports.
 pub(crate) fn nest_external_imports<'a>(
-    c: &mut LinkerContext<'a>,
+    c: &LinkerContext<'_, 'a>,
+    log: &mut bun_ast::Log,
     order: &mut [CssImportOrder<'a>],
 ) {
     let arena = c.graph.arena();
@@ -278,7 +279,7 @@ pub(crate) fn nest_external_imports<'a>(
             let mut printer = new_printer(c, arena, &mut code, &options, None);
             let printed = import::rule_to_css(path.pretty, Some(condition), &mut printer);
             if let Err(e) = printer.finish(printed) {
-                c.log_mut().add_error_fmt(
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
                     format_args!("Error generating CSS for import: {}", e),

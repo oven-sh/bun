@@ -518,7 +518,7 @@ impl<'a> Transpiler<'a> {
     /// The resolver
     /// crate carries a FORWARD_DECL subset of `BundleOptions`, so re-project
     /// rather than `Clone`. Called after `init_transpiler` mutates
-    /// `self.options` so the resolver sees the same conditions/target/public_path.
+    /// `self.options` so the resolver sees the same conditions/target.
     pub fn sync_resolver_opts(&mut self) {
         self.resolver.opts = resolver_bundle_options_subset(&self.options);
     }
@@ -1037,7 +1037,6 @@ pub(crate) fn resolver_bundle_options_subset(
         // the bundler configured.
         output_dir: src.output_dir.clone(),
         root_dir: src.root_dir.clone(),
-        public_path: src.public_path.clone(),
         compile: src.compile_mode.is_executable(),
         supports_multiple_outputs: src.supports_multiple_outputs,
         tree_shaking: src.tree_shaking,

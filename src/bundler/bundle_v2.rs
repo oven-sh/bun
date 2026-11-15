@@ -5,9 +5,11 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 use core::ptr::NonNull;
+use core::sync::atomic::AtomicU32;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
+use bun_threading::WaitGroup;
 
 // `bake_types` / `dispatch` are canonically defined in `bv2_impl` below
 // (the full versions); re-exported here so the crate-root `lib.rs` modules and
@@ -38,7 +40,7 @@ use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
 use crate::transpiler::Transpiler;
-use crate::{Index, IndexInt, LinkerContext};
+use crate::{Index, IndexInt};
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
 pub use crate::ParseTask;
@@ -86,8 +88,13 @@ pub struct BundleV2<'a> {
     /// When Bun Bake is used, the resolved framework is passed here.
     pub(crate) framework: Option<bake::Framework>,
     pub graph: Graph<'a>,
-    // `LinkerContext<'a>` borrows the same arena lifetime as `transpiler`.
-    pub linker: LinkerContext<'a>,
+    pub(crate) r#loop: EventLoop,
+    pub(crate) has_any_css_locals: AtomicU32,
+    /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
+    pub(crate) bytecode_order: Option<crate::bytecode_order::BytecodeOrder>,
+    /// For the linker's source map tasks. Here because the linker may move while they run.
+    pub(crate) line_offset_wait_group: WaitGroup,
+    pub(crate) quoted_contents_wait_group: WaitGroup,
     // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
     // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
     pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
@@ -170,13 +177,12 @@ impl<'a> BundleV2<'a> {
         &*self.transpiler
     }
 
-    /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it.
+    /// The loop that runs this bundle pass. Other threads only post to it.
     #[inline]
     pub fn any_loop(&self) -> &bun_event_loop::AnyEventLoop {
-        self.linker
-            .any_loop()
-            .expect("BundleV2.linker.loop must be set before plugins run")
+        let any_loop = self.r#loop.expect("BundleV2.loop must be set to parse");
+        // SAFETY: BACKREF — set once in `init` from a loop that outlives the bundle pass.
+        unsafe { any_loop.as_ref() }
     }
 
     #[inline]
@@ -240,7 +246,7 @@ impl<'a> BundleV2<'a> {
         // the only case that doesn't return the main transpiler is a
         // browser-target request from a server-side build, which lazily
         // spins up a client transpiler.
-        if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
+        if !self.transpiler.options.server_components && self.dev_server.is_none() {
             if target == Target::Browser && self.transpiler.options.target.is_server_side() {
                 if let Some(p) = self.client_transpiler {
                     // SAFETY: client_transpiler is live for `'a` (set in `init`);
@@ -1445,6 +1451,7 @@ pub mod bv2_impl {
     use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
+    use crate::LinkerGraph;
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
     use crate::ServerComponentParseTask::ServerComponentParseTask;
     use crate::barrel_imports;
@@ -1855,24 +1862,6 @@ pub mod bv2_impl {
     // and has no usable size/layout in this crate.
     bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
-    /// Erase `&[u8]` to `&'static [u8]` for storage in lifetime-erased
-    /// slots (`LinkerOptions`, `ParseTask` contents).
-    ///
-    /// # Safety
-    /// Caller guarantees `s` is one of:
-    ///   - a `'static` literal,
-    ///   - interned in `FilenameStore`/`DirnameStore` (process-lifetime BSS lists),
-    ///   - allocated from the bundle-pass arena (`BundleV2::arena()`), in which
-    ///     case the returned reference is valid only for the bundle pass and the
-    ///     consumer must not outlive it.
-    /// All call sites in this file satisfy one of these; this is the documented
-    /// arena-erasure convention (PORTING.md §Type Mapping: arena-owned struct
-    /// fields use erased lifetimes).
-    #[inline(always)]
-    unsafe fn interned_slice(s: &[u8]) -> &'static [u8] {
-        // SAFETY: upheld by caller per fn contract.
-        unsafe { bun_ptr::detach_lifetime(s) }
-    }
     /// Logs resolver errors that `resolve()` returns without writing to any
     /// log so `has_errors()` actually fires. Returns `true` when `err` is one
     /// of those; shared by `run_resolver` and `resolve_import_records`.
@@ -2451,8 +2440,7 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
-            let any_loop =
-                (self.linker.r#loop).expect("event loop not initialized for waitForParse");
+            let any_loop = (self.r#loop).expect("event loop not initialized for waitForParse");
             // SAFETY: the loop outlives the bundle pass, and it is not part of `*self`.
             let any_loop = unsafe { any_loop.as_ref() };
             while !self.is_done() {
@@ -2673,7 +2661,7 @@ pub mod bv2_impl {
                         let idx = self
                             .enqueue_parse_task(
                                 &file_map_result,
-                                file_map_result.path_pair.primary,
+                                path_primary,
                                 &mut tmp_source,
                                 loader,
                                 import_record.original_target,
@@ -2915,7 +2903,7 @@ pub mod bv2_impl {
                 let idx = self
                     .enqueue_parse_task(
                         &resolve_result,
-                        self.parse_task_path(&resolve_result, path),
+                        self.parse_task_path(&resolve_result, path, target),
                         &mut tmp_source,
                         loader,
                         import_record.original_target,
@@ -3109,7 +3097,7 @@ pub mod bv2_impl {
                 ..Default::default()
             })?;
             // Arena-owned; freed on heap reset.
-            let task_path = self.parse_task_path(result, path);
+            let task_path = self.parse_task_path(result, path, target);
             let task_val = ParseTask::init(result, task_path, source_index, self);
             let task: &mut ParseTask = self.arena().alloc(task_val);
             task.loader = Some(loader);
@@ -3205,10 +3193,11 @@ pub mod bv2_impl {
                     kit_referenced_client_data: false,
                     ..Graph::new(heap)
                 },
-                linker: LinkerContext {
-                    r#loop: event_loop,
-                    ..LinkerContext::new(heap)
-                },
+                r#loop: event_loop,
+                has_any_css_locals: Default::default(),
+                bytecode_order: None,
+                line_offset_wait_group: Default::default(),
+                quoted_contents_wait_group: Default::default(),
                 bun_watcher: None,
                 plugins: None,
                 completion: None,
@@ -3244,7 +3233,6 @@ pub mod bv2_impl {
                     .map(|sc| sc.separate_ssr_graph)
                     .unwrap_or(false);
                 this.framework = Some(bo.framework);
-                this.linker.framework = this.framework.as_ref().map(bun_ptr::BackRef::new);
                 this.plugins = bo.plugins;
                 if let Some(plugins) = this.plugins_ref() {
                     plugins.freeze_filters();
@@ -3272,11 +3260,6 @@ pub mod bv2_impl {
             this.transpiler.options.tree_shaking = tree_shaking;
             this.transpiler.resolver.opts.tree_shaking = tree_shaking;
 
-            // BACKREF: `LinkerContext<'a>.resolver` is `ParentRef<Resolver<'a>>`;
-            // the resolver lives in `transpiler` which outlives `self` (same `'a`).
-            this.linker.resolver = Some(bun_ptr::ParentRef::new(&this.transpiler.resolver));
-            this.linker.graph.code_splitting = this.transpiler.options.code_splitting;
-
             // Cross-chunk imports/exports are only generated for ESM (see
             // computeCrossChunkDependencies). Reject other formats up front
             // rather than panicking later. Matches esbuild.
@@ -3290,55 +3273,6 @@ pub mod bv2_impl {
                 );
             }
 
-            this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
-            this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
-            this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
-            this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
-            this.linker.options.deprecated_namespace_object_setters =
-                this.transpiler.options.deprecated_namespace_object_setters;
-            this.linker.options.ignore_dce_annotations =
-                this.transpiler.options.ignore_dce_annotations;
-            // SAFETY: `transpiler.options.{banner,footer,public_path}` are
-            // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
-            // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
-            // (see `interned_slice` contract — these are bundle-pass-interned).
-            this.linker.options.banner = unsafe { interned_slice(&this.transpiler.options.banner) };
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.footer = unsafe { interned_slice(&this.transpiler.options.footer) };
-            this.linker.options.css_chunking = this.transpiler.options.css_chunking;
-            this.linker.options.min_chunk_size =
-                this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
-                    crate::options::default_min_chunk_size(this.transpiler.options.target)
-                });
-            this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
-            this.linker.options.entry_naming_has_hash = crate::options::path_template_needs(
-                &this.transpiler.options.entry_naming,
-                crate::options::PlaceholderField::Hash,
-            );
-            this.linker.options.module_preload = this.transpiler.options.module_preload;
-            this.linker.options.source_maps = this.transpiler.options.source_map;
-            this.linker.options.tree_shaking = this.transpiler.options.tree_shaking;
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.public_path =
-                unsafe { interned_slice(&this.transpiler.options.public_path) };
-            this.linker.options.target = this.transpiler.options.target;
-            this.linker.options.output_format = this.transpiler.options.output_format;
-            this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
-            this.linker.options.generate_internal_module_bytecode =
-                this.transpiler.options.bytecode
-                    && !matches!(
-                        this.transpiler.options.compile_target_builtins,
-                        crate::options::CompileTargetBuiltins::None
-                    );
-            this.linker.options.target_builtins =
-                match &this.transpiler.options.compile_target_builtins {
-                    crate::options::CompileTargetBuiltins::Target(section) => {
-                        Some(std::sync::Arc::clone(section))
-                    }
-                    _ => None,
-                };
-            this.linker.options.bytecode_depth = this.transpiler.options.bytecode_depth;
-            this.linker.options.optimize_bytecode = this.transpiler.options.optimize_bytecode;
             // Read now, once and in full (a pipe will do): a path that is wrong fails the build here, before anything
             // is parsed, not after the link.
             if this.transpiler.options.bytecode
@@ -3363,7 +3297,7 @@ pub mod bv2_impl {
                                 ),
                             );
                         }
-                        this.linker.options.bytecode_order = order;
+                        this.bytecode_order = order;
                     }
                     Err((path, err)) => {
                         this.transpiler.log_mut().add_error_fmt(
@@ -3378,10 +3312,6 @@ pub mod bv2_impl {
                     }
                 }
             }
-            this.linker.options.compile_mode = this.transpiler.options.compile_mode;
-            this.linker.options.metafile = this.transpiler.options.metafile;
-
-            this.linker.dev_server = this.dev_server;
 
             let tp = ThreadPool::init(&*this, thread_pool);
             this.graph.pool = bun_ptr::BackRef::new_mut(this.arena().alloc(tp));
@@ -3696,11 +3626,12 @@ pub mod bv2_impl {
             Ok(())
         }
 
-        pub(crate) fn clone_ast(&mut self) -> Result<(), Error> {
+        pub(crate) fn clone_ast(&mut self) -> Result<LinkerGraph<'a>, Error> {
             let _trace = crate::perf::trace("Bundler.cloneAST");
-            self.linker.graph.ast = self.graph.ast.clone()?;
+            let mut linker_graph = LinkerGraph::new(self.graph.heap);
+            linker_graph.ast = self.graph.ast.clone()?;
 
-            for module_scope in self.linker.graph.ast.items_module_scope_mut() {
+            for module_scope in linker_graph.ast.items_module_scope_mut() {
                 // `children` are arena-allocated `StoreRef<Scope>`s; we re-point
                 // their `parent` BACKREF at the cloned module scope. `StoreRef`'s
                 // safe `DerefMut` replaces the open-coded `unsafe { child.as_mut() }`.
@@ -3718,8 +3649,8 @@ pub mod bv2_impl {
 
             // Some parts of the AST are owned by worker allocators at this point.
             // Transfer ownership to the graph heap.
-            self.linker.graph.take_ast_ownership();
-            Ok(())
+            linker_graph.take_ast_ownership();
+            Ok(linker_graph)
         }
 
         /// This generates the two asts for 'bun:bake/client' and 'bun:bake/server'. Both are generated
@@ -4053,7 +3984,7 @@ pub mod bv2_impl {
             let task_path = stored.path;
             // SAFETY: `graph.input_files` owns `stored.contents` for the bundle
             // pass, and the row is not replaced before the task has read it.
-            let contents: &'a [u8] = unsafe { interned_slice(stored.contents()) };
+            let contents: &'a [u8] = unsafe { bun_ptr::detach_lifetime(stored.contents()) };
             let jsx = if known_target == Target::ServerComponentsSsr
                 && !self
                     .framework
@@ -4162,6 +4093,7 @@ pub mod bv2_impl {
         pub dependencies: bun_collections::StringSet,
         pub reachable_files: &'r [Index],
         pub bundle_v2: &'r mut BundleV2<'a>,
+        pub linker_graph: &'r LinkerGraph<'a>,
     }
 
     /// Callback contract for [`DependenciesScanner`].
@@ -4175,6 +4107,7 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         pub(crate) fn get_all_dependencies(
             &mut self,
+            linker_graph: &LinkerGraph<'a>,
             reachable_files: &[Index],
             fetcher: &mut DependenciesScanner<'_>,
         ) -> Result<(), Error> {
@@ -4232,30 +4165,10 @@ pub mod bv2_impl {
             let mut result = DependenciesScannerResult {
                 dependencies: external_deps,
                 bundle_v2: self,
+                linker_graph,
                 reachable_files,
             };
             fetcher.analyzer.on_analyze(&mut result)
-        }
-
-        /// `load` has returned its `&mut Graph` before `link` starts the workers that read the graph.
-        pub(crate) fn link(
-            &mut self,
-            reachable: &[Index],
-        ) -> Result<Box<[Chunk<'a>]>, crate::linker_context_mod::LinkError> {
-            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
-            unsafe {
-                self.linker.load(
-                    &mut self.graph,
-                    &*self.transpiler,
-                    &mut self.dynamic_import_entry_points,
-                    reachable,
-                )
-            }?;
-            self.linker.link(
-                self.has_any_top_level_await_modules,
-                self.unique_key,
-                reachable,
-            )
         }
 
         pub fn generate_from_cli(
@@ -4314,18 +4227,22 @@ pub mod bv2_impl {
                 let reachable_files = this.find_reachable_files()?;
                 *reachable_files_count = reachable_files.len().saturating_sub(1); // - 1 for the runtime
 
-                this.process_files_to_copy(&reachable_files)?;
+                let additional_output_files = this.process_files_to_copy(&reachable_files)?;
 
                 this.add_server_component_boundaries_as_extra_entry_points()?;
 
-                this.clone_ast()?;
+                let mut linker_graph = this.clone_ast()?;
+                linker_graph.additional_output_files = additional_output_files;
 
-                let mut chunks = this.link(&reachable_files)?;
+                let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
+                let mut chunks = linker.link(this.transpiler.log_mut())?;
                 this.dump_pool_stats("link");
 
                 // Do this at the very end, after processing all the imports/exports so that we can follow exports as needed.
                 if let Some(fetch) = fetcher {
-                    this.get_all_dependencies(&reachable_files, fetch)?;
+                    drop(chunks);
+                    let linker_graph = linker.into_graph();
+                    this.get_all_dependencies(&linker_graph, &reachable_files, fetch)?;
                     return Ok(BuildResult {
                         output_files: Vec::new(),
                         metafile: None,
@@ -4334,17 +4251,15 @@ pub mod bv2_impl {
                 }
 
                 let output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                    &mut this.linker,
+                    &mut linker,
+                    this.transpiler.log_mut(),
                     &mut chunks,
                 )?;
                 this.dump_pool_stats("print");
 
                 // Generate metafile if requested (the CLI build command writes the files)
-                let metafile: Option<Box<[u8]>> = if this.linker.options.metafile {
-                    match crate::linker_context::metafile_builder::generate(
-                        &mut this.linker,
-                        &mut chunks,
-                    ) {
+                let metafile: Option<Box<[u8]>> = if linker.options.metafile {
+                    match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
                         Ok(m) => Some(m),
                         Err(err) => {
                             bun_core::warn!("Failed to generate metafile: {}", err);
@@ -4452,20 +4367,23 @@ pub mod bv2_impl {
 
             let reachable_files = this.find_reachable_files()?;
 
-            this.process_files_to_copy(&reachable_files)?;
+            let additional_output_files = this.process_files_to_copy(&reachable_files)?;
 
             this.add_server_component_boundaries_as_extra_entry_points()?;
 
-            this.clone_ast()?;
+            let mut linker_graph = this.clone_ast()?;
+            linker_graph.additional_output_files = additional_output_files;
 
-            let mut chunks = this.link(&reachable_files)?;
+            let mut linker = LinkerContext::load(&this, linker_graph, &reachable_files)?;
+            let mut chunks = linker.link(this.transpiler.log_mut())?;
 
             if chunks.is_empty() {
                 return Ok(Vec::new());
             }
 
             crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut this.linker,
+                &mut linker,
+                this.transpiler.log_mut(),
                 &mut chunks,
             )
         }
@@ -4503,7 +4421,8 @@ pub mod bv2_impl {
         pub(crate) fn process_files_to_copy(
             &mut self,
             reachable_files: &[Index],
-        ) -> Result<(), Error> {
+        ) -> Result<Vec<options::OutputFile>, Error> {
+            let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
             if self.graph.estimated_file_loader_count > 0 {
                 // SAFETY: MultiArrayList columns are disjoint backing storage; raw-ptr
                 // sidestep so we can hold several read-only column slices, one mutable
@@ -4536,7 +4455,6 @@ pub mod bv2_impl {
                         (*self_ptr).graph.input_files.items_loader(),
                     )
                 };
-                let mut additional_output_files: Vec<options::OutputFile> = Vec::new();
                 let mut has_unusable_output_path = false;
                 // Without an output directory the paths are only returned, so they can have any length.
                 let opens_output_paths = !self.transpiler.resolver.opts.output_dir.is_empty()
@@ -4555,7 +4473,7 @@ pub mod bv2_impl {
                             options::PathTemplate::ASSET.into()
                         } else {
                             let mut template: options::PathTemplate =
-                                if self.graph.html_imports.server_source_indices.len() != 0
+                                if self.graph.html_imports.len() != 0
                                     && self.transpiler.options.asset_naming.is_empty()
                                 {
                                     options::PathTemplate::ASSET_WITH_TARGET.into()
@@ -4694,12 +4612,11 @@ pub mod bv2_impl {
                     }
                 }
 
-                self.graph.additional_output_files = additional_output_files;
                 if has_unusable_output_path {
                     return Err(crate::Error::BuildFailed);
                 }
             }
-            Ok(())
+            Ok(additional_output_files)
         }
 
         pub fn on_load_async(&self, load: &mut jsc_api::JSBundler::Load) {
@@ -5310,11 +5227,9 @@ pub mod bv2_impl {
 
     impl Drop for BundleV2<'_> {
         fn drop(&mut self) {
-            // A build that stops between `compute_data_for_source_map` and the waits in
-            // `generate_chunks_in_parallel` gets here with those tasks still on the pool,
-            // creating `Worker`s and reading `graph`.
-            self.linker.source_maps.line_offset_wait_group.wait();
-            self.linker.source_maps.quoted_contents_wait_group.wait();
+            // Dropping the linker waits too, but leaking it does not.
+            self.line_offset_wait_group.wait();
+            self.quoted_contents_wait_group.wait();
             // The last IO callback may still be using the worker pool that `pool.deinit()` frees.
             self.graph.pool().wait_for_io_tasks();
 
@@ -5338,7 +5253,7 @@ pub mod bv2_impl {
             // arena teardown bulk-frees them:
             // `LinkerGraph.File.line_offset_table`
             // is `List<AstAlloc>` (slab + `columns_for_non_ascii` payloads in the
-            // worker AST heap, see `compute_line_offsets`), and every
+            // worker AST heap, see `SourceMapTasks`), and every
             // `MultiArrayList<BundledAst>` / `JSMeta` / `InputFile` column —
             // `quoted_source_contents`, `Part`s, `NamedImport`s, `Scope`s,
             // `ImportData`/`ExportData`, `ArrayHashMap` buckets — is `AstAlloc`-
@@ -5351,33 +5266,11 @@ pub mod bv2_impl {
             // type). The arena-allocated stylesheet never has `Drop` run by the
             // slab. For JS-only bundles every `css` slot is `None`, so this loop
             // is N×branch with no work; only CSS entries pay a real drop. The
-            // macro takes only one side (`linker.graph.ast` is a bitwise SoA
-            // `memcpy` of `graph.ast`), so this is the unique drop.
-            {
-                macro_rules! take_ast_cols {
-                    ($ast:expr) => {{
-                        let ast = $ast;
-                        for v in ast.items_css_mut() {
-                            if let Some(css_ref) = v.take() {
-                                // SAFETY: live arena pointer; dropped exactly once.
-                                unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
-                            }
-                        }
-                    }};
-                }
-                if self.linker.graph.ast.len() != 0 {
-                    take_ast_cols!(&mut self.linker.graph.ast);
-                } else {
-                    take_ast_cols!(&mut self.graph.ast);
-                }
-            }
-
-            // `File.entry_bits` is `AutoBitSet::Dynamic` (global-heap) when
-            // entry points exceed the 64-bit static inline. The slab-only
-            // `MultiArrayList::drop` won't run its destructor.
-            for b in self.linker.graph.files.items_entry_bits_mut() {
-                if let bun_collections::AutoBitSet::Dynamic(d) = b {
-                    d.deinit();
+            // linker's `ast` is a bitwise SoA `memcpy` of `graph.ast`, so this is the unique drop.
+            for v in self.graph.ast.items_css_mut() {
+                if let Some(css_ref) = v.take() {
+                    // SAFETY: live arena pointer; dropped exactly once.
+                    unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
             }
 
@@ -5429,33 +5322,32 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.clone_ast()?;
+            let mut linker_graph = self.clone_ast()?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             let reachable_files = self.find_reachable_files()?;
 
-            self.process_files_to_copy(&reachable_files)?;
+            linker_graph.additional_output_files = self.process_files_to_copy(&reachable_files)?;
 
             self.add_server_component_boundaries_as_extra_entry_points()?;
 
-            let mut chunks = self.link(&reachable_files)?;
+            let mut linker = LinkerContext::load(self, linker_graph, &reachable_files)?;
+            let mut chunks = linker.link(self.transpiler.log_mut())?;
 
             if self.transpiler.log().errors > 0 {
                 return Err(crate::Error::BuildFailed);
             }
 
             let mut output_files = crate::linker_context_mod::generate_chunks_in_parallel::<false>(
-                &mut self.linker,
+                &mut linker,
+                self.transpiler.log_mut(),
                 &mut chunks,
             )?;
 
             // Generate metafile if requested
-            let metafile: Option<Box<[u8]>> = if self.linker.options.metafile {
-                match crate::linker_context::metafile_builder::generate(
-                    &mut self.linker,
-                    &mut chunks,
-                ) {
+            let metafile: Option<Box<[u8]>> = if linker.options.metafile {
+                match crate::linker_context::metafile_builder::generate(&linker, &chunks) {
                     Ok(m) => Some(m),
                     Err(err) => {
                         bun_core::warn!("Failed to generate metafile: {}", err.name());
@@ -5482,8 +5374,7 @@ pub mod bv2_impl {
 
             // Write metafile outputs to disk and add them as OutputFiles.
             // Metafile paths are relative to outdir, like all other output files.
-            // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
-            let outdir = &self.linker.resolver().opts.output_dir;
+            let outdir = &self.transpiler.resolver.opts.output_dir;
             if !self.transpiler.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(
@@ -5637,10 +5528,6 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            self.clone_ast().map_err(|_| AllocError)?;
-
-            /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
-
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
 
@@ -5726,7 +5613,7 @@ pub mod bv2_impl {
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast")));
 
-                                // Part liveness for HMR is seeded after `linker.load`
+                                // Part liveness for HMR is seeded after `LinkerContext::load`
                                 // (every part of every JS file is marked live).
                             }
 
@@ -5807,21 +5694,14 @@ pub mod bv2_impl {
 
             // The linker still has to be initialized as code generation expects
             // much of its state to be valid memory, even if empty.
-            // SAFETY: `graph` and `transpiler` are those of `self`, which holds `linker`.
-            unsafe {
-                self.linker.load(
-                    &mut self.graph,
-                    &*self.transpiler,
-                    &mut self.dynamic_import_entry_points,
-                    js_reachable_files,
-                )
-            }
-            .map_err(|_| AllocError)?;
+            let linker_graph = self.clone_ast().map_err(|_| AllocError)?;
+            let mut linker = LinkerContext::load(self, linker_graph, js_reachable_files)
+                .map_err(|_| AllocError)?;
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets
             // here: every part of every JS file is considered live.
             {
-                let parts_col = self.linker.graph.ast.items_parts();
+                let parts_col = linker.graph.ast.items_parts();
                 let mut parts_live: Vec<bun_collections::AutoBitSet> =
                     Vec::with_capacity(parts_col.len());
                 for parts in parts_col {
@@ -5830,7 +5710,7 @@ pub mod bv2_impl {
                 for &idx in js_reachable_files {
                     parts_live[idx.get() as usize].set_all(true);
                 }
-                self.linker.graph.parts_live = parts_live;
+                linker.graph.parts_live = parts_live;
             }
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
@@ -5842,7 +5722,7 @@ pub mod bv2_impl {
                     debug_assert!(self.graph.ast.items_parts()[idx.get() as usize].len() != 0); // will create a memory leak
                 }
             }
-            self.linker.compute_data_for_source_map(js_reachable_files);
+            linker.compute_data_for_source_map();
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
@@ -5882,43 +5762,22 @@ pub mod bv2_impl {
             });
 
             // Then all the distinct CSS bundles (these are JS->CSS, not CSS->CSS)
-            let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point]) {
-                    Ok(order) => css_orders.push((*entry_point, order)),
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&linker, self.graph.heap, &[*entry_point]) {
+                    Ok(order) => chunks.push(Chunk {
+                        entry_point: chunk::EntryPoint::non_entry_point(
+                            entry_point.get(),
+                            entry_point.get(),
+                        ),
+                        content: chunk::Content::Css(chunk::CssChunk {
+                            imports_in_chunk_in_order: order,
+                        }),
+                        output_source_map: SourceMap::SourceMapPieces::init(),
+                        ..Chunk::default()
+                    }),
                     Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
                 }
-            }
-            // Treat an `@import` chain that's too deep like an invalid import. The
-            // dev server reports the error for that file and skips its chunk.
-            for (entry_point, too_deep) in css_too_deep {
-                let sources = self.graph.input_files.items_source();
-                let mut log = bun_ast::Log::init();
-                too_deep.add_to_log(sources, &mut log);
-                dev_server
-                    .handle_parse_task_failure(
-                        crate::Error::InvalidCssImport,
-                        bake::Graph::Client,
-                        sources[entry_point.get() as usize].path.text,
-                        &raw const log,
-                        self,
-                    )
-                    .map_err(|_| AllocError)?;
-                let _ = start.css_entry_points.ordered_remove(&entry_point);
-            }
-            for (entry_point, order) in css_orders {
-                chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::non_entry_point(
-                        entry_point.get(),
-                        entry_point.get(),
-                    ),
-                    content: chunk::Content::Css(chunk::CssChunk {
-                        imports_in_chunk_in_order: order,
-                    }),
-                    output_source_map: SourceMap::SourceMapPieces::init(),
-                    ..Chunk::default()
-                });
             }
 
             // Then all HTML files
@@ -5937,18 +5796,41 @@ pub mod bv2_impl {
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
             crate::linker_context_mod::generate_chunks_in_parallel::<true>(
-                &mut self.linker,
+                &mut linker,
+                self.transpiler.log_mut(),
                 &mut chunks,
             )
             .map_err(|_| AllocError)?;
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
+            // It points into `linker`.
+            chunks[0].renamer = Default::default();
+            let linker_graph = linker.into_graph();
+
+            // An `@import` chain that is too deep has no chunk. It is reported like an invalid import.
+            for (entry_point, too_deep) in css_too_deep {
+                let sources = self.graph.input_files.items_source();
+                let mut log = bun_ast::Log::init();
+                too_deep.add_to_log(sources, &mut log);
+                dev_server
+                    .handle_parse_task_failure(
+                        crate::Error::InvalidCssImport,
+                        bake::Graph::Client,
+                        sources[entry_point.get() as usize].path.text,
+                        &raw const log,
+                        self,
+                    )
+                    .map_err(|_| AllocError)?;
+                let _ = start.css_entry_points.ordered_remove(&entry_point);
+            }
+
             dev_server
                 .finalize_bundle(
                     self,
-                    &mut DevServerOutput {
+                    DevServerOutput {
                         chunks,
+                        linker_graph,
                         css_file_list: core::mem::take(&mut start.css_entry_points),
                     },
                 )
@@ -6121,9 +6003,11 @@ pub mod bv2_impl {
             &self,
             result: &_resolver::Result<'_>,
             active: Fs::Path<'a>,
+            target: options::Target,
         ) -> Fs::Path<'a> {
             if result.path_pair.primary.is_disabled {
-                path_in_arena(&result.path_pair.primary, self.arena())
+                self.path_with_pretty_initialized(&result.path_pair.primary, target)
+                    .expect("oom")
             } else {
                 active
             }
@@ -6986,7 +6870,7 @@ pub mod bv2_impl {
                 // Arena-owned.
                 let resolve_task_val = ParseTask::init(
                     &resolve_result,
-                    resolve_result.path_pair.primary,
+                    self.parse_task_path(&resolve_result, import_record.path, target),
                     bun_ast::Index::INVALID,
                     self,
                 );
@@ -7260,7 +7144,7 @@ pub mod bv2_impl {
                     chunk::UniqueKey {
                         prefix: self.unique_key,
                         kind: chunk::QueryKind::HtmlImport,
-                        index: self.graph.html_imports.server_source_indices.len() as u32,
+                        index: self.graph.html_imports.len() as u32,
                     },
                 ))
                 .as_bytes();
@@ -7310,10 +7194,7 @@ pub mod bv2_impl {
             let _ = self
                 .path_to_source_index_map(target)
                 .put(path_text, fake_source_index.0); // OOM-only Result
-            self.graph
-                .html_imports
-                .server_source_indices
-                .push(fake_source_index.0);
+            self.graph.html_imports.push(fake_source_index.0);
             self.ensure_client_transpiler();
             Ok(())
         }
@@ -8126,6 +8007,7 @@ pub mod bv2_impl {
     /// The lifetime of this structure is tied to the bundler's arena
     pub struct DevServerOutput<'a> {
         pub chunks: Vec<Chunk<'a>>,
+        pub linker_graph: LinkerGraph<'a>,
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
     }
 

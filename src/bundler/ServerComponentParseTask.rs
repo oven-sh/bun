@@ -104,20 +104,10 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop`.
-    //
-    // The loop is effectively non-optional — `BundleV2::init`
-    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
     // Running `on_complete` inline on the worker thread would violate
     // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
     // bundler graph, which is owned by the main/bundler thread).
-    match worker
-        .ctx
-        .linker
-        .any_loop()
-        .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
-    {
+    match worker.ctx.any_loop() {
         bun_event_loop::AnyEventLoop::Js { .. } => {
             let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
             let poster = worker

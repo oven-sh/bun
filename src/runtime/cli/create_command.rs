@@ -722,8 +722,6 @@ impl CreateCommand {
                         pkg.seek_to(prev_file_pos)?;
                         // The printer doesn't truncate, so we must do so manually
                         let _ = bun_sys::ftruncate(pkg.handle(), 0);
-
-                        bun_ast::initialize_store();
                     }
                 }
             }
@@ -779,15 +777,13 @@ impl CreateCommand {
             }
 
             if let Some(package_json_file) = &package_json_file {
-                bun_ast::initialize_store();
-
                 let source = bun_ast::Source::init_path_string(
                     b"package.json",
                     package_json_contents.list.as_slice(),
                 );
 
                 let log: &bun_ast::Log = ctx.log();
-                let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+                let bump: &'static bun_ast::AstArena = crate::cli::cli_arena();
                 let parsed = match JSON::parse_package_json_utf8_with_opts(
                     JSON::JSONOptions {
                         guess_indentation: true,
@@ -886,7 +882,8 @@ impl CreateCommand {
 
                                     if strings::contains(script, b"react-scripts build") {
                                         scripts_properties[script_property_i].value =
-                                            Some(bun_ast::Expr::init(
+                                            Some(bun_ast::Expr::allocate(
+                                                bump,
                                                 bun_ast::E::EString::init(
                                                     b"npx react-scripts build",
                                                 ),
@@ -1743,10 +1740,9 @@ impl Example {
 
         refresher.root().set_name(b"Parsing package.json");
         refresher.refresh();
-        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"package.json", mutable.list.as_slice());
         let log = ctx.log();
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let bump: &'static bun_ast::AstArena = crate::cli::cli_arena();
         let expr = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
@@ -1889,10 +1885,9 @@ impl Example {
             Global::exit(1);
         }
 
-        bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
         // Process-lifetime: the examples borrow from it.
-        let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
+        let bump: &'static bun_ast::AstArena = crate::cli::cli_arena();
         let log = ctx.log();
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,

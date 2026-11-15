@@ -350,28 +350,28 @@ impl DevServer {
         // Boxed so its address is stable: `bv2.graph.heap: &'static Arena`
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
-        let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // Borrows `heap`, so AST nodes built during bundle setup
+        let ast_arena: Box<bun_ast::AstArena> = Box::default();
+        // Borrows `ast_arena`, so AST nodes built during bundle setup
         // live exactly as long as the bundle. The `AstAllocState` is taken
         // into `CurrentBundle` on success and recycled on error paths.
-        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(&heap);
+        let mut ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(&ast_arena);
         let ast_scope = ast_memory_store.enter();
 
         // The bundler stores
-        // `Option<NonNull<AnyEventLoop>>`. Park the value in `heap`
+        // `Option<NonNull<AnyEventLoop>>`. Park the value in `ast_arena`
         // — bumpalo chunks are heap-allocated, so the address is stable across
-        // the move of `heap` into `bv2.graph.heap` and lives exactly as long
+        // the move of `ast_arena` into `bv2.graph.heap` and lives exactly as long
         // as `bv2`.
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(::core::ptr::NonNull::from(heap.alloc(
+            Some(::core::ptr::NonNull::from(ast_arena.alloc(
                 bun_event_loop::AnyEventLoop::js(self.vm().event_loop_ptr()),
             )));
 
-        let heap_ptr: *const bun_alloc::Arena = &raw const *heap;
-        // SAFETY: `heap` is `Box`-allocated above and moved into
+        let ast_arena_ptr: *const bun_ast::AstArena = &raw const *ast_arena;
+        // SAFETY: `ast_arena` is `Box`-allocated above and moved into
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address
         // is stable for the lifetime of `bv2.graph.heap`'s borrow.
-        let heap_ref: &'static bun_alloc::Arena = unsafe { &*heap_ptr };
+        let ast_arena_ref: &'static bun_ast::AstArena = unsafe { &*ast_arena_ptr };
         // SAFETY: `self` holds the transpilers at a fixed address and outlives every use of `bv2`.
         // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
         // server one on this thread (`watch_directory`, `finalize_bundle`).
@@ -391,12 +391,12 @@ impl DevServer {
                 ssr_transpiler,
                 plugins: self.plugins,
             }),
-            heap_ref,
+            ast_arena_ref,
             event_loop,
             Some(::core::ptr::NonNull::from(
                 bun_threading::work_pool::WorkPool::get(),
             )),
-            heap_ref,
+            ast_arena_ref,
         );
         bv2.asynchronous = true;
         bv2.dev_server = Some(self.bundler_handle());
@@ -428,7 +428,7 @@ impl DevServer {
         let ast_alloc_state = ast_memory_store.take_ast_state();
         self.current_bundle = Some(CurrentBundle {
             _bv2: bv2,
-            _heap: heap,
+            _ast_arena: ast_arena,
             _ast_alloc_state: ast_alloc_state,
             timer,
             start_data,

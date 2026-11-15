@@ -81,16 +81,29 @@ fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> Result<T, Pack
 }
 
 /// `E::String` erases the lifetime of its bytes, so these have to outlive the printing of the AST.
-fn string_property(key: &'static [u8], value: &'static [u8]) -> G::Property {
+fn string_property(
+    bump: &bun_ast::AstArena,
+    key: &'static [u8],
+    value: &'static [u8],
+) -> G::Property {
     G::Property {
-        key: Some(Expr::init(E::String::init(key), bun_ast::Loc::EMPTY)),
-        value: Some(Expr::init(E::String::init(value), bun_ast::Loc::EMPTY)),
+        key: Some(Expr::allocate(
+            bump,
+            E::String::init(key),
+            bun_ast::Loc::EMPTY,
+        )),
+        value: Some(Expr::allocate(
+            bump,
+            E::String::init(value),
+            bun_ast::Loc::EMPTY,
+        )),
         ..Default::default()
     }
 }
 
-fn object_expr(properties: Vec<G::Property>) -> Expr {
-    Expr::init(
+fn object_expr(bump: &bun_ast::AstArena, properties: Vec<G::Property>) -> Expr {
+    Expr::allocate(
+        bump,
         E::Object {
             properties: bun_alloc::AstAlloc::vec_from_iter(properties),
             ..Default::default()
@@ -251,7 +264,7 @@ impl Context {
         };
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_ast::AstArena::new();
         let json_source = bun_ast::Source::init_path_string(b"package.json", package_json_contents);
         let mut json = match json_mod::parse_package_json_utf8(&json_source, manager.log(), &bump) {
             Ok(j) => j,
@@ -503,7 +516,7 @@ impl PublishCommand {
         manager: &mut PackageManager,
         original_cwd: &[u8],
     ) -> Result<(), Error> {
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_ast::AstArena::new();
         // Each with the options as its `publishConfig` left them.
         let mut packed: Vec<(bun_core::ZBox, PublishTarget, Context)> = Vec::new();
         for abs_package_json_path in
@@ -688,7 +701,7 @@ impl PublishCommand {
 
         let source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
         let log = bun_ast::Log::init();
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_ast::AstArena::new();
         let Ok(json) = json_mod::parse_utf8(&source, &log, &bump) else {
             return false;
         };
@@ -914,7 +927,7 @@ impl PublishCommand {
         registry: &Npm::Registry::Scope,
         response_buf: &mut MutableString,
     ) -> Result<Box<[u8]>, AllocError> {
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_ast::AstArena::new();
         let res_source = bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
 
         'try_web: {
@@ -1024,7 +1037,7 @@ impl PublishCommand {
                     200 => {
                         WEB_LOGIN.lock().auth_url = None;
 
-                        let done_bump = bun_alloc::Arena::new();
+                        let done_bump = bun_ast::AstArena::new();
                         let otp_done_source =
                             bun_ast::Source::init_path_string(b"???", response_buf.list.as_slice());
                         let otp_done_json =
@@ -1087,7 +1100,7 @@ impl PublishCommand {
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
 
-        let bump = bun_alloc::Arena::new();
+        let bump = bun_ast::AstArena::new();
         let registry = manager.scope_for_package_name(package_name);
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
@@ -1143,11 +1156,14 @@ impl PublishCommand {
         json.set(
             &bump,
             b"dist",
-            object_expr(vec![
-                string_property(b"integrity", integrity_fmt),
-                string_property(b"shasum", shasum_fmt),
-                string_property(b"tarball", cli_dupe(tarball.as_bytes())),
-            ]),
+            object_expr(
+                &bump,
+                vec![
+                    string_property(&bump, b"integrity", integrity_fmt),
+                    string_property(&bump, b"shasum", shasum_fmt),
+                    string_property(&bump, b"tarball", cli_dupe(tarball.as_bytes())),
+                ],
+            ),
         )?;
 
         Self::normalize_bin(json, &bump, package_name, &files)?;
@@ -1195,6 +1211,7 @@ impl PublishCommand {
 
     /// Adds `key: value`, unless `value` is the package root or outside of it.
     fn push_bin(
+        bump: &bun_ast::AstArena,
         bin_props: &mut Vec<G::Property>,
         key: &[u8],
         value: &[u8],
@@ -1212,12 +1229,16 @@ impl PublishCommand {
                 bun_fmt::escape_control_chars(target.as_bytes()),
             );
         }
-        bin_props.push(string_property(cli_dupe(key), cli_dupe(target.as_bytes())));
+        bin_props.push(string_property(
+            bump,
+            cli_dupe(key),
+            cli_dupe(target.as_bytes()),
+        ));
     }
 
     fn normalize_bin(
         json: &mut Expr,
-        bump: &bun_alloc::Arena,
+        bump: &bun_ast::AstArena,
         package_name: &[u8],
         files: &PackageFiles<'_>,
     ) -> Result<(), AllocError> {
@@ -1228,6 +1249,7 @@ impl PublishCommand {
             let mut bin_props: Vec<G::Property> = Vec::new();
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => Self::push_bin(
+                    bump,
                     &mut bin_props,
                     package_name,
                     bin_str.string(bump)?,
@@ -1263,6 +1285,7 @@ impl PublishCommand {
                             continue;
                         };
                         Self::push_bin(
+                            bump,
                             &mut bin_props,
                             &key,
                             value.string(bump)?,
@@ -1281,7 +1304,7 @@ impl PublishCommand {
                 .expect("infallible: variant checked")
                 .properties
                 .slice_mut()[bin_query.i as usize]
-                .value = Some(object_expr(bin_props));
+                .value = Some(object_expr(bump, bin_props));
         }
 
         // An empty "bin" is `{}` by now. The listing replaces it.
@@ -1313,6 +1336,7 @@ impl PublishCommand {
                         .is_some_and(|below| below.len() > 1 && below[0] == b'/')
                     {
                         bin_props.push(string_property(
+                            bump,
                             cli_dupe(bun_paths::basename_posix(path)),
                             cli_dupe(path),
                         ));
@@ -1325,7 +1349,7 @@ impl PublishCommand {
                     );
                     return Ok(());
                 }
-                return json.set(bump, b"bin", object_expr(bin_props));
+                return json.set(bump, b"bin", object_expr(bump, bin_props));
             }
         };
 
@@ -1387,6 +1411,7 @@ impl PublishCommand {
                 }
 
                 bin_props.push(string_property(
+                    bump,
                     cli_dupe(bun_paths::basename_posix(subpath)),
                     subpath,
                 ));
@@ -1400,7 +1425,7 @@ impl PublishCommand {
             }
         }
 
-        json.set(bump, b"bin", object_expr(bin_props))
+        json.set(bump, b"bin", object_expr(bump, bin_props))
     }
 
     fn construct_publish_headers(

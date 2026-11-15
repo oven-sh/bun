@@ -81,7 +81,9 @@ pub(crate) struct RuntimeState {
     /// `deinit_runtime_state` reclaims it on Worker teardown — previously
     /// leaked per-VM (PORTING.md §Forbidden: leaking only for true
     /// process-lifetime singletons via `OnceLock`, which a per-VM arena is not).
-    pub(crate) transpiler_arena: Box<bun_alloc::Arena>,
+    pub(crate) transpiler_arena: Box<bun_ast::AstArena>,
+    /// Taken by `with_text_format_source` while it runs.
+    pub(crate) text_format_arena: Cell<bun_ast::AstArena>,
     /// Moved from `InitOptions::owned_env_loader`. `vm.transpiler` points to it.
     pub(crate) owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     /// `vm.body_value_pool` — pooled storage for `Body.Value`
@@ -332,7 +334,8 @@ unsafe fn init_runtime_state(
         // `borrowing_default()` wraps `mi_heap_main()` so `Transpiler`-level
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
-        transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
+        transpiler_arena: Box::new(bun_ast::AstArena::borrowing_default()),
+        text_format_arena: Cell::default(),
         owned_env_loader: opts.owned_env_loader.take(),
         body_value_pool: {
             // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
@@ -409,7 +412,7 @@ unsafe fn init_runtime_state(
         // inner `Box<Arena>` payload is heap-stable and outlives the
         // `Transpiler` (reclaimed in `deinit_runtime_state` after the VM —
         // and hence `vm.transpiler` — is done).
-        let arena: &'static bun_alloc::Arena = unsafe { &*(*state).transpiler_arena };
+        let arena: &'static bun_ast::AstArena = unsafe { &*(*state).transpiler_arena };
         // Forward `opts.env_loader` so the VM
         // shares the caller's `DotEnv.Loader` (e.g. `bun test` writes
         // `NODE_ENV=test` into it after init).
@@ -1970,14 +1973,14 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // Reuse the per-VM arena when free; allocate a
             // fresh boxed one otherwise. `give_back_arena` is cleared on the
             // ParseError path, which leaves it for the caller to inspect.
-            let arena: Box<bun_alloc::Arena> = jsc_vm
+            let arena: Box<bun_ast::AstArena> = jsc_vm
                 .module_loader
                 .transpile_source_code_arena
                 .take()
-                .unwrap_or_else(|| Box::new(bun_alloc::Arena::new()));
+                .unwrap_or_default();
             // Stable heap address (Box interior); survives the move into
             // `arena_guard` and into the VM slot on give-back.
-            let arena_ptr: *const bun_alloc::Arena = &raw const *arena;
+            let arena_ptr: *const bun_ast::AstArena = &raw const *arena;
             // Captured before `arena` moves into `arena_guard` (the Box
             // interior is address-stable across the move).
             let arena_heap: *mut bun_alloc::mimalloc::Heap = arena.heap_ptr();

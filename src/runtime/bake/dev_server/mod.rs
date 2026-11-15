@@ -326,7 +326,7 @@ pub(super) use crate::bake::dev_server::source_map_store::SourceMapStore;
 
 pub(crate) struct Options<'a> {
     /// Arena must live until DevServer drops
-    pub arena: &'a Arena,
+    pub arena: &'a bun_ast::AstArena,
     pub root: &'a ZStr,
     pub vm: &'a VirtualMachine,
     pub framework: bake::Framework,
@@ -387,7 +387,7 @@ impl<P> Served for bun_ptr::BackRef<DevServer, P> {
 /// inevitably share state. This bundle is asynchronous, storing its state here
 /// while in-flight. All allocations held by `.bv2.graph.heap`'s arena
 pub(crate) struct CurrentBundle {
-    /// The `BundleV2<'static>`: `dyn`, so trimming the bundler takes its drop along. Drops before `_heap`.
+    /// The `BundleV2<'static>`: `dyn`, so trimming the bundler takes its drop along. Drops before `_ast_arena`.
     /// Note: `'static` is a stand-in for the DevServer-self lifetime —
     /// `BundleV2<'a>` borrows the `Transpiler<'_>` fields stored inline
     /// in `DevServer`, so the true bound is the `Box<DevServer>` allocation
@@ -396,7 +396,7 @@ pub(crate) struct CurrentBundle {
     pub(crate) _bv2: Box<dyn ::core::any::Any>,
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
-    pub(crate) _heap: Box<bun_alloc::MimallocArena>,
+    pub(crate) _ast_arena: Box<bun_ast::AstArena>,
     /// Backs the small `AstVec`s built during bundle setup
     /// (`start_async_bundle`'s AST scope); dropped with the bundle.
     pub(crate) _ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,

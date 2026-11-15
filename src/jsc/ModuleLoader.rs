@@ -5,7 +5,6 @@
 //! the standalone graph); this crate calls the first two through link-time
 //! `extern "Rust"` decls.
 
-use bun_alloc::Arena as ArenaAllocator;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::{MAIN_FILE_NAME, MainEntryPoint, VirtualMachine};
@@ -20,7 +19,7 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 
 #[derive(Default)]
 pub struct ModuleLoader {
-    pub transpile_source_code_arena: crate::JsCell<Option<Box<ArenaAllocator>>>,
+    pub transpile_source_code_arena: crate::JsCell<Option<Box<bun_ast::AstArena>>>,
     /// Taken while a module is printed, and put back so that the next one reuses its buffer.
     pub source_code_printer: core::cell::Cell<bun_js_printer::BufferPrinter>,
     pub eval_source: core::cell::OnceCell<Box<bun_ast::Source<'static>>>,
@@ -48,7 +47,7 @@ pub fn is_allowed_to_use_internal_testing_apis() -> bool {
 impl ModuleLoader {
     /// This must be called after calling transpileSourceCode
     pub(crate) fn reset_arena(&self) {
-        // PERF: this unconditionally calls `reset()`. Per
+        // PERF: this unconditionally destroys the heap. Per
         // `MimallocArena::reset_retain_with_limit`'s doc comment, the
         // "mimalloc's segment cache keeps pages warm anyway" theory behind
         // unconditional `reset()` proved wrong (purged pages get re-committed
@@ -60,7 +59,7 @@ impl ModuleLoader {
         // tracked as a dedicated work order rather than changed inline.
         self.transpile_source_code_arena.with_mut(|arena| {
             if let Some(arena) = arena {
-                arena.reset();
+                arena.reset_retain_chunks(8 * 1024 * 1024);
             }
         });
     }

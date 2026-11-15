@@ -11,7 +11,7 @@ use bun_sys::{self, Fd, File, O};
 use crate::bin::Bin;
 use crate::dependency::{self, Behavior, Dependency};
 use crate::external_slice::ExternalSlice;
-use crate::install::{self as Install, PackageManager, Subcommand};
+use crate::install::{PackageManager, Subcommand};
 use crate::lockfile::{
     Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
     Migrated, Package,
@@ -130,10 +130,11 @@ pub(crate) fn parse_manifest_bin(
     pkg: &mut Package,
     manifest: &Expr,
 ) -> Result<(), AllocError> {
+    let manifest = bun_ast::JsonView::from(manifest);
     if let Some(bin) = manifest.get(b"bin") {
-        pkg.bin = Bin::parse_append(&bin, &mut sbuf!(this), &mut this.buffers.extern_strings)?;
+        pkg.bin = Bin::parse_append(bin, &mut sbuf!(this), &mut this.buffers.extern_strings)?;
     } else if let Some(bin) = manifest.get(b"directories").and_then(|d| d.get(b"bin")) {
-        pkg.bin = Bin::parse_append_from_directories(&bin, &mut sbuf!(this))?;
+        pkg.bin = Bin::parse_append_from_directories(bin, &mut sbuf!(this))?;
     }
     Ok(())
 }
@@ -300,6 +301,7 @@ pub(crate) fn parse_root_overrides(
     json: bun_ast::Expr,
     workspace_names: &WorkspaceMap,
 ) -> Result<(), Error> {
+    let json = bun_ast::JsonView::from(&json);
     if json.as_property(b"overrides").is_none() && json.as_property(b"resolutions").is_none() {
         return Ok(());
     }
@@ -428,17 +430,15 @@ fn migrate_npm_lockfile(
     debug!("begin lockfile migration");
 
     this.init_empty();
-    Install::initialize_store();
 
     let json_src = bun_ast::Source::init_path_string(abs_path, data);
-    let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log)
+    let arena = bun_ast::AstArena::new();
+    let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log, &arena)
         .map_err(|_| crate::Error::InvalidNPMLockfile)?;
-    let json = &parsed_json.root;
 
-    let ExprData::EObjectJSON(root_obj) = &json.data else {
+    let Some(root_obj) = parsed_json.root().as_e_object_json() else {
         return Err(crate::Error::InvalidNPMLockfile);
     };
-    let root_obj: &E::ObjectJSON = root_obj.get();
     match root_obj.get(b"lockfileVersion") {
         Some(E::JsonValue::Number(n)) if (2.0..=4.0).contains(&n.value()) => {}
         Some(E::JsonValue::Number(n)) => {

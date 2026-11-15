@@ -56,7 +56,7 @@ impl ScratchManifests {
             manager,
             &self.log,
             &root_source,
-            root_json,
+            bun_ast::JsonView::from(&root_json),
             &mut resolver,
             features,
         )?;
@@ -106,7 +106,6 @@ impl ScratchManifests {
                 &bun_ast::Log::init(),
                 &target.package_json_path,
                 GetJSONOptions {
-                    init_reset_store: false,
                     guess_indentation: true,
                 },
             )
@@ -151,7 +150,7 @@ impl ScratchManifests {
             manager,
             &self.log,
             source.get(),
-            json,
+            bun_ast::JsonView::from(&json),
             &mut resolver,
             features,
         )?;

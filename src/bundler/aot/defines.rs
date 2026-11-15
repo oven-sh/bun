@@ -200,7 +200,7 @@ mod tests {
     fn create_table(
         entries: &[(&str, &str)],
         dropped: &[&[u8]],
-        scratch: &Arena,
+        scratch: &bun_ast::AstArena,
     ) -> Box<DefineTable> {
         let input = api::StringMap {
             keys: entries
@@ -227,7 +227,7 @@ mod tests {
     }
 
     fn fold_configured<'s>(
-        configure: impl FnOnce(&mut BundleOptions<'_>, &Arena),
+        configure: impl FnOnce(&mut BundleOptions<'_>, &bun_ast::AstArena),
         arena: &'s Arena,
         atoms: &Interner<'s>,
     ) -> (FoldOptions<'s>, Log) {

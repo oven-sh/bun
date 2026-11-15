@@ -1,5 +1,7 @@
 //! "api" in this context means "the Bun APIs", as in "the exposed JS APIs"
 
+use bun_ptr::CellExt as _;
+
 // ─── server / socket / ffi ───────────────────────────────────────────────────
 pub(crate) use crate::server;
 pub(crate) use crate::server::AnyRequestContext;
@@ -147,29 +149,8 @@ fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     bytes: &[u8],
     path: &'static [u8],
-    f: impl FnOnce(&bun_alloc::Arena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
+    f: impl FnOnce(&bun_ast::AstArena, &mut bun_ast::Log, &bun_ast::Source) -> bun_jsc::JsResult<R>,
 ) -> bun_jsc::JsResult<R> {
-    // A private mi_heap costs microseconds to create, more than parsing a
-    // small document: keep one per thread and recycle it between calls.
-    // `#[thread_local]` rather than `thread_local!` so there is no
-    // destructor racing mimalloc's own thread teardown (as in
-    // `ast_memory_allocator.rs`); a parked heap is reclaimed with the thread.
-    #[thread_local]
-    static ARENA: core::cell::Cell<Option<bun_alloc::Arena>> = core::cell::Cell::new(None);
-    struct Recycle(Option<bun_alloc::Arena>);
-    impl Drop for Recycle {
-        fn drop(&mut self) {
-            if let Some(mut arena) = self.0.take() {
-                arena.reset_retain_with_limit(2 * 1024 * 1024);
-                ARENA.set(Some(arena));
-            }
-        }
-    }
-    let recycle = Recycle(Some(ARENA.take().unwrap_or_default()));
-    let arena = recycle.0.as_ref().expect("set above");
-    let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
-    let _ast_scope = ast_memory_allocator.enter();
-
     // Every parser reached from here records source positions as an `i32`
     // (`ast::Loc` via `usize2loc` for JSONC/TOML, JSON5's token locs, YAML's
     // `Pos`), so an input those offsets cannot represent panics inside the
@@ -188,7 +169,17 @@ fn with_text_format_source<R>(
     let mut log = bun_ast::Log::init();
     let source = bun_ast::Source::init_path_string(path, bytes);
 
-    f(arena, &mut log, &source)
+    // Reused because `mi_heap_new` costs more than parsing a small document. A nested call gets a new arena.
+    let slot = &crate::jsc_hooks::runtime_state().text_format_arena;
+    slot.with_taken(|arena| {
+        let result = {
+            let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
+            let _ast_scope = ast_memory_allocator.enter();
+            f(arena, &mut log, &source)
+        };
+        arena.reset_retain_with_limit(2 * 1024 * 1024);
+        result
+    })
 }
 
 // ─── shared Expr → JS conversion for the text-format parsers ─────────────────

@@ -29,10 +29,7 @@ pub(crate) fn generate_compile_result_for_js_chunk(
 
     let worker_alloc = worker.arena();
     let mut buffer_writer = js_printer::BufferWriter::init();
-    // `temporary_arena` is a `MimallocArena`
-    // here because `temp_arena` flows into `Stmt::allocate`/`Expr::allocate`/
-    // `Binding::alloc`/`ArenaVec`, all of which take `&MimallocArena` concretely;
-    // a plain `reset()` would be `mi_heap_destroy + mi_heap_new` *per part_range*
+    // A plain `reset()` would be `mi_heap_destroy + mi_heap_new` *per part_range*
     // (perf-probe: 46× for one elysia build). Use `reset_retain_with_limit`
     // (see `ModuleLoader`'s `transpile_source_code_arena`):
     // keep the heap warm across part_ranges and
@@ -41,7 +38,7 @@ pub(crate) fn generate_compile_result_for_js_chunk(
     // worker's full part_range set for typical bundles, so this is ~one
     // `mi_heap_new` per worker instead of one per module.
     let arena = scopeguard::guard(&mut worker.temporary_arena, |a| {
-        let _ = a.reset_retain_with_limit(8 * 1024 * 1024);
+        a.reset_retain_with_limit(8 * 1024 * 1024);
     });
     let stmt_list = &mut worker.stmt_list;
     stmt_list.reset();

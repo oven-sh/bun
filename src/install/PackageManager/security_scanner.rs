@@ -7,7 +7,6 @@ use bstr::BStr;
 
 use crate::Error;
 use crate::bun_fs::FileSystem;
-use crate::bun_json::{Expr, ExprData};
 use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{append_without_url_credentials, append_without_url_userinfo};
 use bun_collections::ArrayHashMap;
@@ -1117,7 +1116,9 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let temp_log = bun_ast::Log::init();
 
-        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &temp_log) {
+        let arena = bun_ast::AstArena::new();
+        let parsed = match crate::bun_json::ParsedJson::parse_json(&json_source, &temp_log, &arena)
+        {
             Ok(e) => e,
             Err(e) => {
                 Output::err_generic("Security scanner sent invalid JSON: {}", (e.name(),));
@@ -1127,9 +1128,9 @@ impl<'a> SecurityScanSubprocess<'a> {
                 return Err(crate::Error::InvalidIPCMessage);
             }
         };
-        let json_expr = parsed.root;
+        let json_expr = parsed.root();
 
-        if !matches!(json_expr.data, ExprData::EObjectJSON(_)) {
+        if !json_expr.is_object() {
             Output::err_generic("Security scanner IPC message must be a JSON object", ());
             return Err(crate::Error::InvalidIPCFormat);
         }
@@ -1260,7 +1261,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         };
 
         let advisories =
-            parse_security_advisories_from_expr(self.manager, advisories_expr, package_paths)?;
+            parse_security_advisories_from_json(self.manager, advisories_expr, package_paths)?;
 
         if !status.is_ok() {
             match &status {
@@ -1301,27 +1302,27 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 }
 
-fn parse_security_advisories_from_expr(
+fn parse_security_advisories_from_json(
     manager: &PackageManager,
-    advisories_expr: Expr,
+    advisories_expr: bun_ast::JsonView<'_>,
     package_paths: &ArrayHashMap<PackageID, PackagePath>,
 ) -> Result<Box<[SecurityAdvisory]>, Error> {
     let mut advisories_list: Vec<SecurityAdvisory> = Vec::new();
 
-    let ExprData::EArrayJSON(array) = &advisories_expr.data else {
+    let Some(array) = advisories_expr.as_e_array_json() else {
         Output::err_generic(
             "Security scanner 'advisories' field must be an array, got: {}",
-            (advisories_expr.data.tag_name(),),
+            (advisories_expr.tag_name(),),
         );
         return Err(crate::Error::InvalidAdvisoriesFormat);
     };
 
-    for (i, item_value) in array.get().items().iter().enumerate() {
-        let item = Expr::from_json_value(item_value, advisories_expr.loc);
-        if !matches!(item.data, ExprData::EObjectJSON(_)) {
+    for (i, item_value) in array.items().iter().enumerate() {
+        let item = bun_ast::JsonView::from_json_value(item_value, advisories_expr.loc);
+        if !item.is_object() {
             Output::err_generic(
                 "Security advisory at index {} must be an object, got: {}",
-                (i, item.data.tag_name()),
+                (i, item.tag_name()),
             );
             return Err(crate::Error::InvalidAdvisoryFormat);
         }
@@ -1356,7 +1357,7 @@ fn parse_security_advisories_from_expr(
             if let Some(str) = expr.as_utf8_string_literal() {
                 return Ok(Some(Box::from(str)));
             }
-            if matches!(expr.data, ExprData::ENull(_)) {
+            if expr.is_null() {
                 return Ok(None);
             }
             Output::err_generic(

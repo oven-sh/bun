@@ -13,8 +13,8 @@ use bun_alloc::Arena as Bump;
 use bun_core::StackCheck;
 // `is_identifier_start/_part` landed in `bun_core::lexer`; route through there.
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
+use bun_ast::{AstArena, Loc, Log, Source};
 use bun_ast::{E, Expr, G};
-use bun_ast::{Loc, Log, Source};
 use bun_core::lexer as identifier;
 use bun_core::strings;
 
@@ -361,7 +361,11 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    pub fn parse(source: &'a Source<'a>, log: &Log, bump: &'a Bump) -> Result<Expr, ExternalError> {
+    pub fn parse(
+        source: &'a Source<'a>,
+        log: &Log,
+        bump: &'a AstArena,
+    ) -> Result<Expr, ExternalError> {
         source.check_parseable_len(log, "JSON5 document")?;
         let mut parser = JSON5Parser {
             source: source.contents.as_ref(),
@@ -376,7 +380,7 @@ impl<'a> JSON5Parser<'a> {
             is_jsonc: false,
             not_in_json: None,
         };
-        match parser.parse_root() {
+        match parser.parse_root(bump) {
             Ok(result) => Ok(result),
             Err(err) => {
                 let e = Self::to_error(err, &parser);
@@ -639,16 +643,16 @@ impl<'a> JSON5Parser<'a> {
 
     // ── Parser ──
 
-    fn parse_root(&mut self) -> Result<Expr, ParseError> {
+    fn parse_root(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
         self.scan()?;
-        let result = self.parse_value()?;
+        let result = self.parse_value(arena)?;
         if !matches!(self.token.data, TokenData::Eof) {
             return Err(ParseError::TrailingData);
         }
         Ok(result)
     }
 
-    fn parse_value(&mut self) -> Result<Expr, ParseError> {
+    fn parse_value(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ParseError::StackOverflow);
         }
@@ -656,11 +660,11 @@ impl<'a> JSON5Parser<'a> {
         let loc = self.token.loc;
 
         match self.token.data {
-            TokenData::LeftBrace => self.parse_object(),
-            TokenData::LeftBracket => self.parse_array(),
+            TokenData::LeftBrace => self.parse_object(arena),
+            TokenData::LeftBracket => self.parse_array(arena),
             TokenData::String(s) => {
                 self.scan()?;
-                Ok(Expr::init(E::String::init(s), loc))
+                Ok(Expr::allocate(arena, E::String::init(s), loc))
             }
             TokenData::Number(n) => {
                 self.scan()?;
@@ -689,21 +693,21 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    fn parse_object(&mut self) -> Result<Expr, ParseError> {
+    fn parse_object(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '{'
 
         let mut properties: Vec<G::Property> = Vec::new();
 
         while !matches!(self.token.data, TokenData::RightBrace) {
-            let key = self.parse_object_key()?;
+            let key = self.parse_object_key(arena)?;
 
             if !matches!(self.token.data, TokenData::Colon) {
                 return Err(ParseError::ExpectedColon);
             }
             self.scan()?; // advance past ':'
 
-            let value = self.parse_value()?;
+            let value = self.parse_value(arena)?;
 
             properties.push(G::Property {
                 flags: E::own_key_property_flags(&key),
@@ -727,7 +731,8 @@ impl<'a> JSON5Parser<'a> {
         }
 
         self.scan()?; // advance past '}'
-        Ok(Expr::init(
+        Ok(Expr::allocate(
+            arena,
             E::Object {
                 properties: bun_alloc::AstAlloc::vec_from_iter(properties),
                 ..Default::default()
@@ -736,16 +741,16 @@ impl<'a> JSON5Parser<'a> {
         ))
     }
 
-    fn parse_object_key(&mut self) -> Result<Expr, ParseError> {
+    fn parse_object_key(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         match self.token.data {
             TokenData::String(s) => {
                 self.scan()?;
-                Ok(Expr::init(E::String::init(s), loc))
+                Ok(Expr::allocate(arena, E::String::init(s), loc))
             }
             TokenData::Identifier(s) => {
                 self.scan()?;
-                Ok(Expr::init(E::String::init(s), loc))
+                Ok(Expr::allocate(arena, E::String::init(s), loc))
             }
             TokenData::Number(_) => Err(ParseError::InvalidIdentifier),
             TokenData::Boolean(b) => {
@@ -761,14 +766,14 @@ impl<'a> JSON5Parser<'a> {
         }
     }
 
-    fn parse_array(&mut self) -> Result<Expr, ParseError> {
+    fn parse_array(&mut self, arena: &AstArena) -> Result<Expr, ParseError> {
         let loc = self.token.loc;
         self.scan()?; // advance past '['
 
         let mut items: Vec<Expr> = Vec::new();
 
         while !matches!(self.token.data, TokenData::RightBracket) {
-            let value = self.parse_value()?;
+            let value = self.parse_value(arena)?;
             items.push(value);
 
             match self.token.data {
@@ -786,7 +791,8 @@ impl<'a> JSON5Parser<'a> {
         }
 
         self.scan()?; // advance past ']'
-        Ok(Expr::init(
+        Ok(Expr::allocate(
+            arena,
             E::Array {
                 items: bun_alloc::AstAlloc::vec_from_iter(items),
                 ..Default::default()

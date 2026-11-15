@@ -7073,6 +7073,19 @@ static JSModuleMock* moduleMockForTest(Zig::GlobalObject* globalObject, const St
     return mock;
 }
 
+// What an import gives of the file that require() resolves the name of `mock` to, where `mock` answers that path: an import of the path gets the mock.
+// As in requireFileAtRequirePath(), a module that is loaded under the path is the file itself, and otherwise a copy is loaded under the key of an original.
+// Either is loaded by its key, which passes no resolve. The factories that run are asked as about the import of any file: what one of them awaits must not wait for it.
+static JSC::JSPromise* importFileAtRequirePath(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& from)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    String key = originalKeyOfRequirePath(globalObject, mock);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!globalObject->onLoadPlugins.runningModuleMocks.isEmpty())
+        key = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, from, true);
+    RELEASE_AND_RETURN(scope, importModuleKey(globalObject, key));
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -7109,6 +7122,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
 #endif
         return JSValue::encode(original);
     }
+    // The mock of a name answers the path that require() resolves the name to, where an import resolves the name to another file. This gives the file of that path.
+    if (auto* ofName = moduleMockOfRequirePath(globalObject, specifier.key))
+        RELEASE_AND_RETURN(scope, JSValue::encode(importFileAtRequirePath(globalObject, ofName, callerPath(vm, callframe))));
 #if ENABLE(AOT)
     if (JSValue kept = retainedFailureForImports(globalObject, specifier.key))
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, kept)));
@@ -7259,7 +7275,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockModule, (JSC::JSGlobalObject * lexi
     RETURN_IF_EXCEPTION(scope, {});
     String from = callerPath(vm, callframe);
 
+    // The mock of a name answers the path that require() resolves the name to, where an import resolves the name to another file. As in requireMockModule(), it is loaded
+    // by its own key: the path gets the file wherever keyOfModuleMockAtRequirePath() makes no turn.
+    String keyToImport = specifier.key;
     bool isMocked = moduleMockForTest(globalObject, specifier.key);
+    if (auto* ofName = isMocked ? nullptr : moduleMockOfRequirePath(globalObject, specifier.key)) {
+        keyToImport = ofName->specifier->tryGetValue().data;
+        isMocked = true;
+    }
     if (!isMocked) {
         JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, specifier.key, false);
         RETURN_IF_EXCEPTION(scope, {});
@@ -7280,7 +7303,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockModule, (JSC::JSGlobalObject * lexi
             return JSValue::encode(imported);
     }
 #endif
-    JSC::JSPromise* loading = importModuleFrom(globalObject, from, specifier.key);
+    JSC::JSPromise* loading = importModuleFrom(globalObject, from, keyToImport);
     RETURN_IF_EXCEPTION(scope, {});
     if (isMocked)
         return JSValue::encode(loading);

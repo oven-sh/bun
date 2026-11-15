@@ -193,9 +193,9 @@ pub(crate) struct ResponseAndMethod {
 }
 
 /// A client script request waiting for the in-flight bundle to finish, even if that bundle doesn't include its route.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct DeferredScriptRequest {
-    pub(super) ref_count: ::core::cell::Cell<u32>,
+    pub(super) ref_count: bun_ptr::RefCount,
     pub(super) route_bundle_index: route_bundle::Index,
     /// Parsed from the request URL.
     pub(super) generation: u32,

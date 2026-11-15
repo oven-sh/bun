@@ -144,9 +144,9 @@ impl UpgradeClientRef {
 
 type WebSocketClient = crate::websocket_client::WebSocket<false>;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct WebSocketProxyTunnel {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Reference to the upgrade client (WebSocketUpgradeClient) - used during handshake phase
     upgrade_client: Cell<Option<UpgradeClientRef>>,
     /// Back-reference to the connected WebSocket client - used after
@@ -185,7 +185,7 @@ impl WebSocketProxyTunnel {
         };
 
         RefPtr::new(WebSocketProxyTunnel {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             upgrade_client: Cell::new(Some(upgrade_client)),
             connected_websocket: Cell::new(None),
             wrapper: OnceCell::new(),

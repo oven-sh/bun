@@ -15,7 +15,6 @@ use super::{StdioResult, Subprocess};
 
 // Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
-#[ref_count(debug_name = "PipeReader")]
 pub(crate) struct PipeReader {
     reader: BufferedReader,
     // Backref to owning Subprocess; cleared when `Readable::Pipe` lets go of this reader.
@@ -25,7 +24,7 @@ pub(crate) struct PipeReader {
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     process: Cell<Option<ParentRef<Subprocess<'static>>>>,
     event_loop: bun_io::EventLoopCtx,
-    ref_count: RefCount<PipeReader>,
+    ref_count: RefCount,
     /// Held from `start()` until the read ends or moves into a stream.
     start_ref: Cell<Option<RefPtr<PipeReader>>>,
     /// Taken by `start()`.

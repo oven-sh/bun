@@ -192,7 +192,7 @@ impl bun_jsc::JsClass for Response {
 /// scalars) or `JsCell` (non-Copy `body`/`init`/`url`/`js_ref`). Both are
 /// `#[repr(transparent)]`, so `#[repr(C)]` field layout is unchanged.
 #[repr(C)]
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = bun_ptr::weak_ptr::destroy)]
 pub(crate) struct Response {
     body: JsCell<Body>,
@@ -201,7 +201,7 @@ pub(crate) struct Response {
     redirected: Cell<bool>,
     /// The JS wrapper, fetch (so a discarded JS Response can still resolve
     /// its body) and HTMLRewriter each hold a ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Bun.serve's RequestContext holds a weak reference so `onAbort` /
     /// `handleResolveStream` / `handleRejectStream` can safely observe that the
     /// Response was GC'd (null) instead of dereferencing a freed pointer when
@@ -223,7 +223,7 @@ impl Default for Response {
             init: JsCell::new(Init::default()),
             url: JsCell::new(BunString::EMPTY),
             redirected: Cell::new(false),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             weak_ptr_data: WeakPtrData::EMPTY,
             js_ref: JsCell::new(JsRef::empty()),
             reported_estimated_size: Cell::new(0),

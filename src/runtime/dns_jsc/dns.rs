@@ -1953,7 +1953,7 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 /// `DNSResolver`, declared in `dns_internals.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct Resolver {
-    pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
+    pub(crate) ref_count: bun_ptr::RefCount,
     channel: JsCell<Option<c_ares::OwnedChannel>>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is

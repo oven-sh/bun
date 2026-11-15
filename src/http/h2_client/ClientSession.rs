@@ -40,10 +40,10 @@ type u31 = u32;
 #[allow(non_camel_case_types)]
 type u24 = u32;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct ClientSession {
     /// One ref moves between `active_h2_sessions`, while the socket ext points here, and the keep-alive pool.
-    pub(crate) ref_count: Cell<u32>,
+    pub(crate) ref_count: bun_ptr::RefCount,
 
     pub(crate) hpack: lshpack::HpackHandle, // RAII owner; Deref/DerefMut to lshpack::HPACK
     pub(crate) socket: Socket,
@@ -334,7 +334,7 @@ impl ClientSession {
         client: &HTTPClient,
     ) -> SessionPtr {
         let this = RefPtr::new(ClientSession {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             hpack: lshpack::HpackHandle::new(4096),
             socket,
             ctx,

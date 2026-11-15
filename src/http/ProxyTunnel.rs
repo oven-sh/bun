@@ -38,7 +38,7 @@ type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 // canonical 3-arm enum lives in `bun_uws` next to its payload type.
 pub use bun_uws::MaybeAnySocket as Socket;
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct ProxyTunnel {
     pub(crate) wrapper: Option<ProxyTunnelWrapper>,
     pub(crate) shutdown_err: Cell<Error>,
@@ -57,7 +57,7 @@ pub struct ProxyTunnel {
     /// without this, a strict caller could reuse a tunnel where the hostname
     /// was never checked natively.
     pub(crate) verification: PeerVerification,
-    pub(crate) ref_count: Cell<u32>,
+    pub(crate) ref_count: bun_ptr::RefCount,
 }
 
 impl Default for ProxyTunnel {
@@ -69,7 +69,7 @@ impl Default for ProxyTunnel {
             write_buffer: bun_io::StreamBuffer::default(),
             did_have_handshaking_error: false,
             verification: PeerVerification::None,
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
         }
     }
 }
@@ -81,8 +81,6 @@ impl Drop for ProxyTunnel {
         self.socket = Socket::None;
     }
 }
-
-// ─── intrusive refcount: derived via #[derive(CellRefCounted)] above ─────────
 
 // ─── raw-pointer field accessors ─────────────────────────────────────────────
 //
@@ -156,8 +154,7 @@ impl ProxyTunnel {
     /// eventual release, which is the last one whenever the guarded call
     /// released the client's ref, goes through the holder's own pointer
     /// rather than through a `&mut self` that would still be live at that
-    /// point. `RefPtr::init_ref` bumps via raw `CellRefCounted::ref_count_raw`
-    /// field projection — touching only `ref_count`, never the whole tunnel —
+    /// point. `RefPtr::init_ref` touches only `ref_count`, never the whole tunnel,
     /// so it does not alias the caller's `&SSLWrapper` (see ALIASING NOTE).
     /// HTTP-thread-only.
     #[inline]

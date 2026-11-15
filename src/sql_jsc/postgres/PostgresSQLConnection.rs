@@ -78,11 +78,11 @@ pub(crate) struct PendingNotification {
 }
 
 // JS can re-enter any method, so they all take `&self` and the fields are cells.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct PostgresSQLConnection {
     pub(crate) socket: JsCell<Socket>,
     pub(crate) status: Cell<Status>,
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
 
     pub(crate) write_buffer: JsCell<OffsetByteList>,
     read_buffer: JsCell<OffsetByteList>,
@@ -1002,7 +1002,7 @@ fn open(
             socket: uws::InternalSocket::Detached,
         })),
         status: Cell::new(Status::Connecting),
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         write_buffer: JsCell::new(OffsetByteList::default()),
         read_buffer: JsCell::new(OffsetByteList::default()),
         defer_reads: Cell::new(false),

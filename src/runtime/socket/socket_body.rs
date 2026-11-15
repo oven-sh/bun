@@ -2738,8 +2738,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// A write to a JS stream runs script, which can close this socket, write to it or flush it.
-    /// After a negative result of `write` the bytes can never be delivered. True: flush again.
+    /// A negative result of `write` drops the bytes. True: script under it asked for another flush.
     fn write_parked(&self, write: impl FnOnce(&[u8]) -> i32) -> (i32, bool) {
         let socket = self.socket.get();
         let unwritten = &self.buffered_data_for_node_net;

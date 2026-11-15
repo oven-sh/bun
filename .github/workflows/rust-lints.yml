@@ -39,7 +39,7 @@ env:
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
   # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need
   # to lint the host). Keep in sync with `channel` in rust-toolchain.toml.
-  RUSTUP_TOOLCHAIN: nightly-2026-09-15
+  RUSTUP_TOOLCHAIN: nightly-2026-11-14
 
 jobs:
   clippy:

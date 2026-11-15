@@ -300,9 +300,7 @@ struct Reflected<T>(PhantomData<T>);
 impl<T> Reflected<T> {
     /// Number of fields in `T`; const-panics unless `T` is laid out as a struct.
     ///
-    /// The reflection API has no "is this a struct" query (`Type::of::<T>().kind`
-    /// ICEs on nightly-2026-09-15, and `variant(0)` is a hard error on a struct),
-    /// so the check is on what the scatter/gather needs: one variant (not a
+    /// The check is on what the scatter/gather needs: one variant (not a
     /// multi-variant enum), fields unless `T` is zero-sized (not a primitive,
     /// pointer or array), and fields that do not overlap (not a union; disjoint
     /// fields cannot sum past `size_of::<T>()`). A single-variant enum with an
@@ -385,9 +383,7 @@ impl<T> Reflected<T> {
             let mut j = 0;
             while j + 1 + i < n {
                 if Self::META[idx[j]].align < Self::META[idx[j + 1]].align {
-                    let tmp = idx[j];
-                    idx[j] = idx[j + 1];
-                    idx[j + 1] = tmp;
+                    idx.swap(j, j + 1);
                 }
                 j += 1;
             }

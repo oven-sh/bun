@@ -163,8 +163,10 @@ impl DeferredLinks {
         let resolutions = lockfile.packages.items_resolution();
         // The package whose `node_modules` a tree is, if its folder can be a link to it.
         let local_package = |tree: &Tree| -> Option<usize> {
-            let package_id =
-                *(lockfile.buffers.resolutions.as_slice()).get(tree.dependency_id as usize)?;
+            let package_id = *lockfile
+                .buffers
+                .resolutions
+                .get(tree.dependency_id as usize)?;
             let resolution = resolutions.get(package_id as usize)?;
             (!resolution.tag.can_enqueue_install_task()).then_some(package_id as usize)
         };
@@ -745,7 +747,7 @@ impl<'a> PackageInstaller<'a> {
         }
 
         while let Some(dep_id) = tree.binaries.remove_or_null() {
-            debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.as_slice().len());
+            debug_assert!((dep_id as usize) < lockfile.buffers.dependencies.len());
             let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
             debug_assert!(package_id != invalid_package_id);
             let bin = self.bins[package_id as usize];

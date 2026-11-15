@@ -1,4 +1,3 @@
-#![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(core_io, core_io_borrowed_buf)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache

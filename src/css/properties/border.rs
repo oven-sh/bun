@@ -624,7 +624,7 @@ mod border_handler_body {
 
     // Route the large `Property` enum construction through a non-inlined
     // callee so each temporary lives in the helper's frame, not in
-    // `flush_logical`'s 146 KB monolith (clippy::large_stack_frames).
+    // `flush_logical`'s 146 KB monolith (clippy::large_unopt_stack_frames).
     #[inline(never)]
     fn dest_push_with<'bump>(
         dest: &mut DeclarationList<'bump>,

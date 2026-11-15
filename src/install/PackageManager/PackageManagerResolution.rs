@@ -73,9 +73,7 @@ impl PackageManager {
 
     pub(crate) fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        debug_assert!(
-            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-        );
+        debug_assert!((dependency_id as usize) < self.lockfile.buffers.resolutions.len());
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         // debug_assert!(self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize] == invalid_package_id);
         self.lockfile.take_refreshing(dependency_id);
@@ -97,9 +95,7 @@ impl PackageManager {
         package_id: PackageID,
     ) {
         // reshaped for borrowck — capture lengths before mutable borrows.
-        debug_assert!(
-            (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
-        );
+        debug_assert!((dependency_id as usize) < self.lockfile.buffers.resolutions.len());
         debug_assert!((package_id as usize) < self.lockfile.packages.len());
         debug_assert!(
             self.lockfile.buffers.resolutions.as_slice()[dependency_id as usize]

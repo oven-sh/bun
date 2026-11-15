@@ -67,11 +67,8 @@ impl<'a> Interval<'a> {
     }
 
     fn and_query(&mut self, query: &Query, buf: &'a [u8]) {
-        let mut cur = Some(query);
-        while let Some(q) = cur {
-            self.narrow(q.range.left, buf);
-            self.narrow(q.range.right, buf);
-            cur = q.next.as_deref();
+        for comparator in query.comparators() {
+            self.narrow(comparator, buf);
         }
     }
 
@@ -170,21 +167,13 @@ impl<'a> Interval<'a> {
             it.version.tag.has_pre() && (it.inclusive || it.version.tag.pre.slice(it.buf) != b"0")
         });
         lower.into_iter().chain(upper).all(|bound| {
-            let is_prerelease_of_it = |c: Comparator| {
+            query.comparators().any(|c| {
                 c.op != Op::Unset
                     && c.version.tag.has_pre()
                     && c.version.major == bound.version.major
                     && c.version.minor == bound.version.minor
                     && c.version.patch == bound.version.patch
-            };
-            let mut cur = Some(query);
-            while let Some(q) = cur {
-                if is_prerelease_of_it(q.range.left) || is_prerelease_of_it(q.range.right) {
-                    return true;
-                }
-                cur = q.next.as_deref();
-            }
-            false
+            })
         })
     }
 }
@@ -221,11 +210,6 @@ impl Query {
 }
 
 impl Group {
-    /// The AND chains that are OR'd together.
-    fn alternatives(&self) -> impl Iterator<Item = &Query> {
-        core::iter::successors(Some(&self.head), |list| list.next.as_deref()).map(|list| &list.head)
-    }
-
     /// `satisfies`, except that `*` admits a prerelease too.
     fn admits(&self, self_buf: &[u8], version: Version, version_buf: &[u8]) -> bool {
         self.satisfies(version, self_buf, version_buf)
@@ -274,8 +258,7 @@ impl Group {
     ) -> bool {
         other
             .alternatives()
-            .flat_map(|head| core::iter::successors(Some(head), |query| query.next.as_deref()))
-            .flat_map(|query| [query.range.left, query.range.right])
+            .flat_map(Query::comparators)
             .any(|comparator| {
                 let mut version = comparator.version;
                 if comparator.op == Op::Lt && version.tag.eql(Tag::ZERO_PRE) {
@@ -289,21 +272,17 @@ impl Group {
     /// `subset`, each `||` alternative of `self` has to be within a single alternative of `other`,
     /// so `>=1` isn't a subset of `1 || >=2`.
     pub fn is_subset_of(&self, self_buf: &[u8], other: &Group, other_buf: &[u8]) -> bool {
-        let mut a = Some(&self.head);
-        'alternatives: while let Some(list_a) = a {
-            a = list_a.next.as_deref();
+        'alternatives: for a in self.alternatives() {
             let mut sub = Interval::default();
-            sub.and_query(&list_a.head, self_buf);
+            sub.and_query(a, self_buf);
             let sub = sub.canonical();
             if !sub.is_non_empty() {
                 continue;
             }
-            let mut b = Some(&other.head);
-            while let Some(list_b) = b {
-                b = list_b.next.as_deref();
+            for b in other.alternatives() {
                 let mut dom = Interval::default();
-                dom.and_query(&list_b.head, other_buf);
-                if sub.is_within(&dom.canonical()) && sub.prereleases_can_satisfy(&list_b.head) {
+                dom.and_query(b, other_buf);
+                if sub.is_within(&dom.canonical()) && sub.prereleases_can_satisfy(b) {
                     continue 'alternatives;
                 }
             }

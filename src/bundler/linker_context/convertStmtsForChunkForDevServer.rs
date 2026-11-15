@@ -1,4 +1,3 @@
-use crate::BundledAst as JSAst;
 use crate::mal_prelude::*;
 use bun_alloc::AllocError;
 use bun_alloc::ArenaVecExt as _;
@@ -7,7 +6,7 @@ use bun_ast::ArrayBinding;
 use bun_ast::ImportRecordFlags;
 use bun_ast::Loc;
 use bun_ast::{AstArena, Binding, E, Expr, ExprNodeList, G, S, Stmt, StmtData, b};
-use bun_ast::{ImportRecordTag, Loader};
+use bun_ast::{ImportRecord, ImportRecordTag, Loader};
 
 use crate::linker_context_mod::{LinkerContext, StmtList, StmtListWhich};
 
@@ -46,9 +45,11 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
     bump: &'bump AstArena,
-    ast: &mut JSAst<'a>,
+    source_index: usize,
+    import_records: &mut [ImportRecord<'a>],
 ) -> Result<(), AllocError> {
-    let hmr_api_ref = ast.wrapper_ref;
+    let hmr_api_ref = c.graph.ast.items_wrapper_ref()[source_index];
+    let module_ref = c.graph.ast.items_module_ref()[source_index];
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> =
         bun_alloc::ArenaVec::new_in(bump.heap());
@@ -57,7 +58,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
     let input_files = &c.parse_graph().input_files;
     let loaders = input_files.items_loader();
     let sources = input_files.items_source();
-    for record in ast.import_records.as_mut_slice() {
+    for record in &mut *import_records {
         if record.path.is_disabled {
             continue;
         }
@@ -77,7 +78,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
     for stmt in part_stmts {
         match &stmt.data {
             StmtData::SImport(st) => {
-                let record = &mut ast.import_records[st.import_record_index as usize];
+                let record = &mut import_records[st.import_record_index as usize];
                 if record.path.is_disabled {
                     continue;
                 }
@@ -222,9 +223,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
                             bun_ast::StoreSlice::new(core::slice::from_ref(bump.alloc(G::Arg {
                                 binding: Binding::alloc(
                                     bump,
-                                    b::Identifier {
-                                        r#ref: ast.module_ref,
-                                    },
+                                    b::Identifier { r#ref: module_ref },
                                     Loc::EMPTY,
                                 ),
                                 ..Default::default()
@@ -244,10 +243,7 @@ pub(crate) fn convert_stmts_for_chunk_for_dev_server<'a, 'bump>(
                                                 st.namespace_ref,
                                                 Loc::EMPTY,
                                             ),
-                                            right: Expr::init_identifier(
-                                                ast.module_ref,
-                                                Loc::EMPTY,
-                                            ),
+                                            right: Expr::init_identifier(module_ref, Loc::EMPTY),
                                         },
                                         Loc::EMPTY,
                                     ),

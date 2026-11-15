@@ -36,25 +36,11 @@ pub struct AstList {
     pub(crate) byte_offset_to_start_of_line: AstVec<u32>,
 }
 
-/// Typed SoA column accessors on [`List`] (= `MultiArrayList<LineOffsetTable>`).
-///
-/// Can't be an
-/// inherent impl (orphan rules — `MultiArrayList` lives in `bun_collections`),
-/// so it's an extension trait; same pattern as `mapping::MappingColumns`.
-pub trait LineOffsetTableColumns {
-    fn items_byte_offset_to_start_of_line(&self) -> &[u32];
-    fn items_byte_offset_to_first_non_ascii(&self) -> &[u32];
-}
-
-impl LineOffsetTableColumns for List {
-    #[inline]
-    fn items_byte_offset_to_start_of_line(&self) -> &[u32] {
-        self.items::<"byte_offset_to_start_of_line", u32>()
-    }
-
-    #[inline]
-    fn items_byte_offset_to_first_non_ascii(&self) -> &[u32] {
-        self.items::<"byte_offset_to_first_non_ascii", u32>()
+bun_collections::multi_array_columns! {
+    pub trait LineOffsetTableColumns for LineOffsetTable {
+        columns_for_non_ascii: Box<[i32]>,
+        byte_offset_to_first_non_ascii: u32,
+        byte_offset_to_start_of_line: u32,
     }
 }
 

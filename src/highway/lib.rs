@@ -1,5 +1,8 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
 // Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
+#![feature(core_io, core_io_borrowed_buf)]
+
+use core::io::BorrowedCursor;
 
 unsafe extern "C" {
     fn highway_index_of_char(haystack: *const u8, haystack_len: usize, needle: u8) -> usize;
@@ -1038,22 +1041,28 @@ pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
 /// Apply a WebSocket mask to data using SIMD acceleration
 /// If skip_mask is true, data is copied without masking
 #[inline(always)]
-pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_mask: bool) {
+pub fn fill_with_skip_mask(
+    mask: [u8; 4],
+    mut output: BorrowedCursor<'_, u8>,
+    input: &[u8],
+    skip_mask: bool,
+) {
     if input.is_empty() {
         return;
     }
-    let output = &mut output[..input.len()];
 
-    // SAFETY: mask is 4 bytes; input.ptr/len readable; output.ptr writable for input.len() bytes.
+    // SAFETY: mask is 4 bytes; input.ptr/len readable; the output slice is writable for
+    // input.len() bytes, all of which the kernel writes.
     unsafe {
         highway_fill_with_skip_mask(
             mask.as_ptr(),
             4,
-            output.as_mut_ptr(),
+            output.as_mut()[..input.len()].as_mut_ptr().cast(),
             input.as_ptr(),
             input.len(),
             skip_mask,
         );
+        output.advance(input.len());
     }
 }
 

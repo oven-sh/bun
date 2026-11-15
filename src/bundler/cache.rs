@@ -38,14 +38,10 @@ impl JavaScript {
         source: &'a bun_ast::Source<'a>,
         cache: Option<&mut dyn js_parser::TranspilerCache>,
     ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
-        let temp_log = bun_ast::Log::init();
-        temp_log.level.set(log.level.get());
-        let parser = match js_parser::Parser::init(opts, &temp_log, source, defines, bump) {
-            Ok(p) => p,
-            Err(_) => {
-                temp_log.append_to(log);
-                return Ok(None);
-            }
+        let temp_log = bun_ast::Log::with_level(log.level.get());
+        scopeguard::defer! { temp_log.append_to(log) }
+        let Ok(parser) = js_parser::Parser::init(opts, &temp_log, source, defines, bump) else {
+            return Ok(None);
         };
 
         let result = match parser.parse_with_cache(cache) {
@@ -60,15 +56,13 @@ impl JavaScript {
                 // TODO: thread the failing token range through the `Err`
                 // payload (make `_parse` return a `(Error, Range)` pair) so the
                 // diagnostic points at the failing token.
-                if temp_log.errors.get() == 0 {
+                if !temp_log.has_errors() {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
-                temp_log.append_to(log);
                 return Ok(None);
             }
         };
 
-        temp_log.append_to(log);
         Ok(Some(result))
     }
 
@@ -86,18 +80,12 @@ impl JavaScript {
         }
 
         let temp_log = bun_ast::Log::init();
+        scopeguard::defer! { temp_log.append_to(log) }
 
-        let mut parser = match js_parser::Parser::init(opts, &temp_log, source, defines, bump) {
-            Ok(p) => p,
-            Err(_) => {
-                temp_log.append_to(log);
-                return Ok(());
-            }
+        let Ok(parser) = js_parser::Parser::init(opts, &temp_log, source, defines, bump) else {
+            return Ok(());
         };
 
-        let res = parser.scan_imports(scan_pass_result);
-        drop(parser);
-        temp_log.append_to(log);
-        res.map_err(Into::into)
+        parser.scan_imports(scan_pass_result).map_err(Into::into)
     }
 }

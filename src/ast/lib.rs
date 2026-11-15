@@ -15,6 +15,7 @@ use std::borrow::Cow;
 // `bun_alloc::AllocError` removed — the `add_*` / `clone` family is now
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
+use bun_ptr::CellExt as _;
 
 // Discriminants are wire-stable for serialization.
 #[repr(u8)]
@@ -1181,10 +1182,9 @@ impl Log {
     /// source resume the previous scan instead of restarting from byte 0.
     fn tracked_range_data(&self, source: Option<&Source>, r: Range, text: impl IntoText) -> Data {
         let location = if source.is_some() {
-            let mut tracker = self.line_column_tracker.take().unwrap_or_default();
-            let location = Location::init_or_null_tracked(source, r, &mut tracker);
-            self.line_column_tracker.set(Some(tracker));
-            location
+            self.line_column_tracker.with_taken(|tracker| {
+                Location::init_or_null_tracked(source, r, tracker.get_or_insert_default())
+            })
         } else {
             Location::init_or_null(source, r)
         };
@@ -1208,10 +1208,26 @@ impl Log {
     }
 
     pub fn msgs_len(&self) -> usize {
-        let msgs = self.msgs.take();
-        let len = msgs.len();
-        self.msgs.set(msgs);
-        len
+        self.msgs.with_taken(|msgs| msgs.len())
+    }
+
+    pub fn has_msgs(&self) -> bool {
+        self.msgs_len() > 0
+    }
+
+    /// Removes the messages that were logged since `msgs_len()` was `mark`, and their counts.
+    #[cold]
+    pub fn take_msgs_since(&self, mark: usize) -> Vec<Msg> {
+        let msgs: Vec<Msg> =
+            (self.msgs).with_taken(|msgs| msgs.drain(mark.min(msgs.len())..).collect());
+        for msg in &msgs {
+            match msg.kind {
+                Kind::Err => self.errors.update(|n| n - 1),
+                Kind::Warn => self.warnings.update(|n| n - 1),
+                _ => {}
+            }
+        }
+        msgs
     }
 
     #[inline]
@@ -1220,7 +1236,7 @@ impl Log {
     }
 
     pub fn reset(&self) {
-        self.with_msgs(Vec::clear);
+        self.msgs.with_taken(Vec::clear);
         self.warnings.set(0);
         self.errors.set(0);
         // Drop the per-source scan cache with the messages it was built for;
@@ -1234,7 +1250,10 @@ impl Log {
     }
 
     pub fn init() -> Log {
-        let level = DEFAULT_LOG_LEVEL.load();
+        Log::with_level(DEFAULT_LOG_LEVEL.load())
+    }
+
+    pub fn with_level(level: Level) -> Log {
         Log {
             level: Cell::new(level),
             ..Default::default()
@@ -1340,13 +1359,8 @@ impl Log {
         notes: Box<[Data]>,
         redact_sensitive_information: bool,
     ) {
-        match kind {
-            Kind::Err => self.errors.update(|n| n + 1),
-            Kind::Warn => self.warnings.update(|n| n + 1),
-            _ => {}
-        }
         let data = self.tracked_range_data(source, r, text);
-        self.add_msg(Msg {
+        self.add_counted_msg(Msg {
             kind,
             data,
             notes,
@@ -1765,9 +1779,17 @@ impl Log {
     }
 
     pub fn add_msg(&self, msg: Msg) {
-        let mut msgs = self.msgs.take();
-        msgs.push(msg);
-        self.msgs.set(msgs);
+        self.msgs.with_taken(|msgs| msgs.push(msg));
+    }
+
+    /// [`Self::add_msg`] that also counts `msg` in `errors` or `warnings`.
+    pub fn add_counted_msg(&self, msg: Msg) {
+        match msg.kind {
+            Kind::Err => self.errors.update(|n| n + 1),
+            Kind::Warn => self.warnings.update(|n| n + 1),
+            Kind::Note | Kind::Debug | Kind::Verbose => {}
+        }
+        self.add_msg(msg);
     }
 
     /// Generic only over the text conversion; the body is shared so each

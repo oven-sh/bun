@@ -12,6 +12,7 @@ use bun_ast::{ImportKind, ImportRecord};
 use bun_collections::{ArrayHashMap, HashMap, StringHashMap};
 use bun_core::Output;
 use bun_core::strings;
+use bun_ptr::CellExt as _;
 use bun_wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
@@ -3802,7 +3803,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
             // Enforce strictly increasing scope locations to catch parse/visit pass
             // mismatches. Skip once a parse error is logged: error recovery can push
             // two scopes at one loc and the visit pass won't run anyway.
-            if self.log().errors.get() == 0 && !self.scopes_in_order.is_empty() {
+            if !self.log().has_errors() && !self.scopes_in_order.is_empty() {
                 let mut last_i = self.scopes_in_order.len() - 1;
                 while self.scopes_in_order[last_i].is_none() && last_i > 0 {
                     last_i -= 1;
@@ -8256,7 +8257,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         self.lexer.comments_to_preserve_before = snapshot.comments_to_preserve_before;
 
         let log = self.log();
-        log.with_msgs(|msgs| msgs.truncate(snapshot.log_msgs_len));
+        log.msgs
+            .with_taken(|msgs| msgs.truncate(snapshot.log_msgs_len));
         log.errors.set(snapshot.log_errors);
         log.warnings.set(snapshot.log_warnings);
 

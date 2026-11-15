@@ -245,7 +245,7 @@ pub(crate) fn run_tasks(
         INBOX.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
-            if apply.logger.errors.get() == 0 {
+            if !apply.logger.has_errors() {
                 if let Caller::HoistedLinker(installer) = &mut caller {
                     if apply.task_id.is_none() {
                         if let Some(ctx) = apply.install_context.as_mut() {
@@ -825,9 +825,9 @@ pub(crate) fn run_tasks(
         // An error in a manifest is reported by the dependency that needs it, if there is one.
         let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
             && task.status == Task::Status::Fail;
-        if task.log.msgs_len() > 0 && !holds_log {
+        if task.log.has_msgs() && !holds_log {
             task.log.print(Output::error_writer())?;
-            if task.log.errors.get() > 0 {
+            if task.log.has_errors() {
                 manager.any_failed_to_install = true;
             }
             task.log.reset();

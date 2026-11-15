@@ -687,7 +687,7 @@ impl<'a> PackageJSONVersionChecker<'a> {
 
     #[inline]
     pub fn has_errors(&self) -> bool {
-        self.log.errors.get() > 0
+        self.log.has_errors()
     }
 
     #[inline]

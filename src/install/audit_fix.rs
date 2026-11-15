@@ -436,7 +436,7 @@ fn print_manifest_unavailable(manager: &mut PackageManager, items: &[ManifestUna
             escape_control_chars(&item.detail)
         );
     }
-    if log.msgs_len() > 0 {
+    if log.has_msgs() {
         let _ = log.print(Output::error_writer());
     }
     log.reset();

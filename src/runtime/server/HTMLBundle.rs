@@ -132,9 +132,7 @@ pub(crate) enum State {
 impl State {
     fn memory_cost(&self) -> usize {
         match self {
-            State::Pending => 0,
-            State::Building => 0,
-            State::Err => 0,
+            State::Pending | State::Building | State::Err => 0,
             State::Html(html) => html.memory_cost(),
         }
     }

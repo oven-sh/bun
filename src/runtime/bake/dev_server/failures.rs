@@ -128,7 +128,6 @@ impl DevServer {
                 .zip(resolution_failures.values())
             {
                 if log.has_errors() {
-                    let owner = serialized_failure::OwnerPacked(owner);
                     let index = owner.file();
                     match owner.side() {
                         bake::Side::Client => self.graphs.insert_failure::<{ Side::Client }>(
@@ -145,7 +144,7 @@ impl DevServer {
         }
 
         // Theoretically, it shouldn't be possible for errors to leak into dev.log
-        if self.log.has_errors() && self.log.msgs_len() > 0 {
+        if self.log.has_errors() && self.log.has_msgs() {
             if cfg!(debug_assertions) {
                 bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }

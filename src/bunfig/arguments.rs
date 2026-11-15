@@ -418,13 +418,7 @@ pub fn load_config_above_for_tool(
             if !is_optional {
                 report_bunfig_load_failure_as(cmd, log, err, Some(&shown));
             }
-            for it in log.with_msgs(|msgs| msgs.split_off(said)) {
-                match it.kind {
-                    bun_ast::Kind::Err => log.errors.update(|n| n - 1),
-                    bun_ast::Kind::Warn => log.warnings.update(|n| n - 1),
-                    _ => {}
-                }
-            }
+            drop(log.take_msgs_since(said));
             return None;
         }
         if above == Above::Unwanted {

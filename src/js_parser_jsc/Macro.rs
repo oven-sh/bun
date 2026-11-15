@@ -188,8 +188,7 @@ fn call_macro(
 
 /// Runs `f`, and moves what `vm` logs meanwhile to `log`.
 fn with_vm_logging_to<R>(vm: &VirtualMachine, log: &Log, f: impl FnOnce() -> R) -> R {
-    let mut logged = Log::init();
-    logged.level.set(log.level.get());
+    let mut logged = Log::with_level(log.level.get());
     let redirect = vm.log.redirect(&mut logged);
     let result = f();
     drop(redirect);

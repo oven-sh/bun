@@ -347,7 +347,7 @@ fn finalize_bundle_inner(
                 format_args!("Failed to generate CSS for this file ({})", err.name()),
             );
         }
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             let entry_key = entry_source.path.key_for_incremental_graph();
             dev.graphs.insert_failure::<{ Side::Client }>(
                 incremental_graph::InsertFailureKey::AbsPath(entry_key, bake::Graph::Client),

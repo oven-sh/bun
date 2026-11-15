@@ -487,9 +487,7 @@ fn loaded_from_value(
 
 fn record_message(message: Msg, log: &Log) -> Result<(), Failed> {
     let kind = message.kind;
-    log.add_msg(message);
-    log.errors.update(|n| n + (kind == Kind::Err) as u32);
-    log.warnings.update(|n| n + (kind == Kind::Warn) as u32);
+    log.add_counted_msg(message);
     if kind == Kind::Err {
         return Err(Failed);
     }

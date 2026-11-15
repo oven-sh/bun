@@ -57,7 +57,7 @@ impl<T: fmt::Display> Err<T> {
         let mut text: Vec<u8> = Vec::new();
         write!(&mut text, "{}", self.kind).map_err(|_| bun_core::Error::WriteFailed)?;
 
-        log.add_msg(bun_ast::Msg {
+        log.add_counted_msg(bun_ast::Msg {
             kind: bun_ast::Kind::Err,
             data: bun_ast::Data {
                 location: match &self.loc {
@@ -69,8 +69,6 @@ impl<T: fmt::Display> Err<T> {
             },
             ..Default::default()
         });
-
-        log.errors.update(|n| n + 1);
         Ok(())
     }
 }

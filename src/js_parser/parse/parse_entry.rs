@@ -537,7 +537,7 @@ impl<'a> Parser<'a, '_> {
     /// `bun run`, so keep the `_scan_imports` monomorphizations out of the hot
     /// `.text` between the lexer and the live `_parse` bodies.
     #[cold]
-    pub fn scan_imports(&mut self, scan_pass: &mut ScanPassResult<'a>) -> Result<(), Error> {
+    pub fn scan_imports(self, scan_pass: &mut ScanPassResult<'a>) -> Result<(), Error> {
         if self.options.ts {
             self._scan_imports::<true>(scan_pass)
         } else {
@@ -547,18 +547,11 @@ impl<'a> Parser<'a, '_> {
 
     #[cold]
     fn _scan_imports<const TS: bool>(
-        &mut self,
+        self,
         scan_pass: &mut ScanPassResult<'a>,
     ) -> Result<(), Error> {
-        // `Lexer` owns `Vec`s and `Options` owns
-        // `jsx: Pragma` boxes, so a bitwise `ptr::read` would double-free
-        // when `self` later drops. Move them out, leaving inert placeholders.
-        let placeholder =
-            js_lexer::Lexer::init_without_reading(self.lexer.log, self.source, self.bump);
-        let lexer = core::mem::replace(&mut self.lexer, placeholder);
-        let options = core::mem::take(&mut self.options);
         init_p!(let p: P<'a, '_, TS, true> =
-            (self.bump, self.source, self.define, lexer, options));
+            (self.bump, self.source, self.define, self.lexer, self.options));
 
         // `p` holds the result's containers while it scans.
         p.import_records =

@@ -191,7 +191,7 @@ impl core::ops::Deref for ReportedLog<'_> {
 impl Drop for ReportedLog<'_> {
     #[optimize(size)]
     fn drop(&mut self) {
-        if self.log.errors.get() > 0 {
+        if self.log.has_errors() {
             let _ = self.log.print(bun_output::error_writer());
             self.success.set(false);
         }
@@ -1107,7 +1107,7 @@ impl Snapshots {
             // commit the last segment
             result_text.extend_from_slice(&file_text[uncommitted_segment_end..]);
 
-            if log.errors.get() > 0 {
+            if log.has_errors() {
                 // skip writing the file if there were errors — `log` guard prints on drop.
                 continue;
             }

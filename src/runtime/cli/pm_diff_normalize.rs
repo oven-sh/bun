@@ -323,7 +323,7 @@ fn parse_js<'a>(
     let bun_js_parser::Result::Ast(ast) = parser.parse().ok()? else {
         return None;
     };
-    (log.errors.get() == 0).then_some(ast)
+    (!log.has_errors()).then_some(ast)
 }
 
 /// In a source map, a lone `\r`, U+2028 and U+2029 also end a line. This maps each such line of

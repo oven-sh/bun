@@ -7,7 +7,6 @@ use crate::ComptimeStringMapExt as _;
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
-use core::sync::atomic::Ordering;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
@@ -443,7 +442,7 @@ fn message_with_type_and_level_(
     }
 
     let mut print_length = vals.len();
-    let console_depth = CONSOLE_DEPTH.load(Ordering::Relaxed);
+    let console_depth = CONSOLE_DEPTH.load();
 
     let mut print_options = FormatOptions {
         enable_colors,
@@ -5767,7 +5766,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
-    fmt.max_depth = CONSOLE_DEPTH.load(Ordering::Relaxed);
+    fmt.max_depth = CONSOLE_DEPTH.load();
     fmt.can_throw_stack_overflow = true;
     let mut writer = vm_console(global).error_writer();
     // SAFETY: caller passes a valid (args, args_len) pair.

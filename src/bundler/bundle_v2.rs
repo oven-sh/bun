@@ -58,7 +58,7 @@ pub struct PendingImport {
 }
 
 /// One log per importer.
-pub type ResolutionFailures = ArrayHashMap<u32, bun_ast::Log>;
+pub type ResolutionFailures = ArrayHashMap<bake_types::OwnerPacked, bun_ast::Log>;
 
 pub struct BundleV2<'a> {
     pub transpiler: &'a mut Transpiler<'a>,
@@ -87,7 +87,7 @@ pub struct BundleV2<'a> {
     /// construction. All ~15 DevServer call sites go through this.
     pub dev_server: Option<dispatch::DevServerHandle>,
     /// Unlike parse failures, these can be created asynchronously and out of order. Empty without `dev_server`.
-    pub(crate) resolution_failures: SyncView<ResolutionFailures>,
+    resolution_failures: SyncView<ResolutionFailures>,
     /// In-memory files that can be used as entrypoints or imported.
     /// This is a pointer to the FileMap in the completion config.
     pub file_map: Option<&'a FileMap>,
@@ -371,6 +371,28 @@ pub mod bv2_impl {
                     Side::Client => Graph::Client,
                     Side::Server => Graph::Server,
                 }
+            }
+        }
+        /// A file of the client or server graph of a dev server (1-bit side + 31-bit index).
+        #[repr(transparent)]
+        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, Default)]
+        pub struct OwnerPacked(u32);
+        impl OwnerPacked {
+            #[inline]
+            pub fn new(side: Side, file: u32) -> Self {
+                Self(file | ((side as u32) << 31))
+            }
+            #[inline]
+            pub fn side(self) -> Side {
+                if self.0 >> 31 == 0 {
+                    Side::Client
+                } else {
+                    Side::Server
+                }
+            }
+            #[inline]
+            pub fn file(self) -> u32 {
+                self.0 & 0x7FFF_FFFF
             }
         }
         /// The type of `CacheEntry.kind`.
@@ -4627,12 +4649,7 @@ pub mod bv2_impl {
                         )
                         .expect("oom");
                     } else {
-                        let kind = msg.kind;
-                        log.add_msg(msg);
-                        log.errors
-                            .update(|n| n + (kind == bun_ast::Kind::Err) as u32);
-                        log.warnings
-                            .update(|n| n + (kind == bun_ast::Kind::Warn) as u32);
+                        log.add_counted_msg(msg);
                     }
 
                     // Drop first, as above.
@@ -4954,12 +4971,7 @@ pub mod bv2_impl {
                         &resolve.import_record.source_file,
                         resolve.import_record.original_target.bake_graph(),
                     );
-                    let kind = err.kind;
-                    log.add_msg(err);
-                    log.errors
-                        .update(|n| n + (kind == bun_ast::Kind::Err) as u32);
-                    log.warnings
-                        .update(|n| n + (kind == bun_ast::Kind::Warn) as u32);
+                    log.add_counted_msg(err);
                 }
                 jsc_api::JSBundler::ResolveValue::Pending
                 | jsc_api::JSBundler::ResolveValue::Consumed => unreachable!(),
@@ -5026,7 +5038,7 @@ pub mod bv2_impl {
         ) -> Result<BuildResult, Error> {
             self.unique_key = generate_unique_key();
 
-            if self.transpiler.log().errors.get() > 0 {
+            if self.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
             }
 
@@ -5039,7 +5051,7 @@ pub mod bv2_impl {
 
             /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
 
-            if self.transpiler.log().errors.get() > 0 {
+            if self.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);
             }
             self.fail_if_no_entry_points()?;
@@ -5065,7 +5077,7 @@ pub mod bv2_impl {
             let mut linker = LinkerContext::load(self, linker_graph, &reachable_files)?;
             let mut chunks = linker.link(log)?;
 
-            if log.errors.get() > 0 {
+            if log.has_errors() {
                 return Err(crate::Error::BuildFailed);
             }
 
@@ -7284,7 +7296,7 @@ pub mod bv2_impl {
                                     std::ptr::from_mut(this),
                                 )
                                 .expect("oom");
-                        } else if err.log.msgs_len() > 0 {
+                        } else if err.log.has_msgs() {
                             err.log.append_to(this.transpiler.log());
                         } else {
                             let step_name = match err.step {

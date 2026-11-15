@@ -295,7 +295,7 @@ impl UpgradeCommand {
                     refresher.end();
                     refresher.refresh();
 
-                    if log.errors.get() > 0 {
+                    if log.has_errors() {
                         let _ = log.print(Output::error_writer());
                         Global::exit(1);
                     } else {
@@ -311,7 +311,7 @@ impl UpgradeCommand {
             }
         };
 
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             if !SILENT {
                 let refresher = refresher.expect("infallible: progress active");
                 refresher.end();

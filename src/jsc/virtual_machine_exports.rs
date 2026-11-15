@@ -126,7 +126,7 @@ pub fn vm_handle_queue_task_concurrently(
 /// (decided by promiseRejectionTracker when it happened), or null.
 pub fn handle_rejected_promise(
     global: &JSGlobalObject,
-    promise: &mut JSPromise,
+    promise: &JSPromise,
     rejection_owner: JSValue,
 ) {
     crate::mark_binding!();

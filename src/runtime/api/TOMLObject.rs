@@ -216,7 +216,7 @@ impl Stringifier {
         };
 
         // Pass 1: keyvals.
-        let iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        let iter = jsc::JSPropertyIterator::init(global, &*table.to_object(global)?, iter_options)?;
         while let Some((prop_name, prop_value)) = iter.next()? {
             let value = prop_value.unwrap_boxed_primitive(global)?;
             if value.is_null() {
@@ -240,7 +240,7 @@ impl Stringifier {
 
         // Pass 2: sections. Values are re-read; an array-of-tables element
         // that is no longer a plain object during emission gets an error.
-        let iter = jsc::JSPropertyIterator::init(global, table.to_object(global)?, iter_options)?;
+        let iter = jsc::JSPropertyIterator::init(global, &*table.to_object(global)?, iter_options)?;
         while let Some((prop_name, prop_value)) = iter.next()? {
             let value = prop_value.unwrap_boxed_primitive(global)?;
             match self.layout_of(global, value)? {
@@ -363,7 +363,7 @@ impl Stringifier {
         self.mark_visiting(global, value)?;
         let iter = jsc::JSPropertyIterator::init(
             global,
-            value.to_object(global)?,
+            &*value.to_object(global)?,
             jsc::JSPropertyIteratorOptions {
                 skip_empty_name: false,
                 include_value: true,

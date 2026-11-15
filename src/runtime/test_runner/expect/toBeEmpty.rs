@@ -37,16 +37,15 @@ impl Expect {
                     )?;
                     pass = !any_properties_in_iterator;
                 } else {
-                    let Some(_cell) = value.to_cell() else {
+                    if !value.is_cell() {
                         return Err(global.throw_type_error(format_args!(
                             "Expected value to be a string, object, or iterable"
                         )));
-                    };
-                    // `value` is the same cell, so use the JSValue ToObject path directly.
+                    }
                     let object = value.to_object(global)?;
                     let props_iter = JSPropertyIterator::init(
                         global,
-                        object,
+                        &object,
                         JSPropertyIteratorOptions {
                             skip_empty_name: false,
                             own_properties_only: false,

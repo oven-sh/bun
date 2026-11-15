@@ -12,10 +12,11 @@ use core::marker::PhantomData;
 use bun_ptr::cast_fn_ptr;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
+use crate::bindgen::JsLocal;
 use crate::{
-    AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSStringView, JSType, JsClass, JsError, JsResult,
-    StringJsc as _, WrapperGuard, ZigException, bun_string_jsc, ffi, host_fn,
+    ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSObject, JSPromise, JSString,
+    JSStringView, JSType, JsClass, JsError, JsResult, StringJsc as _, WrapperGuard, ZigException,
+    bun_string_jsc, ffi, host_fn,
 };
 
 /// ABI-compatible with `EncodedJSValue` (`#[repr(transparent)]` over the
@@ -26,11 +27,10 @@ use crate::{
 //
 // The spec encoding is `i64`; the inner field is `usize`
 // (same width on all supported 64-bit targets — see the size assert below)
-// because leaf modules pattern-match on `.0` with pointer/unsigned arithmetic.
-// `from_raw` is the signed view where sign-correct math matters.
+// because the tag checks below are unsigned arithmetic.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct JSValue(pub usize, PhantomData<*const ()>);
+pub struct JSValue(usize, PhantomData<*const ()>);
 
 const _: () = assert!(
     core::mem::size_of::<JSValue>() == core::mem::size_of::<i64>(),
@@ -55,8 +55,11 @@ impl JSValue {
     pub(crate) const PROPERTY_DOES_NOT_EXIST: JSValue = JSValue(0x4, PhantomData);
 
     /// Construct a JSValue from an opaque encoded bit-pattern.
+    ///
+    /// # Safety
+    /// `bits` is what [`encoded`](Self::encoded) returned, and the value has not been collected.
     #[inline]
-    pub const fn from_encoded(bits: usize) -> JSValue {
+    pub const unsafe fn from_encoded(bits: usize) -> JSValue {
         JSValue(bits, PhantomData)
     }
     /// Read the raw encoded bit-pattern.
@@ -64,17 +67,26 @@ impl JSValue {
     pub const fn encoded(self) -> usize {
         self.0
     }
-    #[inline]
-    pub(crate) const fn from_raw(raw: i64) -> JSValue {
-        JSValue(raw as usize, PhantomData)
-    }
 
     /// Wrap a JSCell pointer as a JSValue (cell-tagged JSValues *are* the
     /// pointer — `NotCellMask` bits are zero). Mirrors `JSValue.fromCell`.
+    ///
+    /// # Safety
+    /// `cell` is the address of a cell. Once that is dead, the result is only compared.
     #[inline]
-    pub fn from_cell<T>(cell: *const T) -> JSValue {
+    pub unsafe fn from_cell<T>(cell: *const T) -> JSValue {
         debug_assert!(!cell.is_null());
         JSValue(cell as usize, PhantomData)
+    }
+
+    /// The reference is the address of the cell, so the conservative stack scan sees it for as long as it is used.
+    ///
+    /// # Safety
+    /// `self` is a cell, and `T` is a handle of its type.
+    #[inline]
+    pub(crate) unsafe fn as_cell_unchecked<T>(&self) -> &T {
+        // SAFETY: a handle has no bytes, and the value of a cell is its address.
+        unsafe { &*(self.0 as *const T) }
     }
 
     /// `JSValue.fromPtrAddress` — encode an arbitrary native pointer as a JS
@@ -350,19 +362,11 @@ impl JSValue {
     pub fn is_exception(self, vm: &crate::VM) -> bool {
         JSC__JSValue__isException(self, vm)
     }
-    /// `JSValue.asException(vm)` — cast to `*mut Exception`
-    /// if `is_exception`, else null. The returned pointer borrows the GC cell;
-    /// callers must keep `self` alive (the only callsite —
-    /// `runErrorHandler` — holds it on the stack).
     #[inline]
-    pub fn as_exception(self, vm: &crate::VM) -> Option<*mut crate::Exception> {
-        if self.is_exception(vm) {
-            // SAFETY: `is_exception` proved the cell is a `JSC::Exception`;
-            // the encoded value is the cell pointer.
-            Some(self.0 as *mut crate::Exception)
-        } else {
-            None
-        }
+    pub fn as_exception(&self, vm: &crate::VM) -> Option<&crate::Exception> {
+        // SAFETY: just checked.
+        self.is_exception(vm)
+            .then(|| unsafe { self.as_cell_unchecked() })
     }
     #[inline]
     pub fn is_falsey(self) -> bool {
@@ -434,12 +438,10 @@ impl JSValue {
         JSC__JSValue__jsNumberFromDouble(n)
     }
     /// `JSC::purifyNaN` (PureNaN.h) — canonicalizes every NaN to the one
-    /// payload that is safe to NaN-box. Required before boxing any `f64`
-    /// whose bit pattern comes from outside the engine (FFI memory, native
-    /// addons, wire formats): other NaN payloads collide with the JSValue
+    /// payload that is safe to NaN-box: other NaN payloads collide with the JSValue
     /// tag space and decode as forged cells or immediates.
     #[inline]
-    pub fn purify_nan(n: f64) -> f64 {
+    fn purify_nan(n: f64) -> f64 {
         if n.is_nan() {
             // `PNaNAsBits` in PureNaN.h; not `f64::NAN`, whose bit pattern
             // is not guaranteed.
@@ -450,11 +452,15 @@ impl JSValue {
     /// `JSValue::jsDoubleNumber` (JSCJSValueInlines.h) — boxes an `f64`
     /// *always* as a double-encoded immediate (no int32 fast path). Required
     /// when the consumer round-trips through `f64::to_bits` / `as_number` and
-    /// must see the original bit pattern (e.g. [`from_ptr_address`]).
+    /// must see the original bit pattern (e.g. [`from_ptr_address`]). A NaN is purified.
     #[inline]
     pub fn js_double_number(n: f64) -> JSValue {
-        const DOUBLE_ENCODE_OFFSET: i64 = 1i64 << 49;
-        JSValue::from_raw((n.to_bits() as i64).wrapping_add(DOUBLE_ENCODE_OFFSET))
+        const DOUBLE_ENCODE_OFFSET: u64 = 1 << 49;
+        let bits = Self::purify_nan(n).to_bits();
+        JSValue(
+            bits.wrapping_add(DOUBLE_ENCODE_OFFSET) as usize,
+            PhantomData,
+        )
     }
     pub fn js_empty_string(global: &JSGlobalObject) -> JSValue {
         JSC__JSValue__jsEmptyString(global)
@@ -756,9 +762,10 @@ impl JSValue {
         T::coerce_from(self, global)
     }
     #[track_caller]
-    pub fn to_js_string<'a>(self, global: &'a JSGlobalObject) -> JsResult<&'a JSString> {
+    pub fn to_js_string(self, global: &JSGlobalObject) -> JsResult<JsLocal<'_, JSString>> {
         crate::call_null_is_throw(global, || JSC__JSValue__toStringOrNull(self, global))
-            .map(|p| JSString::opaque_ref(p.as_ptr()))
+            // SAFETY: a string that the engine has just returned.
+            .map(|p| unsafe { p.as_ref() }.to_local(global))
     }
     /// [`to_js_string`] plus a borrowed view of its characters, in one FFI
     /// call. The returned guard keeps the characters' owner cell alive while in scope.
@@ -769,10 +776,13 @@ impl JSValue {
         crate::call_null_is_throw(global, || {
             JSC__JSValue__toJSStringView(self, global, &mut view, &mut owner)
         })
-        .map(|p| JSStringView {
-            cell: JSString::opaque_ref(p.as_ptr()),
-            owner: JSString::opaque_ref(owner),
-            view,
+        // SAFETY: C++ sets `owner` when it returns a string. The view keeps both visible to the stack scan.
+        .map(|p| unsafe {
+            JSStringView {
+                cell: p.as_ref(),
+                owner: &*owner,
+                view,
+            }
         })
     }
     pub fn to_bun_string(self, global: &JSGlobalObject) -> JsResult<bun_core::String> {
@@ -798,9 +808,12 @@ impl JSValue {
     ) -> JsResult<E> {
         E::from_js_value(self, global, property_name)
     }
-    pub fn as_string(self) -> &'static JSString {
-        debug_assert!(self.is_string_literal());
-        JSString::opaque_ref(JSC__JSValue__asString(self))
+    /// A string, not a `String` object.
+    #[inline]
+    pub fn as_string(&self) -> Option<&JSString> {
+        // SAFETY: just checked.
+        self.is_string_literal()
+            .then(|| unsafe { self.as_cell_unchecked() })
     }
     /// JS `typeof`, or `"array"` for arrays.
     pub fn type_name<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
@@ -813,7 +826,7 @@ impl JSValue {
     /// Never throws; the backing cell is GC-rooted by the VM's SmallStrings
     /// table.
     pub fn js_type_string<'a>(self, global: &'a JSGlobalObject) -> bun_core::StringView<'a> {
-        let cell = JSString::opaque_ref::<'a>(JSC__jsTypeStringForValue(global, self));
+        let cell = JSC__jsTypeStringForValue(global, self).unwrap();
         crate::validation_scope!(scope, global);
         let mut owner: *const JSString = cell;
         let view = crate::js_string::JSC__JSString__view(cell, global, &mut owner);
@@ -842,32 +855,10 @@ impl JSValue {
     pub fn as_direct<T: JsClass>(&self) -> Option<WrapperGuard<'_, T>> {
         T::from_js_direct(self)
     }
-    /// `JSValue.asPromise()` — downcast to `JSPromise` (matches `JSInternalPromise` too).
-    /// Returns a raw pointer; conjuring a
-    /// `&'static mut` here would permit aliased `&mut` UB across two calls on
-    /// the same value (PORTING.md §Forbidden).
-    pub fn as_promise(self) -> Option<*mut JSPromise> {
-        if !self.is_cell() {
-            return None;
-        }
-        let p = JSC__JSValue__asPromise(self);
-        if p.is_null() { None } else { Some(p) }
-    }
-    pub fn as_any_promise(self) -> Option<AnyPromise> {
-        if !self.is_cell() {
-            return None;
-        }
-        // Check internal FIRST (JSInternalPromise extends JSPromise,
-        // so `asPromise` would also match it and misclassify).
-        let p = JSC__JSValue__asInternalPromise(self);
-        if !p.is_null() {
-            return Some(AnyPromise::Internal(p));
-        }
-        let p = JSC__JSValue__asPromise(self);
-        if !p.is_null() {
-            return Some(AnyPromise::Normal(p));
-        }
-        None
+    #[inline]
+    pub fn as_promise(&self) -> Option<&JSPromise> {
+        // SAFETY: just checked.
+        (self.js_type() == JSType::JSPromise).then(|| unsafe { self.as_cell_unchecked() })
     }
     /// `JSValue.attachAsyncStackFromPromise(global, promise)` — append the
     /// promise's await-chain frames to this error's stack.
@@ -1254,12 +1245,11 @@ impl JSValue {
             )
         })
     }
-    pub fn get_object(self) -> Option<*mut JSObject> {
-        if !self.is_object() {
-            return None;
-        }
-        // Cell-tagged JSValues *are* the cell pointer (NotCellMask bits are zero).
-        Some(self.0 as *mut JSObject)
+    #[inline]
+    pub fn get_object(&self) -> Option<&JSObject> {
+        // SAFETY: just checked.
+        self.is_object()
+            .then(|| unsafe { self.as_cell_unchecked() })
     }
     pub fn get_index(self, global: &JSGlobalObject, i: u32) -> JsResult<JSValue> {
         JSObject::get_index(self, global, i)
@@ -1955,15 +1945,13 @@ unsafe extern "C" {
         view: &mut bun_core::StringView<'a>,
         owner: &mut *const JSString,
     ) -> *mut JSString;
-    safe fn JSC__JSValue__asString(this: JSValue) -> *mut JSString;
-    safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue) -> *mut JSString;
+    safe fn JSC__jsTypeStringForValue(global: &JSGlobalObject, value: JSValue)
+    -> Option<&JSString>;
     safe fn JSC__JSValue__asArrayBuffer(
         this: JSValue,
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
-    safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(
         global: &JSGlobalObject,
         err: JSValue,
@@ -2137,18 +2125,11 @@ impl JSValue {
     }
 
     // ── Object / cell views. ───────────────
-    /// Statically cast to a `JSCell*`; `None` for non-cells.
-    #[inline]
-    pub fn to_cell(self) -> Option<*mut crate::JSCell> {
-        if self.is_cell() {
-            Some(self.0 as *mut crate::JSCell)
-        } else {
-            None
-        }
-    }
     /// `JSValue.toObject` — ECMA `ToObject`; throws on null/undefined.
-    pub fn to_object(self, global: &JSGlobalObject) -> JsResult<*mut JSObject> {
-        Ok(crate::call_null_is_throw(global, || JSC__JSValue__toObject(self, global))?.as_ptr())
+    pub fn to_object(self, global: &JSGlobalObject) -> JsResult<JsLocal<'_, JSObject>> {
+        crate::call_null_is_throw(global, || JSC__JSValue__toObject(self, global))
+            // SAFETY: an object that the engine has just returned.
+            .map(|p| unsafe { p.as_ref() }.to_local(global))
     }
     /// `JSValue.unwrapBoxedPrimitive` — unwraps Number,
     /// Boolean, String, and BigInt objects to their primitive forms.
@@ -2216,11 +2197,11 @@ impl JSValue {
         self,
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
-    ) -> JsResult<Option<*mut JSObject>> {
+    ) -> JsResult<Option<JsLocal<'_, JSObject>>> {
         let property_name = property_name.as_ref();
         match self.get_own_truthy(global, property_name)? {
             Some(v) => match v.get_object() {
-                Some(obj) => Ok(Some(obj)),
+                Some(obj) => Ok(Some(obj.to_local(global))),
                 None => Err(global.throw_invalid_arguments(format_args!(
                     "{} must be an object",
                     bstr::BStr::new(property_name),

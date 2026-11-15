@@ -9,9 +9,9 @@ use crate::webcore::blob::{MAX_SIZE, SizeType, Store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_io::{self as aio, IntrusiveUvFs as _};
+use bun_jsc::{self as jsc, JSValue};
 #[cfg(not(windows))]
-use bun_jsc::JSGlobalObject;
-use bun_jsc::{self as jsc, JSPromise, JSValue};
+use bun_jsc::{JSGlobalObject, JSPromise};
 #[cfg(not(windows))]
 use bun_paths::PathBuffer;
 use bun_ptr::RefPtr;
@@ -87,7 +87,7 @@ impl jsc::JobContext for CopyFile {
         mut promise: jsc::JSPromiseStrong,
         cx: &jsc::JsThread<'_>,
     ) -> jsc::JsResult<()> {
-        CopyFile::then(&mut this, promise.swap(), cx.global())
+        CopyFile::then(&mut this, &promise.swap(cx.global()), cx.global())
     }
 }
 
@@ -128,7 +128,7 @@ impl CopyFile {
 
     pub(crate) fn reject(
         &mut self,
-        promise: &mut JSPromise,
+        promise: &JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         let mut system_error: SystemError = self.system_error.take().unwrap_or_default();
@@ -149,7 +149,7 @@ impl CopyFile {
 
     pub(crate) fn then(
         &mut self,
-        promise: &mut JSPromise,
+        promise: &JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         if self.system_error.is_some() {
@@ -1336,9 +1336,8 @@ impl CopyFileWindows {
     fn throw(mut self: Box<Self>, err: bun_sys::Error) {
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
-        // A GC cell: not tied to `self`, which is dropped before it is settled.
-        let promise = JSPromise::opaque_mut(self.promise.swap());
-        let err_instance = err.to_js_with_async_stack(global_this, promise);
+        let promise = self.promise.swap(global_this);
+        let err_instance = err.to_js_with_async_stack(global_this, &promise);
 
         let _guard = self.event_loop.enter_scope();
         drop(self);
@@ -1404,8 +1403,7 @@ impl CopyFileWindows {
         note_written(&self.destination_file_store);
         let _context = jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);
         let global_this = self.event_loop.global_ref();
-        // A GC cell: not tied to `self`, which is dropped before it is settled.
-        let promise = JSPromise::opaque_mut(self.promise.swap());
+        let promise = self.promise.swap(global_this);
         let _guard = self.event_loop.enter_scope();
 
         drop(self);

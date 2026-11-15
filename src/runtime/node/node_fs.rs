@@ -2522,9 +2522,9 @@ mod _async_tasks {
             let global_object: &JSGlobalObject = unsafe { &*go_ptr.cast::<JSGlobalObject>() };
             let success = (*self.result.get_mut()).is_ok();
             let promise_value = self.promise.value();
-            let promise = self.promise.get();
+            let promise = self.promise.get().to_local(global_object);
             let result = match core::mem::replace(self.result.get_mut(), Ok(())) {
-                Err(err) => match err.to_js_with_async_stack(global_object, promise) {
+                Err(err) => match err.to_js_with_async_stack(global_object, &promise) {
                     Ok(v) => v,
                     Err(e) => return promise.reject(global_object, Err(e)),
                 },
@@ -2537,13 +2537,11 @@ mod _async_tasks {
 
             let _dispatch = self.tracker.dispatch(global_object);
 
-            // Raw: the drop releases the `Strong` this was borrowed from before the resolve/reject.
-            let promise: *mut bun_jsc::JSPromise = promise;
             drop(self);
             if success {
-                bun_jsc::JSPromise::opaque_mut(promise).resolve(global_object, result)?;
+                promise.resolve(global_object, result)?;
             } else {
-                bun_jsc::JSPromise::opaque_mut(promise).reject(global_object, Ok(result))?;
+                promise.reject(global_object, Ok(result))?;
             }
             Ok(())
         }
@@ -4556,7 +4554,7 @@ pub(crate) mod args {
                     Some(-1),
                     Some(bun_jsc::MAX_SAFE_INTEGER),
                 )?
-            } else if let Some(position) = bun_jsc::JSBigInt::from_js(position_value) {
+            } else if let Some(position) = bun_jsc::JSBigInt::from_js(&position_value) {
                 // const maxPosition = 2n ** 63n - 1n - BigInt(length)
                 let max_position = i64::MAX - length_int;
                 if position.order(-1i64) == core::cmp::Ordering::Less

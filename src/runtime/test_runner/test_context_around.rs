@@ -87,8 +87,8 @@ fn named_error(
     Ok(error)
 }
 
-fn pending<'a>(promise: Option<JSValue>) -> Option<&'a mut JSPromise> {
-    let promise = JSPromise::opaque_mut(promise?.as_promise()?);
+fn pending(promise: Option<&JSValue>) -> Option<&JSPromise> {
+    let promise = promise?.as_promise()?;
     (promise.status() == PromiseStatus::Pending).then_some(promise)
 }
 
@@ -222,13 +222,14 @@ impl AroundHook {
                     ),
                 )?,
             };
-            return match pending(js::ready_get_cached(this_value)) {
+            return match pending(js::ready_get_cached(this_value).as_ref()) {
                 Some(ready) => ready.reject(global, Ok(error)),
                 None => Ok(()),
             };
         }
         // Only set once the hook has called `runTest()`.
-        let Some(done) = pending(js::done_get_cached(this_value)) else {
+        let done = js::done_get_cached(this_value);
+        let Some(done) = pending(done.as_ref()) else {
             return Ok(());
         };
         match result {
@@ -343,7 +344,7 @@ pub(crate) fn run(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResult<JSV
     let release = JSPromise::create(global).to_js();
     js::release_set_cached(this_value, global, release);
     js::done_set_cached(this_value, global, JSPromise::create(global).to_js());
-    if let Some(ready) = pending(js::ready_get_cached(this_value)) {
+    if let Some(ready) = pending(js::ready_get_cached(this_value).as_ref()) {
         ready.resolve(global, JSValue::UNDEFINED)?;
     }
     Ok(release)
@@ -358,7 +359,7 @@ pub(crate) fn tear_down(cx: &mut JsScope<'_>, this_value: JsLocal<'_>) -> JsResu
         let outer = js::outer_async_context_get_cached(this_value).unwrap_or_default();
         test_context::js::async_context_set_cached(context, global, outer);
     }
-    if let Some(release) = pending(js::release_get_cached(this_value)) {
+    if let Some(release) = pending(js::release_get_cached(this_value).as_ref()) {
         release.resolve(global, JSValue::UNDEFINED)?;
     }
     Ok(js::done_get_cached(this_value).unwrap_or(JSValue::UNDEFINED))

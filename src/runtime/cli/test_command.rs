@@ -3820,11 +3820,11 @@ impl TestCommand {
             .expect("oom"))
     }
 
-    fn never_settled(
-        global: &jsc::JSGlobalObject,
+    fn never_settled<'a>(
+        global: &'a jsc::JSGlobalObject,
         what: &str,
         file_path: &[u8],
-    ) -> *mut jsc::JSInternalPromise {
+    ) -> jsc::bindgen::JsLocal<'a, jsc::JSPromise> {
         let rejected = jsc::JSPromise::rejected_promise(
             global,
             global.create_error_instance(format_args!(
@@ -3834,7 +3834,7 @@ impl TestCommand {
             )),
         );
         rejected.set_handled();
-        std::ptr::from_mut(rejected)
+        rejected
     }
 
     fn undo_module_mocks(
@@ -3989,9 +3989,7 @@ impl TestCommand {
                 reporter.update_summary(|summary| summary.files += 1);
             }
 
-            if jsc::JSInternalPromise::opaque_mut(promise).status()
-                != jsc::js_promise::Status::Rejected
-            {
+            if promise.status() != jsc::js_promise::Status::Rejected {
                 vm.event_loop().tick();
 
                 // Tests start after top-level mock.module() calls with a pending factory have patched their module.
@@ -4007,15 +4005,12 @@ impl TestCommand {
                 }
             }
 
-            // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            let failed_to_load = jsc::JSInternalPromise::opaque_mut(promise).status()
-                == jsc::js_promise::Status::Rejected;
+            let failed_to_load = promise.status() == jsc::js_promise::Status::Rejected;
             if failed_to_load {
                 // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
                 // `unhandled_rejection(&mut self, ...)` can reborrow.
                 let global = vm.global();
-                let p = jsc::JSInternalPromise::opaque_mut(promise);
-                let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                let (result, promise_js) = (promise.result(global.vm()), promise.to_js());
                 vm.unhandled_rejection(global, result, promise_js);
             }
 
@@ -4055,9 +4050,7 @@ impl TestCommand {
                     }
                     if !bun_test_root.timer.is_active() && !vm.has_work_left() {
                         let (what, waits_for) = Self::what_runner_waits_for(&buntest);
-                        let p = jsc::JSPromise::opaque_mut(Self::never_settled(
-                            global, what, file_path,
-                        ));
+                        let p = Self::never_settled(global, what, file_path);
                         vm.unhandled_rejection(global, p.result(global.vm()), p.to_js());
                         vm.event_loop().tick();
                         // The error ends a describe() or a test. Anything else stays stuck, so abandon the file.

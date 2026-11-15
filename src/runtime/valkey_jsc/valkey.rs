@@ -8,7 +8,7 @@ use core::cell::Cell;
 use bun_collections::OffsetByteList;
 use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult};
 use bun_ptr::{CellExt as _, PairDequeCellExt as _, VecDequeCellExt as _};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_valkey::valkey_protocol as protocol;
@@ -1371,14 +1371,14 @@ impl JSValkeyClient {
         &self,
         global_this: &JSGlobalObject,
         command: &Command,
-    ) -> Result<*mut JSPromise, crate::Error> {
+    ) -> Result<JSValue, crate::Error> {
         // FIX: Check meta before using it for routing decisions
         let mut checked_command = *command;
         checked_command.meta = command.meta.check(command);
 
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 
-        let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
+        let js_promise = promise.promise.value();
         if let Some(message) = self.send_rejection() {
             let _ = promise.reject(
                 global_this,

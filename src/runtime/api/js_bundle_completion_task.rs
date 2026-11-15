@@ -366,7 +366,7 @@ impl JSBundleCompletionTask {
 
     fn to_js_error(
         &mut self,
-        promise: &mut JSPromise,
+        promise: &JSPromise,
         global_this: &JSGlobalObject,
     ) -> jsc::JsResult<()> {
         let throw_on_error = self.config.throw_on_error;
@@ -699,7 +699,7 @@ impl JSBundleCompletionTask {
                 Ok(())
             }
             BuildOwner::Promise { promise, .. } if deliver => {
-                self.settle(promise.swap(), &global_this)
+                self.settle(&promise.swap(&global_this), &global_this)
             }
             BuildOwner::Promise { .. } => Ok(()),
         }
@@ -707,7 +707,7 @@ impl JSBundleCompletionTask {
 
     fn settle(
         &mut self,
-        promise: &mut JSPromise,
+        promise: &JSPromise,
         global_this: &JSGlobalObject,
     ) -> bun_event_loop::JsResult<()> {
         if let Ok(build) = &mut self.result

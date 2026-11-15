@@ -552,7 +552,7 @@ where
 
     /// [`Self::cancel_unread_body`] for a rooted handler result: a `Response` or a settled promise of one.
     fn discard_response_body(global_this: &JSGlobalObject, value: JSValue) {
-        let value = match value.as_any_promise() {
+        let value = match value.as_promise() {
             Some(promise) => {
                 match promise.unwrap(global_this.vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                     jsc::PromiseResult::Fulfilled(fulfilled) => fulfilled,
@@ -568,7 +568,7 @@ where
 
     /// [`Self::discard_response_body`] for a request this context can no longer respond to.
     fn discard_handler_result(&self, global_this: &JSGlobalObject, result: JSValue) {
-        let Some(promise) = result.as_any_promise() else {
+        let Some(promise) = result.as_promise() else {
             if self.did_upgrade_web_socket()
                 && let Some(err) = result.to_error()
             {
@@ -590,7 +590,7 @@ where
                 result.then_with_value(global_this, cell, Self::ON_RESOLVE, Self::ON_REJECT);
             }
             // A subscribed promise that rejects later is dropped. Drop this one the same way.
-            jsc::PromiseStatus::Rejected if resp_held => promise.set_handled(global_this.vm()),
+            jsc::PromiseStatus::Rejected if resp_held => promise.set_handled(),
             // Nothing subscribes, so a rejection stays unhandled and reaches `unhandledRejection`.
             jsc::PromiseStatus::Pending | jsc::PromiseStatus::Rejected => {}
             jsc::PromiseStatus::Fulfilled => {
@@ -1970,15 +1970,14 @@ where
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.pending_flush() {
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                effective_result = jsc::JSPromise::opaque_ref(flush).to_js();
+                effective_result = flush;
             }
         }
 
         if !effective_result.is_empty_or_undefined_or_null() {
             effective_result.ensure_still_alive();
             // it returns a Promise when it goes through ReadableStreamDefaultReader
-            if let Some(promise) = effective_result.as_any_promise() {
+            if let Some(promise) = effective_result.as_promise() {
                 stream_log!("returned a promise");
                 if this.drain_microtasks().is_err() {
                     return;
@@ -2447,7 +2446,7 @@ where
 
         let vm = this.vm();
 
-        if let Some(promise) = response_value.as_any_promise() {
+        if let Some(promise) = response_value.as_promise() {
             // If we immediately have the value available, we can skip the extra event loop tick
             match promise.unwrap(vm.global().vm(), jsc::PromiseUnwrapMode::MarkHandled) {
                 jsc::PromiseResult::Pending => {
@@ -2533,8 +2532,7 @@ where
                     debug_assert!(self.server.get().is_some());
                     let global_this = self.server().global_this();
                     let cell = self.create_promise_cell(global_this);
-                    // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                    jsc::JSPromise::opaque_ref(flush).to_js().then_with_value(
+                    flush.then_with_value(
                         global_this,
                         cell,
                         Self::ON_RESOLVE_STREAM,
@@ -3319,8 +3317,8 @@ where
                     if let Some(err) = result.to_error() {
                         self.finish_running_error_handler(err, status);
                         return;
-                    } else if let Some(promise) = result.as_any_promise() {
-                        self.process_on_error_promise(result, promise, value, status);
+                    } else if let Some(promise) = result.as_promise() {
+                        self.process_on_error_promise(promise, value, status);
                         return;
                     } else if let Some(response) = result.as_class_ref::<Response>() {
                         // An unsendable Response from the error handler itself
@@ -3343,13 +3341,7 @@ where
         self.finish_running_error_handler(value, status);
     }
 
-    fn process_on_error_promise(
-        &self,
-        promise_js: JSValue,
-        promise: jsc::AnyPromise,
-        value: JSValue,
-        status: u16,
-    ) {
+    fn process_on_error_promise(&self, promise: &jsc::JSPromise, value: JSValue, status: u16) {
         let ctx = self;
         debug_assert!(ctx.server.get().is_some());
         let server = ctx.server();
@@ -3359,7 +3351,7 @@ where
             jsc::PromiseResult::Pending => {
                 ctx.flags.set_is_error_promise_pending(true);
                 let cell = ctx.create_promise_cell(server.global_this());
-                promise_js.then_with_value(
+                promise.to_js().then_with_value(
                     server.global_this(),
                     cell,
                     Self::ON_RESOLVE,

@@ -15,6 +15,7 @@ use bun_io as Async;
 use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _};
 use bun_uws as uws;
 
+use crate::bindgen::JsLocal;
 use crate::bun_string_jsc;
 use crate::counters::Counters;
 use crate::event_loop::EventLoop;
@@ -22,7 +23,7 @@ use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, Exception, JSGlobalObject, JSInternalPromise, JSValue, JsCell, JsResult,
+    self as jsc, Exception, JSGlobalObject, JSPromise, JSValue, JsCell, JsResult,
     PlatformEventLoop, ResolvedSource, StrongCell, VM, ZigException,
 };
 
@@ -1899,7 +1900,7 @@ impl VirtualMachine {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<JsLocal<'_, JSPromise>> {
         use bun_bundler::entry_points::MacroEntryPoint;
         use bun_collections::hash_map::Entry;
         let entry_point = self.macro_entry_points.with_mut(|entry_points| {
@@ -2693,9 +2694,10 @@ pub struct RuntimeHooks {
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(state: RuntimeState),
     /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-    /// preload promise if any, else null. Errors propagate
+    /// preload promise if any. Errors propagate
     /// (resolver failures / `ModuleNotFound`).
-    pub load_preloads: fn(vm: &VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
+    pub load_preloads:
+        fn(vm: &VirtualMachine) -> crate::CrateResult<Option<JsLocal<'_, JSPromise>>>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: fn(vm: &VirtualMachine, block_until_connected: bool),
     /// `eventLoop().autoTick()` — needs `Timer::All` for the timeout calc.
@@ -2960,7 +2962,7 @@ unsafe extern "C" {
     safe fn Bun__loadBuiltinEntryPoint(
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
-    ) -> *mut JSInternalPromise;
+    ) -> Option<&JSPromise>;
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -2975,7 +2977,7 @@ unsafe extern "C" {
     safe fn JSC__JSInternalPromise__resolvedPromise(
         global: &JSGlobalObject,
         value: JSValue,
-    ) -> *mut JSInternalPromise;
+    ) -> Option<&JSPromise>;
 }
 
 fn get_origin_timestamp() -> u64 {
@@ -3245,7 +3247,7 @@ impl VirtualMachine {
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
-    pub fn wait_for_promise(&self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
+    pub fn wait_for_promise(&self, promise: &jsc::JSPromise) -> Result<(), jsc::Stopped> {
         self.event_loop().wait_for_promise(promise)
     }
 
@@ -3284,7 +3286,7 @@ impl VirtualMachine {
     pub(crate) fn reload_entry_point(
         &self,
         entry_path: Option<&'static [u8]>,
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<JsLocal<'_, JSPromise>> {
         let entry_path = entry_path.map(crate::compiled_program::entry_module_key);
         self.has_loaded.set(false);
         self.set_main(entry_path);
@@ -3372,9 +3374,8 @@ impl VirtualMachine {
         if !self.transpiler.get().options.disable_transpilation {
             if !self.preload.is_empty() {
                 if let Some(hooks) = hooks {
-                    let p = (hooks.load_preloads)(self)?;
-                    if !p.is_null() {
-                        self.set_pending_internal_promise(Some(p));
+                    if let Some(p) = (hooks.load_preloads)(self)? {
+                        self.set_pending_internal_promise(Some(&p));
                         return Ok(p);
                     }
                 }
@@ -3396,7 +3397,7 @@ impl VirtualMachine {
                         (_, Some(main)) => main,
                     };
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
-                    let promise: *mut JSInternalPromise =
+                    let promise: JsLocal<'_, JSPromise> =
                         match jsc::from_js_host_call_generic(global_ref, || {
                             NodeModuleModule__callOverriddenRunMain(global_ref, argv1)
                         }) {
@@ -3411,6 +3412,8 @@ impl VirtualMachine {
                                 jsc::call_check_slow(global_ref, || {
                                     JSC__JSInternalPromise__resolvedPromise(global_ref, ret)
                                 })?
+                                .ok_or(crate::CrateError::JSError)?
+                                .to_local(global_ref)
                             }
                             Err(err) => {
                                 let rejected =
@@ -3425,10 +3428,10 @@ impl VirtualMachine {
                                 // Whoever loads the entry point reports its promise, so, like the
                                 // loader's, it is not for the rejection tracker as well.
                                 rejected.set_handled();
-                                core::ptr::from_mut(rejected).cast()
+                                rejected
                             }
                         };
-                    self.set_pending_internal_promise(Some(promise));
+                    self.set_pending_internal_promise(Some(&promise));
                     return Ok(promise);
                 }
             }
@@ -3451,36 +3454,29 @@ impl VirtualMachine {
             if !self.transpiler.get().options.disable_transpilation {
                 self.has_loaded.set(true);
             }
-            let p: *mut JSInternalPromise = jsc::from_js_host_call_generic(global, || {
-                Bun__loadBuiltinEntryPoint(global, builtin)
-            })?;
-            if p.is_null() {
-                return Err(crate::CrateError::JSError);
-            }
-            p
+            jsc::from_js_host_call_generic(global, || Bun__loadBuiltinEntryPoint(global, builtin))?
+                .ok_or(crate::CrateError::JSError)?
+                .to_local(global)
         } else if self.main_entry_point.get() != MainEntryPoint::File
             && !self.transpiler.get().options.disable_transpilation
         {
             // The path is the key of the module: there is nothing to resolve.
             let main = (self.main()).expect("the entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
-                .map(NonNull::as_ptr)
+            jsc::JSModuleLoader::load_and_evaluate_module(global, &main_str)
                 .ok_or(crate::CrateError::JSError)?
         } else if !self.transpiler.get().options.disable_transpilation {
             let name = bun_core::StringView::borrow_utf8(MAIN_FILE_NAME);
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
-                .map(NonNull::as_ptr)
+            jsc::JSModuleLoader::load_and_evaluate_module(global, &name)
                 .ok_or(crate::CrateError::JSError)?
         } else {
             let main = (self.main()).expect("a file entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(global, &main_str)
-                .map(NonNull::as_ptr)
+            jsc::JSModuleLoader::resolve_and_load_and_evaluate_module(global, &main_str)
                 .ok_or(crate::CrateError::JSError)?
         };
 
-        self.set_pending_internal_promise(Some(promise));
+        self.set_pending_internal_promise(Some(&promise));
         Ok(promise)
     }
 
@@ -3489,7 +3485,7 @@ impl VirtualMachine {
     pub fn load_entry_point(
         &self,
         entry_path: Option<&'static [u8]>,
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<JsLocal<'_, JSPromise>> {
         let promise = self.reload_entry_point(entry_path)?;
 
         // pending_internal_promise can change if hot module reloading is enabled
@@ -3498,25 +3494,22 @@ impl VirtualMachine {
                 let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
-                // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-                if crate::JSPromise::status_ptr(p) != crate::js_promise::Status::Pending {
+                if p.status() != crate::js_promise::Status::Pending {
                     break;
                 }
                 self.event_loop().tick();
                 let Some(p) = self.pending_internal_promise() else {
                     break;
                 };
-                // SAFETY: see above.
-                if crate::JSPromise::status_ptr(p) == crate::js_promise::Status::Pending {
+                if p.status() == crate::js_promise::Status::Pending {
                     self.auto_tick();
                 }
             }
         } else {
-            // SAFETY: `promise` is a live JSC heap cell.
-            if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
+            if promise.status() == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+            let _ = self.wait_for_promise(&promise);
         }
 
         Ok(self.pending_internal_promise().unwrap_or(promise))
@@ -4192,14 +4185,15 @@ impl VirtualMachine {
 
     /// The promise of the latest load of the entry point. `--hot` looks at it on every tick,
     /// long after it has settled and the module loader has let go of it.
-    pub fn pending_internal_promise(&self) -> Option<*mut JSInternalPromise> {
-        Some(self.pending_internal_promise.get()?.to_cell()?.cast())
+    pub fn pending_internal_promise(&self) -> Option<JsLocal<'_, JSPromise>> {
+        let promise = self.pending_internal_promise.get()?;
+        Some(promise.as_promise()?.to_local(self.global()))
     }
 
-    pub fn set_pending_internal_promise(&self, promise: Option<*mut JSInternalPromise>) {
+    pub fn set_pending_internal_promise(&self, promise: Option<&JSPromise>) {
         let slot = &self.pending_internal_promise;
         match promise {
-            Some(promise) => slot.set(self.global(), JSValue::from_cell(promise)),
+            Some(promise) => slot.set(self.global(), promise.to_js()),
             None => slot.clear_without_deallocation(),
         }
     }
@@ -4207,8 +4201,7 @@ impl VirtualMachine {
     /// After a hot reload, surfaces the entry-point promise's rejection (if any) and re-arms the watcher.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&self) {
         while let Some(promise) = self.pending_internal_promise() {
-            // SAFETY: `promise` is a live JSC heap cell tracked by the VM.
-            match crate::JSPromise::status_ptr(promise) {
+            match promise.status() {
                 crate::js_promise::Status::Pending => break,
                 crate::js_promise::Status::Rejected => {
                     if self.pending_internal_promise_reported_at.get()
@@ -4217,11 +4210,9 @@ impl VirtualMachine {
                         self.pending_internal_promise_reported_at
                             .set(self.hot_reload_counter.get());
                         let global_ref = self.global();
-                        // `opaque_mut`: the VM's slot keeps this JSC heap cell alive.
-                        let result = crate::JSPromise::opaque_mut(promise).result(global_ref.vm());
-                        let promise_js = JSValue::from_cell(promise);
-                        self.unhandled_rejection(global_ref, result, promise_js);
-                        crate::JSPromise::opaque_mut(promise).set_handled();
+                        let result = promise.result(global_ref.vm());
+                        self.unhandled_rejection(global_ref, result, promise.to_js());
+                        promise.set_handled();
                     }
                 }
                 crate::js_promise::Status::Fulfilled => {}
@@ -4285,8 +4276,7 @@ impl VirtualMachine {
         }
 
         if let Some(p) = self.pending_internal_promise() {
-            // SAFETY: `p` is a live JSC heap cell tracked by the VM.
-            match crate::JSPromise::status_ptr(p) {
+            match p.status() {
                 crate::js_promise::Status::Pending => {
                     self.hot_reload_deferred.set(true);
                     return;
@@ -4370,7 +4360,7 @@ impl VirtualMachine {
         if let Ok(rejected) = rejected {
             // The run loop reports the entry promise's rejection, so keep it out of the unhandled rejection tracker.
             rejected.set_handled();
-            self.set_pending_internal_promise(Some(core::ptr::from_mut(rejected)));
+            self.set_pending_internal_promise(Some(&rejected));
         }
     }
 
@@ -5309,7 +5299,7 @@ impl VirtualMachine {
     pub(crate) fn reload_entry_point_for_test_runner(
         &self,
         entry_path: &'static [u8],
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<JsLocal<'_, JSPromise>> {
         let entry_path = crate::compiled_program::entry_module_key(entry_path);
         self.has_loaded.set(
             crate::compiled_program::runs_in_place()
@@ -5328,9 +5318,8 @@ impl VirtualMachine {
 
         if !self.transpiler.get().options.disable_transpilation {
             if let Some(hooks) = runtime_hooks() {
-                let p = (hooks.load_preloads)(self)?;
-                if !p.is_null() {
-                    self.set_pending_internal_promise(Some(p));
+                if let Some(p) = (hooks.load_preloads)(self)? {
+                    self.set_pending_internal_promise(Some(&p));
                     return Ok(p);
                 }
             }
@@ -5342,22 +5331,21 @@ impl VirtualMachine {
         let global = self.global();
         let main = (self.main()).expect("set to the test file above");
         let main_str = bun_core::StringView::from_bytes(main);
-        let promise = match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module_ptr(
-            global, &main_str,
-        ) {
-            Some(promise) => promise.as_ptr(),
-            // Not resolving is this file's failure, like not loading.
-            None => {
-                let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
-                    self.global(),
-                    jsc::JsError::Thrown,
-                )?;
-                // Like the loader's: whoever loads the file reports it, not the rejection tracker.
-                rejected.set_handled();
-                std::ptr::from_mut(rejected)
-            }
-        };
-        self.set_pending_internal_promise(Some(promise));
+        let promise =
+            match jsc::JSModuleLoader::resolve_and_load_and_evaluate_module(global, &main_str) {
+                Some(promise) => promise,
+                // Not resolving is this file's failure, like not loading.
+                None => {
+                    let rejected = crate::JSPromise::rejected_promise_with_caught_exception(
+                        self.global(),
+                        jsc::JsError::Thrown,
+                    )?;
+                    // Like the loader's: whoever loads the file reports it, not the rejection tracker.
+                    rejected.set_handled();
+                    rejected
+                }
+            };
+        self.set_pending_internal_promise(Some(&promise));
         Ok(promise)
     }
 
@@ -5371,12 +5359,11 @@ impl VirtualMachine {
     pub(crate) unsafe fn load_entry_point_for_web_worker(
         &self,
         entry_path: &[u8],
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<JsLocal<'_, JSPromise>> {
         // SAFETY: fn contract. Only `main` keeps it.
         let entry_path = unsafe { bun_ptr::detach_lifetime(entry_path) };
         let promise = self.reload_entry_point(Some(entry_path))?;
-        self.event_loop()
-            .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
+        self.event_loop().wait_for_worker_entry_evaluation(&promise);
         if let Some(worker) = self.worker_ref() {
             if worker.has_requested_terminate() {
                 return Err(crate::CrateError::WorkerTerminated);
@@ -5389,12 +5376,11 @@ impl VirtualMachine {
     pub fn wait_for_test_runner_load(
         &self,
         module: core::fmt::Arguments<'_>,
-    ) -> Option<*mut JSInternalPromise> {
+    ) -> Option<JsLocal<'_, JSPromise>> {
         // pending_internal_promise can change if hot module reloading is enabled
         let waited = self.event_loop().wait_at_top_level(|| {
-            self.pending_internal_promise().is_none_or(|promise| {
-                crate::JSPromise::status_ptr(promise) != crate::js_promise::Status::Pending
-            })
+            self.pending_internal_promise()
+                .is_none_or(|promise| promise.status() != crate::js_promise::Status::Pending)
         });
         let Err(nothing_left @ crate::event_loop::TopLevelWaitError::NothingLeft) = waited else {
             return None;
@@ -5409,8 +5395,7 @@ impl VirtualMachine {
         );
         // The caller reports it, so keep it away from the unhandled-rejection tracker.
         rejected.set_handled();
-        let rejected = std::ptr::from_mut(rejected);
-        self.set_pending_internal_promise(Some(rejected));
+        self.set_pending_internal_promise(Some(&rejected));
         Some(rejected)
     }
 
@@ -5418,12 +5403,10 @@ impl VirtualMachine {
     pub fn load_entry_point_for_test_runner(
         &self,
         entry_path: &'static [u8],
-    ) -> crate::CrateResult<*mut JSInternalPromise> {
+    ) -> crate::CrateResult<JsLocal<'_, JSPromise>> {
         let promise = self.reload_entry_point_for_test_runner(entry_path)?;
 
-        if !self.is_watcher_enabled()
-            && crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected
-        {
+        if !self.is_watcher_enabled() && promise.status() == crate::js_promise::Status::Rejected {
             return Ok(promise);
         }
         if let Some(rejected) =
@@ -5724,11 +5707,10 @@ impl VirtualMachine {
     pub(crate) fn _load_macro_entry_point(
         &self,
         entry_path: &[u8],
-    ) -> Option<*mut JSInternalPromise> {
+    ) -> Option<JsLocal<'_, JSPromise>> {
         let path_str = bun_core::StringView::from_bytes(entry_path);
-        let promise =
-            jsc::JSModuleLoader::load_and_evaluate_module_ptr(self.global(), &path_str)?.as_ptr();
-        let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
+        let promise = jsc::JSModuleLoader::load_and_evaluate_module(self.global(), &path_str)?;
+        let _ = self.wait_for_promise(&promise);
         Some(promise)
     }
 
@@ -6644,8 +6626,7 @@ impl VirtualMachine {
         // live for this fn.
         let code_string: Option<bun_core::String>;
         let code: Option<&[u8]> = if is_error_instance {
-            // SAFETY: `is_error_instance` ⇒ `get_object()` is `Some`.
-            let obj = unsafe { &mut *error_instance.get_object().unwrap_unchecked() };
+            let obj = error_instance.get_object().expect("an ErrorInstance");
             if let Some(code_value) = obj.get_code_property_vm_inquiry(global_ref) {
                 // Not `is_string()`: converting a String object runs its `toString` /
                 // `Symbol.toPrimitive`. The property loop below prints one.
@@ -6797,8 +6778,7 @@ impl VirtualMachine {
 
         if is_error_instance {
             let mut saw_cause = false;
-            // SAFETY: `is_error_instance` ⇒ object.
-            let error_obj = unsafe { error_instance.get_object().unwrap_unchecked() };
+            let error_obj = error_instance.get_object().expect("an ErrorInstance");
             let iterator = crate::JSPropertyIterator::init(
                 global_ref,
                 error_obj,
@@ -7300,8 +7280,8 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
     const MSG_1: &str = "This error originated either by throwing inside of an async function \
         without a catch block, or by rejecting a promise which was not handled with .catch(). \
         The promise rejected with the reason \"";
-    if reason_str.is_string_literal() {
-        let view = reason_str.as_string().view(global_object)?;
+    if let Some(reason_str) = reason_str.as_string() {
+        let view = reason_str.view(global_object)?;
         return Ok(global_object
             .err(
                 crate::ErrorCode::ERR_UNHANDLED_REJECTION,

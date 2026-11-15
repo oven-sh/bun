@@ -1,7 +1,8 @@
-use crate::{JSGlobalObject, JSInternalPromise, JsError, JsResult};
+use crate::bindgen::JsLocal;
+use crate::{JSGlobalObject, JSPromise, JsError, JsResult};
 use bun_core::String as BunString;
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque FFI handle for JSC's JSModuleLoader.
     pub struct JSModuleLoader;
 }
@@ -9,59 +10,48 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`), and so is `&BunString`.
-    // The returned `*mut JSInternalPromise` is nullable; callers check before deref.
-    safe fn JSC__JSModuleLoader__loadAndEvaluateModule(
-        arg0: &JSGlobalObject,
+    safe fn JSC__JSModuleLoader__loadAndEvaluateModule<'a>(
+        arg0: &'a JSGlobalObject,
         arg1: &BunString,
-    ) -> *mut JSInternalPromise;
-    safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
-        arg0: &JSGlobalObject,
+    ) -> Option<&'a JSPromise>;
+    safe fn JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule<'a>(
+        arg0: &'a JSGlobalObject,
         arg1: &BunString,
-    ) -> *mut JSInternalPromise;
+    ) -> Option<&'a JSPromise>;
 
     // safe: same handle/reference contract as above.
-    safe fn JSModuleLoader__import(
-        arg0: &JSGlobalObject,
+    safe fn JSModuleLoader__import<'a>(
+        arg0: &'a JSGlobalObject,
         arg1: &BunString,
-    ) -> *mut JSInternalPromise;
+    ) -> Option<&'a JSPromise>;
 }
 
 impl JSModuleLoader {
-    /// `JSC::loadAndEvaluateModule`, which takes a key: what is resolved already. Returns the FFI
-    /// `*mut JSInternalPromise` directly so callers that need to store or pass
-    /// a mutable cell pointer don't launder provenance through `&T -> *mut T`.
-    pub fn load_and_evaluate_module_ptr(
-        global_object: &JSGlobalObject,
+    /// `JSC::loadAndEvaluateModule`, which takes a key: what is resolved already.
+    pub fn load_and_evaluate_module<'a>(
+        global_object: &'a JSGlobalObject,
         key: &BunString,
-    ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        core::ptr::NonNull::new(JSC__JSModuleLoader__loadAndEvaluateModule(
-            global_object,
-            key,
-        ))
+    ) -> Option<JsLocal<'a, JSPromise>> {
+        JSC__JSModuleLoader__loadAndEvaluateModule(global_object, key)
+            .map(|promise| promise.to_local(global_object))
     }
 
-    /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module_ptr`]
+    /// `JSModuleLoader::resolve` with no importer, then [`Self::load_and_evaluate_module`]
     /// of the key. `None`, with the exception pending, if it does not resolve either.
-    pub fn resolve_and_load_and_evaluate_module_ptr(
-        global_object: &JSGlobalObject,
+    pub fn resolve_and_load_and_evaluate_module<'a>(
+        global_object: &'a JSGlobalObject,
         module_name: &BunString,
-    ) -> Option<core::ptr::NonNull<JSInternalPromise>> {
-        core::ptr::NonNull::new(JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(
-            global_object,
-            module_name,
-        ))
+    ) -> Option<JsLocal<'a, JSPromise>> {
+        JSC__JSModuleLoader__resolveAndLoadAndEvaluateModule(global_object, module_name)
+            .map(|promise| promise.to_local(global_object))
     }
 
-    /// Raw-pointer variant of `Self::import`. Returns the FFI
-    /// `*mut JSInternalPromise` directly so callers that need to store or pass
-    /// a mutable cell pointer (e.g. `VirtualMachine::pending_internal_promise`)
-    /// don't launder provenance through `&T -> *mut T`. Mirrors
-    /// [`Self::load_and_evaluate_module_ptr`].
-    pub fn import_ptr(
-        global_object: &JSGlobalObject,
+    pub fn import<'a>(
+        global_object: &'a JSGlobalObject,
         module_name: &BunString,
-    ) -> JsResult<core::ptr::NonNull<JSInternalPromise>> {
-        core::ptr::NonNull::new(JSModuleLoader__import(global_object, module_name))
+    ) -> JsResult<JsLocal<'a, JSPromise>> {
+        JSModuleLoader__import(global_object, module_name)
+            .map(|promise| promise.to_local(global_object))
             .ok_or(JsError::Thrown)
     }
 }

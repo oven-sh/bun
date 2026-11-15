@@ -3468,18 +3468,6 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC::EncodedJSValue value
     return std::numeric_limits<double>::infinity();
 }
 
-JSC::JSPromise* JSC__JSValue__asInternalPromise(JSC::EncodedJSValue JSValue0)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return dynamicDowncast<JSC::JSPromise>(value);
-}
-
-JSC::JSPromise* JSC__JSValue__asPromise(JSC::EncodedJSValue JSValue0)
-{
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
-    return dynamicDowncast<JSC::JSPromise>(value);
-}
-
 JSC::EncodedJSValue JSC__JSValue__createInternalPromise(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -3888,7 +3876,6 @@ JSC::JSObject* JSC__JSCell__getObject(JSC::JSCell* arg0)
 {
     return arg0->getObject();
 }
-unsigned char JSC__JSCell__getType(JSC::JSCell* arg0) { return arg0->type(); }
 
 JSC::JSObject* JSC__JSCell__toObject(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject)
 {
@@ -4438,13 +4425,10 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC::JSGlobalObject* globalObject,
 }
 #pragma mark - JSC::JSPromise
 
-void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue encodedPromise, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))
+void JSC__JSPromise__settleWith(JSC::JSPromise* promise, JSC::JSGlobalObject* globalObject, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    JSValue promiseValue = JSC::JSValue::decode(encodedPromise);
-    ASSERT(!promiseValue.isEmpty());
 
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
@@ -4453,32 +4437,19 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
         if (!scope.tryClearException())
             return;
 
-        if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, exception->value());
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-
-        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
-    }
-
-    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
-        if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-            promise->reject(vm, errorInstance);
-            RETURN_IF_EXCEPTION(scope, );
-            return;
-        }
-
-        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
-    }
-
-    if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
-        promise->resolve(globalObject, vm, result);
+        promise->reject(vm, exception->value());
         RETURN_IF_EXCEPTION(scope, );
         return;
     }
 
-    ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(result)) {
+        promise->reject(vm, errorInstance);
+        RETURN_IF_EXCEPTION(scope, );
+        return;
+    }
+
+    promise->resolve(globalObject, vm, result);
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void* ctx, JSC::EncodedJSValue (*func)(void*, JSC::JSGlobalObject*))
@@ -4788,12 +4759,6 @@ extern "C" void Bun__releaseRejectedPromises(Zig::GlobalObject* globalObject, si
 
 #pragma mark - JSC::JSValue
 
-JSC::JSString* JSC__JSValue__asString(JSC::EncodedJSValue JSValue0)
-{
-    auto value = JSC::JSValue::decode(JSValue0);
-    return JSC::asString(value);
-};
-
 bool JSC__JSValue__eqlCell(JSC::EncodedJSValue JSValue0, JSC::JSCell* arg1)
 {
     return JSC::JSValue::decode(JSValue0) == arg1;
@@ -4985,7 +4950,9 @@ void JSC__JSValue__forEach(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* ar
 }
 __attribute__((__always_inline__)) JSC::EncodedJSValue JSC__JSValue__jsNumberFromDouble(double arg0)
 {
-    return JSC::JSValue::encode(JSC::jsNumber(arg0));
+    if (auto int32Value = tryConvertToStrictInt32(arg0))
+        return JSC::JSValue::encode(JSC::jsNumber(*int32Value));
+    return JSC::JSValue::encode(JSC::jsDoubleNumber(JSC::purifyNaN(arg0)));
 }
 JSC::EncodedJSValue JSC__JSValue__jsNumberFromInt32(int32_t arg0)
 {
@@ -6972,7 +6939,7 @@ extern "C" [[ZIG_EXPORT(check_slow)]] int32_t Bun__Temporal__toTOMLDateTime(JSC:
 extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNumber(JSC::JSGlobalObject* globalObject, double unixTimestamp)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSC::DateInstance* date = JSC::DateInstance::create(vm, globalObject->dateStructure(), unixTimestamp);
+    JSC::DateInstance* date = JSC::DateInstance::create(vm, globalObject->dateStructure(), JSC::purifyNaN(unixTimestamp));
     return JSValue::encode(date);
 }
 

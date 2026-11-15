@@ -130,8 +130,6 @@ pub mod common_strings;
 pub mod console_object;
 #[path = "Counters.rs"]
 pub mod counters;
-#[path = "DecodedJSValue.rs"]
-pub mod decoded_js_value;
 #[path = "DOMURL.rs"]
 pub mod dom_url;
 #[path = "EncodedSlice.rs"]
@@ -199,9 +197,6 @@ pub use self::console_object::formatter::Tag as FormatTag;
 pub use self::console_object::formatter::Tag as FormatAs;
 pub use self::js_array_iterator::JSArrayIterator;
 pub use self::js_promise::JSPromise;
-/// `JSInternalPromise` was removed upstream; the module loader uses `JSPromise`
-/// everywhere now. Alias kept for existing call sites.
-pub use self::js_promise::JSPromise as JSInternalPromise;
 pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
@@ -344,7 +339,6 @@ impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
 }
 
 pub use self::counters::Counters;
-pub use self::decoded_js_value::DecodedJSValue;
 pub use self::js_array::JSArray;
 pub use self::js_ref::JsRef;
 pub use self::string_builder::StringBuilder;
@@ -426,8 +420,6 @@ pub mod virtual_machine_exports;
 
 #[rustfmt::skip]
 #[path = "host_fn.rs"] pub mod host_fn;
-#[path = "AnyPromise.rs"]
-pub mod any_promise;
 #[path = "BytecodeOrderRecorder.rs"]
 pub mod bytecode_order_recorder;
 #[path = "CachedBytecode.rs"]
@@ -1001,9 +993,6 @@ pub use bun_core::String;
 /// `VirtualMachine` struct itself.
 pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
-/// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
-pub use self::any_promise::AnyPromise;
-
 pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
 
 /// `JSPromise.Unwrapped` — surfaced at the crate root as
@@ -1011,7 +1000,7 @@ pub use self::js_promise::UnwrapMode as PromiseUnwrapMode;
 /// via `jsc::PromiseResult::{Pending,Fulfilled,Rejected}`).
 pub use self::js_promise::Unwrapped as PromiseResult;
 
-// `JSPropertyIteratorOptions` / `PropertyIteratorOptions` / `IntoIterObject` are
+// `JSPropertyIteratorOptions` / `PropertyIteratorOptions` are
 // defined in `js_property_iterator` and re-exported below alongside
 // `JSPropertyIterator`.
 
@@ -1232,7 +1221,7 @@ pub use self::web_worker::WebWorker;
 // instead of routing through `bun_jsc`. No alias is exported here.
 
 pub use self::js_property_iterator::{
-    IntoIterObject, JSPropertyIterator, JSPropertyIteratorOptions, PropertyIteratorOptions,
+    JSPropertyIterator, JSPropertyIteratorOptions, PropertyIteratorOptions,
 };
 
 #[path = "event_loop.rs"]
@@ -1304,19 +1293,6 @@ pub fn mark_binding() {
     if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {
         let loc = core::panic::Location::caller();
         bun_core::Global::JSC_SCOPE.log(format_args!("[jsc] ({}:{})\n", loc.file(), loc.line()));
-    }
-}
-
-/// Like [`mark_binding`], with a class-name prefix.
-#[inline]
-pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Location<'static>) {
-    if bun_core::env::IS_DEBUG && bun_core::Global::JSC_SCOPE.is_visible() {
-        bun_core::Global::JSC_SCOPE.log(format_args!(
-            "[jsc] {} ({}:{})\n",
-            class,
-            src.file(),
-            src.line()
-        ));
     }
 }
 

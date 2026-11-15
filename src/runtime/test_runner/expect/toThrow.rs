@@ -118,7 +118,7 @@ impl Expect {
                 let received_message: JSValue = (if result.is_object() {
                     result.fast_get(global, bun_jsc::BuiltinName::Message)?
                 } else {
-                    Some(JSValue::from_cell(result.to_js_string(global)?))
+                    Some(result.to_js_string(global)?.to_js())
                 })
                 .unwrap_or(JSValue::UNDEFINED);
 
@@ -146,7 +146,7 @@ impl Expect {
                 let received_message: JSValue = (if result.is_object() {
                     result.fast_get(global, bun_jsc::BuiltinName::Message)?
                 } else {
-                    Some(JSValue::from_cell(result.to_js_string(global)?))
+                    Some(result.to_js_string(global)?.to_js())
                 })
                 .unwrap_or(JSValue::UNDEFINED);
 
@@ -173,7 +173,7 @@ impl Expect {
                 let received_message: JSValue = (if result.is_object() {
                     result.fast_get(global, bun_jsc::BuiltinName::Message)?
                 } else {
-                    Some(JSValue::from_cell(result.to_js_string(global)?))
+                    Some(result.to_js_string(global)?.to_js())
                 })
                 .unwrap_or(JSValue::UNDEFINED);
 
@@ -236,7 +236,7 @@ impl Expect {
             let received_message_opt: Option<JSValue> = if result.is_object() {
                 result.fast_get(global, bun_jsc::BuiltinName::Message)?
             } else {
-                Some(JSValue::from_cell(result.to_js_string(global)?))
+                Some(result.to_js_string(global)?.to_js())
             };
 
             if expected_value.is_string() {

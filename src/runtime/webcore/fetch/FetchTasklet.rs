@@ -133,7 +133,7 @@ use http::signals::BodyReceiveMode;
 pub struct FetchTasklet {
     /// The JS controller holds a detachable back-pointer into it.
     sink: Option<AliasableBox<FetchRequestBodySink>>,
-    /// `None` while it drops.
+    /// `None` before the request is built and in `drop`.
     async_http_id: Option<u32>,
     method: Method,
     pub(crate) result: HTTPClientResult<'static>,
@@ -147,7 +147,7 @@ pub struct FetchTasklet {
     js_ref: Option<RefPtr<FetchTasklet>>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
-    /// This side's ref; the HTTP thread holds the other of the two initial refs.
+    /// This side's ref; the HTTP thread holds the other.
     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
 
     /// buffer used to stream response to JS
@@ -1943,13 +1943,13 @@ impl FetchTasklet {
             if !fetch_tasklet.upgraded_connection {
                 fetch_tasklet.declared_request_body_len = framing.content_length;
             }
-            let [ours, theirs] = ThreadSafeStreamBuffer::new(
+            let buffer = ThreadSafeStreamBuffer::new(
                 FetchTasklet::on_write_request_data_drain,
                 fetch_tasklet_ptr,
             );
-            fetch_tasklet.request_body_streaming_buffer = Some(ours);
+            fetch_tasklet.request_body_streaming_buffer = Some(buffer.clone());
             http.request_body = http::HTTPRequestBody::Stream(http::http_request_body::Stream {
-                buffer: Some(theirs),
+                buffer: Some(buffer),
                 ended: false,
                 framing,
             });
@@ -2272,7 +2272,11 @@ impl FetchTasklet {
     /// # Safety
     /// `task` must be a live heap-allocated `FetchTasklet` with the
     /// HTTP-thread ref still held.
-    fn callback(task: *mut FetchTasklet, finished: http::Finished, result: HTTPClientResult) {
+    fn callback(
+        task: *mut FetchTasklet,
+        finished: Option<http::FinishedRequest>,
+        result: HTTPClientResult,
+    ) {
         drop(finished);
         let is_done = !result.has_more;
         // SAFETY: fn contract; `http_ref` is HTTP-thread-only.

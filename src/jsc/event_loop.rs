@@ -17,6 +17,7 @@ use bun_io as Async;
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
+use crate::spawn_sync_event_loop::SuppressMicrotaskDrain;
 use crate::virtual_machine::VirtualMachine;
 use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 
@@ -86,7 +87,7 @@ pub struct EventLoop {
     plugin_request_refills_left: Cell<u32>,
     /// Set only on Bun.spawnSync's isolated loop: how other threads reach *this*
     /// loop's queue (the VM's handle names only the VM's own two loops).
-    pub(crate) isolated_poster: OnceCell<std::sync::Arc<crate::vm_handle::IsolatedPosterInner>>,
+    pub(crate) isolated_poster: OnceCell<std::sync::Arc<crate::vm_handle::IsolatedPoster>>,
     // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub(crate) global: Cell<Option<NonNull<JSGlobalObject>>>,
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
@@ -99,7 +100,7 @@ pub struct EventLoop {
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     /// The uws loop this `EventLoop` runs on: the process loop for the VM's
     /// embedded loops, a private one for a spawnSync loop. Set by
-    /// `ensure_waker` / `new_on`.
+    /// `ensure_waker` / `with_uws_loop`.
     uws_loop: Cell<Option<&'static uws::Loop>>,
 
     entered_event_loop_count: Cell<isize>,
@@ -157,7 +158,7 @@ impl EventLoop {
     }
 
     /// A loop of `vm` that runs on `uws_loop`.
-    pub(crate) fn new_on(vm: &VirtualMachine, uws_loop: &'static uws::Loop) -> Self {
+    pub(crate) fn with_uws_loop(vm: &VirtualMachine, uws_loop: &'static uws::Loop) -> Self {
         Self {
             global: Cell::new(NonNull::new(vm.global.get())),
             uws_loop: Cell::new(Some(uws_loop)),
@@ -165,10 +166,10 @@ impl EventLoop {
         }
     }
 
-    /// For the handles of the crates that cannot name this type.
+    /// For the crates that cannot name this type.
     #[inline]
-    pub fn as_erased_ptr(&self) -> *mut () {
-        core::ptr::from_ref(self).cast_mut().cast()
+    pub fn as_handle(&self) -> EventLoopHandle {
+        EventLoopHandle::init(core::ptr::from_ref(self).cast_mut().cast())
     }
 }
 
@@ -865,13 +866,11 @@ impl EventLoop {
         self.tick_concurrent();
 
         let vm = self.vm_ref();
-        let prev = vm.suppress_microtask_drain.replace(true);
+        let _suppress = SuppressMicrotaskDrain::new(vm);
 
         while let Ok(1..) = self.tick_with_count(vm) {
             self.tick_concurrent();
         }
-
-        vm.suppress_microtask_drain.set(prev);
     }
 
     /// Teardown has released the queue (after forbidding script); tasks arriving now are released on
@@ -990,29 +989,8 @@ impl EventLoop {
         }
     }
 
-    pub fn deinit(&mut self) {
-        // Everything queued was released by `release_queued_tasks` (which
-        // also made later enqueues release on arrival) and refused posts never
-        // reach `concurrent_tasks`; nothing can be left to leak with the VM box.
-        debug_assert!(
-            self.tasks.get_mut().readable_length() == 0
-                && self.concurrent_tasks.is_empty()
-                && self.plugin_requests.get_mut().readable_length() == 0
-                && self.concurrent_plugin_requests.is_empty(),
-            "queued tasks must be released (release_queued_tasks) before the loop is destroyed"
-        );
-        debug_assert!(
-            self.immediate_tasks.get_mut().is_empty(),
-            "pending immediates must be released (release_queued_tasks) while the loop is alive"
-        );
-        *self.tasks.get_mut() = Queue::init();
-        *self.plugin_requests.get_mut() = Queue::init();
-        // Free the deferred-task map's storage. The tasks must not be run, and an
-        // entry owns nothing but a `Copy` ctx pointer whose owner released it when
-        // the JSC teardown before this finalized it. A worker's VM box is
-        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing
-        // else frees it.
-        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
+    pub(crate) fn is_drained(&self) -> bool {
+        !self.has_pending_tasks() && self.immediate_task_count() == 0
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -1108,7 +1086,7 @@ impl EventLoop {
             vm.event_loop_handle.set(Some(Async::Loop::get()));
             vm.gc_controller.init(vm);
         }
-        EventLoopHandle::init(self.as_erased_ptr()).set_as_parent_of(uws::Loop::get());
+        self.as_handle().set_as_parent_of(uws::Loop::get());
     }
 
     /// Asynchronously run the garbage collector and track how much memory is now allocated
@@ -1226,7 +1204,7 @@ impl EventLoop {
     /// loop's own poster for a spawnSync loop.
     pub fn js_poster(&self) -> bun_event_loop::JsPoster {
         match self.isolated_poster.get() {
-            Some(p) => std::sync::Arc::<crate::vm_handle::IsolatedPosterInner>::clone(p),
+            Some(p) => std::sync::Arc::<crate::vm_handle::IsolatedPoster>::clone(p),
             None => self.vm_ref().js_poster(),
         }
     }
@@ -1260,7 +1238,7 @@ impl EventLoop {
         // `swap_global_for_test_isolation`, `SpawnSyncEventLoop`), so
         // read it directly instead of the vm→global dependent-load chain.
         // SAFETY: set before the loop is handed out or given a task (`VirtualMachine::init`,
-        // `enable_macro_mode`, `EventLoop::new_on`); the JSGlobalObject is
+        // `enable_macro_mode`, `EventLoop::with_uws_loop`); the JSGlobalObject is
         // GC-rooted and outlives the EventLoop.
         unsafe { self.global.get().unwrap_unchecked().as_ref() }
     }

@@ -96,7 +96,7 @@ impl PackageManager {
         }
     }
 
-    /// Callers gate on `options.log_level.show_progress()`, as what sets it does.
+    /// Panics unless a progress bar is running.
     pub(crate) fn downloads_node(&self) -> NodeId {
         self.downloads_node.expect("downloads_node active")
     }
@@ -125,7 +125,7 @@ impl PackageManager {
     }
 
     /// For a linker that has `to_install` packages to install.
-    pub(crate) fn start_link_progress(&mut self, to_install: usize) {
+    pub(crate) fn start_install_progress_bar(&mut self, to_install: usize) {
         let progress = &mut self.progress;
         progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
         progress.start(b"", 0);

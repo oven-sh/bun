@@ -410,7 +410,7 @@ pub(crate) fn writable_stream(
     // MultiPartUpload.
     let global_static = GlobalRef::from(cx.global());
     let task = RefPtr::new(MultiPartUpload {
-        unfinished: Cell::new(None),
+        self_ref: Cell::new(None),
         queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
@@ -442,7 +442,7 @@ pub(crate) fn writable_stream(
         state: Cell::new(MultiPartUploadState::NotStarted),
         callback: JsCell::new(None), // assigned below
     });
-    task.unfinished.set(Some(task.clone()));
+    task.self_ref.set(Some(task.clone()));
 
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
@@ -718,7 +718,7 @@ pub(crate) fn upload_stream(
     // SAFETY (JSC_BORROW): see `writable_stream` for rationale.
     let global_static = GlobalRef::from(cx.global());
     let task = RefPtr::new(MultiPartUpload {
-        unfinished: Cell::new(None),
+        self_ref: Cell::new(None),
         queue: OnceCell::new(),
         available: Cell::new(IntegerBitSet::init_full()),
         current_part_number: Cell::new(1),
@@ -749,7 +749,7 @@ pub(crate) fn upload_stream(
         state: Cell::new(MultiPartUploadState::WaitStreamCheck),
         callback: JsCell::new(None), // assigned below
     });
-    task.unfinished.set(Some(task.clone()));
+    task.self_ref.set(Some(task.clone()));
 
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };

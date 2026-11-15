@@ -22,5 +22,6 @@ bun_dotenv.workspace = true
 bun_js_parser.workspace = true
 bun_jsc.workspace = true
 bun_ast.workspace = true
+bun_ptr.workspace = true
 bun_resolver.workspace = true
 thiserror.workspace = true

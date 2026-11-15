@@ -76,7 +76,7 @@ pub(crate) type WatcherSlot = bun_jsc::JsCell<Option<posix::MemoryPressureWatche
 pub(crate) type WatcherSlot = bun_jsc::JsCell<Option<windows::MemoryPressureWatcher>>;
 
 fn slot(vm: &VirtualMachine) -> &WatcherSlot {
-    &crate::jsc_hooks::state_of(vm).memory_pressure_watcher
+    &crate::jsc_hooks::runtime_state_of(vm).memory_pressure_watcher
 }
 
 // ────────────────────────────────────────────────────────────────────────────

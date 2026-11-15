@@ -1,18 +1,18 @@
 use crate::mysql::mysql_types::FieldType;
 use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::encode_int::decode_length_int;
-use crate::mysql::protocol::new_reader::PacketReader;
+use crate::mysql::protocol::packet_reader::PacketReader;
 use crate::shared::column_identifier::ColumnIdentifier;
-use crate::shared::data::Data;
 use bstr::BStr;
+use bun_collections::smallvec::SmallVec;
 
 bun_core::declare_scope!(ColumnDefinition41, hidden);
 
 pub struct ColumnDefinition41 {
     /// A copy: it is read after the packet is gone.
-    pub table: Data,
+    pub table: SmallVec<[u8; 16]>,
     /// A copy of the name on the wire, which `name_or_index` is made from.
-    name: Option<Data>,
+    name: Option<SmallVec<[u8; 16]>>,
     pub character_set: u16,
     pub column_length: u32,
     pub column_type: FieldType,
@@ -24,7 +24,7 @@ pub struct ColumnDefinition41 {
 impl Default for ColumnDefinition41 {
     fn default() -> Self {
         Self {
-            table: Data::empty(),
+            table: SmallVec::new(),
             name: None,
             character_set: 0,
             column_length: 0,
@@ -123,9 +123,9 @@ impl ColumnDefinition41 {
 
         let table = reader.encode_len_string()?;
         bun_core::scoped_log!(ColumnDefinition41, "table: {}", BStr::new(table));
-        let mut described_differently = self.table.slice() != table;
+        let mut described_differently = self.table.as_slice() != table;
         if described_differently {
-            self.table = Data::create(table).map_err(|_| AnyMySQLError::OutOfMemory)?;
+            self.table = SmallVec::from_slice(table);
         }
 
         let org_table = reader.encode_len_string()?;
@@ -182,12 +182,9 @@ impl ColumnDefinition41 {
 
         // The server re-sends column definitions on every COM_STMT_EXECUTE, so a
         // reused prepared statement re-decodes into the same slot once per query.
-        let renamed = self
-            .name
-            .as_ref()
-            .is_none_or(|previous| previous.slice() != name);
+        let renamed = self.name.as_deref() != Some(name);
         if renamed {
-            self.name = Some(Data::create(name).map_err(|_| AnyMySQLError::OutOfMemory)?);
+            self.name = Some(SmallVec::from_slice(name));
             self.name_or_index = ColumnIdentifier::init(name.into());
         }
 

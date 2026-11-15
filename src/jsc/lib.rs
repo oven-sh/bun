@@ -16,6 +16,7 @@
 // `Tag` is a fieldless enum, so this is the structural-match subset of the
 // feature.
 #![feature(adt_const_params)]
+#![feature(core_io_borrowed_buf)]
 // `#[thread_local]` for the per-JS-thread VM holder and adjacent hot
 // per-callback statics — bare `__thread`/`.tbss` instead of the
 // `thread_local!` macro's `LocalKey::__getit` wrapper. node:http perf showed
@@ -350,7 +351,7 @@ pub use self::uuid::{UUID, UUID5, UUID7};
 
 pub use self::js_function::JSFunction;
 pub use self::js_module_loader::JSModuleLoader;
-pub use self::strong::{Optional as StrongOptional, Strong};
+pub use self::strong::{Optional as StrongOptional, Strong, StrongCell};
 pub use self::weak::{Weak, WeakRefType};
 
 pub use self::exception::Exception;

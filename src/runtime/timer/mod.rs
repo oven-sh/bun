@@ -506,15 +506,7 @@ pub(crate) struct HotRun {
 /// its generation (see [`All::open_drain`]).
 struct Drain {
     now: Timespec,
-    generation: Option<Generation>,
-}
-
-/// An open drain generation: the stamp of the timers armed while it is open, and `drain_seq` to restore when it
-/// closes (the enclosing drain's generation, or 0).
-#[derive(Clone, Copy)]
-struct Generation {
-    seq: u32,
-    outer: u32,
+    seq: Option<u32>,
 }
 
 /// Timers fire JavaScript that schedules and clears timers, so this is only ever shared.
@@ -538,11 +530,9 @@ pub(crate) struct All {
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: Cell<u32>,
-    /// The last drain generation handed out. Never reused.
-    drain_seq_counter: Cell<u32>,
-    /// The generation of the innermost open drain, or of its parent when none is open (0 at the top level). A timer
-    /// armed now gets this stamp, see `EventLoopTimer::armed_in_drain`. Atomic because `wtf_arm` runs on any
-    /// thread. Written only on the JS thread.
+    /// The last drain generation opened, see [`All::open_drain`]. A timer armed now gets it as its stamp
+    /// (`EventLoopTimer::armed_in_drain`). Atomic because `wtf_arm` runs on any thread. Written only on the JS
+    /// thread.
     drain_seq: AtomicU32,
     pub(crate) immediate_ref_count: Cell<i32>,
     #[cfg(windows)]
@@ -568,7 +558,6 @@ impl All {
             warned_not_number: Cell::new(false),
             zero_delay_is_due_when_idle: Cell::new(false),
             epoch: Cell::new(0),
-            drain_seq_counter: Cell::new(0),
             drain_seq: AtomicU32::new(0),
             immediate_ref_count: Cell::new(0),
             #[cfg(windows)]
@@ -821,18 +810,19 @@ impl All {
         }
     }
 
-    /// Opens a drain generation. Timers armed until [`Self::close_drain`] carry its stamp, and the drain leaves
-    /// them in the heap.
-    fn open_drain(&self) -> Generation {
-        let outer = self.drain_seq.load(Ordering::Relaxed);
-        let seq = self.drain_seq_counter.get().wrapping_add(1);
-        self.drain_seq_counter.set(seq);
+    /// Opens a drain generation: the stamp of every timer armed from now until the next generation opens. The
+    /// generations are consecutive, so the timers armed while a drain runs are the ones stamped from its own
+    /// generation up to the latest one (a nested drain opens later generations). A drain leaves those timers in
+    /// the heap, see [`Self::armed_in_drain`].
+    fn open_drain(&self) -> u32 {
+        let seq = self.drain_seq.load(Ordering::Relaxed).wrapping_add(1);
         self.drain_seq.store(seq, Ordering::Relaxed);
-        Generation { seq, outer }
+        seq
     }
 
-    fn close_drain(&self, generation: Generation) {
-        self.drain_seq.store(generation.outer, Ordering::Relaxed);
+    /// Whether a timer with `stamp` was armed since the drain with generation `seq` opened.
+    fn armed_in_drain(&self, stamp: u32, seq: u32) -> bool {
+        stamp.wrapping_sub(seq) <= self.drain_seq.load(Ordering::Relaxed).wrapping_sub(seq)
     }
 
     fn drain_due_wtf_timers(
@@ -840,20 +830,7 @@ impl All {
         maybe_now: &mut Option<Timespec>,
         vm: &VirtualMachine,
     ) -> Option<Timespec> {
-        let mut generation = None;
-        let next = self.drain_due_wtf_timers_in(maybe_now, &mut generation, vm);
-        if let Some(generation) = generation {
-            self.close_drain(generation);
-        }
-        next
-    }
-
-    fn drain_due_wtf_timers_in(
-        &self,
-        maybe_now: &mut Option<Timespec>,
-        generation: &mut Option<Generation>,
-        vm: &VirtualMachine,
-    ) -> Option<Timespec> {
+        let mut seq: Option<u32> = None;
         loop {
             let min = {
                 let wtf = self.wtf_timers.lock();
@@ -865,9 +842,9 @@ impl All {
                 if min_next.greater(&now) {
                     return Some(min_next);
                 }
-                let generation = *generation.get_or_insert_with(|| self.open_drain());
+                let seq = *seq.get_or_insert_with(|| self.open_drain());
                 // SAFETY: as above.
-                if unsafe { (*min).armed_in_drain.get() } == generation.seq {
+                if self.armed_in_drain(unsafe { (*min).armed_in_drain.get() }, seq) {
                     return Some(min_next);
                 }
                 let min = wtf.delete_min().expect("peek succeeded");
@@ -984,17 +961,14 @@ impl All {
             if first.is_due_when_idle.get() && first.next.get().greater(&now) {
                 now = first.next.get();
             }
-            Drain {
-                now,
-                generation: None,
-            }
+            Drain { now, seq: None }
         });
         if first.next.get().greater(&drain.now) {
             return None;
         }
-        let generation = *drain.generation.get_or_insert_with(|| self.open_drain());
+        let seq = *drain.seq.get_or_insert_with(|| self.open_drain());
         // Due by this drain's reading of the clock, but armed from a later one. The next turn's reading decides.
-        if first.armed_in_drain.get() == generation.seq {
+        if self.armed_in_drain(first.armed_in_drain.get(), seq) {
             return None;
         }
         Some((self.timers.delete_min()?, drain.now))
@@ -1017,9 +991,6 @@ impl All {
             if fold_timer(vm, fired).is_err() {
                 break;
             }
-        }
-        if let Some(generation) = drain.and_then(|drain| drain.generation) {
-            self.close_drain(generation);
         }
     }
 

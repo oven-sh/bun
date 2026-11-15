@@ -876,6 +876,30 @@ it("a timer that a timer callback arms fires inside the nested event loop of Bun
   expect(built).toBe(true);
 });
 
+it("a timer that a timer callback arms waits for the next turn, even one whose _idleStart puts it in the past", async () => {
+  // A drain fires the timers due by the one clock reading it took when it began. A timer armed by one of its
+  // callbacks is not among them, whatever its deadline says: the immediates run first.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const order = [];
+       setTimeout(() => {
+         const t = setTimeout(() => order.push("backdated timeout"), 1);
+         t._idleStart = 0;
+         setImmediate(() => order.push("immediate"));
+       }, 1);
+       setTimeout(() => console.log(order.join(",")), 30);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("immediate,backdated timeout\n");
+  expect(exitCode).toBe(0);
+});
+
 describe("a delay of 0", () => {
   it("does not wait for Node's minimum of 1 ms in bun test", async () => {
     let fired = false;

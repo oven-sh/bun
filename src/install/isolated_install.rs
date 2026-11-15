@@ -2501,7 +2501,7 @@ pub(crate) fn install_isolated_packages(
 
                     let ctx = install::TaskCallbackContext::IsolatedPackageInstallContext(entry_id);
 
-                    match package_manager::enqueue_package_for_cache(
+                    match package_manager::enqueue_install_task(
                         installer.manager_mut(),
                         dep_id,
                         pkg_id,

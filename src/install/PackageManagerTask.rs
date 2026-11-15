@@ -188,7 +188,7 @@ impl Task {
                 Job::PackageManifest {
                     name,
                     network,
-                    save_through,
+                    temp_dir,
                     manifest,
                 } => {
                     // Take ownership so the
@@ -234,7 +234,7 @@ impl Task {
                         &mut this.log,
                         name.slice(),
                         loaded_manifest.take(),
-                        *save_through,
+                        *temp_dir,
                         *is_extended_manifest,
                     ) {
                         Ok(v) => v,
@@ -379,7 +379,7 @@ pub(crate) enum Job {
         name: StringOrTinyString,
         network: &'static mut NetworkTask,
         /// `None` if the manifest cache is off or cannot be written.
-        save_through: Option<&'static TemporaryDirectory>,
+        temp_dir: Option<&'static TemporaryDirectory>,
         manifest: Option<npm::PackageManifest>,
     },
     Extract {

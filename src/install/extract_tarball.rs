@@ -12,7 +12,7 @@ use bun_sys::{self as sys, Dir, Fd};
 use bun_archive::{ArchiveAppender, ExtractOptions};
 use bun_install::install::{self as Install, DependencyID, ExtractData};
 use bun_install::integrity::Integrity;
-use bun_install::npm::{self as Npm, registry::FolderTag};
+use bun_install::npm::{self as Npm, registry::FolderCacheKey};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories::{self, CacheDirectory};
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
@@ -42,7 +42,7 @@ pub struct ExtractTarball {
     /// it); empty on a fresh resolve, which uses the archive's root dir name.
     pub(crate) github_resolved: &'static [u8],
     /// For an npm resolution. `None` is the default registry.
-    pub(crate) registry: Option<FolderTag>,
+    pub(crate) registry: Option<FolderCacheKey>,
 }
 
 impl ExtractTarball {
@@ -515,11 +515,11 @@ impl ExtractTarball {
                         );
                         return Err(crate::Error::InstallFailed);
                     }
-                    directories::npm_package_folder_name_print(
-                        self.registry,
+                    directories::cached_npm_package_folder_name_print(
                         &mut bufs.folder_name_buf,
                         name,
                         self.resolution.npm().version,
+                        self.registry,
                         None,
                     )
                 }

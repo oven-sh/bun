@@ -9,7 +9,7 @@ use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::call_frame::CallerSrcLoc;
 use bun_jsc::js_promise::{Status, UnwrapMode, Unwrapped};
 use bun_jsc::{
-    AnyPromise, JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
+    JSFunction, JSGlobalObject, JSHostFn, JSPromise, JSValue,
     JsClass as _, JsError, JsResult, Strong,
 };
 use bun_ptr::{CellExt as _, VecCellExt as _};
@@ -35,17 +35,17 @@ pub(crate) struct MatcherCall<'a> {
 unsafe extern "C" {
     safe fn ExpectDeferred__callWhenSettled(
         global: &JSGlobalObject,
-        promise: JSValue,
+        promise: &JSPromise,
         function: JSValue,
         deferred: JSValue,
     );
     safe fn ExpectDeferred__then(
         global: &JSGlobalObject,
-        promise: JSValue,
+        promise: &JSPromise,
         on_fulfilled: JSValue,
     ) -> JSValue;
     safe fn ExpectDeferred__takeThrown(global: &JSGlobalObject) -> JSValue;
-    safe fn ExpectDeferred__isHandled(promise: JSValue) -> bool;
+    safe fn ExpectDeferred__isHandled(promise: &JSPromise) -> bool;
     safe fn ExpectDeferred__captureCallSite(global: &JSGlobalObject) -> JSValue;
     safe fn ExpectDeferred__continueStackAt(
         global: &JSGlobalObject,
@@ -504,24 +504,25 @@ impl Pass {
         Self::return_or_throw(global, threw, value)
     }
 
-    pub(crate) fn settled(
-        global: &JSGlobalObject,
+    pub(crate) fn settled<'a>(
+        global: &'a JSGlobalObject,
         question: Question,
         ask: &mut dyn FnMut() -> JsResult<JSValue>,
-    ) -> JsResult<Option<AnyPromise>> {
-        let Some(promise) = Self::once(global, question, ask)?.as_any_promise() else {
+    ) -> JsResult<Option<JsLocal<'a, JSPromise>>> {
+        let answer = Self::once(global, question, ask)?;
+        let Some(promise) = answer.as_promise() else {
             return Ok(None);
         };
         if promise.status() == Status::Pending {
             return Err(Self::wait_for(global, promise));
         }
-        Ok(Some(promise))
+        Ok(Some(promise.to_local(global)))
     }
 
     /// Throws an `ExpectDeferred`, which makes the running matcher return a promise and re-run once `promise` settles.
     /// `promise` must come from `once()`, so the re-run sees the same one.
     #[cold]
-    pub(crate) fn wait_for(global: &JSGlobalObject, promise: AnyPromise) -> JsError {
+    pub(crate) fn wait_for(global: &JSGlobalObject, promise: &JSPromise) -> JsError {
         let Some(pass) = Self::current() else {
             return global.throw(format_args!(
                 "An async matcher only works inside an expect() matcher, which then returns a promise: await expect(received).toEqual(expected)"
@@ -534,7 +535,7 @@ impl Pass {
         let deferred = pass
             .replayed()
             .unwrap_or_else(|| ExpectDeferred::waiting(global));
-        js::awaited_set_cached(deferred, global, promise.as_value());
+        js::awaited_set_cached(deferred, global, promise.to_js());
         js::journal_set_cached(deferred, global, journal);
         global.throw_value(deferred)
     }
@@ -594,7 +595,8 @@ impl ExpectDeferred {
         global: &JSGlobalObject,
         call: &MatcherCall<'_>,
     ) -> JsResult<JSValue> {
-        let Some(awaited) = js::awaited_get_cached(thrown) else {
+        let awaited = js::awaited_get_cached(thrown);
+        let Some(awaited) = awaited.as_ref().and_then(JSValue::as_promise) else {
             return Ok(JSValue::UNDEFINED);
         };
         let when_settled = private_function(global, generated::Bun__ExpectDeferred__onSettled);
@@ -679,10 +681,9 @@ impl ExpectDeferred {
             }
         };
 
-        let Some(promise_ptr) = promise.as_promise() else {
+        let Some(settle) = promise.as_promise() else {
             return Ok(());
         };
-        let settle = JSPromise::opaque_mut(promise_ptr);
         let held = this.held.take();
         let error = match result {
             Ok(returned) if returned == promise => {
@@ -708,7 +709,7 @@ impl ExpectDeferred {
             ExpectDeferred__continueStackAt(global, error, call_site);
         }
         match held {
-            Some(held) if !ExpectDeferred__isHandled(promise) => {
+            Some(held) if !ExpectDeferred__isHandled(settle) => {
                 held.release(global, Some(error));
                 settle.reject_as_handled(global, error)
             }
@@ -751,7 +752,7 @@ impl ExpectDeferred {
                 continue;
             }
             let is_handled = js::promise_get_cached(deferred)
-                .is_some_and(ExpectDeferred__isHandled);
+                .is_some_and(|promise| promise.as_promise().is_some_and(ExpectDeferred__isHandled));
             crate::dispatch::fold(this.abandon(global, deferred, Some(buntest)));
             if is_handled {
                 continue;
@@ -779,11 +780,12 @@ impl ExpectDeferred {
         if let Some(index) = held.and_then(|held| held.unclaimed) {
             buntest.unclaimed.remove(index);
         }
-        let Some(promise) = js::promise_get_cached(deferred).and_then(JSValue::as_promise) else {
+        let promise = js::promise_get_cached(deferred);
+        let Some(promise) = promise.as_ref().and_then(JSValue::as_promise) else {
             return Ok(());
         };
         let error = buntest.unclaimed.ended_error(global);
-        JSPromise::opaque_mut(promise).reject_as_handled(global, error)
+        promise.reject_as_handled(global, error)
     }
 
     pub(crate) fn settle_ended(buntest: &BunTest, global: &JSGlobalObject) -> JsResult<()> {
@@ -874,7 +876,7 @@ pub(crate) fn poll_once(cx: &mut JsScope<'_>, callback: JsLocal<'_>, check: JsLo
     let (function, check) = (callback.to_js(), check.to_js());
     let value = function.call(global, JSValue::UNDEFINED, &[])?;
     match Expect::promise_to_await(global, value)? {
-        Some(promise) => Ok(ExpectDeferred__then(global, promise.as_value(), check)),
+        Some(promise) => Ok(ExpectDeferred__then(global, &promise, check)),
         None => check.call(global, JSValue::UNDEFINED, &[value]),
     }
 }
@@ -1019,7 +1021,7 @@ impl Expect {
             what: JSValue::UNDEFINED,
         };
         let polling = Pass::once(global, question, &mut || self.start_polling(global, call))?;
-        let Some(polling) = polling.as_any_promise() else {
+        let Some(polling) = polling.as_promise() else {
             return Ok(JSValue::UNDEFINED);
         };
         match polling.unwrap(global.vm(), UnwrapMode::MarkHandled) {
@@ -1094,7 +1096,7 @@ impl Expect {
             expect_js::result_value_set_cached(
                 this_value,
                 global,
-                promise.map_or(JSValue::NULL, AnyPromise::as_value),
+                promise.map_or(JSValue::NULL, JsLocal::to_js),
             );
             // bun:test checks a settled promise right away and throws, as it always has. Vitest always returns a promise.
             let always_defer = self.is_vitest();
@@ -1102,7 +1104,7 @@ impl Expect {
                 promise.filter(|promise| always_defer || promise.status() == Status::Pending)
             {
                 let deferred = ExpectDeferred::waiting(global);
-                js::awaited_set_cached(deferred, global, promise.as_value());
+                js::awaited_set_cached(deferred, global, promise.to_js());
                 let deferred = ExpectDeferred::defer(deferred, self, global, call);
                 expect_js::result_value_set_cached(this_value, global, JSValue::ZERO);
                 return deferred;

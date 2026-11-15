@@ -208,7 +208,7 @@ impl TopExceptionScope {
     /// Only intended to be called when there is a pending exception.
     #[cfg(any(debug_assertions, bun_asan))]
     #[cold]
-    fn assertion_failure(&mut self, proof: NonNull<Exception>) -> ! {
+    fn assertion_failure(&mut self, proof: JSValue) -> ! {
         let _ = proof;
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         TopExceptionScope__assertNoException(self);
@@ -219,11 +219,13 @@ impl TopExceptionScope {
         self.exception().is_some()
     }
 
-    /// Get the thrown exception if it exists (like scope.exception() in C++)
-    pub fn exception(&mut self) -> Option<NonNull<Exception>> {
+    /// Get the thrown `Exception` cell if it exists (like scope.exception() in C++)
+    pub fn exception(&mut self) -> Option<JSValue> {
         #[cfg(any(debug_assertions, bun_asan))]
         debug_assert!(core::ptr::eq(self.location, &raw const self.bytes[0]));
         NonNull::new(TopExceptionScope__pureException(self))
+            // SAFETY: the VM holds the pending exception.
+            .map(|exception| unsafe { JSValue::from_cell(exception.as_ptr()) })
     }
 
     /// As `clear_exception`, but a TerminationException stays pending (JSC's
@@ -272,7 +274,7 @@ impl TopExceptionScope {
             // terminate(), worker process.exit()) regardless of what the host
             // function returned, so it's never a return-value/exception
             // mismatch — let the caller's safepoint observe it.
-            if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+            if e.is_termination_exception() {
                 return;
             }
             self.assertion_failure(e);
@@ -302,7 +304,7 @@ impl TopExceptionScope {
     /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
-            if JSValue::from_cell(e.as_ptr()).is_termination_exception() {
+            if e.is_termination_exception() {
                 return Err(self.err_for_pending());
             }
             #[cfg(any(debug_assertions, bun_asan))]

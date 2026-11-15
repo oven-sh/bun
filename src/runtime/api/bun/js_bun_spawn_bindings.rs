@@ -566,12 +566,7 @@ fn spawn_maybe_sync(
                         .throw_invalid_arguments(format_args!("env must be an object")));
                 };
 
-                // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
-                // centralised non-null-ZST deref proof.
-                let (object, lines) = (
-                    JSObject::opaque_ref(object),
-                    env_override.insert(Vec::new()),
-                );
+                let lines = env_override.insert(Vec::new());
                 path = append_envp_from_js(cx.global(), object, lines)?;
             }
 

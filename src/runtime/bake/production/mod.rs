@@ -26,8 +26,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
-    StringJsc as _,
+    self as jsc, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult, StringJsc as _,
 };
 use bun_paths::resolve_path::{self, SpillBuf, platform};
 use bun_resolver as resolver;
@@ -276,23 +275,16 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         BunString::clone_utf8(config_entry_point.path_const().unwrap().text);
 
     let Some(config_promise) =
-        JSModuleLoader::load_and_evaluate_module_ptr(global, &config_entry_point_string)
+        JSModuleLoader::load_and_evaluate_module(global, &config_entry_point_string)
     else {
         debug_assert!(global.has_exception());
         return Err(crate::Error::JSError);
     };
-    let config_promise_ptr = config_promise.as_ptr();
-    // `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST handle —
-    // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
-    // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
-    jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
+    config_promise.set_handled();
+    vm.wait_for_promise(&config_promise)
         .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm();
-    // Promise cell is still live (rooted via the module loader).
-    let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
-        .unwrap(jsc_vm, UnwrapMode::MarkHandled)
-    {
+    let mut options = match config_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             let default = bake_get_default_export_from_module(
@@ -1051,10 +1043,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .map_err(js_err)?;
     }
 
-    // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap);
-    // `JSPromise` is an opaque `UnsafeCell`-backed handle so `&mut *` is sound.
+    // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap), and the reference stays in this frame.
     let render_promise = unsafe {
-        &mut *BakeRenderRoutesForProdStatic(
+        &*BakeRenderRoutesForProdStatic(
             global,
             &StringView::from_bytes(&root_dir_path),
             pt.all_server_files.as_ref().unwrap().get(),
@@ -1070,7 +1061,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         )
     };
     render_promise.set_handled();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise))
+    vm.wait_for_promise(render_promise)
         .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
     let jsc_vm = vm.jsc_vm();
     match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {

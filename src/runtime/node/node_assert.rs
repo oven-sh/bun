@@ -122,7 +122,7 @@ where
     T: FromAny + Copy,
 {
     JSValue::create_array_from_iter(global, diff_list.iter(), |line| {
-        Ok(JSObject::create_null_proto(line, global)?.to_js())
+        JSObject::create_null_proto(line, global)
     })
 }
 

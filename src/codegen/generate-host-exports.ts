@@ -492,7 +492,6 @@ const importCandidates: Array<[string, string]> = [
   ["bun_jsc", "JSGlobalObject"],
   ["bun_jsc", "JSValue"],
   ["bun_jsc", "JsResult"],
-  ["bun_jsc", "JSInternalPromise"],
   ["bun_jsc", "JSObject"],
   ["bun_jsc", "JSPromise"],
   ["bun_jsc", "ZigStackFrame"],

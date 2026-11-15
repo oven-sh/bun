@@ -1278,7 +1278,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 break 'brk HttpResult::Exception(err);
             }
 
-            if let Some(promise) = result.as_any_promise() {
+            if let Some(promise) = result.as_promise() {
                 // One `status()` read; only re-read after `drain_microtasks`
                 // (which can settle a pending promise) actually runs.
                 let mut status = promise.status();
@@ -1303,7 +1303,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         break 'brk HttpResult::Success;
                     }
                     jsc::js_promise::Status::Rejected => {
-                        promise.set_handled(global.vm());
+                        promise.set_handled();
                         break 'brk HttpResult::Rejection(promise.result(global.vm()));
                     }
                     jsc::js_promise::Status::Pending => {

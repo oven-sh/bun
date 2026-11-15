@@ -112,10 +112,9 @@ fn bound(global: &JSGlobalObject, this_value: JSValue, name: &'static str, funct
 }
 
 fn settle(global: &JSGlobalObject, promise: Option<JSValue>, value: Result<JSValue, JSValue>) -> JsResult<()> {
-    let Some(promise) = promise.and_then(JSValue::as_promise) else {
+    let Some(promise) = promise.as_ref().and_then(JSValue::as_promise) else {
         return Ok(());
     };
-    let promise = JSPromise::opaque_mut(promise);
     match value {
         Ok(value) => promise.resolve(global, value),
         Err(error) => promise.reject(global, Ok(error)),
@@ -290,7 +289,7 @@ impl TestFixtures {
         } else if first.is_object() && !first.is_callable() {
             let entries = jsc::JSPropertyIterator::init(
                 global,
-                first.to_object(global)?,
+                &*first.to_object(global)?,
                 jsc::JSPropertyIteratorOptions::new(false, true),
             )?;
             while let Some((name, value)) = entries.next()? {

@@ -1078,27 +1078,18 @@ impl WebWorker {
         // marks this promise handled, so nothing else would report it.
         let mut entry_rejection_seen = false;
         let mut observe_entry = |vm: &VirtualMachine| -> EntryOutcome {
-            // SAFETY: `promise` is a live JSC heap cell, rooted below for the loop's duration.
-            unsafe {
-                if entry_rejection_seen || (*promise).status() != jsc::js_promise::Status::Rejected
-                {
-                    return EntryOutcome::Continue;
-                }
-                entry_rejection_seen = true;
-                // Same rule as the main thread (run_command): a CJS worker
-                // entry's top-level throw is an uncaughtException; only an
-                // ESM entry rejection reports origin "unhandledRejection".
-                let is_rejection = !vm.entry_point_is_commonjs();
-                let handled = vm.uncaught_exception(
-                    vm.global(),
-                    (*promise).result(vm.jsc_vm()),
-                    is_rejection,
-                );
-                if handled && !self.has_requested_terminate() {
-                    EntryOutcome::Continue
-                } else {
-                    EntryOutcome::Stop
-                }
+            if entry_rejection_seen || promise.status() != jsc::js_promise::Status::Rejected {
+                return EntryOutcome::Continue;
+            }
+            entry_rejection_seen = true;
+            // As on the main thread (run_command): only an ESM entry reports origin "unhandledRejection".
+            let is_rejection = !vm.entry_point_is_commonjs();
+            let handled =
+                vm.uncaught_exception(vm.global(), promise.result(vm.jsc_vm()), is_rejection);
+            if handled && !self.has_requested_terminate() {
+                EntryOutcome::Continue
+            } else {
+                EntryOutcome::Stop
             }
         };
         if let EntryOutcome::Stop = observe_entry(vm) {
@@ -1110,10 +1101,7 @@ impl WebWorker {
         // Node the worker counts as started once its module graph is executing,
         // and the await continues in the normal event loop below — messages,
         // timers and I/O keep flowing meanwhile. Rooted for the loop's duration.
-        let entry_promise = crate::Strong::create(
-            JSValue::from_cell(promise.cast::<crate::JSCell>()),
-            vm.global(),
-        );
+        let entry_promise = crate::Strong::create(promise.to_js(), vm.global());
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
@@ -1170,8 +1158,7 @@ impl WebWorker {
             vm.on_before_exit();
             // Drained with the entry still pending: an unsettled top-level await,
             // Node's exit 13 (unless the user chose a nonzero exit code).
-            // SAFETY: rooted by `entry_promise`.
-            if unsafe { (*promise).status() } == jsc::js_promise::Status::Pending
+            if promise.status() == jsc::js_promise::Status::Pending
                 && vm.exit_handler.exit_code.get() == 0
             {
                 vm.exit_handler.exit_code.set(13);

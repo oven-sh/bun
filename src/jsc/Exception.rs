@@ -1,6 +1,6 @@
 use crate::{JSGlobalObject, JSValue, ZigStackTrace};
 
-bun_opaque::opaque_ffi! {
+bun_opaque::sealed_handle! {
     /// Opaque representation of a JavaScript exception
     pub struct Exception;
 }

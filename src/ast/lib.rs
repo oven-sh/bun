@@ -1480,9 +1480,7 @@ impl Log {
         )
     }
 
-    /// An error whose [`Location`] the parser computed itself, because it
-    /// reads units the byte scan of [`Location::init_or_null`] cannot map
-    /// (UTF-16 or Latin-1, or a buffer it transcoded).
+    /// An error with a [`Location`] the parser computed in its own units.
     #[cold]
     #[inline(never)]
     pub fn add_error_with_location(&mut self, location: Location, args: fmt::Arguments<'_>) {
@@ -2183,9 +2181,8 @@ impl ErrorPositionState {
     }
 }
 
-/// Window a long line of UTF-8 to ~120 bytes around `offset_in_line`, the
-/// byte of the error in it. The shape is kept (no left trim for an error in
-/// the last 80 bytes) so `write_format`'s caret aligns.
+/// A long line of UTF-8 cut to ~120 bytes around `offset_in_line`, the byte
+/// of the error in it.
 fn window_line_text(full_line: &[u8], offset_in_line: usize) -> &[u8] {
     if full_line.len() <= 80 + offset_in_line {
         return full_line;

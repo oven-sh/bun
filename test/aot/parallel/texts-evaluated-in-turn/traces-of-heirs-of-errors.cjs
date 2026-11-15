@@ -41,6 +41,7 @@ for (const f of other) { const e = f(); out.push(e.name + " " + names(e)); }
   const made = new Function("program", hidden(text))(program);
   const later = new Function("program", "One", hidden("return async function later(n) { await null; if (n) return await later(n - 1); return new One('later'); };"))(program, made.One);
   out.push(names(await later(2)));
-  for (const [k, l] of [...new Set(out)].entries()) console.log(k, l);
-  console.log(out.length);
+  const rows = [...new Set(out)];
+  for (const [k, l] of rows.entries()) console.log(k, l);
+  console.log(out.map(l => rows.indexOf(l)).join());
 })();

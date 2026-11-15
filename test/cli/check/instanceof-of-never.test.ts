@@ -6,7 +6,7 @@ afterAll(endChildren);
 
 const tsconfig = JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] }, include: ["*.ts"] });
 
-async function findErrors(source: string) {
+async function check(source: string) {
   using dir = tempDir("check-instanceof-of-never", { "tsconfig.json": tsconfig, "a.ts": source });
   await using proc = spawn({
     cmd: [bunExe(), "check", "--no-pretty"],
@@ -15,8 +15,8 @@ async function findErrors(source: string) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-  return (stdout + stderr).match(/\(\d+,\d+\): error TS\d+/g) ?? [];
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { errors: (stdout + stderr).match(/\(\d+,\d+\): error TS\d+/g) ?? [], exitCode };
 }
 
 const inside = (parameter: string, guard: string, statement: string) =>
@@ -46,5 +46,8 @@ test.each([
   ["nothing narrowed", "string", "c", "do { if (c) { } } while (a instanceof Date);", ["(3,30): error TS2358"]],
   ["a parameter of type never", "never", "c", "do { if (c) { } } while (a instanceof Date);", ["(3,30): error TS2358"]],
 ] as const)("%s", async (_, parameter, guard, statement, expected) => {
-  expect(await findErrors(inside(parameter, guard, statement))).toEqual([...expected]);
+  expect(await check(inside(parameter, guard, statement))).toEqual({
+    errors: [...expected],
+    exitCode: expected.length === 0 ? 0 : 1,
+  });
 });

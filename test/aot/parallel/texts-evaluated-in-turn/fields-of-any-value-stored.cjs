@@ -15,14 +15,14 @@ const literal = i => ({ first: known[i % known.length], second: i, third: undefi
 const values = [0, 1, -1, 2147483647, 4294967296, 1.5, -0, NaN, Infinity, undefined, null, true, false, "", "text", "ro" + known.length, Symbol("s"), 10n, 2n ** 70n, { a: 1 }, [1, 2], () => 1, new Any(1), new Map([[1, 2]]), /x/, Object.create(null)];
 const makers = [() => new Any(known[3]), () => new Any(1), () => new Heir("h", 2), () => new Numbers(3), () => new Maybe(0), () => new Maybe(1), () => new Maybe(2), () => new Maybe(3), () => new Fields(), () => literal(1), () => literal(4), () => Object.assign(new Any(2), { extra: 1 }), () => Object.create(new Any(3)), () => ({ v: 1 }), () => [1]];
 const names = ["v", "w", "n", "name", "i", "d", "t", "b", "odd", "always", "two", "a", "c", "e", "later", "sum", "first", "second", "third", "extra", "kept", "missing"];
-const put = {}, putStrict = {}, get = {};
+const put = {}, putStrict = {}, get = {}, sum = text => { let k = 0; for (let i = 0; i < text.length; i++) k = k * 31 + text.charCodeAt(i) | 0; return k; };
 for (const n of names) { put[n] = F("o", "v", `o.${n} = v; return v;`); putStrict[n] = F("o", "v", `"use strict"; o.${n} = v; return v;`); get[n] = F("o", `return o.${n};`); }
 for (let m = 0; m < makers.length; m++) {
     for (const n of names) {
         const t = [];
         for (let turn = 0; turn < 3; turn++) { const o = makers[m](); for (const v of values) { t.push(attempt(() => show(put[n](o, v)))); t.push(attempt(() => show(get[n](o)))); } t.push(list(o)); }
         const p = makers[m](); t.push(attempt(() => show(putStrict[n](p, "strict"))), attempt(() => JSON.stringify(p)), Object.keys(p).join());
-        say(m, n, t.join().length, t.slice(-3).join(" | ").slice(0, 260));
+        say(m, n, sum(t.join()), t.slice(-3).join(" | ").slice(0, 260));
     }
 }
 const states = { frozen: Object.freeze, sealed: Object.seal, fixed: Object.preventExtensions, readonly: o => Object.defineProperty(o, "v", { writable: false }), other: o => Object.defineProperty(o, "w", { writable: false }), hidden: o => Object.defineProperty(o, "v", { enumerable: false }), accessor: o => Object.defineProperty(o, "v", { get() { return "got"; }, set(v) { this.w = v; } }), gone: o => { delete o.v; return o; }, again: o => { delete o.v; o.w = 1; o.v = 2; return o; } };

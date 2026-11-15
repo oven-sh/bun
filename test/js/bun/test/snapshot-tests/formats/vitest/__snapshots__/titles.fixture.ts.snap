@@ -338,6 +338,90 @@ exports[`%o and %O > typed Float64Array [ -0, 1.5 ] 1`] = `55`;
 
 exports[`%o and %O > typed Uint8Array [ 1, 2 ] 1`] = `54`;
 
+exports[`a matcher as a string and as JSON > j of a matcher {"inverse":false} 1`] = `366`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"inverse":false} 2`] = `367`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":"it's","inverse":false} 1`] = `372`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":"x","inverse":true} 1`] = `373`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":[],"inverse":true} 1`] = `383`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":[1,"a"],"inverse":false} 1`] = `370`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":[1,"two"],"inverse":false} 1`] = `382`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":[1],"inverse":true} 1`] = `371`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":[null,"is odd"],"inverse":true} 1`] = `381`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":[null],"inverse":false} 1`] = `380`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":{"a":1},"inverse":false} 1`] = `368`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":{"b":2},"inverse":true} 1`] = `369`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":{},"inverse":false} 1`] = `374`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":{},"inverse":false} 2`] = `375`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":{},"inverse":true} 1`] = `376`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":1,"inverse":false,"precision":2} 1`] = `378`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":1.5,"inverse":false,"precision":3} 1`] = `377`;
+
+exports[`a matcher as a string and as JSON > j of a matcher {"sample":1.5,"inverse":true,"precision":3} 1`] = `379`;
+
+exports[`a matcher as a string and as JSON > s of a matcher Any 1`] = `348`;
+
+exports[`a matcher as a string and as JSON > s of a matcher Anything 1`] = `349`;
+
+exports[`a matcher as a string and as JSON > s of a matcher ArrayContaining 1`] = `352`;
+
+exports[`a matcher as a string and as JSON > s of a matcher ArrayNotContaining 1`] = `353`;
+
+exports[`a matcher as a string and as JSON > s of a matcher NumberCloseTo 1`] = `359`;
+
+exports[`a matcher as a string and as JSON > s of a matcher NumberCloseTo 2`] = `360`;
+
+exports[`a matcher as a string and as JSON > s of a matcher NumberNotCloseTo 1`] = `361`;
+
+exports[`a matcher as a string and as JSON > s of a matcher ObjectContaining 1`] = `350`;
+
+exports[`a matcher as a string and as JSON > s of a matcher ObjectNotContaining 1`] = `351`;
+
+exports[`a matcher as a string and as JSON > s of a matcher StringContaining 1`] = `354`;
+
+exports[`a matcher as a string and as JSON > s of a matcher StringMatching 1`] = `356`;
+
+exports[`a matcher as a string and as JSON > s of a matcher StringMatching 2`] = `357`;
+
+exports[`a matcher as a string and as JSON > s of a matcher StringNotContaining 1`] = `355`;
+
+exports[`a matcher as a string and as JSON > s of a matcher StringNotMatching 1`] = `358`;
+
+exports[`a matcher as a string and as JSON > s of a matcher not.toBeFoo 1`] = `365`;
+
+exports[`a matcher as a string and as JSON > s of a matcher not.toSatisfy 1`] = `363`;
+
+exports[`a matcher as a string and as JSON > s of a matcher toBeFoo 1`] = `364`;
+
+exports[`a matcher as a string and as JSON > s of a matcher toSatisfy 1`] = `362`;
+
+exports[`a matcher at the depth where a value that is longer than 40 is cut > <a p={[ObjectContaining]}  /> 1`] = `388`;
+
+exports[`a matcher at the depth where a value that is longer than 40 is cut > [ [ [ObjectContaining] ] ] 1`] = `384`;
+
+exports[`a matcher at the depth where a value that is longer than 40 is cut > [ArrayContaining] 1`] = `389`;
+
+exports[`a matcher at the depth where a value that is longer than 40 is cut > { a: { b: [ObjectNotContaining] } } 1`] = `385`;
+
+exports[`a matcher at the depth where a value that is longer than 40 is cut > Map { 'k' => [ArrayContaining] } 1`] = `386`;
+
+exports[`a matcher at the depth where a value that is longer than 40 is cut > Set { [ArrayNotContaining] } 1`] = `387`;
+
 exports[`names > <anonymous> 1`] = `344`;
 
 exports[`names > 5 1`] = `345`;

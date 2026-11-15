@@ -770,16 +770,26 @@ test.concurrent("a deferred abort doesn't use a stream that lsquic has freed", a
     const server = await listen(session => {
       session.closed.catch(() => {});
       session.ondatagram = () => session.sendDatagram("pong");
-      session.onstream = stream => (stream.closed.catch(() => {}), remote.resolve(stream));
+      session.onstream = stream => {
+        stream.closed.catch(() => {});
+        remote.resolve(stream);
+      };
     }, serverOptions);
     let dropping = false, clientPort, pong;
     const relay = await Bun.udpSocket({
       hostname: "127.0.0.1",
       socket: {
         data(socket, data, port) {
-          if (port !== server.address.port) socket.send(data, server.address.port, "127.0.0.1"), (clientPort = port);
-          else if (!dropping || data.length < 400) socket.send(data, clientPort, "127.0.0.1");
-          else dropped.resolve(), pong && session.sendDatagram("ping"); // The dropped packet may carry the pong.
+          if (port !== server.address.port) {
+            clientPort = port;
+            socket.send(data, server.address.port, "127.0.0.1");
+          } else if (!dropping || data.length < 400) {
+            socket.send(data, clientPort, "127.0.0.1");
+          } else {
+            dropped.resolve();
+            // The dropped packet may carry the pong.
+            if (pong) session.sendDatagram("ping");
+          }
         },
       },
     });
@@ -845,7 +855,8 @@ test.concurrent("a session that references its closed stream is garbage collecte
       Bun.gc(true);
       count = alive();
     }
-    console.log(count <= 2);
+    // The server's last session and stream can still be closing.
+    console.log(count <= 2 || count);
     process.exit(0);
   `);
   expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });

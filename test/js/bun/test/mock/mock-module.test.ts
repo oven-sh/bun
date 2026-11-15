@@ -2079,6 +2079,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           test("a factory that requires a module that requires the name", () => {
             mock.module("./lib", () => ({ which: "mock", seen: require("./seen.cjs").which() }));
             expect(require("./lib")).toEqual({ which: "mock", seen: "real cjs" });
+            expect(require("./seen.cjs").which()).toBe("mock");
           });
           test("an ES module that loads the CommonJS file of its package with createRequire()", async () => {
             mock.module("create-require", async importOriginal => ({ ...(await importOriginal()), extra: 1 }));
@@ -3507,10 +3508,8 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect(required.named()).toBeUndefined();
             expect(required.named).toHaveBeenCalledTimes(1);
             expect((await import("cycle")).named).toBe(required.named);
-            // The helper ran while the mock was made of the CommonJS file: it got the mock of that same file, as
-            // with one file.
             const actual = await vi.importActual("cycle");
-            expect([actual.named(), actual.viaHelper()]).toEqual(["real named", undefined]);
+            expect([actual.named(), actual.viaHelper()]).toEqual(["real named", "real named"]);
           });
         `,
         ),

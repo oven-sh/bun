@@ -26,7 +26,8 @@ pub(crate) fn proxy_for<'a>(
         };
         bun_core::handle_oom(env.map.put(&name, &value));
     }
-    env.get_http_proxy_for(&URL::parse(url))
+    env.snapshot()
+        .get_http_proxy_for(&URL::parse(url))
         .map(|proxy| heap.create_utf8_string(proxy.href))
         .transpose()
 }

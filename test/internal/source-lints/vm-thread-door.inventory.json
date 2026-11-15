@@ -54,11 +54,6 @@
   "src/runtime/api/bundle_thread.rs": {
     "thread spawn": 1
   },
-  "src/runtime/bake/production/mod.rs": {
-    "unsafe impl Sync": [
-      "DotenvSingleton"
-    ]
-  },
   "src/runtime/cli/fuzzilli_compile_loop.rs": {
     "thread spawn": 1
   },

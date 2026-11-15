@@ -27,7 +27,7 @@ pub struct ExecutableRequest<'a> {
     pub graph: GraphRequest<'a>,
     pub root_dir: Fd,
     pub outfile: &'a [u8],
-    pub env: &'a mut bun_dotenv::Loader,
+    pub env: &'a bun_dotenv::Loader,
     pub windows: &'a WindowsOptions,
     pub executable_path: Option<&'a [u8]>,
     pub trim: Option<&'a bun_trim::TrimPlan>,

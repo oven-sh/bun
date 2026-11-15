@@ -33,7 +33,7 @@ fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {
 fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
     crate::api::bun::process::WindowsOptions {
         loop_: bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None),
+            bun_event_loop::MiniEventLoop::init_global(),
         ),
         ..Default::default()
     }
@@ -247,8 +247,6 @@ impl UpgradeCommand {
             }
         }
 
-        let http_proxy = env_loader.get_http_proxy_for(&api_url);
-
         let metadata_body: &'static mut MutableString =
             crate::cli::cli_arena().alloc(MutableString::init(2048)?);
         let headers_buf: &'static [u8] = crate::cli::cli_dupe(&headers_buf);
@@ -259,7 +257,6 @@ impl UpgradeCommand {
             header_entries,
             headers_buf,
             b"",
-            http_proxy,
             HTTP::ProxySettings::from_env(env_loader),
             HTTP::FetchRedirect::Follow,
         );
@@ -617,7 +614,6 @@ impl UpgradeCommand {
 
         let zip_url_bytes = core::mem::take(&mut version.zip_url);
         let zip_url = URL::parse(&zip_url_bytes);
-        let http_proxy = env_loader.get_http_proxy_for(&zip_url);
 
         {
             let refresher = &mut Progress::Progress::default();
@@ -634,7 +630,6 @@ impl UpgradeCommand {
                 headers::EntryList::default(),
                 b"",
                 b"",
-                http_proxy,
                 HTTP::ProxySettings::from_env(&env_loader),
                 HTTP::FetchRedirect::Follow,
             );

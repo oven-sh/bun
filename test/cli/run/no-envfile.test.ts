@@ -263,3 +263,33 @@ test("--no-env-file in production mode", async () => {
   expect(stdout.trim()).toBe("undefined");
   expect(exitCode).toBe(0);
 });
+
+test.each([
+  [
+    "a dev server with serve.static.env starts",
+    `import html from "./index.html";
+     using server = Bun.serve({ port: 0, development: true, routes: { "/": html } });`,
+  ],
+  ["a Bun.Transpiler for the macro target is created", `new Bun.Transpiler({ target: "macro" });`],
+])("--no-env-file keeps .env out of process.env after %s", async (_, setup) => {
+  using dir = tempDir("no-env-file-second-transpiler", {
+    ".env": "FOO=bar",
+    "bunfig.toml": `[serve.static]\nenv = "PUBLIC_*"\n`,
+    "index.html": "<!doctype html>",
+    "index.js": `${setup} console.log(process.env.FOO);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--no-env-file", "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("undefined");
+  expect(exitCode).toBe(0);
+});

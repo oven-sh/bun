@@ -233,6 +233,7 @@ pub fn load_env(logger: &Log, env: &DotEnvLoader) {
 #[derive(Default)]
 pub struct Options<'a> {
     pub http_proxy: Option<URL<'a>>,
+    /// Replaces `http_proxy` with the proxy for the URL of each hop.
     pub proxy_settings: Option<Box<crate::ProxySettings>>,
     pub proxy_headers: Option<Headers>,
     pub signals: Option<Signals>,
@@ -389,6 +390,7 @@ impl<'a> AsyncHTTP<'a> {
         this.client.flags.yields_to_other_requests = options.yields_to_other_requests;
         this.client.compress = options.compress;
         this.client.proxy_settings = options.proxy_settings;
+        this.client.select_proxy();
         this.client.pool = options.pool;
         if options.bypass_pool {
             this.client.flags.pool_bypass = crate::PoolBypass::NotThisHop;
@@ -399,7 +401,7 @@ impl<'a> AsyncHTTP<'a> {
     /// Construct an `AsyncHTTP` for a synchronous request driven via
     /// [`send_sync`].
     ///
-    /// Borrowed inputs (`url`, `headers_buf`, `request_body`, `http_proxy`)
+    /// Borrowed inputs (`url`, `headers_buf`, `request_body`)
     /// are tied to lifetime `'a` and must outlive the returned value — in
     /// practice they live on the calling stack frame and the request is driven
     /// to completion via `send_sync` before that frame returns.
@@ -409,7 +411,6 @@ impl<'a> AsyncHTTP<'a> {
         headers: headers::EntryList,
         headers_buf: &'a [u8],
         request_body: &'a [u8],
-        http_proxy: Option<URL<'a>>,
         proxy_settings: Option<Box<crate::ProxySettings>>,
         redirect_type: FetchRedirect,
     ) -> Box<AsyncHTTP<'a>> {
@@ -422,7 +423,6 @@ impl<'a> AsyncHTTP<'a> {
             noop_callback(),
             redirect_type,
             Options {
-                http_proxy,
                 proxy_settings,
                 ..Options::default()
             },
@@ -485,7 +485,6 @@ impl OwnedRequest {
         );
         http.owned_href = href;
         http.owned_headers_buf = headers_buf;
-        http.client.select_proxy();
         Self(http)
     }
 

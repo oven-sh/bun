@@ -41,9 +41,17 @@ const WORKER_ID_VARIABLES: [&[u8]; 4] = [
     b"VITEST_WORKER_ID",
 ];
 
-/// Vitest sets these even without workers. JEST_WORKER_ID stays unset because libraries use it to detect Jest.
-pub(crate) fn set_ids_without_workers(env: &mut bun_dotenv::Loader) {
-    for name in [b"VITEST_POOL_ID".as_slice(), b"VITEST_WORKER_ID"] {
+/// The ids for files that run in this process. `parallel`: `--parallel` was passed.
+pub(crate) fn set_ids_of_this_process(env: &mut bun_dotenv::Loader, parallel: bool) {
+    let names: &[&[u8]] = if parallel {
+        // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
+        // tests can rely on the var whenever --parallel is passed.
+        &WORKER_ID_VARIABLES
+    } else {
+        // Vitest sets these even without workers. JEST_WORKER_ID stays unset because libraries use it to detect Jest.
+        &[b"VITEST_POOL_ID", b"VITEST_WORKER_ID"]
+    };
+    for name in names {
         let _ = env.map.put(name, b"1");
     }
 }
@@ -59,23 +67,17 @@ pub(crate) fn run_as_coordinator(
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
-    // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *vm.transpiler.get().env };
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
-        // Jest sets JEST_WORKER_ID=1 even with --maxWorkers=1; match that so
-        // tests can rely on the var whenever --parallel is passed.
-        for name in WORKER_ID_VARIABLES {
-            let _ = env.map.put(name, b"1");
-        }
         return Ok(false);
     }
 
+    let mut env = vm.env_loader().map.clone_with_allocator()?;
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
     if Output::enable_ansi_colors_stderr() {
-        let _ = env.map.put(b"FORCE_COLOR", b"1");
+        let _ = env.put(b"FORCE_COLOR", b"1");
     }
     // Each worker gets a unique JEST_WORKER_ID / BUN_TEST_WORKER_ID (1-indexed,
     // matching Jest) so tests can pick distinct ports/databases. Serialize the
@@ -87,9 +89,9 @@ pub(crate) fn run_as_coordinator(
         let mut id = Vec::new();
         write!(&mut id, "{}", i + 1).unwrap();
         for name in WORKER_ID_VARIABLES {
-            let _ = env.map.put(name, &id);
+            let _ = env.put(name, &id);
         }
-        envps.push(env.map.to_envp());
+        envps.push(env.to_envp());
     }
     let argv = build_worker_argv(ctx)?;
 
@@ -682,8 +684,7 @@ impl WorkerLoop {
         // failures aren't reproducible from a test. Debug/ASAN builds only,
         // so a stray env var can't disable --parallel in a release build.
         if cfg!(any(debug_assertions, bun_asan)) {
-            // SAFETY: env loader is initialized before the test runner runs.
-            let env = unsafe { &*vm.transpiler.get().env };
+            let env = vm.env_loader();
             if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
                 bun_core::pretty_errorln!(
                     "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"

@@ -691,6 +691,7 @@ impl ProxySettings {
 
     /// Capture `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy` from the process env.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
+        let env = env.snapshot();
         let [http, https] = env.proxy_env_for_both_schemes();
         if http.is_none() && https.is_none() {
             return None;
@@ -705,6 +706,7 @@ impl ProxySettings {
         env: &bun_dotenv::Loader,
         respect_no_proxy: bool,
     ) -> Option<Box<Self>> {
+        let env = env.snapshot();
         let no_proxy: &[u8] = if respect_no_proxy {
             env.no_proxy_list()
         } else {

@@ -638,7 +638,7 @@ impl SideEffects {
                     return false;
                 }
 
-                local.decls = G::DeclList::move_from_list(decls);
+                local.decls = bun_alloc::AstAlloc::vec_from_iter(decls);
                 true
             }
 

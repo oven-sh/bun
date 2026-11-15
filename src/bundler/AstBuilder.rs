@@ -407,7 +407,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                             ),
                             Expr::init(
                                 E::Object {
-                                    properties: G::PropertyList::move_from_list(export_props),
+                                    properties: bun_alloc::AstAlloc::vec_from_iter(export_props),
                                     ..Default::default()
                                 },
                                 Loc::EMPTY,
@@ -485,9 +485,9 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         }
 
         parts[1].declared_symbols = core::mem::take(&mut self.declared_symbols);
-        parts[1].import_record_indices = bun_ast::PartImportRecordIndices::move_from_list(
-            core::mem::take(&mut self.import_records_for_current_part),
-        );
+        parts[1].import_record_indices = bun_alloc::AstAlloc::vec_from_iter(core::mem::take(
+            &mut self.import_records_for_current_part,
+        ));
 
         Ok(crate::BundledAst {
             parts,

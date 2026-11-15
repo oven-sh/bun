@@ -212,7 +212,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            let mut args = ExprNodeList::init_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
@@ -250,9 +250,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: bun_ast::ExprNodeList::from_owned_slice(
-                                                    args.into_boxed_slice(),
-                                                ),
+                                                args,
                                                 ..Default::default()
                                             },
                                             stmt.loc,
@@ -352,7 +350,7 @@ pub(crate) fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            let mut args: Vec<Expr> = Vec::with_capacity(args_len);
+                            let mut args = ExprNodeList::init_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
                                     ref_: ast.exports_ref,
@@ -379,9 +377,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     },
                                                     stmt.loc,
                                                 ),
-                                                args: ExprNodeList::from_owned_slice(
-                                                    args.into_boxed_slice(),
-                                                ),
+                                                args,
                                                 ..Default::default()
                                             },
                                             stmt.loc,

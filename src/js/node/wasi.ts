@@ -991,12 +991,7 @@ class WASI {
         getiovs(iovs, iovsLen).forEach(iov => {
           let w = 0;
           while (w < iov.byteLength) {
-            const at = position + written + w;
-            // writeSync() ignores a position that is not a safe integer and writes where the descriptor is.
-            if (at > Number.MAX_SAFE_INTEGER) {
-              throw new WASIError(WASI_EFBIG);
-            }
-            w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, at);
+            w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, position + written + w);
           }
           written += w;
         });
@@ -1019,12 +1014,13 @@ class WASI {
           } else {
             let w = 0;
             while (w < iov.byteLength) {
-              const position = stats.offset ? Number(stats.offset) : null;
-              // As in fd_pwrite.
-              if (position !== null && position > Number.MAX_SAFE_INTEGER) {
-                throw new WASIError(WASI_EFBIG);
-              }
-              const i = fs.writeSync(stats.real, iov, w, iov.byteLength - w, position);
+              const i = fs.writeSync(
+                stats.real,
+                iov,
+                w,
+                iov.byteLength - w,
+                stats.offset ? Number(stats.offset) : null,
+              );
               if (stats.offset) stats.offset += BigInt(i);
               w += i;
             }

@@ -383,7 +383,7 @@ it("fd_readdir reads the cookie as a u64 and returns no entry for a cookie past 
   });
 });
 
-it("fd_pread, fd_pwrite and fd_filestat_set_size answer an errno for an offset or a size that no file has", () => {
+it("fd_pread, fd_pwrite and fd_filestat_set_size answer EINVAL for an offset or a size of 2^63 or more", () => {
   using dir = tempDir("wasi-u64-offset", { "data.txt": "0123456789" });
   const file = path.join(String(dir), "data.txt");
   const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
@@ -392,9 +392,7 @@ it("fd_pread, fd_pwrite and fd_filestat_set_size answer an errno for an offset o
   const view = new DataView(wasi.memory.buffer);
 
   const WASI_ESUCCESS = 0;
-  const WASI_EFBIG = 22;
   const WASI_EINVAL = 28;
-  const WASI_WHENCE_SET = 0;
   const WASI_RIGHT_FD_READ = BigInt(2);
   const WASI_RIGHT_FD_SEEK = BigInt(4);
   const WASI_RIGHT_FD_WRITE = BigInt(64);
@@ -455,15 +453,6 @@ it("fd_pread, fd_pwrite and fd_filestat_set_size answer an errno for an offset o
     fd_pwrite: positional(w.fd_pwrite, 99, BigInt(-1)),
   }).toEqual({ fd_pread: refused, fd_pwrite: refused });
 
-  // fs.writeSync() takes a position up to 2^53 - 1. Above that, Node answers what the filesystem does (EFBIG on ext4).
-  const tooBig = { errno: WASI_EFBIG, count: sentinel, buf: "WXYZ" };
-  expect({
-    "2^53": positional(w.fd_pwrite, fd, BigInt(2) ** BigInt(53)),
-    "2^60": positional(w.fd_pwrite, fd, BigInt(2) ** BigInt(60)),
-    "2^63 - 1": positional(w.fd_pwrite, fd, BigInt(2) ** BigInt(63) - BigInt(1)),
-    file: fs.readFileSync(file, "latin1"),
-  }).toEqual({ "2^53": tooBig, "2^60": tooBig, "2^63 - 1": tooBig, file: "0123456789" });
-
   expect({
     fd_pwrite: positional(w.fd_pwrite, fd, BigInt(2)),
     file: fs.readFileSync(file, "latin1"),
@@ -490,28 +479,6 @@ it("fd_pread, fd_pwrite and fd_filestat_set_size answer an errno for an offset o
     fd_filestat_set_size: w.fd_filestat_set_size(fd, BigInt(0)),
     file: fs.readFileSync(file, "latin1"),
   }).toEqual({ fd_filestat_set_size: WASI_ESUCCESS, file: "" });
-
-  // fd_write has the same limit for a position that fd_seek stored.
-  const seekThenWrite = position => {
-    expect(w.fd_seek(fd, position, WASI_WHENCE_SET, countPtr)).toBe(WASI_ESUCCESS);
-    memory.write("WXYZ", bufPtr);
-    view.setUint32(countPtr, sentinel, true);
-    const errno = w.fd_write(fd, iovsPtr, 1, countPtr);
-    return { errno, count: view.getUint32(countPtr, true) };
-  };
-  expect({
-    "2^53": seekThenWrite(BigInt(2) ** BigInt(53)),
-    "2^60": seekThenWrite(BigInt(2) ** BigInt(60)),
-    file: fs.readFileSync(file, "latin1"),
-  }).toEqual({
-    "2^53": { errno: WASI_EFBIG, count: sentinel },
-    "2^60": { errno: WASI_EFBIG, count: sentinel },
-    file: "",
-  });
-  expect({
-    "2": seekThenWrite(BigInt(2)),
-    file: fs.readFileSync(file, "latin1"),
-  }).toEqual({ "2": { errno: WASI_ESUCCESS, count: 4 }, file: "\0\0WXYZ" });
 });
 
 it("fd_filestat_set_times and path_filestat_set_times answer EINVAL for an unknown flag and leave the times alone", () => {

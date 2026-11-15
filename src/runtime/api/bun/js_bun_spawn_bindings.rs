@@ -1360,7 +1360,7 @@ fn spawn_maybe_sync(
         (JSValue::ZERO, Some(SyncWrapper(subprocess_ref)))
     } else {
         let out = SubprocessT::to_js_nonnull(subprocess_ref.into_non_null().cast(), cx.global());
-        subprocess.this_value.with_mut(|v| v.set_weak(out));
+        subprocess.this_value.set_weak(out);
         // Immediately upgrade to strong if there's pending activity to prevent premature GC
         subprocess.update_has_pending_activity();
         (out, None)

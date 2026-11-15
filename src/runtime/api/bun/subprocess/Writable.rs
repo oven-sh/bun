@@ -76,7 +76,7 @@ impl Writable {
     // Parent comes via `SourceHandle::Subprocess` (the whole `*mut Subprocess`), not `&mut self`
     // on the `stdin` field; accesses are disjoint so `&Subprocess` suffices.
     pub(crate) fn on_close(process: &Subprocess<'_>, _: Option<bun_sys::Error>) {
-        if let Some(this_jsvalue) = process.this_value.get().try_get() {
+        if let Some(this_jsvalue) = process.this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::forget_subprocess(existing_value);
             }
@@ -293,7 +293,7 @@ impl Writable {
     // Note: see `on_close` — the caller passes the parent; deriving it from
     // `&mut self` on `Writable` would be out-of-provenance.
     pub(crate) fn finalize(subprocess: &Subprocess<'_>) {
-        if let Some(this_jsvalue) = subprocess.this_value.get().try_get() {
+        if let Some(this_jsvalue) = subprocess.this_value.try_get() {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 file_sink::JSSink::forget_subprocess(existing_value);
             }

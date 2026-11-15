@@ -4,9 +4,7 @@ use core::ptr::NonNull;
 
 use crate::webcore::jsc::SysErrorJsc as _;
 use crate::webcore::jsc::bindgen::{JsLocal, JsScope, JsWrapper};
-use crate::webcore::jsc::{
-    self as jsc, JSGlobalObject, JSValue, JsCell, JsCellRefExt as _, JsResult,
-};
+use crate::webcore::jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 // `bun_jsc` not yet a dep; alias to local shim so `bun_jsc::Strong` etc. resolve.
 use crate::webcore::jsc as bun_jsc;
 use bun_sys as syscall;
@@ -847,7 +845,7 @@ pub struct NewSource<C: SourceContext> {
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_close`] reads `None` instead of a
     /// dead-but-unswept cell.
-    pub this_jsvalue: JsCell<jsc::JsRef>,
+    pub this_jsvalue: jsc::JsRef,
     /// The producer's native ref does not root the wrapper ([`Self::unroot_wrapper`]).
     pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
@@ -875,7 +873,7 @@ jsc::impl_abort_handle_owner!(
     },
     |this, _cause| {
         // SAFETY: trait contract — `this` is live.
-        let wrapper = unsafe { (*this).this_jsvalue.get() };
+        let wrapper = unsafe { &(*this).this_jsvalue };
         // Collected and not swept yet: so are those peers, and the finalizer releases this.
         if wrapper.try_get().is_none() && !wrapper.is_finalized() {
             return;
@@ -894,7 +892,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             pending_err: None,
             producer: Cell::new(streams::SourceHandle::None),
             global_this: Cell::new(None),
-            this_jsvalue: JsCell::new(jsc::JsRef::empty()),
+            this_jsvalue: jsc::JsRef::empty(),
             wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
             reader_context: Cell::new(None),
@@ -1090,7 +1088,7 @@ impl<C: SourceContext> NewSource<C> {
     fn will_release(this: &bun_ptr::RefPtr<Self>) {
         if this.ref_count.get() == 2 {
             // Only the JS wrapper's own ref will remain: drop the Strong root so that it is collectable again.
-            this.this_jsvalue.with_mut(jsc::JsRef::downgrade);
+            this.this_jsvalue.downgrade();
         }
     }
 
@@ -1101,8 +1099,8 @@ impl<C: SourceContext> NewSource<C> {
 
     fn upgrade_wrapper(&self) {
         if let Some(global) = self.global_this.get().as_deref() {
-            if self.this_jsvalue.get().is_not_empty() {
-                self.this_jsvalue.with_mut(|r| r.upgrade(global));
+            if self.this_jsvalue.is_not_empty() {
+                self.this_jsvalue.upgrade(global);
             }
         }
     }
@@ -1111,7 +1109,7 @@ impl<C: SourceContext> NewSource<C> {
     /// tells the producer if that happens.
     pub fn unroot_wrapper(&self) {
         self.wrapper_unrooted.set(true);
-        self.this_jsvalue.with_mut(jsc::JsRef::downgrade);
+        self.this_jsvalue.downgrade();
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer that does not hold the wrapper takes the bytes.
@@ -1134,8 +1132,8 @@ impl<C: SourceContext> NewSource<C> {
             C::js_create(core::ptr::from_mut(self).cast::<c_void>(), cx.global())
         };
         out_value.ensure_still_alive();
-        if self.this_jsvalue.get().is_empty() {
-            self.this_jsvalue.set(jsc::JsRef::init_weak(out_value));
+        if self.this_jsvalue.is_empty() {
+            self.this_jsvalue.set_weak(out_value);
             if let Some(context) = cx.vm().as_context_that_stops_early(cx.context()) {
                 // SAFETY: the wrapper just made owns this heap allocation; the handle leaves its
                 // context when this is dropped.
@@ -1240,7 +1238,7 @@ impl<C: SourceContext> NewSource<C> {
     }
 
     pub fn finalize(&self) {
-        self.this_jsvalue.with_mut(|r| r.finalize());
+        self.this_jsvalue.finalize();
         // The wrapper's ref, released after this, keeps the count > 0 across the refs this drops.
         if self.ref_count.get() > 1 {
             self.context.wrapper_finalized();

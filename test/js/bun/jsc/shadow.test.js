@@ -1,4 +1,4 @@
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 it("shadow realm works", () => {
@@ -75,6 +75,76 @@ it.concurrent("rejected promises are collected", async () => {
         setImmediate(() => console.log(promises() - before < 10));
       });`),
   ).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+});
+
+describe.concurrent("realms that nothing points to", () => {
+  // The memory of the first few globals of a thread is never given back.
+  const prelude = `
+    const REALMS = 20;
+    const inRealms = (source, ...args) => {
+      const realms = Array.from({ length: REALMS }, () => new ShadowRealm().evaluate(source));
+      for (const f of realms) f(...args);
+      return realms;
+    };
+    const turn = () => new Promise(resolve => setImmediate(resolve));
+    const collectUntil = async done => {
+      while ((Bun.gc(true), !done())) await turn();
+    };
+    const mostRealmsAreGone = () => require("bun:jsc").heapStats().objectTypeCounts.GlobalObject < REALMS / 2;`;
+
+  it("outlive the fetch() whose response they dropped", async () => {
+    expect(
+      await run(`${prelude}
+        let aborted = 0;
+        const server = Bun.serve({
+          port: 0,
+          fetch(request) {
+            request.signal.onabort = () => aborted++;
+            return new Response(new ReadableStream({ start: controller => controller.enqueue(new Uint8Array(1)) }));
+          },
+        });
+        let responses = 0;
+        inRealms("(url, done) => void fetch(url).then(() => done())", server.url.href, () => void responses++);
+        while (responses < REALMS) await turn();
+        await collectUntil(() => aborted > REALMS / 2);
+        await collectUntil(mostRealmsAreGone);
+        await server.stop(true);
+        console.log("done");`),
+    ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  });
+
+  it.each([
+    ["fetch()", "(url, done) => void fetch(url).then(response => done(void (globalThis.body = response.body)))"],
+  ])("outlive the %s whose body fails", async (_, start) => {
+    expect(
+      await run(`${prelude}
+        let requests = 0;
+        const server = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: {
+            data(socket) {
+              requests++;
+              socket.write("HTTP/1.1 200 OK\\r\\nContent-Length: 2\\r\\n\\r\\nx");
+            },
+          },
+        });
+        let bodies = 0;
+        const realms = inRealms(${JSON.stringify(start)}, "http://127.0.0.1:" + server.port, () => void bodies++);
+        while (bodies < REALMS || requests < REALMS) await turn();
+        realms.length = 0;
+        server.stop(true);
+        // A collection that allocating starts finalizes nothing yet, and what it found dead is used again.
+        for (let round = 0, keep; round < 20; round++) {
+          keep = [new Uint8Array(1 << 23)];
+          for (let i = 0; i < 100; i++) keep.push(class extends Error {}, Object.create({ i }));
+        }
+        process.on("beforeExit", () => {
+          Bun.gc(true);
+          console.log("done");
+        });`),
+    ).toEqual({ stdout: "done\n", stderr: "", exitCode: 0 });
+  });
 });
 
 it("Bun.isMainThread and node:worker_threads' isMainThread reflect the realm's thread", async () => {

@@ -753,24 +753,19 @@ pub(crate) struct NameTooLong;
 /// adds only the path-buffer slicers and JS-argument parsing that depend on
 /// `bun_runtime` types (`Valid`, `ArgumentsSlice` cursor flow).
 pub(crate) trait PathLikeExt {
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr
-    where
-        Self: Sized;
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
+    /// Writes the path to the start of `buf`, or "" if it does not fit.
+    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
     #[cfg(windows)]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
+    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
+    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
     fn os_path_kernel32<'a>(
-        &'a self,
+        &self,
         buf: &'a mut PathBuffer,
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
@@ -844,13 +839,7 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike<'_> {
-    // Const-generics can't change return mutability, so this always returns
-    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
-    // separate method.
-    fn slice_z_with_force_copy<'a, const FORCE: bool>(
-        &'a self,
-        buf: &'a mut PathBuffer,
-    ) -> &'a ZStr {
+    fn slice_z<'a>(&self, buf: &'a mut PathBuffer) -> &'a ZStr {
         let sliced = self.slice();
 
         #[cfg(windows)]
@@ -903,33 +892,12 @@ impl PathLikeExt for PathLike<'_> {
             }
         }
 
-        if sliced.is_empty() {
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
-            buf[0] = 0;
-            // SAFETY: buf[0] == 0 written above.
-            return ZStr::from_buf(&buf[..], 0);
-        }
-
-        if !FORCE {
-            if sliced[sliced.len() - 1] == 0 {
-                // SAFETY: last byte is NUL.
-                return ZStr::from_slice_with_nul(sliced);
-            }
-        }
-
         if sliced.len() >= buf.len() {
             bun_core::debug_warn!(
                 "path too long: {} bytes exceeds PathBuffer capacity of {}\n",
                 sliced.len(),
                 buf.len()
             );
-            if !FORCE {
-                return ZStr::EMPTY;
-            }
-
             buf[0] = 0;
             // SAFETY: buf[0] == 0 written above.
             return ZStr::from_buf(&buf[..], 0);
@@ -941,14 +909,9 @@ impl PathLikeExt for PathLike<'_> {
         ZStr::from_buf(&buf[..], sliced.len())
     }
 
-    #[inline]
-    fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr {
-        self.slice_z_with_force_copy::<false>(buf)
-    }
-
     #[cfg(windows)]
     #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+    fn slice_w<'a>(&self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
         let sliced = self.slice();
         if !strings::fits_in_wide_path_buffer(sliced) {
             return Err(NameTooLong);
@@ -957,20 +920,20 @@ impl PathLikeExt for PathLike<'_> {
     }
 
     #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
+    fn os_path<'a>(&self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            Ok(self.slice_z(buf))
         }
     }
 
     #[inline]
     fn os_path_kernel32<'a>(
-        &'a self,
+        &self,
         buf: &'a mut PathBuffer,
     ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
@@ -1045,7 +1008,7 @@ impl PathLikeExt for PathLike<'_> {
 
         #[cfg(not(windows))]
         {
-            Ok(self.slice_z_with_force_copy::<false>(buf))
+            Ok(self.slice_z(buf))
         }
     }
 

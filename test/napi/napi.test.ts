@@ -444,7 +444,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   describe("napi_get_boolean", () => {
-    // Node reads out of bounds here.
+    // Node returns no boolean for these.
     it("takes every byte but zero for true", async () => {
       const output = await runOn(bunExe(), "test_napi_get_boolean_bytes", []);
       expect(output.match(/^\d+: \d/gm)).toEqual(["0: 0", "1: 1", "2: 1", "128: 1", "255: 1"]);
@@ -796,6 +796,31 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "finalized during execute(): 0",
         "resolved to undefined",
       ]);
+    });
+    it("completes in the next file of bun test --isolate", async () => {
+      const prelude = `
+        import { expect, test } from "bun:test";
+        const addon = require(${JSON.stringify(join(__dirname, "napi-app/build/Debug/napitests.node"))});
+      `;
+      using dir = tempDir("napi-isolate-async-work", {
+        "a.test.ts": `${prelude} test("queue", () => addon.queue_held_async_work());`,
+        "b.test.ts": `${prelude}
+          test("complete", async () => {
+            while (addon.release_held_async_work() === -1) await new Promise(setImmediate);
+            expect(addon.release_held_async_work()).toBe(0);
+          });
+        `,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      expect(stderr).toContain(" 2 pass");
+      expect(exitCode).toBe(0);
     });
   });
 

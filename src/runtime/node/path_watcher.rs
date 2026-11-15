@@ -115,12 +115,12 @@ struct WatcherId(u32);
 #[derive(Default)]
 struct Watchers {
     slots: Vec<Option<PathWatcher>>,
-    free: Vec<WatcherId>,
+    free_list: Vec<WatcherId>,
 }
 
 impl Watchers {
     fn insert(&mut self, watcher: PathWatcher) -> WatcherId {
-        if let Some(id) = self.free.pop() {
+        if let Some(id) = self.free_list.pop() {
             self.slots[id.0 as usize] = Some(watcher);
             return id;
         }
@@ -130,10 +130,10 @@ impl Watchers {
 
     fn remove(&mut self, id: WatcherId) -> Option<PathWatcher> {
         let watcher = self.slots[id.0 as usize].take();
-        if self.free.len() + 1 == self.slots.len() {
+        if self.free_list.len() + 1 == self.slots.len() {
             *self = Self::default();
         } else {
-            self.free.push(id);
+            self.free_list.push(id);
         }
         watcher
     }
@@ -295,8 +295,9 @@ impl PathWatcher {
         if let Some(i) = manager.by_path.values().iter().position(|&w| w == id) {
             manager.by_path.swap_remove_at(i);
         }
-        let _freed_unlocked = manager.watchers.remove(id);
+        let removed = manager.watchers.remove(id);
         drop(locked);
+        drop(removed);
 
         #[cfg(target_os = "macos")]
         fsevents::reschedule();
@@ -380,8 +381,9 @@ pub(crate) fn watch(
 
     #[cfg(not(target_os = "macos"))]
     if let Err(err) = manager.platform.add_watch(id, &mut manager.watchers[id]) {
-        let _freed_unlocked = manager.watchers.remove(id);
+        let removed = manager.watchers.remove(id);
         drop(locked);
+        drop(removed);
         return Err(err.without_path());
     }
     handle_oom(manager.by_path.put(key, id));
@@ -771,7 +773,7 @@ impl Linux {
             // Track which PathWatchers got at least one event so we flush() each once.
             let mut touched: ArrayHashMap<WatcherId, ()> = ArrayHashMap::default();
 
-            for ev in InotifyEvents(&buf[..n]) {
+            for ev in InotifyEventIterator(&buf[..n]) {
                 let wd = ev.watch_descriptor;
 
                 // Queue hit fs.inotify.max_queued_events and the kernel dropped
@@ -951,7 +953,7 @@ impl Linux {
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_watcher::inotify_watcher::Events as InotifyEvents;
+use bun_watcher::inotify_watcher::EventIterator as InotifyEventIterator;
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin

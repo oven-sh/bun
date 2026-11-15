@@ -19,7 +19,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         .unwrap_or(false);
 
     // Note: `server_transpiler` / `client_transpiler` / `ssr_transpiler` /
-    // `router` / `pending_changes` must be assigned after the
+    // `router` / `pending_reload_event` must be assigned after the
     // heap address is stable. Rust forbids partial struct literals and
     // `mem::zeroed()` here is UB (`Arc<Watcher>` is `NonNull`-backed;
     // `Transpiler<'a>` carries `&'a Arena`), so use
@@ -142,9 +142,9 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-    let pending_changes = PendingChanges::new(p);
+    let pending_reload_event = PendingReloadEvent::new(p);
     let watch_context = Box::new(watch::WatchContext {
-        pending_changes: std::sync::Arc::clone(&pending_changes),
+        pending_reload_event: std::sync::Arc::clone(&pending_reload_event),
         vm_handle: options.vm.handle(),
     });
     let bun_watcher = match Watcher::init(watch_context, top_level_dir) {
@@ -221,7 +221,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
         }
 
         w!(bun_watcher, bun_watcher);
-        w!(pending_changes, pending_changes);
+        w!(pending_reload_event, pending_reload_event);
         w!(spare_reload_event, HotReloadEvent::default());
         w!(bundler_framework_views, bundler_framework_views);
         w!(framework, options.framework);
@@ -517,7 +517,7 @@ impl Drop for DevServer {
                 server_register_update_callback: _,
                 bun_watcher: _,
                 directory_watchers: _,
-                pending_changes: _,
+                pending_reload_event: _,
                 spare_reload_event: _,
                 testing_batch_events: _,
                 generation: _,
@@ -576,7 +576,7 @@ impl Drop for DevServer {
             debug_assert!(value.ref_count > 0);
         }
 
-        self.pending_changes.detach();
+        self.pending_reload_event.detach();
 
         if let TestingBatchEvents::Enabled(batch) | TestingBatchEvents::ReleaseAfterBundle(batch) =
             &mut self.testing_batch_events

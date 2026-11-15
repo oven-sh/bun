@@ -67,14 +67,14 @@ pub struct Watcher {
     #[cfg(not(windows))]
     pub(crate) platform: Platform,
     /// Locked while the context is called.
-    pub(crate) watched: Guarded<Watched>,
+    pub(crate) state: Guarded<State>,
     cwd: &'static [u8],
     /// Cleared by `shutdown`, polled by the platform `watch_loop`.
     pub(crate) running: bun_core::AtomicCell<bool>,
 }
 
-pub(crate) struct Watched {
-    pub(crate) list: WatchList,
+pub(crate) struct State {
+    pub(crate) watchlist: WatchList,
     evictions: Evictions,
     close_descriptors: bool,
     /// Until the watcher thread takes it.
@@ -110,8 +110,8 @@ impl Watcher {
         let this = Arc::new(Watcher {
             #[cfg(not(windows))]
             platform: Platform::new(top_level_dir)?,
-            watched: Guarded::new(Watched {
-                list: WatchList::default(),
+            state: Guarded::new(State {
+                watchlist: WatchList::default(),
                 evictions: Evictions::new(),
                 close_descriptors: false,
                 thread: Some(Box::new(WatcherThread {
@@ -136,18 +136,21 @@ impl Watcher {
         &self,
         thread: &mut WatcherThread,
         event_count: usize,
-        changed: &[&[u8]],
+        changed_files: &[&[u8]],
     ) {
-        let watched = &mut *self.watched.lock();
+        let state = &mut *self.state.lock();
         if !self.running.load() {
             return;
         }
         let events = &thread.watch_events[..event_count];
-        WatcherTrace::write_events(&watched.list, events, changed);
-        thread
-            .ctx
-            .on_file_update(events, changed, &watched.list, &mut watched.evictions);
-        self.flush_evictions(watched);
+        WatcherTrace::write_events(&state.watchlist, events, changed_files);
+        thread.ctx.on_file_update(
+            events,
+            changed_files,
+            &state.watchlist,
+            &mut state.evictions,
+        );
+        self.flush_evictions(state);
     }
 
     pub fn start(self: &Arc<Self>) -> Result<(), crate::Error> {
@@ -184,8 +187,8 @@ impl Watcher {
 
     /// The context is not called after this returns. The thread ends when a change next wakes it.
     pub fn shutdown(&self, close_descriptors: bool) {
-        let mut watched = self.watched.lock();
-        watched.close_descriptors = close_descriptors;
+        let mut state = self.state.lock();
+        state.close_descriptors = close_descriptors;
         self.running.store(false);
     }
 
@@ -198,10 +201,10 @@ impl Watcher {
 
         log!("Watcher started");
 
-        let thread = self.watched.lock().thread.take();
+        let thread = self.state.lock().thread.take();
         let mut thread = thread.expect("a watcher is started once");
         if let Err(err) = platform::watch_loop(self, &mut thread) {
-            let _watched = self.watched.lock();
+            let _state = self.state.lock();
             if self.running.load() {
                 thread.ctx.on_error(err);
             }
@@ -213,23 +216,23 @@ impl Watcher {
         Output::flush();
     }
 
-    fn flush_evictions(&self, watched: &mut Watched) {
-        let evicted = &mut watched.evictions;
-        if evicted.is_empty() {
+    fn flush_evictions(&self, state: &mut State) {
+        let evictions = &mut state.evictions;
+        if evictions.is_empty() {
             return;
         }
-        let watchlist = &mut watched.list;
+        let watchlist = &mut state.watchlist;
 
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed
         // So if we just sort the list by the biggest index first, that should be fine
-        index_sort::sort_slice_by(evicted, |a, b| b.cmp(a));
+        index_sort::sort_slice_by(evictions, |a, b| b.cmp(a));
 
         let fds = watchlist.items_fd();
         let fds_len = fds.len();
         let mut last_item = NO_WATCH_ITEM;
 
-        for &item in &*evicted {
+        for &item in &*evictions {
             // catch duplicates, since the list is sorted, duplicates will appear right after each other
             if item == last_item {
                 continue;
@@ -252,7 +255,7 @@ impl Watcher {
 
         last_item = NO_WATCH_ITEM;
         // This is split into two passes because reading the slice while modified is potentially unsafe.
-        for item in evicted.drain(..) {
+        for item in evictions.drain(..) {
             if item == last_item || watchlist.len() <= item as usize {
                 continue;
             }
@@ -322,7 +325,7 @@ impl Watcher {
         watchlist: &mut WatchList,
         fd: Fd,
         file_path: &'a [u8],
-        keep: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
         hash: HashType,
         parent_hash: HashType,
     ) -> sys::Result<FdOwnership> {
@@ -355,7 +358,7 @@ impl Watcher {
         };
 
         watchlist.append_assume_capacity(WatchItem {
-            file_path: keep(file_path),
+            file_path: to_static(file_path),
             fd,
             hash,
             parent_hash,
@@ -371,7 +374,7 @@ impl Watcher {
         watchlist: &mut WatchList,
         stored_fd: Fd,
         file_path: &'a [u8],
-        keep: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
         #[cfg(windows)]
@@ -419,7 +422,7 @@ impl Watcher {
         };
 
         watchlist.append_assume_capacity(WatchItem {
-            file_path: keep(file_path),
+            file_path: to_static(file_path),
             fd,
             hash,
             parent_hash,
@@ -437,7 +440,7 @@ impl Watcher {
         watchlist: &mut WatchList,
         fd: Fd,
         file_path: &'a [u8],
-        keep: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
         hash: HashType,
         dir_fd: Fd,
     ) -> sys::Result<FdOwnership> {
@@ -480,7 +483,7 @@ impl Watcher {
                     watchlist,
                     dir_fd,
                     parent_dir,
-                    keep,
+                    to_static,
                     parent_dir_hash,
                 ) {
                     Err(err) => {
@@ -496,7 +499,7 @@ impl Watcher {
             watchlist,
             fd,
             file_path,
-            keep,
+            to_static,
             hash,
             parent_dir_hash,
         ) {
@@ -551,17 +554,17 @@ impl Watcher {
         &self,
         fd: Fd,
         file_path: &'a [u8],
-        keep: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        let watchlist = &mut self.watched.lock().list;
+        let watchlist = &mut self.state.lock().watchlist;
         if let Some(idx) = index_of(watchlist, hash) {
             return Ok(idx as WatchItemIndex);
         }
         watchlist
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
-        self.append_directory_assume_capacity(watchlist, fd, file_path, keep, hash)
+        self.append_directory_assume_capacity(watchlist, fd, file_path, to_static, hash)
     }
 
     /// Lazily watch a file by path (slow path).
@@ -581,7 +584,7 @@ impl Watcher {
         }
         let hash = Self::get_hash(file_path);
 
-        if index_of(&self.watched.lock().list, hash).is_some() {
+        if index_of(&self.state.lock().watchlist, hash).is_some() {
             return true;
         }
 
@@ -644,11 +647,11 @@ impl Watcher {
         &self,
         fd: Fd,
         file_path: &'a [u8],
-        keep: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
+        to_static: impl Fn(&'a [u8]) -> Cow<'static, [u8]> + Copy,
         hash: HashType,
         dir_fd: Fd,
     ) -> sys::Result<FdOwnership> {
-        let watchlist = &mut self.watched.lock().list;
+        let watchlist = &mut self.state.lock().watchlist;
 
         if let Some(index) = index_of(watchlist, hash) {
             let mut ownership = FdOwnership::Caller;
@@ -667,12 +670,12 @@ impl Watcher {
             return Ok(ownership);
         }
 
-        self.append_file(watchlist, fd, file_path, keep, hash, dir_fd)
+        self.append_file(watchlist, fd, file_path, to_static, hash, dir_fd)
     }
 
     /// Takes effect after the next change.
-    pub fn evict(&self, index: WatchItemIndex) {
-        self.watched.lock().evictions.push(index);
+    pub fn remove_at_index(&self, index: WatchItemIndex) {
+        self.state.lock().evictions.push(index);
     }
 
     pub fn on_maybe_watch_directory(&self, file_path: &'static [u8], dir_fd: Fd) {
@@ -688,14 +691,14 @@ impl Watcher {
     }
 }
 
-impl Drop for Watched {
+impl Drop for State {
     fn drop(&mut self) {
         if self.close_descriptors {
-            for &fd in self.list.items_fd().iter().filter(|fd| fd.is_valid()) {
+            for &fd in self.watchlist.items_fd().iter().filter(|fd| fd.is_valid()) {
                 let _ = bun_sys::close(fd);
             }
         }
-        self.list.drop_elements();
+        self.watchlist.drop_elements();
     }
 }
 

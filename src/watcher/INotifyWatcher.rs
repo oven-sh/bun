@@ -59,9 +59,9 @@ impl<'a> Event<'a> {
 }
 
 /// The events in the bytes read from an inotify descriptor.
-pub struct Events<'a>(pub &'a [u8]);
+pub struct EventIterator<'a>(pub &'a [u8]);
 
-impl<'a> Iterator for Events<'a> {
+impl<'a> Iterator for EventIterator<'a> {
     type Item = Event<'a>;
 
     fn next(&mut self) -> Option<Event<'a>> {
@@ -249,13 +249,13 @@ impl Drop for INotifyWatcher {
 
 pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys::Result<()> {
     let mut bytes = vec![0u8; EVENTLIST_BYTES_SIZE].into_boxed_slice();
-    let mut eventlist_indexes = Vec::new();
+    let mut eventlist_index_scratch = Vec::new();
     while this.running.load() {
         let len = this.platform.read(&mut bytes)?;
-        let mut events = Events(&bytes[..len]);
+        let mut events = EventIterator(&bytes[..len]);
         // More than one batch only under load, see `watch-many-dirs.test.ts`.
         while !events.0.is_empty() && this.running.load() {
-            process_inotify_event_batch(this, thread, &mut events, &mut eventlist_indexes);
+            process_inotify_event_batch(this, thread, &mut events, &mut eventlist_index_scratch);
         }
     }
     Ok(())
@@ -264,21 +264,21 @@ pub(crate) fn watch_loop(this: &Watcher, thread: &mut WatcherThread) -> bun_sys:
 fn process_inotify_event_batch(
     this: &Watcher,
     thread: &mut WatcherThread,
-    events: &mut Events<'_>,
-    eventlist_indexes: &mut Vec<EventListIndex>,
+    events: &mut EventIterator<'_>,
+    eventlist_index_scratch: &mut Vec<EventListIndex>,
 ) {
     use crate::watcher_impl::WatchItemColumns;
     let _flush = Output::flush_guard();
 
-    eventlist_indexes.clear();
-    eventlist_indexes.extend_from_slice(this.watched.lock().list.items_eventlist_index());
+    eventlist_index_scratch.clear();
+    eventlist_index_scratch.extend_from_slice(this.state.lock().watchlist.items_eventlist_index());
 
     let mut event_count: usize = 0;
     let mut temp_name_list: [&[u8]; max_count] = [b""; max_count];
     let mut temp_name_off: u8 = 0;
 
     for event in events.take(max_count) {
-        let Some(idx) = eventlist_indexes
+        let Some(idx) = eventlist_index_scratch
             .iter()
             .position(|&x| x == event.watch_descriptor)
         else {
@@ -309,9 +309,9 @@ fn process_inotify_event_batch(
 
     for i in 0..watch_events.len() {
         // An event without a name gets the names of those merged into it.
-        let temp_name_off = core::mem::replace(&mut watch_events[i].name_off, name_off);
+        let old_name_off = core::mem::replace(&mut watch_events[i].name_off, name_off);
         if watch_events[i].name_len > 0 {
-            changed_filepaths[name_off as usize] = temp_name_list[temp_name_off as usize];
+            changed_filepaths[name_off as usize] = temp_name_list[old_name_off as usize];
             name_off += 1;
         }
 

@@ -8969,87 +8969,45 @@ bool moduleMockImportsByKey(Zig::GlobalObject* globalObject, const String& key)
     return mock && mock->importsOriginal;
 }
 
-// For the error of a test file that never finished loading. A module that began before a factory ran can be suspended at a top-level await of an
-// import() of that factory's mock, also through the modules that it awaits. redirectedModuleKey() gives the factory no copy of such a module,
-// because isWaitingForModule() follows import statements only. A factory that awaits the module then never settles.
-__attribute__((minsize)) void appendNotesOnFactoriesThatLoadWhatWaitsForTheirMock(Zig::GlobalObject* globalObject, StringBuilder& notes)
+bool isModuleMockFactoryRunning(Zig::GlobalObject* globalObject, const String& key)
 {
-    auto& vm = JSC::getVM(globalObject);
-    auto& runningModuleMocks = globalObject->onLoadPlugins.runningModuleMocks;
+    return globalObject->onLoadPlugins.runningModuleMocks.containsIf([&](const auto& running) {
+        auto* mock = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get());
+        return mock->factory && mock->factory.get().isCallable() && mock->specifier->tryGetValue().data == key;
+    });
+}
+
+// For the error of a test file that never finished loading. The loader fetches nothing for an import() of a mocked module whose factory runs, so no
+// entry of the registry names that module. Adds the mocked modules whose running factory a module of `evaluating` awaits an import() of.
+__attribute__((minsize)) void appendModuleMocksWhoseFactoryAnImportAwaits(Zig::GlobalObject* globalObject, std::span<JSC::CyclicModuleRecord* const> evaluating, Vector<String>& keys)
+{
     JSValue dynamicImports = globalObject->mockModule.dynamicImports.get();
-    if (runningModuleMocks.isEmpty() || !dynamicImports)
+    if (globalObject->onLoadPlugins.runningModuleMocks.isEmpty() || !dynamicImports)
         return;
 
-    MarkedArgumentBuffer pendingImports;
-    Vector<String, 8> pendingKeys;
+    auto& vm = JSC::getVM(globalObject);
+    // Each step walks the reactions of one import(). A program with very many of them is not searched to the end.
+    size_t stepsLeft = 1 << 16;
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), uncheckedDowncast<JSC::JSMap>(dynamicImports), JSC::IterationKind::Entries);
     while (true) {
         auto [import, key] = iterator->nextWithAdvance(vm);
         if (!import)
             break;
-        if (key.isString() && uncheckedDowncast<JSC::JSPromise>(import)->status() == JSC::JSPromise::Status::Pending) {
-            pendingImports.append(import);
-            pendingKeys.append(asString(key)->tryGetValue());
-        }
-    }
-
-    auto* loader = testFileModuleLoader(globalObject);
-    auto suspendedRecordOf = [&](const String& key) -> JSC::CyclicModuleRecord* {
-        auto* entry = loader->registryEntry(JSC::Identifier::fromString(vm, key));
-        auto* record = entry ? dynamicDowncast<JSC::CyclicModuleRecord>(entry->record()) : nullptr;
-        return record && record->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync ? record : nullptr;
-    };
-    // Each step walks the reactions of one import(). A program with very many of them gets no note.
-    size_t stepsLeft = 4096;
-    auto waitsFor = [&](BunPlugin::OnLoad::RunningModuleMock& running, JSC::CyclicModuleRecord* record, const String& mocked) {
-        Vector<JSC::CyclicModuleRecord*, 4> waiting { record };
-        for (size_t at = 0; at < waiting.size(); at++) {
-            for (size_t index = 0; index < pendingKeys.size(); index++) {
-                if (!stepsLeft)
-                    return false;
-                stepsLeft--;
-                if (!JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(uncheckedDowncast<JSC::JSPromise>(pendingImports.at(index)), waiting[at]))
-                    continue;
-                if (pendingKeys[index] == mocked)
-                    return true;
-                if (auto* awaited = suspendedRecordOf(pendingKeys[index])) {
-                    if (!waiting.contains(awaited))
-                        waiting.append(awaited);
-                    continue;
-                }
-                // It has yet to run: its import statements say whether it waits.
-                Vector<String> unfinished;
-                if (Zig::isWaitingForModule(globalObject, running, pendingKeys[index], mocked, unfinished))
-                    return true;
+        if (!key.isString())
+            continue;
+        String mocked = asString(key)->tryGetValue();
+        if (keys.contains(mocked) || !isModuleMockFactoryRunning(globalObject, mocked))
+            continue;
+        for (auto* record : evaluating) {
+            if (!stepsLeft)
+                return;
+            stepsLeft--;
+            if (JSC::AbstractModuleRecord::importPromiseGatesAsyncDependency(uncheckedDowncast<JSC::JSPromise>(import), record)) {
+                keys.append(mocked);
+                break;
             }
         }
-        return false;
-    };
-
-    bool found = false;
-    for (auto& running : runningModuleMocks) {
-        String mocked = uncheckedDowncast<Zig::JSModuleMock>(running.mock.get())->specifier->tryGetValue().data;
-        Vector<String> loaded = copyToVector(running.importChain);
-#if ENABLE(AOT)
-        for (size_t module : running.compiledImportChain)
-            loaded.append(JSC::AOT::moduleFilePath(JSC::AOT::ModuleID(module)));
-#endif
-        std::sort(loaded.begin(), loaded.end(), WTF::codePointCompareLessThan);
-        for (const String& key : loaded) {
-            auto* record = suspendedRecordOf(key);
-            if (!record || !record->hasTLA() || !waitsFor(running, record, mocked))
-                continue;
-            notes.append("\nnote: the mock.module() factory for "_s);
-            notes.appendQuotedJSONString(mocked);
-            notes.append(" loaded "_s);
-            notes.appendQuotedJSONString(key);
-            notes.append(", which waits for that mock"_s);
-            found = true;
-            break;
-        }
     }
-    if (found)
-        notes.append("\nnote: a factory that awaits such a module never settles: don't await it in the factory"_s);
 }
 
 bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String& key)

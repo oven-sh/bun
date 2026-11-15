@@ -85,6 +85,8 @@ test/cli/test/test-changed.test.ts: bun test --changed --watch > trigger file pa
 test/cli/test/test-environment.test.ts: test environment > without --isolate > switching environments works even if a file leaves builtins patched
 test/cli/test/test-shard.test.ts: --timings > --parallel with --timings cuts chunks by duration and dispatches each chunk slowest-first
 test/cli/test/test-shard.test.ts: --timings > --shard with --timings cuts path-sorted files into runs of equal total time
+# The next one mocks `node:os`. The runner is not told of a compiled import of a builtin module, so it cannot say that the file waits for the factory.
+test/js/bun/test/mock/mock-hoist.test.ts: errors > a factory for a builtin module is named too
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate"]
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: ["--isolate=modules"]
 test/js/bun/test/mock/mock-hoist.test.ts: errors > a jest.mock() factory can read a later const though an earlier file or a preload loaded the module: []

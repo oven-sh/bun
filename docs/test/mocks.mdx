@@ -414,7 +414,7 @@ Outside a factory, use `await vi.importActual("./math")` or `jest.requireActual(
 
 This also works when the mocked module is part of an import cycle. The modules that import it still get the mock.
 
-If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock. A module that had already begun, and is waiting at an `await import()` for the mock, is not copied (see [Differences from Vitest](#differences-from-vitest)).
+If the factory loads another module with `import()`, `require()` or `vi.importActual()`, and that module imports the one being mocked, it gets the original instead of waiting for the mock. That copy is private to the factory. The rest of the program loads the module again and gets the mock.
 
 When one import leads to several mocked modules, Bun calls their factories one at a time, in the order the modules are imported, as Vitest does. A factory that imports another mocked module gets that mock, whose factory is called first if it hasn't been.
 
@@ -807,7 +807,7 @@ test("lazy import", async () => {
 - A factory that uses `importOriginal` is called after the original module is evaluated, not before, so after the factories that don't use it. A factory that declares the parameter counts as using it, so the original is evaluated even if the factory never calls it.
 - `export * from` a mocked module re-exports the original's export names if the factory uses `importOriginal`. Names the factory adds aren't re-exported, and names it leaves out are re-exported as `undefined`.
 - If two files import each other and both have hoisted calls, they wait on each other and the run fails with an error that names both files. Keep the hoisted calls in only one of them.
-- If a factory awaits an `import()` of a module that is already waiting at an `await import()` for that factory's mock, they wait on each other and the test file fails to load. The error names the mocked module and the module that waits. A file with hoisted calls awaits each of its imports this way. Load that module in the factory without `await`, or after the factory returns.
+- If a factory awaits a module that is itself waiting at an `await import()` for that factory's mock, they wait on each other. A file with hoisted calls awaits each of its imports this way. If the test file then fails to load, a note of the error names the mocked module: `a mock.module() factory never settled for`. In a test, a hook or a `describe()` callback, the same wait ends in a timeout or in `never settled`, without that note. Load such a module after the factory returns, for example in a function that the mock exports.
 
 ## Implementation Details
 

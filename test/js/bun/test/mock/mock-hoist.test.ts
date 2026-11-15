@@ -1091,53 +1091,144 @@ describe.concurrent("errors", () => {
     ).toEqual([["shared"]]);
   });
 
-  // helper.ts hoists, so it awaits its import of ./mod. The factory for ./mod runs then, and awaits helper.ts.
-  test("a factory that awaits a module which waits for the factory's mock is named in the error", async () => {
-    const { stderr, exitCode } = await run({
-      "helper.ts": `
-        import { value } from "./mod";
-        vi.mock("./unrelated", () => ({}));
-        export const helper = () => value;
-      `,
-      "hoist.test.ts": `
-        import { helper } from "./helper";
-        vi.mock("./mod", async () => {
-          const { helper } = await import("./helper");
-          return { value: "mocked", helper };
-        });
-        test("unreachable", () => { helper(); });
-      `,
-    });
-    expect(stderr).toMatch(/error: ".*hoist\.test\.ts" never finished loading/);
-    expect(stderr).toMatch(
-      /note: the mock\.module\(\) factory for ".*mod\.ts" loaded ".*helper\.ts", which waits for that mock/,
-    );
-    expect(stderr).toContain("note: a factory that awaits such a module never settles: don't await it in the factory");
+  // The `error:` and `note:` lines of a run whose test file does not load, with the folder cut off each path.
+  async function loadError(files: Record<string, string>) {
+    const { stderr, exitCode } = await run(files);
     expect(exitCode).toBe(1);
-  });
+    return stderr
+      .split("\n")
+      .filter(line => /^(error|note): /.test(line))
+      .map(line => line.replace(/"[^"]*[\\/]/g, '"'));
+  }
+  const neverFinished = [
+    'error: "hoist.test.ts" never finished loading',
+    "note: the event loop is empty, so nothing can settle it anymore",
+  ];
+  const unsettled = (file: string) => `note: unsettled top-level await in "${file}"`;
+  const neverSettled = (file: string) =>
+    `note: an onLoad() plugin or a mock.module() factory never settled for "${file}"`;
 
-  test("a factory that does not await the module which waits for its mock lets both finish", async () => {
+  // helper.ts hoists, so it awaits its import of ./mod. The factory for ./mod runs then, and awaits helper.ts.
+  test("a factory that awaits a module which awaits the factory's mock is named in the error", async () => {
     expect(
-      await events({
+      await loadError({
         "helper.ts": `
           import { value } from "./mod";
           vi.mock("./unrelated", () => ({}));
-          export const helper = () => value;
+          export function helper() { return value; }
         `,
         "hoist.test.ts": `
           import { helper } from "./helper";
-          vi.mock("./mod", () => {
-            const loading = import("./helper");
-            return { value: "mocked", fromFactory: async () => (await loading).helper() };
+          vi.mock("./mod", async () => {
+            const { helper } = await import("./helper");
+            return { value: "mocked", helper };
           });
-          test("reads the module that the factory loaded", async () => {
-            const mod = await import("./mod");
-            (globalThis.events ??= []).push(helper(), await mod.fromFactory());
-          });
-          ${print}
+          test("unreachable", () => { helper(); });
         `,
       }),
-    ).toEqual([["mocked", "mocked"]]);
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), unsettled("helper.ts"), neverSettled("mod.ts")]);
+  });
+
+  test("a factory that never settles is named where a file that hoists imports its module", async () => {
+    expect(
+      await loadError({
+        "hoist.test.ts": `
+          import { value } from "./mod";
+          vi.mock("./mod", () => new Promise(() => {}));
+          test("unreachable", () => { value; });
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), neverSettled("mod.ts")]);
+  });
+
+  test("a factory that two modules wait for is named once", async () => {
+    const importer = `
+      import { value } from "./mod";
+      vi.mock("./unrelated", () => ({}));
+      export default value;
+    `;
+    expect(
+      await loadError({
+        "first.ts": importer,
+        "second.ts": importer,
+        "hoist.test.ts": `
+          vi.mock("./mod", () => new Promise(() => {}));
+          await Promise.all([import("./first"), import("./second")]);
+          test("unreachable", () => {});
+        `,
+      }),
+    ).toEqual([
+      ...neverFinished,
+      unsettled("hoist.test.ts"),
+      unsettled("first.ts"),
+      unsettled("second.ts"),
+      neverSettled("mod.ts"),
+    ]);
+  });
+
+  test("a factory for a builtin module is named too", async () => {
+    expect(
+      await loadError({
+        "hoist.test.ts": `
+          import { hostname } from "node:os";
+          vi.mock("node:os", () => new Promise(() => {}));
+          test("unreachable", () => { hostname; });
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), neverSettled("node:os")]);
+  });
+
+  test("a factory is named beyond the limit of five notes", async () => {
+    const files: Record<string, string> = {
+      "hoist.test.ts": `
+        import "./importer0";
+        vi.mock("./mod", () => new Promise(() => {}));
+        test("unreachable", () => {});
+      `,
+    };
+    for (let i = 0; i < 5; i++) {
+      files[`importer${i}.ts`] = `
+        import "./${i < 4 ? `importer${i + 1}` : "mod"}";
+        vi.mock("./unrelated", () => ({}));
+      `;
+    }
+    expect(await loadError(files)).toEqual([
+      ...neverFinished,
+      unsettled("hoist.test.ts"),
+      ...[0, 1, 2, 3].map(i => unsettled(`importer${i}.ts`)),
+      neverSettled("mod.ts"),
+      "note: and 1 more",
+    ]);
+  });
+
+  test("a factory whose import() no module awaits is not named", async () => {
+    expect(
+      await loadError({
+        "hoist.test.ts": `
+          vi.mock("./mod", () => new Promise(() => {}));
+          void import("./mod");
+          await new Promise(() => {});
+          test("unreachable", () => {});
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts")]);
+  });
+
+  // The mock of node:fs is the file in __mocks__, which never finishes. No factory runs.
+  test("a mock without a factory is not named as a factory", async () => {
+    expect(
+      await loadError({
+        "__mocks__/fs.ts": `
+          await new Promise(() => {});
+          export const existsSync = () => "mocked";
+        `,
+        "hoist.test.ts": `
+          import { existsSync } from "node:fs";
+          vi.mock("node:fs");
+          test("unreachable", () => { existsSync; });
+        `,
+      }),
+    ).toEqual([...neverFinished, unsettled("hoist.test.ts"), unsettled("fs.ts")]);
   });
 });
 

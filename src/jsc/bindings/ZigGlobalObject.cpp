@@ -995,11 +995,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     Vector<JSC::Identifier> unfinished;
     Vector<std::pair<int64_t, String>> awaiting;
     Vector<String> fetching;
+    Vector<JSC::CyclicModuleRecord*, 8> evaluating;
     Bun::forEachModuleRegistrySpecifier(loader, [&](UniquedStringImpl* specifier, JSC::ModuleRegistryEntry* entry) {
         if (isModuleLoadSettled(entry))
             return;
         auto key = JSC::Identifier::fromUid(vm, specifier);
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
+        if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync)
+            evaluating.append(cyclic);
         if (!entry->record())
             fetching.append(key.string());
         else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0)) {
@@ -1034,8 +1037,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     }
 #endif
     // While the records are still in the registry.
-    StringBuilder notes;
-    Bun::appendNotesOnFactoriesThatLoadWhatWaitsForTheirMock(globalObject, notes);
+    Bun::appendModuleMocksWhoseFactoryAnImportAwaits(globalObject, evaluating.span(), fetching);
     for (auto& key : unfinished)
         loader->removeEntry(key);
 
@@ -1049,6 +1051,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
 
     constexpr size_t maxNotes = 5;
     size_t count = 0;
+    StringBuilder notes;
     for (auto& [order, specifier] : awaiting) {
         if (count++ < maxNotes) {
             notes.append("\nnote: unsettled top-level await in "_s);
@@ -1056,7 +1059,8 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         }
     }
     for (auto& specifier : fetching) {
-        if (count++ < maxNotes) {
+        // The others wait for a factory that never settled, so it is named beyond the limit too.
+        if (Bun::isModuleMockFactoryRunning(globalObject, specifier) || count++ < maxNotes) {
             notes.append("\nnote: an onLoad() plugin or a mock.module() factory never settled for "_s);
             notes.appendQuotedJSONString(specifier);
         }

@@ -219,7 +219,7 @@ public:
             drain();
         }
 
-        // Addon threads keep running after a worker's shutdown (Node: ThreadSafeFunction::Cleanup).
+        // Close the threadsafe functions, which addon threads can outlive a worker with (Node: ThreadSafeFunction::Cleanup).
         // Their finalizers are native callbacks like the ones below, so they
         // start from a clean exception state too: a cleanup hook may have left one.
         clearExceptionsBetweenFinalizers();

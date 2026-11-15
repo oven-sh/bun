@@ -230,9 +230,8 @@ impl DevServer {
                 payload.extend_from_slice(&removed.get_owner().encode().bits().to_le_bytes());
             }
 
-            let mut i = 0;
-            while let Some(added) = self.graphs.incremental_result.failures_added.get(i) {
-                i += 1;
+            for i in 0..self.graphs.incremental_result.failures_added.len() {
+                let added = &self.graphs.incremental_result.failures_added[i];
                 payload.extend_from_slice(&added.data);
 
                 match added.get_owner() {

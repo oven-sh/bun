@@ -130,7 +130,7 @@ impl ScanOpts {
 /// like `bun_resolver::DirEntryAccessor`.
 pub(crate) mod standalone_accessor {
     use bun_core::ZStr;
-    use bun_glob::walk::{Accessor, AccessorDirIter, AccessorHandle, DirEntry};
+    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_paths::{PathBuffer, Platform, platform, resolve_path};
     use bun_standalone_graph::Graph;
     use bun_sys::{E, Error as SysError, FileKind, Result as Maybe, Stat, Tag};
@@ -192,12 +192,12 @@ pub(crate) mod standalone_accessor {
     impl AccessorDirIter for StandaloneDirIter {
         type Handle = StandaloneHandle;
 
-        fn next(&mut self) -> Maybe<Option<DirEntry<'_>>> {
+        fn next(&mut self) -> Maybe<Option<AccessorDirEntry<'_>>> {
             let Some((name, is_dir)) = self.entries.next() else {
                 return Ok(None);
             };
             self.name = name;
-            Ok(Some(DirEntry {
+            Ok(Some(AccessorDirEntry {
                 name: &self.name,
                 kind: if is_dir {
                     FileKind::Directory

@@ -738,9 +738,9 @@ pub(crate) struct JSXTag<'a> {
 }
 
 impl<'a> JSXTag<'a> {
-    pub(crate) fn parse<P>(p: &mut P) -> crate::CrateResult<JSXTag<'a>>
+    pub(crate) fn parse<'log, P>(p: &mut P) -> crate::CrateResult<JSXTag<'a>>
     where
-        P: crate::p::ParserLike<'a>,
+        P: crate::p::ParserLike<'a, 'log>,
     {
         use bun_core::strings;
 
@@ -796,8 +796,7 @@ impl<'a> JSXTag<'a> {
 
             if let Some(index) = strings::index_of_char(member, b'-') {
                 let source = p.source();
-                // SAFETY: `log_ptr()` returns the externally-lent `Log`, which outlives `P`.
-                unsafe { p.log_ptr().as_ref() }.add_error(
+                p.lexer().log.add_error(
                     Some(source),
                     bun_ast::Loc {
                         start: member_range.loc.start + i32::try_from(index).expect("int cast"),
@@ -1706,18 +1705,13 @@ pub fn new_lazy_export_ast_impl<'bump>(
     symbols: js_ast::symbol::List<'bump>,
 ) -> crate::CrateResult<Option<js_ast::Ast<'bump>>> {
     let temp_log = bun_ast::Log::init();
-    // parser.log and lexer.log both store `NonNull<Log>`; copy the lexer's
-    // pointer so they share one provenance chain. See `Parser::init` for the
-    // same pattern.
     let lexer = js_lexer::Lexer::init_without_reading(&temp_log, source, bump);
-    let log_ptr = lexer.log;
     let mut parser = Parser {
         options: opts,
         bump,
         lexer,
         define,
         source,
-        log: log_ptr,
         orig_error_count: 0,
     };
     let result = match parser.to_lazy_export_ast(expr, runtime_api_call, symbols) {

@@ -1010,14 +1010,6 @@ pub struct GregorianDateTime {
     pub weekday: i32,
 }
 
-/// Options for `JSGlobalObject::validate_object`.
-#[derive(Default, Copy, Clone)]
-pub struct ValidateObjectOpts {
-    pub(crate) allow_array: bool,
-    pub(crate) allow_function: bool,
-    pub(crate) nullable: bool,
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // JSObject (real module in JSObject.rs).
 // ──────────────────────────────────────────────────────────────────────────

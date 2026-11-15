@@ -179,7 +179,6 @@ fn compute_fills(removable: &[RemovableBytes], cuts: &[AddressRange]) -> Vec<Fil
 mod tests {
     use super::*;
     use crate::cut_model::SlotCosts;
-    use crate::image::ExecutableFormat;
 
     const PAGE: u64 = 4096;
 
@@ -252,7 +251,6 @@ mod tests {
         cuttable_spans: Vec<AddressRange>,
     ) -> CutPlan {
         let model = CutModel {
-            format: ExecutableFormat::Elf,
             alignment: limits.alignment,
             capacity: CutCapacity::from_free_slots(limits.max_cuts),
             cuttable_spans,
@@ -634,7 +632,6 @@ mod tests {
             cuttable(16 * PAGE, 18 * PAGE, false),
         ];
         let model = CutModel {
-            format: ExecutableFormat::MachO,
             alignment: PAGE,
             capacity: CutCapacity::from_free_slots(LIMITS.max_cuts),
             cuttable_spans: vec![
@@ -667,7 +664,6 @@ mod tests {
             range(16 * PAGE, 32 * PAGE),
         ];
         let model = |free_slots| CutModel {
-            format: ExecutableFormat::Pe,
             alignment: PAGE,
             capacity: CutCapacity::Cuts(free_slots / 2),
             cuttable_spans: spans.clone(),

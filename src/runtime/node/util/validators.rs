@@ -242,81 +242,27 @@ pub(crate) fn validate_boolean(
     Ok(value.as_boolean())
 }
 
-bitflags::bitflags! {
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
-    pub(crate) struct ValidateObjectOptions: u8 {
-        const ALLOW_NULLABLE = 1 << 0;
-        const ALLOW_ARRAY    = 1 << 1;
-        const ALLOW_FUNCTION = 1 << 2;
-    }
-}
-
-impl ValidateObjectOptions {
-    #[inline]
-    fn allow_nullable(self) -> bool {
-        self.contains(Self::ALLOW_NULLABLE)
-    }
-    #[inline]
-    fn allow_array(self) -> bool {
-        self.contains(Self::ALLOW_ARRAY)
-    }
-    #[inline]
-    fn allow_function(self) -> bool {
-        self.contains(Self::ALLOW_FUNCTION)
-    }
-}
-
 pub(crate) fn validate_object(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
-    options: ValidateObjectOptions,
 ) -> JsResult<()> {
-    if !options.allow_nullable() && !options.allow_array() && !options.allow_function() {
-        if value.is_null() || value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
+    if value.is_null() || value.js_type().is_array() {
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "object",
+            value,
+        ));
+    }
 
-        if !value.is_object() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-    } else {
-        if !options.allow_nullable() && value.is_null() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !options.allow_array() && value.js_type().is_array() {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
-
-        if !value.is_object() && (!options.allow_function() || !value.js_type().is_function()) {
-            return Err(throw_err_invalid_arg_type(
-                global_this,
-                name,
-                "object",
-                value,
-            ));
-        }
+    if !value.is_object() {
+        return Err(throw_err_invalid_arg_type(
+            global_this,
+            name,
+            "object",
+            value,
+        ));
     }
     Ok(())
 }
@@ -325,7 +271,6 @@ pub(crate) fn validate_array(
     global_this: &JSGlobalObject,
     value: JSValue,
     name: impl fmt::Display + Copy,
-    min_length: Option<i32>,
 ) -> JsResult<()> {
     if !value.js_type().is_array() {
         let actual_type = value.type_name(global_this);
@@ -337,14 +282,6 @@ pub(crate) fn validate_array(
             ),
         ));
     }
-    if let Some(min_length) = min_length {
-        if (value.get_length(global_this)? as i64) < i64::from(min_length) {
-            return Err(throw_err_invalid_arg_value(
-                global_this,
-                format_args!("{} must be longer than {}", name, min_length),
-            ));
-        }
-    }
     Ok(())
 }
 
@@ -353,7 +290,7 @@ pub(crate) fn validate_string_array(
     value: JSValue,
     name: impl fmt::Display + Copy,
 ) -> JsResult<usize> {
-    validate_array(global_this, value, name, None)?;
+    validate_array(global_this, value, name)?;
     let mut i: usize = 0;
     let mut iter = value.array_iterator(global_this)?;
     while let Some(item) = iter.next()? {
@@ -375,7 +312,7 @@ pub(crate) fn validate_boolean_array(
     value: JSValue,
     name: impl fmt::Display + Copy,
 ) -> JsResult<usize> {
-    validate_array(global_this, value, name, None)?;
+    validate_array(global_this, value, name)?;
     let mut i: usize = 0;
     let mut iter = value.array_iterator(global_this)?;
     while let Some(item) = iter.next()? {

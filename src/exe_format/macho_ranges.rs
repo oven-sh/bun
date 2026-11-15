@@ -5,8 +5,8 @@ use bun_core::AnyBitPattern;
 
 use crate::cut_model::{CutCapacity, CutModel, NoCutReason};
 use crate::image::{
-    AddressRange, Architecture, ExecutableFormat, ImageBytes, ImageError, MappedSpan,
-    RemovedFileRanges, merge_ranges, subtract_cuts,
+    AddressRange, Architecture, ImageBytes, ImageError, MappedSpan, RemovedFileRanges,
+    merge_ranges, subtract_cuts,
 };
 use crate::macho::{MachoSigner, SEG_LINKEDIT};
 use crate::macho_fixups::{SegmentPiece, rebuild_chained_fixups};
@@ -89,14 +89,12 @@ pub(crate) fn mapped_spans(macho: &[u8]) -> Result<Vec<MappedSpan>, ImageError> 
 }
 
 pub(crate) fn cut_model(macho: &[u8]) -> CutModel {
-    let without_cuts =
-        |reason| CutModel::without_cuts(ExecutableFormat::MachO, CUT_ALIGNMENT, reason);
+    let without_cuts = |reason| CutModel::without_cuts(CUT_ALIGNMENT, reason);
     let Ok(parsed) = parse(macho) else {
         return without_cuts(NoCutReason::HeadersUnreadable);
     };
     match compute_capacity(macho, &parsed) {
         Ok(capacity @ CutCapacity::Cuts(_)) => CutModel {
-            format: ExecutableFormat::MachO,
             alignment: CUT_ALIGNMENT,
             capacity,
             cuttable_spans: find_cuttable_spans(&parsed),

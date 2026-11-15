@@ -313,10 +313,7 @@ fn assert_image_error(original: &[u8], cuts: &[AddressRange], expected: ImageErr
 
 fn assert_no_cuts(bytes: &[u8], reason: NoCutReason) {
     let model = cut_model(bytes);
-    assert_eq!(
-        model,
-        CutModel::without_cuts(ExecutableFormat::Pe, MIN_CUT_ALIGNMENT, reason)
-    );
+    assert_eq!(model, CutModel::without_cuts(MIN_CUT_ALIGNMENT, reason));
     assert_eq!(model.max_cuts(), 0);
 }
 
@@ -344,7 +341,6 @@ fn reads_toy_headers() {
     assert_eq!(spans[3].addresses.start, u64::from(BUILTINS_ADDRESS));
     assert_eq!(spans[6].addresses, relocation_addresses(&toy()));
     let model = cut_model(&toy());
-    assert_eq!(model.format, ExecutableFormat::Pe);
     assert_eq!(model.alignment, 4096);
     assert_eq!(model.capacity, CutCapacity::Cuts(TOY_MAX_CUTS));
 

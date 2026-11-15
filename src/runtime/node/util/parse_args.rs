@@ -408,12 +408,7 @@ fn parse_option_definitions<'a>(
             ..Default::default()
         };
 
-        validators::validate_object(
-            global,
-            obj,
-            format_args!("options.{}", option.long_name),
-            Default::default(),
-        )?;
+        validators::validate_object(global, obj, format_args!("options.{}", option.long_name))?;
 
         // type field is required
         let option_type: JSValue = obj
@@ -908,7 +903,7 @@ fn parse_args_impl(
         None => JSValue::UNDEFINED,
     };
     let args: ArgsSlice = if !config_args.is_undefined_or_null() {
-        validators::validate_array(global, config_args, "args", None)?;
+        validators::validate_array(global, config_args, "args")?;
         ArgsSlice {
             array: config_args,
             start: 0,
@@ -963,7 +958,7 @@ fn parse_args_impl(
     // Phase 0.C: Parse the options definitions
 
     let options_iter = if !config_options.is_undefined_or_null() {
-        validators::validate_object(global, config_options, "options", Default::default())?;
+        validators::validate_object(global, config_options, "options")?;
         Some(bun_jsc::JSPropertyIterator::init(
             global,
             config_options.get_object().unwrap(),

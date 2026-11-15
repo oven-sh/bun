@@ -1,5 +1,5 @@
 use crate::cut_choice::choose_cuts;
-use crate::image::{AddressRange, ExecutableFormat};
+use crate::image::AddressRange;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct RemovableBytes {
@@ -49,7 +49,6 @@ pub struct SlotCosts {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct CutModel {
-    pub format: ExecutableFormat,
     pub alignment: u64,
     pub capacity: CutCapacity,
     pub cuttable_spans: Vec<AddressRange>,
@@ -60,13 +59,8 @@ pub struct CutModel {
 }
 
 impl CutModel {
-    pub(crate) fn without_cuts(
-        format: ExecutableFormat,
-        alignment: u64,
-        reason: NoCutReason,
-    ) -> CutModel {
+    pub(crate) fn without_cuts(alignment: u64, reason: NoCutReason) -> CutModel {
         CutModel {
-            format,
             alignment,
             capacity: CutCapacity::NoCuts(reason),
             cuttable_spans: Vec::new(),

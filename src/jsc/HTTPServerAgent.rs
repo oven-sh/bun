@@ -1,5 +1,4 @@
 use core::cell::Cell;
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::VirtualMachineRef as VirtualMachine;
@@ -87,31 +86,21 @@ bun_opaque::opaque_ffi! {
 // `[[ZIG_EXPORT(nothrow)]]` — declared once in `crate::cpp::raw` (cppbind),
 // called below with explicit casts to the codegen's opaque param types.
 impl InspectorHTTPServerAgent {
-    /// # Safety
-    /// `server_instance` is forwarded to C++ as an opaque token; caller must
-    /// ensure it remains valid for the duration of the FFI call.
-    pub unsafe fn notify_server_started(
+    pub fn notify_server_started(
         agent: *mut InspectorHTTPServerAgent,
         server_id: ServerId,
-        hot_reload_id: HotReloadId,
         address: &BunString,
         start_time: f64,
-        server_instance: *mut c_void,
     ) {
-        // `opaque_mut` is the centralised ZST-handle deref proof (panics on
-        // null). The C++ side never reads `server_instance` as anything but an
-        // opaque token, so passing the raw pointer through is sound.
         let agent = Self::opaque_mut(agent);
         // SAFETY: `[[ZIG_EXPORT(nothrow)]]` C++ shim; `agent` proven non-null
-        // above; remaining args are by-value scalars / `&BunString`.
+        // via `opaque_mut`; remaining args are by-value scalars / `&BunString`.
         unsafe {
             crate::cpp::raw::Bun__HTTPServerAgent__notifyServerStarted(
                 core::ptr::from_mut(agent).cast(),
                 server_id.get() as _,
-                hot_reload_id as _,
                 address,
                 start_time,
-                server_instance,
             );
         }
     }

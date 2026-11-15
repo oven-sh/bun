@@ -964,24 +964,19 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
         config.passphrase = DataPointer::FromSpan(passphraseView->span());
     }
 
-    if (config.output_key_object) {
-        if (!isInput) {
-        }
-    } else {
-        if (!isInput) {
-            if (cipherValue.isString()) {
-                JSString* cipherString = cipherValue.toString(globalObject);
-                RETURN_IF_EXCEPTION(scope, );
-                GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
-                RETURN_IF_EXCEPTION(scope, );
-                config.cipher = Cipher::FromName(cipherView);
-                if (config.cipher == nullptr) {
-                    ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
-                    return;
-                }
-            } else {
-                config.cipher = nullptr;
+    if (!isInput) {
+        if (cipherValue.isString()) {
+            JSString* cipherString = cipherValue.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            GCOwnedDataScope<WTF::StringView> cipherView = cipherString->view(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            config.cipher = Cipher::FromName(cipherView);
+            if (config.cipher == nullptr) {
+                ERR::CRYPTO_UNKNOWN_CIPHER(scope, globalObject, cipherView);
+                return;
             }
+        } else {
+            config.cipher = nullptr;
         }
     }
 }

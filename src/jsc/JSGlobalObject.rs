@@ -1129,16 +1129,8 @@ impl JSGlobalObject {
     }
 
     // returns false if it throws
-    pub fn validate_object(
-        &self,
-        arg_name: &'static str,
-        value: JSValue,
-        opts: ValidateObjectOpts,
-    ) -> JsResult<()> {
-        if (!opts.nullable && value.is_null())
-            || (!opts.allow_array && value.is_array())
-            || (!value.is_object() && (!opts.allow_function || !value.is_function()))
-        {
+    pub fn validate_object(&self, arg_name: &'static str, value: JSValue) -> JsResult<()> {
+        if value.is_null() || value.is_array() || !value.is_object() {
             return Err(self.throw_invalid_argument_type_value(
                 arg_name.as_bytes(),
                 b"object",
@@ -1284,12 +1276,7 @@ pub struct SysErrOptions {
     pub name: Option<&'static [u8]>,
 }
 
-// Unified with the crate-root definitions (lib.rs) — re-exported here so
-// `bun_jsc::js_global_object::{IntegerRange, ValidateObjectOpts}` keep
-// resolving for any caller that named them via this path. The previous local
-// `ValidateObjectOpts` diverged from lib.rs (`nullable` vs `allow_nullable`),
-// splitting the public API across two incompatible structs.
-pub use crate::{IntegerRange, ValidateObjectOpts};
+pub use crate::IntegerRange;
 
 /// `bun.webcore.ScriptExecutionContext.Identifier` (ported here, not in
 /// `bun_runtime`, because `JSGlobalObject::script_execution_context_identifier`

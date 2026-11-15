@@ -898,12 +898,7 @@ fn format_with_separator<'a>(
     let path_object = path_object.to_js();
     let members = {
         let global = cx.global();
-        validate_object(
-            global,
-            path_object,
-            format_args!("pathObject"),
-            Default::default(),
-        )?;
+        validate_object(global, path_object, format_args!("pathObject"))?;
         let mut members: [Option<Utf8Bytes<'static>>; 5] = Default::default();
         for (member, name) in members
             .iter_mut()

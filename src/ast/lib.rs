@@ -1337,6 +1337,25 @@ impl Log {
         self.line_column_tracker.set(None);
     }
 
+    /// Until the guard drops, `self` has the messages, counts and level of `into`, and what is logged ends up there.
+    pub fn redirect<'g>(&'g self, into: &'g mut Log) -> LogRedirect<'g> {
+        self.swap(into);
+        LogRedirect { log: self, into }
+    }
+
+    fn swap(&self, other: &mut Log) {
+        let theirs = core::mem::take(other);
+        *other = Log {
+            warnings: Cell::new(self.warnings.replace(theirs.warnings.get())),
+            errors: Cell::new(self.errors.replace(theirs.errors.get())),
+            msgs: Cell::new(self.msgs.replace(theirs.msgs.into_inner())),
+            level: Cell::new(self.level.replace(theirs.level.get())),
+            line_column_tracker: Cell::new(
+                (self.line_column_tracker).replace(theirs.line_column_tracker.into_inner()),
+            ),
+        };
+    }
+
     // TODO: remove `deinit` because it does not de-initialize the log; it clears it
     pub fn clear_and_free(&self) {
         self.msgs.set(Vec::new());
@@ -1344,6 +1363,19 @@ impl Log {
         // self.errors = 0;
         // See `reset` — the scan cache goes with the messages.
         self.line_column_tracker.set(None);
+    }
+}
+
+/// See [`Log::redirect`].
+#[must_use = "the redirect ends on drop; bind to a named local"]
+pub struct LogRedirect<'g> {
+    log: &'g Log,
+    into: &'g mut Log,
+}
+
+impl Drop for LogRedirect<'_> {
+    fn drop(&mut self) {
+        self.log.swap(self.into);
     }
 }
 

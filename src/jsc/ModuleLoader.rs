@@ -100,7 +100,6 @@ pub struct TranspileArgs<'a> {
     pub specifier: &'a [u8],
     pub referrer: &'a [u8],
     pub input_specifier: &'a bun_core::String,
-    pub log: *const bun_ast::Log,
     pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,
@@ -116,9 +115,10 @@ pub struct TranspileExtra<'a> {
 
 unsafe extern "Rust" {
     /// Defined in `bun_runtime::jsc_hooks`.
-    pub(crate) fn __bun_transpile_source_code(
+    pub(crate) safe fn __bun_transpile_source_code(
         jsc_vm: &VirtualMachine,
         args: &TranspileArgs<'_>,
+        log: &mut bun_ast::Log,
     ) -> Result<ResolvedSource, crate::CrateError>;
     /// Defined in `bun_runtime::jsc_hooks`. `None` when the specifier is not a
     /// builtin / standalone-graph module.

@@ -67,15 +67,10 @@ fn load_router(
     config: RouteConfig,
     load: Load,
 ) -> JsResult<Option<(Router::Router, &'static bun_resolver::DirInfo)>> {
-    let transpiler = &VirtualMachine::get().transpiler;
-    let log = Log::Log::new();
-    // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
-    let _restore_log = unsafe {
-        Resolver::scoped_log(
-            &raw mut (*transpiler.as_ptr()).resolver,
-            core::ptr::NonNull::from(&log),
-        )
-    };
+    let vm = VirtualMachine::get();
+    let (transpiler, log) = (&vm.transpiler, vm.log);
+    let mut router_log = Log::Log::new();
+    let _redirect = log.redirect(&mut router_log);
     if load == Load::FromDisk {
         FileSystemRouter::bust_dir_cache_recursive(
             strings::paths::without_trailing_slash_windows_path(&config.dir),
@@ -95,7 +90,7 @@ fn load_router(
     let config_dir = router.config.dir.clone();
     let loaded = transpiler.with_mut(|t| {
         router.load_routes(
-            &log,
+            log,
             root_dir_info,
             &mut RouterResolver(&mut t.resolver),
             &config_dir,

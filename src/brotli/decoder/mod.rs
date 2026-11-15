@@ -10,9 +10,8 @@ mod transform;
 
 use crate::context::{ContextMode, DISTANCE_CONTEXTS, LITERAL_CONTEXTS};
 use crate::format::{
-    BLOCK_LENGTH_CODES, BLOCK_LENGTH_SYMBOLS, COMMAND_SYMBOLS, DistanceParams,
-    LARGE_MAX_WINDOW_BITS, LITERAL_SYMBOLS, MAX_BLOCK_TYPES, MAX_DICTIONARY_SIZE, MIN_WINDOW_BITS,
-    max_backward_distance,
+    Alphabet, BLOCK_LENGTH_CODES, DistanceParams, LARGE_MAX_WINDOW_BITS, MAX_BLOCK_TYPES,
+    MAX_DICTIONARY_SIZE, MIN_WINDOW_BITS, max_backward_distance,
 };
 use crate::{DecodeError, memory};
 use bit_reader::{BitReader, Bits};
@@ -20,7 +19,7 @@ use bun_core::vec::BorrowedCursor;
 use commands::{Command, Phase, RecentDistances, push_command_tree, push_distance_tree};
 use context_map::ContextMap;
 use huffman::{Forest, Ranges, Root, Symbol, read_symbol};
-use prefix_code::{Alphabet, PrefixCodeReader};
+use prefix_code::PrefixCodeReader;
 use ring_buffer::RingBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,9 +332,8 @@ impl Decoder {
                     State::BlockLengthCode(category)
                 }
                 State::BlockLengthCode(category) => {
-                    let alphabet = Alphabet::new(BLOCK_LENGTH_SYMBOLS as u32);
-                    self.symbols
-                        .push_symbols(self.codes.read(alphabet, reader)?)?;
+                    let code = self.codes.read(Alphabet::BLOCK_LENGTHS, reader)?;
+                    self.symbols.push_symbols(code)?;
                     State::FirstBlockLength(category)
                 }
                 State::FirstBlockLength(category) => {
@@ -491,24 +489,19 @@ impl Decoder {
         match category {
             Category::Literal => {
                 while self.symbols.len() < first + self.literal_map.tree_count as usize {
-                    let alphabet = Alphabet::new(LITERAL_SYMBOLS as u32);
-                    self.symbols
-                        .push_literals(self.codes.read(alphabet, reader)?, self.literal_root)?;
+                    let code = self.codes.read(Alphabet::LITERALS, reader)?;
+                    self.symbols.push_literals(code, self.literal_root)?;
                 }
             }
             Category::Command => {
                 while self.ranges.len() < first + self.type_count(category) {
-                    let alphabet = Alphabet::new(COMMAND_SYMBOLS as u32);
-                    push_command_tree(&mut self.ranges, self.codes.read(alphabet, reader)?)?;
+                    let code = self.codes.read(Alphabet::COMMANDS, reader)?;
+                    push_command_tree(&mut self.ranges, code)?;
                 }
             }
             Category::Distance => {
-                let alphabet = Alphabet {
-                    nominal_size: self.distance_params.nominal_alphabet_size,
-                    size: self.distance_params.alphabet_size,
-                };
                 while self.ranges.len() < first + self.distance_map.tree_count as usize {
-                    let code = self.codes.read(alphabet, reader)?;
+                    let code = self.codes.read(self.distance_params.alphabet, reader)?;
                     push_distance_tree(&mut self.ranges, code, &self.distance_params)?;
                 }
             }

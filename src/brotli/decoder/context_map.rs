@@ -2,9 +2,10 @@
 
 use super::bit_reader::BitReader;
 use super::huffman::{Forest, Symbol, read_symbol};
-use super::prefix_code::{Alphabet, PrefixCodeReader};
+use super::prefix_code::PrefixCodeReader;
 use super::{Stop, read_count};
 use crate::DecodeError;
+use crate::format::Alphabet;
 
 #[derive(Default, Clone, Copy)]
 enum Phase {

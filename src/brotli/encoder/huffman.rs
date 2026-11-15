@@ -6,8 +6,8 @@ use super::bit_writer::{BitWriter, Bits, Room};
 use super::matching::put_bytes;
 use super::symbol_set::SymbolSet;
 use crate::format::{
-    CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, COMMAND_SYMBOLS,
-    INITIAL_REPEATED_CODE_LENGTH, MAX_CODE_LENGTH, MAX_CODE_LENGTH_CODE_LENGTH,
+    Alphabet, CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES,
+    COMMAND_SYMBOLS, INITIAL_REPEATED_CODE_LENGTH, MAX_CODE_LENGTH, MAX_CODE_LENGTH_CODE_LENGTH,
     REPEAT_PREVIOUS_CODE_LENGTH, REPEAT_ZERO_CODE_LENGTH, repeat_extra_bits,
 };
 use crate::memory::{self, Result};
@@ -249,8 +249,8 @@ impl Tokens {
 }
 
 /// In bytes: one for the length of each symbol, and the code for the lengths.
-pub(super) const fn max_description_size(symbols: usize) -> usize {
-    symbols + 10
+pub(super) const fn max_description_size(alphabet: Alphabet) -> usize {
+    alphabet.size as usize + 10
 }
 
 pub(super) struct TreeBuilder {
@@ -314,12 +314,13 @@ impl TreeBuilder {
     fn build_and_write_simple(
         &mut self,
         histogram: &[u32],
-        symbol_bits: u32,
+        Alphabet { size, symbol_bits }: Alphabet,
         (limit, ties): (usize, Ties),
         lengths: &mut Lengths,
         codes: &mut [Code],
         writer: &mut BitWriter,
     ) -> bool {
+        let histogram = &histogram[..size as usize];
         let used = SymbolSet::matching(histogram, |count| count != 0);
         let mut first = [0; 4];
         for (slot, symbol) in first.iter_mut().zip(&used) {
@@ -341,19 +342,16 @@ impl TreeBuilder {
         true
     }
 
-    /// `alphabet_size` decides how many bits a symbol of a simple code has.
     pub(super) fn build_and_write(
         &mut self,
         histogram: &[u32],
-        alphabet_size: usize,
+        alphabet: Alphabet,
         codes: &mut [Code],
         writer: &mut BitWriter,
     ) {
-        let symbol_bits = (alphabet_size - 1).bit_width();
         let shape = (MAX_CODE_LENGTH, Ties::HigherSymbolFirst);
-        let mut lengths = Lengths::zeros(histogram.len());
-        if !self.build_and_write_simple(histogram, symbol_bits, shape, &mut lengths, codes, writer)
-        {
+        let mut lengths = Lengths::zeros(alphabet.size as usize);
+        if !self.build_and_write_simple(histogram, alphabet, shape, &mut lengths, codes, writer) {
             self.write_complex(&lengths, writer);
         }
     }
@@ -362,7 +360,7 @@ impl TreeBuilder {
     pub(super) fn build_and_write_fast(
         &mut self,
         histogram: &[u32],
-        symbol_bits: u32,
+        alphabet: Alphabet,
         codes: &mut [Code],
         writer: &mut BitWriter,
     ) {
@@ -376,8 +374,8 @@ impl TreeBuilder {
             codes
         };
         let shape = (14, Ties::Unordered);
-        let mut lengths = Lengths::zeros(histogram.len());
-        if self.build_and_write_simple(histogram, symbol_bits, shape, &mut lengths, codes, writer) {
+        let mut lengths = Lengths::zeros(alphabet.size as usize);
+        if self.build_and_write_simple(histogram, alphabet, shape, &mut lengths, codes, writer) {
             return;
         }
         // How the stream describes `LENGTH_CODES`.

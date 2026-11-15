@@ -7,27 +7,11 @@ use super::bit_reader::{BitReader, Bits};
 use super::huffman::{SymbolLists, fill_root};
 use crate::DecodeError;
 use crate::format::{
-    CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, INITIAL_REPEATED_CODE_LENGTH,
+    Alphabet, CODE_LENGTH_CODE_LENGTH_CODES, CODE_LENGTH_CODE_ORDER, INITIAL_REPEATED_CODE_LENGTH,
     MAX_CODE_LENGTH, MAX_CODE_LENGTH_CODE_LENGTH, REPEAT_PREVIOUS_CODE_LENGTH, repeat_extra_bits,
 };
 
 const FIRST_REPEAT: u32 = REPEAT_PREVIOUS_CODE_LENGTH as u32;
-
-#[derive(Clone, Copy)]
-pub(super) struct Alphabet {
-    /// Decides how many bits a symbol of a simple code has.
-    pub(super) nominal_size: u32,
-    pub(super) size: u32,
-}
-
-impl Alphabet {
-    pub(super) fn new(size: u32) -> Self {
-        Self {
-            nominal_size: size,
-            size,
-        }
-    }
-}
 
 enum Phase {
     Start,
@@ -88,11 +72,10 @@ fn read_simple_code(
     code: &mut SymbolLists,
 ) -> Result<(), Stop> {
     let count = bits.read(2)? as usize + 1;
-    let symbol_bits = (alphabet.nominal_size - 1).bit_width();
     let mut symbols = [0; 4];
     let (symbols, _) = symbols.split_at_mut(count);
     for symbol in symbols.iter_mut() {
-        *symbol = bits.read(symbol_bits)?;
+        *symbol = bits.read(alphabet.symbol_bits)?;
         if *symbol >= alphabet.size {
             return Err(DecodeError::SimpleHuffmanAlphabet.into());
         }

@@ -30,7 +30,7 @@ pub use params::{MAX_QUALITY, MIN_QUALITY};
 
 use bit_stream::write_metadata_header;
 use bit_writer::BitWriter;
-use fragment::{OnePass, TwoPass};
+use fragment::Fragments;
 use histogram::DISTANCE_SYMBOLS;
 use huffman::{TreeBuilder, max_description_size};
 use params::{Params, Requested};
@@ -38,7 +38,7 @@ use prepared_dictionary::PreparedDictionary;
 use windowed::Windowed;
 
 use crate::error::EncodeError;
-use crate::format::{COMMAND_SYMBOLS, LITERAL_SYMBOLS, MAX_DICTIONARY_SIZE};
+use crate::format::{Alphabet, MAX_DICTIONARY_SIZE};
 use crate::memory;
 use bun_core::vec::BorrowedCursor;
 
@@ -124,9 +124,9 @@ pub fn max_compressed_size(input_size: usize) -> usize {
 
 /// Room for the meta-blocks of `input_size` bytes, before it turns out that they are too large.
 fn try_reserve_for(input_size: usize, writer: &mut BitWriter) -> memory::Result<()> {
-    const ONE_CODE_EACH: usize = max_description_size(LITERAL_SYMBOLS)
-        + max_description_size(COMMAND_SYMBOLS)
-        + max_description_size(DISTANCE_SYMBOLS);
+    const ONE_CODE_EACH: usize = max_description_size(Alphabet::LITERALS)
+        + max_description_size(Alphabet::COMMANDS)
+        + max_description_size(Alphabet::new(DISTANCE_SYMBOLS as u32));
     writer.try_reserve(2 * input_size + ONE_CODE_EACH)
 }
 
@@ -142,8 +142,7 @@ enum State {
 
 #[allow(clippy::large_enum_variant)] // There is one for each stream.
 enum Method {
-    OnePass(OnePass),
-    TwoPass(TwoPass),
+    Fragments(Fragments),
     Windowed(Windowed),
 }
 
@@ -169,8 +168,7 @@ impl Stream {
             params,
             state: State::Processing,
             method: match params.quality {
-                0 => Method::OnePass(OnePass::default()),
-                1 => Method::TwoPass(TwoPass::default()),
+                0 | 1 => Method::Fragments(Fragments::new(params.quality)),
                 _ => Method::Windowed(Windowed::new(&params)),
             },
             trees: TreeBuilder::new()?,
@@ -275,7 +273,7 @@ impl Stream {
     ) -> memory::Result<bool> {
         let (is_ready, fragment_size) = match &self.method {
             Method::Windowed(windowed) => (windowed.room_in_block(&self.params) == 0, 0),
-            _ => (!input.is_empty(), self.params.block_size()),
+            Method::Fragments(_) => (!input.is_empty(), self.params.block_size()),
         };
         if !is_ready && operation == Operation::Process {
             return Ok(false);
@@ -289,8 +287,7 @@ impl Stream {
         let is_last = operation == Operation::Finish;
         let (trees, writer) = (&mut self.trees, &mut self.writer);
         match &mut self.method {
-            Method::OnePass(method) => method.compress(fragment, is_last, trees, writer)?,
-            Method::TwoPass(method) => method.compress(fragment, is_last, trees, writer)?,
+            Method::Fragments(method) => method.compress(fragment, is_last, trees, writer)?,
             Method::Windowed(_) => self.end_block(dictionary, rest.len(), operation)?,
         }
         *input = rest;

@@ -4,13 +4,13 @@ use core::ops::ControlFlow;
 
 use super::{
     FIRST_COPY_AT_LAST_DISTANCE, SYMBOLS, Sink, Table, Token, build_and_write_codes, find_matches,
-    table_bits, write_fragment,
+    table_bits,
 };
 use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
 use crate::encoder::bit_writer::BitWriter;
 use crate::encoder::histogram::{bits_entropy, count_bytes, count_every_nth_byte};
 use crate::encoder::huffman::{Code, SYMBOL_SLACK, TreeBuilder, write_symbols};
-use crate::format::{LITERAL_SYMBOLS, WINDOW_GAP};
+use crate::format::{Alphabet, LITERAL_SYMBOLS, WINDOW_GAP};
 use crate::memory::{self, Result};
 
 const BLOCK_SIZE: usize = 1 << 17;
@@ -59,27 +59,24 @@ impl Sink for Block {
 }
 
 impl TwoPass {
-    pub(in crate::encoder) fn compress(
+    pub(super) fn compress(
         &mut self,
         input: &[u8],
-        is_last: bool,
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        write_fragment(input, is_last, writer, |writer| {
-            match table_bits(input.len(), 17) {
-                8 => self.write_meta_blocks::<{ 1 << 8 }, 4>(input, trees, writer),
-                9 => self.write_meta_blocks::<{ 1 << 9 }, 4>(input, trees, writer),
-                10 => self.write_meta_blocks::<{ 1 << 10 }, 4>(input, trees, writer),
-                11 => self.write_meta_blocks::<{ 1 << 11 }, 4>(input, trees, writer),
-                12 => self.write_meta_blocks::<{ 1 << 12 }, 4>(input, trees, writer),
-                13 => self.write_meta_blocks::<{ 1 << 13 }, 4>(input, trees, writer),
-                14 => self.write_meta_blocks::<{ 1 << 14 }, 4>(input, trees, writer),
-                15 => self.write_meta_blocks::<{ 1 << 15 }, 4>(input, trees, writer),
-                16 => self.write_meta_blocks::<{ 1 << 16 }, 6>(input, trees, writer),
-                _ => self.write_meta_blocks::<{ 1 << 17 }, 6>(input, trees, writer),
-            }
-        })
+        match table_bits(input.len(), 17) {
+            8 => self.write_meta_blocks::<{ 1 << 8 }, 4>(input, trees, writer),
+            9 => self.write_meta_blocks::<{ 1 << 9 }, 4>(input, trees, writer),
+            10 => self.write_meta_blocks::<{ 1 << 10 }, 4>(input, trees, writer),
+            11 => self.write_meta_blocks::<{ 1 << 11 }, 4>(input, trees, writer),
+            12 => self.write_meta_blocks::<{ 1 << 12 }, 4>(input, trees, writer),
+            13 => self.write_meta_blocks::<{ 1 << 13 }, 4>(input, trees, writer),
+            14 => self.write_meta_blocks::<{ 1 << 14 }, 4>(input, trees, writer),
+            15 => self.write_meta_blocks::<{ 1 << 15 }, 4>(input, trees, writer),
+            16 => self.write_meta_blocks::<{ 1 << 16 }, 6>(input, trees, writer),
+            _ => self.write_meta_blocks::<{ 1 << 17 }, 6>(input, trees, writer),
+        }
     }
 
     #[inline(never)]
@@ -98,25 +95,37 @@ impl TwoPass {
         };
         for start in (0..input.len()).step_by(BLOCK_SIZE) {
             let end = input.len().min(start + BLOCK_SIZE);
-            block.tokens.clear();
-            block.literals.clear();
-            block.histogram.fill(0);
-            memory::try_reserve(&mut block.tokens, (end - start) / 2 + 1)?;
-            memory::try_reserve(&mut block.literals, end - start + WINDOW_GAP)?;
+            block.begin(end - start)?;
             let (ControlFlow::Continue(next_literal) | ControlFlow::Break(next_literal)) =
                 find_matches::<_, MIN_MATCH>(input, start, end, start, table, &mut block);
-            if next_literal < end {
-                block.tokens(Token::insert(end - next_literal), Token::NONE);
-                block.literals.extend_from_slice(&input[next_literal..end]);
-            }
+            block.insert_last(&input[next_literal..end]);
             block.write(&input[start..end], trees, writer)?;
         }
-        (self.tokens, self.literals) = (block.tokens, block.literals);
+        self.keep_memory_of(block);
         Ok(())
+    }
+
+    fn keep_memory_of(&mut self, block: Block) {
+        (self.tokens, self.literals) = (block.tokens, block.literals);
     }
 }
 
 impl Block {
+    fn begin(&mut self, size: usize) -> Result<()> {
+        self.tokens.clear();
+        self.literals.clear();
+        self.histogram.fill(0);
+        memory::try_reserve(&mut self.tokens, size / 2 + 1)?;
+        memory::try_reserve(&mut self.literals, size + WINDOW_GAP)
+    }
+
+    fn insert_last(&mut self, literals: &[u8]) {
+        if !literals.is_empty() {
+            self.tokens(Token::insert(literals.len()), Token::NONE);
+            self.literals.extend_from_slice(literals);
+        }
+    }
+
     #[inline(never)]
     fn write(
         &mut self,
@@ -130,7 +139,12 @@ impl Block {
         }
         write_plain_header(writer, MetaBlockKind::Compressed, input.len());
         let mut literal_codes = [Code::EMPTY; LITERAL_SYMBOLS];
-        trees.build_and_write_fast(&count_bytes(&self.literals), 8, &mut literal_codes, writer);
+        trees.build_and_write_fast(
+            &count_bytes(&self.literals),
+            Alphabet::LITERALS,
+            &mut literal_codes,
+            writer,
+        );
         // Each code needs two symbols.
         for symbol in [1, 2, 64, 84] {
             self.histogram[symbol] += 1;

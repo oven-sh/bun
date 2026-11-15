@@ -3,10 +3,10 @@
 mod one_pass;
 mod two_pass;
 
-pub(super) use one_pass::OnePass;
-pub(super) use two_pass::TwoPass;
-
 use core::ops::ControlFlow;
+
+use one_pass::OnePass;
+use two_pass::TwoPass;
 
 use super::bit_stream::{write_empty_last, write_uncompressed};
 use super::bit_writer::{BitWriter, Bits};
@@ -397,21 +397,40 @@ fn build_and_write_codes(
     codes_for(&lengths)
 }
 
-fn write_fragment(
-    input: &[u8],
-    is_last: bool,
-    writer: &mut BitWriter,
-    write_meta_blocks: impl FnOnce(&mut BitWriter) -> Result<()>,
-) -> Result<()> {
-    try_reserve_for(input.len(), writer)?;
-    let start = writer.position();
-    write_meta_blocks(writer)?;
-    if writer.position() - start > 31 + 8 * input.len() {
-        writer.rewind(start);
-        write_uncompressed(writer, [input, &[]]);
+#[allow(clippy::large_enum_variant)] // There is one for each stream.
+pub(super) enum Fragments {
+    OnePass(OnePass),
+    TwoPass(TwoPass),
+}
+
+impl Fragments {
+    pub(super) fn new(quality: u32) -> Self {
+        match quality {
+            0 => Self::OnePass(OnePass::default()),
+            _ => Self::TwoPass(TwoPass::default()),
+        }
     }
-    if is_last {
-        write_empty_last(writer);
+
+    pub(super) fn compress(
+        &mut self,
+        input: &[u8],
+        is_last: bool,
+        trees: &mut TreeBuilder,
+        writer: &mut BitWriter,
+    ) -> Result<()> {
+        try_reserve_for(input.len(), writer)?;
+        let start = writer.position();
+        match self {
+            Self::OnePass(method) => method.compress(input, trees, writer)?,
+            Self::TwoPass(method) => method.compress(input, trees, writer)?,
+        }
+        if writer.position() - start > 31 + 8 * input.len() {
+            writer.rewind(start);
+            write_uncompressed(writer, [input, &[]]);
+        }
+        if is_last {
+            write_empty_last(writer);
+        }
+        Ok(())
     }
-    Ok(())
 }

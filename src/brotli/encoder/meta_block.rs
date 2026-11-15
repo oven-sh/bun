@@ -292,7 +292,7 @@ impl MetaBlock {
             smooth_counts(&mut histogram.counts);
         }
         for histogram in &mut self.distance_histograms {
-            smooth_counts(&mut histogram.counts[..self.distance_params.alphabet_size as usize]);
+            smooth_counts(&mut histogram.counts[..self.distance_params.alphabet.size as usize]);
         }
     }
 }

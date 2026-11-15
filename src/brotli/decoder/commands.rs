@@ -14,9 +14,9 @@ use crate::context::{
 };
 use crate::dictionary;
 use crate::format::{
-    COMMAND_SYMBOLS, COPY_LENGTH_CODES, DISTANCE_SHORT_CODES, DistanceParams,
+    COMMAND_SYMBOLS, COPY_LENGTH_CODES, CommandCodes, DISTANCE_SHORT_CODES, DistanceParams,
     FIRST_COMMAND_WITH_DISTANCE, INITIAL_DISTANCES, INSERT_LENGTH_CODES, MAX_ALLOWED_DISTANCE,
-    MAX_CODE_LENGTH, SHORT_CODE_BASES, SHORT_CODE_DELTAS, split_command_symbol,
+    MAX_CODE_LENGTH, SHORT_CODE_BASES, SHORT_CODE_DELTAS,
 };
 
 /// In place of a distance context.
@@ -28,7 +28,7 @@ static COMMANDS: [Ranges; COMMAND_SYMBOLS.next_power_of_two()] = {
     let mut commands = [Ranges::new(0, [0; 2], 0); _];
     let mut symbol = 0;
     while symbol < COMMAND_SYMBOLS {
-        let (insert, copy) = split_command_symbol(symbol);
+        let CommandCodes { insert, copy } = CommandCodes::of(symbol);
         let (insert, copy) = (INSERT_LENGTH_CODES[insert], COPY_LENGTH_CODES[copy]);
         let context = if symbol < FIRST_COMMAND_WITH_DISTANCE {
             LAST_DISTANCE as u8

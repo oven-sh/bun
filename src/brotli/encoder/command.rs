@@ -6,8 +6,8 @@ use super::log2::log2_floor;
 use super::matching::match_length;
 use crate::context::{DISTANCE_CONTEXTS, distance_context};
 use crate::format::{
-    COMMAND_SYMBOLS, COPY_LENGTH_CODES, DISTANCE_SHORT_CODES, DistanceParams,
-    FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES, LengthCode, split_command_symbol,
+    COMMAND_SYMBOLS, COPY_LENGTH_CODES, CommandCodes, DISTANCE_SHORT_CODES, DistanceParams,
+    FIRST_COMMAND_WITH_DISTANCE, INSERT_LENGTH_CODES, LengthCode,
 };
 use crate::memory::{self, Result};
 
@@ -64,7 +64,7 @@ pub(super) const fn combine_length_codes(
         let mut symbol = COMMAND_SYMBOLS;
         while symbol > 0 {
             symbol -= 1;
-            let (insert, copy) = split_command_symbol(symbol);
+            let CommandCodes { insert, copy } = CommandCodes::of(symbol);
             symbols[1][insert][copy] = symbol as u16;
             if symbol >= FIRST_COMMAND_WITH_DISTANCE {
                 symbols[0][insert][copy] = symbol as u16;
@@ -98,7 +98,7 @@ static MEANINGS: [Meaning; COMMAND_SYMBOLS.next_power_of_two()] = {
     let mut meanings = [meaning(INSERT_LENGTH_CODES[0], COPY_LENGTH_CODES[0]); _];
     let mut symbol = 0;
     while symbol < COMMAND_SYMBOLS {
-        let (insert, copy) = split_command_symbol(symbol);
+        let CommandCodes { insert, copy } = CommandCodes::of(symbol);
         meanings[symbol] = meaning(INSERT_LENGTH_CODES[insert], COPY_LENGTH_CODES[copy]);
         symbol += 1;
     }

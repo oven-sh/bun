@@ -164,7 +164,7 @@ impl CostModel {
         let mut literal_costs = [0.0; LITERAL_SYMBOLS];
         set_costs(&literals, false, &mut literal_costs);
         set_costs(&symbols, true, &mut *self.commands);
-        let used = block.params.distance.alphabet_size as usize;
+        let used = block.params.distance.alphabet.size as usize;
         set_costs(&distances[..used], true, &mut *self.distances);
         self.commands_changed();
         let data = block.data_from(block.position);

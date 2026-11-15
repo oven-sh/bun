@@ -28,6 +28,19 @@ impl BlockSplit {
         })
     }
 
+    /// Neighbors of the same type become one block.
+    fn joined(type_count: usize, types: &[u32], lengths: &[usize]) -> Result<Self> {
+        let mut blocks: Vec<Block> = memory::empty(lengths.len())?;
+        for (&kind, &length) in types.iter().zip(lengths) {
+            let (kind, length) = (kind as u8, length as u32);
+            match blocks.last_mut() {
+                Some(last) if last.kind == kind => last.length += length,
+                _ => blocks.push(Block { kind, length }),
+            }
+        }
+        Ok(Self { type_count, blocks })
+    }
+
     /// The type and the symbols of each block.
     pub(super) fn apply_to<'a, T>(
         &self,
@@ -86,7 +99,12 @@ pub(super) fn split<const N: usize>(
     let mut ids = memory::zeroed(data.len())?;
     let mut path = PathFinder::new(data.len(), N, count)?;
     for _ in 0..iterations {
-        path.assign(data, tuning.switch_cost, &histograms, &mut ids);
+        if histograms.len() == 1 {
+            ids.fill(0);
+        } else {
+            path.begin(&histograms);
+            path.assign(data, tuning.switch_cost, &mut ids);
+        }
         let used = renumber_ids(&mut ids);
         histograms.truncate(used);
         histograms.iter_mut().for_each(Histogram::clear);
@@ -95,7 +113,7 @@ pub(super) fn split<const N: usize>(
         }
     }
     drop((path, histograms));
-    cluster_blocks::<N>(data, &ids)
+    cluster_blocks::<N>(data, &run_lengths(&ids)?)
 }
 
 fn sample<const N: usize>(data: &[u16], length: usize, histograms: &mut [Histogram<N>]) {
@@ -150,8 +168,10 @@ impl PathFinder {
         })
     }
 
-    fn set_symbol_costs<const N: usize>(&mut self, histograms: &[Histogram<N>]) {
+    fn begin<const N: usize>(&mut self, histograms: &[Histogram<N>]) {
         let groups = histograms.len().div_ceil(LANES);
+        self.costs.clear();
+        self.costs.resize(groups, [0.0; LANES]);
         self.symbol_costs.clear();
         self.symbol_costs.resize(N * groups, [TOO_MUCH; LANES]);
         for (i, histogram) in histograms.iter().enumerate() {
@@ -168,22 +188,10 @@ impl PathFinder {
     }
 
     /// Chooses a histogram for each symbol.
-    fn assign<const N: usize>(
-        &mut self,
-        data: &[u16],
-        switch_cost: f64,
-        histograms: &[Histogram<N>],
-        ids: &mut [u8],
-    ) {
+    #[inline(never)]
+    fn assign(&mut self, data: &[u16], switch_cost: f64, ids: &mut [u8]) {
         const PROLOGUE: usize = 2000;
-        if histograms.len() <= 1 {
-            ids.fill(0);
-            return;
-        }
-        self.set_symbol_costs(histograms);
-        let groups = histograms.len().div_ceil(LANES);
-        self.costs.clear();
-        self.costs.resize(groups, [0.0; LANES]);
+        let groups = self.costs.len();
 
         // What limits the costs after a symbol is applied when the next one is added.
         let (mut min_cost, mut max_cost) = (0.0, TOO_MUCH);
@@ -247,10 +255,14 @@ fn renumber_ids(ids: &mut [u8]) -> usize {
     usize::from(count)
 }
 
-fn cluster_blocks<const N: usize>(data: &[u16], ids: &[u8]) -> Result<BlockSplit> {
+fn run_lengths(ids: &[u8]) -> Result<Vec<usize>> {
     let runs = || ids.chunk_by(|a, b| a == b);
     let mut lengths = memory::empty(runs().count())?;
     lengths.extend(runs().map(<[u8]>::len));
+    Ok(lengths)
+}
+
+fn cluster_blocks<const N: usize>(data: &[u16], lengths: &[usize]) -> Result<BlockSplit> {
     let histograms_of_blocks = || {
         let mut rest = data;
         lengths.iter().map(move |&length| {
@@ -293,16 +305,5 @@ fn cluster_blocks<const N: usize>(data: &[u16], ids: &[u8]) -> Result<BlockSplit
         *assignment = previous;
     }
     let type_count = renumber(&mut assignments, clusters.len())?;
-
-    let mut blocks: Vec<Block> = memory::empty(lengths.len())?;
-    for (&assignment, &length) in assignments.iter().zip(&lengths) {
-        match blocks.last_mut() {
-            Some(last) if u32::from(last.kind) == assignment => last.length += length as u32,
-            _ => blocks.push(Block {
-                kind: assignment as u8,
-                length: length as u32,
-            }),
-        }
-    }
-    Ok(BlockSplit { type_count, blocks })
+    BlockSplit::joined(type_count, &assignments, lengths)
 }

@@ -4,14 +4,14 @@ use core::ops::{ControlFlow, Range};
 
 use super::{
     FIRST_COPY_AT_LAST_DISTANCE, SYMBOLS, Sink, Table, Token, TokenCodes, build_and_write_codes,
-    codes_for, find_matches, table_bits, write_fragment,
+    codes_for, find_matches, table_bits,
 };
 use crate::encoder::bit_stream::{MetaBlockKind, write_plain_header, write_uncompressed};
 use crate::encoder::bit_writer::{BitWriter, Bits, Room};
 use crate::encoder::histogram::{count_bytes, count_every_nth_byte};
 use crate::encoder::huffman::{Code, SYMBOL_SLACK, TreeBuilder, write_symbols};
 use crate::encoder::log2::fast_log2;
-use crate::format::{INSERT_LENGTH_CODES, LITERAL_SYMBOLS, WINDOW_GAP};
+use crate::format::{Alphabet, INSERT_LENGTH_CODES, LITERAL_SYMBOLS, WINDOW_GAP};
 use crate::memory::Result;
 
 const FIRST_BLOCK_SIZE: usize = 3 << 15;
@@ -102,7 +102,12 @@ impl MetaBlock {
         for count in &mut histogram {
             *count += 2 * (*count).min(11) + u32::from(is_sample);
         }
-        trees.build_and_write_fast(&histogram, 8, &mut self.literal_codes, writer);
+        trees.build_and_write_fast(
+            &histogram,
+            Alphabet::LITERALS,
+            &mut self.literal_codes,
+            writer,
+        );
         let total: u32 = histogram.iter().sum();
         let bits = histogram.iter().zip(&self.literal_codes);
         let bits: u32 = bits.map(|(count, code)| count * code.length()).sum();
@@ -176,21 +181,18 @@ impl Sink for Emitter<'_> {
 }
 
 impl OnePass {
-    pub(in crate::encoder) fn compress(
+    pub(super) fn compress(
         &mut self,
         input: &[u8],
-        is_last: bool,
         trees: &mut TreeBuilder,
         writer: &mut BitWriter,
     ) -> Result<()> {
-        write_fragment(input, is_last, writer, |writer| {
-            match table_bits(input.len(), 15) | 1 {
-                9 => self.write_meta_blocks::<{ 1 << 9 }>(input, trees, writer),
-                11 => self.write_meta_blocks::<{ 1 << 11 }>(input, trees, writer),
-                13 => self.write_meta_blocks::<{ 1 << 13 }>(input, trees, writer),
-                _ => self.write_meta_blocks::<{ 1 << 15 }>(input, trees, writer),
-            }
-        })
+        match table_bits(input.len(), 15) | 1 {
+            9 => self.write_meta_blocks::<{ 1 << 9 }>(input, trees, writer),
+            11 => self.write_meta_blocks::<{ 1 << 11 }>(input, trees, writer),
+            13 => self.write_meta_blocks::<{ 1 << 13 }>(input, trees, writer),
+            _ => self.write_meta_blocks::<{ 1 << 15 }>(input, trees, writer),
+        }
     }
 
     #[inline(never)]

@@ -49,38 +49,54 @@ pub(crate) const fn max_backward_distance(window_bits: u32) -> usize {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Alphabet {
+    pub(crate) size: u32,
+    /// Of a symbol in the description of a simple prefix code.
+    pub(crate) symbol_bits: u32,
+}
+
+impl Alphabet {
+    pub(crate) const LITERALS: Self = Self::new(LITERAL_SYMBOLS as u32);
+    pub(crate) const COMMANDS: Self = Self::new(COMMAND_SYMBOLS as u32);
+    pub(crate) const BLOCK_LENGTHS: Self = Self::new(BLOCK_LENGTH_SYMBOLS as u32);
+
+    pub(crate) const fn new(size: u32) -> Self {
+        Self {
+            size,
+            symbol_bits: (size - 1).bit_width(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DistanceParams {
     pub(crate) postfix_bits: u32,
     pub(crate) direct_codes: u32,
-    /// Decides how many bits a symbol of a simple prefix code has.
-    pub(crate) nominal_alphabet_size: u32,
-    pub(crate) alphabet_size: u32,
+    pub(crate) alphabet: Alphabet,
     pub(crate) max_distance: usize,
 }
 
 impl DistanceParams {
     pub(crate) const fn new(postfix_bits: u32, direct_codes: u32, large_window: bool) -> Self {
-        let (nominal_alphabet_size, alphabet_size, max_distance) = if large_window {
+        let (alphabet, max_distance) = if large_window {
             let (size, max) = large_window_limits(postfix_bits, direct_codes);
-            let nominal = alphabet_size(postfix_bits, direct_codes, LARGE_MAX_DISTANCE_BITS);
-            (nominal, size, max)
+            let nominal = alphabet(postfix_bits, direct_codes, LARGE_MAX_DISTANCE_BITS);
+            (Alphabet { size, ..nominal }, max)
         } else {
-            let size = alphabet_size(postfix_bits, direct_codes, MAX_DISTANCE_BITS);
             let max = direct_codes + (((1 << MAX_DISTANCE_BITS) - 1) << (postfix_bits + 2));
-            (size, size, max)
+            (alphabet(postfix_bits, direct_codes, MAX_DISTANCE_BITS), max)
         };
         Self {
             postfix_bits,
             direct_codes,
-            nominal_alphabet_size,
-            alphabet_size,
+            alphabet,
             max_distance: max_distance as usize,
         }
     }
 }
 
-const fn alphabet_size(postfix_bits: u32, direct_codes: u32, max_distance_bits: u32) -> u32 {
-    DISTANCE_SHORT_CODES + direct_codes + (max_distance_bits << (postfix_bits + 1))
+const fn alphabet(postfix_bits: u32, direct_codes: u32, max_distance_bits: u32) -> Alphabet {
+    Alphabet::new(DISTANCE_SHORT_CODES + direct_codes + (max_distance_bits << (postfix_bits + 1)))
 }
 
 /// The alphabet size and the largest distance of the whole groups of codes within [`MAX_ALLOWED_DISTANCE`].
@@ -148,11 +164,21 @@ pub(crate) const FIRST_COMMAND_WITH_DISTANCE: usize = 128;
 /// Only the copies below it have such symbols.
 pub(crate) const SHORT_COPY_END: usize = COPY_LENGTH_CODES[16].base as usize;
 
-/// The indexes into [`INSERT_LENGTH_CODES`] and [`COPY_LENGTH_CODES`].
-#[allow(clippy::indexing_slicing)] // Runs at compile time.
-pub(crate) const fn split_command_symbol(symbol: usize) -> (usize, usize) {
-    const INSERT: [usize; COMMAND_SYMBOLS / 64] = [0, 0, 0, 0, 8, 8, 0, 16, 8, 16, 16];
-    const COPY: [usize; COMMAND_SYMBOLS / 64] = [0, 8, 0, 8, 0, 8, 16, 0, 16, 8, 16];
-    let cell = symbol / 64;
-    (INSERT[cell] + symbol / 8 % 8, COPY[cell] + symbol % 8)
+/// Indexes into [`INSERT_LENGTH_CODES`] and [`COPY_LENGTH_CODES`].
+pub(crate) struct CommandCodes {
+    pub(crate) insert: usize,
+    pub(crate) copy: usize,
+}
+
+impl CommandCodes {
+    #[allow(clippy::indexing_slicing)] // Runs at compile time.
+    pub(crate) const fn of(symbol: usize) -> Self {
+        const INSERT: [usize; COMMAND_SYMBOLS / 64] = [0, 0, 0, 0, 8, 8, 0, 16, 8, 16, 16];
+        const COPY: [usize; COMMAND_SYMBOLS / 64] = [0, 8, 0, 8, 0, 8, 16, 0, 16, 8, 16];
+        let cell = symbol / 64;
+        Self {
+            insert: INSERT[cell] + symbol / 8 % 8,
+            copy: COPY[cell] + symbol % 8,
+        }
+    }
 }

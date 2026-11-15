@@ -9,7 +9,9 @@ use crate::format::{
 
 /// The largest distance alphabet.
 pub(super) const DISTANCE_SYMBOLS: usize =
-    DistanceParams::new(MAX_POSTFIX_BITS, MAX_DIRECT_CODES, true).alphabet_size as usize;
+    DistanceParams::new(MAX_POSTFIX_BITS, MAX_DIRECT_CODES, true)
+        .alphabet
+        .size as usize;
 
 pub(super) type LiteralHistogram = Histogram<LITERAL_SYMBOLS>;
 pub(super) type CommandHistogram = Histogram<COMMAND_SYMBOLS>;

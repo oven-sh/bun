@@ -21,13 +21,12 @@ mod unix {
         libc::stat,
         libc::rusage,
         libc::timespec,
-        libc::timeval,
         libc::pollfd,
         libc::sockaddr,
         libc::sockaddr_in,
         libc::sockaddr_in6,
     );
-    impl_any_bit_pattern!(libc::sockaddr_storage);
+    impl_any_bit_pattern!(libc::sockaddr_storage, libc::timeval);
     impl_pod!(libc::sockaddr_un);
     // A `u32` on Darwin, which the primitive impl covers.
     #[cfg(not(target_vendor = "apple"))]

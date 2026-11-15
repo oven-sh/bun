@@ -2,6 +2,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::sync::atomic::{AtomicBool, Ordering};
+use std::io::IoSlice;
 
 use bun_ast::ExportsKind;
 use bun_ast::Source;
@@ -353,23 +354,23 @@ impl Entry {
             };
             let metadata_bytes: &[u8] = &metadata_buf[0..metadata_bytes_len];
 
-            let mut vecs_buf: [sys::PlatformIoVecConst; 4] = bun_core::ffi::zeroed();
+            let mut vecs_buf = [IoSlice::new(&[]); 4];
             let mut vecs_i: usize = 0;
-            vecs_buf[vecs_i] = sys::platform_iovec_const_create(metadata_bytes);
+            vecs_buf[vecs_i] = IoSlice::new(metadata_bytes);
             vecs_i += 1;
             if !output_bytes.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(output_bytes);
+                vecs_buf[vecs_i] = IoSlice::new(output_bytes);
                 vecs_i += 1;
             }
             if !sourcemap.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(sourcemap);
+                vecs_buf[vecs_i] = IoSlice::new(sourcemap);
                 vecs_i += 1;
             }
             if !esm_record.is_empty() {
-                vecs_buf[vecs_i] = sys::platform_iovec_const_create(esm_record);
+                vecs_buf[vecs_i] = IoSlice::new(esm_record);
                 vecs_i += 1;
             }
-            let vecs: &[sys::PlatformIoVecConst] = &vecs_buf[0..vecs_i];
+            let vecs = &vecs_buf[0..vecs_i];
 
             let mut position: i64 = 0;
             let file_len = Metadata::SIZE + output_bytes.len() + sourcemap.len() + esm_record.len();
@@ -378,9 +379,8 @@ impl Entry {
             {
                 let mut total: usize = 0;
                 for v in vecs {
-                    debug_assert!(v.len > 0);
-                    // `uv_buf_t::len` is `ULONG` (u32) on Windows, `usize` on POSIX.
-                    total += v.len as usize;
+                    debug_assert!(!v.is_empty());
+                    total += v.len();
                 }
                 debug_assert!(file_len == total);
             }

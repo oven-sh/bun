@@ -1622,7 +1622,7 @@ impl PipelineTask {
         }
 
         if matches!(self.kind, Kind::Placeholder) {
-            self.result = match make_placeholder(&decoded.rgba, decoded.width, decoded.height) {
+            self.result = match make_placeholder(decoded.as_image()) {
                 Ok(r) => r,
                 Err(e) => TaskResult::Err(e),
             };
@@ -1656,13 +1656,7 @@ impl PipelineTask {
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
-        let out = match codecs::encode(
-            &decoded.rgba,
-            decoded.width,
-            decoded.height,
-            enc,
-            decoded.icc_profile.as_deref(),
-        ) {
+        let out = match codecs::encode(decoded.as_image(), enc, decoded.icc_profile.as_deref()) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);
@@ -1819,7 +1813,7 @@ impl PipelineTask {
     fn apply_pipeline(&self, d: &mut codecs::Decoded) -> Result<(), codecs::Error> {
         let p = &self.pipeline;
         if p.rotate != 0 {
-            let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
+            let next = codecs::rotate(d.as_image(), u32::from(p.rotate))?;
             // Assignment drops
             // the old `Vec<u8>`/owned buffer.
             d.rgba = next.rgba;
@@ -1827,11 +1821,11 @@ impl PipelineTask {
             d.height = next.height;
         }
         if p.flip {
-            let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
+            let next = codecs::flip(d.as_image(), false)?;
             d.rgba = next;
         }
         if p.flop {
-            let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
+            let next = codecs::flip(d.as_image(), true)?;
             d.rgba = next;
         }
         if let Some(r) = p.resize {
@@ -1848,7 +1842,7 @@ impl PipelineTask {
                 return Err(codecs::Error::TooManyPixels);
             }
             if t.0 != d.width || t.1 != d.height {
-                let next = codecs::resize(&d.rgba, d.width, d.height, t.0, t.1, r.filter)?;
+                let next = codecs::resize(d.as_image(), t.0, t.1, r.filter)?;
                 d.rgba = next;
                 d.width = t.0;
                 d.height = t.1;
@@ -1867,12 +1861,12 @@ impl PipelineTask {
 /// `box` (the only filter that's correct for "average everything in a
 /// cell" — Lanczos would ring into the DCT). The hash itself stays on
 /// the worker stack; only the rendered PNG crosses back.
-fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs::Error> {
+fn make_placeholder(rgba: codecs::RgbaImage<'_>) -> Result<TaskResult, codecs::Error> {
     const MAX_IN: u32 = 100;
-    let mut w = sw;
-    let mut h = sh;
+    let mut w = rgba.width();
+    let mut h = rgba.height();
     let mut owned: Option<Vec<u8>> = None;
-    let mut pixels: &[u8] = rgba;
+    let mut pixels: &[u8] = &rgba;
     if w > MAX_IN || h > MAX_IN {
         let r = (w as f32) / (h as f32);
         if r > 1.0 {
@@ -1882,7 +1876,7 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
             h = MAX_IN;
             w = 1u32.max(((MAX_IN as f32) * r).round() as u32);
         }
-        owned = Some(codecs::resize(rgba, sw, sh, w, h, codecs::Filter::Box)?);
+        owned = Some(codecs::resize(rgba, w, h, codecs::Filter::Box)?);
         pixels = owned.as_deref().unwrap();
     }
     let mut buf = [0u8; thumbhash::MAX_LEN];
@@ -1935,17 +1929,17 @@ fn apply_orientation(
 ) -> Result<(), codecs::Error> {
     let t = orient.transform();
     if t.flip {
-        let next = codecs::flip(&d.rgba, d.width, d.height, false)?;
+        let next = codecs::flip(d.as_image(), false)?;
         d.rgba = next;
     }
     if t.flop {
-        let next = codecs::flip(&d.rgba, d.width, d.height, true)?;
+        let next = codecs::flip(d.as_image(), true)?;
         d.rgba = next;
     }
     if t.rotate != 0 {
         // Swap pixel slots only — `next` carries no ICC profile, and the
         // one on `d` (set by decode) must survive EXIF auto-orient.
-        let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(t.rotate))?;
+        let next = codecs::rotate(d.as_image(), u32::from(t.rotate))?;
         d.rgba = next.rgba;
         d.width = next.width;
         d.height = next.height;

@@ -1647,7 +1647,7 @@ impl FFI {
 
             // optional if the user passed "ptr"
             if function.symbol_from_dynamic_library.is_none() {
-                let Some(resolved_symbol) = dylib.lookup::<*mut c_void>(&function_name) else {
+                let Some(resolved_symbol) = dylib.lookup(&function_name) else {
                     let ret = global.to_invalid_arguments(format_args!(
                         "Symbol \"{}\" not found in \"{}\"",
                         BStr::new(function_name.as_bytes()),

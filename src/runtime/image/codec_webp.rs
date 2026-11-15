@@ -9,7 +9,7 @@ use super::codecs;
 use crate::encoded_wrap_free;
 
 unsafe extern "C" {
-    pub(crate) fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
+    fn WebPGetInfo(data: *const u8, len: usize, w: *mut c_int, h: *mut c_int) -> c_int;
     fn WebPDecodeRGBAInto(
         data: *const u8,
         len: usize,
@@ -189,21 +189,22 @@ impl Drop for Mux {
     }
 }
 
-pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+/// The width and the height in the header.
+pub(crate) fn read_header(bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
     let mut cw: c_int = 0;
     let mut ch: c_int = 0;
-    // Header-only probe first so the pixel guard fires before libwebp
-    // allocates the full canvas internally. WebPGetInfo can hand back
-    // non-positive on a malformed header; reject before the cast traps.
     // SAFETY: bytes.ptr/len describe a valid readable slice.
-    if unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) } == 0
-        || cw <= 0
-        || ch <= 0
-    {
-        return Err(codecs::Error::DecodeFailed);
+    let rc = unsafe { WebPGetInfo(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
+    // WebPGetInfo can hand back non-positive on a malformed header.
+    match (u32::try_from(cw), u32::try_from(ch)) {
+        (Ok(w @ 1..), Ok(h @ 1..)) if rc != 0 => Ok((w, h)),
+        _ => Err(codecs::Error::DecodeFailed),
     }
-    let w: u32 = u32::try_from(cw).expect("int cast");
-    let h: u32 = u32::try_from(ch).expect("int cast");
+}
+
+pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
+    // Header-only probe first so the pixel guard fires before the canvas is allocated.
+    let (w, h) = read_header(bytes)?;
     codecs::guard(w, h, max_pixels)?;
     // `bytes` is a borrowed view of a JS ArrayBuffer the user can still WRITE
     // (the pin only blocks detach), so the decoder can see a different image
@@ -255,13 +256,12 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 }
 
 pub(crate) fn encode(
-    rgba: &[u8],
-    w: u32,
-    h: u32,
+    rgba: codecs::RgbaImage<'_>,
     quality: u8,
     lossless: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
+    let (w, h) = (rgba.width(), rgba.height());
     let mut out: *mut u8 = core::ptr::null_mut();
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     let len = if lossless {

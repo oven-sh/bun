@@ -78,15 +78,8 @@ pub(super) fn create(bytes: &[u8]) -> sys::Result<Bytes> {
         }
     }
 
-    let ptr = sys::mmap(
-        core::ptr::null_mut(),
-        bytes.len(),
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_SHARED,
-        fd,
-        0,
-    )?;
-    let mapping = core::ptr::slice_from_raw_parts_mut(ptr, bytes.len());
-    // SAFETY: just mapped.
+    let prot = libc::PROT_READ | libc::PROT_WRITE;
+    let mapping = sys::Mmap::new(bytes.len(), prot, libc::MAP_SHARED, fd, 0)?;
+    // SAFETY: just mapped read-write over the bytes written above.
     Ok(unsafe { Bytes::from_memfd_mapping(mapping, memfd) })
 }

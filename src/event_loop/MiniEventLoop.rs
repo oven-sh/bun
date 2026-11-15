@@ -18,12 +18,15 @@
 //! - Shell command execution with proper I/O handling
 //! - Any Bun subsystem that needs event-driven architecture without JS overhead
 
-use core::cell::{Cell, OnceCell, UnsafeCell};
+#[cfg(not(windows))]
+use core::cell::OnceCell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
+#[cfg(not(windows))]
 use bun_io::file_poll::Store as FilePollStore;
 use bun_threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -53,12 +56,16 @@ pub struct MiniEventLoop {
     tasks: UnsafeCell<Queue>,
     concurrent_tasks: ConcurrentTaskQueue,
     pub loop_: &'static UwsLoop,
+    #[cfg(not(windows))]
     file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
     /// `NonNull` so that [`EventLoopHandle::env`] can hand out a `*mut` with mutable provenance.
     env: Option<NonNull<DotEnvLoader>>,
     // Opaque ctx assigned externally; only read/cleared here.
+    #[cfg(not(windows))]
     after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
+    #[cfg(not(windows))]
     after_event_loop_callback: Cell<Option<unsafe extern "C" fn(*mut c_void)>>,
+    #[cfg(not(windows))]
     pipe_read_scratch: Box<bun_io::PipeReadScratch>,
 }
 
@@ -113,6 +120,7 @@ impl MiniEventLoop {
     }
 
     pub fn on_after_event_loop(&self) {
+        #[cfg(not(windows))]
         if let Some(cb) = self.after_event_loop_callback.get() {
             self.after_event_loop_callback.set(None);
             let ctx = self.after_event_loop_callback_ctx.take();
@@ -122,6 +130,7 @@ impl MiniEventLoop {
         }
     }
 
+    #[cfg(not(windows))]
     fn file_polls_ptr(&self) -> *mut FilePollStore {
         self.file_polls
             .get_or_init(|| Box::new(UnsafeCell::new(FilePollStore::init())))
@@ -133,10 +142,14 @@ impl MiniEventLoop {
             tasks: UnsafeCell::new(Queue::init()),
             concurrent_tasks: ConcurrentTaskQueue::default(),
             loop_: UwsLoop::get(),
+            #[cfg(not(windows))]
             file_polls: OnceCell::new(),
             env: None,
+            #[cfg(not(windows))]
             after_event_loop_callback_ctx: Cell::new(None),
+            #[cfg(not(windows))]
             after_event_loop_callback: Cell::new(None),
+            #[cfg(not(windows))]
             pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
         }
     }

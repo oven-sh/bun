@@ -909,8 +909,6 @@ function startBunSocket(
         },
       },
     };
-    // Private name: a cluster-shared descriptor is read one datagram at a time so workers share the load.
-    if (sharedHandle) $putByIdDirectPrivate(udpOptions, "sharedFd", true);
     (Bun.udpSocket(udpOptions) as Promise<$Node.UDPSocketHandle>).$then(
       (socket: $Node.UDPSocketHandle) => {
         if (!state.handle) {

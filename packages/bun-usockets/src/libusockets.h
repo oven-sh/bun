@@ -235,9 +235,11 @@ int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, 
 LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
 
 /* Adopts an already created (and usually already bound) UDP socket descriptor
- * instead of creating a new one. The fd is made non-blocking and the standard
- * receive-path options are applied. Returns null with *err set on failure. */
-struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int shared, int *err, void *user);
+ * instead of creating a new one. The fd is made non-blocking and gets
+ * SO_REUSEADDR, as in uv_udp_open. Returns null with *err set on failure.
+ * Another process may read the descriptor too, so the socket takes one
+ * datagram per receive call. */
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);

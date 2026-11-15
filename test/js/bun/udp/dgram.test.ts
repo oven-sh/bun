@@ -1,5 +1,6 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
+import { readSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 
 import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
@@ -425,6 +426,103 @@ test.skipIf(isWindows)("Bun.udpSocket({ fd }) rejects a descriptor a live socket
 
   socket.close();
   wrap.close();
+});
+
+// A descriptor that Bun adopts can be one that another process also reads: child.send(message,
+// socket) delivers a socket to bind({ fd, exclusive: true }). Node takes one datagram per
+// recvmsg(), so what a listener has not received is still queued for that process:
+// https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/udp.c#L285-L362
+// The listener here reads the rest of the queue itself, through the descriptor.
+// POSIX-only, like the bind({ fd }) cases above: Windows has no raw-descriptor helpers.
+describe.skipIf(isWindows)("an adopted descriptor", () => {
+  type Listener = (datagram: Buffer, close: () => void) => void;
+  // Adopts `fd`. Every failure goes to `onError`. The result closes the socket.
+  type Adopt = (fd: number, listener: Listener, onError: (error: unknown) => void) => Promise<() => void>;
+
+  const bind =
+    (options: { exclusive?: boolean }): Adopt =>
+    async (fd, listener, onError) => {
+      const socket = createSocket("udp4");
+      // A second close() of a dgram socket throws.
+      let open = true;
+      const close = () => {
+        if (!open) return;
+        open = false;
+        socket.close();
+      };
+      socket.on("message", datagram => listener(datagram, close));
+      socket.on("error", onError);
+      socket.bind({ ...options, fd });
+      return close;
+    };
+
+  test.each<[string, Adopt]>([
+    ["bind({ fd })", bind({})],
+    ["bind({ fd, exclusive: true })", bind({ exclusive: true })],
+    [
+      "Bun.udpSocket({ fd })",
+      async (fd, listener, onError) => {
+        const socket = await Bun.udpSocket({
+          fd,
+          socket: {
+            data: (adopted, datagram) => listener(datagram, () => adopted.close()),
+            // Bun passes (error). The types declare (socket, error): #44277.
+            error: (...args: unknown[]) => onError(args.at(-1)),
+          },
+        } as any);
+        return () => socket.close();
+      },
+    ],
+  ])("%s takes one datagram per receive call", async (_, adopt) => {
+    const { _createSocketHandle } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
+    using cleanup = new DisposableStack();
+    const wrap = _createSocketHandle("127.0.0.1", 0, "udp4");
+    cleanup.defer(() => wrap.close());
+    const bound = {} as any;
+    wrap.getsockname(bound);
+    const sender = await Bun.udpSocket({ connect: { hostname: "127.0.0.1", port: bound.port } });
+    cleanup.defer(() => sender.close());
+    // The descriptor is bound, so the datagrams wait in its queue until a socket adopts it.
+    for (let i = 0; i < 32; i++) sender.send(String(i));
+    sender.send("end");
+
+    const queued: string[] = [];
+    const { promise: first, resolve, reject } = Promise.withResolvers<string>();
+    const closeAdopted = await adopt(
+      wrap.fd,
+      (datagram, close) => {
+        try {
+          // "end" is sent last: every datagram that the socket has not taken comes before it.
+          const next = Buffer.alloc(8);
+          const deadline = Date.now() + 1_000;
+          for (;;) {
+            let length: number;
+            try {
+              length = readSync(wrap.fd, next);
+            } catch (error: any) {
+              if (error.code !== "EAGAIN" || Date.now() > deadline) throw error;
+              continue;
+            }
+            const text = next.toString("latin1", 0, length);
+            if (text === "end") break;
+            queued.push(text);
+          }
+          resolve(String(datagram));
+        } catch (error) {
+          reject(error);
+        } finally {
+          close();
+        }
+      },
+      reject,
+    );
+    cleanup.defer(closeAdopted);
+
+    expect({ first: await first, queued }).toEqual({
+      first: "0",
+      queued: Array.from({ length: 31 }, (_, i) => String(i + 1)),
+    });
+  });
 });
 
 // Node throws an ErrnoException from the option setters of an unbound socket;

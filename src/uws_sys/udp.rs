@@ -56,7 +56,6 @@ impl Socket {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         fd: c_int,
-        shared: bool,
         err: Option<&mut c_int>,
         user_data: *mut c_void,
     ) -> *mut Socket {
@@ -75,7 +74,6 @@ impl Socket {
                 close_cb,
                 recv_error_cb,
                 fd_native,
-                shared as c_int,
                 err.map_or(core::ptr::null_mut(), core::ptr::from_mut),
                 user_data,
             )
@@ -237,7 +235,6 @@ unsafe extern "C" {
         close_cb: extern "C" fn(*mut Socket),
         recv_error_cb: extern "C" fn(*mut Socket, c_int, c_int),
         fd: LIBUS_SOCKET_DESCRIPTOR,
-        shared: c_int,
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;

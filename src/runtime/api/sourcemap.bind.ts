@@ -6,6 +6,8 @@ const find = { returns: b.any.returning("object"), capability: "js", throws: tru
 
 export const SourceMap = b.class({
   rustPath: "crate::api::js_source_map::JSSourceMap",
+  configurable: true,
+  enumerable: false,
   estimatedSize: true,
   construct: {
     passStructure: true,

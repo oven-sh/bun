@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/net.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 d6861dbd59c52394231c89ff7bae0bcff81e31756f79b40db9ee7cee0562b4a5.
+// Written against that file with the SHA-256 b89925fcd069b6285aa47fb51aebfb17429b3cb4790ccff616d2e27670cdbdb7.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:net"
@@ -3015,6 +3015,7 @@ Object.defineProperty(Socket.prototype, "pending", {
   get: function (this: $Node.Socket) {
     return !this._handle || this.connecting;
   },
+  configurable: true,
 });
 
 // Queued/in-flight plain writes would be stranded on the retired TCP wrapper
@@ -4246,6 +4247,8 @@ Object.defineProperty(Server.prototype, "listening", {
   get(this: $Node.NetServer) {
     return !!this._handle;
   },
+  configurable: true,
+  enumerable: true,
 });
 
 Server.prototype.ref = function ref(this: $Node.NetServer) {

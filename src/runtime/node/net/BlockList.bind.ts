@@ -6,6 +6,8 @@ const js = { capability: "js", throws: true } as const;
 /** `net.BlockList`. A structured clone shares the struct. */
 export const BlockList = b.class({
   rustPath: "crate::node::net::block_list::BlockList",
+  configurable: true,
+  enumerable: false,
   refCounted: true,
   estimatedSize: true,
   types: [table.exactType("$Node.BlockList"), table.exactType("$Bindgen.BlockList")],

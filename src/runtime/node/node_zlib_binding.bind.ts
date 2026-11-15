@@ -35,6 +35,8 @@ const compressionStream = <Init extends object, Params extends object>(
 ) =>
   b.class({
     rustPath,
+    // As SetProtoMethod leaves the functions of Node's handle: https://github.com/nodejs/node/blob/v26.12.1/src/node_zlib.cc#L2067-L2073
+    configurable: true,
     refCounted: true,
     rustTraits: ["crate::node::node_zlib_binding::CompressionStreamImpl"],
     estimatedSize: true,
@@ -43,7 +45,8 @@ const compressionStream = <Init extends object, Params extends object>(
     proto: {
       close: {},
       init: { ...method, ...init },
-      onerror: { getter: b.any, setter: { capability: "js" }, passThis: true },
+      // Node's handle has it as an own property, and no accessor on the prototype.
+      onerror: { getter: b.any, setter: { capability: "js" }, passThis: true, configurable: false },
       params,
       reset: method,
       write,

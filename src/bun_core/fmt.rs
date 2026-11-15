@@ -978,9 +978,7 @@ pub fn parse_double(buf: &[u8]) -> Result<f64, InvalidCharacter> {
     if buf.is_empty() {
         return Err(InvalidCharacter);
     }
-    let mut count: usize = 0;
-    // SAFETY: `buf` is a valid slice; WTF reads at most `len` Latin-1 bytes.
-    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
+    let (res, count) = wtf_parse_double(buf);
     if count == 0 {
         return Err(InvalidCharacter);
     }
@@ -995,6 +993,14 @@ unsafe extern "C" {
     fn WTF__parseDouble(bytes: *const u8, length: usize, counted: *mut usize) -> f64;
 }
 
+/// The number that `buf` starts with, and its length.
+fn wtf_parse_double(buf: &[u8]) -> (f64, usize) {
+    let mut count: usize = 0;
+    // SAFETY: `buf` is a valid slice; WTF reads at most `len` Latin-1 bytes.
+    let res = unsafe { WTF__parseDouble(buf.as_ptr(), buf.len(), &raw mut count) };
+    (res, count)
+}
+
 /// Full-match parse of `s` as an `f64`.
 /// Returns `None` on empty input, trailing garbage (`b"1.5x"`), or non-numeric
 /// input. Backed by `WTF__parseDouble` (no `&str` round-trip — digits are
@@ -1006,9 +1012,7 @@ pub fn parse_f64(s: &[u8]) -> Option<f64> {
     if s.is_empty() {
         return None;
     }
-    let mut count: usize = 0;
-    // SAFETY: `s` is a valid slice; WTF reads at most `len` Latin-1 bytes.
-    let res = unsafe { WTF__parseDouble(s.as_ptr(), s.len(), &raw mut count) };
+    let (res, count) = wtf_parse_double(s);
     if count == s.len() {
         return Some(res);
     }

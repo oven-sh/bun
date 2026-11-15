@@ -45,9 +45,7 @@ pub mod kernel32 {
         // safe: by-value DWORD write to the TEB; cannot fault.
         pub safe fn SetLastError(dwErrCode: DWORD);
         // ── IOCP / async directory watching ──
-        // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
-        // a bad handle yields NULL + GetLastError, no UB.
-        pub safe fn CreateIoCompletionPort(
+        pub(super) fn CreateIoCompletionPort(
             FileHandle: HANDLE,
             ExistingCompletionPort: HANDLE,
             CompletionKey: ULONG_PTR,
@@ -333,20 +331,15 @@ pub type LPOVERLAPPED_COMPLETION_ROUTINE =
 
 pub use bun_windows_sys::{PROCESS_INFORMATION, STARTUPINFOEXW, STARTUPINFOW};
 
-/// Wraps the kernel32 `CreateIoCompletionPort` call and returns `Err` on
-/// `NULL`.
+/// Creates a port for `file_handle`, whose completion key is 0, and returns `Err` on `NULL`.
 pub fn CreateIoCompletionPort(
     file_handle: HANDLE,
-    existing_completion_port: HANDLE,
-    completion_key: ULONG_PTR,
     concurrent_threads: DWORD,
 ) -> core::result::Result<HANDLE, bun_errno::SystemErrno> {
-    let h = kernel32::CreateIoCompletionPort(
-        file_handle,
-        existing_completion_port,
-        completion_key,
-        concurrent_threads,
-    );
+    // SAFETY: nothing waits on the new port yet; a bad handle yields NULL.
+    let h = unsafe {
+        kernel32::CreateIoCompletionPort(file_handle, ptr::null_mut(), 0, concurrent_threads)
+    };
     if h.is_null() {
         return Err(bun_errno::SystemErrno::EIO);
     }
@@ -576,13 +569,18 @@ pub use bun_errno::translate_uv_error_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
 
-pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Option<*mut c_void> {
+/// # Safety
+/// `ptr` is `None` or the handle of a loaded module.
+pub unsafe fn GetProcAddressA(
+    ptr: Option<*mut c_void>,
+    utf8: &bun_core::ZStr,
+) -> Option<*mut c_void> {
     let module = ptr.unwrap_or(core::ptr::null_mut());
     // Win32 `GetProcAddress` takes `LPCSTR` (narrow ANSI, NUL-terminated). The
     // symbol name is already a NUL-terminated byte string — pass it through
     // directly. (Widening to UTF-16 would terminate after the first WCHAR's
     // 0x00 high byte and resolve nothing.)
-    // SAFETY: `utf8` is NUL-terminated; `module` may be null (yields null sym).
+    // SAFETY: caller contract; `utf8` is NUL-terminated.
     let sym = unsafe { GetProcAddress(module, utf8.as_ptr().cast::<c_char>()) };
     if sym.is_null() { None } else { Some(sym) }
 }
@@ -1248,16 +1246,15 @@ pub fn detect_runtime_version() -> &'static str {
         szCSDVersion: [u16; 128],
     }
     unsafe extern "system" {
-        // safe: out-param is `&mut OSVERSIONINFOW` (non-null, valid for write);
-        // ntdll only writes the struct and returns NTSTATUS — no preconditions.
-        safe fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
+        fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
     }
     static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
     bun_core::impl_zeroable!(OSVERSIONINFOW);
     CACHE.get_or_init(|| {
         let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
         info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;
-        if RtlGetVersion(&mut info) != 0 {
+        // SAFETY: `dwOSVersionInfoSize` is the size of `info`.
+        if unsafe { RtlGetVersion(&mut info) } != 0 {
             return std::string::String::from("unknown");
         }
         std::format!("{}.{}", info.dwMajorVersion, info.dwBuildNumber)
@@ -1528,9 +1525,7 @@ pub struct PROCESS_MEMORY_COUNTERS {
 /// (kernel32 hosts the K32* shims since Windows 7, no separate psapi.lib).
 pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, Win32Error> {
     unsafe extern "system" {
-        // safe: `HANDLE` is a by-value opaque (bad handle → BOOL 0, no UB);
-        // out-param is `&mut PROCESS_MEMORY_COUNTERS` sized by `cb`.
-        safe fn K32GetProcessMemoryInfo(
+        fn K32GetProcessMemoryInfo(
             hProcess: HANDLE,
             ppsmemCounters: &mut PROCESS_MEMORY_COUNTERS,
             cb: DWORD,
@@ -1541,9 +1536,8 @@ pub fn GetProcessMemoryInfo(process: HANDLE) -> Result<PROCESS_MEMORY_COUNTERS, 
         cb,
         ..Default::default()
     };
-    if K32GetProcessMemoryInfo(process, &mut out, cb) == 0 {
-        return Err(Win32Error::get());
-    }
+    // SAFETY: `cb` is the size of `out`.
+    check(unsafe { K32GetProcessMemoryInfo(process, &mut out, cb) })?;
     Ok(out)
 }
 pub use bun_windows_sys::externs::GetConsoleMode;

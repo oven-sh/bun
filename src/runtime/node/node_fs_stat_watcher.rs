@@ -288,8 +288,7 @@ impl StatWatcherScheduler {
             let update = Box::new(StatWatcherTimerUpdate {
                 scheduler: pass.scheduler,
             });
-            pass.ticket
-                .post(ConcurrentTask::create(Task::from_boxed(update)));
+            pass.ticket.post(ConcurrentTask::create_boxed(update));
         }
     }
 

@@ -85,6 +85,7 @@ macro_rules! boxed_arm {
     (
         $task:ident,
         $features:tt,
+        // `$payload` repeats so that `mut name` matches.
         |$($payload:ident)+: $Payload:ty| $(-> $Result:ty)? $body:block
     ) => {
         in_features!(

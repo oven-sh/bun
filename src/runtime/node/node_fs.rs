@@ -1284,9 +1284,8 @@ mod _async_tasks {
                 if let Err(err) = mkdirp(self.target.directory()) {
                     self.target.set_error(err);
                 }
-                let task = bun_jsc::Task::from_boxed(self.target);
                 self.ticket
-                    .post(ConcurrentTask::ConcurrentTask::create(task));
+                    .post(ConcurrentTask::ConcurrentTask::create_boxed(self.target));
             }
         }
 
@@ -2531,8 +2530,7 @@ mod _async_tasks {
                 .take()
                 .expect("fs.cp in flight holds its poster");
             if poster.is_js() {
-                let task = bun_jsc::Task::from_boxed(this);
-                poster.post_js(ConcurrentTask::ConcurrentTask::create(task));
+                poster.post_js(ConcurrentTask::ConcurrentTask::create_boxed(this));
             } else {
                 let at = AnyTaskWithExtraContext::from_callback_auto_deinit(this, |task, _| {
                     let _ = task.run_from_js_thread(); // TODO: properly propagate exception upwards

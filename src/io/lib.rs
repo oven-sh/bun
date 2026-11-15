@@ -1902,6 +1902,8 @@ pub enum PathOrFileDescriptor<'a> {
 pub mod waker {
     #[cfg(not(windows))]
     use bun_sys::Fd;
+    #[cfg(windows)]
+    use core::sync::atomic::{AtomicPtr, Ordering};
 
     #[cfg(target_os = "macos")]
     pub type Waker = KEventWaker;
@@ -2044,8 +2046,8 @@ pub mod waker {
 
     #[cfg(windows)]
     pub struct WindowsWaker {
-        /// The loop of the thread that called `init`. Other threads only wake it.
-        loop_: core::sync::atomic::AtomicPtr<bun_uws_sys::WindowsLoop>,
+        /// The loop of the thread that called `init`. Other threads only wake it. `AtomicPtr` only to be `Sync`.
+        loop_: AtomicPtr<bun_uws_sys::WindowsLoop>,
     }
 
     #[cfg(windows)]
@@ -2053,7 +2055,7 @@ pub mod waker {
         pub fn init() -> crate::error::Result<Self> {
             let loop_: &bun_uws_sys::WindowsLoop = bun_uws_sys::WindowsLoop::get();
             Ok(Self {
-                loop_: core::sync::atomic::AtomicPtr::new(core::ptr::from_ref(loop_).cast_mut()),
+                loop_: AtomicPtr::new(core::ptr::from_ref(loop_).cast_mut()),
             })
         }
 
@@ -2064,7 +2066,7 @@ pub mod waker {
 
         pub fn wake(&self) {
             // Relaxed: only `init` writes it, before the waker is shared.
-            let loop_ = self.loop_.load(core::sync::atomic::Ordering::Relaxed);
+            let loop_ = self.loop_.load(Ordering::Relaxed);
             // SAFETY: `loop_` came from `WindowsLoop::get()`, which is `&'static`;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
             unsafe { bun_uws_sys::loop_::us_wakeup_loop(loop_) };

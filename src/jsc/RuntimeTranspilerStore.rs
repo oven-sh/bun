@@ -39,7 +39,7 @@ use crate::runtime_transpiler_cache::{
 };
 use crate::saved_source_map::SavedSourceMap;
 use crate::strong::Optional as StrongOptional;
-use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine};
+use crate::virtual_machine::{SourceMapHandlerGetter, VirtualMachine, process_fetch_log};
 use crate::{
     ErrorableResolvedSource, JSGlobalObject, JSInternalPromise, JSValue, JsError, JsResult,
     ResolvedSource,
@@ -493,7 +493,7 @@ fn fulfill(
         Err(crate::CrateError::JSError | crate::CrateError::Bundler(bun_bundler::Error::Js(_))) => {
             ErrorableResolvedSource::err(global_this.take_error(JsError::Thrown))
         }
-        Err(e) => ErrorableResolvedSource::err(crate::virtual_machine::process_fetch_log(
+        Err(e) => ErrorableResolvedSource::err(process_fetch_log(
             global_this,
             specifier,
             referrer,

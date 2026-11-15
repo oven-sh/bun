@@ -62,7 +62,7 @@ unsafe extern "C" fn Bun__queueJSCDeferredWorkTaskConcurrently(
     // SAFETY: C++ passes the reference its JSVMClientData holds.
     let handle = unsafe { crate::VmHandle::borrow_ref(r) };
     let ct = ConcurrentTask::create_from(task);
-    if matches!(handle.post(kind, ct), crate::Posted::Refused(_)) {
+    if let crate::Posted::Refused(_) = handle.post(kind, ct) {
         // SAFETY: `task` is the C++ job handed over for exactly one run/destroy. Its ticket was
         // already cancelled by the VM teardown (DeferredWorkTimer is shut down before ~VM).
         unsafe { JSCDeferredWorkTask::destroy(task) };

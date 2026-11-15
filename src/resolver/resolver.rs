@@ -3957,7 +3957,7 @@ impl<'a> Resolver<'a> {
         if input_package_id == Install::INVALID_PACKAGE_ID || input_package_id == 0 {
             // All packages are enqueued to the root
             // because we download all the npm package dependencies
-            match pm!().enqueue_dependency_to_root(
+            return match pm!().enqueue_dependency_to_root(
                 esm.name,
                 version,
                 version_buf,
@@ -3969,12 +3969,10 @@ impl<'a> Resolver<'a> {
                     resolution,
                 } => {
                     *input_package_id_ = package_id;
-                    return Some(resolution);
+                    Some(resolution)
                 }
-                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => {
-                    return None;
-                }
-            }
+                Install::EnqueueResult::NotFound | Install::EnqueueResult::Failure(_) => None,
+            };
         }
 
         // NOTE: the non-root path is genuinely unimplemented; this is not a stub.

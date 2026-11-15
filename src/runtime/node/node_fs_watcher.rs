@@ -92,7 +92,7 @@ bun_jsc::impl_abort_handle_owner!(FSWatcher, abort_handle, |this, cause| {
 impl FSWatcher {
     /// Watcher thread → JS thread. `task` is the intrusive node of a heap batch
     /// task; the queue takes ownership unless the VM has been torn down, in
-    /// which case the caller gets it back.
+    /// which case it stays the caller's.
     #[cfg(not(windows))]
     pub(crate) fn post_intrusive(
         &self,

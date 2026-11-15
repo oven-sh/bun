@@ -23,7 +23,7 @@ impl Default for AnyTaskWithExtraContext {
 }
 
 impl AnyTaskWithExtraContext {
-    /// The task is in a box with `wrapped`, which it frees after `callback(wrapped, extra)`.
+    /// Boxes `wrapped` with the returned task. Running it calls `callback(wrapped, extra)` and frees the box.
     pub fn from_callback_auto_deinit<T: 'static>(
         wrapped: T,
         callback: fn(T, *mut c_void),

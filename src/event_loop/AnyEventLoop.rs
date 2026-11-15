@@ -415,7 +415,7 @@ impl EventLoopHandle {
 // bundle owned by a JS loop). Its `post` is deliver-or-refuse: once the VM has
 // closed, the task comes back and the caller releases it — its own payload —
 // on its own thread. Work that a VM must *wait* for holds a `bun_jsc::Ticket`
-// instead, which implements the trait too and never refuses.
+// instead, which implements `PostToJs` too and never refuses.
 
 /// Result of a weak post to a JS loop from another thread: it was queued, or
 /// the loop's VM is closed and the caller has the task back to release on this

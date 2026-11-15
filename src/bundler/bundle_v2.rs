@@ -1470,6 +1470,8 @@ pub mod bv2_impl {
     // static instances and registers hooks at init. See PORTING.md §Dispatch.
     // ══════════════════════════════════════════════════════════════════════════
     pub mod dispatch {
+        use core::sync::atomic::{AtomicBool, Ordering};
+
         pub use crate::{DevServerHandle, DevServerHandleKind};
 
         impl DevServerHandle {
@@ -1798,12 +1800,12 @@ pub mod bv2_impl {
         #[derive(Copy, Clone)]
         pub struct CompletionHandle<'a> {
             /// That VM is shutting down: stop waiting for the plugins' answers and fail the build.
-            pub cancelled: &'a core::sync::atomic::AtomicBool,
+            pub cancelled: &'a AtomicBool,
             pub poster: &'a dyn bun_event_loop::PostToJs,
         }
         impl CompletionHandle<'_> {
             pub(crate) fn is_cancelled(&self) -> bool {
-                self.cancelled.load(core::sync::atomic::Ordering::SeqCst)
+                self.cancelled.load(Ordering::SeqCst)
             }
         }
     }

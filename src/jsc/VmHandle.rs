@@ -237,7 +237,7 @@ impl Ticket {
     /// before this returns, so `self` must not live inside that memory: move
     /// the ticket out of the work's struct first, post, then drop it.
     pub fn post(&self, task: Box<ConcurrentTaskItem>) {
-        self.post_intrusive(NonNull::from(Box::leak(task)));
+        self.post_intrusive(bun_core::heap::into_raw_nn(task));
     }
 
     /// As [`post`](Self::post), for a node that its container keeps alive until the task has run.
@@ -354,7 +354,7 @@ impl VmHandle {
             let Some(_a) = self.enter() else {
                 return Posted::Refused(task);
             };
-            self.0.deliver(kind, NonNull::from(Box::leak(task)));
+            self.0.deliver(kind, bun_core::heap::into_raw_nn(task));
             Posted::Queued
         })
     }
@@ -383,7 +383,7 @@ impl VmHandle {
             fn Bun__deleteEventLoopTask(task: *mut crate::cpp_task::CppTask);
         }
         let ct = ConcurrentTaskItem::create(bun_event_loop::Task::init(task));
-        if matches!(self.post(kind, ct), Posted::Refused(_)) {
+        if let Posted::Refused(_) = self.post(kind, ct) {
             // SAFETY: refused ⇒ `task` is still ours (fn contract).
             unsafe { Bun__deleteEventLoopTask(task) };
         }
@@ -864,7 +864,7 @@ impl ConcurrentPoster {
 
     /// Post a JS-loop `ConcurrentTask`. Panics (debug) if this poster is `Mini`.
     pub fn post_js(&self, task: Box<ConcurrentTaskItem>) {
-        self.post_js_intrusive(NonNull::from(Box::leak(task)));
+        self.post_js_intrusive(bun_core::heap::into_raw_nn(task));
     }
 
     /// As [`Ticket::post_intrusive`].
@@ -961,7 +961,7 @@ impl bun_event_loop::PostToJs for IsolatedPosterInner {
         let posted = if self.open.load(Ordering::SeqCst) {
             // SAFETY: gate held and open ⇒ the isolated loop is alive.
             let el = unsafe { &*self.event_loop };
-            el.post(NonNull::from(Box::leak(task)));
+            el.post(bun_core::heap::into_raw_nn(task));
             el.wakeup();
             Posted::Queued
         } else {

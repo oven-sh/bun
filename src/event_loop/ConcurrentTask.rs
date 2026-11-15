@@ -18,10 +18,6 @@ use bun_threading::unbounded_queue::{Link, Linked};
 // inherent-method call. Provide thin module-level forwarders so both spellings
 // work — the struct's inherent methods remain the canonical impls below.
 #[inline]
-pub fn create(task: Task) -> Box<ConcurrentTask> {
-    ConcurrentTask::create(task)
-}
-#[inline]
 pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
     ConcurrentTask::create_from(task)
 }
@@ -149,6 +145,7 @@ pub mod task_tag {
     }
 }
 
+/// No `Drop`: a dropped task leaks what `from_boxed` took.
 pub struct Task {
     tag: TaskTag,
     ptr: *mut (),
@@ -231,6 +228,7 @@ pub trait Taskable {
 /// As [`Taskable`], for a type that the queued [`Task`] owns.
 pub trait BoxedTask: 'static {
     const TAG: TaskTag;
+    /// As [`Taskable::release_unrun`]. An empty body drops the box.
     fn release_unrun(self: Box<Self>);
     fn context(&self) -> ContextId;
 }
@@ -286,15 +284,16 @@ impl Task {
     #[inline]
     pub fn from_boxed<T: BoxedTask>(task: Box<T>) -> Task {
         let context = task.context();
-        Task::new(T::TAG, Box::into_raw(task).cast(), context)
+        Task::new(T::TAG, bun_core::heap::into_raw(task).cast(), context)
     }
 
-    /// SAFETY: `self` came from `from_boxed::<T>`, and no bitwise copy of it is used.
+    /// # Safety
+    /// `self` came from `from_boxed::<T>`, and no bitwise copy of it is used.
     #[inline]
     pub unsafe fn into_boxed<T: BoxedTask>(self) -> Box<T> {
         debug_assert!(self.tag == T::TAG);
         // SAFETY: fn contract.
-        unsafe { Box::from_raw(self.ptr.cast()) }
+        unsafe { bun_core::heap::take(self.ptr.cast()) }
     }
 }
 
@@ -364,6 +363,10 @@ impl ConcurrentTask {
     pub fn create_from<T: Taskable>(task: *mut T) -> Box<ConcurrentTask> {
         bun_core::mark_binding!();
         Self::create(Task::init(task))
+    }
+
+    pub fn create_boxed<T: BoxedTask>(task: Box<T>) -> Box<ConcurrentTask> {
+        Self::create(Task::from_boxed(task))
     }
 
     /// For a node that is a field of what it carries.

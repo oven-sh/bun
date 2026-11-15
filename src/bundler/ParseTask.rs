@@ -4,7 +4,7 @@
 //! and ship a `Result` back to the bundler thread.
 
 use core::ffi::c_void;
-use core::mem::offset_of;
+use core::mem::{ManuallyDrop, offset_of};
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use crate::Error as AnyError;
@@ -14,6 +14,9 @@ use bun_ast::{Loc, Location, Log, Msg, Source};
 use bun_collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
+use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_event_loop::ConcurrentTask::ConcurrentTask;
+use bun_event_loop::{BoxedTask, Posted};
 use bun_sys::Fd;
 use bun_threading::thread_pool as ThreadPoolLib;
 
@@ -122,21 +125,21 @@ pub enum ParseTaskStage {
 
 /// The information returned to the Bundler thread when a parse finishes.
 pub struct Result<'a> {
-    pub(crate) task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+    pub(crate) task: AnyTaskWithExtraContext,
     pub(crate) ctx: bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>,
-    /// What `on_parse_task_complete` leaves owns only its log, or shares it with the graph.
-    pub(crate) value: core::mem::ManuallyDrop<ResultValue<'a>>,
+    /// `ManuallyDrop`: after `on_parse_task_complete` the graph owns what this points to, except the log.
+    pub(crate) value: ManuallyDrop<ResultValue<'a>>,
     pub(crate) watcher_data: WatcherData,
     /// This is used for native onBeforeParsePlugins to store
     /// a function pointer and context pointer to free the
     /// returned source code by the plugin. After `value`, which may borrow it.
     pub(crate) external: ExternalFreeFunction,
 }
-impl bun_event_loop::BoxedTask for Result<'static> {
+impl BoxedTask for Result<'static> {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BundleV2ParseTaskResult;
     /// The VM that runs the bundle is going: the result goes to nobody.
     fn release_unrun(self: Box<Self>) {
-        drop(core::mem::ManuallyDrop::into_inner(self.value));
+        drop(ManuallyDrop::into_inner(self.value));
     }
     /// A step of the bundle.
     fn context(&self) -> bun_event_loop::ContextId {
@@ -2824,7 +2827,7 @@ pub mod parse_worker {
         let result = Box::new(Result {
             ctx,
             task: Default::default(),
-            value: core::mem::ManuallyDrop::new(value),
+            value: ManuallyDrop::new(value),
             // `ExternalFreeFunction`
             // doesn't derive `Copy`, so move it out (task is consumed here).
             external: core::mem::take(&mut this.external_free_function),
@@ -2844,13 +2847,12 @@ pub mod parse_worker {
         post_result(result);
     }
 
-    /// `on_complete` mutates the graph, which belongs to the bundle's thread.
+    /// Hands `result` to the bundle's thread, the only one that changes the graph.
     pub(crate) fn post_result(result: Box<Result<'static>>) {
-        use bun_event_loop::{BoxedTask as _, ConcurrentTask::ConcurrentTask, Posted, Task};
         let ctx = result.ctx;
         match ctx.any_loop() {
             bun_event_loop::AnyEventLoop::Js { .. } => {
-                let ct = ConcurrentTask::create(Task::from_boxed(result));
+                let ct = ConcurrentTask::create_boxed(result);
                 let poster = ctx
                     .js_poster
                     .as_ref()
@@ -2879,7 +2881,8 @@ pub mod parse_worker {
         complete(bundle, result);
     }
 
-    /// SAFETY: on the bundle's thread, which uses no other borrow of the bundle during the call.
+    /// # Safety
+    /// On the bundle's thread, which uses no other borrow of the bundle during the call.
     pub unsafe fn on_complete(result: Box<Result<'static>>) {
         let ctx = result.ctx;
         // SAFETY: `ctx` has write provenance (`from_ref_mut` in `ParseTask::init`) and outlives

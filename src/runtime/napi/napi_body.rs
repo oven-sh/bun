@@ -5417,7 +5417,7 @@ impl NapiFinalizerTask {
             // not the env ref — the env's count is not atomic and the env goes
             // with its VM — as the cleanup-hooks-already-ran case below does.
             let handle = self.finalizer.env.vm_handle().clone();
-            let ct = ConcurrentTask::create(Task::from_boxed(self));
+            let ct = ConcurrentTask::create_boxed(self);
             if let bun_jsc::vm_handle::Posted::Refused(ct) =
                 handle.post(bun_jsc::LoopKind::Regular, ct)
             {

@@ -30,11 +30,11 @@ static STATE: Guarded<State> = Guarded::new(State {
     last_started_addr: 0,
 });
 
-/// Of `State::last_started_addr`, and written under the same lock.
+/// Whether the build at `last_started_addr` is cancelled. Written under `STATE`'s lock.
 pub(super) static CANCELLED: AtomicBool = AtomicBool::new(false);
 
-/// The thread's uws loop, in which a build waits for its plugins.
-pub(super) static UWS_LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
+/// The thread's `Loop::get()`, in which the `MiniEventLoop` of a build waits for its plugins.
+static UWS_LOOP: AtomicPtr<bun_uws::Loop> = AtomicPtr::new(core::ptr::null_mut());
 
 pub(super) fn enqueue(task: Box<JSBundleCompletionTask>, ticket: Ticket) {
     // The lock also blocks other callers until the thread is created.
@@ -65,11 +65,9 @@ pub(super) fn cancel_if_started(js: &BundleJs) {
         return;
     }
     CANCELLED.store(true, Ordering::SeqCst);
-    let uws_loop = UWS_LOOP.load(Ordering::SeqCst);
-    if !uws_loop.is_null() {
-        // SAFETY: the loop of a thread that never exits; wakeup is thread-safe.
-        unsafe { bun_uws::us_wakeup_loop(uws_loop) };
-    }
+    // SAFETY: `start_next` wrote that address, after `thread_main` stored the loop. The thread
+    // never exits or frees its loop, and wakeup is thread-safe.
+    unsafe { bun_uws::us_wakeup_loop(UWS_LOOP.load(Ordering::SeqCst)) };
 }
 
 fn start_next() -> Option<QueuedBuild> {
@@ -90,6 +88,7 @@ fn spawn() -> std::io::Result<&'static Waker> {
             // On Windows the waker is this thread's libuv loop, so create it here.
             let waker = Waker::init().map(|waker| &*Box::leak(Box::new(waker)));
             let _ = slot.set(waker);
+            // `thread_main` never returns.
             drop(slot);
             if let Ok(waker) = waker {
                 thread_main(waker);
@@ -103,12 +102,15 @@ fn spawn() -> std::io::Result<&'static Waker> {
 extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) {}
 
 fn thread_main(waker: &Waker) -> ! {
+    let uws_loop: &bun_uws::Loop = bun_uws::Loop::get();
+    UWS_LOOP.store(core::ptr::from_ref(uws_loop).cast_mut(), Ordering::SeqCst);
+
     // At function scope: the loop holds its address.
     #[cfg(windows)]
     let mut timer: bun_sys::windows::libuv::Timer = bun_core::ffi::zeroed();
     #[cfg(windows)]
     {
-        timer.init(bun_uws::Loop::get().uv_loop());
+        timer.init(uws_loop.uv_loop());
         timer.start(u64::MAX, u64::MAX, Some(timer_callback));
     }
 
@@ -116,7 +118,7 @@ fn thread_main(waker: &Waker) -> ! {
     loop {
         let mut has_bundled = false;
         while let Some(QueuedBuild { task, ticket }) = start_next() {
-            // Newer than the run time's directory listings, which bear 0, and an earlier build's.
+            // The resolver rereads a directory whose listing has a lower generation. The runtime's have 0.
             generation = generation.saturating_add(1);
             task.run(ticket, generation);
             has_bundled = true;

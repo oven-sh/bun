@@ -418,13 +418,13 @@ impl Route {
             bundler_options::SourceMapOption::None
         };
 
-        // The build is the server's: it continues the script that made the server.
         this.state.set(State::Building);
         let owner = BuildOwner::Route {
             plugins,
             route: this,
             started_at_ns: bun_core::util::Timespec::now_allow_mocked_time().ns(),
         };
+        // The build is the server's: it continues the script that made the server.
         JSBundleCompletionTask::schedule(config, &global, server.context_id(), owner);
         Ok(())
     }

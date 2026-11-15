@@ -1,4 +1,4 @@
-// FIFO of fixed size items without destructors; owning element types belong in `VecDeque`.
+// FIFO of fixed size items. It never drops them: types with `Drop` belong in `VecDeque`.
 
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
@@ -167,7 +167,7 @@ impl<T> LinearFifo<T, DynamicBuffer<T>> {
 }
 
 // `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static is a
-// no-op. Items are never dropped, which `init` asserts is fine.
+// no-op. Items are never dropped: `init` rejects a `T` that needs it.
 
 impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     #[inline]
@@ -307,14 +307,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    /// Discard first `count` items in the fifo
-    pub fn discard(&mut self, count: usize)
-    where
-        T: Copy,
-    {
-        self.advance_head(count);
-    }
-
     fn advance_head(&mut self, count: usize) {
         debug_assert!(count <= self.count);
 
@@ -356,11 +348,43 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         Some(c)
     }
 
+    /// Returns number of items available in fifo
+    #[inline]
+    pub fn writable_length(&self) -> usize {
+        self.buf_len() - self.count
+    }
+
+    /// Write a single item to the fifo
+    pub fn write_item(&mut self, item: T) -> Result<(), AllocError> {
+        self.ensure_unused_capacity(1)?;
+        self.write_at_tail(item);
+        Ok(())
+    }
+
+    fn write_at_tail(&mut self, item: T) {
+        debug_assert!(self.count < self.buf_len());
+        let mut tail = self.head + self.count;
+        if B::POWERS_OF_TWO {
+            tail &= self.buf_len() - 1;
+        } else {
+            tail %= self.buf_len();
+        }
+        // SAFETY: `tail` is in-bounds (capacity reserved by caller). The slot is
+        // logically uninitialized `MaybeUninit<T>` storage; `ptr::write`
+        // initializes it without reading the prior bit-pattern.
+        unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
+        self.count += 1;
+    }
+}
+
+impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
+    /// Discard first `count` items in the fifo
+    pub fn discard(&mut self, count: usize) {
+        self.advance_head(count);
+    }
+
     /// Read data from the fifo into `dst`, returns number of items copied.
-    pub(crate) fn read(&mut self, dst: &mut [T]) -> usize
-    where
-        T: Copy,
-    {
+    pub(crate) fn read(&mut self, dst: &mut [T]) -> usize {
         let total = dst.len();
         let mut dst_left = &mut dst[..];
 
@@ -379,18 +403,9 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         total - dst_left.len()
     }
 
-    /// Returns number of items available in fifo
-    #[inline]
-    pub fn writable_length(&self) -> usize {
-        self.buf_len() - self.count
-    }
-
     /// Returns the first section of writable buffer.
     /// Note that this may be of length 0.
-    pub(crate) fn writable_slice(&mut self, offset: usize) -> &mut [T]
-    where
-        T: Copy,
-    {
+    pub(crate) fn writable_slice(&mut self, offset: usize) -> &mut [T] {
         let buf_len = self.buf_len();
         if offset > buf_len {
             return &mut [];
@@ -410,10 +425,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns a writable buffer of at least `size` items, allocating memory as needed.
     /// Use `fifo.update` once you've written data to it.
-    pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError>
-    where
-        T: Copy,
-    {
+    pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError> {
         self.ensure_unused_capacity(size)?;
 
         // try to avoid realigning buffer
@@ -428,20 +440,14 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Update the tail location of the buffer (usually follows use of writable/writableWithSize)
-    pub fn update(&mut self, count: usize)
-    where
-        T: Copy,
-    {
+    pub fn update(&mut self, count: usize) {
         debug_assert!(self.count + count <= self.buf_len());
         self.count += count;
     }
 
     /// Appends the data in `src` to the fifo.
     /// You must have ensured there is enough space.
-    pub(crate) fn write_assume_capacity(&mut self, src: &[T])
-    where
-        T: Copy,
-    {
+    pub(crate) fn write_assume_capacity(&mut self, src: &[T]) {
         debug_assert!(self.writable_length() >= src.len());
 
         let mut src_left = src;
@@ -460,41 +466,13 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    /// Write a single item to the fifo
-    pub fn write_item(&mut self, item: T) -> Result<(), AllocError> {
-        self.ensure_unused_capacity(1)?;
+    pub fn write_item_assume_capacity(&mut self, item: T) {
         self.write_at_tail(item);
-        Ok(())
-    }
-
-    pub fn write_item_assume_capacity(&mut self, item: T)
-    where
-        T: Copy,
-    {
-        self.write_at_tail(item);
-    }
-
-    fn write_at_tail(&mut self, item: T) {
-        debug_assert!(self.count < self.buf_len());
-        let mut tail = self.head + self.count;
-        if B::POWERS_OF_TWO {
-            tail &= self.buf_len() - 1;
-        } else {
-            tail %= self.buf_len();
-        }
-        // SAFETY: `tail` is in-bounds (capacity reserved by caller). The slot is
-        // logically uninitialized `MaybeUninit<T>` storage; `ptr::write`
-        // initializes it without reading the prior bit-pattern.
-        unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
-        self.count += 1;
     }
 
     /// Appends the data in `src` to the fifo.
     /// Allocates more memory as necessary
-    pub fn write(&mut self, src: &[T]) -> Result<(), AllocError>
-    where
-        T: Copy,
-    {
+    pub fn write(&mut self, src: &[T]) -> Result<(), AllocError> {
         self.ensure_unused_capacity(src.len())?;
         self.write_assume_capacity(src);
         Ok(())
@@ -515,10 +493,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Place data back into the read stream
-    pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError>
-    where
-        T: Copy,
-    {
+    pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError> {
         self.ensure_unused_capacity(src.len())?;
 
         self.rewind(src.len());
@@ -540,10 +515,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the item at `offset`.
     /// Asserts offset is within bounds.
-    pub fn peek_item(&self, offset: usize) -> T
-    where
-        T: Copy,
-    {
+    pub fn peek_item(&self, offset: usize) -> T {
         debug_assert!(offset < self.count);
 
         let mut index = self.head + offset;
@@ -557,10 +529,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the item at `offset`.
     /// Asserts offset is within bounds.
-    pub fn peek_item_mut(&mut self, offset: usize) -> &mut T
-    where
-        T: Copy,
-    {
+    pub fn peek_item_mut(&mut self, offset: usize) -> &mut T {
         debug_assert!(offset < self.count);
 
         let mut index = self.head + offset;
@@ -573,10 +542,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Remove one item at `offset` and MOVE all items after it up one.
-    pub fn ordered_remove_item(&mut self, offset: usize)
-    where
-        T: Copy,
-    {
+    pub fn ordered_remove_item(&mut self, offset: usize) {
         if offset == 0 {
             return self.discard(1);
         }

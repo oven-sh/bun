@@ -245,6 +245,7 @@ fn fail_compilation(log: &mut Log, message: &[u8]) -> bun_bundler::Error {
     bun_bundler::Error::BuildFailed
 }
 
+/// Separate from `compile`, in which the transpiler writes to `log` through its own pointer.
 pub(super) fn finish_compilation(
     config: &JSBundlerConfig,
     compiled: Result<CompiledExecutable, CompileError>,

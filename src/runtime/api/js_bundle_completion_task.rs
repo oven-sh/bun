@@ -14,6 +14,7 @@ use bun_bundler::transpiler::Transpiler;
 use bun_core::env::OperatingSystem;
 use bun_event_loop::BoxedTask;
 use bun_io::KeepAlive;
+use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::WorkPool;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsPtr, LogJsc as _};
@@ -58,7 +59,7 @@ pub(crate) struct JSBundleCompletionTask {
     result: bun_bundler::Result<BuildResult>,
     plugins: Option<JsPtr<Plugin>>,
     declarations: Option<DeclarationOutputs>,
-    /// Owned. Not a `Box`: the JS thread uses it while this task is away.
+    /// Owned. Not a `Box`: the JS thread uses it while this task is on the bundle thread.
     js: JsPtr<BundleJs>,
 }
 
@@ -67,9 +68,9 @@ struct BundleJs {
     global_this: BackRef<JSGlobalObject>,
     owner: BuildOwner,
     poll_ref: KeepAlive,
-    /// The result is not delivered.
+    /// Set when the realm stops: `finish` does not deliver.
     cancelled: Cell<bool>,
-    /// Armed while the build is away: the realm gives up on the result when it stops.
+    /// Armed from `schedule` until `finish`: the realm gives up on the result when it stops.
     abort_handle: jsc::AbortHandle,
     caller: CallerOfTheBuild,
 }
@@ -81,10 +82,16 @@ pub(crate) enum BuildOwner {
     },
     Route {
         route: html_bundle::PendingBuild,
-        /// Of the route's server.
+        /// Owned by the route's server.
         plugins: Option<NonNull<Plugin>>,
         started_at_ns: u64,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    Deliver,
+    Abandon,
 }
 
 struct DeclarationOutputs {
@@ -153,7 +160,7 @@ impl JSBundleCompletionTask {
         if let Some(plugins) = plugins {
             Plugin::opaque_ref(plugins.as_ptr()).freeze_filters();
         }
-        let js = bun_core::heap::into_raw_nn(Box::new(BundleJs {
+        let js = bun_core::heap::alloc_nn(BundleJs {
             global_this: BackRef::new(global_this),
             owner,
             poll_ref,
@@ -163,7 +170,7 @@ impl JSBundleCompletionTask {
                 handle: jsc::AbortHandle::for_owner::<CallerOfTheBuild>(),
                 plugins,
             },
-        }));
+        });
 
         // Cancelled when the realm's context stops. Teardown also waits for the ticket.
         // SAFETY: `js` stays where it is until `finish` takes the task and frees it. Until then it
@@ -188,6 +195,15 @@ impl JSBundleCompletionTask {
             js,
         });
         bundle_thread::enqueue(task, vm.ticket());
+    }
+
+    fn fail_to_start(mut self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
+        self.log.add_error_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!("Failed to start the bundler thread: {err}"),
+        );
+        ticket.post(ConcurrentTask::create_boxed(self));
     }
 }
 
@@ -651,11 +667,11 @@ impl JSBundleCompletionTask {
     }
 
     pub(crate) fn on_complete(self: Box<Self>) -> bun_event_loop::JsResult<()> {
-        self.finish(true)
+        self.finish(Delivery::Deliver)
     }
 
     #[expect(clippy::boxed_local, reason = "reclaim point for the boxed task")]
-    fn finish(mut self: Box<Self>, deliver: bool) -> bun_event_loop::JsResult<()> {
+    fn finish(mut self: Box<Self>, delivery: Delivery) -> bun_event_loop::JsResult<()> {
         // SAFETY: the box that `schedule` leaked for this task. A task gets here from the JS
         // thread's queue or from `abort_handle`, so on that thread.
         let mut js = unsafe { bun_core::heap::take(self.js.as_ptr()) };
@@ -664,7 +680,7 @@ impl JSBundleCompletionTask {
         let global_this = js.global_this;
         js.poll_ref.unref(global_this.bun_vm().loop_ctx());
 
-        let deliver = deliver && !js.cancelled.get();
+        let deliver = delivery == Delivery::Deliver && !js.cancelled.get();
         match &mut js.owner {
             BuildOwner::Route {
                 route,
@@ -690,14 +706,13 @@ impl JSBundleCompletionTask {
         promise: &mut JSPromise,
         global_this: &JSGlobalObject,
     ) -> bun_event_loop::JsResult<()> {
-        let this = self;
-        if let Ok(build) = &mut this.result
-            && this.config.compile.is_some()
+        if let Ok(build) = &mut self.result
+            && self.config.compile.is_some()
         {
             let compile_result = Self::do_compilation(
-                &this.config,
-                &mut this.env,
-                &mut this.log,
+                &self.config,
+                &mut self.env,
+                &mut self.log,
                 &mut build.output_files,
             );
             // `defer compile_result.deinit()` — `CompileResult` is a Rust enum
@@ -705,18 +720,18 @@ impl JSBundleCompletionTask {
 
             if let CompileResult::Err(err) = &compile_result {
                 // `bun.handleOom(log.addError(..., bun.handleOom(dupe(..))))`
-                this.log.add_error_fmt(
+                self.log.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("{}", bstr::BStr::new(err.slice())),
                 );
                 // `this.result.value.deinit()` — owned fields drop with the overwrite.
-                this.result = Err(bun_bundler::Error::CompilationFailed);
+                self.result = Err(bun_bundler::Error::CompilationFailed);
             }
         }
 
-        match &mut this.result {
-            Err(_) => return this.to_js_error(promise, global_this),
+        match &mut self.result {
+            Err(_) => return self.to_js_error(promise, global_this),
             Ok(build) => {
                 let output_files = &mut build.output_files;
                 let output_files_js =
@@ -731,13 +746,13 @@ impl JSBundleCompletionTask {
                 }
 
                 // `output_file.to_js()` needs `&mut OutputFile` while the path
-                // computation reads `this.config`. Snapshot the config slices
+                // computation reads `self.config`. Snapshot the config slices
                 // once outside the loop so the per-file `&mut` doesn't overlap
-                // `&this.config`.
-                let outdir_is_abs = !this.config.outdir.is_empty()
-                    && bun_paths::is_absolute(&this.config.outdir.list);
-                let outdir = this.config.outdir.list.clone();
-                let dir = this.config.dir.list.clone();
+                // `&self.config`.
+                let outdir_is_abs = !self.config.outdir.is_empty()
+                    && bun_paths::is_absolute(&self.config.outdir.list);
+                let outdir = self.config.outdir.list.clone();
+                let dir = self.config.dir.list.clone();
                 let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir();
 
                 let mut to_assign_on_sourcemap = JSValue::ZERO;
@@ -779,7 +794,7 @@ impl JSBundleCompletionTask {
                 let build_output = JSValue::create_empty_object(global_this, 4);
                 build_output.put(global_this, b"outputs", output_files_js);
                 build_output.put(global_this, b"success", JSValue::TRUE);
-                match this.log.to_js_array(global_this) {
+                match self.log.to_js_array(global_this) {
                     Ok(v) => build_output.put(global_this, b"logs", v),
                     Err(e) => return promise.reject(global_this, Err(e)),
                 };
@@ -806,7 +821,7 @@ impl JSBundleCompletionTask {
                     );
                 }
 
-                let did_handle_callbacks = if let Some(plugin) = this.plugins_mut() {
+                let did_handle_callbacks = if let Some(plugin) = self.plugins_mut() {
                     match Self::run_on_end_callbacks(
                         global_this,
                         plugin,
@@ -846,7 +861,7 @@ bun_jsc::jsc_abi_extern! {
 // ─── On the bundle thread ────────────────────────────────────────────────────
 
 impl JSBundleCompletionTask {
-    /// The part of the set-up that follows `Transpiler::init`.
+    /// The set-up after `Transpiler::init`. Returns `config`, which `transpiler` borrows from then on.
     fn configure_bundler<'a>(
         config: &'a mut JSBundlerConfig,
         declarations: &mut Option<DeclarationOutputs>,
@@ -1120,30 +1135,20 @@ impl JSBundleCompletionTask {
     fn run(mut self: Box<Self>, ticket: jsc::Ticket, generation: bun_core::Generation) {
         let heap = Arena::new();
         let mut ast_memory_store = bun_ast::ASTMemoryAllocator::default();
-        // Out here so that it is dropped after the result is on its way.
+        // Declared here so that it drops after `ticket.post`.
         let mut transpiler = None;
         let _ast_scope = ast_memory_store.enter();
 
         self.result = self.build(&mut transpiler, &heap, &ticket, generation);
 
-        let mut log = bun_ast::Log::init();
-        self.log.append_to(&mut log);
-        self.log = log;
+        // It knows a source by its address, and the log outlives the sources.
+        self.log.line_column_tracker = None;
         if let Some(declarations) = self.declarations.take() {
             self.add_declarations(&declarations);
         }
-        ticket.post(jsc::ConcurrentTask::create(jsc::Task::from_boxed(self)));
+        ticket.post(ConcurrentTask::create_boxed(self));
+        // Before the locals drop: the VM does not wait for them.
         drop(ticket);
-    }
-
-    /// JS thread.
-    fn fail_to_start(mut self: Box<Self>, err: &std::io::Error, ticket: &jsc::Ticket) {
-        self.log.add_error_fmt(
-            None,
-            bun_ast::Loc::EMPTY,
-            format_args!("Failed to start the bundler thread: {err}"),
-        );
-        ticket.post(jsc::ConcurrentTask::create(jsc::Task::from_boxed(self)));
     }
 
     fn transform_options(config: &JSBundlerConfig) -> api::TransformOptions {
@@ -1209,15 +1214,9 @@ impl JSBundleCompletionTask {
         // Declared before `bv2` so it outlives the BACKREF in `BundleV2.loop`.
         let any_loop = bun_event_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(NonNull::from(&any_loop));
-        if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {
-            bundle_thread::UWS_LOOP.store(
-                core::ptr::from_ref(mini.loop_).cast_mut(),
-                core::sync::atomic::Ordering::SeqCst,
-            );
-        }
 
         let worker_pool = Some(NonNull::from(WorkPool::get()));
-        let plugins = self.plugins.and_then(|p| NonNull::new(p.as_ptr()));
+        let plugins = self.plugins.map(JsPtr::as_non_null);
         let completion = dispatch::CompletionHandle {
             cancelled: &bundle_thread::CANCELLED,
             poster: ticket,
@@ -1258,7 +1257,7 @@ impl JSBundleCompletionTask {
 impl BoxedTask for JSBundleCompletionTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::JSBundleCompletionTask;
     fn release_unrun(self: Box<Self>) {
-        let _ = self.finish(false);
+        let _ = self.finish(Delivery::Abandon);
     }
     /// The context whose script called `Bun.build`.
     fn context(&self) -> bun_event_loop::ContextId {

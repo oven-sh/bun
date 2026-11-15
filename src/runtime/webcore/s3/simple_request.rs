@@ -2,7 +2,7 @@ use core::sync::atomic::Ordering;
 
 use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{BoxedTask, Task, TaskTag, Taskable, task_tag};
+use bun_event_loop::{BoxedTask, TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
@@ -222,7 +222,7 @@ impl Callback {
                     error,
                     context: context.id(),
                 };
-                let task = ConcurrentTask::create(Task::from_boxed(Box::new(refused)));
+                let task = ConcurrentTask::create_boxed(Box::new(refused));
                 // Not `enqueue_task`: it wakes no loop, and fails the request on arrival in teardown.
                 VirtualMachine::get().ticket().post(task);
                 Ok(())

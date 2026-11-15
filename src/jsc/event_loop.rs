@@ -929,12 +929,7 @@ impl EventLoop {
         }
     }
 
-    /// Move a batch other threads posted (`concurrent_tasks`) into
-    /// `tasks`, freeing the heap `ConcurrentTask` carriers, so one pass
-    /// over `self.tasks` releases everything. Called by `release_queued_tasks`
-    /// in teardown, after `join_child_workers()` (every child has posted its
-    /// close task by then) and before the JSC VM is destroyed (so captured
-    /// `Ref<>`s in queued C++ lambdas drop against a live heap).
+    /// Move a batch that other threads posted into `tasks`, freeing the heap carriers.
     fn take_concurrent_tasks(
         tasks: &mut Queue,
         batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,

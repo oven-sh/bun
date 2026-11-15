@@ -686,7 +686,7 @@ pub struct RewriterPipe {
     /// order within a cycle, so whichever owner releases last frees the Box.
     ref_count: RefCount,
     /// The JS-pump controller's ref, until it detaches.
-    pump_ref: Cell<Option<PipePin>>,
+    pump_ref: Cell<PipePin>,
 }
 
 impl RewriterPipe {
@@ -928,7 +928,7 @@ impl RewriterPipe {
             pending: JsCell::new(WritablePending::default()),
             done: Cell::new(false),
             ref_count: RefCount::init(),
-            pump_ref: Cell::new(None),
+            pump_ref: Cell::new(PipePin(None)),
         });
         // Every field is `Cell`/`JsCell`, so a shared `&RewriterPipe` via
         // `BackRef` is sound across the re-entrant lol-html calls below.
@@ -1119,7 +1119,7 @@ impl RewriterPipe {
         // JS-pump fallback: the controller that `assign_to_stream` creates holds
         // `pipe` raw as its `sink`, so it owns a ref, which it gives up with
         // `pump_ref` wherever it detaches (including its `Drop`).
-        this.pump_ref.set(Some(this.pin()));
+        this.pump_ref.set(this.pin());
         let assignment_result =
             ReadableSinkController::assign_to_stream(cx.global(), stream.value, pipe.into());
         assignment_result.ensure_still_alive();
@@ -1917,7 +1917,7 @@ impl crate::webcore::sink::ControlledSink for RewriterPipe {
     }
 
     fn controller_detached(&self) {
-        self.pump_ref.set(None);
+        self.pump_ref.set(PipePin(None));
     }
 
     /// `controller_detached` released the controller's ref: `_this` may already be freed.

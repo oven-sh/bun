@@ -43,7 +43,7 @@ fn stat_to_js_stats(
 }
 
 /// This is a singleton struct that contains the timer used to schedule re-stat calls.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct StatWatcherScheduler {
     current_interval: AtomicI32,
     /// Set by `timer_callback` immediately before scheduling `work_pool_callback`
@@ -66,7 +66,7 @@ pub(crate) struct StatWatcherScheduler {
 
     pub(crate) event_loop_timer: EventLoopTimer,
 
-    ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
+    ref_count: ThreadSafeRefCount,
 }
 
 bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_loop_timer);
@@ -338,7 +338,7 @@ impl StatWatcherScheduler {
 // (worker-thread-only after init); `persistent`/`poll_ref`/`this_value` are
 // JS-thread-only. Read-only-after-construction fields stay bare.
 /// `StatWatcher`, declared in `node_fs_stat_watcher.bind.ts`.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct StatWatcher {
     pub(crate) next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
@@ -347,7 +347,7 @@ pub(crate) struct StatWatcher {
     /// The pending pool→JS hop, if any (one at a time: the initial stat, then restats).
     pending_hop: Cell<u8>,
 
-    ref_count: ThreadSafeRefCount<StatWatcher>,
+    ref_count: ThreadSafeRefCount,
 
     /// Closed is set to true to tell the scheduler to remove from list and deref.
     closed: AtomicBool,

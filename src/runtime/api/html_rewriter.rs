@@ -598,7 +598,7 @@ impl bun_event_loop::Taskable for RewriterPipeBackgroundPull {
 /// a regular file is never read through inside a single call.
 /// `align(16)`: `NativePromiseContext`'s deferred-deref task packs a 4-bit
 /// type tag into the low bits of a pointer to this.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[repr(align(16))]
 pub struct RewriterPipe {
     pub(crate) global: GlobalRef,
@@ -684,7 +684,7 @@ pub struct RewriterPipe {
     /// `sink` (`pump_ref`), and a parked
     /// suspension's reaction/abandon task. GC sweeps cells in unspecified
     /// order within a cycle, so whichever owner releases last frees the Box.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// The JS-pump controller's ref, until it detaches.
     pump_ref: Cell<Option<PipePin>>,
 }
@@ -927,7 +927,7 @@ impl RewriterPipe {
             free_end_tag_slots: JsCell::new(Vec::new()),
             pending: JsCell::new(WritablePending::default()),
             done: Cell::new(false),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             pump_ref: Cell::new(None),
         });
         // Every field is `Cell`/`JsCell`, so a shared `&RewriterPipe` via
@@ -1182,8 +1182,7 @@ impl RewriterPipe {
     /// caller's frame: a source delivering a chunk follows a `Done` answer
     /// from `write` with `end`, on the same sink snapshot.
     fn pin(&self) -> PipePin {
-        self.ref_();
-        PipePin(BackRef::new(self))
+        PipePin(Some(self.ref_guard()))
     }
 
     /// Nothing is draining the output, so nothing will signal `resume()`:
@@ -1786,19 +1785,16 @@ impl RewriterPipe {
 
 /// A ref that leaves the free to the event loop: whoever is on the stack may still dispatch into the pipe.
 #[must_use = "dropping immediately releases the ref"]
-struct PipePin(BackRef<RewriterPipe>);
+struct PipePin(Option<RefPtr<RewriterPipe>>);
 
 impl Drop for PipePin {
     fn drop(&mut self) {
-        let refs = self.0.ref_count.get();
-        if refs > 1 {
-            self.0.ref_count.set(refs - 1);
-            return;
+        if let Some(last) = self.0.take().and_then(RefPtr::release_unless_last) {
+            native_promise_context::DeferredDerefTask::schedule(
+                last.into_raw().cast(),
+                native_promise_context::Tag::HTMLRewriterPipeFree,
+            );
         }
-        native_promise_context::DeferredDerefTask::schedule(
-            self.0.as_const_ptr().cast_mut().cast(),
-            native_promise_context::Tag::HTMLRewriterPipeFree,
-        );
     }
 }
 
@@ -2105,7 +2101,7 @@ impl HandlerLike for EndTagHandler {
 
 /// Trait abstracting the wrapper-type bits [`handler_callback`] and the
 /// suspension plumbing need.
-trait WrapperLike: bun_ptr::AnyRefCounted + Sized {
+trait WrapperLike: bun_ptr::RefCounted + Sized {
     type Raw;
     /// `pipe` is the one whose lol-html call lends `value`.
     fn init(value: *mut Self::Raw, pipe: BackRef<RewriterPipe>) -> NonNull<Self>;
@@ -2526,20 +2522,18 @@ fn opt_string_to_js_or_null(s: Option<String>, global: &JSGlobalObject) -> JsRes
 // ─────────────────────────── TextChunk ───────────────────────────────────
 
 /// `TextChunk`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct TextChunk {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) text_chunk: DetachablePtr<RawTextChunk>,
 }
 
 impl TextChunk {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
     pub(crate) fn init(text_chunk: *mut RawTextChunk) -> NonNull<TextChunk> {
         bun_core::heap::alloc_nn(TextChunk {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             text_chunk: DetachablePtr::new(text_chunk),
         })
     }
@@ -2576,20 +2570,18 @@ impl_wrapper_like!(TextChunk, RawTextChunk, text_chunk, suspended_text_chunk);
 // ──────────────────────────── DocType ────────────────────────────────────
 
 /// `DocType`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct DocType {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) doctype: DetachablePtr<RawDoctype>,
 }
 
 impl DocType {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
     pub(crate) fn init(doctype: *mut RawDoctype) -> NonNull<DocType> {
         bun_core::heap::alloc_nn(DocType {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             doctype: DetachablePtr::new(doctype),
         })
     }
@@ -2634,20 +2626,18 @@ impl_wrapper_like!(DocType, RawDoctype, doctype, suspended_doctype);
 // ──────────────────────────── DocEnd ─────────────────────────────────────
 
 /// `DocEnd`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct DocEnd {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) doc_end: DetachablePtr<RawDocumentEnd>,
 }
 
 impl DocEnd {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
     pub(crate) fn init(doc_end: *mut RawDocumentEnd) -> NonNull<DocEnd> {
         bun_core::heap::alloc_nn(DocEnd {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             doc_end: DetachablePtr::new(doc_end),
         })
     }
@@ -2662,20 +2652,18 @@ impl_wrapper_like!(DocEnd, RawDocumentEnd, doc_end, suspended_document_end);
 // ──────────────────────────── Comment ────────────────────────────────────
 
 /// `Comment`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct Comment {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) comment: DetachablePtr<RawComment>,
 }
 
 impl Comment {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
     pub(crate) fn init(comment: *mut RawComment) -> NonNull<Comment> {
         bun_core::heap::alloc_nn(Comment {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             comment: DetachablePtr::new(comment),
         })
     }
@@ -2726,10 +2714,10 @@ impl_wrapper_like!(Comment, RawComment, comment, suspended_comment);
 // ──────────────────────────── EndTag ─────────────────────────────────────
 
 /// `EndTag`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct EndTag {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) end_tag: DetachablePtr<RawEndTag>,
 }
@@ -2749,11 +2737,9 @@ impl EndTagHandler {
 }
 
 impl EndTag {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
     pub(crate) fn init(end_tag: *mut RawEndTag) -> NonNull<EndTag> {
         bun_core::heap::alloc_nn(EndTag {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             end_tag: DetachablePtr::new(end_tag),
         })
     }
@@ -2797,10 +2783,10 @@ impl_wrapper_like!(EndTag, RawEndTag, end_tag, suspended_end_tag);
 // ───────────────────────── AttributeIterator ─────────────────────────────
 
 /// `AttributeIterator`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct AttributeIterator {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Non-owning backref to the `Element` wrapper that handed this iterator
     /// out. Reading the attributes through it (rather than caching a
     /// `slice::Iter` into the attribute buffer) means a suspension, which
@@ -2860,10 +2846,10 @@ impl AttributeIterator {
 // ──────────────────────────── Element ────────────────────────────────────
 
 /// `Element`, declared in `html_rewriter.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct Element {
     // Intrusive RefCount; the JS wrapper holds one ref.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     // R-2: `Cell` so host-fns take `&self` (re-entry-safe).
     pub(crate) element: DetachablePtr<RawElement>,
     /// AttributeIterator instances handed out by `getAttributes()`. Each holds
@@ -2885,11 +2871,9 @@ impl Drop for Element {
 }
 
 impl Element {
-    // `ref_()`/`deref()` provided by `#[derive(CellRefCounted)]`.
-
     pub(crate) fn init(element: *mut RawElement, pipe: BackRef<RewriterPipe>) -> NonNull<Element> {
         bun_core::heap::alloc_nn(Element {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             element: DetachablePtr::new(element),
             attribute_iterators: JsCell::new(Vec::new()),
             pipe: Cell::new(Some(pipe)),
@@ -3122,7 +3106,7 @@ impl Element {
         // so it follows a retarget (suspension) and never caches a borrow into
         // the attribute buffer.
         let attr_iter = RefPtr::new(AttributeIterator {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             element: Cell::new(Some(BackRef::new(self))),
             index: Cell::new(0),
         });

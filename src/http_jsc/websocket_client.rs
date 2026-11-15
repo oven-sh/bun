@@ -154,9 +154,9 @@ enum Outcome {
     Failed(ErrorCode, BunString),
 }
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct WebSocket<const SSL: bool> {
-    pub(crate) ref_count: Cell<u32>,
+    pub(crate) ref_count: bun_ptr::RefCount,
 
     pub(crate) tcp: Cell<Socket<SSL>>,
     /// The I/O layer's ref (the adopted socket's userdata, or the tunnel
@@ -1564,7 +1564,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         options: &ConnectedOptions,
     ) -> RefPtr<Self> {
         let ws = RefPtr::new(WebSocket::<SSL> {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             tcp: Cell::new(Socket::<SSL>::detached()),
             io_ref: Cell::new(None),
             outgoing_websocket: JsCell::new(None),

@@ -182,9 +182,9 @@ use boringssl::c::OwnedSslCtx;
 
 /// WebSocket HTTP upgrade client, generic over `SSL`. Intrusively refcounted;
 /// dropped when the count hits 0.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct HTTPClient<const SSL: bool> {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     tcp: Cell<Socket<SSL>>,
     /// The ref held on behalf of the TCP socket's userdata pointer; released
     /// in `handle_close` / `handle_connect_error` / `cancel`, or when the
@@ -460,7 +460,7 @@ where
         poll_ref.r#ref(vm.loop_ctx());
 
         let client = RefPtr::new(HTTPClient::<SSL> {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             tcp: Cell::new(Socket::<SSL>::detached()),
             socket_ref: Cell::new(None),
             outgoing_websocket: JsCell::new(None),

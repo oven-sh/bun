@@ -112,9 +112,8 @@ fn call_exit_handler(h: ProcessExitHandler, status: Status, rusage: &Rusage) {
 /// Shared borrows only. What may free the process, or hands out its address, takes a `ThisPtr`.
 // bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
 // via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
-// keep the embedded count; the derive emits `ThreadSafeRefCounted` +
-// `AnyRefCounted`. Default `destructor` (`heap::take`) applies.
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+// keep the embedded count.
+#[derive(bun_ptr::RefCounted)]
 pub struct Process {
     pub pid: PidT,
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -123,12 +122,12 @@ pub struct Process {
     status: OnceCell<Status>,
     #[cfg(unix)]
     poller: JsCell<Poller>,
-    /// libuv keeps its address, and its `data` points back here.
+    /// libuv keeps its address, so its `data` owns a ref until `on_close_uv`.
     #[cfg(windows)]
     handle: UnsafeCell<uv::uv_process_t>,
     #[cfg(windows)]
     handle_has_closed: Cell<bool>,
-    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
+    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount,
     exit_handler: Cell<ProcessExitHandler>,
     #[cfg(unix)]
     event_loop: EventLoopHandle,
@@ -221,15 +220,6 @@ impl Process {
 
     pub fn has_killed(&self) -> bool {
         matches!(self.status(), Some(Status::Exited(_) | Status::Signaled(_)))
-    }
-
-    /// Takes the ref that the callback of a closing handle adopts.
-    #[cfg(windows)]
-    #[inline]
-    fn ref_(&self) {
-        let this = core::ptr::from_ref(self).cast_mut();
-        // SAFETY: `self` is a live Process, and only its atomic count is written.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(this) };
     }
 
     /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
@@ -487,7 +477,7 @@ impl Process {
     extern "C" fn on_close_uv(uv_handle: *mut uv::uv_process_t) {
         // SAFETY: libuv passes the live handle.
         let _pid = unsafe { (*uv_handle).pid };
-        // SAFETY: adopts the ref that `close` took, through the back-pointer stashed at spawn.
+        // SAFETY: the ref that `data` owns; libuv calls this once.
         let this = unsafe { RefPtr::from_raw((*uv_handle).data.cast::<Process>()) };
         bun_sys::windows::libuv::log!("Process.onClose({})", _pid);
         this.handle_has_closed.set(true);
@@ -501,7 +491,6 @@ impl Process {
             if process.is_closed() {
                 self.handle_has_closed.set(true);
             } else if !process.is_closing() {
-                self.ref_();
                 process.close(Self::on_close_uv);
             }
         });
@@ -904,7 +893,7 @@ pub mod waiter_thread_posix {
     /// Trait abstracting `process.pid` / `process.event_loop` /
     /// `process.onWaitPidFromWaiterThread` for generic `T` (only `Process`
     /// today).
-    pub trait ProcessLike: bun_ptr::AnyRefCounted + 'static {
+    pub trait ProcessLike: bun_ptr::RefCounted + 'static {
         /// `jsc::Task` tag for this `T`'s `ResultTask`; callers supply it.
         const TASK_TAG: TaskTag;
         fn pid(&self) -> PidT;
@@ -1701,8 +1690,8 @@ mod spawn_process_body {
         });
 
         let uv_proc = process.handle.get();
-        // SAFETY: process is freshly allocated. Back-pointer for `on_exit_uv` / `on_close_uv`.
-        unsafe { (*uv_proc).data = process.as_ptr().cast::<c_void>() };
+        // SAFETY: process is freshly allocated.
+        unsafe { (*uv_proc).data = process.clone().into_raw().cast::<c_void>() };
 
         // SAFETY: the zeroed handle of `process`, which nothing else has seen yet.
         let spawn_err = unsafe { (*uv_proc).spawn(loop_, &mut uv_process_options) }

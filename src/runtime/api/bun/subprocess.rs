@@ -85,7 +85,7 @@ pub(crate) use bun_spawn::process::StdioKind;
 // Box when ref_count → 0; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
 pub struct Subprocess<'a> {
-    pub(crate) ref_count: RefCount<Subprocess<'a>>,
+    pub(crate) ref_count: RefCount,
     /// The construction ref on the `Process` (detached in [`Subprocess::finalize`]).
     pub(crate) process: RefPtr<Process>,
     pub(crate) stdin: JsCell<Writable>,

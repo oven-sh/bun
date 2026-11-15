@@ -13,10 +13,10 @@ use bun_sql::mysql::protocol::prepared_statement::ExecuteParam;
 
 bun_core::declare_scope!(MySQLStatement, hidden);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct MySQLStatement {
     pub(crate) cached_structure: CachedStructure,
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     pub(crate) statement_id: u32,
     pub(crate) params: Vec<FieldType>,
     pub(crate) params_received: u32,
@@ -49,7 +49,7 @@ impl MySQLStatement {
     fn new(status: Status, parameter_types: Box<[Cell<Option<ParameterType>>]>) -> Self {
         Self {
             cached_structure: CachedStructure::default(),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             statement_id: 0,
             params: Vec::new(),
             params_received: 0,

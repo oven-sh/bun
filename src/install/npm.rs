@@ -243,7 +243,7 @@ pub mod registry {
         pub(crate) auth: Box<[u8]>,
         pub url: OwnedURL,
         pub url_hash: u64,
-        pub(crate) folder_tag: FolderTag,
+        pub(crate) folder_cache_key: FolderCacheKey,
         pub(crate) token: Box<[u8]>,
 
         // username and password combo, `user:pass`
@@ -258,14 +258,14 @@ pub mod registry {
 
     /// What a cached manifest records about the registry's URL.
     #[derive(Clone, Copy)]
-    pub struct ManifestTag {
+    pub struct ManifestCacheKey {
         pub(crate) url_hash: u64,
         pub(crate) url_len: u64,
     }
 
     /// What the name of a cache folder records about the registry's URL.
     #[derive(Clone, Copy, Default)]
-    pub(crate) struct FolderTag {
+    pub(crate) struct FolderCacheKey {
         pub(crate) hostname: &'static [u8],
         pub(crate) href_hash: u64,
         /// `https://host/`. With a port, a path or http, it's a different registry on that host.
@@ -400,7 +400,7 @@ pub mod registry {
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
             let url = self.url.url();
-            self.folder_tag = FolderTag {
+            self.folder_cache_key = FolderCacheKey {
                 hostname: bun_core::handle_oom(
                     FileSystem::get().dirname_store().append(url.hostname),
                 ),
@@ -409,8 +409,8 @@ pub mod registry {
             };
         }
 
-        pub fn manifest_tag(&self) -> ManifestTag {
-            ManifestTag {
+        pub fn manifest_cache_key(&self) -> ManifestCacheKey {
+            ManifestCacheKey {
                 url_hash: self.url_hash,
                 url_len: strings::without_trailing_slash(self.url.href()).len() as u64,
             }
@@ -759,13 +759,13 @@ pub mod registry {
     }
 
     pub(crate) fn get_package_metadata(
-        registry: ManifestTag,
+        registry: ManifestCacheKey,
         response: &bun_http::HTTPResponseMetadata,
         body: &[u8],
         log: &mut bun_ast::Log,
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
-        save_through: Option<&'static TemporaryDirectory>,
+        temp_dir: Option<&'static TemporaryDirectory>,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
         match response.status_code() {
@@ -800,7 +800,7 @@ pub mod registry {
             manifest_expiry(response),
             is_extended_manifest,
         )? {
-            if let Some(temp_dir) = save_through {
+            if let Some(temp_dir) = temp_dir {
                 package_manifest::Serializer::save_async(&package, registry, temp_dir);
             }
 
@@ -1135,7 +1135,7 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    pub(crate) fn byte_length(&self, registry: registry::ManifestTag) -> usize {
+    pub(crate) fn byte_length(&self, registry: registry::ManifestCacheKey) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, registry, &mut counter) {
             Ok(()) => counter.count,
@@ -1228,7 +1228,7 @@ pub mod package_manifest {
 
         pub(crate) fn write<W: bun_io::Write>(
             this: &PackageManifest,
-            registry: registry::ManifestTag,
+            registry: registry::ManifestCacheKey,
             writer: &mut W,
         ) -> Result<(), Error> {
             let mut pos: u64 = 0;
@@ -1271,7 +1271,7 @@ pub mod package_manifest {
 
         fn write_file(
             this: &PackageManifest,
-            registry: registry::ManifestTag,
+            registry: registry::ManifestCacheKey,
             tmp_path: &bun_core::ZStr,
             temp_dir: &TemporaryDirectory,
             outpath: &bun_core::ZStr,
@@ -1452,14 +1452,14 @@ pub mod package_manifest {
         /// `finish_saves_at_exit`.
         pub(crate) fn save_async(
             this: &PackageManifest,
-            registry: registry::ManifestTag,
+            registry: registry::ManifestCacheKey,
             temp_dir: &'static TemporaryDirectory,
         ) {
             use bun_threading::thread_pool::{Batch as PoolBatch, Task as PoolTask};
 
             struct SaveTask {
                 manifest: PackageManifest,
-                registry: registry::ManifestTag,
+                registry: registry::ManifestCacheKey,
                 temp_dir: &'static TemporaryDirectory,
 
                 task: PoolTask,
@@ -1522,7 +1522,7 @@ pub mod package_manifest {
 
         pub(crate) fn save(
             this: &PackageManifest,
-            registry: registry::ManifestTag,
+            registry: registry::ManifestCacheKey,
             temp_dir: &TemporaryDirectory,
         ) -> Result<(), Error> {
             let file_id = Wyhash11::hash(0, this.name());
@@ -2394,7 +2394,7 @@ fn publish_timestamp_ms(time: &JSON::E::JsonValue) -> f64 {
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
     pub fn parse(
-        registry: registry::ManifestTag,
+        registry: registry::ManifestCacheKey,
         log: &mut bun_ast::Log,
         json_buffer: &[u8],
         expected_name: &[u8],

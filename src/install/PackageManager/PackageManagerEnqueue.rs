@@ -264,7 +264,7 @@ pub(crate) fn add_dependency_error(
 }
 
 /// Brings a package of the lockfile into the cache. `can_enqueue_install_task` must hold for it.
-pub fn enqueue_package_for_cache(
+pub(crate) fn enqueue_install_task(
     this: &mut PackageManager,
     dependency_id: DependencyID,
     package_id: PackageID,
@@ -548,7 +548,7 @@ pub unsafe fn enqueue_parse_npm_package(
     let job = Task::Job::PackageManifest {
         name,
         network,
-        save_through: this.manifest_cache_temporary_directory(),
+        temp_dir: this.manifest_cache_temporary_directory(),
         manifest: None,
     };
     let task = Task::Task::create(this, task_id, job);
@@ -3508,11 +3508,11 @@ fn get_or_put_resolved_package(
             let needs_ext = this.options.minimum_release_age_ms.is_some();
             // Taken out, so that the manifest can be read while the manager changes.
             let manifests = core::mem::take(&mut this.manifests);
-            let mut lent = scopeguard::guard((this, manifests), |(this, manifests)| {
+            let mut guard = scopeguard::guard((this, manifests), |(this, manifests)| {
                 debug_assert!(this.manifests.hash_map.is_empty());
                 this.manifests = manifests;
             });
-            let (ref mut this, ref mut manifests) = *lent;
+            let (ref mut this, ref mut manifests) = *guard;
 
             let name_str = this.lockfile.str(&name);
             let scope = this.options.scope_for_package_name(name_str);

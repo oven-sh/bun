@@ -1837,7 +1837,7 @@ impl<'a> PackageInstaller<'a> {
             | resolution::Tag::RemoteTarball => {
                 let (manager, buf) = (self.manager(), self.folder_path_buf.as_mut_slice());
                 let len = match resolution.tag {
-                    resolution::Tag::Npm => package_manager::cached_npm_package_folder_name_print(
+                    resolution::Tag::Npm => package_manager::cached_npm_package_folder_name(
                         manager,
                         buf,
                         pkg_name.slice(string_buf!()),
@@ -2044,7 +2044,7 @@ impl<'a> PackageInstaller<'a> {
                         path: self.node_modules.path.clone(),
                         dependency_id,
                     });
-                match package_manager::enqueue_package_for_cache(
+                match package_manager::enqueue_install_task(
                     self.manager_mut(),
                     dependency_id,
                     package_id,

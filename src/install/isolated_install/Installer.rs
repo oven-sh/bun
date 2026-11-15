@@ -1530,7 +1530,7 @@ impl<'a> Installer<'a> {
         let manager = self.manager();
         let pkg_res = self.resolution(entry_id);
         match pkg_res.tag {
-            ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
+            ResolutionTag::Npm => directories::cached_npm_package_folder_name(
                 manager,
                 buf,
                 self.pkg_name(entry_id),

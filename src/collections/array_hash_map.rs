@@ -968,7 +968,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         Ok(())
     }
 
-    /// Replaces the entries. No two of `keys` are equal.
+    /// Replaces the entries. `keys` must be distinct.
     pub fn set_entries(&mut self, keys: &[K], values: impl Iterator<Item = V>)
     where
         K: Copy,

@@ -95,7 +95,7 @@
 //! Delta indices are 0..count-2 (first mapping is the seed; only count-1
 //! deltas are encoded).
 
-use core::mem::size_of;
+use core::mem::{offset_of, size_of};
 use core::ptr;
 
 use crate::Ordinal;
@@ -944,7 +944,8 @@ impl Builder {
             let mut out = MutableString::init_empty();
             out.list.reserve_exact(total);
             let count = |len: usize| u32::try_from(len).expect("int cast").to_ne_bytes();
-            out.list.extend_from_slice(&[0; 20]);
+            out.list
+                .extend_from_slice(&[0; offset_of!(Header, object_brace_count)]);
             out.list.extend_from_slice(&count(self.object_braces.len()));
             out.list.extend_from_slice(&count(self.sync_entries.len()));
             out.list.extend_from_slice(&stream_offset.to_ne_bytes());

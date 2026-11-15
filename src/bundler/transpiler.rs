@@ -507,10 +507,7 @@ impl<'a> Transpiler<'a> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// `configure_linker*` / `run_env_loader` — used by
-// `RunCommand::configure_env_for_run` (runtime/cli/run_command.rs:527),
-// `JSBundleCompletionTask`,
-// `JSTranspiler`, and `bun.js.rs:: bun_main_shell_entry`.
+// `configure_linker*` / `run_env_loader`
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_resolver::tsconfig_json::TSConfigJSON;

@@ -471,10 +471,7 @@ impl DirEntry {
                     name_slice,
                     filename_store,
                 )?);
-                // `name_lc` is already ASCII-lowercased, so interning it as-is
-                // is byte-identical to `init_lower_case_append_if_needed(name_slice, ..)`
-                // and skips a second lowercase pass over the basename. Moreover,
-                // when the basename has no uppercase bytes (the overwhelmingly
+                // `name_lc` is already lowercase. When the basename has no uppercase bytes (the
                 // common case on Linux), `copy_lowercase_if_needed` returns the
                 // *input slice unchanged* — so `name_lc` points at the same bytes
                 // `base_` just interned. Detect that and copy `base_` instead of
@@ -779,11 +776,10 @@ pub fn read_file_with_handle_impl<'buf, const USE_SHARED_BUFFER: bool, const STR
         shared_buffer.grow_by(size + 1)?;
 
         // if you press save on a large file we might not read all the
-        // bytes in the first few pread() calls. we only handle this on
+        // bytes in the first few read() calls. we only handle this on
         // stream because we assume that this only realistically happens
         // during HMR
         loop {
-            // We use pread to ensure if the file handle was open, it doesn't seek from the last position
             let read_count = append_with(&mut shared_buffer.list, usize::MAX, |spare| {
                 file.read_all_buf(spare)
             })?;

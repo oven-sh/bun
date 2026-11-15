@@ -4,7 +4,7 @@ use bun_boringssl as boringssl;
 
 use bun_sha_hmac::{SHA1, SHA256};
 
-use super::new_writer::{NewWriter, WriterContext};
+use super::new_writer::NewWriter;
 use super::packet_reader::PacketReader;
 
 bun_core::declare_scope!(Auth, hidden);
@@ -132,10 +132,7 @@ pub mod caching_sha2_password {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        pub(crate) fn write_internal<Context: WriterContext>(
-            &self,
-            writer: NewWriter<Context>,
-        ) -> crate::Result<()> {
+        pub(crate) fn write_internal(&self, writer: &mut NewWriter<'_>) -> crate::Result<()> {
             let (password, public_key) = (self.password, self.public_key);
 
             // `&this.public_key[0]` below would index past a zero-length
@@ -174,17 +171,14 @@ pub mod caching_sha2_password {
                 .public_encrypt_oaep(&plain_password)
                 .ok_or(crate::Error::FailedToEncryptPassword)?;
 
-            let mut packet = writer.start(self.sequence_id)?;
+            let packet = writer.start(self.sequence_id)?;
             writer.write(&encrypted_password)?;
-            packet.end()?;
+            packet.end(writer)?;
             Ok(())
         }
 
         // See src/sql/mysql/protocol/NewWriter.rs
-        pub fn write<Context: WriterContext>(
-            &self,
-            writer: NewWriter<Context>,
-        ) -> crate::Result<()> {
+        pub fn write(&self, writer: &mut NewWriter<'_>) -> crate::Result<()> {
             self.write_internal(writer)
         }
     }

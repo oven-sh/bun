@@ -284,6 +284,31 @@ test.concurrent("wire order equals queue order", async () => {
   });
 });
 
+describe.concurrent("user code that runs while a Bind is written", () => {
+  // The last read of the values is the one of the Bind.
+  test.each([
+    { prepare: true, reads: 3, frames: [] },
+    { prepare: false, reads: 4, frames: ["P", "D", "B(before,-)", "E", "S"] },
+  ])("a getter among the values can close the client (prepare: $prepare)", async ({ prepare, reads, frames }) => {
+    await run(wireFixture, {
+      [`a getter closes, prepare: ${prepare}, read ${reads}`]: { outer: closed, after: closed, frames },
+    });
+  });
+
+  test("toString() of a parameter that is no longer bytea can close the client", async () => {
+    await run(wireFixture, {
+      "toString() after the statement was prepared again": {
+        outer: closed,
+        frames: ["B(AAAA)", "E", "S", "C", "P", "D", "S"],
+      },
+    });
+  });
+});
+
+test.concurrent("a setter on Array.prototype can run the statement whose row is added", async () => {
+  await run(wireFixture, { "a setter on Array.prototype": wire("nested", "B(outer)", "E", "S", ...nestedBind) });
+});
+
 // A reply has no name on it: it goes to the request at the head of the queue. A broken server or proxy can send a
 // message that cannot belong to that request. Whatever the client makes of it, every query settles and the next one runs.
 describe("a message that is out of place", () => {
@@ -341,6 +366,15 @@ describe("a message that is out of place", () => {
     await using sql = new SQL(server.url, { max: 1 });
     expect([await settled(sql`select ${"a"} as v`), await settled(sql`select ${"b"} as v`)]).toEqual([
       first,
+      [{ v: "b" }],
+    ]);
+  });
+
+  test("a named statement that is described twice is prepared again", async () => {
+    using server = await strayAfterParse([pgRowDescription([{ name: "w", typeOid: 25 }])]);
+    await using sql = new SQL(server.url, { max: 1 });
+    expect([await settled(sql`select ${"a"} as v`), await settled(sql`select ${"b"} as v`)]).toEqual([
+      [{ w: "a" }],
       [{ v: "b" }],
     ]);
   });

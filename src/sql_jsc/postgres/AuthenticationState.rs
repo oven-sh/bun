@@ -1,9 +1,8 @@
-use super::sasl::SASL;
-
+#[derive(Clone, Copy)]
 pub enum AuthenticationState {
     Pending,
     Ok,
-    Sasl(Box<SASL>),
+    Sasl,
     SaslVerified { channel_bound: bool },
     Md5,
     ClearText,

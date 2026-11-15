@@ -5,7 +5,7 @@
 // The fixture arms it at the end of one callback, so the drain's own reading of
 // the clock is too high, and disarms it at the start of the next callback, so
 // the deadline of the timer that callback sets comes from the real clock.
-import { beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
@@ -88,7 +88,7 @@ process.on("SIGTERM", () => {
 });
 `;
 
-let dir: ReturnType<typeof tempDir>;
+let dir: ReturnType<typeof tempDir> | undefined;
 let shimPath: string;
 
 beforeAll(async () => {
@@ -103,6 +103,10 @@ beforeAll(async () => {
   });
   const [ccOut, ccErr, ccExit] = await Promise.all([ccProc.stdout.text(), ccProc.stderr.text(), ccProc.exited]);
   if (ccExit !== 0) throw new Error(`shim compile failed: ${ccErr || ccOut}`);
+});
+
+afterAll(() => {
+  dir?.[Symbol.dispose]();
 });
 
 async function runWithJump(nested: boolean) {
@@ -143,7 +147,7 @@ async function runWithJump(nested: boolean) {
   };
 }
 
-test.skipIf(!isLinux || !cc)(
+test.concurrent.skipIf(!isLinux || !cc)(
   "a timer drain with one clock reading seconds too high still returns to the poll",
   async () => {
     expect(await runWithJump(false)).toEqual({
@@ -156,7 +160,7 @@ test.skipIf(!isLinux || !cc)(
   },
 );
 
-test.skipIf(!isLinux || !cc)(
+test.concurrent.skipIf(!isLinux || !cc)(
   "a timer set after a nested event loop in the callback waits for the next turn too",
   async () => {
     expect(await runWithJump(true)).toEqual({

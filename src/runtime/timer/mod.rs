@@ -529,7 +529,9 @@ pub(crate) struct All {
     /// Incremented when timers are scheduled or rescheduled. See
     /// TimerObjectInternals.epoch. Masked to 24 bits on increment.
     pub(crate) epoch: Cell<u32>,
-    /// The latest generation of [`All::open_drain`], the stamp of a timer armed now. Read on any thread.
+    /// The latest generation of [`All::open_drain`], the stamp of a timer armed now. The JS thread writes it.
+    /// `wtf_arm` reads it on any thread, Relaxed: a stale read stamps an older generation, so one WTF timer
+    /// fires in the current drain instead of the next one.
     drain_seq: AtomicU32,
     pub(crate) immediate_ref_count: Cell<i32>,
     #[cfg(windows)]

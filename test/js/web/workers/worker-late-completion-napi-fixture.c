@@ -6,10 +6,6 @@
 #include <uv.h>
 
 static napi_async_work work;
-static uv_loop_t *loop;
-static uv_work_t request;
-
-static void work_cb(uv_work_t *req) {}
 
 static void execute(napi_env env, void *data) {}
 
@@ -20,7 +16,6 @@ static void complete(napi_env env, napi_status status, void *data) {
 static void finalize(node_api_basic_env env, void *data, void *hint) {
   napi_status status = napi_queue_async_work(env, work);
   printf("queued from finalizer: %d\n", (int)status);
-  printf("uv_queue_work is cancelled: %d\n", uv_queue_work(loop, &request, work_cb, NULL) == UV_ECANCELED);
   fflush(stdout);
   if (status != napi_ok) {
     napi_delete_async_work((napi_env)env, work);
@@ -32,8 +27,23 @@ static napi_value queue_from_finalizer(napi_env env, napi_callback_info info) {
   napi_value name, external;
   napi_create_string_utf8(env, "late", NAPI_AUTO_LENGTH, &name);
   napi_create_async_work(env, NULL, name, execute, complete, NULL, &work);
-  napi_get_uv_event_loop(env, &loop);
   napi_create_external(env, NULL, finalize, NULL, &external);
+  return external;
+}
+
+static void work_cb(uv_work_t *req) {}
+
+static void uv_finalize(node_api_basic_env env, void *loop, void *hint) {
+  static uv_work_t request;
+  printf("cancelled: %d\n", uv_queue_work(loop, &request, work_cb, NULL) == UV_ECANCELED);
+  fflush(stdout);
+}
+
+static napi_value uv_queue_from_finalizer(napi_env env, napi_callback_info info) {
+  uv_loop_t *loop;
+  napi_value external;
+  napi_get_uv_event_loop(env, &loop);
+  napi_create_external(env, loop, uv_finalize, NULL, &external);
   return external;
 }
 
@@ -41,5 +51,7 @@ NAPI_MODULE_INIT() {
   napi_value function;
   napi_create_function(env, "queueFromFinalizer", NAPI_AUTO_LENGTH, queue_from_finalizer, NULL, &function);
   napi_set_named_property(env, exports, "queueFromFinalizer", function);
+  napi_create_function(env, "uvQueueFromFinalizer", NAPI_AUTO_LENGTH, uv_queue_from_finalizer, NULL, &function);
+  napi_set_named_property(env, exports, "uvQueueFromFinalizer", function);
   return exports;
 }

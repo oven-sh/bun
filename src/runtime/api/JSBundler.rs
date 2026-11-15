@@ -2439,12 +2439,11 @@ pub(crate) use bun_bundler::options::OutputKind;
 /// `JSValue::as(Blob)` BuildArtifact fallback — declared
 /// `extern "Rust"` in `bun_jsc::webcore_types`; link-time resolved.
 #[unsafe(no_mangle)]
-fn __bun_blob_from_build_artifact(value: JSValue) -> Option<*mut Blob> {
-    <BuildArtifact as bun_jsc::JsClass>::from_js(value).map(|b| {
-        // SAFETY: `from_js` returns the non-null `*mut BuildArtifact` kept alive by
-        // the JS wrapper; `addr_of_mut!` only computes the field address (no deref).
-        unsafe { core::ptr::addr_of_mut!((*b).blob) }
-    })
+fn __bun_blob_from_build_artifact(value: &JSValue) -> Option<bun_jsc::WrapperGuard<'_, Blob>> {
+    let artifact = value.as_class_ref::<BuildArtifact>()?;
+    Some(bun_jsc::WrapperGuard::map(artifact, |artifact| {
+        &artifact.blob
+    }))
 }
 
 impl BuildArtifact {
@@ -2626,8 +2625,8 @@ impl BuildArtifact {
                 )?;
 
                 let sourcemap_value = js::sourcemap_get_cached(this_value);
-                if let Some((sm_value, sm)) =
-                    sourcemap_value.and_then(|v| v.as_class_ref::<BuildArtifact>().map(|p| (v, p)))
+                if let Some(sm_value) = sourcemap_value
+                    && let Some(sm) = sm_value.as_class_ref::<BuildArtifact>()
                 {
                     sm.write_format::<F, W, ENABLE_ANSI_COLORS>(sm_value, formatter, writer)?;
                 } else {

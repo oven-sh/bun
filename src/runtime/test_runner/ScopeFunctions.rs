@@ -326,12 +326,12 @@ pub(crate) fn call_as_function<'a>(
     let _g = group_log::begin();
 
     let global = cx.global();
-    let Some(this) = this_value.to_js().as_class_ref::<ScopeFunctions>() else {
+    let Some(this) = this_value.as_class_ref::<ScopeFunctions>() else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
     };
     let line_no = jest::capture_test_line_number(global);
 
-    let buntest = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
+    let buntest = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(&this))?;
 
     let is_vitest = this.cfg.flavor == Flavor::Vitest;
     let callback_mode: CallbackMode = match this.cfg.self_mode {
@@ -346,7 +346,7 @@ pub(crate) fn call_as_function<'a>(
         first,
         second,
         third,
-        Signature::ScopeFunctions(this),
+        Signature::ScopeFunctions(&this),
         ParseArgumentsCfg {
             callback: callback_mode,
             kind: FunctionKind::TestOrDescribe,

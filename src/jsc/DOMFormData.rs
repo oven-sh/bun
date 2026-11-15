@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::webcore_types::Blob;
-use crate::{DOMWrapped, JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult, WrapperGuard};
 use bun_core::EncodedSlice;
 
 bun_opaque::sealed_handle! {
@@ -104,10 +104,9 @@ impl DOMFormData {
         })
     }
 
-    /// `None` if `value` is not a `FormData`.
-    pub fn with_wrapped<R>(value: JSValue, f: impl FnOnce(&Self) -> R) -> Option<R> {
+    pub fn from_js(value: &JSValue) -> Option<WrapperGuard<'_, Self>> {
         // SAFETY: a `JSDOMFormData` holds a ref on what it wraps.
-        unsafe { DOMWrapped::new(value, WebCore__DOMFormData__fromJS(value)) }.map(|form| f(&form))
+        unsafe { WrapperGuard::new(value, WebCore__DOMFormData__fromJS(*value)) }
     }
 
     #[track_caller]

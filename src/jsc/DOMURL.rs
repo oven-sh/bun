@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use crate::{DOMWrapped, JSValue, VM};
+use crate::{JSValue, VM, WrapperGuard};
 use bun_core as bstr;
 
 bun_opaque::sealed_handle! {
@@ -27,12 +27,12 @@ pub enum ToFileSystemPathError {
 }
 
 impl DOMURL {
-    pub fn cast_(value: JSValue, vm: &VM) -> Option<DOMWrapped<DOMURL>> {
+    pub fn cast_<'a>(value: &'a JSValue, vm: &VM) -> Option<WrapperGuard<'a, DOMURL>> {
         // SAFETY: a `JSDOMURL` holds a ref on what it wraps.
-        unsafe { DOMWrapped::new(value, WebCore__DOMURL__cast_(value, vm)) }
+        unsafe { WrapperGuard::new(value, WebCore__DOMURL__cast_(*value, vm)) }
     }
 
-    pub fn cast(value: JSValue) -> Option<DOMWrapped<DOMURL>> {
+    pub fn cast(value: &JSValue) -> Option<WrapperGuard<'_, DOMURL>> {
         Self::cast_(
             value,
             crate::virtual_machine::VirtualMachine::get().global().vm(),

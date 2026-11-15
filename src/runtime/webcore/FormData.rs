@@ -201,14 +201,15 @@ pub(crate) fn to_js_from_multipart_data(
         }
     }
 
-    let Some(parsed) = DOMFormData::with_wrapped(form_data_value, |form| {
-        let mut wrap = Wrapper { global, form };
-        for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry)
-    }) else {
+    let Some(form) = DOMFormData::from_js(&form_data_value) else {
         scoped_log!(FormData, "failed to create DOMFormData.fromJS");
         return Err(crate::Error::FailedToParseMultipartData);
     };
-    if let Err(e) = parsed {
+    let mut wrap = Wrapper {
+        global,
+        form: &form,
+    };
+    if let Err(e) = for_each_multipart_entry(input, boundary, &mut wrap, Wrapper::on_entry) {
         scoped_log!(FormData, "failed to parse multipart data");
         return Err(e);
     }

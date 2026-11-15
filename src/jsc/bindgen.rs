@@ -13,8 +13,8 @@ use bun_ptr::CellExt as _;
 use crate::virtual_machine::VirtualMachine;
 use crate::{
     ArrayBuffer, CommonString, EnsureStillAlive, ErrorCode, JSArray, JSGlobalObject, JSObject,
-    JSString, JSValue, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated,
-    ThreadIsolatedArg,
+    JSString, JSValue, JsClass, JsError, JsThread, PinnedArrayBuffer, Strong, ThreadIsolated,
+    ThreadIsolatedArg, WrapperGuard,
 };
 
 #[path = "bindgen/extern_types.rs"]
@@ -478,11 +478,25 @@ impl<'a, T> JsLocal<'a, T> {
         JsLocal::from_raw(self.0)
     }
 
+    /// As [`JSValue::as_class_ref`].
+    #[inline]
+    pub fn as_class_ref<C: JsClass>(self) -> Option<WrapperGuard<'a, C>> {
+        // The guard copies the value, which the call holds for 'a.
+        let WrapperGuard {
+            native, wrapper, ..
+        } = self.0.as_class_ref()?;
+        Some(WrapperGuard {
+            native,
+            wrapper,
+            _value: PhantomData,
+        })
+    }
+
     /// The collector sees the value up to here.
     #[doc(hidden)]
     #[inline(always)]
     pub fn keep_alive(self) {
-        core::hint::black_box(self.0);
+        self.0.ensure_still_alive();
     }
 }
 

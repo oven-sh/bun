@@ -23,7 +23,7 @@ pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result<'stat
 
 /// The canonical newtype lives in `bun_ast::Macro` (the lowest tier that
 /// stores it, in `MacroContext.javascript_object`); re-exported here.
-pub use js_ast::Macro::MacroJSCtx;
+pub use js_ast::Macro::{LoadedMacros, MacroJSCtx};
 /// The default (zero) macro JS context value.
 #[inline]
 pub const fn default_macro_js_value() -> MacroJSCtx {
@@ -37,8 +37,6 @@ pub const fn default_macro_js_value() -> MacroJSCtx {
 /// This object is not exclusive to bundle_v2/Bun.build; one of these is stored
 /// on every VM so that the options can be used for transpilation.
 pub struct Transpiler<'a> {
-    /// First: points into `options` and `resolver`.
-    pub macro_context: Option<js_ast::Macro::MacroContext>,
     pub options: options::BundleOptions<'a>,
     // Raw ptr — the same `*Log` is aliased into `linker.log` and
     // `resolver.log` (see `set_log`). `&'a mut` would forbid that aliasing.
@@ -71,7 +69,7 @@ impl<'a> Transpiler<'a> {
         self.resolver.log = core::ptr::NonNull::new(log).expect("set_log: log is non-null");
     }
 
-    /// Replace the transpiler's arena and re-init the macro context against it.
+    /// Replace the transpiler's arena.
     // TODO: remove this method. it does not make sense
     pub fn set_arena(&mut self, arena: &'a Arena) {
         self.arena = arena;
@@ -94,7 +92,6 @@ impl<'a> Transpiler<'a> {
     /// `VirtualMachine` field. Owned `Transpiler`s from [`Self::for_worker`] must use
     /// normal `Drop` instead.
     pub unsafe fn deinit(&mut self) {
-        self.macro_context = None;
         // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
         // read past `destroy()`. Caller upholds
         // the no-auto-drop contract above.
@@ -175,15 +172,14 @@ impl<'a> Transpiler<'a> {
     ///
     /// The returned value is a normal owned `Transpiler` whose `Drop` is sound
     /// — no `MaybeUninit` / `ptr::write` field-overwrite contract is needed by
-    /// callers. **Self-referential pointers are NOT yet wired** (the value may
-    /// still be moved into its final slot); call [`Self::wire_after_move`]
-    /// once the `Transpiler` is at its final address.
+    /// callers.
     pub(crate) fn for_worker(
         from: &Transpiler<'a>,
         arena: &'a Arena,
         log: *mut bun_ast::Log,
     ) -> Transpiler<'a> {
-        let options = from.options.for_worker();
+        let mut options = from.options.for_worker();
+        options.log = log;
         let resolver_opts = resolver_bundle_options_subset(&options);
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
         let resolver = Resolver::for_worker(&from.resolver, log_nn, resolver_opts);
@@ -201,24 +197,7 @@ impl<'a> Transpiler<'a> {
             elapsed: 0,
             linker: crate::linker::Linker::init(log),
             env: from.env,
-            // `MacroContext::init(transpiler)` takes the
-            // transpiler's *address*; deferred to `wire_after_move`.
-            macro_context: None,
         }
-    }
-
-    /// Wire the aliases of `log` and the self-referential `macro_context`
-    /// after this `Transpiler` has reached its final address (post-move into
-    /// `Worker` / arena slot).
-    pub(crate) fn wire_after_move(&mut self) {
-        // `self.log` was already set inside `for_worker` via direct field
-        // init; re-thread into `options.log` / `resolver.log` /
-        // `linker.log` here so all four aliases agree.
-        let log = self.log;
-        self.options.log = log;
-        self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
-        self.linker.log = log;
-        self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
     /// Returns the resolver's auto-install package-manager handle. Errs when
@@ -780,8 +759,7 @@ pub struct ParseOptions<'a, 'b> {
     pub jsx: crate::options_impl::jsx::Pragma,
     pub macro_remappings: MacroRemap,
     pub macro_js_ctx: MacroJSCtx,
-    /// Used and filled instead of the transpiler's.
-    pub macro_context: Option<&'a mut Option<js_ast::Macro::MacroContext>>,
+    pub loaded_macros: &'a LoadedMacros,
     pub virtual_source: Option<&'b bun_ast::Source<'a>>,
     pub replace_exports: bun_collections::StringArrayHashMap<bun_ast::runtime::ReplaceableExport>,
     pub inject_jest_globals: bool,
@@ -1095,7 +1073,6 @@ impl<'a> Transpiler<'a> {
             // .thread_pool = pool,
             linker: crate::linker::Linker::init(log),
             env: env_loader,
-            macro_context: None,
         })
     }
 
@@ -1337,15 +1314,6 @@ impl<'a> Transpiler<'a> {
                 jsx.parse = loader.is_jsx();
                 let _ = &this_parse.macro_remappings;
 
-                // `ParserOptions::init` is hard-typed
-                // `-> Options<'static>` and `Options<'a>` is *invariant* in
-                // `'a` (it holds `Option<&'a mut MacroContext>`), so an
-                // `Options<'static>` cannot be passed to
-                // `cache::JavaScript::parse::<'x>` alongside a non-`'static`
-                // `bump`/`source`/`define`. Construct the struct literal
-                // directly (mirroring the body of `Options::init`,
-                // ast/Parser.rs:144-180) so `'x` is inferred from the borrows
-                // below instead of pinned to `'static`.
                 use js_ast::parser::options as p_opts;
                 let mut opts = js_ast::ParserOptions::<'_> {
                     ts: loader.is_typescript(),
@@ -1362,6 +1330,7 @@ impl<'a> Transpiler<'a> {
                     code_splitting: false,
                     package_version: b"",
                     macro_context: None,
+                    macro_remap: None,
                     warn_about_unbundled_modules: !target.is_bun(),
                     allow_unresolved: &p_opts::AllowUnresolved::DEFAULT,
                     module_type: to_parser_module_type(this_parse.module_type),
@@ -1461,40 +1430,28 @@ impl<'a> Transpiler<'a> {
                     entries: this_parse.replace_exports,
                 };
 
-                let macro_context = match this_parse.macro_context {
-                    Some(own) => own.get_or_insert_with(|| js_ast::Macro::MacroContext::init(self)),
-                    None => {
-                        if self.macro_context.is_none() {
-                            self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
-                        }
-                        self.macro_context.as_mut().unwrap()
-                    }
-                };
-                // Thread the caller-supplied JS
-                // context into the macro runtime so macros invoked during
-                // runtime transpilation see it (instead of null).
-                if target != crate::options_impl::Target::BunMacro {
-                    macro_context.javascript_object = this_parse.macro_js_ctx;
-                }
-                let macro_context = core::ptr::from_mut(macro_context);
                 // `crate::defines::Define` IS
                 // `bun_js_parser::defines::Define`. Hand the parser the real
                 // table so user `--define` values apply at parse time.
                 let define: &'p js_ast::defines::Define;
-                // SAFETY: `self.options.define` / `macro_context` are owned by the long-lived
-                // `Transpiler` or the caller, and neither is dropped while a parse is in flight.
-                // Erased to `'p` so the returned `Ast<'p>` is not pinned to the `&mut self` borrow.
+                let this: *mut Self = self;
+                // SAFETY: `self` is not used again until the parser returns, and neither table is
+                // replaced while a parse is in flight. Erased to `'p` so the returned `Ast<'p>`
+                // is not pinned to the `&mut self` borrow.
                 unsafe {
-                    let define_ptr: *const js_ast::defines::Define =
-                        &raw const *self.options.define;
-                    define = &*define_ptr;
-                    opts.macro_context = Some(&mut *macro_context);
+                    define = &*(*this).options.define;
+                    opts.macro_remap = Some(&(*this).options.macro_remap);
+                    opts.macro_context = Some(js_ast::Macro::MacroContext::new(
+                        this.cast(),
+                        this_parse.loaded_macros,
+                        this_parse.macro_js_ctx,
+                    ));
                 }
                 // Only the runtime's module loader sets `allow_commonjs`. Other callers just transform text.
                 if this_parse.allow_commonjs {
                     // SAFETY: the resolver outlives the parse, which only calls it from this thread.
                     opts.import_meta_glob =
-                        Some(unsafe { Resolver::import_meta_glob_host(&raw mut self.resolver) });
+                        Some(unsafe { Resolver::import_meta_glob_host(&raw mut (*this).resolver) });
                 }
 
                 // spec calls `transpiler.resolver.caches.js.parse`.
@@ -2567,6 +2524,7 @@ impl<'a> Transpiler<'a> {
         import_path_format: options::ImportPathFormat,
         outstream: TransformOutstream,
     ) -> crate::Result<()> {
+        let loaded_macros = LoadedMacros::default();
         while let Some(item) = self.resolve_queue.pop_front() {
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
@@ -2578,6 +2536,7 @@ impl<'a> Transpiler<'a> {
                 import_path_format,
                 outstream,
                 None,
+                &loaded_macros,
             ) {
                 Ok(Some(f)) => f,
                 Ok(None) => continue,
@@ -2658,13 +2617,17 @@ impl<'a> Transpiler<'a> {
         Ok(())
     }
 
-    fn build_with_resolve_result_eager(
+    fn build_with_resolve_result_eager<'p>(
         &mut self,
         resolve_result: &resolver::Result,
         import_path_format: options::ImportPathFormat,
         _outstream: TransformOutstream,
-        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'a>>,
-    ) -> crate::Result<Option<options::OutputFile>> {
+        client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint<'p>>,
+        loaded_macros: &'p LoadedMacros,
+    ) -> crate::Result<Option<options::OutputFile>>
+    where
+        'a: 'p,
+    {
         if resolve_result.flags.is_external() {
             return Ok(None);
         }
@@ -2752,7 +2715,7 @@ impl<'a> Transpiler<'a> {
                     opened_file: None,
                     macro_remappings,
                     macro_js_ctx: default_macro_js_value(),
-                    macro_context: None,
+                    loaded_macros,
                     jsx,
                     emit_decorator_metadata,
                     experimental_decorators,

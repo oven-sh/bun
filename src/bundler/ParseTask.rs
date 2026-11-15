@@ -770,7 +770,7 @@ pub mod parse_worker {
     fn get_ast(
         log: &mut Log,
         transpiler: *mut Transpiler,
-        opts: ParserOptions<'static>,
+        mut opts: ParserOptions<'static>,
         bump: &'static Bump,
         resolver: *mut Resolver,
         source: &'static Source<'static>,
@@ -790,7 +790,6 @@ pub mod parse_worker {
         match loader {
             Loader::Jsx | Loader::Tsx | Loader::Js | Loader::Ts => {
                 let _trace = perf::trace("Bundler.ParseJS");
-                // `ParserOptions` is not `Clone` (holds `&'a mut MacroContext`).
                 // The empty-AST fallback needs the same options; since `opts`
                 // moves into `.parse()`,
                 // snapshot a faithful field-by-field copy via
@@ -798,6 +797,7 @@ pub mod parse_worker {
                 // field drift is a hard error) before the move.
                 let fallback_opts = opts.clone_for_lazy_export();
                 let module_type = opts.module_type;
+                opts.macro_remap = Some(&topts.macro_remap);
                 return if let Some(res) =
                     (crate::cache::JavaScript {}).parse(bump, opts, &topts.define, log, source)?
                 {
@@ -2242,17 +2242,12 @@ pub mod parse_worker {
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
-        // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
-        // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
-        // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
-        // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` is
-        // sound — caller (`BundleV2::init`) guarantees
-        // it is set before any ParseTask runs.
-        // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
-        // `'static` erasure: the context outlives the parse.
+        // SAFETY: the worker owns both and outlives the parse, whose macros cannot reach them.
         opts.macro_context = unsafe {
-            Some(&mut *std::ptr::from_mut(
-                (*transpiler).macro_context.as_mut().unwrap(),
+            Some(js_parser::Macro::MacroContext::new(
+                transpiler.cast(),
+                &(*worker_raw).loaded_macros,
+                crate::transpiler::default_macro_js_value(),
             ))
         };
         opts.package_version = task.package_version.slice();

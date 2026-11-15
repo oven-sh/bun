@@ -4,8 +4,7 @@
 //!
 //! `Worker::new` builds the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the self-referential `macro_context` is wired by
-//! `Transpiler::wire_after_move` once the value is at its final address.
+//! bitwise struct copy).
 
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
@@ -278,6 +277,7 @@ pub struct Worker {
     /// `'static` stands for the borrow of `heap`.
     pub(crate) transpiler: Transpiler<'static>,
     other_transpiler: Option<Box<Transpiler<'static>>>,
+    pub(crate) loaded_macros: js_ast::Macro::LoadedMacros,
 
     pub(crate) temporary_arena: bun_alloc::Arena,
     pub(crate) stmt_list: StmtList,
@@ -329,9 +329,8 @@ impl Drop for WorkerGuard {
 impl Drop for Worker {
     fn drop(&mut self) {
         bun_core::scoped_log!(ThreadPool, "Worker.drop()");
-        // `collect_vm_garbage` needs both `MacroContext`s freed first.
-        self.transpiler.macro_context = None;
-        self.other_transpiler = None;
+        // `collect_vm_garbage` needs the macros released first.
+        drop(core::mem::take(&mut self.loaded_macros));
         js_ast::Macro::collect_vm_garbage();
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
@@ -366,10 +365,11 @@ impl Worker {
 
         // `'static` stands for the bundle's lifetime, here and in the transpilers made from `ctx`.
         let ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
-        let mut worker = Box::new(Worker {
+        let worker = Box::new(Worker {
             ctx,
             transpiler: Transpiler::for_worker(ctx.transpiler(), arena, log),
             other_transpiler: None,
+            loaded_macros: Default::default(),
             temporary_arena: bun_alloc::Arena::new(),
             stmt_list: StmtList::init(),
             // Shares `heap` with the parser: mimalloc caches only the last heap a thread touched.
@@ -381,7 +381,6 @@ impl Worker {
             },
             heap,
         });
-        worker.transpiler.wire_after_move();
 
         bun_core::scoped_log!(ThreadPool, "Worker.new()");
         worker.into()
@@ -392,10 +391,7 @@ impl Worker {
             let (arena, log) = (self.arena(), self.transpiler.log);
             let other = self.other_transpiler.get_or_insert_with(|| {
                 let client = self.ctx.client_transpiler_ref().unwrap();
-                let mut boxed = Box::new(Transpiler::for_worker(client, arena, log));
-                // Wire self-refs after the value reached its final (heap) address.
-                boxed.wire_after_move();
-                boxed
+                Box::new(Transpiler::for_worker(client, arena, log))
             });
             debug_assert!(other.options.target == target);
             return other;

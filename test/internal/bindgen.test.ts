@@ -3158,7 +3158,7 @@ describe("classes", () => {
 
     it("the size of the object includes the struct", () => {
       // The cell, then size_of::<TestRefCounted>().
-      expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 12);
+      expect(estimateShallowMemoryUsageOf(new TestRefCounted(1))).toBe(48 + 16);
     });
   });
 });

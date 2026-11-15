@@ -68,10 +68,10 @@ impl Taskable for FetchTaskletDeinitHop {
 }
 impl FetchTaskletDeinitHop {
     /// # Safety
-    /// `this` is the tasklet the hop was created from, ref_count == 0, JS thread.
+    /// `this` is the tasklet the hop was created from, whose last ref it owns. JS thread.
     pub(crate) unsafe fn run(this: *mut Self) {
-        // SAFETY: fn contract — sole owner.
-        drop(unsafe { bun_core::heap::take(this.cast::<FetchTasklet>()) });
+        // SAFETY: fn contract.
+        drop(unsafe { RefPtr::from_raw(this.cast::<FetchTasklet>()) });
     }
 }
 
@@ -93,19 +93,18 @@ impl Taskable for FetchTaskletRequestDrain {
 
 /// The HTTP thread's ref, and how that thread reaches the JS thread.
 struct HttpThreadRef {
-    tasklet: NonNull<FetchTasklet>,
+    /// `None` while it drops.
+    tasklet: Option<RefPtr<FetchTasklet>>,
     ticket: jsc::Ticket,
 }
 
 impl Drop for HttpThreadRef {
     fn drop(&mut self) {
-        let tasklet = self.tasklet.as_ptr();
-        // SAFETY: the ref taken in `queue`.
-        if unsafe { bun_ptr::ThreadSafeRefCount::release(tasklet) } {
+        if let Some(last) = self.tasklet.take().and_then(RefPtr::release_unless_last) {
             // It holds JSC handles, so it is freed on the JS thread.
             self.ticket
                 .post(ConcurrentTask::create(bun_event_loop::Task::init(
-                    tasklet.cast::<FetchTaskletDeinitHop>(),
+                    last.into_raw().cast::<FetchTaskletDeinitHop>(),
                 )));
         }
     }
@@ -132,7 +131,7 @@ const SCHEDULED_PRERESERVE_MAX: usize = 256 * 1024 * 1024;
 
 use http::signals::BodyReceiveMode;
 
-#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct FetchTasklet {
     /// The JS controller holds a detachable back-pointer into it.
     sink: Option<AliasableBox<FetchRequestBodySink>>,
@@ -208,7 +207,7 @@ pub struct FetchTasklet {
 
     pub(crate) tracker: AsyncTaskTracker,
 
-    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
+    pub(crate) ref_count: bun_ptr::ThreadSafeRefCount,
 }
 
 // Boxing `AnyBlob` is not viable: the `AnyBlob` arm is constructed/matched in
@@ -344,7 +343,6 @@ jsc::impl_abort_handle_owner!(FetchTasklet, abort_handle, |this, cause| {
 impl Drop for FetchTasklet {
     fn drop(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "deinit");
-        self.ref_count.assert_no_refs();
         self.async_http_id = None;
         self.response.clear();
         self.native_response.set(None);
@@ -2258,7 +2256,7 @@ impl FetchTasklet {
         // Out on the HTTP thread from here until its final callback: its context
         // aborts it when it stops, and the VM waits for it (the ticket).
         node_ref.http_ref = Some(HttpThreadRef {
-            tasklet: js_ref.clone().into_non_null(),
+            tasklet: Some(js_ref.clone()),
             ticket: cx.vm().ticket(),
         });
         // SAFETY: as in `get`.

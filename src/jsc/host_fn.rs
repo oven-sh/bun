@@ -145,14 +145,12 @@ pub fn host_fn_lazy_passthrough(
 /// # Safety
 /// `this` is the live pointer the wrapper holds a ref on.
 #[inline]
-pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::AnyRefCounted>(
+pub unsafe fn host_fn_finalize_ref_counted<T: bun_ptr::RefCounted>(
     this: *mut T,
     f: impl FnOnce(&T),
 ) {
-    // SAFETY: fn contract; other refs may exist, so only `&T` is formed.
-    f(unsafe { &*this });
-    // SAFETY: fn contract — releases the wrapper's ref.
-    unsafe { T::rc_deref(this) };
+    // SAFETY: fn contract.
+    f(&*unsafe { bun_ptr::RefPtr::from_raw(this) });
 }
 
 /// Convert the return value of a function returning an error union into a maybe-empty `JSValue`.

@@ -12,7 +12,7 @@ use bun_core::ZStr;
 use bun_event_loop::Task;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, SysErrorJsc};
-use bun_ptr::{RefPtr, ThisPtr};
+use bun_ptr::{AliasableBox, RefPtr, ThisPtr};
 use bun_sys::{self, Error as SysError, Fd, SystemErrno};
 use bun_uws::{self as uws, us_bun_verify_error_t};
 
@@ -23,12 +23,12 @@ bun_output::declare_scope!(WindowsNamedPipeContext, visible);
 /// while the context (and its ref on the native socket) stays behind.
 pub(crate) static LIVE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = schedule_deinit)]
 pub(crate) struct WindowsNamedPipeContext {
-    // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
+    // Intrusive refcount; last release → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Held until the pipe closes, or fails to open.
     pub(super) self_ref: Cell<Option<RefPtr<Self>>>,
     /// `on_close` and `fail_connect` hand it to the socket's last event. Drops before `named_pipe`.
@@ -56,8 +56,9 @@ bun_jsc::impl_abort_handle_owner!(WindowsNamedPipeContext, abort_handle, |this, 
 /// Reached from `on_close` while `WindowsNamedPipe::on_close`
 /// still holds a live `&mut (*this).named_pipe` and uses it after we return, so
 /// project raw fields only — same constraint as the `on_*` handlers below.
-fn schedule_deinit(this: *mut WindowsNamedPipeContext) {
-    // SAFETY: called from `deref()` at count zero; `this` is live until the task fires.
+fn schedule_deinit(last: AliasableBox<WindowsNamedPipeContext>) {
+    let this = last.into_raw();
+    // SAFETY: `this` is live until the task fires.
     // `task_event`/`vm` are disjoint from the caller's `&mut named_pipe`.
     unsafe {
         debug_assert!((*this).task_event != EventState::Deinit);
@@ -300,7 +301,7 @@ impl WindowsNamedPipeContext {
         // arm; `this` is the live ctx pointer registered in create()
         match unsafe { (*this).task_event } {
             EventState::Deinit => {
-                // SAFETY: `this` was allocated via heap::alloc in create(); refcount hit zero
+                // SAFETY: `this` was allocated via heap::alloc in create(); its last ref is gone
                 // and this deferred task is the sole remaining owner. Drop runs field destructors.
                 drop(unsafe { bun_core::heap::take(this) });
             }
@@ -348,7 +349,7 @@ impl WindowsNamedPipeContext {
             ptr::write(
                 this,
                 WindowsNamedPipeContext {
-                    ref_count: Cell::new(1),
+                    ref_count: bun_ptr::RefCount::init(),
                     self_ref: Cell::new(None),
                     socket: Some(socket),
                     named_pipe,
@@ -439,7 +440,7 @@ impl Drop for WindowsNamedPipeContext {
 
 impl bun_event_loop::Taskable for WindowsNamedPipeContext {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WindowsNamedPipeContext;
-    /// A `Deinit` hop (refcount already zero) that will not run: `this` is the
+    /// A `Deinit` hop (last ref already gone) that will not run: `this` is the
     /// heap context, freed by nobody else — do what the hop does, script-free.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.

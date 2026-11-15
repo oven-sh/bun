@@ -1,5 +1,3 @@
-use core::cell::Cell;
-
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, Strong};
 
 use crate::postgres::signature::Signature;
@@ -14,10 +12,10 @@ use bun_sql::postgres::postgres_types::int4;
 
 bun_core::declare_scope!(Postgres, visible);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub struct PostgresSQLStatement {
     pub(crate) cached_structure: PostgresCachedStructure,
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     pub(crate) fields: Vec<protocol::FieldDescription>,
     pub(crate) parameters: Box<[int4]>,
     pub(crate) signature: Signature,
@@ -33,7 +31,7 @@ impl Default for PostgresSQLStatement {
         // exists only to mirror the per-field `= ...` initializers.
         Self {
             cached_structure: PostgresCachedStructure::default(),
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             fields: Vec::new(),
             parameters: Box::default(),
             signature: Signature::default(),
@@ -193,8 +191,6 @@ impl Drop for PostgresSQLStatement {
     fn drop(&mut self) {
         bun_core::scoped_log!(Postgres, "PostgresSQLStatement deinit");
 
-        debug_assert_eq!(self.ref_count.get(), 0, "ref_count.assertNoRefs()");
-
         // `fields` (Vec<FieldDescription>): each element's Drop runs, then the buffer frees.
         // `parameters` (Box<[int4]>): freed by Drop.
         // `cached_structure`, `error_response`, `signature`: Drop.
@@ -259,11 +255,7 @@ impl StatementCache {
 
     /// Never one that a request holds.
     pub(crate) fn evict(&mut self) -> Option<RefPtr<PostgresSQLStatement>> {
-        if let Some(i) = self
-            .discarded
-            .iter()
-            .position(|statement| statement.ref_count.get() == 1)
-        {
+        if let Some(i) = self.discarded.iter().position(RefPtr::has_one_ref) {
             return Some(self.discarded.swap_remove(i));
         }
         self.cache.evict(Self::MAX_STATEMENTS)

@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue};
-use bun_ptr::{AnyRefCounted, RefPtr};
+use bun_ptr::{RefCounted, RefPtr};
 
 use crate::api::html_rewriter;
 use crate::api::server;
@@ -97,7 +97,7 @@ impl Tag {
 
 /// Maps a concrete native type to its `Tag`, expressed as a compile-time
 /// mapping via a trait impl per type.
-pub(crate) trait NativePromiseContextType: AnyRefCounted {
+pub(crate) trait NativePromiseContextType: RefCounted {
     const TAG: Tag;
 }
 
@@ -181,7 +181,7 @@ pub(crate) fn take_held(cell: JSValue) -> JSValue {
 /// settling).
 ///
 /// The destructor runs during GC sweep, so it is NOT safe to do anything
-/// that might touch the JSC heap. RequestContext.deref() can trigger
+/// that might touch the JSC heap. Dropping a ref on a RequestContext can trigger
 /// deinit() which aborts signals, unrefs bodies, and calls back into
 /// the server — all of which may unprotect JS values or allocate. We must
 /// defer that work to the event loop.

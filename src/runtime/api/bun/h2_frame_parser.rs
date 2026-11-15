@@ -1075,7 +1075,7 @@ pub(crate) struct H2FrameParser {
     /// Where the bytes emitted through `write()` over a JS-backed transport stand relative to
     /// frame and header-block boundaries.
     tx_tracker: Cell<TxFrameTracker>,
-    ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+    ref_count: bun_ptr::RefCount, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
 
     /// Held while the deferred flush is registered.
     auto_flush_ref: Cell<Option<RefPtr<Self>>>,
@@ -1096,18 +1096,15 @@ pub(crate) struct H2FrameParser {
 }
 
 impl H2FrameParser {
-    /// `RefCounted` destructor: drop in place, then return the slot to the pool.
-    ///
-    /// # Safety
-    /// `this` came from `POOL` on this thread and nothing else refers to it.
-    unsafe fn release(this: *mut Self) {
+    /// `RefCounted::destroy`: drop in place, then return the slot to the pool.
+    fn release(last: AliasableBox<Self>) {
         POOL.with(|pool| {
             let pool = pool
                 .0
                 .get()
                 .expect("H2FrameParser released before constructor initialised pool");
-            // SAFETY: fn contract.
-            unsafe { pool.put(this) }
+            // SAFETY: `constructor` took it from this thread's `POOL`, and `last` was its only owner.
+            unsafe { pool.put(last.into_raw()) }
         });
     }
 

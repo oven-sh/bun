@@ -30,9 +30,9 @@ struct StatCacheEntry {
     stat_hash: StatHash,
 }
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct DirectoryRoute {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     server: Cell<Option<AnyServer>>,
     root: File,
     /// Mount prefix with trailing `/` (`"/static/"`, or `"/"` for `"/*"`).
@@ -89,7 +89,7 @@ impl DirectoryRoute {
         }
 
         Ok(RefPtr::new(DirectoryRoute {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             server: Cell::new(None),
             root,
             url_prefix: url_prefix.to_vec().into_boxed_slice(),

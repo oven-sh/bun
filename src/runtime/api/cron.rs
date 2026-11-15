@@ -66,7 +66,7 @@ use crate::jsc_hooks::timer_all;
 // in-flight dealloc UB) and touches nothing after the call that may free
 // `this`. Mutable state lives in `Cell`/`JsCell` fields so every access is a
 // short shared borrow.
-trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
+trait CronJobBase: Sized + bun_ptr::RefCounted {
     /// The single owning ref; released by `finish`.
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
     fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
@@ -190,9 +190,9 @@ enum JobAction {
 // CronRegisterJob
 // ============================================================================
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 struct CronRegisterJob {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRegisterJob>>>,
     promise: JsCell<jsc::JSPromiseStrong>,
@@ -725,7 +725,7 @@ pub(crate) fn register_os_job(
             )));
     }
     let job = RefPtr::new(CronRegisterJob {
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
@@ -865,9 +865,9 @@ const ASCII_WHITESPACE: [u8; 6] = *b" \t\n\r\x0b\x0c";
 // CronRemoveJob
 // ============================================================================
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 struct CronRemoveJob {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// The single owning ref; released by `finish`.
     owner: Cell<Option<RefPtr<CronRemoveJob>>>,
     promise: JsCell<jsc::JSPromiseStrong>,
@@ -1133,7 +1133,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
     }
 
     let job = RefPtr::new(CronRemoveJob {
-        ref_count: Cell::new(1),
+        ref_count: bun_ptr::RefCount::init(),
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
@@ -1205,10 +1205,10 @@ impl Drop for CronRemoveJob {
 // + `UnsafeCell`-backed fields suppresses `noalias` on the receiver.
 // (Aligned for `NativePromiseContext`, which packs its tag into the pointer's low bits.)
 /// `CronJob`, declared in `cron.bind.ts`.
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 #[repr(align(16))]
 pub(crate) struct CronJob {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     /// Set from the allocating `RefPtr` so `&self` host fns can reach the
     /// `ThisPtr`-taking paths that may release refs.
     self_ref: Cell<BackRef<CronJob, bun_ptr::Root>>,
@@ -1597,7 +1597,7 @@ impl CronJob {
         let vm = global.bun_vm();
 
         let job = RefPtr::new(CronJob {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             self_ref: Cell::new(BackRef::dangling()),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CronJob),
             global: GlobalRef::from(global),

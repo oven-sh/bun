@@ -77,7 +77,7 @@ mod connection {
 /// `NodeHTTPResponse`, declared in `NodeHTTPResponse.bind.ts`.
 #[derive(bun_ptr::RefCounted)]
 pub(crate) struct NodeHTTPResponse {
-    ref_count: bun_ptr::RefCount<Self>,
+    ref_count: bun_ptr::RefCount,
 
     connection: connection::Connection,
 

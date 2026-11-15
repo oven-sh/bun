@@ -24,9 +24,9 @@ use crate::server::{DirectoryRoute, FileRoute, PendingRequest};
 
 bun_output::declare_scope!(FileResponseStream, hidden);
 
-#[derive(bun_ptr::CellRefCounted)]
+#[derive(bun_ptr::RefCounted)]
 pub(crate) struct FileResponseStream {
-    ref_count: Cell<u32>,
+    ref_count: bun_ptr::RefCount,
     resp: Cell<AnyResponse>,
     event_loop: bun_io::EventLoopCtx,
     reader: BufferedReader,
@@ -184,7 +184,7 @@ impl FileResponseStream {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         let owned = RefPtr::new(FileResponseStream {
-            ref_count: Cell::new(1),
+            ref_count: bun_ptr::RefCount::init(),
             resp: Cell::new(opts.resp),
             event_loop: opts.vm.loop_ctx(),
             fd: opts.fd,

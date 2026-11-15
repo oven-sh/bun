@@ -1076,7 +1076,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
                         server.context.set(context.id());
-                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
+                        // SAFETY: heap-allocated; leaves its context in `stop_listening` / `drop`.
                         unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
@@ -1108,12 +1108,13 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `server` is the live heap-allocated server returned by `init`.
-            let route_list_object = <$ServerType>::listen(server);
+            let route_list_object = <$ServerType>::listen(&server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `listen` frees the server only when it throws.
+            // Its reference count owns it from now on.
+            let server = server.into_raw();
+            // SAFETY: the ref that the wrapper takes below is held.
             let server_ref: &$ServerType = unsafe { &*server };
             let obj = <$ServerType>::ptr_to_js(server, global_object);
             if route_list_object != JSValue::ZERO {
@@ -1159,7 +1160,7 @@ pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSVa
             server_ref.gc_hint_after_listen();
 
             // SAFETY: `server` is heap-allocated and leaves its context in
-            // `stop_listening` / `deinit`.
+            // `stop_listening` / `drop`.
             unsafe {
                 (*server).context.set(context.id());
                 bun_jsc::AbortHandle::arm_owner(server, context)

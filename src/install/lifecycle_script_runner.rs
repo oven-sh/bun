@@ -772,7 +772,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 return;
             }
 
-            Output::disable_buffering();
+            let _unbuffered = Output::disable_buffering_scope();
             Output::flush();
 
             if stdout_len > 0 {
@@ -791,8 +791,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 stderr.clear();
                 stderr.shrink_to_fit();
             }
-
-            Output::enable_buffering();
         }
     }
 

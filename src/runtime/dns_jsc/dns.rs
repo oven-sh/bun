@@ -1054,7 +1054,7 @@ pub(crate) mod internal {
     }
 
     // SAFETY: every `*mut Request` stored here is a heap allocation transferred between
-    // threads only while `GLOBAL_CACHE` is locked; no thread-affine data hangs off it.
+    // threads only while `GLOBAL_CACHE` is locked; its macOS service refs are gone before it is freed.
     unsafe impl Send for GlobalCache {}
 
     impl GlobalCache {

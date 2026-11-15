@@ -4675,9 +4675,8 @@ impl VirtualMachine {
             .has_set_no_clear_terminal_on_reload(!bun_core::Output::enable_ansi_colors_stdout());
         if should_clear_terminal {
             bun_core::Output::flush();
-            bun_core::Output::disable_buffering();
+            let _unbuffered = bun_core::Output::disable_buffering_scope();
             bun_core::Output::reset_terminal_all();
-            bun_core::Output::enable_buffering();
         }
 
         if let Some(hooks) = runtime_hooks() {
@@ -6496,7 +6495,7 @@ impl VirtualMachine {
             return;
         }
         // **Warning** this method can be called in the heap collector thread!!
-        self.remap_stack_frames_mutex.lock();
+        let _guard = self.remap_stack_frames_mutex.lock_guard();
 
         // Note: a last-`(hash → InternalSourceMap)` cache across the loop
         // would be purely a perf optimization (most stacks repeat the same
@@ -6540,8 +6539,6 @@ impl VirtualMachine {
                 frame.remapped = true;
             }
         }
-
-        self.remap_stack_frames_mutex.unlock();
     }
 
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.

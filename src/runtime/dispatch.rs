@@ -389,7 +389,9 @@ pub(crate) fn run_task(
             feature_arm!(
                 [Fetch],
                 |drain: crate::webcore::fetch::FetchTaskletRequestDrain| {
-                    crate::webcore::fetch::FetchTaskletRequestDrain::run(drain);
+                    // SAFETY: §Dispatch — tag identifies pointee; the task owns a ref.
+                    let tasklet = unsafe { bun_ptr::RefPtr::from_raw(drain.cast()) };
+                    FetchTasklet::resume_request_data_stream(&tasklet);
                 }
             )
         }
@@ -544,15 +546,14 @@ pub(crate) fn run_task(
 
         // ── fetch / S3 ───────────────────────────────────────────────────
         task_tag::FetchTasklet => feature_arm!([Fetch], |tasklet: FetchTasklet| -> JsResult<()> {
-            // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-            unsafe { &mut *tasklet }.on_progress_update()?;
-            Ok(())
+            // SAFETY: §Dispatch — tag identifies pointee.
+            unsafe { FetchTasklet::on_progress_update(tasklet) }
         })?,
         task_tag::FetchTaskletDeinit => {
             feature_arm!(
                 [Fetch],
                 |hop: crate::webcore::fetch::FetchTaskletDeinitHop| {
-                    // SAFETY: posted by `deref_from_thread` with the last ref.
+                    // SAFETY: posted by `HttpThreadRef` with the last ref.
                     unsafe { crate::webcore::fetch::FetchTaskletDeinitHop::run(hop) };
                 }
             )

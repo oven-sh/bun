@@ -2,11 +2,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
 import { join } from "node:path";
 
-// The file-watcher thread enqueues a task for the dev server. If the server is
-// dropped before the event loop drains it the drain must not read freed memory: a
-// `Segmentation fault at address 0x48` on release builds (the zeroed
-// `{tag: 0, ptr: null}` dispatches as `fs.access` with a null receiver), or
-// heap-use-after-free under ASAN.
+// The watcher thread posts a task for the dev server, which can be dropped before the task runs.
 //
 // Lives in its own file because the neighbouring `bun-serve-html.test.ts`
 // bundles React and exceeds the default per-test timeout under a debug+ASAN

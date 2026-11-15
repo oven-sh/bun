@@ -1,6 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+  untilEveryThreadIs,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
 
@@ -1271,22 +1282,6 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
 
 // The coordinator is stopped meanwhile, so it finds a worker's last frame and its end together.
 describe.skipIf(!isLinux)("--parallel: a worker that has exited gets no file", () => {
-  const states = (pid: number) =>
-    readdirSync(`/proc/${pid}/task`).map(tid => {
-      try {
-        const stat = readFileSync(`/proc/${pid}/task/${tid}/stat`, "utf8");
-        return stat[stat.lastIndexOf(")") + 2];
-      } catch {
-        return "X";
-      }
-    });
-  async function untilEveryThreadIs(state: string, pid: number) {
-    const deadline = performance.now() + 30_000;
-    while (states(pid).some(other => other !== state)) {
-      if (performance.now() > deadline) throw new Error(`threads of ${pid}: ${states(pid)}`);
-      await Bun.sleep(1);
-    }
-  }
   const exitAfterTheFile = `setTimeout(() => process.exit(0));`;
   const exitAfterReady = `writeSync(3, Buffer.alloc(5)); process.exit(0);`;
 

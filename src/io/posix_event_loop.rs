@@ -173,16 +173,16 @@ const EV_EOF: u16 = 0x8000;
 pub enum PollTag {
     Null = 0,
     FileSink,
-    StaticPipeWriter,
-    ShellStaticPipeWriter,
-    SecurityScanStaticPipeWriter,
+    SubprocessStdinWriter,
+    ShellStdinWriter,
+    SecurityScanWriter,
     #[cfg(not(windows))]
     DnsResolver,
     #[cfg(target_os = "macos")]
     GetAddrInfoRequest,
     #[cfg(not(windows))]
     Process,
-    ShellBufferedWriter,
+    ShellIoWriter,
     TerminalWriter,
     #[cfg(windows)]
     WindowsNamedPipe,

@@ -1,5 +1,6 @@
 use crate::mal_prelude::*;
 use bstr::BStr;
+use core::num::NonZeroU32;
 
 use bun_alloc::Arena;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Range};
@@ -10,7 +11,7 @@ use crate::Graph::Graph;
 use crate::bun_css::css_parser::BundlerCssRule;
 use crate::bun_css::{ImportConditions, LayerName};
 use crate::bundled_ast::CssAstRef;
-use crate::chunk::{CssImportCondition, CssImportOrder, CssImportOrderKind, Layers};
+use crate::chunk::{CssImportOrder, CssImportOrderKind, ImportConditionsRef, Layers};
 use crate::linker_context_mod::debug;
 use crate::{Index, LinkerContext};
 use bun_ast::Index as AstIndex;
@@ -77,7 +78,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn push_entry(
             &mut self,
             kind: CssImportOrderKind<'a>,
-            wrapping_conditions: &'a [CssImportCondition<'a>],
+            wrapping_conditions: &'a [ImportConditionsRef<'a>],
         ) {
             self.order.push(CssImportOrder {
                 kind,
@@ -88,7 +89,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         /// An import that loads no style sheet still adds its layer to the layer order.
         fn push_layers_of_unloaded_import(
             &mut self,
-            wrapping_conditions: &'a [CssImportCondition<'a>],
+            wrapping_conditions: &'a [ImportConditionsRef<'a>],
         ) {
             if wrapping_conditions.iter().any(|c| c.layer.is_some()) {
                 self.push_entry(
@@ -100,10 +101,10 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
         /// The external import is hoisted out of the anonymous layer that its
         /// neighbours share, so something else must hold the place of its sublayer.
-        fn push_sublayer_of_external_import(&mut self, conditions: &'a [CssImportCondition<'a>]) {
+        fn push_sublayer_of_external_import(&mut self, conditions: &'a [ImportConditionsRef<'a>]) {
             let names_a_sublayer = conditions
                 .iter()
-                .skip_while(|c| c.anonymous_layer == 0)
+                .skip_while(|c| c.anonymous_layer_id.is_none())
                 .any(|c| c.layer_name().is_some());
             if names_a_sublayer {
                 self.push_entry(CssImportOrderKind::Layers(Layers::None), conditions);
@@ -112,21 +113,20 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
         /// Every visit of a bare "layer" makes a new anonymous layer, also when it
         /// is the same rule or its conditions look the same.
-        fn append_conditions(
+        fn fork_conditions(
             &mut self,
-            conditions: &[CssImportCondition<'a>],
+            conditions: &[ImportConditionsRef<'a>],
             sheet: CssAstRef<'a>,
-            rule: usize,
-            has_anonymous_layer: bool,
-        ) -> &'a [CssImportCondition<'a>] {
-            let mut appended = CssImportCondition {
+            rule_index: usize,
+        ) -> &'a [ImportConditionsRef<'a>] {
+            let mut appended = ImportConditionsRef {
                 sheet,
-                rule: rule as u32,
-                anonymous_layer: 0,
+                rule_index: rule_index as u32,
+                anonymous_layer_id: None,
             };
-            if has_anonymous_layer {
+            if appended.has_anonymous_layer() {
                 self.anonymous_layers += 1;
-                appended.anonymous_layer = self.anonymous_layers;
+                appended.anonymous_layer_id = NonZeroU32::new(self.anonymous_layers);
             }
             self.arena.alloc_slice_fill_with(conditions.len() + 1, |i| {
                 *conditions.get(i).unwrap_or(&appended)
@@ -138,7 +138,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             &mut self,
             importer: Index,
             record: &ImportRecord<'a>,
-            wrapping_conditions: &'a [CssImportCondition<'a>],
+            wrapping_conditions: &'a [ImportConditionsRef<'a>],
         ) -> bool {
             if !self.stack_check.is_safe_to_recurse() {
                 self.too_deep = Some(CssImportChainTooDeep {
@@ -155,7 +155,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         fn visit(
             &mut self,
             source_index: Index,
-            wrapping_conditions: &'a [CssImportCondition<'a>],
+            wrapping_conditions: &'a [ImportConditionsRef<'a>],
         ) {
             debug!(
                 "Visit file: {}={}",
@@ -212,8 +212,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
 
                     // The conditions of this import add to those that wrap this file.
                     let conditions = if import_rule.has_conditions() {
-                        let is_anonymous = import_rule.conditions.has_anonymous_layer();
-                        self.append_conditions(wrapping_conditions, repr, rule_index, is_anonymous)
+                        self.fork_conditions(wrapping_conditions, repr, rule_index)
                     } else {
                         wrapping_conditions
                     };
@@ -312,7 +311,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         // Pass 1: Pull out leading "@layer" and external "@import" rules
         let is_statement = |entry: &CssImportOrder| match &entry.kind {
             CssImportOrderKind::Layers(layers) => {
-                prints_as_layer_statement(layers.inner().is_empty(), entry.conditions)
+                prints_as_layer_statement(layers.names().is_empty(), entry.conditions)
             }
             _ => false,
         };
@@ -320,7 +319,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         // not keep a later statement behind the hoisted imports.
         let continues_prefix = |entry: &CssImportOrder| {
             is_statement(entry)
-                || matches!(&entry.kind, CssImportOrderKind::Layers(layers) if layers.inner().is_empty())
+                || matches!(&entry.kind, CssImportOrderKind::Layers(layers) if layers.names().is_empty())
         };
         let mut is_at_layer_prefix = true;
         for entry in order.slice() {
@@ -353,9 +352,9 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
     // file. This works because in CSS, the last instance of a declaration
     // overrides all previous instances of that declaration.
     {
-        let mut source_index_duplicates: ArrayHashMap<u32, Vec<&[CssImportCondition]>> =
+        let mut source_index_duplicates: ArrayHashMap<u32, Vec<&[ImportConditionsRef]>> =
             ArrayHashMap::new();
-        let mut external_path_duplicates: StringArrayHashMap<Vec<&[CssImportCondition]>> =
+        let mut external_path_duplicates: StringArrayHashMap<Vec<&[ImportConditionsRef]>> =
             StringArrayHashMap::new();
 
         let mut earlier = order.as_mut_slice();
@@ -430,13 +429,16 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
             );
             // An external import prints an anonymous layer of its own, apart
             // from the one that its neighbours share.
-            let in_anonymous_layer = entry.conditions.iter().any(|c| c.anonymous_layer != 0);
+            let in_anonymous_layer = entry
+                .conditions
+                .iter()
+                .any(|c| c.anonymous_layer_id.is_some());
             match &entry.kind {
                 // Simplify the conditions since we know they only wrap "@layer"
                 CssImportOrderKind::Layers(layers) => {
                     // An external import with these exact conditions already
                     // declares what this entry would.
-                    if layers.inner().is_empty()
+                    if layers.names().is_empty()
                         && !in_anonymous_layer
                         && wip_order.slice().iter().any(|kept| {
                             matches!(kept.kind, CssImportOrderKind::ExternalPath(_))
@@ -474,7 +476,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     //     @layer foo;
                     //   }
                     //
-                    if layers.inner().len() == 0 {
+                    if layers.names().len() == 0 {
                         while let [rest @ .., last] = entry.conditions
                             && last.layer.is_none()
                         {
@@ -483,7 +485,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     }
 
                     // Remove unnecessary entries entirely
-                    if entry.conditions.len() == 0 && layers.inner().len() == 0 {
+                    if entry.conditions.len() == 0 && layers.names().len() == 0 {
                         continue;
                     }
                 }
@@ -500,7 +502,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                     .unwrap()
                     .layer_names
                     .slice_const(),
-                CssImportOrderKind::Layers(layers) => layers.inner(),
+                CssImportOrderKind::Layers(layers) => layers.names(),
                 CssImportOrderKind::ExternalPath(_) => &[],
             };
             let mut index: usize = 0;
@@ -567,7 +569,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                             let other = wip_order.at(duplicate_index as usize);
                             if let CssImportOrderKind::Layers(layers) = &other.kind
                                 && (layers_key.is_empty()
-                                    || core::ptr::eq(layers_key, layers.inner()))
+                                    || core::ptr::eq(layers_key, layers.names()))
                                 && import_conditions_are_equal(entry.conditions, other.conditions)
                             {
                                 // Remove the previous entry and then overwrite it below
@@ -647,7 +649,7 @@ pub(crate) fn css_import_orders_are_equal<'a>(
             import_conditions_are_equal(a.conditions, b.conditions)
                 && match (&a.kind, &b.kind) {
                     (CssImportOrderKind::Layers(a), CssImportOrderKind::Layers(b)) => {
-                        layer_lists_are_equal(a.inner(), b.inner())
+                        layer_lists_are_equal(a.names(), b.names())
                     }
                     (CssImportOrderKind::ExternalPath(a), CssImportOrderKind::ExternalPath(b)) => {
                         a.text == b.text
@@ -662,7 +664,7 @@ pub(crate) fn css_import_orders_are_equal<'a>(
 
 /// Whether a list of layer names under these conditions prints only "@layer"
 /// statements, which may precede an "@import".
-fn prints_as_layer_statement(no_names: bool, conditions: &[CssImportCondition]) -> bool {
+fn prints_as_layer_statement(no_names: bool, conditions: &[ImportConditionsRef]) -> bool {
     match conditions {
         [] => true,
         [only] => {
@@ -695,15 +697,17 @@ fn can_mask_external_import(earlier: &[CssImportOrder], import: &CssImportOrder)
 }
 
 fn import_conditions_are_equal<'a>(
-    a: &[CssImportCondition<'a>],
-    b: &[CssImportCondition<'a>],
+    a: &[ImportConditionsRef<'a>],
+    b: &[ImportConditionsRef<'a>],
 ) -> bool {
     if a.len() != b.len() {
         return false;
     }
 
     for (ai, bi) in a.iter().zip(b) {
-        if !ai.layers_eql(bi) || !ImportConditions::supports_eql(ai, bi) || !ai.media.eql(&bi.media)
+        if !ai.is_same_layer(bi)
+            || !ImportConditions::supports_eql(ai, bi)
+            || !ai.media.eql(&bi.media)
         {
             return false;
         }
@@ -742,8 +746,8 @@ fn import_conditions_are_equal<'a>(
 /// A "@layer" condition that only the earlier one has means the two apply in
 /// different layers, so neither can stand for the other.
 fn is_conditional_import_redundant<'a>(
-    earlier: &[CssImportCondition<'a>],
-    later: &[CssImportCondition<'a>],
+    earlier: &[ImportConditionsRef<'a>],
+    later: &[ImportConditionsRef<'a>],
 ) -> bool {
     if later.len() > earlier.len() {
         return false;
@@ -751,7 +755,7 @@ fn is_conditional_import_redundant<'a>(
 
     for (a, b) in earlier.iter().zip(later) {
         // Only compare "@supports" and "@media" if "@layers" is equal
-        if a.layers_eql(b) {
+        if a.is_same_layer(b) {
             let same_supports = ImportConditions::supports_eql(a, b);
             let same_media = a.media.eql(&b.media);
 

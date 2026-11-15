@@ -1,6 +1,7 @@
 //! Starting bundles: choosing entry points, the bundle queue, and plugin loading.
 
 use super::*;
+use bun_ptr::detach_lifetime_mut;
 
 impl DevServer {
     pub(super) fn append_route_entry_points_if_not_stale(
@@ -376,11 +377,11 @@ impl DevServer {
         // Until `bv2` is dropped, nothing else uses the client and SSR ones. `self` still uses the
         // server one on this thread (`watch_directory`, `finalize_bundle`).
         let (ssr_transpiler, server_transpiler, client_transpiler) = unsafe {
-            use bun_ptr::detach_lifetime_mut as detach;
             (
-                self.ssr_transpiler_mut().map(|ssr| detach(ssr)),
-                detach(&mut *self.server_transpiler),
-                detach(&mut *self.client_transpiler),
+                self.ssr_transpiler_mut()
+                    .map(|ssr| detach_lifetime_mut(ssr)),
+                detach_lifetime_mut(&mut *self.server_transpiler),
+                detach_lifetime_mut(&mut *self.client_transpiler),
             )
         };
         let mut bv2: Box<BundleV2<'static>> = BundleV2::init(

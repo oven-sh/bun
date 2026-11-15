@@ -768,7 +768,7 @@ pub struct SecurityScanSubprocess<'a> {
     exit_status: Option<Status>,
     remaining_fds: i8,
     json_writer: Option<StaticPipeWriter<Box<[u8]>>>,
-    /// `finish_spawn` is re-entered through the exit handler.
+    /// `on_process_exit` can run while `finish_spawn` holds `&mut self`.
     _pin: core::marker::PhantomPinned,
 }
 
@@ -950,13 +950,13 @@ impl<'a> SecurityScanSubprocess<'a> {
         let process = self.process.insert(process).this_ptr();
 
         let owner = Owner::new(
-            PollTag::SecurityScanStaticPipeWriter,
+            PollTag::SecurityScanWriter,
             core::ptr::from_mut(self).cast(),
         );
-        // SAFETY: it becomes a field of its owner, which is boxed.
+        // SAFETY: `owner` points to the heap allocation that holds this writer from the next line on.
         let writer = unsafe { StaticPipeWriter::create(owner, json_stdio, json_source) };
         match self.json_writer.insert(writer).start(event_loop) {
-            Ok(state) => self.on_pipe_state(state),
+            Ok(state) => self.on_writer_state(state),
             Err(e) => {
                 Output::err_generic(
                     "Failed to start security scanner JSON pipe writer: {}",
@@ -981,11 +981,11 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     pub fn on_writer_io(&mut self, event: IoEvent) {
         if let Some(writer) = &self.json_writer {
-            self.on_pipe_state(writer.on_io(event));
+            self.on_writer_state(writer.on_io(event));
         }
     }
 
-    fn on_pipe_state(&mut self, state: PipeState) {
+    fn on_writer_state(&mut self, state: PipeState) {
         if state == PipeState::Closed {
             self.json_writer = None;
             self.remaining_fds -= 1;

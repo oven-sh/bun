@@ -1248,16 +1248,16 @@ pub unsafe trait IntrusiveUvFs: Sized {
     /// `core::mem::offset_of!(Self, io_request)`.
     const UV_FS_OFFSET: usize;
 
-    /// Recover `*mut Self` from the `*mut uv::fs_t` libuv passes back.
+    /// Take back the `Box<Self>` that was left to libuv, from the `*mut uv::fs_t` it passes back.
     ///
     /// # Safety
     /// `req` must point to the `fs_t` field at `Self::UV_FS_OFFSET` inside a
-    /// live `Self` allocation, and the pointer's provenance must cover the
+    /// leaked `Box<Self>` that nothing else takes back, and the pointer's provenance must cover the
     /// whole allocation.
     #[inline(always)]
-    unsafe fn from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> *mut Self {
+    unsafe fn take_from_uv_fs(req: *mut bun_sys::windows::libuv::fs_t) -> Box<Self> {
         // SAFETY: caller upholds the trait safety contract above.
-        unsafe { bun_core::container_of::<Self, _>(req, Self::UV_FS_OFFSET) }
+        unsafe { bun_core::heap::take(bun_core::container_of(req, Self::UV_FS_OFFSET)) }
     }
 }
 

@@ -10,7 +10,7 @@ use bun_jsc::JSGlobalObject;
 use bun_ptr::RefPtr;
 
 use crate::webcore::Blob;
-use crate::webcore::blob::store::{Bytes, Data, IsAllAscii, Store};
+use crate::webcore::blob::store::{Bytes, Data, Store};
 use bun_standalone_graph::{File, Graph, is_bun_standalone_file_path};
 
 /// The process-wide template of an embedded file's `Blob`: store, content
@@ -21,12 +21,7 @@ fn template_blob(
     *file.cached_blob.get_or_init(|| {
         let mut bytes = Bytes::init_static(file.utf8_contents());
         bytes.stored_name = file.name.to_vec().into_boxed_slice();
-        let mut store = Store {
-            data: Data::Bytes(bytes),
-            mime_type: MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        };
+        let mut store = Store::new(Data::Bytes(bytes), MimeType::NONE);
         let blob = Blob::default();
         if let Some(mime) = MimeType::by_extension_no_default(strings::trim_leading_char(
             bun_paths::extension(file.name),

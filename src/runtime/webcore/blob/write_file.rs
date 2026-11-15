@@ -561,7 +561,7 @@ mod windows_impl {
     }
 
     impl WriteFileWindows {
-        pub(crate) fn create(
+        pub(crate) fn start(
             event_loop: &'static EventLoop,
             script_context: &bun_jsc::ScriptExecutionContext,
             file_blob: Blob,
@@ -650,7 +650,7 @@ mod windows_impl {
 
         extern "C" fn on_open(req: *mut uv::fs_t) {
             // SAFETY: `req` is the `io_request` of the box that `open` left to libuv.
-            let mut this = unsafe { bun_core::heap::take(WriteFileWindows::from_uv_fs(req)) };
+            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
             let rc = this.io_request.result;
             #[cfg(debug_assertions)]
             bun_output::scoped_log!(
@@ -694,7 +694,7 @@ mod windows_impl {
 
         extern "C" fn on_write_complete(req: *mut uv::fs_t) {
             // SAFETY: `req` is the `io_request` of the box that `do_write_loop` left to libuv.
-            let mut this = unsafe { bun_core::heap::take(WriteFileWindows::from_uv_fs(req)) };
+            let mut this = unsafe { WriteFileWindows::take_from_uv_fs(req) };
             let rc = this.io_request.result;
             if let Some(err) = rc.to_error(sys::Tag::write) {
                 fold(this.throw(err));
@@ -708,7 +708,6 @@ mod windows_impl {
         fn on_finish(mut self: Box<Self>) -> jsc::JsResult<()> {
             let _exit = self.event_loop.enter_scope();
 
-            // We don't need to enqueue task since this is already in a task.
             let (mut promise, global_this) = (self.promise.take(), self.global_this);
             let _context =
                 bun_jsc::virtual_machine::VirtualMachine::get().enter_context(self.context);

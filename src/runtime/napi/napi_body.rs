@@ -1,6 +1,6 @@
 //! Node-API (N-API) implementation.
 
-use core::cell::Cell;
+use core::cell::{Cell, UnsafeCell};
 use core::ffi::{c_char, c_int, c_uint, c_void};
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr;
@@ -16,8 +16,7 @@ use bun_jsc::bun_string_jsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    StrongOptional, Task,
+    self as jsc, Debugger, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StrongOptional, Task,
 };
 use bun_threading::Condition as Condvar;
 use bun_threading::Mutex;
@@ -52,7 +51,7 @@ impl Taskable for napi_async_work {
         let global = VirtualMachine::get().global();
         // `Err` is left pending for the release dispatcher's fold.
         // SAFETY: fn contract — the addon's live work object the pool posted.
-        let _ = unsafe { (*this).run_from_js(global) };
+        let _ = unsafe { Self::run_from_js(this, global) };
     }
     /// An addon's completion always runs (it frees the work there): `NapiEnv::complete_in_context`
     /// enters the context that queued it, and refuses calls into script if that context has stopped.
@@ -126,6 +125,11 @@ impl NapiEnv {
     pub(crate) fn to_js(&self) -> &JSGlobalObject {
         // SAFETY: NapiEnv__globalObject always returns a valid non-null pointer.
         unsafe { &*NapiEnv__globalObject(self.as_mut_ptr()) }
+    }
+
+    fn retain(&self) -> NapiEnvRef {
+        // SAFETY: `self` is a live C++-owned napi_env.
+        unsafe { NapiEnvRef::clone_from_raw(self.as_mut_ptr()) }
     }
 
     /// Any thread holding an env ref: the env's VM handle.
@@ -1926,101 +1930,77 @@ pub(super) enum AsyncWorkStatus {
 
 /// must be globally allocated
 pub(crate) struct napi_async_work {
-    pub task: WorkPoolTask,
-    pub(crate) concurrent_task: ConcurrentTask,
-    /// Held while the work is out on the pool (`schedule` until it is posted
-    /// back): how the pool thread delivers completion / cancellation, and what
-    /// makes the VM wait for it.
-    pub(crate) ticket: Option<bun_jsc::Ticket>,
-    /// JS thread only.
-    pub global: GlobalRef,
-    pub(crate) env: NapiEnvRef,
-    pub(crate) execute: napi_async_execute_callback,
-    pub(crate) complete: Option<napi_async_complete_callback>,
-    pub(crate) data: *mut c_void,
-    pub(crate) status: AtomicU32, // AsyncWorkStatus
-    pub(crate) scheduled: bool,
-    pub poll_ref: JsKeepAlive,
+    /// The pool's from `schedule` until it posts the work back.
+    trip: UnsafeCell<PoolTrip>,
+    status: AtomicU32, // AsyncWorkStatus
+    data: *mut c_void,
+    /// Taken by `run_from_js`, which needs the env for longer than the work lives.
+    env: Cell<Option<NapiEnvRef>>,
+    complete: Option<napi_async_complete_callback>,
+    scheduled: Cell<bool>,
+    poll_ref: Cell<JsKeepAlive>,
     /// The context whose script created the work: `complete` runs in it.
-    pub(crate) context: bun_jsc::ContextId,
+    context: bun_jsc::ContextId,
 }
 
-bun_threading::intrusive_work_task!(napi_async_work, task);
+struct PoolTrip {
+    task: WorkPoolTask,
+    concurrent_task: ConcurrentTask,
+    /// How the pool thread delivers completion / cancellation, and what makes the VM wait for it.
+    ticket: Option<bun_jsc::Ticket>,
+    env: napi_env,
+    execute: napi_async_execute_callback,
+}
+
+bun_threading::intrusive_work_task!(PoolTrip, task);
 
 impl napi_async_work {
-    pub(crate) fn new(
-        env: &NapiEnv,
-        execute: napi_async_execute_callback,
-        complete: Option<napi_async_complete_callback>,
-        data: *mut c_void,
-    ) -> *mut napi_async_work {
-        let global = env.to_js();
-
-        bun_core::heap::into_raw(Box::new(napi_async_work {
-            task: WorkPoolTask {
-                node: bun_threading::thread_pool::Node::default(),
-                callback: Self::run_from_thread_pool,
-            },
-            concurrent_task: ConcurrentTask::default(),
-            global: GlobalRef::from(global),
-            // SAFETY: env outlives the async work; clone bumps the C++ refcount.
-            env: unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) },
-            execute,
-            ticket: None,
-            complete,
-            data,
-            status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
-            scheduled: false,
-            poll_ref: JsKeepAlive::default(),
-            context: global.bun_vm().context_of_caller().id(),
-        }))
-    }
-
-    pub(crate) fn destroy(this: *mut napi_async_work) {
-        // SAFETY: `this` was created by heap::alloc in `new`.
-        // env.deinit() runs via Drop on NapiEnvRef.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
-
     /// Returns false if the VM is closed. The addon still has to delete the work.
-    pub(crate) fn schedule(&mut self) -> bool {
-        if self.scheduled {
+    ///
+    /// SAFETY: as [`napi_queue_async_work`].
+    unsafe fn schedule(&self) -> bool {
+        if self.scheduled.get() {
             return true;
         }
-        let vm = self.global.bun_vm();
+        let vm = VirtualMachine::get();
         // A finalizer can call this during the GC that destroys the heap.
         if vm.closed() {
             return false;
         }
-        self.scheduled = true;
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
+        self.scheduled.set(true);
+        self.poll_ref.set(JsKeepAlive::active());
         // The work object belongs to the addon and `execute` receives this
         // env, so the VM waits for it (Node likewise settles its threadpool
         // requests before an environment is freed).
-        self.ticket = Some(vm.ticket());
-        // SAFETY: `self.env` keeps the env alive.
-        unsafe { NapiEnv__asyncWorkEnteredThreadPool(self.env.get()) };
-        WorkPool::schedule(&raw mut self.task);
+        let ticket = vm.ticket();
+        let trip = UnsafeCell::raw_get(&raw const self.trip);
+        // SAFETY: the work was not scheduled, so nothing else has `trip`, and `self.env` keeps the env alive.
+        unsafe {
+            (*trip).ticket = Some(ticket);
+            NapiEnv__asyncWorkEnteredThreadPool((*trip).env);
+            WorkPool::schedule(&raw mut (*trip).task);
+        }
         true
     }
 
-    pub(crate) unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: `task` is the `task` field of a live heap `napi_async_work`,
-        // exclusively owned by the work pool for this callback's duration.
-        unsafe { (*napi_async_work::from_task_ptr(task)).run() };
-    }
-
-    fn run(&mut self) {
-        let self_ptr: *mut Self = self;
-        // Moved out: the JS thread may free `self` the moment it is posted back.
-        let ticket = self
+    /// SAFETY: `task` is the one that `schedule` handed to the pool.
+    unsafe fn run_from_thread_pool(task: *mut WorkPoolTask) {
+        // SAFETY: the addon deletes no work before its `complete` is called, and `trip` is the
+        // pool's. `napi_cancel_async_work` can be running, so the rest is only shared.
+        let (this, trip, status, data) = unsafe {
+            let trip = PoolTrip::from_task_ptr(task);
+            let this = bun_core::from_field_ptr!(Self, trip, trip);
+            (this, &mut *trip, &(*this).status, (*this).data)
+        };
+        // Moved out: the JS thread may free the work the moment it is posted back.
+        let ticket = trip
             .ticket
             .take()
             .expect("scheduled napi async work holds a ticket");
         // A VM that is already stopping cancels work it has not started, as
         // Node's environment cleanup does (uv_cancel).
         let started = ticket.script_allowed()
-            && match self.status.compare_exchange(
+            && match status.compare_exchange(
                 AsyncWorkStatus::Pending as u32,
                 AsyncWorkStatus::Started as u32,
                 Ordering::SeqCst,
@@ -2030,29 +2010,20 @@ impl napi_async_work {
                 Err(state) => state != AsyncWorkStatus::Cancelled as u32,
             };
         if started {
-            (self.execute)(self.env.get(), self.data);
-            self.status
-                .store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
+            // SAFETY: `napi_create_async_work`'s contract. The work keeps the env alive until it is posted back.
+            unsafe { (trip.execute)(trip.env, data) };
+            status.store(AsyncWorkStatus::Completed as u32, Ordering::SeqCst);
         } else {
-            let _ = self.cancel();
+            let _ = Self::cancel(status);
         }
-        // SAFETY: `self.env` keeps the env alive, and `self` is live until it is posted back.
-        unsafe { NapiEnv__asyncWorkLeftThreadPool(self.env.get()) };
-        self.post_to_js_thread(self_ptr, &ticket);
+        // SAFETY: as above.
+        unsafe { NapiEnv__asyncWorkLeftThreadPool(trip.env) };
+        // A VM tearing down runs `complete` from its queue release, as Node does at environment cleanup.
+        ticket.post_intrusive(ptr::NonNull::from(trip.concurrent_task.from(this)));
     }
 
-    /// Pool thread → JS thread: run `complete` there. `concurrent_task` is the
-    /// live inline field of this heap work; the queue takes ownership of its
-    /// `next` link. A VM tearing down runs `complete` from its queue release
-    /// (status cancelled if `execute` never ran), as Node does at environment
-    /// cleanup.
-    fn post_to_js_thread(&mut self, self_ptr: *mut Self, ticket: &bun_jsc::Ticket) {
-        let ct = core::ptr::NonNull::from(self.concurrent_task.from(self_ptr));
-        ticket.post_intrusive(ct);
-    }
-
-    pub(crate) fn cancel(&mut self) -> bool {
-        self.status
+    fn cancel(status: &AtomicU32) -> bool {
+        status
             .compare_exchange(
                 AsyncWorkStatus::Pending as u32,
                 AsyncWorkStatus::Cancelled as u32,
@@ -2062,31 +2033,40 @@ impl napi_async_work {
             .is_ok()
     }
 
-    pub(crate) fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<()> {
-        // Note: the "this" value here may already be freed by the user in `complete`
-        let _poll_ref = core::mem::take(&mut self.poll_ref);
+    /// SAFETY: `this` is the work that the pool posted back, on the thread it was posted to.
+    pub(crate) unsafe fn run_from_js(this: *mut Self, global: &JSGlobalObject) -> JsResult<()> {
+        let (_poll_ref, env, complete, status, data, context) = {
+            // SAFETY: fn contract. The borrow ends here, because `complete` usually deletes the work.
+            let work = unsafe { &*this };
+            (
+                work.poll_ref.take(),
+                work.env.take(),
+                work.complete,
+                work.status.load(Ordering::SeqCst),
+                work.data,
+                work.context,
+            )
+        };
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
-        let Some(complete) = self.complete else {
+        let (Some(complete), Some(env)) = (complete, env) else {
             return Ok(());
         };
 
-        let env = self.env.get();
-        // SAFETY: env is held alive by NapiEnvRef for the duration of this call.
-        let env_ref = unsafe { &*env };
-        let _hs = NapiHandleScope::open_scoped(env_ref);
+        let _hs = NapiHandleScope::open_scoped(&env);
 
-        let status: NapiStatus =
-            if self.status.load(Ordering::SeqCst) == AsyncWorkStatus::Cancelled as u32 {
-                NapiStatus::cancelled
-            } else {
-                NapiStatus::ok
-            };
+        let status: NapiStatus = if status == AsyncWorkStatus::Cancelled as u32 {
+            NapiStatus::cancelled
+        } else {
+            NapiStatus::ok
+        };
 
-        let data = self.data;
-        env_ref.complete_in_context(self.context, || complete(env, status as napi_status, data));
+        env.complete_in_context(context, || {
+            // SAFETY: `napi_create_async_work`'s contract.
+            unsafe { complete(env.get(), status as napi_status, data) }
+        });
 
-        env_ref.surface_exception(global)
+        env.surface_exception(global)
     }
 }
 
@@ -2101,8 +2081,9 @@ pub(crate) enum napi_threadsafe_function_release_mode {
 
 const NAPI_TSFN_BLOCKING: c_uint = 1;
 type napi_threadsafe_function_call_mode = c_uint;
-pub(super) type napi_async_execute_callback = extern "C" fn(napi_env, *mut c_void);
-pub(super) type napi_async_complete_callback = extern "C" fn(napi_env, napi_status, *mut c_void);
+pub(super) type napi_async_execute_callback = unsafe extern "C" fn(napi_env, *mut c_void);
+pub(super) type napi_async_complete_callback =
+    unsafe extern "C" fn(napi_env, napi_status, *mut c_void);
 pub(super) type napi_threadsafe_function_call_js =
     extern "C" fn(napi_env, napi_value, *mut c_void, *mut c_void);
 
@@ -2315,8 +2296,9 @@ unsafe extern "C" {
     ) -> napi_status;
 }
 
+/// SAFETY: `execute_` takes `data` on a pool thread, and `complete` takes it on this one afterwards.
 #[unsafe(no_mangle)]
-extern "C" fn napi_create_async_work(
+unsafe extern "C" fn napi_create_async_work(
     env_: Option<&NapiEnv>,
     _async_resource: napi_value,
     _async_resource_name: *const c_char,
@@ -2332,39 +2314,55 @@ extern "C" fn napi_create_async_work(
     let Some(execute) = execute_ else {
         return env.invalid_arg();
     };
-    result.write(napi_async_work::new(env, execute, complete, data));
+    result.write(bun_core::heap::into_raw(Box::new(napi_async_work {
+        trip: UnsafeCell::new(PoolTrip {
+            task: WorkPoolTask {
+                node: bun_threading::thread_pool::Node::default(),
+                callback: napi_async_work::run_from_thread_pool,
+            },
+            concurrent_task: ConcurrentTask::default(),
+            ticket: None,
+            env: env.as_mut_ptr(),
+            execute,
+        }),
+        status: AtomicU32::new(AsyncWorkStatus::Pending as u32),
+        data,
+        env: Cell::new(Some(env.retain())),
+        complete,
+        scheduled: Cell::new(false),
+        poll_ref: Cell::default(),
+        context: env.to_js().bun_vm().context_of_caller().id(),
+    })));
     env.ok()
 }
 
 #[unsafe(no_mangle)]
 extern "C" fn napi_delete_async_work(
     env_: Option<&NapiEnv>,
-    work_: *mut napi_async_work,
+    work_: Returned<napi_async_work>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_delete_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = work_ else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    napi_async_work::destroy(work_);
+    drop(ManuallyDrop::into_inner(work));
     env.ok()
 }
 
+/// SAFETY: the addon does not delete the work before its `complete` is called.
 #[unsafe(no_mangle)]
-extern "C" fn napi_queue_async_work(
+unsafe extern "C" fn napi_queue_async_work(
     env_: Option<&NapiEnv>,
-    work_: *mut napi_async_work,
+    work_: Option<&napi_async_work>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_queue_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = work_ else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    if !work.schedule() {
+    // SAFETY: fn contract.
+    if !unsafe { work.schedule() } {
         return env.cannot_run_js();
     }
     env.ok()
@@ -2373,16 +2371,14 @@ extern "C" fn napi_queue_async_work(
 #[unsafe(no_mangle)]
 extern "C" fn napi_cancel_async_work(
     env_: Option<&NapiEnv>,
-    work_: *mut napi_async_work,
+    work_: Option<&napi_async_work>,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_cancel_async_work");
     let env = get_env!(env_);
-    // SAFETY: `work_` is null or the `napi_async_work` we allocated in `napi_create_async_work`.
-    let Some(work) = (unsafe { work_.as_mut() }) else {
+    let Some(work) = work_ else {
         return env.invalid_arg();
     };
-    debug_assert!(core::ptr::eq(env.to_js(), work.global.as_ptr()));
-    if work.cancel() {
+    if napi_async_work::cancel(&work.status) {
         return env.ok();
     }
 
@@ -2570,8 +2566,7 @@ extern "C" fn Bun__napi_enqueue_finalizer(
     };
     let this = Finalizer {
         fun,
-        // SAFETY: env_ref points to a live C++-owned napi_env.
-        env: unsafe { NapiEnvRef::clone_from_raw(env_ref.as_mut_ptr()) },
+        env: env_ref.retain(),
         data,
         hint,
     };
@@ -3373,8 +3368,7 @@ extern "C" fn napi_create_threadsafe_function(
         event_loop: Some(bun_ptr::BackRef::new(vm.event_loop())),
         handle: vm.handle(),
         loop_kind: vm.current_loop_kind(),
-        // SAFETY: env is a live C++-owned napi_env.
-        env: Some(unsafe { NapiEnvRef::clone_from_raw(env.as_mut_ptr()) }),
+        env: Some(env.retain()),
         callback,
         ctx: context,
         queue: TsfnQueue::init(max_queue_size),

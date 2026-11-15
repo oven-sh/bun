@@ -72,6 +72,7 @@ use crate::cli::open::Editor;
 use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
+use bun_ptr::CellExt as _;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd};
 use bun_zlib as zlib;
@@ -562,7 +563,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     // This makes `eval('require.main === module')` work when the main module is a symlink.
     // This behavior differs slightly from Node. Node sets the `id` to `.` when the main module is a symlink.
     'use_resolved_path: {
-        if vm.main_resolved_path.get().is_empty() {
+        if vm.main_resolved_path.with_taken(|path| path.is_empty()) {
             // If it's from eval, don't try to resolve it.
             if strings::ends_with(main, b"[eval]") {
                 break 'use_resolved_path;
@@ -616,8 +617,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
 
         return vm
             .main_resolved_path
-            .get()
-            .to_js(global_this)
+            .with_taken(|path| path.to_js(global_this))
             .or_pending_exception();
     }
 

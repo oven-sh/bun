@@ -1,5 +1,7 @@
 //! `Bun.FileSystemRouter` / `MatchedRoute` — Next.js-style file router.
 
+use core::cell::OnceCell;
+
 use bun_paths::strings;
 
 use bun_ast as Log;
@@ -325,7 +327,7 @@ impl FileSystemRouter {
             query_start: path.slice().len() - url_path.query_string.len(),
             pathname: path,
             params_list,
-            param_map: JsCell::new(None),
+            param_map: OnceCell::new(),
             origin: self.origin.clone(),
             asset_prefix: self.asset_prefix.clone(),
             base_dir: self.base_dir.clone(),
@@ -376,7 +378,7 @@ pub(crate) struct MatchedRoute {
     query_start: usize,
     params_list: route_param::List<'static>,
     /// Made by the first of `params` and `query` to need it.
-    param_map: JsCell<Option<QueryStringMap<'static>>>,
+    param_map: OnceCell<QueryStringMap<'static>>,
     origin: Option<WTFString>,
     asset_prefix: Option<WTFString>,
     base_dir: WTFString,
@@ -438,15 +440,17 @@ impl MatchedRoute {
             return Self::create_query_object(heap, None);
         }
 
-        if self.param_map.get().is_none() {
-            self.param_map.set(QueryStringMap::init_with_route_params(
+        if self.param_map.get().is_none()
+            && let Some(map) = QueryStringMap::init_with_route_params(
                 b"",
                 self.pathname_without_leading_slash(),
                 &self.params_list,
-            )?);
+            )?
+        {
+            let _ = self.param_map.set(map);
         }
 
-        Self::create_query_object(heap, self.param_map.get().as_ref())
+        Self::create_query_object(heap, self.param_map.get())
     }
 
     pub(crate) fn get_pathname(&self) -> impl AsRef<[u8]> {

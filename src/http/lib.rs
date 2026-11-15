@@ -1720,8 +1720,7 @@ impl<'a> HTTPClient<'a> {
                     // continue until we are aborted or not
                     return true;
                 }
-                // SAFETY: the callers are the handshake handlers of the socket and of the tunnel.
-                if !enforce || unsafe { uws::check_server_identity(ssl, hostname) } {
+                if !enforce || uws::check_server_identity(ssl, hostname) {
                     return true;
                 }
             }

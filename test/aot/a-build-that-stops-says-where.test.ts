@@ -5,7 +5,7 @@ import { rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isLinux, isWindows, raiseDoesNothing, tempDir } from "harness";
 import { constants } from "os";
 import { join } from "path";
-import { without } from "./harness/capabilities";
+import { cCompiler, without } from "./harness/capabilities";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./harness/commands";
 import { afterAll } from "./harness/default-timeout";
 import { buildEnvironment } from "./harness/flags";
@@ -108,7 +108,7 @@ describe("compile/aot/a build that stops says where", () => {
   test.skipIf(!isLinux || !!without("a C compiler"))(
     "a build that takes long, which SIGTERM cannot end, says what it is still compiling and exits with 128 + the number of the signal",
     async () => {
-      const env = { ...(await raiseDoesNothing.env()), ...withoutCrashReport };
+      const env = { ...(await raiseDoesNothing.env(cCompiler!)), ...withoutCrashReport };
       expect(await endWhileItCompiles("SIGTERM", env)).toEqual({
         stderr: expect.stringMatching(/^Still compiling .+ in (walk|sweep|emit|allocate|encode)\.$/m),
         signal: null,

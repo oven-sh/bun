@@ -2717,8 +2717,7 @@ export const pidNamespace = {
 
 let raiseDoesNothingShim: Promise<string> | undefined;
 
-async function compileRaiseDoesNothingShim(): Promise<string> {
-  const cc = which("cc") || which("clang") || which("gcc");
+async function compileRaiseDoesNothingShim(cc = which("cc") || which("clang") || which("gcc")): Promise<string> {
   if (!cc) throw new Error("raiseDoesNothing: no C compiler (cc/clang/gcc) found in $PATH");
   const shim = join(tmpdirSync("raise-does-nothing-"), "shim.so");
   const source = join(import.meta.dir, "fixtures", "raise-does-nothing-shim.c");
@@ -2740,17 +2739,21 @@ async function compileRaiseDoesNothingShim(): Promise<string> {
  * needing such a namespace: `env()` preloads a `raise()` that does nothing.
  */
 export const raiseDoesNothing = {
-  /** Linux with a C compiler; `skipIf(!raiseDoesNothing.available)`. */
+  /** Linux with a C compiler in $PATH; `skipIf(!raiseDoesNothing.available)`. */
   get available(): boolean {
     return isLinux && !!(which("cc") || which("clang") || which("gcc"));
   },
-  /** Compiles the shim the first time it is called, and resolves to its path. */
-  shim(): Promise<string> {
-    return (raiseDoesNothingShim ??= compileRaiseDoesNothingShim());
+  /**
+   * Compiles the shim the first time it is called, and resolves to its path.
+   * A test that skips itself by another check than `available` names in `cc`
+   * the compiler which that check found.
+   */
+  shim(cc?: string): Promise<string> {
+    return (raiseDoesNothingShim ??= compileRaiseDoesNothingShim(cc));
   },
-  /** Spawn bun with the returned env. */
-  async env(): Promise<NodeJS.Dict<string>> {
-    const shim = await raiseDoesNothing.shim();
+  /** Spawn bun with the returned env. `cc` is as for `shim()`. */
+  async env(cc?: string): Promise<NodeJS.Dict<string>> {
+    const shim = await raiseDoesNothing.shim(cc);
     return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
   },
 };

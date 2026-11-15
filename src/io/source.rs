@@ -117,7 +117,7 @@ impl OpenFile {
         })
     }
 
-    /// SAFETY: the bytes of `iov` stay until `callback` runs or they are moved to `buffer`.
+    /// SAFETY: on `Ok` the bytes of `iov` stay until `callback` runs.
     pub(crate) unsafe fn submit_write(
         &self,
         iov: uv::uv_buf_t,
@@ -189,7 +189,7 @@ pub struct File {
     fs: UnsafeCell<uv::fs_t>,
 
     /// The reader or writer that hears of a completion.
-    pub(crate) parent: Cell<*mut c_void>,
+    parent: Cell<*mut c_void>,
 
     loop_: &'static bun_uws_sys::Loop,
 
@@ -261,14 +261,14 @@ impl File {
 
     /// Mark the file as in-use for an operation.
     /// Must only be called when can_start() returns true.
-    pub(crate) fn prepare(&self) {
+    fn prepare(&self) {
         debug_assert!(self.can_start());
         self.state.set(FileState::Operating);
     }
 
     /// Mark the operation as complete and clean up.
     /// SAFETY: libuv has refused the operation, or is calling its callback.
-    pub(crate) unsafe fn complete(&self, was_canceled: bool) {
+    unsafe fn complete(&self, was_canceled: bool) {
         debug_assert!(self.is_busy());
         if was_canceled {
             debug_assert!(self.state.get() == FileState::Canceling);

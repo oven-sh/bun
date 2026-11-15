@@ -107,6 +107,16 @@ test/js/bun/test/mock/mock-module.test.ts: a module that is linked, but not eval
 test/js/bun/test/mock/mock-module.test.ts: a test file that has mocked modules > doesn't leak the modules that imported a mock after it ends
 test/js/bun/test/mock/mock-module.test.ts: a test file's module mocks are undone when it ends > also when the file fails to load, or has already removed the mock itself
 test/js/bun/test/mock/mock-module.test.ts: requiring the original of a module in a cycle before its async factory runs throws, and the mock still loads
+# The next two: a sum, an enum member or a string behind `?.` is the key, as in `vi?.["importActual"](path)`. Plain prints `vi.importActual(path)` for each and reads the path. Compiled takes each for a request of the mocked module and runs that first.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module by a folded key ["--coverage"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module by a folded key []
+# The next six cannot pass: --aot refuses --inspect, as docs/compiler/debugging.mdx says.
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is evaluated before a factory that requests it by name, however the factory is passed ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is evaluated before a factory that requests it in another wording ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a factory that requests another module by a folded key ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a package that a preload mocks with the original of another ["--inspect=127.0.0.1:0"]
+test/js/bun/test/mock/mock-module.test.ts: the original of a mocked module > is not evaluated for a request in code that never runs ["--inspect=127.0.0.1:0"]
 test/js/bun/test/vitest-flavor.test.ts: [test] globals = "vitest" > is part of the transpiler cache key
 test/js/bun/test/import-meta-env.test.ts: import.meta.env > in other realms
 # These ask about the transpiler cache, which a compiled run doesn't use: they say nothing about compiled code.

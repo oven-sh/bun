@@ -12,7 +12,7 @@ use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_install::package_manager::workspace_selection;
-use bun_io::BufferedReader;
+use bun_io::{BufferedReader, IoEvent, Owner, PollTag};
 use bun_paths as path;
 
 use crate::Command;
@@ -82,8 +82,8 @@ impl Shared {
     }
 }
 
-/// Parent of a reader: prints what a script writes to stdout or to stderr, line by line.
-pub(crate) struct ScriptOutput<'a> {
+/// Prints what a script writes to stdout or to stderr, line by line.
+struct ScriptOutput<'a> {
     shared: &'a Shared,
     config: &'a ScriptConfig,
     is_stderr: bool,
@@ -128,18 +128,7 @@ impl ScriptOutput<'_> {
     }
 }
 
-bun_io::impl_buffered_reader_parent! {
-    MultiRunPipeReader for ScriptOutput<'a>;
-    feature = Tools;
-    has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, _has_more| { let _ = (*this).read_chunk(&chunk); true };
-    on_reader_done  = |_this| {};
-    on_reader_error = |_this, _err| {};
-    loop_           = |this| bun_io::uws_to_native((*this).shared.event_loop.loop_);
-    event_loop      = |this| (*this).shared.event_loop.as_event_loop_ctx();
-}
-
-struct PipeReader<'a> {
+pub(crate) struct PipeReader<'a> {
     reader: BufferedReader,
     output: ScriptOutput<'a>,
 }
@@ -147,7 +136,7 @@ struct PipeReader<'a> {
 impl<'a> PipeReader<'a> {
     fn new(shared: &'a Shared, config: &'a ScriptConfig, is_stderr: bool) -> Self {
         Self {
-            reader: BufferedReader::init::<ScriptOutput>(),
+            reader: BufferedReader::init(),
             output: ScriptOutput {
                 shared,
                 config,
@@ -157,18 +146,24 @@ impl<'a> PipeReader<'a> {
         }
     }
 
+    /// The exit of the process ends the script, not the end of a reader.
+    pub(crate) fn read(&mut self, event: Option<IoEvent>) {
+        let event_loop = self.output.shared.event_loop.as_event_loop_ctx();
+        let _ = self.reader.read_chunks(event_loop, event, |chunk, _| {
+            let _ = self.output.read_chunk(&chunk);
+            true
+        });
+    }
+
     /// After the exit: a leftover child may hold the pipe open, so its EOF may never come.
     fn drain_and_close(&mut self) {
-        let reader = &mut self.reader;
         // Windows has no synchronous drain.
         #[cfg(unix)]
-        if !reader.is_done() && reader.get_fd() != bun_sys::Fd::INVALID {
-            reader.set_parent((&raw mut self.output).cast());
-            // SAFETY: the callbacks reach only `self.output`, which `&mut self` covers.
-            unsafe { BufferedReader::read(reader) };
+        if !self.reader.is_done() && self.reader.get_fd() != bun_sys::Fd::INVALID {
+            self.read(None);
         }
-        if !reader.is_done() {
-            reader.deinit();
+        if !self.reader.is_done() {
+            self.reader.deinit();
         }
     }
 }
@@ -224,7 +219,9 @@ impl<'a> ProcessHandle<'a> {
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(self.shared.event_loop));
 
         for pipe in [&mut self.stdout_reader, &mut self.stderr_reader] {
-            pipe.reader.set_parent((&raw mut pipe.output).cast());
+            let owner = Owner::new(PollTag::MultiRun, std::ptr::from_mut(pipe).cast());
+            // SAFETY: a field of its owner, whose slot in `State.handles` does not move.
+            unsafe { pipe.reader.set_owner(owner) };
         }
 
         #[cfg(windows)]
@@ -242,20 +239,14 @@ impl<'a> ProcessHandle<'a> {
         }
 
         #[cfg(unix)]
-        {
-            if let Some(stdout_fd) = stdout_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stdout_fd);
-                self.stdout_reader
-                    .reader
-                    .start(stdout_fd, true)
-                    .map_err(Error::from)?;
-            }
-            if let Some(stderr_fd) = stderr_pipe.map(bun_sys::File::into_raw) {
-                let _ = bun_sys::set_nonblocking(stderr_fd);
-                self.stderr_reader
-                    .reader
-                    .start(stderr_fd, true)
-                    .map_err(Error::from)?;
+        for (pipe, file) in [
+            (&self.stdout_reader, stdout_pipe),
+            (&self.stderr_reader, stderr_pipe),
+        ] {
+            if let Some(fd) = file.map(bun_sys::File::into_raw) {
+                let _ = bun_sys::set_nonblocking(fd);
+                let event_loop = self.shared.event_loop.as_event_loop_ctx();
+                let _ = pipe.reader.start(event_loop, fd, true)?;
             }
         }
         #[cfg(not(unix))]

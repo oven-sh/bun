@@ -1409,7 +1409,7 @@ impl CodeHost for LoadHost<'_> {
 
     fn types_asked_where_options_are_unread(&self, path: &[u8]) -> &'static [&'static [u8]] {
         const ALL: &[&[u8]] = &[
-            b"json", b"jsonc", b"json5", b"toml", b"yaml", b"xml", b"text",
+            b"json", b"jsonc", b"json5", b"toml", b"yaml", b"xml", b"text", b"file",
         ];
         let options = &self.input.options.aot;
         let hides_source = !options.embeds_function_source || options.hides_names();

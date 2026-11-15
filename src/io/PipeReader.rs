@@ -5,11 +5,11 @@ use bun_sys::{self as sys, Fd};
 
 use crate::{EventLoopHandle, LoopRef};
 #[cfg(unix)]
-use crate::{FilePollKind, Owner, PollTag};
+use crate::{FilePoll, FilePollFlag, Owner, PollTag};
 
 /// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
-/// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
+/// dispatch in `bun_runtime::dispatch::__bun_run_io` recovers the type
 /// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
 use crate::max_buf::MaxBuf;
 use crate::pipes::{Chunk, ReadState};
@@ -100,6 +100,7 @@ impl BufferedReaderVTable {
         self.link().event_loop()
     }
 
+    #[cfg(windows)]
     fn loop_(&self) -> LoopRef {
         self.link().loop_()
     }
@@ -218,7 +219,7 @@ impl PosixFlags {
 impl PosixBufferedReader {
     pub fn init<T: BufferedReaderParent>() -> PosixBufferedReader {
         PosixBufferedReader {
-            handle: PollOrFd::Closed,
+            handle: PollOrFd::closed(),
             rwf_unsupported: core::cell::Cell::new(false),
             _buffer: Vec::new(),
             _offset: 0,
@@ -233,14 +234,12 @@ impl PosixBufferedReader {
         // Remember the ref state so a poll created later (lazy start) honours
         // an unref() that preceded the first registration.
         self.flags.set(PosixFlags::KEEP_ALIVE, value);
-        let Some(poll) = self.handle.get_poll() else {
-            return;
-        };
-        // An unarmed poll delivers nothing; `try_register_poll` applies KEEP_ALIVE when it arms.
-        if value && !poll.is_watching() {
-            return;
-        }
-        poll.set_keeping_process_alive(self.vtable.event_loop(), value);
+        self.handle.with_poll(|poll| {
+            // An unarmed poll delivers nothing; `try_register_poll` applies KEEP_ALIVE when it arms.
+            if !value || poll.is_watching() {
+                poll.set_keeping_process_alive(value);
+            }
+        });
     }
 
     #[inline]
@@ -257,7 +256,7 @@ impl PosixBufferedReader {
     pub fn from(&mut self, other: &mut PosixBufferedReader, parent: *mut c_void) {
         let kind = self.vtable.kind;
         *self = PosixBufferedReader {
-            handle: mem::replace(&mut other.handle, PollOrFd::Closed),
+            handle: PollOrFd::closed(),
             rwf_unsupported: other.rwf_unsupported.clone(),
             _buffer: mem::take(other.buffer()),
             _offset: other._offset,
@@ -269,11 +268,8 @@ impl PosixBufferedReader {
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
         other.limit = ReadLimit::NONE;
-        // Capture *mut Self before borrowing `handle` so the owner pointer
-        // doesn't conflict with the field borrow.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle
-            .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+        self.set_parent(parent);
+        self.handle.take_from(&other.handle);
 
         // note: the caller is supposed to drain the buffer themselves
         // doing it here automatically makes it very easy to end up reading from the same buffer multiple times.
@@ -281,16 +277,14 @@ impl PosixBufferedReader {
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.vtable.parent = parent;
-        // Capture *mut Self before borrowing `handle` so the owner pointer
-        // doesn't conflict with the field borrow.
-        let owner = std::ptr::from_mut(self).cast::<c_void>();
-        self.handle
-            .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
+        let owner = Owner::new(PollTag::BufferedReader, std::ptr::from_mut(self).cast());
+        // SAFETY: `handle` is a field of its owner.
+        unsafe { self.handle.set_owner(owner) };
     }
 
     pub fn start_memfd(&mut self, fd: Fd) {
         self.flags.insert(PosixFlags::MEMFD);
-        self.handle = PollOrFd::Fd(fd);
+        self.handle.set_fd(fd);
     }
 
     pub(crate) fn get_file_type(&self) -> FileType {
@@ -332,8 +326,7 @@ impl PosixBufferedReader {
             debug_assert!(!self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING));
             self.flags.insert(PosixFlags::CLOSED_WITHOUT_REPORTING);
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-                let owner = std::ptr::from_mut(self).cast::<c_void>();
-                self.handle.close(Some(owner), None::<fn(*mut c_void)>);
+                self.handle.close();
             }
         }
     }
@@ -349,11 +342,11 @@ impl PosixBufferedReader {
         self.flags.insert(PosixFlags::IS_PAUSED);
 
         // Unregister the FilePoll if it's registered
-        if let Some(poll) = self.handle.get_poll() {
+        self.handle.with_poll(|poll| {
             if poll.is_registered() {
-                let _ = poll.unregister(self.vtable.loop_(), false);
+                let _ = poll.unregister(false);
             }
-        }
+        });
     }
 
     pub fn unpause(&mut self) {
@@ -370,14 +363,15 @@ impl PosixBufferedReader {
 
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         if self.flags.contains(PosixFlags::MEMFD) {
-            if let PollOrFd::Fd(fd) = self.handle {
+            let fd = self.get_fd();
+            if fd != Fd::INVALID {
                 // The handle is closed after the read regardless of result.
                 // `self.handle` owns the fd;
                 // borrow a non-owning `File` view so the temporary doesn't
                 // close it on drop (handle.close() below does).
                 let result = sys::File::borrow(&fd)
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
-                self.handle.close(None, None::<fn(*mut c_void)>);
+                self.handle.close();
                 if let Err(err) = result {
                     bun_core::debug_warn!("error reading from memfd\n{}", err);
                     return self.buffer();
@@ -393,9 +387,7 @@ impl PosixBufferedReader {
     }
 
     fn finish(&mut self) {
-        if !matches!(self.handle, PollOrFd::Closed)
-            || self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING)
-        {
+        if !self.handle.is_closed() || self.flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
             if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
                 // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
                 // a protector across the (maybe-freeing) done dispatch — pre-existing
@@ -429,15 +421,9 @@ impl PosixBufferedReader {
         }
 
         // SAFETY: caller contract; the `handle` borrow is scoped to the call.
-        // The close callback receives the same raw pointer, so its `done` also
-        // runs without a receiver borrow.
         unsafe {
-            if (*this).flags.contains(PosixFlags::CLOSE_HANDLE) {
-                (*this).handle.close(
-                    Some(this.cast::<c_void>()),
-                    // SAFETY: ctx is the live reader raw pointer passed above.
-                    Some(|ctx: *mut c_void| Self::done(ctx.cast::<PosixBufferedReader>())),
-                );
+            if (*this).flags.contains(PosixFlags::CLOSE_HANDLE) && (*this).handle.close() {
+                Self::done(this);
             }
         }
     }
@@ -449,9 +435,7 @@ impl PosixBufferedReader {
     pub(crate) unsafe fn done(this: *mut Self) {
         // SAFETY: caller contract; borrows end at each `;`.
         unsafe {
-            if !matches!((*this).handle, PollOrFd::Closed)
-                && (*this).flags.contains(PosixFlags::CLOSE_HANDLE)
-            {
+            if !(*this).handle.is_closed() && (*this).flags.contains(PosixFlags::CLOSE_HANDLE) {
                 Self::close_handle(this);
                 return;
             } else if (*this).flags.contains(PosixFlags::CLOSED_WITHOUT_REPORTING) {
@@ -504,50 +488,34 @@ impl PosixBufferedReader {
         if self.flags.contains(PosixFlags::IS_PAUSED) {
             return Ok(());
         }
-        // Hoist vtable-derived scalars and
-        // normalize self.handle to Poll before taking the single &mut borrow,
-        // so no raw-pointer escape is needed.
-        let ev = self.vtable.event_loop();
-        let lp = self.vtable.loop_();
-        let owner_ptr = std::ptr::from_mut(self).cast::<c_void>();
-
-        if let PollOrFd::Fd(fd) = self.handle {
-            if !self.flags.contains(PosixFlags::POLLABLE) {
+        let fd = self.get_fd();
+        if !self.handle.has_poll() {
+            if fd == Fd::INVALID || !self.flags.contains(PosixFlags::POLLABLE) {
                 return Ok(());
             }
-            self.handle.set_poll(
-                ev,
-                fd,
-                Owner::new(PollTag::BufferedReader, owner_ptr.cast()),
-            );
+            self.set_parent(self.vtable.parent);
+            self.handle.set_poll(self.vtable.event_loop(), fd);
         }
-        let Some(poll) = self.handle.get_poll() else {
-            return Ok(());
-        };
-        poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
         // Re-applied on every arm: `pause()` unregisters, which drops it.
         if self.flags.contains(PosixFlags::KEEP_ALIVE) {
-            poll.enable_keeping_process_alive(ev);
+            (self.handle).with_poll(FilePoll::enable_keeping_process_alive);
         }
 
-        match poll.register_with_fd(lp, FilePollKind::Readable, poll.fd()) {
-            sys::Result::Err(err) => Err(err),
-            sys::Result::Ok(()) => Ok(()),
-        }
+        self.handle.register(FilePollFlag::Readable, fd)
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
         if !is_pollable {
             self.buffer().clear();
             self.flags.remove(PosixFlags::IS_DONE);
-            self.handle.close(None, None::<fn(*mut c_void)>);
-            self.handle = PollOrFd::Fd(fd);
+            self.handle.close();
+            self.handle.set_fd(fd);
             return sys::Result::Ok(());
         }
         self.flags.insert(PosixFlags::POLLABLE);
         if self.get_fd() != fd {
-            self.handle = PollOrFd::Fd(fd);
+            self.handle.set_fd(fd);
         }
         // With nothing left to read the fd is never waited on: like a non-pollable source, the parent's first read request ends the reader.
         if !self.flags.contains(PosixFlags::IS_PAUSED) && !self.limit.reached() {
@@ -577,13 +545,11 @@ impl PosixBufferedReader {
         // `is_registered()`: a one-shot poll that has fired but not been
         // re-armed will not deliver another callback, so callers that skip
         // `read()` on "pending" must not be told one is in flight.
-        matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
+        self.handle.is_watching()
     }
 
     pub fn watch(&mut self) {
-        if self.flags.contains(PosixFlags::POLLABLE)
-            && !matches!(&self.handle, PollOrFd::Poll(poll) if poll.is_watching())
-        {
+        if self.flags.contains(PosixFlags::POLLABLE) && !self.handle.is_watching() {
             // SAFETY: `self` is live. Note: this `&mut self` receiver still carries
             // a protector across the (maybe-freeing) error dispatch — pre-existing
             // on the parent chain, tracked with the raw-dispatch follow-up.
@@ -592,11 +558,7 @@ impl PosixBufferedReader {
     }
 
     pub fn has_pending_activity(&self) -> bool {
-        match &self.handle {
-            PollOrFd::Poll(poll) => poll.is_active(),
-            PollOrFd::Fd(_) => true,
-            _ => false,
-        }
+        (self.handle.with_poll(FilePoll::is_active)).unwrap_or_else(|| !self.handle.is_closed())
     }
 
     /// # Safety
@@ -990,7 +952,7 @@ enum ReadOnce {
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
         if self.flags.contains(PosixFlags::CLOSE_HANDLE) {
-            self.handle.close(None, None::<fn(*mut c_void)>);
+            self.handle.close();
         }
     }
 }

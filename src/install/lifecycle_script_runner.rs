@@ -9,9 +9,9 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::ProgressStrings;
 use bun_core::{Global, Output};
 use bun_io::BufferedReader;
-use bun_io::heap as io_heap;
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags};
+use bun_io::PosixFlags;
+use bun_io::heap as io_heap;
 
 use bun_core::{CStrList, CStrRef, CStringList, ZStr};
 #[cfg(unix)]
@@ -682,9 +682,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         if let Err(err) = (*this).stdout.start(stdout, true) {
                             (*this).exit_unspawned(err.into());
                         }
-                        if let Some(poll) = (*this).stdout.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
-                        }
                     } else {
                         (*this).stdout.start_memfd(stdout);
                     }
@@ -697,9 +694,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         Self::reset_output_flags(&mut (*this).stderr, stderr);
                         if let Err(err) = (*this).stderr.start(stderr, true) {
                             (*this).exit_unspawned(err.into());
-                        }
-                        if let Some(poll) = (*this).stderr.handle.get_poll() {
-                            poll.set_flag(FilePollFlag::Socket);
                         }
                     } else {
                         (*this).stderr.start_memfd(stderr);

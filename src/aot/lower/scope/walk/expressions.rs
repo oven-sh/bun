@@ -472,6 +472,11 @@ impl Walker<'_, '_> {
                 let slot = ScopeSlot::CommonJs(CommonJsVariable::Module);
                 self.record_slot_use(context.function, self.file_scope, slot);
             }
+            let compares_callee = is_site_of_require && !loads_module;
+            if compares_callee && self.is_value_of_run(CommonJsVariable::Require, context) {
+                let slot = ScopeSlot::CommonJs(CommonJsVariable::Require);
+                self.record_slot_use(context.function, self.file_scope, slot);
+            }
             if let Some((function, _)) = function_named_by_call(self.hir, self.bound, &call)
                 && self.walk.function_of_fn[function.idx()] == Some(context.function)
             {

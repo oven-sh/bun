@@ -1379,6 +1379,11 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     fn emit_expected_callee(&mut self, expected: BuiltinId) -> ValueId {
+        if expected == BuiltinId::ModuleRequire
+            && let Some(require) = self.find_require_of_run()
+        {
+            return require;
+        }
         match table::entry(expected).scope {
             Scope::Module => {
                 let module = self.file.module_id();

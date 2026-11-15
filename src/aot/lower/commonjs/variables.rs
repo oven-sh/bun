@@ -880,6 +880,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .then(|| self.get_commonjs_variable(CommonJsVariable::Module))
     }
 
+    pub(in crate::lower) fn find_require_of_run(&mut self) -> Option<ValueId> {
+        let variable = CommonJsVariable::Require;
+        let stored = BindingRef::Slot(module::file_scope(self.file), ScopeSlot::CommonJs(variable));
+        (self.is_function_of_file_that_runs_again()
+            && self.file.body_form() == BodyForm::Plain
+            && !is_stored(self.file, variable)
+            && self.reaches_stored(stored))
+        .then(|| self.get_commonjs_variable(variable))
+    }
+
     fn find_source(&self, variable: CommonJsVariable) -> VariableSource {
         match variable {
             CommonJsVariable::Module | CommonJsVariable::Require

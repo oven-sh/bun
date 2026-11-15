@@ -67,7 +67,7 @@ pub(crate) struct EbusyState {
 }
 
 impl Cp {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let (sources_start, target_idx) = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -81,9 +81,9 @@ impl Cp {
                     return Builtin::write_failing_error(interp, cmd, Kind::Cp.usage_string(), 1);
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Cp, &e, || {
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    });
+                    let buf = Builtin::parse_error_to_string(Kind::Cp, &e);
+                    Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                    return Builtin::write_failing_error(interp, cmd, &buf, 1);
                 }
             }
         };
@@ -102,7 +102,7 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule {
@@ -187,7 +187,7 @@ impl Cp {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -206,7 +206,7 @@ impl Cp {
     /// for the same absolute src/tgt, the EBUSY is benign and the task is
     /// dropped; otherwise its error is surfaced via `print_shell_cp_task`.
     #[cfg(windows)]
-    fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn ignore_ebusy_error_if_possible(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         loop {
             // Pop tasks one at a time, so a re-entry after the first
             // non-ignorable hit resumes behind it.
@@ -241,10 +241,10 @@ impl Cp {
     }
 
     fn on_shell_cp_task_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         #[cfg_attr(not(windows), allow(unused_mut))] mut task: Box<ShellCpTask>,
-    ) {
+    ) -> Yield {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
@@ -265,7 +265,7 @@ impl Cp {
                                     .map_or(false, |p| sys.path.eql_utf8(p)));
                     if is_ebusy {
                         exec.ebusy.tasks.push_back(task);
-                        return Self::next(interp, cmd).run(interp);
+                        return Self::next(interp, cmd);
                     }
                 } else {
                     // Record successful absolute paths so a deferred EBUSY
@@ -279,21 +279,25 @@ impl Cp {
                 }
             }
         }
-        Self::print_shell_cp_task(interp, cmd, task).run(interp);
+        Self::print_shell_cp_task(interp, cmd, task)
     }
 
     #[allow(
         clippy::boxed_local,
         reason = "reclaim point for the box the work pool handed back"
     )]
-    fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, mut task: Box<ShellCpTask>) -> Yield {
+    fn print_shell_cp_task(
+        interp: &mut Interpreter<'_>,
+        cmd: NodeId,
+        mut task: Box<ShellCpTask>,
+    ) -> Yield {
         // The lock is uncontended here (all work-pool subtasks have
         // finished) but the data lives inside it.
         let output = core::mem::take(&mut *task.verbose_output.lock());
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
         let errstr: Option<Vec<u8>> = task.err.take().map(|e| {
-            let s = Builtin::shell_err_to_string(interp, cmd, Kind::Cp, &e).to_vec();
+            let s = Builtin::shell_err_to_string(Kind::Cp, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
@@ -306,7 +310,7 @@ impl Cp {
 
 impl OutputTaskVTable for Cp {
     fn write_err(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
         errbuf: &[u8],
@@ -314,53 +318,44 @@ impl OutputTaskVTable for Cp {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
+            return ControlFlow::Break(interp.enqueue(fd, childptr, errbuf));
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         ControlFlow::Continue(child)
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
     fn write_out(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
     ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
-            Self::state_mut(interp, cmd).output_queue.push_back(child);
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            let next = interp.enqueue(fd, childptr, child.output.slice());
+            Self::state_mut(interp, cmd).output_queue.push_back(child);
+            return ControlFlow::Break(next);
         }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
         ControlFlow::Continue(child)
     }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -466,7 +461,7 @@ impl ShellCpTask {
     /// double-enqueue. The embedded [`ShellTask`] is reused for its
     /// `WorkPoolTask` / `concurrent_task` / `keep_alive` storage.
     fn schedule(
-        interp: &Interpreter,
+        interp: &Interpreter<'_>,
         cmd: NodeId,
         opts: Opts,
         operands: usize,
@@ -754,11 +749,11 @@ impl ShellTaskCtx for ShellCpTask {
             "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
         );
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter<'_>) -> Yield {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is the live heap-allocated task posted via `ShellTask::schedule`.
         let task = unsafe { bun_core::heap::take(this) };
-        Cp::on_shell_cp_task_done(interp, task.cmd, task);
+        Cp::on_shell_cp_task_done(interp, task.cmd, task)
     }
 }
 

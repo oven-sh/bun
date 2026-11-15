@@ -795,8 +795,6 @@ pub(crate) mod testing_apis {
             }
         };
 
-        // `crate::shell::ast::Script` is a `'static`-erased alias of
-        // `bun_shell_parser::ast::Script`, so it formats directly.
         Ok(format!(
             "{}",
             bun_shell_parser::json_fmt::script_json_fmt(&script_ast)

@@ -7,26 +7,25 @@
 //!
 //! So environment strings can be ref counted or borrowed slices
 
-use bun_ptr::{BackRef, RefPtr};
+use bun_ptr::RefPtr;
 
 use super::ref_counted_str::RefCountedStr;
 
 #[derive(Clone)]
-pub(crate) enum EnvStr {
-    /// Memory is managed elsewhere.
-    Slice(BackRef<[u8]>),
+pub(crate) enum EnvStr<'a> {
+    Slice(&'a [u8]),
     Refcounted(RefPtr<RefCountedStr>),
 }
 
-const _: () = assert!(size_of::<EnvStr>() == 2 * size_of::<usize>());
+const _: () = assert!(size_of::<EnvStr<'_>>() == 2 * size_of::<usize>());
 
-impl EnvStr {
+impl<'a> EnvStr<'a> {
     #[inline]
-    pub(crate) fn init_slice(str: &[u8]) -> EnvStr {
-        EnvStr::Slice(BackRef::new(str))
+    pub(crate) fn init_slice(str: &'a [u8]) -> EnvStr<'a> {
+        EnvStr::Slice(str)
     }
 
-    pub(crate) fn init_ref_counted(str: Box<[u8]>) -> EnvStr {
+    pub(crate) fn init_ref_counted(str: Box<[u8]>) -> EnvStr<'a> {
         if str.is_empty() {
             return EnvStr::init_slice(b"");
         }

@@ -58,28 +58,26 @@ enum MvParseError {
 }
 
 impl Mv {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 
     fn write_failing_error(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         buf: &[u8],
         exit_code: ExitCode,
     ) -> Yield {
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
             Self::state_mut(interp, cmd).state = MvState::WaitingWriteErr { exit_code };
             let child = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Builtin::of_mut(interp, cmd)
-                .stderr
-                .enqueue(child, buf, safeguard);
+            return interp.enqueue(fd, child, buf);
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, buf);
         Builtin::done(interp, cmd, exit_code)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         // Read the tag, drop the borrow, then act.
         enum Tag {
             Idle,
@@ -101,13 +99,10 @@ impl Mv {
             Tag::Idle => {
                 if let Err(e) = Self::parse_opts(interp, cmd) {
                     let buf: Vec<u8> = match e {
-                        MvParseError::IllegalOption(s) => Builtin::fmt_error_arena(
-                            interp,
-                            cmd,
+                        MvParseError::IllegalOption(s) => Builtin::fmt_error(
                             Some(Kind::Mv),
                             format_args!("illegal option -- {}\n", bstr::BStr::new(s)),
-                        )
-                        .to_vec(),
+                        ),
                         MvParseError::ShowUsage => Kind::Mv.usage_string().to_vec(),
                     };
                     return Self::write_failing_error(interp, cmd, &buf, 1);
@@ -134,6 +129,7 @@ impl Mv {
                     return Yield::suspended();
                 };
                 let target_idx = Self::state_mut(interp, cmd).args.target_idx;
+                let n_sources = target_idx - Self::state_mut(interp, cmd).args.sources_start;
                 let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
                 let target_fd = match result {
                     Ok(fd) => fd,
@@ -143,58 +139,40 @@ impl Mv {
                         // one source. Any other errno (EACCES, ELOOP, …)
                         // is reported and fails regardless of source count.
                         if e.get_errno() == bun_sys::E::ENOENT {
-                            let n_sources = {
-                                let me = Self::state_mut(interp, cmd);
-                                me.args.target_idx - me.args.sources_start
-                            };
                             if n_sources == 1 {
                                 None
                             } else {
-                                let buf = Builtin::fmt_error_arena(
-                                    interp,
-                                    cmd,
+                                let buf = Builtin::fmt_error(
                                     Some(Kind::Mv),
                                     format_args!(
                                         "{}: No such file or directory\n",
                                         bstr::BStr::new(target)
                                     ),
-                                )
-                                .to_vec();
+                                );
                                 return Self::write_failing_error(interp, cmd, &buf, 1);
                             }
                         } else {
                             let msg = e.msg().unwrap_or(b"unknown error");
-                            let buf = Builtin::fmt_error_arena(
-                                interp,
-                                cmd,
+                            let buf = Builtin::fmt_error(
                                 Some(Kind::Mv),
                                 format_args!(
                                     "{}: {}\n",
                                     bstr::BStr::new(target),
                                     bstr::BStr::new(msg)
                                 ),
-                            )
-                            .to_vec();
+                            );
                             return Self::write_failing_error(interp, cmd, &buf, 1);
                         }
                     }
                 };
 
                 let maybe_fd = target_fd.as_ref().map(OwnedFd::fd);
-                let n_sources = {
-                    let me = Self::state_mut(interp, cmd);
-                    me.args.target_fd = target_fd;
-                    me.args.target_idx - me.args.sources_start
-                };
                 // Trying to move multiple files into a non-directory.
                 if maybe_fd.is_none() && n_sources > 1 {
-                    let buf = Builtin::fmt_error_arena(
-                        interp,
-                        cmd,
+                    let buf = Builtin::fmt_error(
                         Some(Kind::Mv),
                         format_args!("{} is not a directory\n", bstr::BStr::new(target)),
-                    )
-                    .to_vec();
+                    );
                     return Self::write_failing_error(interp, cmd, &buf, 1);
                 }
 
@@ -203,8 +181,10 @@ impl Mv {
                 let cwd = Builtin::cwd(interp, cmd);
                 let (sources_start, no_clobber) = {
                     let me = Self::state_mut(interp, cmd);
+                    me.args.target_fd = target_fd;
                     (me.args.sources_start, me.args.no_clobber)
                 };
+                let target = Builtin::of(interp, cmd).arg_bytes(target_idx);
 
                 let mut tasks: Vec<ShellMvBatchedTask> = Vec::with_capacity(task_count);
                 for i in 0..task_count {
@@ -270,7 +250,7 @@ impl Mv {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         _: usize,
         e: Option<bun_sys::SystemError>,
@@ -287,7 +267,7 @@ impl Mv {
         }
     }
 
-    fn batched_move_task_done(interp: &Interpreter, cmd: NodeId, task_idx: usize) {
+    fn batched_move_task_done(interp: &mut Interpreter<'_>, cmd: NodeId, task_idx: usize) -> Yield {
         let (all_done, had_err, sources, was_on_disk, target, is_folder) = {
             let MvState::Executing {
                 task_count,
@@ -340,16 +320,16 @@ impl Mv {
                 };
                 // The failing rename's errno becomes the shell exit code.
                 let exit_code = e.errno as ExitCode;
-                let buf = Builtin::task_error_to_string(interp, cmd, Kind::Mv, &e).to_vec();
-                Self::write_failing_error(interp, cmd, &buf, exit_code).run(interp);
-                return;
+                let buf = Builtin::task_error_to_string(Kind::Mv, &e);
+                return Self::write_failing_error(interp, cmd, &buf, exit_code);
             }
             Self::state_mut(interp, cmd).state = MvState::Done;
-            Self::next(interp, cmd).run(interp);
+            return Self::next(interp, cmd);
         }
+        Yield::suspended()
     }
 
-    fn parse_opts(interp: &Interpreter, cmd: NodeId) -> Result<(), MvParseError> {
+    fn parse_opts(interp: &mut Interpreter<'_>, cmd: NodeId) -> Result<(), MvParseError> {
         let argc = Builtin::of(interp, cmd).args_slice().len();
         if argc == 0 {
             return Err(MvParseError::ShowUsage);
@@ -422,7 +402,7 @@ impl ShellWork for ShellMvCheckTargetTask {
             Err(e) => Err(e),
         });
     }
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
         Mv::state_mut(interp, self.cmd).state = MvState::CheckTarget(self.result.take());
         Mv::next(interp, self.cmd)
     }
@@ -816,10 +796,10 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellMvBatchedTask {
     fn run_from_thread_pool(this: &mut Self) {
         Self::run_from_thread_pool(this)
     }
-    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+    fn run_from_main_thread(this: *mut Self, interp: &mut Interpreter<'_>) -> Yield {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is a live `ShellMvBatchedTask` held in `MvState::Executing::tasks`.
-        let this = unsafe { this.as_ref() }.unwrap();
-        Mv::batched_move_task_done(interp, this.cmd, this.idx);
+        let (cmd, idx) = unsafe { ((*this).cmd, (*this).idx) };
+        Mv::batched_move_task_done(interp, cmd, idx)
     }
 }

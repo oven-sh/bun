@@ -38,7 +38,7 @@ pub(crate) struct ExecState {
 }
 
 impl Touch {
-    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let args_start = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -54,9 +54,9 @@ impl Touch {
                     );
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Touch, &e, || {
-                        Self::state_mut(interp, cmd).state = State::WaitingWriteErr
-                    });
+                    let buf = Builtin::parse_error_to_string(Kind::Touch, &e);
+                    Self::state_mut(interp, cmd).state = State::WaitingWriteErr;
+                    return Builtin::write_failing_error(interp, cmd, &buf, 1);
                 }
             }
         };
@@ -73,7 +73,7 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn next(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         enum Action {
             Done(ExitCode),
             Schedule(usize),
@@ -125,7 +125,7 @@ impl Touch {
     }
 
     pub(crate) fn on_io_writer_chunk(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         written: usize,
         e: Option<bun_sys::SystemError>,
@@ -144,14 +144,14 @@ impl Touch {
         Self::next(interp, cmd)
     }
 
-    fn on_shell_touch_task_done(interp: &Interpreter, task: &mut ShellTouchTask) -> Yield {
+    fn on_shell_touch_task_done(interp: &mut Interpreter<'_>, task: &mut ShellTouchTask) -> Yield {
         let cmd = task.cmd;
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_done += 1;
         }
         if let Some(e) = task.err.take() {
             let output_task = OutputTask::<Touch>::new(cmd, OutputSrc::Arrlist(Vec::new()));
-            let errstr = Builtin::task_error_to_string(interp, cmd, Kind::Touch, &e).to_vec();
+            let errstr = Builtin::task_error_to_string(Kind::Touch, &e);
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
@@ -163,7 +163,7 @@ impl Touch {
 
 impl OutputTaskVTable for Touch {
     fn write_err(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
         errbuf: &[u8],
@@ -171,7 +171,7 @@ impl OutputTaskVTable for Touch {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
+        if let Some(fd) = Builtin::of(interp, cmd).stderr.needs_io() {
             // Stash so on_io_writer_chunk can route to the OutputTask state
             // machine and reclaim the box (stopgap for missing WriterTag).
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
@@ -179,51 +179,42 @@ impl OutputTaskVTable for Touch {
             };
             exec.output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stderr
-                    .enqueue(childptr, errbuf, safeguard),
-            );
+            return ControlFlow::Break(interp.enqueue(fd, childptr, errbuf));
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
         ControlFlow::Continue(child)
     }
-    fn on_write_err(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_err(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
     fn write_out(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'_>,
         cmd: NodeId,
         child: Box<OutputTask<Self>>,
     ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
-        if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
-            let buf = child.output.slice().to_vec();
+        if let Some(fd) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
+            let next = interp.enqueue(fd, childptr, child.output.slice());
             let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
                 unreachable!()
             };
             exec.output_queue.push_back(child);
-            let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return ControlFlow::Break(
-                Builtin::of_mut(interp, cmd)
-                    .stdout
-                    .enqueue(childptr, &buf, safeguard),
-            );
+            return ControlFlow::Break(next);
         }
-        let buf = child.output.slice().to_vec();
-        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
+        let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, child.output.slice());
         ControlFlow::Continue(child)
     }
-    fn on_write_out(interp: &Interpreter, cmd: NodeId) {
+    fn on_write_out(interp: &mut Interpreter<'_>, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_done += 1;
         }
     }
-    fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield {
+    fn on_done(interp: &mut Interpreter<'_>, cmd: NodeId) -> Yield {
         Self::next(interp, cmd)
     }
 }
@@ -290,7 +281,7 @@ impl ShellWork for ShellTouchTask {
         }
     }
 
-    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield {
+    fn run_from_main_thread(&mut self, interp: &mut Interpreter<'_>) -> Yield {
         Touch::on_shell_touch_task_done(interp, self)
     }
 }

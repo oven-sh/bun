@@ -6,45 +6,33 @@ use crate::shell::states::base::{Base, Env};
 use crate::shell::states::stmt::Stmt;
 use crate::shell::yield_::Yield;
 
-pub(crate) struct If {
+pub(crate) struct If<'a> {
     pub(crate) base: Base,
-    pub node: bun_ptr::BackRef<ast::If>,
+    pub node: &'a ast::If<'a>,
     pub(crate) io: IO,
-    pub(crate) state: IfState,
-    shell: Env,
+    pub(crate) state: IfState<'a>,
+    pub(crate) shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
-pub enum IfState {
+pub enum IfState<'a> {
     #[default]
     Idle,
-    Exec(Exec),
+    Exec(Exec<'a>),
 }
 
-pub struct Exec {
+pub struct Exec<'a> {
     pub(crate) state: ExecBranch,
-    /// Back-reference to the current `SmolList<ast::Stmt>` being walked.
-    /// Points into the AST arena, which the interpreter holds for its entire
-    /// lifetime — it outlives every state node.
-    pub(crate) stmts: bun_ptr::BackRef<ast::SmolList<ast::Stmt>>,
+    /// The current `SmolList<ast::Stmt>` being walked.
+    pub(crate) stmts: &'a ast::SmolList<'a, ast::Stmt<'a>>,
     pub(crate) stmt_idx: u32,
     pub(crate) last_exit_code: ExitCode,
 }
 
-impl Exec {
-    /// Borrow the current `SmolList<Stmt>` being walked.
-    ///
-    /// `stmts` always points into the AST arena (`ShellArgs::__arena`), which
-    /// the interpreter holds for its entire lifetime — it outlives every state
-    /// node (BackRef invariant).
-    #[inline]
-    fn stmts(&self) -> &ast::SmolList<ast::Stmt> {
-        self.stmts.get()
-    }
-
+impl Exec<'_> {
     #[inline]
     fn stmts_len(&self) -> u32 {
-        self.stmts().len() as u32
+        self.stmts.len() as u32
     }
 }
 
@@ -55,43 +43,40 @@ pub(crate) enum ExecBranch {
     Else,
 }
 
-impl If {
+impl<'a> If<'a> {
     pub(crate) fn init(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         shell: Env,
-        node: &ast::If,
+        node: &'a ast::If<'a>,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::If(If {
             base: Base::new(parent),
             shell,
-            node: bun_ptr::BackRef::new(node),
+            node,
             io,
             state: IfState::Idle,
         }))
     }
 
-    pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn start(_interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         Yield::Next(this)
     }
 
-    pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
+    pub(crate) fn next(interp: &mut Interpreter<'a>, this: NodeId) -> Yield {
         let parent = interp.as_if(this).base.parent;
         loop {
             // Read/mutate `state` via a short-lived borrow, decide an action,
             // then drop the borrow before calling back into `interp`.
             let action = {
                 let me = interp.as_if_mut(this);
-                // Copy the BackRef out so `n` borrows a local, leaving `me`
-                // free for the disjoint `&mut me.state` borrow below.
-                let node = me.node;
-                let n = node.get();
+                let n = me.node;
                 match &mut me.state {
                     IfState::Idle => {
                         me.state = IfState::Exec(Exec {
                             state: ExecBranch::Cond,
-                            stmts: bun_ptr::BackRef::new(&n.cond),
+                            stmts: &n.cond,
                             stmt_idx: 0,
                             last_exit_code: 0,
                         });
@@ -103,7 +88,7 @@ impl If {
                                 ExecBranch::Cond => {
                                     if exec.last_exit_code == 0 {
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts = bun_ptr::BackRef::new(&n.then);
+                                        exec.stmts = &n.then;
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -112,13 +97,13 @@ impl If {
                                         0 => Action::Done(0),
                                         1 => {
                                             exec.state = ExecBranch::Else;
-                                            exec.stmts = bun_ptr::BackRef::new(&n.else_parts[0]);
+                                            exec.stmts = &n.else_parts[0];
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
                                         _ => {
                                             exec.state = ExecBranch::Elif { idx: 0 };
-                                            exec.stmts = bun_ptr::BackRef::new(&n.else_parts[0]);
+                                            exec.stmts = &n.else_parts[0];
                                             exec.stmt_idx = 0;
                                             continue;
                                         }
@@ -131,8 +116,7 @@ impl If {
                                         // `elif` cond at `idx + 1`.
                                         let then_idx = *idx + 1;
                                         exec.state = ExecBranch::Then;
-                                        exec.stmts =
-                                            bun_ptr::BackRef::new(&n.else_parts[then_idx as usize]);
+                                        exec.stmts = &n.else_parts[then_idx as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -142,14 +126,11 @@ impl If {
                                         Action::Done(0)
                                     } else if *idx == else_len - 1 {
                                         exec.state = ExecBranch::Else;
-                                        exec.stmts = bun_ptr::BackRef::new(
-                                            &n.else_parts[(else_len - 1) as usize],
-                                        );
+                                        exec.stmts = &n.else_parts[(else_len - 1) as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     } else {
-                                        exec.stmts =
-                                            bun_ptr::BackRef::new(&n.else_parts[*idx as usize]);
+                                        exec.stmts = &n.else_parts[*idx as usize];
                                         exec.stmt_idx = 0;
                                         continue;
                                     }
@@ -160,7 +141,7 @@ impl If {
                             let i = exec.stmt_idx;
                             exec.stmt_idx += 1;
                             // `i` was bounds-checked against `stmts_len()`.
-                            Action::SpawnStmt(&exec.stmts()[i as usize])
+                            Action::SpawnStmt(&exec.stmts[i as usize])
                         }
                     }
                 }
@@ -170,7 +151,7 @@ impl If {
                 Action::SpawnStmt(stmt_node) => {
                     let (shell, io) = {
                         let me = interp.as_if(this);
-                        (me.shell.as_ptr(), me.io.clone())
+                        (me.shell.id(), me.io)
                     };
                     let new_stmt = Stmt::init(interp, shell, stmt_node, this, io);
                     Stmt::start(interp, new_stmt)
@@ -180,7 +161,7 @@ impl If {
     }
 
     pub(crate) fn child_done(
-        interp: &Interpreter,
+        interp: &mut Interpreter<'a>,
         this: NodeId,
         child: NodeId,
         exit_code: ExitCode,
@@ -203,5 +184,5 @@ impl If {
 
 pub(crate) enum Action<'a> {
     Done(ExitCode),
-    SpawnStmt(&'a ast::Stmt),
+    SpawnStmt(&'a ast::Stmt<'a>),
 }

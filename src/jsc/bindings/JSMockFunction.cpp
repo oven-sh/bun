@@ -3057,6 +3057,36 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
     }
 
     JSC::JSObject* object = objectValue.getObject();
+
+    // A module mock's exports are read live from the object its factory returned, so spy on that object, under the name the export has there.
+    // That object can be a namespace object too, or an object that the steps below are for, such as globalThis.
+    JSObject* mockOfObject = nullptr;
+    if (isNamespaceObjectOfModule(globalObject, object)) {
+        // Mocks can read each other's namespace objects in a circle, and then no object holds the export. The remembered hop
+        // moves ahead at each power of two, so a circle of any length comes back to it. Nearly every walk ends after one hop.
+        JSObject* rememberedObject = nullptr;
+        Identifier rememberedKey;
+        for (unsigned hops = 0;; ++hops) {
+            Bun::ExportOfModuleMock held = Bun::exportOfModuleMock(globalObject, object, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (!held.object)
+                break;
+            if (held.object == rememberedObject && held.name == rememberedKey) {
+                throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
+                return {};
+            }
+            if (hops && hasOneBitSet(hops)) {
+                rememberedObject = held.object;
+                rememberedKey = held.name;
+            }
+            object = held.object;
+            propertyKey = WTF::move(held.name);
+            mockOfObject = held.mock;
+            if (!isNamespaceObjectOfModule(globalObject, object))
+                break;
+        }
+    }
+
     if (object->type() == JSC::JSType::GlobalProxyType)
         object = uncheckedDowncast<JSC::JSGlobalProxy>(object)->target();
 
@@ -3083,33 +3113,6 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         if (JSObject* env = processEnvOfImportMetaEnvForTests(globalObject, object))
             object = env;
         RETURN_IF_EXCEPTION(scope, {});
-    }
-
-    // A module mock's exports are read live from the object its factory returned, so spy on that object, under the name the export has there.
-    // That object can be a namespace object too.
-    if (isNamespaceObjectOfModule(globalObject, object)) {
-        // Mocks can read each other's namespace objects in a circle, and then no object holds the export. The remembered hop
-        // moves ahead at each power of two, so a circle of any length comes back to it. Nearly every walk ends after one hop.
-        JSObject* rememberedObject = nullptr;
-        Identifier rememberedKey;
-        for (unsigned hops = 0;; ++hops) {
-            Bun::ExportOfModuleMock held = Bun::exportOfModuleMock(globalObject, object, propertyKey);
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!held.object)
-                break;
-            if (held.object == rememberedObject && held.name == rememberedKey) {
-                throwNotExported(globalObject, scope, propertyKeyValue, propertyKey);
-                return {};
-            }
-            if (hops && hasOneBitSet(hops)) {
-                rememberedObject = held.object;
-                rememberedKey = held.name;
-            }
-            object = held.object;
-            propertyKey = WTF::move(held.name);
-            if (!isNamespaceObjectOfModule(globalObject, object))
-                break;
-        }
     }
 
     if (auto* target = dynamicDowncast<JSMockFunction>(object); target && propertyKey == vm.propertyNames->prototype) {
@@ -3204,6 +3207,19 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
             return {};
         }
 
+        // Importers can read a name that the object lacks: the default export of a Jest factory's object is the object itself. The spy starts from that.
+        bool isServedByMock = false;
+        if (!hasValue && mockOfObject) {
+            isServedByMock = mockOfObject->hasProperty(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isServedByMock) {
+                value = mockOfObject->get(globalObject, propertyKey);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (dynamicDowncast<JSMockFunction>(value))
+                    return JSValue::encode(value);
+            }
+        }
+
         auto* mock = createMockFunction(vm, globalObject, isVitest);
         unsigned spyAttributes = slotAttributes;
         // A spy that shadows an inherited property is deleted on restore, so it has to be configurable.
@@ -3213,7 +3229,7 @@ __attribute__((minsize)) static JSC::EncodedJSValue spyOn(JSC::JSGlobalObject* l
         if (isOpaque)
             spyAttributes |= JSMockFunction::SpyAttributeOpaque;
 
-        if (hasValue && ((slotAttributes & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
+        if ((hasValue || isServedByMock) && ((slotAttributes & PropertyAttribute::Function) != 0 || (value.isCell() && value.isCallable()))) {
             wrapFunction(globalObject, mock, value);
             RETURN_IF_EXCEPTION(scope, {});
 

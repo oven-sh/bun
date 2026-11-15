@@ -67,12 +67,18 @@ test(name, () => {
 });`,
   });
   const plain = await run([bunExe(), "test"], String(dir), bunEnv);
-  expect(said(plain.stdout + "\n" + plain.stderr)).toEqual(["SAID spy: no error"]);
+  expect({ said: said(plain.stdout + "\n" + plain.stderr), exitCode: plain.exitCode }).toEqual({
+    said: ["SAID spy: no error"],
+    exitCode: 0,
+  });
   const compiled = await run([bunExe(), "test", "--aot"], String(dir), bunEnv);
   const fake = join(String(dir), "fake.js");
-  expect(said(compiled.stdout + "\n" + compiled.stderr)).toEqual([
-    `SAID spy: TypeError: Cannot spy on 'answer' of "${fake}" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from "<path>"; spyOn(module, "answer") ${page}`,
-  ]);
+  expect({ said: said(compiled.stdout + "\n" + compiled.stderr), exitCode: compiled.exitCode }).toEqual({
+    said: [
+      `SAID spy: TypeError: Cannot spy on 'answer' of "${fake}" because the build didn't see a test spy on it. Spell out the module and the name where the spy is made: import * as module from "<path>"; spyOn(module, "answer") ${page}`,
+    ],
+    exitCode: 0,
+  });
 }, 600000);
 
 test("in an executable", async () => {

@@ -970,7 +970,7 @@ static Bun::ExportOfModuleMock findExportOfModuleMock(JSC::JSGlobalObject* globa
     JSObject* exports = mock ? mock->exports.get() : nullptr;
     if (!exports)
         return {};
-    return { exports, resolution.localName };
+    return { exports, resolution.localName, mock };
 }
 
 static JSC::JSPromise* importModuleKey(Zig::GlobalObject* globalObject, const String& key)
@@ -9181,7 +9181,7 @@ ExportOfModuleMock exportOfModuleMock(JSC::JSGlobalObject* globalObject, JSC::JS
         RETURN_IF_EXCEPTION(scope, {});
         // With Vitest the object has no other names: reading a name that the mock lacks throws. A spy gives the mock the name.
         if (holdsName || (exports && mock->isOfVitest()))
-            return { exports, name };
+            return { exports, name, mock };
     }
     if (JSC::AbstractModuleRecord* record = JSC::AOT::moduleRecordForNamespace(globalObject, moduleNamespace))
         RELEASE_AND_RETURN(scope, Zig::findExportOfModuleMock(globalObject, record, name));

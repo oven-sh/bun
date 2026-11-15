@@ -3226,16 +3226,34 @@ describe.concurrent("a mocked module's exports are read from the object the fact
         "left-out-vi-mock.test.ts": leftOut("vi.mock"),
         "left-out-jest-mock.test.ts": `
           ${leftOut("jest.mock")}
-          test("the default export of a jest.mock() factory that returned no \`default\` is the object itself", () => {
-            expect(aliases.def).toBe(made);
-            const spy = spyOn(aliases, "def").mockReturnValue("spied");
+          test("the default export of a jest.mock() factory that returned no \`default\` is the object itself, and the spy starts from it", () => {
+            const spy = spyOn(aliases, "def");
             expect(spyOn(dep, "default")).toBe(spy);
+            for (const read of [aliases.def, local.viaDefaultImport, dep.default]) expect(read).toBe(made);
+            expect(spy).toHaveBeenCalledTimes(3);
+            spy.mockReturnValue("spied");
             expect([aliases.def, local.viaDefaultImport, dep.default]).toEqual(["spied", "spied", "spied"]);
             spy.mockRestore();
             expect(Object.keys(made)).toEqual(["fn"]);
-            expect(aliases.def).toBe(made);
-            expect(local.viaDefaultImport).toBe(made);
-            expect(dep.default).toBe(made);
+            for (const read of [aliases.def, local.viaDefaultImport, dep.default]) expect(read).toBe(made);
+          });
+        `,
+        "jest-mock-function.test.ts": `
+          import { expect, jest, spyOn, test } from "bun:test";
+
+          const made = Object.assign((...args) => ["called", ...args], { fn: () => "fn" });
+          jest.mock("./dep", () => made);
+          const [dep, aliases] = [await import("./dep"), await import("./aliases")];
+
+          test("the default export of a jest.mock() factory that returned a function is the function, and the spy wraps it", () => {
+            const spy = spyOn(aliases, "def");
+            expect(spyOn(dep, "default")).toBe(spy);
+            expect([aliases.def("one"), dep.default("two"), spy.mock.calls]).toEqual([["called", "one"], ["called", "two"], [["one"], ["two"]]]);
+            spy.mockReturnValue("spied");
+            expect(aliases.def()).toBe("spied");
+            spy.mockRestore();
+            expect(Object.keys(made)).toEqual(["fn"]);
+            for (const read of [aliases.def, dep.default]) expect(read).toBe(made);
           });
         `,
         "accessors.test.ts": `
@@ -3288,7 +3306,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
           });
         `,
       },
-      48,
+      49,
     );
   });
 
@@ -3301,7 +3319,7 @@ describe.concurrent("a mocked module's exports are read from the object the fact
     `,
   };
 
-  test("spyOn() through a re-export under another name, of a factory that returned a module namespace object", async () => {
+  test("spyOn() through a re-export under another name, of a factory that returned a module namespace object or globalThis", async () => {
     await expectFixturesToPass(
       {
         ...fake,
@@ -3338,8 +3356,28 @@ describe.concurrent("a mocked module's exports are read from the object the fact
             expect([Object.keys(fake), Object.keys(list)]).toEqual([["default", "flag", "fn"], ["0", "1"]]);
           });
         `,
+        "global-this.test.ts": `
+          import { expect, mock, spyOn, test } from "bun:test";
+          const realm: any = globalThis;
+          const original = () => "global";
+          realm.fn = original;
+          mock.module("./dep", () => globalThis);
+          const { read } = await import("./readers");
+
+          test.each([
+            ["its own name", "./dep", "fn"],
+            ["another name", "./aliases", "again"],
+          ])("a factory that returned globalThis, under %s", async (_, specifier, name) => {
+            const spy = spyOn(await import(specifier), name).mockReturnValue("spied");
+            expect(realm.fn).toBe(spy);
+            expect(read().fn).toEqual(Array(5).fill("spied"));
+            spy.mockRestore();
+            expect(realm.fn).toBe(original);
+            expect(read().fn).toEqual(Array(5).fill("global"));
+          });
+        `,
       },
-      2,
+      4,
     );
   });
 

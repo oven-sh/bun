@@ -6,7 +6,7 @@ use bun_sql::mysql::protocol::ColumnDefinition41;
 use bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 use bun_sql::mysql::protocol::encode_int::decode_length_int;
-use bun_sql::mysql::protocol::new_reader::PacketReader;
+use bun_sql::mysql::protocol::packet_reader::PacketReader;
 use bun_sql::shared::SQLQueryResultMode;
 
 use crate::shared::CachedStructure;

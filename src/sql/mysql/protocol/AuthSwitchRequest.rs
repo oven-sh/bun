@@ -1,6 +1,6 @@
 use bun_core::strings;
 
-use super::new_reader::PacketReader;
+use super::packet_reader::PacketReader;
 
 pub struct AuthSwitchRequest<'a> {
     pub header: u8,

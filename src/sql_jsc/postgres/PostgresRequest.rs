@@ -17,7 +17,7 @@ use crate::postgres::PostgresSQLConnection;
 use crate::postgres::PostgresSQLQuery;
 use crate::postgres::PostgresSQLStatement;
 use crate::postgres::Signature;
-use crate::postgres::postgres_sql_connection::ListenerCall;
+use crate::postgres::postgres_sql_connection::PendingNotification;
 use crate::postgres::types::{date, tag_jsc};
 
 bun_core::declare_scope!(Postgres, visible);
@@ -410,11 +410,11 @@ fn on_ssl_request_reply(
     }
 }
 
-/// Stops behind a notification: a listener can run the event loop, which reuses the receive buffer.
+/// Stops after a notification: a listener can run the event loop, which reuses the receive buffer.
 pub(crate) fn on_data(
     connection: &PostgresSQLConnection,
     reader: &protocol::NewReader<'_>,
-) -> Result<Option<ListenerCall>, AnyPostgresError> {
+) -> Result<Option<PendingNotification>, AnyPostgresError> {
     use MessageType as M;
     loop {
         // A handler can `fail()` and user code can close: the rest of the read is dropped.
@@ -441,8 +441,8 @@ pub(crate) fn on_data(
         // with length in message").
         let (before, length) = reader.peek_length()?;
         let after = before - length;
-        // The column transform runs before the rows can be read.
-        connection.reads_wait.set(after != 0 || c == b'T');
+        // The column transform can run the event loop; rows must wait for it.
+        connection.defer_reads.set(after != 0 || c == b'T');
 
         match c {
             b'D' => connection.on(M::DataRow, reader)?,
@@ -469,10 +469,10 @@ pub(crate) fn on_data(
             b'A' => {
                 let notification = protocol::NotificationResponse::decode_internal(reader)?;
                 if reader.peek().len() == after
-                    && let Some(call) = connection.listener_call(&notification)?
+                    && let Some(pending) = connection.prepare_notification(&notification)?
                 {
                     reader.mark_message_start();
-                    return Ok(Some(call));
+                    return Ok(Some(pending));
                 }
             }
 

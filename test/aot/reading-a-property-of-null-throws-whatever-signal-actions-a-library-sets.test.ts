@@ -89,6 +89,11 @@ static void note_blocked_signals(int n) { blocked = blocked_signals(); }
 void sigaction_notes_blocked_signals(int n) { struct sigaction a; memset(&a, 0, sizeof a); a.sa_handler = note_blocked_signals; sigaddset(&a.sa_mask, SIGBUS); sigaddset(&a.sa_mask, SIGUSR2); sigaction(n, &a, 0); }
 int blocked_in_handler(void) { return blocked; }
 void raise_it(int n) { raise(n); }
+#ifdef __x86_64__
+void trap_it(int n) { __asm__("int3"); }
+#else
+void trap_it(int n) { __asm__("brk #0x3e8"); }
+#endif
 void read_address_8(int n) { *(volatile int*)8; }
 `;
 
@@ -112,6 +117,7 @@ const names = [
   "sigsetmask_blocks",
   "sigaction_notes_blocked_signals",
   "raise_it",
+  "trap_it",
   "read_address_8",
 ];
 
@@ -248,15 +254,27 @@ Bun.spawnSync(["kill", "-SEGV", String(process.pid)]);
 await Bun.sleep(50);
 console.log("process", process.pid, "goes on");
 `;
+const aLibraryTrapsBehindTheLastListener = `${open}const listener = () => {};
+process.on("SIGTRAP", listener);
+process.off("SIGTRAP", listener);
+library.trap_it();
+console.log("process", process.pid, "goes on");
+`;
 const asFirstProcess = ["unshare", "--user", "--map-root-user", "--pid", "--fork", "--mount-proc"];
 const canBeFirstProcess =
   isLinux && !!Bun.which("unshare") && Bun.spawnSync([...asFirstProcess, "true"]).exitCode === 0;
+// A first process that never ends is to go with the one that started it. Not every unshare has the option.
+const endsWithItsParent =
+  canBeFirstProcess && Bun.spawnSync([...asFirstProcess, "--kill-child", "true"]).exitCode === 0
+    ? ["--kill-child"]
+    : [];
 
-async function run(cmd: string[], cwd: string, env: Record<string, string> = {}) {
+async function run(cmd: string[], cwd: string, env: Record<string, string> = {}, timeout?: number) {
   await using proc = Bun.spawn({
     cmd: withoutCoreDump(cmd),
     cwd,
     env: { ...bunEnv, ...(!locksEnvironment && { BUN_CRASH_REPORT_URL: "" }), BUN_ENABLE_CRASH_REPORTING: "0", ...env },
+    ...(timeout && { timeout, killSignal: "SIGKILL" as const }),
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -475,6 +493,26 @@ describe.skipIf(skipped).concurrent("reading a property of null throws a TypeErr
       expect(compiled).toEqual({ stdout: "process 1 goes on\n", stderr: "", exitCode: 0, signalCode: null });
     },
     120_000,
+  );
+
+  test.skipIf(!canBeFirstProcess)(
+    "and a trap of a library ends the first process of a PID namespace as it does without --aot",
+    async () => {
+      using directory = tempDir("aot-first-process-traps", {
+        "main.ts": aLibraryTrapsBehindTheLastListener,
+        "library.c": library,
+      });
+      const [executable, path] = await Promise.all([
+        build(String(directory), "main.ts"),
+        buildLibrary(String(directory)),
+      ]);
+      const ended = (...program: string[]) =>
+        run([...asFirstProcess, ...endsWithItsParent, ...program, path], String(directory), {}, 60_000);
+      const compiled = await ended(executable);
+      expect(compiled).toEqual(await ended(bunExe(), "main.ts"));
+      expect(compiled).toMatchObject({ stdout: "", exitCode: 133 });
+    },
+    240_000,
   );
 
   test("and a worker in a loop is terminated, whatever action a library has set", async () => {

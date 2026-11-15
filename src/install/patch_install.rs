@@ -14,8 +14,8 @@ use bun_threading::thread_pool::Task as ThreadPoolTask;
 use bun_threading::work_pool::OwnedTask;
 
 use crate::cache_publish::StagedEntry;
-use crate::package_manager::{self, INBOX};
-use crate::resolution::{Resolution, Tag as ResolutionTag};
+use crate::package_manager::{self, INBOX, InstallFields};
+use crate::resolution::Tag as ResolutionTag;
 use crate::{DependencyID, PackageID, PackageManager, lockfile::Package};
 
 // The directory handles on `PatchTask`/`ApplyPatch` are *borrowed views* of the
@@ -238,32 +238,13 @@ impl OwnedTask for PatchTask {
                 bun_core::handle_oom(self.apply());
             }
         }
-        INBOX.patch_tasks.push(bun_core::heap::into_raw_nn(self));
+        INBOX.patch_tasks.push(self);
         INBOX.wake();
     }
 }
 
 impl PatchTask {
-    pub(crate) fn run_from_main_thread(
-        &mut self,
-        manager: &mut PackageManager,
-        log_level: LogLevel,
-    ) -> Result<(), crate::Error> {
-        let result = if matches!(self.callback, Callback::CalcHash(_)) {
-            self.run_from_main_thread_calc_hash(manager, log_level)
-        } else {
-            self.run_from_main_thread_apply();
-            Ok(())
-        };
-        if self.pre {
-            let _ = manager
-                .pending_pre_calc_hashes
-                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
-        }
-        result
-    }
-
-    fn run_from_main_thread_apply(&mut self) {
+    pub(crate) fn run_from_main_thread_apply(&mut self) {
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()
         };
@@ -276,11 +257,16 @@ impl PatchTask {
         let _ = apply.logger.print(Output::error_writer());
     }
 
-    fn run_from_main_thread_calc_hash(
+    pub(crate) fn run_from_main_thread_calc_hash(
         &mut self,
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), crate::Error> {
+        if self.pre {
+            let _ = manager
+                .pending_pre_calc_hashes
+                .fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+        }
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
@@ -347,37 +333,38 @@ impl PatchTask {
                         manager.lockfile.str(&pkg_name),
                         pkg.resolution.npm().version,
                     );
-                    debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
+                    debug_assert!(!manager.state.network_dedupe_map.contains_key(&task_id));
 
                     let is_required = dep_behavior.is_required();
-                    let network_task: *mut crate::NetworkTask =
-                        match package_manager::generate_network_task_for_tarball(
-                            manager,
-                            task_id,
-                            None,
-                            is_required,
-                            dep_id,
-                            &pkg,
-                        ) {
-                            // --offline and not cached: already reported / skipped; nothing to patch
-                            Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
-                            other => other?.unwrap_or_else(|| unreachable!()),
-                        };
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::Extract {
+                    let network_task = match package_manager::generate_network_task_for_tarball(
+                        &mut manager.install_fields(),
+                        task_id,
+                        None,
+                        is_required,
+                        dep_id,
+                        &pkg,
+                    ) {
+                        // --offline and not cached: already reported / skipped; nothing to patch
+                        Err(crate::network_task::ForTarballError::Offline) => return Ok(()),
+                        other => other?.unwrap_or_else(|| unreachable!()),
+                    };
+                    if manager.state.preinstall_state.get(pkg_meta_id) == PreinstallState::Extract {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::Extracting);
-                        package_manager::enqueue_network_task(manager, network_task);
+                        package_manager::enqueue_network_task(&mut manager.state, network_task);
                     }
                 }
                 PreinstallState::ApplyPatch => {
                     let patch_task = PatchTask::new_apply_patch_hash(
-                        manager,
+                        &manager.install_fields(),
                         pkg_meta_id,
                         out_patchfile_hash.unwrap(),
                         name_and_version_hash,
                     );
-                    if manager.get_preinstall_state(pkg_meta_id) == PreinstallState::ApplyPatch {
+                    if manager.state.preinstall_state.get(pkg_meta_id)
+                        == PreinstallState::ApplyPatch
+                    {
                         manager.set_preinstall_state(pkg_meta_id, PreinstallState::ApplyingPatch);
-                        package_manager::enqueue_patch_task(manager, patch_task);
+                        package_manager::enqueue_patch_task(&mut manager.state, patch_task);
                     }
                 }
                 _ => {}
@@ -639,43 +626,32 @@ impl PatchTask {
     }
 
     pub(crate) fn new_apply_patch_hash(
-        pkg_manager: &mut PackageManager,
+        manager: &InstallFields<'_>,
         pkg_id: PackageID,
         patch_hash: u64,
         name_and_version_hash: u64,
     ) -> Box<PatchTask> {
-        let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
-
-        // Borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
-        // while `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably.
-        // Clone the slice/resolution out first.
-        let pkg_name_slice = pkg_name
-            .slice(&pkg_manager.lockfile.buffers.string_bytes)
-            .to_vec();
-        // `Resolution` and `Integrity` are `Copy`; copy out so the lockfile borrow ends
-        // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
-        let resolution_clone: Resolution =
-            pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
-        let integrity = pkg_manager.lockfile.packages.items_meta()[pkg_id as usize].integrity;
+        let lockfile = manager.lockfile;
+        let pkg_name = lockfile.packages.items_name()[pkg_id as usize];
+        let resolution = &lockfile.packages.items_resolution()[pkg_id as usize];
 
         let mut folder_path_buf = bun_paths::path_buffer_pool::get();
         let stuff = package_manager::compute_cache_dir_and_subpath(
-            pkg_manager,
-            &pkg_name_slice,
-            &resolution_clone,
-            &integrity,
+            manager,
+            lockfile.str(&pkg_name),
+            resolution,
+            manager.integrity(pkg_id),
             &mut folder_path_buf,
             Some(patch_hash),
         );
 
         let patchfilepath: Box<[u8]> = Box::from(
-            pkg_manager
-                .lockfile
+            lockfile
                 .patched_dependencies
                 .get(&name_and_version_hash)
                 .unwrap()
                 .path
-                .slice(&pkg_manager.lockfile.buffers.string_bytes),
+                .slice(&lockfile.buffers.string_bytes),
         );
 
         let cache_dir_subpath_bytes = stuff.cache_dir_subpath.as_bytes();
@@ -687,7 +663,9 @@ impl PatchTask {
             ZBox::from_bytes(&cache_dir_subpath_bytes[..patch_hash_idx]);
         let cache_dir = stuff.cache_dir;
 
-        let tempdir = pkg_manager.get_temporary_directory().handle.fd();
+        let tempdir = package_manager::get_temporary_directory(manager)
+            .handle
+            .fd();
         Box::new(PatchTask {
             tempdir,
             callback: Callback::Apply(ApplyPatch {
@@ -696,7 +674,7 @@ impl PatchTask {
                 cache_dir,
                 patchfilepath,
                 pkgname: pkg_name,
-                resolution_tag: resolution_clone.tag,
+                resolution_tag: resolution.tag,
                 logger: Log::init(),
                 cache_dir_subpath,
                 cache_dir_subpath_without_patch_hash,

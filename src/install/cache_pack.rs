@@ -264,7 +264,7 @@ fn lockfile_entries(pm: &mut PackageManager) -> Vec<LockfileEntry> {
             .str(&pm.lockfile.packages.items_name()[i])
             .to_vec();
         let subpath = directories::compute_cache_dir_and_subpath(
-            pm,
+            &pm.install_fields(),
             &name,
             &resolution,
             &integrity,

@@ -1770,6 +1770,34 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("linker=%s", linker =
   });
 });
 
+// For each "leaf" folder, a thread of the linker looks up the rule of every dependency on the overriding folder.
+test.concurrent("the isolated linker looks up nested rules from several threads", async () => {
+  const names = (prefix: string, length: number) => Array.from({ length }, (_, i) => `${prefix}-${i}`);
+  const folders = (names: string[], parent: string) =>
+    Object.fromEntries(names.map(name => [name, `file:${parent}/${name}`]));
+  const manifest = (name: string, dependencies = {}) => [
+    `vendor/${name}/package.json`,
+    JSON.stringify({ name, version: "1.0.0", dependencies }),
+  ];
+  const [leaves, users] = [names("leaf", 30), names("user", 60)];
+  const dir = await project(
+    {
+      dependencies: { "one-dep": "1.0.0", ...folders(users, "vendor") },
+      overrides: { "one-dep": { "no-deps": "file:vendor/no-deps" } },
+    },
+    "isolated",
+    Object.fromEntries([
+      manifest("no-deps", folders(leaves, "..")),
+      ...leaves.map(name => manifest(name)),
+      ...users.map(name => manifest(name, folders(["no-deps"], ".."))),
+    ]),
+  );
+  for (let i = 0; i < 4; i++) {
+    await rm(join(dir, "node_modules"), { recursive: true, force: true });
+    expect((await installOk(dir)).summary).toBe("92 packages installed");
+  }
+});
+
 describe.concurrent("lockfile", () => {
   test("round trip: stable across installs, value changes are frozen-lockfile changes", async () => {
     const dir = await project(precedenceProject);

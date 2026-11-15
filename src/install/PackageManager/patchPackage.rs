@@ -161,7 +161,9 @@ pub(crate) fn write_pending_patch(
     let mut tmpname_buf = [0u8; 1024];
     let tempfile_name =
         bun_paths::fs::FileSystem::tmpname(b"tmp", &mut tmpname_buf, bun_core::fast_random())?;
-    let tmpdir = get_temporary_directory(manager).handle.fd();
+    let tmpdir = get_temporary_directory(&manager.install_fields())
+        .handle
+        .fd();
     if let Err(e) = sys::File::write_file(tmpdir, tempfile_name, &patch.contents) {
         Output::err(e, "failed to write patch to temp file", ());
         Global::crash();
@@ -464,7 +466,7 @@ pub fn do_patch_commit(
 ) -> Result<Option<PatchCommitResult>, crate::Error> {
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log();
-    let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
+    let load_result = lockfile.load_or_migrate(Fd::cwd(), manager, log);
     let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
@@ -510,7 +512,7 @@ pub fn do_patch_commit(
     let patch_key = patch_key_of(&manager.lockfile, &pkg);
     let mut folder_path_buf = bun_paths::path_buffer_pool::get();
     let cache_result = compute_cache_dir_and_subpath(
-        manager,
+        &manager.install_fields(),
         &name,
         &pkg.resolution,
         &pkg.meta.integrity,
@@ -782,7 +784,8 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let spawned = bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, &manager.event_loop);
+    let spawned =
+        bun_patch::spawn_git_diff(&paths[0], &paths[1], cwd, git, manager.state.event_loop);
     let mut spawn_result = match spawned {
         Err(e) => {
             bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
@@ -1002,7 +1005,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), crate::Error> {
 
     let mut folder_path_buf = bun_paths::path_buffer_pool::get();
     let cache_result = compute_cache_dir_and_subpath(
-        manager,
+        &manager.install_fields(),
         &pkg_name,
         &pkg.resolution,
         &pkg.meta.integrity,
@@ -1112,7 +1115,7 @@ fn download_if_not_cached(manager: &mut PackageManager, pkg: &Package) {
     let is_cached = |manager: &mut PackageManager| {
         let mut folder_path_buf = bun_paths::path_buffer_pool::get();
         let entry = compute_cache_dir_and_subpath(
-            manager,
+            &manager.install_fields(),
             &name,
             &pkg.resolution,
             &pkg.meta.integrity,
@@ -1185,15 +1188,19 @@ fn apply_patch_if_not_cached(
     patchfile_hash: u64,
     patch_key_hash: u64,
 ) -> Result<(), crate::Error> {
-    let mut task = PatchTask::new_apply_patch_hash(manager, pkg_id, patchfile_hash, patch_key_hash);
+    let mut task = PatchTask::new_apply_patch_hash(
+        &manager.install_fields(),
+        pkg_id,
+        patchfile_hash,
+        patch_key_hash,
+    );
     let apply = task.callback.apply_mut();
     let patched_entry = apply.cache_dir_subpath.as_zstr();
     if sys::directory_exists_at(apply.cache_dir, patched_entry).unwrap_or(false) {
         return Ok(());
     }
     handle_oom(task.apply());
-    let log_level = manager.options.log_level;
-    task.run_from_main_thread(manager, log_level)?;
+    task.run_from_main_thread_apply();
     if task.callback.apply_mut().logger.has_errors() {
         Global::crash();
     }

@@ -315,7 +315,7 @@ impl Context {
         sha512.r#final(&mut integrity);
 
         let normalized_pkg_info = PublishCommand::normalized_package(
-            manager,
+            manager.scope_for_package_name(&package_name),
             PackageFiles::Tarball(&files),
             &package_name,
             &package_version,
@@ -525,7 +525,7 @@ impl PublishCommand {
             let abs_package_json_path = bun_core::ZBox::from_bytes(&abs_package_json_path);
             // Copied, because the scripts that `pack()` runs invalidate the cache that this points
             // into.
-            let root = pack::package_json_entry(manager, &abs_package_json_path).root;
+            let root = pack::package_json_root(manager, &abs_package_json_path);
             let string_field = |key: &[u8]| -> Box<[u8]> {
                 let value = root.get(key);
                 let value = value.as_ref().and_then(Expr::as_utf8_string_literal);
@@ -1088,7 +1088,7 @@ impl PublishCommand {
     }
 
     pub(crate) fn normalized_package(
-        manager: &PackageManager,
+        registry: &Npm::Registry::Scope,
         files: PackageFiles<'_>,
         package_name: &[u8],
         package_version: &[u8],
@@ -1100,8 +1100,6 @@ impl PublishCommand {
         readme: Option<ReadmeInfo>,
     ) -> Result<Box<[u8]>, AllocError> {
         debug_assert!(json.is_object());
-
-        let registry = manager.scope_for_package_name(package_name);
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
 

@@ -1832,25 +1832,22 @@ pub(crate) struct ReportersConfig {
 impl CommandLineReporter {
     fn print_test_line<const DIM: bool>(
         status: bun_test::Execution::Result,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
         writer: &mut impl bun_io::Write,
     ) {
         let initial_retry_count = test_entry.retry_count;
-        let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
+        let attempts = (initial_retry_count - sequence.remaining_retry_count.get()) + 1;
         let initial_repeat_count = test_entry.repeat_count;
-        let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
+        let repeats = (initial_repeat_count - sequence.remaining_repeat_count.get()) + 1;
         let mut scopes_stack: BoundedArray<&bun_test::DescribeScope, 64> = BoundedArray::default();
-        let mut parent_ = test_entry.base.parent;
 
-        while let Some(scope) = parent_ {
-            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            let scope = unsafe { &*scope };
+        for scope in buntest.scopes_from(test_entry.base.parent) {
             if scopes_stack.push(scope).is_err() {
                 break;
             }
-            parent_ = scope.base.parent;
         }
 
         let scopes: &[&bun_test::DescribeScope] = scopes_stack.as_slice();
@@ -1866,20 +1863,21 @@ impl CommandLineReporter {
             match status {
                 bun_test::Execution::Result::FailBecauseExpectedAssertionCount => {
                     // not sent to writer so it doesn't get printed twice
-                    let expected_count =
-                        if let bun_test::ExpectAssertions::Exact(n) = sequence.expect_assertions {
-                            n
-                        } else {
-                            12345
-                        };
+                    let expected_count = if let bun_test::ExpectAssertions::Exact(n) =
+                        sequence.expect_assertions.get()
+                    {
+                        n
+                    } else {
+                        12345
+                    };
                     Output::err(
                         crate::Error::AssertionError,
                         "expected <green>{} assertion{}<r>, but test ended with <red>{} assertion{}<r>\n",
                         (
                             expected_count,
                             if expected_count == 1 { "" } else { "s" },
-                            sequence.expect_call_count,
-                            if sequence.expect_call_count == 1 {
+                            sequence.expect_call_count.get(),
+                            if sequence.expect_call_count.get() == 1 {
                                 ""
                             } else {
                                 "s"
@@ -2052,7 +2050,7 @@ impl CommandLineReporter {
     /// on its `TestDone` frame and the coordinator replays it.
     fn test_case_report<'a>(
         status: bun_test::Execution::Result,
-        buntest: &bun_test::BunTest,
+        buntest: &'a bun_test::BunTest,
         sequence: &bun_test::Execution::ExecutionSequence,
         test_entry: &'a bun_test::ExecutionEntry,
         elapsed_ns: u64,
@@ -2070,17 +2068,13 @@ impl CommandLineReporter {
 
         // Innermost first while walking up; reversed below.
         let mut scopes: Vec<(&'a [u8], u32)> = Vec::new();
-        let mut parent = test_entry.base.parent.map(|p| p.cast_const());
-        while let Some(scope) = parent {
+        for scope in buntest.scopes_from(test_entry.base.parent) {
             if scopes.len() == 64 {
                 break;
             }
-            // SAFETY: describe scopes outlive the file's test run.
-            let scope: &'a bun_test::DescribeScope = unsafe { &*scope };
             if let Some(name) = scope.base.name.as_deref() {
                 scopes.push((name, scope.base.line_no));
             }
-            parent = scope.base.parent.map(|p| p.cast_const());
         }
         scopes.reverse();
 
@@ -2089,7 +2083,7 @@ impl CommandLineReporter {
             scopes,
             name: test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
             status,
-            assertions: sequence.expect_call_count,
+            assertions: sequence.expect_call_count.get(),
             elapsed_ns,
             line_number: test_entry.base.line_no,
             failure,
@@ -2126,9 +2120,9 @@ impl CommandLineReporter {
     }
 
     pub(crate) fn handle_test_completed(
-        buntest: &mut bun_test::BunTest,
-        sequence: &mut bun_test::Execution::ExecutionSequence,
-        test_entry: &mut bun_test::ExecutionEntry,
+        buntest: &bun_test::BunTest,
+        sequence: &bun_test::Execution::ExecutionSequence,
+        test_entry: &bun_test::ExecutionEntry,
         elapsed_ns: u64,
     ) {
         let mut output_buf: Vec<u8> = Vec::new();
@@ -2136,7 +2130,7 @@ impl CommandLineReporter {
         let initial_length = output_buf.len();
         let writer = &mut output_buf;
 
-        let result = sequence.result;
+        let result = sequence.result.get();
         if result != bun_test::Execution::Result::SkippedBecauseLabel {
             // SAFETY: `BunTest.reporter` is `NonNull<CommandLineReporter>` with write
             // provenance from `enter_file`'s `&mut`; single-threaded; reporter outlives
@@ -2198,10 +2192,12 @@ impl CommandLineReporter {
                     bun_test::BasicResult::Pass | bun_test::BasicResult::Fail => false,
                 };
                 if dim {
-                    Self::print_test_line::<true>(result, sequence, test_entry, elapsed_ns, writer);
+                    Self::print_test_line::<true>(
+                        result, buntest, sequence, test_entry, elapsed_ns, writer,
+                    );
                 } else {
                     Self::print_test_line::<false>(
-                        result, sequence, test_entry, elapsed_ns, writer,
+                        result, buntest, sequence, test_entry, elapsed_ns, writer,
                     );
                 }
                 if basic == bun_test::BasicResult::Fail {
@@ -2225,7 +2221,7 @@ impl CommandLineReporter {
         // the coordinator replays into its own `JunitReporter`.
         let report = this.jest.test_options.reporters.junit.then(|| {
             let failure = sequence.failure.take();
-            let earlier = core::mem::take(&mut sequence.earlier_failures);
+            let earlier = sequence.earlier_failures.take();
             Self::test_case_report(
                 result, buntest, sequence, test_entry, elapsed_ns, failure, earlier,
             )
@@ -2240,7 +2236,7 @@ impl CommandLineReporter {
         }
 
         if !this.reporters.dots && !this.reporters.only_failures {
-            match sequence.result.basic_result() {
+            match result.basic_result() {
                 bun_test::BasicResult::Skip => this
                     .skips_to_repeat_buf
                     .extend_from_slice(&output_buf[initial_length..]),
@@ -2255,7 +2251,7 @@ impl CommandLineReporter {
         }
 
         use bun_test::Execution::Result as R;
-        match sequence.result {
+        match result {
             R::Pending => {}
             R::Pass => this.summary().pass += 1,
             R::Skip => this.summary().skip += 1,
@@ -2282,7 +2278,7 @@ impl CommandLineReporter {
         this.summary().expectations = this
             .summary()
             .expectations
-            .saturating_add(sequence.expect_call_count);
+            .saturating_add(sequence.expect_call_count.get());
     }
 
     pub(crate) fn print_summary(&mut self) {
@@ -3932,19 +3928,15 @@ impl TestCommand {
     /// Returns a description for the error, and the step's identity so the caller can tell if the runner moved on.
     fn what_runner_waits_for(
         buntest: &bun_test::BunTest,
-    ) -> (&'static str, Option<(*const (), i64)>) {
+    ) -> (&'static str, Option<bun_test::RefDataValue>) {
         match buntest.get_current_state_data() {
-            bun_test::RefDataValue::Collection { active_scope } => (
-                "A describe() callback",
-                Some((active_scope.as_ptr().cast_const().cast(), 0)),
-            ),
-            bun_test::RefDataValue::Execution {
-                entry_data: Some(entry),
+            step @ bun_test::RefDataValue::Collection { .. } => {
+                ("A describe() callback", Some(step))
+            }
+            step @ bun_test::RefDataValue::Execution {
+                entry_data: Some(_),
                 ..
-            } => (
-                "A test or hook with no timeout",
-                Some((entry.entry, i64::from(entry.attempt))),
-            ),
+            } => ("A test or hook with no timeout", Some(step)),
             bun_test::RefDataValue::Done => ("An un-awaited matcher's promise", None),
             _ => ("A test or hook with no timeout", None),
         }
@@ -4095,7 +4087,9 @@ impl TestCommand {
                 let buntest = buntest_strong.get();
                 buntest.is_loading = false;
                 // Skips this file's tests, but preload hooks due with this file still run.
-                buntest.collection.root_scope.failed |= failed_to_load;
+                if failed_to_load {
+                    buntest.scope(bun_test::ScopeId::ROOT).failed.set(true);
+                }
 
                 // Automatically execute bun_test tests
                 if buntest.result_queue.readable_length() == 0 {

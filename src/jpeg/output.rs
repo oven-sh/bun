@@ -69,6 +69,7 @@ impl Plane {
             bun_highway::jpeg_inverse_transform(blocks, quant, size, out, stride)?;
             return Ok(());
         }
+        let out = out.get_mut(..blocks.len()).ok_or(Error::Internal)?;
         for (sample, block) in out.iter_mut().zip(blocks) {
             let mean = (i32::from(block.dc()) * i32::from(quant.dc()) + 4) >> 3;
             *sample = (mean + 128).clamp(0, 255) as u8;

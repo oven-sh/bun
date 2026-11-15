@@ -6,6 +6,8 @@ use crate::{Error, MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::ops::Range;
 
 const MAX_BLOCKS_IN_MCU: usize = 10;
+/// In a progressive scan (ITU-T T.81, table B.3).
+const MAX_AL: u8 = 13;
 
 /// Where the blocks of a component are in a buffer that all components share.
 #[derive(Clone, Copy, Default)]
@@ -54,7 +56,7 @@ fn has_valid_parameters(frame: &Frame, scan: &Scan) -> bool {
                 0 => se == 0,
                 _ => (ss..64).contains(&se) && scan.components().len() == 1,
             };
-            is_band && (ah == 0 || ah - 1 == al) && al <= 13
+            is_band && (ah == 0 || ah - 1 == al) && al <= MAX_AL
         }
         Process::Lossless => matches!((ss, se, ah), (1..=7, 0, 0)) && al < frame.precision,
     }

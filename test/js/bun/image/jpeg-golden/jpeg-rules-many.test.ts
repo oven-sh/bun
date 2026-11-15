@@ -1,22 +1,25 @@
-// What holds for a few blocks, bits and components holds for many.
+// The largest numbers of blocks in a row, of bits and of components.
 import { describe, test } from "bun:test";
 import { randomBytes } from "../png-golden/write";
 import { ArithmeticCoder } from "./arithmetic";
-import { expectPictures, range, said } from "./decode";
+import { colorMarkers, expectPictures, range } from "./decode";
 import { known, pictureOf, scaled } from "./model";
 import {
   all,
+  bitByBit,
   coded,
   dri,
   frameOf,
+  groupsOf,
   headerOf,
   isLossless,
   isProgressive,
   jpeg,
-  marker,
   noise,
-  RST0,
+  progressiveTypes,
+  random16,
   scanOf,
+  scanWithTables,
   simpleProgression,
   SOF0,
   SOF10,
@@ -25,6 +28,7 @@ import {
   SOF9,
   sos,
   stuffed,
+  withRestarts,
   write,
 } from "./write";
 
@@ -34,14 +38,14 @@ describe.each([
   ["progressive", SOF2, simpleProgression],
   ["sequential, arithmetic", SOF9, [scanOf([0, 1, 2])]],
   ["progressive, arithmetic", SOF10, simpleProgression],
-])("8188 blocks, with restart markers 356 apart: %s", (name, type, scans) => {
+])("8188 MCUs, in restart intervals of 356: %s", (name, type, scans) => {
   const [interval, count, length, eighths] = [356, 23, 65500, 2];
   const [row, column] = [frameOf(interval * 8, 8, "1x1,1x1,1x1", { type }), frameOf(8, interval * 8, "1x1,1x1,1x1")];
   noise(row, randomBytes(1), { sparse: 20, ac: 60 });
   column.components.forEach((component, c) => (component.data = row.components[c].data));
   const parts = scans.flatMap(scan => {
     const { tables, header, data } = coded(row, scan);
-    return [...tables, header, data, ...range(0, count - 2).flatMap(n => [marker(RST0 + (n & 7)), data])];
+    return [...tables, header, ...withRestarts<Buffer>(Array(count).fill(data))];
   });
   const fileOf = (width: number, height: number) => jpeg(headerOf({ ...row, width, height }), dri(interval), ...parts);
   const long = scaled(length, eighths);
@@ -63,14 +67,11 @@ describe.each([
   });
 });
 
-test.each([
-  ["Huffman", SOF2],
-  ["arithmetic", SOF10],
-])("each of 16 bits, from the top down: %s", async (_, type) => {
-  // Odd numbers of every size, the last below -32768, and steps that make something small of them in 16 bits.
+test.each(progressiveTypes)("successive approximation of 16-bit coefficients: %s", async (_, type) => {
+  // Odd values of every size, the last below -32768. With these steps, they dequantize to small values in 16 bits.
   const random = randomBytes(13);
   const sizes = range(0, 63).map(k => 1 << (14 - ((k * 7) % 15)));
-  const values = sizes.map(size => size | (((random() << 8) | random()) & (size - 1)) | 1).with(63, 32769);
+  const values = sizes.map(size => size | (random16(random) & (size - 1)) | 1).with(63, 32769);
   const steps = values.map(value => range(1, 32767).find(step => ((value * step + 24) & 0xffff) < 48 && step & 8)!);
   const frame = frameOf(40, 8, "1x1", { type, tables: [steps] });
   const { data } = frame.components[0];
@@ -79,17 +80,17 @@ test.each([
   await expectPictures(
     [13, 14].map(missing => {
       const first = known(frame, [scanOf([0], 0, 63, 0, missing)]);
-      const down = (ss: number, se: number) => [
-        coded(first, scanOf([0], ss, se, 0, 13)),
-        ...range(1, missing).map(i => coded(frame, scanOf([0], ss, se, missing - i + 1, missing - i))),
-      ];
-      const parts = [...down(0, 0), ...down(1, 20), ...down(21, 63)].flatMap(it => Object.values(it).flat());
-      return { name: `${missing} missing at first`, file: jpeg(headerOf(frame), ...parts), expected };
+      const band = (ss: number, se: number) =>
+        bitByBit(missing, [0], ss, se).flatMap((scan, i) =>
+          i ? scanWithTables(frame, scan) : scanWithTables(first, { ...scan, al: 13 }),
+        );
+      const file = jpeg(headerOf(frame), ...band(0, 0), ...band(1, 20), ...band(21, 63));
+      return { name: `from Ah = ${missing}`, file, expected };
     }),
   );
 });
 
-test("with arithmetic coding, coefficients behind thousands of blocks that have none", async () => {
+test("arithmetic coding: coefficients after thousands of empty blocks", async () => {
   const [wide, high] = [64, 80];
   const random = randomBytes(2);
   const [top, bottom] = [0, 1].map(() => frameOf(wide * 8, 8, "1x1", { type: SOF10 }));
@@ -103,12 +104,34 @@ test("with arithmetic coding, coefficients behind thousands of blocks that have 
     for (let i = 0; i < wide; i++) coder.band(0, lastRow.subarray(i * 64), ss, se, 0, 0);
     return [sos(frame, scanOf([0], ss, se)), stuffed(coder.finish())];
   };
-  // What the first block has for the time being moves the rest of the data by any number of bits.
-  const bands = range(1, 63).flatMap(k => band(k, k, 1 + (((random() << 8) | random()) >> (2 + (k % 14))), data));
+  // The value in the first block shifts the rest of the data by some number of bits. The last scan overwrites it.
+  const bands = range(1, 63).flatMap(k => band(k, k, 1 + (random16(random) >> (2 + (k % 14))), data));
   const file = jpeg(headerOf(frame), ...bands, ...band(1, 63, 1, new Int32Array(wide * 64)));
   const between = Buffer.alloc(wide * (high - 2) * 64 * 4, Buffer.from([128, 128, 128, 255]));
   const rgba = Buffer.concat([pictureOf(top).rgba, between, pictureOf(bottom).rgba]);
   await expectPictures([{ name: "64 scans", file, expected: { width: wide * 8, height: high * 8, rgba } }]);
+});
+
+test("arithmetic coding: a scan for every bit of every coefficient of 128 by 128 blocks", async () => {
+  const side = 128;
+  const [frame, lastRow] = [side, 1].map(high => frameOf(side * 8, high * 8, "1x1", { type: SOF10 }));
+  // All coefficients of a block are equal, so all AC bands have the same data.
+  const [{ data }] = lastRow.components;
+  for (let x = 0; x < side; x++) data.fill((x % 19) - 9, x * 64, (x + 1) * 64);
+  frame.components[0].data.set(data, (side - 1) * data.length);
+  const dc = bitByBit(13, [0], 0, 0).map(scan => coded(frame, scan).data);
+  const ac = bitByBit(13, [0], 1, 1).map(({ ah, al }) => {
+    const coder = new ArithmeticCoder();
+    for (let i = 0; i < side * (side - 1); i++) coder.decide(coder.ac(0), 0, 1);
+    for (let x = 0; x < side; x++) coder.band(0, data.subarray(x * 64), 1, 1, ah, al);
+    return stuffed(coder.finish());
+  });
+  const scans = range(0, 63).flatMap(k =>
+    bitByBit(13, [0], k, k).flatMap((scan, i) => [sos(frame, scan), (k ? ac : dc)[i]]),
+  );
+  const above = Buffer.alloc(side * (side - 1) * 64 * 4, Buffer.from([128, 128, 128, 255]));
+  const expected = { ...frame, rgba: Buffer.concat([above, pictureOf(lastRow).rgba]) };
+  await expectPictures([{ name: "896 scans", file: jpeg(headerOf(frame), ...scans), expected }]);
 });
 
 test.each([
@@ -121,7 +144,7 @@ test.each([
   const random = randomBytes(9);
   const tables = range(1, 4).map(n => range(0, 63).map(k => n + (k % (n + 1))));
   const samplings = ["1x1,1x1,1x1,2x2", "2x1,2x1,2x1,1x1", "1x2,1x1,2x1,2x2", "2x2,1x1,2x1,1x2", "1x1,1x1,1x1,1x4"];
-  const numbers = ["3210 2301", "3210 1111", "2222 3210"].map(it => it.split(" ").map(of => [...of].map(Number)));
+  const numbers = ["3210 2301", "3210 1111", "2222 3210"].map(groupsOf);
   await expectPictures(
     samplings.flatMap((sampling, i) => {
       const frame = noise(frameOf(37, 21, sampling, { type, tables }), random, { sparse: 3, ac: 40 });
@@ -132,13 +155,17 @@ test.each([
       const named = (components: number[], ...fields: [number, number, number, number]) =>
         scanOf(components, ...fields, { dc: components.map(c => dc[c]), ac: components.map(c => ac[c]), interval });
       return ["0123", "01 23", "3 012", "0 0123"].map(layout => {
-        const groups = layout.split(" ").map(group => [...group].map(Number));
         const bands = (ah: number, al: number) => all(frame).map(c => named([c], 1, 63, ah, al));
-        const each = (...fields: [number, number, number, number]) => groups.map(group => named(group, ...fields));
+        const each = (...fields: [number, number, number, number]) =>
+          groupsOf(layout).map(group => named(group, ...fields));
         const scans = isProgressive(frame)
           ? [...each(0, 0, 0, 1), ...bands(0, 1), ...each(0, 0, 1, 0), ...bands(1, 0)]
           : each(isLossless(frame) ? 4 : 0, isLossless(frame) ? 0 : 63, 0, 0);
-        return { name: `${sampling}, ${layout}`, file: write(frame, scans, { before: said[colors] }), expected };
+        return {
+          name: `${sampling}, ${layout}`,
+          file: write(frame, scans, { before: colorMarkers[colors] }),
+          expected,
+        };
       });
     }),
   );

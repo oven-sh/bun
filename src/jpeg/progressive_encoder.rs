@@ -248,7 +248,7 @@ pub(crate) fn write_scans(out: &mut Vec<u8>, strips: &mut Strips<'_>) -> Result<
     let (mcus, luma) = (strips.size_in_mcus(), strips.size_in_luma_blocks());
     let mut blocks = [block::ZERO; BATCH_LEN];
     let mut masks = [[0; 4]; BATCH_LEN];
-    // The 6 DC coefficients of each MCU in the row.
+    // The 6 DC coefficients of each MCU in the row, in 8 places for `wrapped_mut()`.
     let mut dc = filled(mcus.wide, [0i16; 8])?;
     let mut predictions = [0; MAX_COMPONENTS];
     for mcu_row in 0..mcus.high {

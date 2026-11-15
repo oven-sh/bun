@@ -1,4 +1,4 @@
-// The rules for lossless frames.
+// Lossless frames.
 import { expect, test } from "bun:test";
 import { slow } from "../png-golden/check";
 import { randomBytes } from "../png-golden/write";
@@ -8,13 +8,13 @@ import {
   difference,
   expectPictures,
   fine,
+  grouped,
   headerOnly,
   hex,
   outcome,
   pictureFrom,
   range,
   refused,
-  where,
 } from "./decode";
 import { pictureOf } from "./model";
 import {
@@ -26,12 +26,15 @@ import {
   dht,
   dri,
   frameOf,
+  groupsOf,
   jfif,
   jpeg,
   marker,
   noise,
   predict,
-  RST0,
+  random16,
+  rgbIds,
+  rst,
   scanOf,
   sof,
   SOF11,
@@ -39,6 +42,8 @@ import {
   sos,
   Symbols,
   tableOf,
+  TEM,
+  withRestarts,
   write,
   type Frame,
   type Scan,
@@ -48,24 +53,24 @@ const type = SOF3;
 const three = "1x1,1x1,1x1";
 const lossless = (components: number[], predictor = 1, al = 0, more: Partial<Scan> = {}) =>
   scanOf(components, predictor, 0, 0, al, { dc: components, ...more });
-/** Without the `al` lowest bits of each component. */
+/** Clears the `al[c]` low bits of component `c`. */
 function shifted(frame: Frame, al: number[]) {
   const out = copyOf(frame);
   out.components.forEach(({ data }, c) => data.forEach((sample, i) => (data[i] = (sample >> al[c]) << al[c])));
   return out;
 }
 
-test("every predictor, with samples of 2 to 8 bits and any number of them left out", async () => {
+test("every predictor, precision from 2 to 8 and point transform", async () => {
   const random = randomBytes(1);
   await expectPictures(
     range(2, 8).flatMap(precision => {
       const frame = noise(frameOf(7, 5, three, { type, precision }), random);
       return range(0, precision - 1).flatMap(al => {
-        // They are not scaled to 8 bits.
+        // Samples are not scaled to 8 bits.
         const expected = pictureOf(shifted(frame, [al, al, al]));
         const predictors = range(1, 7).filter(predictor => !slow || (predictor + al) % 2);
         return predictors.map(predictor => ({
-          name: `${precision} bits but for ${al}, predictor ${predictor}`,
+          name: `precision ${precision}, Al ${al}, predictor ${predictor}`,
           file: write(frame, [lossless([0, 1, 2], predictor, al, { dc: [0, 0, 0] })]),
           expected,
         }));
@@ -74,26 +79,22 @@ test("every predictor, with samples of 2 to 8 bits and any number of them left o
   );
 });
 
-test("of 9 to 16 bits the size can be had", async () => {
+test("precision 9 to 16 only has metadata", async () => {
   const file = write(frameOf(2, 2, three, { type }));
   const at = file.indexOf(marker(type)) + 4;
-  expect(await where(bytes, precision => outcome(file.with(at, precision)))).toEqual({
+  expect(await grouped(bytes, precision => outcome(file.with(at, precision)))).toEqual({
     [refused]: [0, 1, ...range(17, 255)],
     [fine]: range(2, 8),
     [headerOnly]: range(9, 16),
   });
 });
 
-test("three components are RGB whatever their names, and colors are not converted", async () => {
+test("three components are RGB whatever their ids, and gray, YCbCr and YCCK only have metadata", async () => {
   const of = (sampling: string, ids: number[], ...before: Buffer[]) =>
     outcome(write(frameOf(2, 2, sampling, { type, ids }), undefined, { before }));
-  for (const ids of [
-    [1, 2, 3],
-    [82, 71, 66],
-    [0, 1, 2],
-  ]) {
+  for (const ids of [[1, 2, 3], rgbIds, [0, 1, 2]]) {
     expect([await of(three, ids), await of(three, ids, adobe(0))]).toEqual([fine, fine]);
-    for (const said of [jfif, adobe(1), adobe(2)]) expect(await of(three, ids, said)).toBe(headerOnly);
+    for (const app of [jfif, adobe(1), adobe(2)]) expect(await of(three, ids, app)).toBe(headerOnly);
   }
   expect(await of("1x1", [1])).toBe(headerOnly);
   const cmyk = noise(frameOf(9, 3, "1x1,1x1,1x1,1x1", { type }), randomBytes(2));
@@ -107,7 +108,7 @@ test("three components are RGB whatever their names, and colors are not converte
   for (const transform of [1, 2]) expect(await of("1x1,1x1,1x1,1x1", [1, 2, 3, 4], adobe(transform))).toBe(headerOnly);
 });
 
-test("with arithmetic coding, only the size can be had", async () => {
+test("SOF11 only has metadata", async () => {
   const frame = as(SOF11, frameOf(2, 2, three, { type }));
   expect(await outcome(jpeg(sof(frame), dht(0, tableOf([0], [1])), sos(frame, scanOf([0, 1, 2], 1, 0))))).toBe(
     headerOnly,
@@ -118,44 +119,48 @@ const small = frameOf(2, 2, three, { type, precision: 5 });
 const none = dht(2, tableOf([0], [1]));
 const [zeros, twos] = [0, 2].map(number => ({ dc: Array(3).fill(number) }));
 
-test("the predictor is 1 to 7, a bit has to be left, and the other fields are 0", async () => {
+test("Ss is 1 to 7, Se and Ah are 0, and Al is below the precision", async () => {
   const some = [...range(0, 17), 63, 255];
-  // In the only scan, in a later one, and in one that the picture could do without.
+  // In the only scan, in a later one, and in a repeated one.
   for (const [components, ...before] of [[[0, 1, 2]], [[2], [0, 1]], [[2], [0, 1], [2]]]) {
     const start = [sof(small), none, ...before.map(group => sos(small, lossless(group, 1, 0, twos)))];
     const of = (ss: number, se: number, both: number) =>
       outcome(jpeg(...start, sos(small, scanOf(components, ss, se, both >> 4, both & 15, twos))));
-    expect((await where(some, ss => of(ss, 0, 0)))[fine]).toEqual(range(1, 7));
-    expect((await where(some, se => of(1, se, 0)))[fine]).toEqual([0]);
-    expect((await where(some, both => of(1, 0, both)))[fine]).toEqual(range(0, 4));
+    expect((await grouped(some, ss => of(ss, 0, 0)))[fine]).toEqual(range(1, 7));
+    expect((await grouped(some, se => of(1, se, 0)))[fine]).toEqual([0]);
+    expect((await grouped(some, both => of(1, 0, both)))[fine]).toEqual(range(0, 4));
   }
   for (const precision of [2, 7, 8]) {
     const of = (al: number) =>
       outcome(jpeg(sof({ ...small, precision }), none, sos(small, lossless([0, 1, 2], 1, al, twos))));
-    expect((await where(range(0, 15), of))[fine]).toEqual(range(0, precision - 1));
+    expect((await grouped(range(0, 15), of))[fine]).toEqual(range(0, precision - 1));
   }
 });
 
-test("there are no typical tables, and none for AC coefficients or for quantization is needed", async () => {
+test("there are no default Huffman tables, and neither AC nor quantization tables are needed", async () => {
   const header = sos(small, lossless([0, 1, 2], 1, 0, twos));
   const some = bytes.filter(both => both % 5 === 0 || both >> 4 === 2);
-  expect((await where(some, both => outcome(jpeg(sof(small), none, header.with(8, both))), hex))[fine]).toBe(
+  expect((await grouped(some, both => outcome(jpeg(sof(small), none, header.with(8, both))), hex))[fine]).toBe(
     hex(range(0x20, 0x2f)),
   );
   const named = { ...small, components: small.components.map(c => ({ ...c, table: 255 })) };
   expect(await outcome(jpeg(sof(named), none, header))).toBe(fine);
+  const complete = [[0, 1], [2]].map(group => sos(small, lossless(group, 1, 0, twos)));
+  const repeated = (dc: number) =>
+    outcome(jpeg(sof(small), none, ...complete, sos(small, lossless([2], 1, 0, { dc: [dc] }))));
+  expect(await grouped(range(0, 3), repeated)).toEqual({ [headerOnly]: [0, 1, 3], [fine]: [2] });
 });
 
-test("a difference has up to 16 bits, and 32768 takes no more than its code", async () => {
+test("categories go up to 16, which is 32768 without extra bits", async () => {
   const withSymbol = (symbol: number) =>
     outcome(jpeg(sof(small), dht(2, tableOf([0, symbol], [1, 2])), sos(small, lossless([0, 1, 2], 1, 0, twos))));
-  expect((await where(range(0, 32), withSymbol))[fine]).toEqual(range(0, 16));
+  expect((await grouped(range(0, 32), withSymbol))[fine]).toEqual(range(0, 16));
 
-  // Sums are of 16 bits, of which the low 8 show. The predictors that halve bring down the ninth.
+  // Samples wrap at 16 bits, and the low 8 are output. Predictors 5 to 7 shift higher bits down.
   const frame = frameOf(40, 6, three, { type });
   const random = randomBytes(3);
   for (const { data } of frame.components) {
-    data.forEach((_, i) => (data[i] = ((random() << 8) | random()) >> (random() % 16)));
+    data.forEach((_, i) => (data[i] = random16(random) >> (random() % 16)));
     data.set([128 + 32768, 128, 128 + 32768]);
   }
   await expectPictures(
@@ -166,19 +171,17 @@ test("a difference has up to 16 bits, and 32768 takes no more than its code", as
   );
 });
 
-test("long and short codes in any order", async () => {
-  // With the bits that follow them, they take 3, 15, 16, 31 and 3 bits.
-  const [sizes, lengths] = [
-    [1, 8, 9, 15, 16],
-    [2, 7, 7, 16, 3],
-  ];
-  const often = [1, 8, 8, 8, 8, 9, 15, 15, 15, 16];
+test.each([
+  ["3, 15, 16, 31 and 3", [1, 8, 9, 15, 16], [2, 7, 7, 16, 3], [1, 8, 8, 8, 8, 9, 15, 15, 15, 16]],
+  ["15 to 25", range(5, 15), Array(11).fill(10), [5, 5, 5, 5, 5, 5, ...range(5, 15), 15, 15]],
+  ["16, 18, 15, 17, 19 and 15", [15, 14, 10, 12, 13, 8], [1, 4, 5, 5, 6, 7], [15, 14, 10, 10, 12, 13, 8, 8, 8]],
+])("codes that take %s bits with their extra bits, in any order", async (_, sizes, lengths, often) => {
   const frame = frameOf(1500, 1, three, { type });
   const random = randomBytes(10);
   for (const { data } of frame.components) {
     data.forEach((_, i) => {
       const size = often[random() % often.length];
-      const magnitude = (1 << (size - 1)) | (size < 16 ? ((random() << 8) | random()) >> (17 - size) : 0);
+      const magnitude = (1 << (size - 1)) | (size < 16 ? random16(random) >> (17 - size) : 0);
       data[i] = ((i ? data[i - 1] : 128) + (random() & 1 ? magnitude : -magnitude)) & 0xffff;
     });
   }
@@ -186,39 +189,39 @@ test("long and short codes in any order", async () => {
   await expectPictures([{ name: "all", file, expected: pictureOf(frame) }]);
 });
 
-test("components can be in one scan or in several, each with its own predictor and shift", async () => {
+test("components can be in one scan or in several, each with its own predictor and point transform", async () => {
   const frame = noise(frameOf(9, 7, three, { type }), randomBytes(4));
   await expectPictures(
     ["0 1 2", "2 1 0", "01 2", "1 02", "21 0", "1 012"].map(name => {
-      const scans = name.split(" ").map((group, i) => lossless([...group].map(Number), 7 - i, i));
+      const scans = groupsOf(name).map((group, i) => lossless(group, 7 - i, i));
       const al = all(frame).map(c => scans.findLast(scan => scan.components.includes(c))!.al);
       return { name, file: write(frame, scans), expected: pictureOf(shifted(frame, al)) };
     }),
   );
 });
 
-test("but each has to be in one", async () => {
+test("every component needs a scan", async () => {
   const layouts = ["0", "01", "12", "0 2", "0 0 0", "0 1 2"];
   for (const frame of [small, frameOf(2, 1, three, { type })]) {
     const of = (name: string) =>
       outcome(
         write(
           frame,
-          name.split(" ").map(group => lossless([...group].map(Number))),
+          groupsOf(name).map(group => lossless(group)),
         ),
       );
-    expect(await where(layouts, of)).toEqual({ [headerOnly]: layouts.slice(0, 5), [fine]: layouts.slice(5) });
+    expect(await grouped(layouts, of)).toEqual({ [headerOnly]: layouts.slice(0, 5), [fine]: layouts.slice(5) });
   }
   const four = frameOf(2, 1, "1x1,1x1,1x1,1x1", { type });
   const without = (c: number) =>
     outcome(write(four, [lossless(all(four).filter(other => other !== c)), lossless([c ? 0 : 1])]));
-  expect(await where(all(four), without)).toEqual({ [headerOnly]: all(four) });
+  expect(await grouped(all(four), without)).toEqual({ [headerOnly]: all(four) });
   expect(await outcome(write(small, [lossless([0, 1, 2]), lossless([0])]))).toBe(headerOnly);
   const apart = write(small, [lossless([0]), lossless([1, 2])]);
   expect(await outcome(jpeg(apart.subarray(2, -2), marker(0xf0)))).toBe(headerOnly);
 });
 
-test("samples that stand for several pixels are repeated", async () => {
+test("subsampled components are upsampled by repetition", async () => {
   const random = randomBytes(5);
   await expectPictures(
     ["2x1,1x1,1x1", "1x2,1x1,1x1", "2x2,1x1,1x1", "4x2,1x1,1x1", "1x1,3x1,1x2", "2x2,2x1,1x2", "1x4,1x2,1x1"].flatMap(
@@ -242,7 +245,7 @@ test("samples that stand for several pixels are repeated", async () => {
     ),
   );
   const samplings = ["3x1,2x1,1x1", "2x2,2x2,2x2"];
-  expect(await where(samplings, sampling => outcome(write(frameOf(4, 4, sampling, { type }))))).toEqual({
+  expect(await grouped(samplings, sampling => outcome(write(frameOf(4, 4, sampling, { type }))))).toEqual({
     [headerOnly]: samplings,
   });
 });
@@ -254,7 +257,7 @@ test.each<[string, string[]]>([
   ["4x1,2x1,1x4", ["01 2", "0 21", "1 02"]],
   ["2x2,2x2,2x2", ["01 2", "12 0", "0 1 2"]],
   ["2x1,1x1,1x2,2x2", ["03 12", "012 3", "2 013"]],
-])("some of the components in one scan and some in another, at any size: %s", async (sampling, layouts) => {
+])("subsampled components in several scans, at small sizes: %s", async (sampling, layouts) => {
   const random = randomBytes(11);
   const sides = [1, 2, 3, 5, 7, 8, 13];
   const sizes = sides.flatMap(width => sides.map(height => [width, height]));
@@ -265,7 +268,7 @@ test.each<[string, string[]]>([
       return layouts
         .filter((_, nth) => !slow || (i + nth) % 3 === 0)
         .map(layout => {
-          const scans = layout.split(" ").map((group, nth) => lossless([...group].map(Number), 1 + ((i + nth) % 7)));
+          const scans = groupsOf(layout).map((group, nth) => lossless(group, 1 + ((i + nth) % 7)));
           return { name: `${width} by ${height}, ${layout}`, file: write(frame, scans), expected };
         });
     }),
@@ -287,18 +290,17 @@ test("rows of any length", async () => {
   );
 });
 
-test.each(["012", "0 1 2"])("thousands of samples across or down, in scans of %s", async layout => {
+test.each(["012", "0 1 2"])("very wide and very tall images, in scans of %s", async layout => {
   const [some, length] = [20, slow ? 8200 : 65500];
   const row = noise(frameOf(some, 1, three, { type }), randomBytes(12));
-  // Two bytes for each difference, and at the end the sample that the first is predicted from. So the data can repeat.
+  // Each difference takes two bytes, and the row ends with 128, the initial prediction. So the data can repeat.
   const tables = { 0: tableOf(range(0, 8), range(8, 16).toReversed()) };
   for (const { data } of row.components) data[some - 1] = 128;
-  const scans = layout.split(" ").map(group => coded(row, scanOf([...group].map(Number), 1, 0, 0, 0, zeros), tables));
+  const scans = groupsOf(layout).map(group => coded(row, scanOf(group, 1, 0, 0, 0, zeros), tables));
   const of = (width: number, height: number, interval = width * height) => {
     const parts = scans.flatMap(({ header, data }) => {
       const each = Buffer.alloc((data.length * interval) / some, data);
-      const more = range(2, (width * height) / interval);
-      return [header, each, ...more.flatMap(n => [marker(RST0 + ((n - 2) & 7)), each])];
+      return [header, ...withRestarts<Buffer>(Array((width * height) / interval).fill(each))];
     });
     return {
       name: `${width} by ${height}, ${interval}`,
@@ -309,7 +311,7 @@ test.each(["012", "0 1 2"])("thousands of samples across or down, in scans of %s
   await expectPictures([of(length, 3, length), of(1, length), of(1, length, length / 5)]);
 });
 
-test("restart markers come after whole rows, and the next row is predicted like the first", async () => {
+test("a restart interval is whole rows of MCUs, and its first row is predicted like the first of the scan", async () => {
   const frame = noise(frameOf(6, 21, "2x2,1x1,1x1", { type }), randomBytes(7));
   const expected = pictureOf(frame);
   await expectPictures(
@@ -327,12 +329,15 @@ test("restart markers come after whole rows, and the next row is predicted like 
     ]),
   );
   const together = (interval: number) => outcome(write(frame, [lossless([0, 1, 2], 1, 0, { interval })]));
-  expect((await where(range(1, 12), together))[fine]).toEqual([3, 6, 9, 12]);
-  const later = (interval: number) => outcome(write(frame, [lossless([1, 2]), lossless([0], 1, 0, { interval })]));
-  expect((await where([3, 11, 12, 13], later))[fine]).toEqual([12]);
+  expect((await grouped(range(1, 12), together))[fine]).toEqual([3, 6, 9, 12]);
+  for (const earlier of [[], [lossless([0])]]) {
+    const later = (interval: number) =>
+      outcome(write(frame, [...earlier, lossless([1, 2]), lossless([0], 1, 0, { interval })]));
+    expect((await grouped([3, 11, 12, 13], later))[fine]).toEqual([12]);
+  }
 });
 
-test("in a scan of its own, a component has rows like any other, whatever its sampling factors", async () => {
+test("in a scan of one component, a restart interval can be any number of rows, whatever V is", async () => {
   const random = randomBytes(9);
   await expectPictures(
     ["1x2,1x1,1x1", "2x4,1x1,1x2", "1x3,1x1,1x1"].flatMap(sampling => {
@@ -350,7 +355,7 @@ test("in a scan of its own, a component has rows like any other, whatever its sa
   );
 });
 
-/** Of the first component. A zero is followed by one bit, so zeros count down. 10 is followed by two, and 110 is 0. */
+/** The codes 0, 10 and 110 are the categories 1, 2 and 0. So 1011 is a difference of 3, and 00 one of -1. */
 async function reds(interval: number, al: number, ...data: (Buffer | number[])[]) {
   const frame = frameOf(2, 4, three, { type });
   const others = new Symbols();
@@ -367,7 +372,7 @@ async function reds(interval: number, al: number, ...data: (Buffer | number[])[]
 }
 const threes = [0b1011_1011];
 
-test("where the data ends, the row that has begun is read from zeros, and the others are in the middle", async () => {
+test("truncated data: the current row is decoded from zeros, and later rows are 128", async () => {
   expect(await reds(0, 0, threes, threes, threes, threes)).toEqual([3, 6, 6, 9, 9, 12, 12, 15]);
   expect(await reds(0, 0, threes, threes)).toEqual([3, 6, 6, 9, 5, 8, 0, 0]);
   expect(await reds(0, 0, [0b1011_01_10], [0b11_1011_10])).toEqual([3, 4, 6, 7, 3, 6, 0, 0]);
@@ -375,7 +380,7 @@ test("where the data ends, the row that has begun is read from zeros, and the ot
   expect(await reds(0, 2, threes)).toEqual([12, 24, 8, 20, 0, 0, 0, 0]);
 });
 
-test("so it is in a longer row, by the table of each component", async () => {
+test("truncated data: zeros decode by the table of each component", async () => {
   const frame = frameOf(50, 2, three, { type });
   const sizes = [1, 2, 0];
   frame.components.forEach(({ data }, c) =>
@@ -391,7 +396,7 @@ test("so it is in a longer row, by the table of each component", async () => {
   );
 });
 
-test("and in a later row, with all bits of the differences", async () => {
+test("truncated data: differences from zeros keep all 16 bits", async () => {
   const frame = frameOf(50, 2, three, { type });
   const sizes = [9, 12, 15];
   frame.components.forEach(({ data }, c) =>
@@ -411,8 +416,7 @@ test("and in a later row, with all bits of the differences", async () => {
   );
 });
 
-test("restart markers that are out of turn", async () => {
-  const rst = (number: number) => marker(RST0 + number);
+test("restart markers out of sequence", async () => {
   expect(await reds(2, 0, threes, rst(0), threes, [1, 2], rst(1), threes, rst(2), threes)).toEqual([
     3, 6, 3, 6, 3, 6, 3, 6,
   ]);
@@ -421,11 +425,18 @@ test("restart markers that are out of turn", async () => {
   expect(await reds(4, 0, rst(0), threes, threes)).toEqual([-1, -2, 0, 0, 3, 6, 6, 9]);
 });
 
-test("what is no code takes 17 bits, and stands for 0", async () => {
+test("the marker after the last restart interval is not skipped", async () => {
+  const frame = frameOf(2, 4, three, { type });
+  const file = write(frame, [lossless([0, 1, 2], 1, 0, { interval: 4 })]);
+  const ending = (code: number) => outcome(jpeg(file.subarray(2, -2), marker(code)));
+  expect(await grouped([TEM, 0x02, 0xbf], ending)).toEqual({ [fine]: [TEM], [headerOnly]: [0x02, 0xbf] });
+});
+
+test("an invalid code takes 17 bits and decodes as category 0", async () => {
   expect(await reds(0, 0, [0xe0, 0, 0b0_1011_101, 0b1_1011_110])).toEqual([0, 3, 3, 6, 3, 5, 0, 0]);
 });
 
-test("is decoded at its size, and then resized", async () => {
+test("resize() decodes at full size", async () => {
   const frame = noise(frameOf(32, 16, three, { type }), randomBytes(8));
   const file = write(frame);
   const whole = await new Bun.Image(file).png().bytes();

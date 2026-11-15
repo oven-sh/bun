@@ -1,4 +1,4 @@
-// What the tests give to Bun.Image, and how they look at what comes back.
+// Decodes with Bun.Image, and compares the results.
 import { expect } from "bun:test";
 import { deflateSync } from "node:zlib";
 import { parse, slow } from "../png-golden/check";
@@ -16,7 +16,7 @@ export async function pictureFrom(image: Bun.Image) {
   return { width, height, rgba, profile: profile ? Buffer.from(profile).toString("latin1") : null };
 }
 
-/** At so many eighths of its size, to which the decoder scales by itself, so that nothing is left to resize. */
+/** At `eighths` / 8 of its size. The decoder scales to that itself, so nothing is left to resize. */
 export async function decode(file: Uint8Array, eighths = 8) {
   const image = new Bun.Image(file);
   if (eighths === 8) return pictureFrom(image);
@@ -29,12 +29,12 @@ const codeOf = (promise: Promise<unknown>) =>
     () => "ok",
     error => (error.code === "ERR_IMAGE_DECODE_FAILED" ? "refused" : (error.code ?? String(error))),
   );
-/** What comes of `metadata()`, and of decoding. */
+/** The result of `metadata()`, then that of decoding. */
 export const outcome = async (file: Uint8Array, options?: { maxPixels?: number }) =>
   `${await codeOf(new Bun.Image(file, options).metadata())}, ${await codeOf(new Bun.Image(file, options).png().bytes())}`;
 export const [fine, refused, headerOnly] = ["ok, ok", "refused, refused", "ok, refused"];
 
-/** The first place in which two pictures differ, if they do. */
+/** The first difference, if there is one. */
 export function difference(actual: Picture, expected: Picture) {
   if (actual.width !== expected.width || actual.height !== expected.height) {
     return `${actual.width} by ${actual.height}, not ${expected.width} by ${expected.height}`;
@@ -61,27 +61,28 @@ export async function expectPictures(cases: Case[]) {
   expect(wrong.flat()).toEqual([]);
 }
 
-/** What follows a file is taken to be EOI anyway. A decoder may take a shorter way while much of the file is left. */
-export const withMoreBehind = (file: Uint8Array) => Buffer.concat([file, Buffer.alloc(much, marker(EOI))]);
-export const much = 2048;
+/** With this many bytes left, the decoder of sequential scans looks up two codes at a time. */
+export const trailerLength = 2048;
+/** Appends EOI markers, which change nothing else: a decoder acts as if they followed any file. */
+export const withTrailer = (file: Uint8Array) => Buffer.concat([file, Buffer.alloc(trailerLength, marker(EOI))]);
 
-export const bothWays = (cases: Case[]) =>
+export const alsoWithTrailer = (cases: Case[]) =>
   cases.flatMap((short, i) => {
-    const long = { ...short, name: `${short.name}, with more behind`, file: withMoreBehind(short.file) };
+    const long = { ...short, name: `${short.name}, with a trailer`, file: withTrailer(short.file) };
     return slow ? [i & 1 ? short : long] : [short, long];
   });
 
-/** With this table, a block that has only a DC coefficient is that far from 128 all over. */
+/** With this quantization table, the samples of a block without AC coefficients are 128 plus its DC coefficient. */
 export const eights: number[] = Array(64).fill(8);
 
-/** A gray picture of such blocks. */
+/** A gray frame of such blocks, from their DC coefficients. */
 export function flat(rows: number[][], type?: number) {
   const frame = frameOf(rows[0].length * 8, rows.length * 8, "1x1", { type, tables: [eights] });
   rows.flat().forEach((level, i) => (frame.components[0].data[i * 64] = level));
   return frame;
 }
 
-/** And back. */
+/** The inverse of `flat()`. */
 export async function levels(file: Uint8Array) {
   const { width, height, rgba } = await decode(file);
   return Array.from({ length: height / 8 }, (_, y) =>
@@ -97,8 +98,8 @@ export async function levels(file: Uint8Array) {
   );
 }
 
-/** Sorts `values` by what comes of each. */
-export async function where<T, U = T[]>(
+/** Groups `values` by their results. */
+export async function grouped<T, U = T[]>(
   values: T[],
   result: (value: T) => Promise<string>,
   show = (some: T[]) => some as unknown as U,
@@ -112,14 +113,20 @@ export const range = (from: number, to: number) => Array.from({ length: to - fro
 export const bytes = range(0, 255);
 export const hex = (codes: number[]) => Buffer.from(codes).toString("hex");
 
-/** What begins with 1 is no code. */
+/** No code starts with 1. */
 export const everySymbol = tableOf(
   bytes,
   bytes.map(symbol => 9 + (symbol & 1)),
 );
 
-/** What a file has to say to be taken for these colors. */
-export const said: Record<Colors, Buffer[]> = { gray: [], YCbCr: [], RGB: [adobe(0)], CMYK: [], YCCK: [adobe(2)] };
+/** The segments that select a color space. */
+export const colorMarkers: Record<Colors, Buffer[]> = {
+  gray: [],
+  YCbCr: [],
+  RGB: [adobe(0)],
+  CMYK: [],
+  YCCK: [adobe(2)],
+};
 
 export function pngOf({ width, height, rgba }: Picture, ...chunks: Buffer[]) {
   const lines = Buffer.alloc(height * (1 + width * 4));

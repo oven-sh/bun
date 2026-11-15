@@ -9,15 +9,15 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { differences } from "../../archive-golden/observe";
 import { loadCases } from "../png-golden/observe";
-import { withMoreBehind } from "./decode";
+import { withTrailer } from "./decode";
 import { observable, type Cases } from "./observe";
 
 const recorded = await loadCases<Cases>(join(import.meta.dir, "cases.json.gz"));
-const cases = { ...observable(recorded), "decode with more behind": observable(recorded, withMoreBehind).decode };
+const cases = { ...observable(recorded), "decode with a trailer": observable(recorded, withTrailer).decode };
 
 describe.each([
-  ["decode", 971],
-  ["decode with more behind", 971],
+  ["decode", 973],
+  ["decode with a trailer", 973],
   ["scale", 1290],
   ["encode", 229],
 ] as const)("Bun.Image reads and writes JPEG the way it was recorded to: %s", (kind, count) => {

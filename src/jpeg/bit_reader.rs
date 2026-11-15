@@ -63,7 +63,7 @@ impl<'i, 'a> Window<'i, 'a> {
         self.end = 8 * end;
         self.low_mark = self.end.saturating_sub(64);
         self.limit = match self.input.pending_marker() {
-            // Above where positions are moved back to.
+            // Above `end + 8`, which is where later slides move positions back to.
             Some(_) => self.end + 16,
             None => self.end - 8 * MARGIN,
         };

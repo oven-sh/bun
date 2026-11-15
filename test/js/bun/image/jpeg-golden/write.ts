@@ -1,5 +1,5 @@
-// Writes a JPEG file around coefficients or samples that are chosen first, in any layout of frame and scans.
-// model.ts says what pixels they stand for. https://www.w3.org/Graphics/JPEG/itu-t81.pdf
+// Writes a JPEG file for given coefficients or samples, in any layout of frame and scans. model.ts has their pixels.
+// Section numbers are those of ITU-T T.81: https://www.w3.org/Graphics/JPEG/itu-t81.pdf
 //
 // A debug build runs JavaScript some fifty times slower. Hence the plain loops over typed arrays.
 import { ArithmeticCoder } from "./arithmetic";
@@ -13,12 +13,13 @@ const bytesOf = (data: Bytes) => (typeof data === "string" ? Buffer.from(data, "
 const word = (value: number) => [value >> 8, value & 255];
 
 export const marker = (code: number) => Buffer.from([0xff, code]);
-/** `length` is what the segment says of itself. */
+export const rst = (number: number) => marker(RST0 + (number & 7));
+export const withRestarts = <T>(intervals: T[]) => intervals.flatMap((data, i) => (i ? [rst(i - 1), data] : [data]));
+/** `length` goes into the length field. */
 export const segment = (code: number, data: Bytes = [], length = 2 + data.length) =>
   Buffer.concat([Buffer.from([0xff, code, ...word(length)]), bytesOf(data)]);
-/** Without an end. */
-export const unfinished = (...parts: Bytes[]) => Buffer.concat([marker(SOI), ...parts.map(bytesOf)]);
-export const jpeg = (...parts: Bytes[]) => unfinished(...parts, marker(EOI));
+export const withoutEoi = (...parts: Bytes[]) => Buffer.concat([marker(SOI), ...parts.map(bytesOf)]);
+export const jpeg = (...parts: Bytes[]) => withoutEoi(...parts, marker(EOI));
 
 export const jfif = segment(APP0, "JFIF\0\x01\x01\0\0\x01\0\x01\0\0");
 export const adobe = (transform: number) => segment(APP14, [...bytesOf("Adobe\0\x64\0\0\0\0"), transform]);
@@ -27,6 +28,8 @@ export const icc = (number: number, count: number, data: Bytes) =>
 export const dri = (interval: number) => segment(DRI, word(interval));
 export const dqt = (number: number, values: number[], wide = values.some(value => value > 255)) =>
   segment(DQT, [number | (wide ? 16 : 0), ...(wide ? values.flatMap(word) : values)]);
+/** A quantization table that multiplies all AC coefficients by 0. That also turns block smoothing off. */
+export const dcOnly = (step: number): number[] => [step, ...Array(63).fill(0)];
 
 export type Component = {
   id: number;
@@ -34,12 +37,12 @@ export type Component = {
   v: number;
   /** The number of its quantization table. */
   table: number;
-  /** In blocks, or in samples if lossless: what the picture needs, and that rounded up to whole MCUs. */
+  /** In blocks, or in samples if lossless: what the image needs, then that rounded up to whole MCUs. */
   wide: number;
   high: number;
   across: number;
   down: number;
-  /** 64 coefficients for each block, in zigzag order. Or one sample each. */
+  /** 64 coefficients for each block, in zigzag order, or the samples if lossless. */
   data: Int32Array;
 };
 
@@ -49,10 +52,15 @@ export type Frame = {
   width: number;
   height: number;
   components: Component[];
-  /** By number, each in zigzag order. */
+  /** Quantization tables by number, in zigzag order. */
   tables: number[][];
 };
 
+export const rgbIds = [...Buffer.from("RGB")];
+export const progressiveTypes = [
+  ["Huffman", SOF2],
+  ["arithmetic", SOF10],
+] as const;
 export const isLossless = (frame: { type: number }) => (frame.type & 3) === 3;
 export const isProgressive = (frame: { type: number }) => (frame.type & 3) === 2;
 export const largest = ({ components }: Frame) => [
@@ -60,7 +68,7 @@ export const largest = ({ components }: Frame) => [
   Math.max(...components.map(c => c.v)),
 ];
 
-/** All zeros. `sampling` is as cjpeg takes it: "2x2,1x1,1x1". One table for all, unless there are more. */
+/** All zeros. `sampling` is like "2x2,1x1,1x1". Component `i` has table `i`, or the last one. */
 export function frameOf(
   width: number,
   height: number,
@@ -98,7 +106,7 @@ export const sof = ({ type, precision, width, height, components }: Frame) =>
 export type Scan = {
   /** Indices into those of the frame. */
   components: number[];
-  /** The band, or else the predictor of a lossless scan. */
+  /** In a lossless scan, the predictor. */
   ss: number;
   se: number;
   ah: number;
@@ -106,11 +114,10 @@ export type Scan = {
   /** For each of `components`, the numbers of its tables. */
   dc: number[];
   ac: number[];
-  /** MCUs from one restart marker to the next. */
+  /** The restart interval. */
   interval: number;
-  /** Progressive Huffman: the longest run of blocks that end early. */
-  longestRun: number;
-  /** Arithmetic: what DAC says of a table, by its class and number. */
+  maxEobRun: number;
+  /** The DAC values, by class and number. */
   conditioning: Record<number, number>;
 };
 
@@ -118,9 +125,15 @@ export type Scan = {
 export function scanOf(components: number[], ss = 0, se = 63, ah = 0, al = 0, more: Partial<Scan> = {}): Scan {
   const numbers = components.map(c => Math.min(c, 1));
   const [dc, ac] = [ss === 0 && ah === 0, se !== 0].map(needed => (needed ? numbers : numbers.map(() => 0)));
-  return { components, ss, se, ah, al, dc, ac, interval: 0, longestRun: 0x7fff, conditioning: {}, ...more };
+  return { components, ss, se, ah, al, dc, ac, interval: 0, maxEobRun: 0x7fff, conditioning: {}, ...more };
 }
 export const all = (frame: Frame) => frame.components.map((_, i) => i);
+/** The components of each scan, from something like "01 2". */
+export const groupsOf = (layout: string) => layout.split(" ").map(group => [...group].map(Number));
+export const forThree = (scans: (component: number) => Scan[]) => [0, 1, 2].flatMap(scans);
+/** Successive approximation: a first scan with this Al, then a refinement scan for each bit. */
+export const bitByBit = (al: number, components: number[], ss: number, se: number) =>
+  Array.from({ length: al + 1 }, (_, i) => scanOf(components, ss, se, i ? al - i + 1 : 0, al - i));
 
 export const sos = (frame: Frame, { components, dc, ac, ss, se, ah, al }: Scan) =>
   segment(SOS, [
@@ -131,7 +144,7 @@ export const sos = (frame: Frame, { components, dc, ac, ss, se, ah, al }: Scan) 
     (ah << 4) | al,
   ]);
 
-/** A.2: calls `unit` for the blocks or samples of a scan in their order, `i` being the place in the scan. */
+/** A.2: calls `unit` for the blocks or samples of a scan in order. `i` is the index of the component in the scan. */
 export function walk(
   frame: Frame,
   { components, interval }: Scan,
@@ -164,8 +177,10 @@ export type HuffmanTable = { counts: number[]; symbols: number[] };
 /** By class and number, as in DHT: AC + 1 is the second table for AC coefficients. */
 export type HuffmanTables = Record<number, HuffmanTable>;
 export const AC = 16;
+export const [EOB, ZRL] = [0x00, 0xf0];
 
 export const dht = (number: number, { counts, symbols }: HuffmanTable) => segment(DHT, [number, ...counts, ...symbols]);
+export const dhts = (tables: HuffmanTables) => Object.entries(tables).map(([number, table]) => dht(+number, table));
 
 const fromHex = (counts: string, symbols: string) => ({
   counts: [...Buffer.from(counts, "hex")],
@@ -190,7 +205,7 @@ export const typical: HuffmanTables = {
   ),
 };
 
-/** A table in which each of `symbols` has a code of the length at its place in `lengths`. */
+/** `symbols[i]` gets a code of `lengths[i]` bits. */
 export function tableOf(symbols: number[], lengths: number[]): HuffmanTable {
   const order = symbols.map((_, i) => i).sort((a, b) => lengths[a] - lengths[b]);
   const counts = Array(16).fill(0);
@@ -198,15 +213,15 @@ export function tableOf(symbols: number[], lengths: number[]): HuffmanTable {
   return { counts, symbols: order.map(i => symbols[i]) };
 }
 
-/** K.2, from how often each symbol occurs. `unlimited` is the length of the longest code before figure K.3. */
+/** K.2. `unlimited` is the length of the longest code before figure K.3 limits it to 16. */
 export function optimalTable(occurrences: ArrayLike<number>) {
-  // One more symbol, which takes the code that is all ones.
+  // A dummy symbol takes the all-ones code.
   const used: number[] = [];
   for (let symbol = 0; symbol < 256; symbol++) if (occurrences[symbol]) used.push(symbol);
   used.push(256);
   const lengths = new Int32Array(257);
   const trees = used.map(symbol => ({ frequency: occurrences[symbol] ?? 1, symbols: [symbol] }));
-  /** The last of equals. */
+  /** On a tie, the last. */
   const least = (but?: number) => {
     let found = but === 0 ? 1 : 0;
     for (let i = 0; i < trees.length; i++) if (i !== but && trees[i].frequency <= trees[found].frequency) found = i;
@@ -240,7 +255,7 @@ export function optimalTable(occurrences: ArrayLike<number>) {
 }
 
 const made = new WeakMap<HuffmanTable, { codes: Int32Array; lengths: Int32Array }>();
-/** C.2: of each symbol, its code and the length of that. */
+/** C.2: the code of each symbol, and its length. */
 function codesOf(table: HuffmanTable) {
   if (made.has(table)) return made.get(table)!;
   const { counts, symbols } = table;
@@ -255,7 +270,6 @@ function codesOf(table: HuffmanTable) {
   return { codes, lengths };
 }
 
-/** A zero behind every FF. */
 export function stuffed(bytes: ArrayLike<number>) {
   const out = Buffer.alloc(bytes.length * 2);
   let to = 0;
@@ -263,10 +277,12 @@ export function stuffed(bytes: ArrayLike<number>) {
   return out.subarray(0, to);
 }
 
+/** SSSS: how many extra bits `value` takes. */
 export const sizeOf = (value: number) => 32 - Math.clz32(Math.abs(value));
+export const int16 = (value: number) => (value << 16) >> 16;
 const [BITS, MARKER] = [-1, -2];
 
-/** What a Huffman-coded scan says, before there are codes for it. */
+/** The symbols and bits of a Huffman-coded scan, before codes are assigned. */
 export class Symbols {
   /** Three numbers each: the table, BITS or MARKER, then the symbol, the bits or the marker, then how many bits. */
   #items: number[] = [];
@@ -279,18 +295,23 @@ export class Symbols {
     if (count) this.#items.push(BITS, bits & ((1 << count) - 1), count);
     return this;
   }
-  /** F.1.2: so many zeros and the size of `value`, then its bits. */
+  /** F.1.2: RRRRSSSS, then the extra bits. */
   value(table: number, run: number, value: number) {
     const size = sizeOf(value);
     return this.symbol(table, (run << 4) | size).bits(value < 0 ? value - 1 : value, size);
   }
-  /** Ones up to the next whole byte, then the marker. */
+  /** G.1.2.2: EOBn, then the extra bits. */
+  eobRun(table: number, blocks: number) {
+    const size = sizeOf(blocks) - 1;
+    return this.symbol(table, size << 4).bits(blocks, size);
+  }
+  /** Pads with ones to a whole byte first. */
   marker(code: number) {
     this.#items.push(MARKER, code, 0);
     return this;
   }
 
-  /** How often each symbol occurs, by table in the order of their first use. */
+  /** By table, in the order of their first use. */
   occurrences() {
     const found = new Map<number, Int32Array>();
     const items = this.#items;
@@ -330,26 +351,25 @@ export class Symbols {
   }
 }
 
-/** libjpeg ends a run of blocks when it has more bits than this to send behind it. */
-export const mostCorrections = 937;
+/** libjpeg ends an EOB run when more correction bits than this are pending. */
+export const maxCorrectionBits = 937;
 
 /** F.1.2 and G.1.2 */
 function huffmanSymbols(frame: Frame, scan: Scan) {
-  const { ss, se, ah, al, longestRun } = isProgressive(frame) ? scan : scanOf([], 0, 63, 0, 0, { longestRun: 1 });
+  const { ss, se, ah, al, maxEobRun } = isProgressive(frame) ? scan : scanOf([], 0, 63, 0, 0, { maxEobRun: 1 });
   const out = new Symbols();
   const last = [0, 0, 0, 0];
   let table = 0;
-  let [ended, corrections] = [0, [] as number[]];
+  let [eobRun, corrections] = [0, [] as number[]];
   const send = (bits: number[]) => {
     for (const bit of bits) out.bits(bit, 1);
     bits.length = 0;
   };
   const endRun = () => {
-    if (!ended) return;
-    const size = sizeOf(ended) - 1;
-    out.symbol(table, size << 4).bits(ended, size);
+    if (!eobRun) return;
+    out.eobRun(table, eobRun);
     send(corrections);
-    ended = 0;
+    eobRun = 0;
   };
   const block = ({ data, across }: Component, i: number, x: number, y: number) => {
     const at = (y * across + x) * 64;
@@ -373,7 +393,7 @@ function huffmanSymbols(frame: Frame, scan: Scan) {
       }
       for (; run > 15 && k <= lastNew; run -= 16) {
         endRun();
-        out.symbol(table, 0xf0);
+        out.symbol(table, ZRL);
         send(waiting);
       }
       if (ah && magnitude > 1) {
@@ -387,7 +407,7 @@ function huffmanSymbols(frame: Frame, scan: Scan) {
     }
     if (run === 0 && waiting.length === 0) return;
     corrections.push(...waiting);
-    if (++ended === longestRun || corrections.length > mostCorrections) endRun();
+    if (++eobRun === maxEobRun || corrections.length > maxCorrectionBits) endRun();
   };
   walk(frame, scan, block, number => {
     endRun();
@@ -403,11 +423,11 @@ export function predict(predictor: number, a: number, b: number, c: number) {
   return [0, a, b, c, a + b - c, a + ((b - c) >> 1), b + ((a - c) >> 1), (a + b) >> 1][predictor];
 }
 
-/** H.1.2. What is only there to fill an MCU is taken for a difference. */
+/** H.1.2. A sample that only pads an MCU is written as a difference. */
 function losslessSymbols(frame: Frame, scan: Scan) {
   const { ss, al } = scan;
   const out = new Symbols();
-  // Of each component, the first row since the start or the last restart marker.
+  // The first row of each component in this restart interval.
   let first: number[] = [];
   const sample = ({ data, across, wide, high }: Component, i: number, x: number, y: number) => {
     first[i] ??= y;
@@ -418,7 +438,7 @@ function losslessSymbols(frame: Frame, scan: Scan) {
       if (y === first[i]) predicted = x ? a : 1 << (frame.precision - al - 1);
       else predicted = x ? predict(ss, a, b, c) : b;
     }
-    const difference = (((data[at] >> al) - predicted) << 16) >> 16;
+    const difference = int16((data[at] >> al) - predicted);
     if (difference === -32768) out.symbol(scan.dc[i], 16);
     else out.value(scan.dc[i], 0, difference);
   };
@@ -439,13 +459,13 @@ function arithmeticData(frame: Frame, scan: Scan) {
     const at = (y * across + x) * 64;
     if (ss === 0 && ah) return coder.evenly((data[at] >> al) & 1);
     if (ss === 0) {
-      coder.difference(scan.dc[i], i, (((data[at] >> al) - last[i]) << 16) >> 16);
+      coder.difference(scan.dc[i], i, int16((data[at] >> al) - last[i]));
       last[i] = data[at] >> al;
     }
     if (se !== 0) coder.band(scan.ac[i], data.subarray(at, at + 64), Math.max(ss, 1), se, ah, al);
   };
   walk(frame, scan, block, number => {
-    parts.push(stuffed(coder.finish()), marker(RST0 + number));
+    parts.push(stuffed(coder.finish()), rst(number));
     coder = new ArithmeticCoder(scan.conditioning);
     last = [0, 0, 0, 0];
   });
@@ -455,7 +475,7 @@ function arithmeticData(frame: Frame, scan: Scan) {
 export const symbolsOf = (frame: Frame, scan: Scan) =>
   isLossless(frame) ? losslessSymbols(frame, scan) : huffmanSymbols(frame, scan);
 
-/** The tables that a scan needs, a segment each, its header and its data. The best tables if none are given. */
+/** The DHT or DAC segments of a scan, its header and its data. Huffman tables that are not given are optimal. */
 export function coded(frame: Frame, scan: Scan, given?: HuffmanTables) {
   const header = sos(frame, scan);
   if (frame.type >= SOF9) {
@@ -471,7 +491,13 @@ export function coded(frame: Frame, scan: Scan, given?: HuffmanTables) {
   };
 }
 
-/** What comes in front of the first scan. */
+export const scanWithTables = (frame: Frame, scan: Scan) => Object.values(coded(frame, scan)).flat();
+export function scanWithoutTables(frame: Frame, scan: Scan, tables = typical) {
+  const data = frame.type >= SOF9 ? arithmeticData(frame, scan) : symbolsOf(frame, scan).bytes(tables);
+  return Buffer.concat([sos(frame, scan), data]);
+}
+
+/** DQT and SOF */
 export const headerOf = (frame: Frame) =>
   Buffer.concat([...(isLossless(frame) ? [] : frame.tables.map((table, i) => dqt(i, table))), sof(frame)]);
 
@@ -503,18 +529,21 @@ export const simpleProgression = [
   scanOf([0], 1, 63, 1, 0),
 ];
 
+export const random16 = (random: () => number) => (random() << 8) | random();
+/** From `-limit` to `limit`. */
+export const within = (random: () => number, limit: number) => (random16(random) % (2 * limit + 1)) - limit;
+
 /**
- * Fills a frame with coefficients of up to `ac` before they are quantized, one in `sparse` of them, around a level of
- * up to `dc` from the middle. Or else with any samples.
+ * Sets one in `sparse` AC coefficients to at most `ac` before quantization, and the mean of each block to at most `dc`
+ * from 128. A lossless frame gets random samples.
  */
 export function noise(frame: Frame, random: () => number, { dc = 64, ac = 96, sparse = 1 } = {}) {
-  const within = (limit: number) => (((random() << 8) | random()) % (2 * limit + 1)) - limit;
   for (const { data, table } of frame.components) {
     const steps = frame.tables[table];
     for (let i = 0; i < data.length; i++) {
       if (isLossless(frame)) data[i] = random() & ((1 << frame.precision) - 1);
-      else if (i % 64 === 0) data[i] = Math.trunc(within(dc * 8) / steps[0]);
-      else if (sparse === 1 || random() % sparse === 0) data[i] = Math.trunc(within(ac) / steps[i % 64]);
+      else if (i % 64 === 0) data[i] = Math.trunc(within(random, dc * 8) / steps[0]);
+      else if (sparse === 1 || random() % sparse === 0) data[i] = Math.trunc(within(random, ac) / steps[i % 64]);
     }
   }
   return frame;

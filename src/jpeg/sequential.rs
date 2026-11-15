@@ -143,7 +143,7 @@ pub(crate) struct StepTables {
 }
 
 impl StepTables {
-    /// For a scan of at most `data_len` bytes.
+    /// `data_len` is an upper bound for the length of the scan.
     pub(crate) fn new(tables: &Tables, scan: &Scan, data_len: usize) -> Result<Self> {
         /// Motion JPEG leaves the standard tables out.
         fn find<'s>(specs: &'s [Option<Spec>], standard: &'s [Spec], n: u8) -> Result<&'s Spec> {

@@ -1641,3 +1641,124 @@ pub unsafe fn parse_mappings(
         )
     }
 }
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::*;
+
+    /// The kernels are only linked into the full binary.
+    macro_rules! stubs {
+        ($($kernel:ident($($parameter:ty),*);)*) => {$(
+            #[unsafe(no_mangle)]
+            extern "C" fn $kernel($(_: $parameter),*) {}
+        )*};
+    }
+    type In = *const u8;
+    type Out = *mut u8;
+    stubs! {
+        highway_jpeg_inverse_transform(In, usize, In, usize, Out, usize);
+        highway_jpeg_ycc_to_rgba(In, In, In, usize, Out);
+        highway_jpeg_ycc422_to_rgba(In, In, In, usize, Out);
+        highway_jpeg_ycc420_to_rgba(In, In, In, In, In, usize, Out);
+        highway_jpeg_rgba_to_ycc420(In, usize, usize, usize, Out, Out, Out, usize);
+        highway_jpeg_forward_transform(In, usize, usize, In, Out, Out, bool);
+    }
+
+    const ZERO: JpegBlock = JpegBlock([0; 64]);
+    const GROUP: usize = JPEG_PIXEL_GROUP;
+    /// Twice this is 0.
+    const HUGE: usize = 1 << (usize::BITS - 1);
+
+    #[test]
+    fn inverse_transform() {
+        let fits = |size, len, stride| {
+            jpeg_inverse_transform(&[ZERO; 2], &ZERO, size, &mut vec![0; len], stride).is_ok()
+        };
+        for size in [0, 1, 9, 11, 13, 15, 16] {
+            assert!(!fits(size, 4096, 64));
+        }
+        for size in [2, 3, 4, 5, 6, 7, 8, 10, 12, 14] {
+            let len = (size - 1) * 64 + 2 * size + JPEG_ROW_SLACK;
+            assert!(fits(size, len, 64));
+            assert!(!fits(size, len - 1, 64));
+        }
+        assert!(!fits(3, 4096, HUGE));
+        assert!(!fits(2, 4096, usize::MAX));
+    }
+
+    #[test]
+    fn ycc_to_rgba() {
+        let fits = |y, chroma, width, room| {
+            let mut out = Vec::with_capacity(1 + room);
+            out.push([0; 4]);
+            let fits = jpeg_ycc_to_rgba(y, chroma, width, &mut out).is_ok();
+            assert_eq!(out.len(), if fits { 1 + width } else { 1 });
+            fits
+        };
+        let (width, padded) = (GROUP + 1, 2 * GROUP);
+        let full = &[0; 2 * GROUP][..];
+        let half = &full[..GROUP + JPEG_ROW_SLACK];
+        let with_short_row = |nth| {
+            let rows = |row: &'static [u8]| [0, 1, 2, 3].map(|i| &row[usize::from(i == nth)..]);
+            let ([cb, cr, ..], [a, b, c, d]) = (rows(full), rows(half));
+            [
+                JpegChroma::HalfSize {
+                    cb: [a, b],
+                    cr: [c, d],
+                },
+                JpegChroma::HalfWidth { cb: a, cr: b },
+                JpegChroma::Full { cb, cr },
+            ]
+        };
+        for chroma in with_short_row(usize::MAX) {
+            assert!(fits(full, chroma, width, padded));
+            assert!(fits(&full[..GROUP], chroma, GROUP, GROUP));
+            assert!(!fits(&full[1..], chroma, width, padded));
+            assert!(!fits(full, chroma, width, padded - 1));
+            assert!(!fits(full, chroma, usize::MAX, padded));
+        }
+        for (nth, kinds) in [(0, 3), (1, 3), (2, 1), (3, 1)] {
+            for chroma in with_short_row(nth).into_iter().take(kinds) {
+                assert!(!fits(full, chroma, width, padded));
+            }
+        }
+    }
+
+    #[test]
+    fn rgba_to_ycc420() {
+        let fits = |lens: [usize; 4], rgba_stride, width, row_pairs, chroma_stride| {
+            let rgba = vec![[0; 4]; lens[0]];
+            let [_, mut y, mut cb, mut cr] = lens.map(|len| vec![0; len]);
+            let ycc = [&mut *y, &mut *cb, &mut *cr];
+            jpeg_rgba_to_ycc420(&rgba, rgba_stride, width, row_pairs, ycc, chroma_stride).is_ok()
+        };
+        let chroma = 2 * 20 + GROUP / 2;
+        let lens = [5 * 50 + GROUP, 5 * 40 + GROUP, chroma, chroma];
+        assert!(fits(lens, 50, GROUP, 3, 20));
+        for nth in 0..4 {
+            let mut lens = lens;
+            lens[nth] -= 1;
+            assert!(!fits(lens, 50, GROUP, 3, 20));
+        }
+        assert!(fits(lens, 0, 2 * GROUP, 1, 0));
+        for width in [GROUP / 2, GROUP - 2, GROUP + GROUP / 2] {
+            assert!(!fits(lens, 0, width, 1, 0));
+        }
+        assert!(!fits(lens, usize::MAX / 4 + 1, GROUP, 0, 20));
+        assert!(!fits(lens, 0, GROUP, HUGE, 0));
+        assert!(!fits(lens, 50, GROUP, 1, HUGE));
+    }
+
+    #[test]
+    fn forward_transform() {
+        let fits = |len, stride, masks| {
+            let (samples, mut masks) = (vec![0; len], vec![[0; 4]; masks]);
+            jpeg_forward_transform(&samples, stride, &[ZERO; 2], &mut [ZERO; 2], &mut masks).is_ok()
+        };
+        assert!(fits(7 * 20 + 16, 20, 2));
+        assert!(!fits(7 * 20 + 15, 20, 2));
+        assert!(!fits(7 * 20 + 16, 20, 1));
+        assert!(!fits(7 * 20 + 16, 20, 3));
+        assert!(!fits(4096, usize::MAX / 7 + 1, 2));
+    }
+}

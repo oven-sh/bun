@@ -1,4 +1,4 @@
-//! JPEG to and from RGBA. It derives from libjpeg-turbo 3.2.0, so it is based in part on the work of the Independent JPEG Group (LICENSE.md).
+//! JPEG to and from 8-bit RGBA, for `Bun.Image`. It derives from libjpeg-turbo 3.2.0, so it is based in part on the work of the Independent JPEG Group (LICENSE.md).
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(
@@ -40,6 +40,7 @@ pub use encoder::encode;
 pub use error::{Error, Result};
 pub use header::Header;
 
+/// In a frame, and in a scan.
 const MAX_COMPONENTS: usize = 4;
 
 /// `table[index % N]`, which the compiler knows to be in bounds.
@@ -76,4 +77,61 @@ fn filled<T: Copy>(len: usize, value: T) -> Result<Vec<T>> {
 fn batches(len: usize, size: usize) -> impl Iterator<Item = [usize; 2]> {
     let starts = (0..len).step_by(size);
     starts.map(move |start| [start, size.min(len - start)])
+}
+
+/// What `Bun.Image` cannot reach. The kernels are only linked into the full binary, so this runs under Miri and calls none.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::header::{ColorSpace, Segments};
+    use crate::output::Output;
+
+    /// One gray block with the DC coefficient 5, and 8 for all quantization steps.
+    fn one_block() -> Vec<u8> {
+        let mut file = Vec::new();
+        file.extend([0xFF, 0xD8, 0xFF, 0xDB, 0, 67, 0]);
+        file.extend([8; 64]);
+        file.extend([0xFF, 0xC0, 0, 11, 8, 0, 8, 0, 8, 1, 1, 0x11, 0]);
+        file.extend([0xFF, 0xDA, 0, 8, 1, 1, 0, 0, 63, 0]);
+        file.extend([0b1001_0110, 0b1011_1111, 0xFF, 0xD9]);
+        file
+    }
+
+    #[test]
+    fn a_file_starts_with_soi() {
+        for bytes in [&b""[..], b"\xFF", b"\xD8\xFF", b"\x89PNG"] {
+            assert_eq!(Decoder::new(bytes).err(), Some(Error::InvalidSignature));
+        }
+    }
+
+    #[test]
+    fn the_smallest_scale_is_an_eighth() -> Result<()> {
+        for eighths in [0, 1] {
+            let image = Decoder::new(&one_block())?.decode(eighths)?;
+            assert_eq!(image.rgba, [133, 133, 133, 255]);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn the_pixels_to_encode_match_the_size() {
+        for len in [0, 15, 17, 20] {
+            let file = encode(&[0; 20][..len], 2, 2, 80, false, None);
+            assert_eq!(file, Err(Error::InvalidBufferSize));
+        }
+    }
+
+    #[test]
+    fn output_refuses_what_does_not_fit() -> Result<()> {
+        let frame = Segments::new(&one_block())?.read_frame()?;
+        for eighths in [1, 8] {
+            let mut output = Output::new(&frame, ColorSpace::Gray, eighths)?;
+            let below = output.planes[0].put(&[block::ZERO], &block::ZERO, 0, 1);
+            assert_eq!(below, Err(Error::Internal));
+            assert_eq!(output.into_rgba(), Err(Error::Internal));
+        }
+        let mut output = Output::new(&frame, ColorSpace::Rgb, 8)?;
+        assert_eq!(output.finish_strip(), Err(Error::Internal));
+        Ok(())
+    }
 }

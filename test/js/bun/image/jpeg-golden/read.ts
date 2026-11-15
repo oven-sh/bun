@@ -1,11 +1,11 @@
-// Reads the kinds of JPEG file that Bun.Image writes, a bit at a time, and throws at the first rule that is not kept.
-import { APP0, APP2, DHT, DQT, EOI, frameOf, scanOf, SOF0, SOF2, SOI, SOS, walk, type HuffmanTable } from "./write";
+// Reads the kinds of JPEG file that Bun.Image writes, bit by bit, and throws at the first violation of T.81.
+import { AC, APP0, APP2, DHT, DQT, EOI, frameOf, scanOf, SOF0, SOF2, SOI, SOS, walk, type HuffmanTable } from "./write";
 
 function fail(what: string): never {
   throw new Error(`not a valid JPEG file: ${what}`);
 }
 
-/** The data of a scan counts as part of its segment. */
+/** SOS comes with its entropy-coded data. */
 export function segmentsOf(input: Uint8Array) {
   const file = Buffer.from(input.buffer, input.byteOffset, input.byteLength);
   if (file.readUInt16BE(0) !== (0xff00 | SOI) || file.readUInt16BE(file.length - 2) !== (0xff00 | EOI))
@@ -62,7 +62,7 @@ class Bits {
   }
   end() {
     const ones = (1 << this.#left) - 1;
-    if (this.#at !== this.data.length || this.take(this.#left) !== ones) fail("more than ones behind the last block");
+    if (this.#at !== this.data.length || this.take(this.#left) !== ones) fail("more than padding after the last block");
   }
 }
 
@@ -92,7 +92,7 @@ export function read(file: Uint8Array) {
   described.forEach(([, , table], i) => (frame.components[i].table = tables[table] ? table : fail("no such DQT")));
 
   const codes: HuffmanTable[] = [];
-  /** Of the runs of blocks that end early in a refinement, how many blocks and how many bits that correct. */
+  /** The EOB runs of refinement scans. */
   const runs: { blocks: number; corrections: number }[] = [];
   const scans = only(DHT, SOS).flatMap(({ body, data }) => {
     if (!data) {
@@ -116,7 +116,7 @@ export function read(file: Uint8Array) {
     const { ah, al } = scan;
     const bits = new Bits(data);
     const last = [0, 0, 0, 0];
-    let ended = 0;
+    let eobRun = 0;
     /** G.1.2.3 */
     const correct = (data: Int32Array, at: number) => {
       if (bits.take(1)) data[at] += data[at] < 0 ? -1 << al : 1 << al;
@@ -129,14 +129,14 @@ export function read(file: Uint8Array) {
         if (ss === 0 && ah) data[at] |= bits.take(1) << al;
         else if (ss === 0) data[at] = (last[i] += bits.value(bits.symbol(codes[dc[i]]))) << al;
         let k = Math.max(ss, 1);
-        for (; k <= se && !ended; k++) {
-          const symbol = bits.symbol(codes[16 + ac[i]]);
+        for (; k <= se && !eobRun; k++) {
+          const symbol = bits.symbol(codes[AC + ac[i]]);
           const size = symbol & 15;
           let run = symbol >> 4;
           if (size > (ah ? 1 : 10) || (!size && run % 15 && type === SOF0)) fail(`symbol ${symbol}`);
           if (!size && run < 15) {
-            ended = (1 << run) + bits.take(run);
-            if (ah) runs.push({ blocks: ended, corrections: 0 });
+            eobRun = (1 << run) + bits.take(run);
+            if (ah) runs.push({ blocks: eobRun, corrections: 0 });
             break;
           }
           const value = bits.value(size) * (1 << al);
@@ -144,8 +144,8 @@ export function read(file: Uint8Array) {
           if (k > se || (!size && k === se)) fail("zeros beyond the band");
           data[at + k] = value;
         }
-        if (!ended) return;
-        ended--;
+        if (!eobRun) return;
+        eobRun--;
         for (; ah && k <= se; k++) {
           if (!data[at + k]) continue;
           correct(data, at + k);
@@ -154,7 +154,7 @@ export function read(file: Uint8Array) {
       },
       () => {},
     );
-    if (ended) fail("a run beyond the last block");
+    if (eobRun) fail("an EOB run beyond the last block");
     bits.end();
     return [scan];
   });

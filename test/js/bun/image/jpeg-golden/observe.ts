@@ -45,7 +45,7 @@ export async function observeDecode(file: Uint8Array, maxPixels?: number) {
   return header + (await pixelsOf(image()).catch(failure));
 }
 
-/** The decoder scales to this size by itself, so that nothing is left to resize. */
+/** The decoder scales to this size itself, so nothing is left to resize. */
 export async function observeScale(file: Uint8Array, eighths: number) {
   const image = new Bun.Image(file);
   const { width, height } = await image.metadata();

@@ -1,6 +1,6 @@
-// The arithmetic coder of T.81, annex D, and what annexes F and G have it code.
+// The arithmetic encoder of T.81, annex D, with the models of annexes F and G.
 
-/** Table D.2: Qe, then the next state after the less probable symbol, plus 128 if the two trade places, and after the more. */
+/** Table D.3: Qe, Next_Index_LPS plus 128 times Switch_MPS, and Next_Index_MPS. */
 export const states = `
   5a1d8101 25860e02 11141003 080b1204 03d81405 01da1706 00e51907 006f1c08 00361e09 001a210a 000d230b 0006090c
   00030a0d 00010c0d 5a7f8f0f 3f252410 2cf22611 207c2712 17b92813 11822a14 0cef2b15 09a12d16 072f2e17 055c3018
@@ -15,11 +15,11 @@ export const states = `
   .trim()
   .split(/\s+/)
   .map(hex => Buffer.from(hex, "hex"))
-  .map(state => ({ qe: state.readUInt16BE(), less: state[2], more: state[3] }));
+  .map(state => ({ qe: state.readUInt16BE(), nextLps: state[2], nextMps: state[3] }));
 
-/** For one scan, or from one restart marker to the next. */
+/** For one restart interval. */
 export class ArithmeticCoder {
-  /** By table: of each bin its state, plus 128 if 1 is the more probable. */
+  /** By table: the state of each bin, plus 128 times its MPS. */
   #bins: Uint8Array[] = [];
   dc = (table: number) => (this.#bins[table] ??= new Uint8Array(64));
   ac = (table: number) => (this.#bins[16 + table] ??= new Uint8Array(256));
@@ -31,11 +31,11 @@ export class ArithmeticCoder {
 
   constructor(private conditioning: Record<number, number> = {}) {}
 
-  /** Whether that took shifting. */
-  #code(qe: number, isMore: boolean) {
+  /** Returns whether it renormalized. */
+  #code(qe: number, isMps: boolean) {
     this.#a -= qe;
-    if (isMore && this.#a >= 0x8000) return false;
-    if (isMore === this.#a < qe) {
+    if (isMps && this.#a >= 0x8000) return false;
+    if (isMps === this.#a < qe) {
       this.#c += this.#a;
       this.#a = qe;
     }
@@ -58,21 +58,21 @@ export class ArithmeticCoder {
     this.#ct = 8;
   }
 
-  /** Whether the bin went on to its next state. */
+  /** Returns whether the bin went to its next state. */
   decide(bins: Uint8Array, bin: number, bit: number) {
     const state = states[bins[bin] & 127];
-    const isMore = bit === bins[bin] >> 7;
-    if (!this.#code(state.qe, isMore)) return false;
-    bins[bin] = (bins[bin] & 128) ^ (isMore ? state.more : state.less);
+    const isMps = bit === bins[bin] >> 7;
+    if (!this.#code(state.qe, isMps)) return false;
+    bins[bin] = (bins[bin] & 128) ^ (isMps ? state.nextMps : state.nextLps);
     return true;
   }
 
-  /** With a probability that does not adapt. */
+  /** With the fixed probability estimate. */
   evenly(bit: number) {
     this.#code(states[0].qe, bit === 0);
   }
 
-  /** Figures F.8 and F.9, from the first decision that has a bin in `bins[x..]`. */
+  /** Figures F.8 and F.9, from bin `x` on: X1 for DC, X2 for AC. */
   #magnitude(bins: Uint8Array, x: number, value: number, top: number) {
     for (; top * 2 <= value; top *= 2) this.decide(bins, x++, 1);
     this.decide(bins, x, 0);
@@ -120,7 +120,7 @@ export class ArithmeticCoder {
     if (end < se) this.decide(bins, 3 * end, 1);
   }
 
-  /** D.1.8: the bytes, but for the zeros at the end. */
+  /** D.1.8: the bytes, without trailing zeros. */
   finish() {
     const rounded = (this.#a - 1 + this.#c) & 0xffff0000;
     this.#c = (rounded < this.#c ? rounded + 0x8000 : rounded) << this.#ct;

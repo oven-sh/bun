@@ -1,3 +1,5 @@
+//! Runs the scans of a file, and takes their blocks to the output (jdcoefct.c).
+
 use crate::arithmetic::Arithmetic;
 use crate::bit_reader::Window;
 use crate::block::{self, Block, Zigzag};
@@ -60,7 +62,7 @@ impl Coefficients {
     }
 
     /// Smooths the blocks on the way if there is an `accuracy` to go by.
-    #[inline(never)] // See `Decoder::decode_lossless()`.
+    #[inline(never)] // So that `smoothed` is not on the stack while the scans are decoded.
     fn transform(
         &self,
         frame: &Frame,
@@ -226,7 +228,7 @@ impl<'a> Decoder<'a> {
         Ok(layout)
     }
 
-    // These three are not inlined, so that only one at a time has its buffers on the stack.
+    // This and the next two are not inlined, so that only one at a time has its buffers on the stack.
     #[inline(never)]
     fn decode_lossless(&mut self, output: &mut Output, is_only_scan: bool) -> Result<()> {
         let mut missing = (1 << self.frame.components().len()) - 1;

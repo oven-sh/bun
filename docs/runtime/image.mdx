@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on built-in JPEG and PNG codecs, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on Bun's own JPEG and PNG codecs, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -188,7 +188,8 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 
 |                        | Linux                             | macOS               | Windows      |
 | ---------------------- | --------------------------------- | ------------------- | ------------ |
-| JPEG / PNG / WebP      | built-in · built-in · libwebp     | same                | same         |
+| JPEG / PNG             | built-in                          | same                | same         |
+| WebP                   | libwebp                           | same                | same         |
 | BMP / GIF (decode)     | built-in                          | ImageIO             | WIC          |
 | TIFF (decode)          | ❌                                | ImageIO             | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage ³ | Highway SIMD |

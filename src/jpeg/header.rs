@@ -148,12 +148,15 @@ impl Scan {
     }
 }
 
+/// How many DC tables, and how many AC tables, arithmetic coding has.
+pub(crate) const ARITHMETIC_TABLES: usize = 16;
+
 pub(crate) struct Tables {
     pub(crate) quant: [Option<Block>; 4],
     pub(crate) dc: [Option<Spec>; 4],
     pub(crate) ac: [Option<Spec>; 4],
-    /// For arithmetic coding: `U << 4 | L` of 16 DC tables, then `Kx` of 16 AC tables.
-    pub(crate) conditioning: [u8; 32],
+    /// For arithmetic coding: `U << 4 | L` of the DC tables, then `Kx` of the AC tables.
+    pub(crate) conditioning: [u8; 2 * ARITHMETIC_TABLES],
     pub(crate) restart_interval: u16,
 }
 
@@ -183,7 +186,10 @@ impl<'a> Segments<'a> {
                 quant: [None; 4],
                 dc: [None; 4],
                 ac: [None; 4],
-                conditioning: core::array::from_fn(|i| if i < 16 { 0x10 } else { 5 }),
+                // L = 0, U = 1 and Kx = 5 (ITU-T T.81, F.1.4.4).
+                conditioning: core::array::from_fn(
+                    |i| if i < ARITHMETIC_TABLES { 0x10 } else { 5 },
+                ),
                 restart_interval: 0,
             },
             has_jfif: false,
@@ -330,7 +336,7 @@ impl<'a> Segments<'a> {
         }
         for _ in 0..length / 2 {
             let [index, value] = self.input.array();
-            if index < 16 && value & 15 > value >> 4 {
+            if usize::from(index) < ARITHMETIC_TABLES && value & 15 > value >> 4 {
                 return Err(Error::InvalidTable);
             }
             *self
@@ -351,7 +357,8 @@ impl<'a> Segments<'a> {
                 symbols: [0; 256],
             };
             let count = spec.len();
-            left = left.checked_sub(17 + count).ok_or(Error::InvalidLength)?;
+            let len = 1 + spec.counts.len() + count;
+            left = left.checked_sub(len).ok_or(Error::InvalidLength)?;
             spec.symbols
                 .get_mut(..count)
                 .ok_or(Error::InvalidTable)?
@@ -373,9 +380,8 @@ impl<'a> Segments<'a> {
         while left != 0 {
             let index = self.input.byte();
             let is_wide = index >> 4 != 0;
-            left = left
-                .checked_sub(if is_wide { 129 } else { 65 })
-                .ok_or(Error::InvalidLength)?;
+            let len = 1 + if is_wide { 2 * 64 } else { 64 };
+            left = left.checked_sub(len).ok_or(Error::InvalidLength)?;
             let table = self
                 .tables
                 .quant

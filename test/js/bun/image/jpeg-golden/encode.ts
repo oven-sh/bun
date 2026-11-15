@@ -1,5 +1,4 @@
-// What the tests have Bun.Image write as JPEG, and how they find fault with it.
-// read.ts holds it to the rules, model.ts says what coefficients it has to hold, and write.ts in which bytes.
+// Encodes with Bun.Image. read.ts validates the file, model.ts has the expected coefficients, write.ts the bytes.
 import { randomBytes } from "../png-golden/write";
 import { pngOf, type Picture } from "./decode";
 import { coefficientsOf } from "./model";
@@ -22,13 +21,13 @@ export function noisy(width: number, height: number, seed = width * 1000 + heigh
 
 export const encode = (picture: Picture, options?: Options) => new Bun.Image(pngOf(picture)).jpeg(options).buffer();
 
-/** The file that holds these coefficients. */
+/** The expected file for these coefficients. */
 export const fileOf = (frame: Frame, progressive = false) =>
   progressive
     ? write(as(SOF2, frame), simpleProgression, { before: [jfif] })
     : write(frame, undefined, { before: [jfif], tables: typical });
 
-/** What is wrong with what is written for each. */
+/** How the files differ from the expected ones. */
 export async function mistakes(pictures: Picture[], quality: number, kinds = [false, true]) {
   const found = await Promise.all(
     pictures.flatMap(picture => {

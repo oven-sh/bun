@@ -1,10 +1,10 @@
-// Reads arithmetic-coded data as T.81 has it in D.2, F.2.4 and G.2, whatever there is of it.
+// Reads arithmetic-coded data, complete or not (T.81, D.2, F.2.4 and G.2).
 import { states } from "./arithmetic";
-import { AC, isProgressive, scanOf, walk, type Frame, type Scan } from "./write";
+import { AC, int16, isProgressive, scanOf, sizeOf, walk, type Frame, type Scan } from "./write";
 
-const fault = Symbol("what cannot be");
+const fault = Symbol("invalid data");
 
-/** From one restart marker to the next. Zeros follow the bytes. */
+/** For one restart interval. Zeros follow the bytes. */
 export class ArithmeticReader {
   #bins: Uint8Array[] = [];
   #contexts = [0, 0, 0, 0];
@@ -22,16 +22,16 @@ export class ArithmeticReader {
 
   byte() {
     const byte = this.bytes[this.#at++] ?? 0;
-    // Without a zero behind it, it is the start of a marker.
+    // An FF that is not stuffed starts a marker.
     return byte !== 0xff || this.bytes[this.#at++] === 0 ? byte : 0;
   }
 
-  /** 0 for the more probable symbol, 1 if that took shifting, and 2 for the less probable. */
+  /** 0 for the MPS, 1 for the MPS with renormalization, 2 for the LPS. */
   take(qe: number) {
     this.#a -= qe;
     const isUpper = this.#c >>> 16 >= this.#a;
     if (!isUpper && this.#a >= 0x8000) return 0;
-    const isLess = isUpper !== this.#a < qe;
+    const isLps = isUpper !== this.#a < qe;
     if (isUpper) {
       this.#c -= this.#a * 0x10000;
       this.#a = qe;
@@ -45,21 +45,21 @@ export class ArithmeticReader {
       this.#c *= 2;
       this.#ct--;
     } while (this.#a < 0x8000);
-    return isLess ? 2 : 1;
+    return isLps ? 2 : 1;
   }
 
   #decide(bins: Uint8Array, bin: number) {
-    const [state, more] = [states[bins[bin] & 127], bins[bin] >> 7];
+    const [state, mps] = [states[bins[bin] & 127], bins[bin] >> 7];
     const taken = this.take(state.qe);
-    if (taken) bins[bin] = (more << 7) ^ (taken === 1 ? state.more : state.less);
-    return more ^ (taken >> 1);
+    if (taken) bins[bin] = (mps << 7) ^ (taken === 1 ? state.nextMps : state.nextLps);
+    return mps ^ (taken >> 1);
   }
 
   evenly() {
     return this.take(states[0].qe) >> 1;
   }
 
-  /** Figures F.23 and F.24, from the first decision that has a bin in `bins[x..]`. */
+  /** Figures F.23 and F.24, from bin `x` on: X1 for DC, X2 for AC. */
   #magnitude(bins: Uint8Array, x: number, top: number) {
     for (; this.#decide(bins, x); x++) if ((top *= 2) === 0x8000) throw fault;
     let value = top;
@@ -74,7 +74,7 @@ export class ArithmeticReader {
     if (!this.#decide(bins, context)) return 0;
     const sign = this.#decide(bins, context + 1);
     const value = this.#decide(bins, context + 2 + sign) && this.#magnitude(bins, 20, 1);
-    const [top, bounds] = [value && 1 << (31 - Math.clz32(value)), this.conditioning[table] ?? 0x10];
+    const [top, bounds] = [value && 1 << (sizeOf(value) - 1), this.conditioning[table] ?? 0x10];
     if (top > (1 << (bounds >> 4)) >> 1) this.#contexts[component] = 12 + sign * 4;
     else if (top >= (1 << (bounds & 15)) >> 1) this.#contexts[component] = 4 + sign * 4;
     return sign ? -value - 1 : value + 1;
@@ -90,7 +90,7 @@ export class ArithmeticReader {
       while (!(ah && block[k]) && !this.#decide(bins, 3 * (k - 1) + 1)) if (++k > se) throw fault;
       const bin = 3 * (k - 1) + 2;
       if (ah && block[k]) {
-        if (this.#decide(bins, bin)) block[k] = short(block[k] + Math.sign(block[k]) * (1 << al));
+        if (this.#decide(bins, bin)) block[k] = int16(block[k] + Math.sign(block[k]) * (1 << al));
         continue;
       }
       const sign = this.evenly() ? -1 : 1;
@@ -98,14 +98,12 @@ export class ArithmeticReader {
       if (value && this.#decide(bins, bin)) {
         value = this.#magnitude(bins, k <= (this.conditioning[AC + table] ?? 5) ? 189 : 217, 2);
       }
-      block[k] = short((sign * (value + 1)) << al);
+      block[k] = int16((sign * (value + 1)) << al);
     }
   }
 }
 
-const short = (value: number) => (value << 16) >> 16;
-
-/** Into the coefficients of `frame`. `intervals` has the data in front of each restart marker, and behind the last. */
+/** Into the coefficients of `frame`. After invalid data, the rest of the restart interval is skipped. */
 export function readArithmetic(frame: Frame, scan: Scan, intervals: Uint8Array[]) {
   const { ss, se, ah, al } = isProgressive(frame) ? scan : scanOf([]);
   let nth = 0;
@@ -120,7 +118,7 @@ export function readArithmetic(frame: Frame, scan: Scan, intervals: Uint8Array[]
       const at = (y * across + x) * 64;
       try {
         if (ss === 0 && ah) data[at] |= reader.evenly() << al;
-        else if (ss === 0) data[at] = short((last[i] += reader.difference(scan.dc[i], i)) << al);
+        else if (ss === 0) data[at] = int16((last[i] += reader.difference(scan.dc[i], i)) << al);
         if (se !== 0) reader.band(scan.ac[i], data.subarray(at, at + 64), Math.max(ss, 1), se, ah, al);
       } catch (error) {
         if (error !== fault) throw error;
@@ -134,7 +132,7 @@ export function readArithmetic(frame: Frame, scan: Scan, intervals: Uint8Array[]
   );
 }
 
-/** What is between the restart markers. */
+/** Splits at the restart markers. */
 export function intervalsOf(data: Buffer) {
   const intervals: Buffer[] = [];
   let start = 0;

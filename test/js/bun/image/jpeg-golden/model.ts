@@ -1,14 +1,14 @@
-// What pixels come of coefficients, and what coefficients of pixels, the slow way. T.81 leaves the last bit open.
-// These are the bits of libjpeg-turbo, and of the programs that are built on it.
-import { copyOf, frameOf, isLossless, largest, type Component, type Frame, type Scan } from "./write";
+// From coefficients to pixels and back, the slow way. It shares no code with Bun.
+// T.81 leaves rounding open. This rounds like libjpeg-turbo.
+import { copyOf, frameOf, int16, isLossless, largest, type Component, type Frame, type Scan } from "./write";
 
-/** Where in its block, row by row, the coefficient is that comes at each place of the zigzag. */
+/** For each coefficient in zigzag order, `8 * row + column`. */
 export const natural = Array.from({ length: 64 }, (_, at) => at).sort((a, b) => {
   const [diagonal, other] = [(a >> 3) + (a & 7), (b >> 3) + (b & 7)];
   return diagonal - other || (diagonal & 1 ? a - b : b - a);
 });
 
-/** By how much the factors differ from the cosines, rounded: a word for each of the first half of the samples. */
+/** By block size: how each factor differs from the rounded cosine. A word for each sample of the first half. */
 const rounding: Record<number, string> = {
   2: "........",
   3: "... ..-",
@@ -24,9 +24,9 @@ const rounding: Record<number, string> = {
 const sizesWithFactors = Object.keys(rounding).map(Number);
 export const sizes = [1, ...sizesWithFactors];
 
-/** For each of `size` samples, what 8 coefficients are multiplied by. */
+/** For each of `size` samples, the factors of 8 coefficients. */
 function factorsOf(size: number) {
-  // These are means of so many of 8 samples. The others are samples of the curve at another distance.
+  // Sizes 2 and 4 average groups of the 8 samples. The others sample the cosines at other points.
   const group = size === 2 || size === 4 ? 8 / size : 1;
   const factors = new Int32Array(size * 8);
   for (const [i, word] of rounding[size].split(" ").entries()) {
@@ -43,7 +43,6 @@ function factorsOf(size: number) {
 }
 export const transforms = Object.fromEntries(sizesWithFactors.map(size => [size, factorsOf(size)]));
 
-const short = (value: number) => (value << 16) >> 16;
 const clamp = (value: number) => (value < 0 ? 0 : value > 255 ? 255 : value);
 
 type Plane = { samples: Uint8Array; stride: number };
@@ -51,8 +50,8 @@ type Plane = { samples: Uint8Array; stride: number };
 const [block, half] = [new Int32Array(64), new Int32Array(14 * 8)];
 
 /**
- * `size` by `size` samples of `block`. Columns first, with two more bits, then rows. What is too large for any sample
- * has sums wrap at 32 bits, and is held to 16 in between, with what the rows need to round and to add 128.
+ * `size` by `size` samples of `block`. Columns first, with two extra bits, then rows. Sums wrap at 32 bits. Between the
+ * passes they saturate at 16, including the bias that rounds the second pass and adds 128.
  */
 function inverseOfBlock(size: number, samples: Uint8Array, to: number, stride: number) {
   const { factors, shift } = transforms[size];
@@ -77,10 +76,10 @@ function inverse({ data, wide, high, across }: Component, steps: number[], size:
     for (let x = 0; x < wide; x++) {
       const at = (y * across + x) * 64;
       if (size === 1) {
-        samples[y * stride + x] = clamp(128 + ((data[at] * short(steps[0]) + 4) >> 3));
+        samples[y * stride + x] = clamp(128 + ((data[at] * int16(steps[0]) + 4) >> 3));
         continue;
       }
-      for (let k = 0; k < 64; k++) block[natural[k]] = short(data[at + k] * steps[k]);
+      for (let k = 0; k < 64; k++) block[natural[k]] = int16(data[at + k] * steps[k]);
       inverseOfBlock(size, samples, (y * stride + x) * size, stride);
     }
   }
@@ -89,7 +88,7 @@ function inverse({ data, wide, high, across }: Component, steps: number[], size:
 
 export const scaled = (length: number, eighths: number) => Math.ceil((length * eighths) / 8);
 
-/** A component that has fewer blocks gets larger ones, as far as that saves making up samples in both directions. */
+/** A subsampled component gets a larger IDCT instead of upsampling where it can. */
 export function blockSize(frame: Frame, { h, v }: Component, eighths: number) {
   const [maxH, maxV] = largest(frame);
   let size = eighths;
@@ -108,7 +107,7 @@ function planeOf(frame: Frame, component: Component, eighths: number, width: num
   const [byX, byY] = [(maxH * eighths) / (component.h * size), (maxV * eighths) / (component.v * size)];
   if (byX === 1 && byY === 1) return { samples, stride };
   const [columns, rows] = [Math.ceil(width / byX), Math.ceil(height / byY)];
-  // Three parts of the nearest sample and one of the next, or of the nearest again where there is no next.
+  // 3/4 of the nearest sample and 1/4 of the next nearest. The edges repeat.
   const blends = eighths > 1 && byX <= 2 && byY <= 2 && (byX === 1 || columns > 2);
   const out = new Uint8Array(width * height);
   for (let y = 0; y < height; y++) {
@@ -138,7 +137,6 @@ export type Colors = "gray" | "YCbCr" | "RGB" | "CMYK" | "YCCK";
 const usually = (frame: Frame) =>
   (["gray", , isLossless(frame) ? "RGB" : "YCbCr", "CMYK"] as const)[frame.components.length - 1]!;
 
-/** The picture at so many eighths of its size. */
 export function pictureOf(frame: Frame, { eighths = 8, colors = usually(frame) as Colors } = {}) {
   const [width, height] = [scaled(frame.width, eighths), scaled(frame.height, eighths)];
   const planes = frame.components.map(component => planeOf(frame, component, eighths, width, height));
@@ -158,7 +156,7 @@ export function pictureOf(frame: Frame, { eighths = 8, colors = usually(frame) a
         b = clamp(luma + ((cbToB * cb + 32768) >> 16));
       }
       if (fourth) {
-        // 255 is no ink.
+        // Inverted, as Adobe writes it: 255 is no ink.
         const k = fourth.samples[y * fourth.stride + x];
         const turn = colors === "YCCK" ? 255 : 0;
         r = Math.round(((r ^ turn) * k) / 255);
@@ -173,14 +171,14 @@ export function pictureOf(frame: Frame, { eighths = 8, colors = usually(frame) a
   return { width, height, rgba };
 }
 
-/** Of each component and coefficient, how many bits are still to come, and -1 if all are. */
+/** For each component and coefficient: the Al of its last scan, or -1 if it has none. */
 export function missingBits(frame: Frame, scans: Scan[]) {
   const bits = frame.components.map(() => Array(64).fill(-1));
   for (const { components, ss, se, al } of scans) for (const c of components) bits[c].fill(al, ss, se + 1);
   return bits;
 }
 
-/** What progressive scans tell of the coefficients. */
+/** The coefficients as far as these progressive scans have them. */
 export function known(frame: Frame, scans: Scan[]) {
   const out = copyOf(frame);
   for (const [c, bits] of missingBits(frame, scans).entries()) {
@@ -197,7 +195,7 @@ export function known(frame: Frame, scans: Scan[]) {
 
 const weights = (text: string) => text.trim().split(/\s+/).map(Number);
 const turned = (of: number[]) => of.map((_, i) => of[(i % 5) * 5 + Math.floor(i / 5)]);
-/** In 256ths, of the DC coefficients of the 5 by 5 blocks around. The numbers are row and column in the block. */
+/** Weights of the DC coefficients of 5 by 5 blocks, in 256ths. `ac21` is for row 2, column 1. */
 const [dc, ac01, ac02, ac03, ac11, ac21] = [
   "-2 -6 -8 -6 -2   -6  6  42   6 -6   -8 42 152  42 -8   -6  6  42   6 -6   -2 -6 -8 -6 -2",
   "-1 -1  0  1  1   -3 13   0 -13  3   -3 38   0 -38  3   -3 13   0 -13  3   -1 -1  0  1  1",
@@ -215,8 +213,8 @@ const [some01, some02, some11] = [
 const withSomeAc = [, some01, turned(some01), turned(some02), some11, some02];
 
 /**
- * K.8, as libjpeg-turbo extends it: the first coefficients, where they are zero and not known to be, are guessed from
- * the blocks around. `missing` is the `missingBits()` of a component for a row of MCUs.
+ * Block smoothing, K.8 as libjpeg-turbo extends it: low coefficients that are zero and inexact are estimated from the
+ * neighboring DC coefficients. `missing` is the `missingBits()` of a component for a row of MCUs.
  */
 export function smoothed(frame: Frame, missing: (component: number, row: number) => number[]) {
   const out = copyOf(frame);
@@ -226,7 +224,7 @@ export function smoothed(frame: Frame, missing: (component: number, row: number)
       const row = Math.floor(y / v);
       const bits = missing(c, row);
       const all = bits.slice(1, 10).every(bit => bit === -1) ? withoutAc : withSomeAc;
-      // It counts the rows of blocks as if every row of MCUs had as many as this one.
+      // It takes all rows of MCUs to have as many rows of blocks as this one.
       const here = Math.min(v, high - row * v);
       const [above, below] = [row * here + (y % v), (down / v - row) * here - (y % v) - 1];
       for (let x = 0; x < wide; x++) {
@@ -249,7 +247,7 @@ export function smoothed(frame: Frame, missing: (component: number, row: number)
   return out;
 }
 
-/** K.1 and K.2, row by row. */
+/** Tables K.1 and K.2, row by row. */
 const typicalSteps = [
   `16 11 10 16 24 40 51 61   12 12 14 19 26 58 60 55   14 13 16 24 40 57 69 56       14 17 22 29 51 87 80 62
    18 22 37 56 68 109 103 77   24 35 55 64 81 104 113 92   49 64 78 87 103 121 120 101   72 92 95 98 112 100 103 99`,
@@ -264,7 +262,8 @@ export function tablesFor(quality: number) {
   );
 }
 
-const toYCbCr = [
+/** The weights of R, G and B, and the bias. */
+export const toYCbCr = [
   [0.299, 0.587, 0.114, 0.5],
   [-0.16874, -0.33126, 0.5, 128.5 - 1 / 65536],
   [0.5, -0.41869, -0.08131, 128.5 - 1 / 65536],
@@ -279,7 +278,7 @@ function samplesOf({ width, height, rgba }: Pixels, c: number, { wide, high }: C
   for (let i = 0, at = 0; i < full.length; i++, at += 4) {
     full[i] = (ofR * rgba[at] + ofG * rgba[at + 1] + ofB * rgba[at + 2] + plus) >> 16;
   }
-  // The last column goes on before the samples are halved. The last row does to make a pair, and then after.
+  // The last column repeats before downsampling. The last row repeats to complete a pair, then after downsampling.
   const by = c ? 2 : 1;
   const samples = new Uint8Array(wide * high * 64);
   for (let y = 0, to = 0; y < high * 8; y++) {
@@ -313,7 +312,7 @@ function forward(samples: Uint8Array, from: number, stride: number, steps: numbe
   }
 }
 
-/** What Bun.Image makes of a picture: YCbCr, with half as many samples of color each way. */
+/** What Bun.Image encodes: YCbCr 4:2:0. */
 export function coefficientsOf(picture: Pixels, quality: number) {
   const frame = frameOf(picture.width, picture.height, "2x2,1x1,1x1", { tables: tablesFor(quality) });
   for (const [c, component] of frame.components.entries()) {
@@ -321,7 +320,7 @@ export function coefficientsOf(picture: Pixels, quality: number) {
     const samples = samplesOf(picture, c, component);
     for (let y = 0, to = 0; y < down; y++) {
       for (let x = 0; x < across; x++, to += 64) {
-        // One that only fills the MCU has the DC coefficient of the one before it.
+        // A padding block repeats the DC coefficient of the block before it.
         if (y >= high) data[to] = data[((y - 1) * across + x - (x % h) + h - 1) * 64];
         else if (x >= wide) data[to] = data[to - 64];
         else forward(samples, (y * wide * 8 + x) * 8, wide * 8, frame.tables[table], data, to);

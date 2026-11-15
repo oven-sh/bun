@@ -59,10 +59,10 @@ pub fn encode(
     icc_profile: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
     check_size(width, height)?;
-    let pixels = rgba.as_chunks().0;
-    if pixels.len() as u64 != u64::from(width) * u64::from(height) {
+    if rgba.len() as u64 != 4 * u64::from(width) * u64::from(height) {
         return Err(Error::InvalidBufferSize);
     }
+    let pixels = rgba.as_chunks().0;
 
     let mut out = Vec::new();
     // A photo of good quality has about 2 bits for each pixel.

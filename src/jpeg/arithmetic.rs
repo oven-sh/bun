@@ -2,13 +2,13 @@
 
 use crate::bit_reader::Window;
 use crate::block::{Block, Zigzag, prefetch_after};
-use crate::header::{Scan, ScanKind, Tables};
+use crate::header::{ARITHMETIC_TABLES, Scan, ScanKind, Tables};
 use crate::scan::{Allowance, EntropyDecoder, Slot};
 use crate::{MAX_COMPONENTS, Result, wrapped, wrapped_mut};
 use core::hint::select_unpredictable;
 use core::ops::Range;
 
-/// `Qe`, `Next_Index_LPS`, `Next_Index_MPS` and `Switch_MPS` (ITU-T T.81, D.3). The last state stays at even odds.
+/// `Qe`, `Next_Index_LPS`, `Next_Index_MPS` and `Switch_MPS` (ITU-T T.81, table D.3). The last state stays at even odds.
 #[rustfmt::skip]
 const ESTIMATES: [(u32, u32, u32, u32); 114] = [
     (0x5a1d,   1,   1, 1), (0x2586,  14,   2, 0), (0x1114,  16,   3, 0), (0x080b,  18,   4, 0),
@@ -43,6 +43,7 @@ const ESTIMATES: [(u32, u32, u32, u32); 114] = [
 ];
 const EVEN_ODDS: u8 = 113;
 
+/// [`ESTIMATES`], packed so that each of the low two bytes updates a bin.
 #[expect(clippy::indexing_slicing, reason = "evaluated by the compiler")]
 static STATES: [u32; 128] = {
     let mut states = [0; 128];
@@ -55,7 +56,7 @@ static STATES: [u32; 128] = {
     states
 };
 
-/// These go by the names in ITU-T T.81, tables F.4 and F.5.
+// Indices of statistics bins, by their names in ITU-T T.81, tables F.4 and F.5.
 const DC_X1: usize = 20;
 const AC_X2_UP_TO_KX: usize = 189;
 const AC_X2_ABOVE_KX: usize = 217;
@@ -131,7 +132,7 @@ impl Coder {
         self.decide(window, &mut { EVEN_ODDS })
     }
 
-    /// Moves `k` to the next coefficient that becomes nonzero. Returns false at the end of the block.
+    /// Moves `k` to the next coefficient that becomes nonzero. False at the end of the block, none if the data is invalid.
     #[inline(always)]
     fn skip_zeros(
         &mut self,
@@ -152,7 +153,7 @@ impl Coder {
         Some(true)
     }
 
-    /// Doubles `magnitude` for each 1 that the bins from `at` on decide. Returns the index of the last.
+    /// Doubles `magnitude` for each 1 that the bins from `at` on decide. Returns the last index, or none if it gets too large.
     #[inline(always)]
     fn widen<const N: usize>(
         &mut self,
@@ -199,9 +200,9 @@ pub(crate) struct Arithmetic<'i, 'a> {
     scan: Scan,
     /// The DC and AC table numbers of each component of the scan.
     tables: [(usize, usize); MAX_COMPONENTS],
-    conditioning: [u8; 32],
-    dc_bins: [[u8; 64]; 16],
-    ac_bins: [[u8; 256]; 16],
+    conditioning: [u8; 2 * ARITHMETIC_TABLES],
+    dc_bins: [[u8; 64]; ARITHMETIC_TABLES],
+    ac_bins: [[u8; 256]; ARITHMETIC_TABLES],
     dc_states: [DcState; MAX_COMPONENTS],
     /// None from an error to the next restart.
     coder: Option<Coder>,
@@ -227,8 +228,8 @@ impl<'i, 'a> Arithmetic<'i, 'a> {
             scan: *scan,
             tables: numbers,
             conditioning: tables.conditioning,
-            dc_bins: [[0; 64]; 16],
-            ac_bins: [[0; 256]; 16],
+            dc_bins: [[0; 64]; ARITHMETIC_TABLES],
+            ac_bins: [[0; 256]; ARITHMETIC_TABLES],
             dc_states: Default::default(),
             coder: Some(Coder::new(window)),
             window,
@@ -278,7 +279,7 @@ impl<'i, 'a> Arithmetic<'i, 'a> {
         let (window, bins) = (&mut *self.window, wrapped_mut(&mut self.ac_bins, table));
         let mut unused = 0;
         let nonzero = self.nonzero.get_mut(index).unwrap_or(&mut unused);
-        let kx = usize::from(*wrapped(&self.conditioning, 16 + table));
+        let kx = usize::from(*wrapped(&self.conditioning, ARITHMETIC_TABLES + table));
         while coder.skip_zeros(window, bins, &mut k, last)? {
             let is_negative = coder.decide_evenly(window);
             let mut at = se(k) + 2;

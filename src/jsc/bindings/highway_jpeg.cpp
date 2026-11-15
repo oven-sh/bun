@@ -887,8 +887,6 @@ static void JpegInverseTransform(const int16_t* HWY_RESTRICT blocks, size_t coun
         return InverseTransform<12>(blocks, count, quant, out, stride);
     case 14:
         return InverseTransform<14>(blocks, count, quant, out, stride);
-    default:
-        return;
     }
 }
 

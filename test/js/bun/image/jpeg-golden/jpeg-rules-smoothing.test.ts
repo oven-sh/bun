@@ -1,8 +1,8 @@
-// What has not come of a progressive file is guessed from the blocks around.
+// Block smoothing: the low AC coefficients that a progressive file lacks are estimated from neighboring blocks.
 import { describe, expect, test } from "bun:test";
 import { slow } from "../png-golden/check";
 import { randomBytes } from "../png-golden/write";
-import { bytes, expectPictures, range, said } from "./decode";
+import { bytes, colorMarkers, expectPictures, range } from "./decode";
 import { known, missingBits, pictureOf, scaled, smoothed } from "./model";
 import {
   AC,
@@ -10,13 +10,15 @@ import {
   coded,
   copyOf,
   dht,
+  dhts,
   dri,
   frameOf,
   headerOf,
   jpeg,
-  marker,
   noise,
-  RST0,
+  progressiveTypes,
+  rgbIds,
+  rst,
   scanOf,
   simpleProgression,
   SOF10,
@@ -24,18 +26,14 @@ import {
   sos,
   tableOf,
   typical,
+  withRestarts,
   write,
   type Frame,
   type HuffmanTable,
   type Scan,
 } from "./write";
 
-const coders = [
-  ["Huffman", SOF2],
-  ["arithmetic", SOF10],
-] as const;
 const steps = range(0, 63).map(k => 3 + ((k * 7) % 11));
-/** Of what `scans` tell of a frame. */
 const guessed = (frame: Frame, scans: Scan[], eighths = 8) => {
   const missing = missingBits(frame, scans);
   return pictureOf(
@@ -44,25 +42,22 @@ const guessed = (frame: Frame, scans: Scan[], eighths = 8) => {
   );
 };
 
-test.each(coders)(
-  "%s: with no AC coefficients, the first nine are, and the DC coefficient is evened out",
-  async (_, type) => {
-    const random = randomBytes(4);
-    const sides = slow ? [1, 2, 3, 6] : range(1, 6);
-    await expectPictures(
-      sides.flatMap(wide =>
-        sides.map(high => {
-          const frame = noise(frameOf(wide * 8, high * 8, "1x1", { type, tables: [steps] }), random);
-          const scans = [scanOf([0], 0, 0, 0, (wide + high) % 3)];
-          return { name: `${wide} by ${high}`, file: write(frame, scans), expected: guessed(frame, scans) };
-        }),
-      ),
-    );
-  },
-);
+test.each(progressiveTypes)("%s: without AC scans, coefficients 0 to 9 are estimated", async (_, type) => {
+  const random = randomBytes(4);
+  const sides = slow ? [1, 2, 3, 6] : range(1, 6);
+  await expectPictures(
+    sides.flatMap(wide =>
+      sides.map(high => {
+        const frame = noise(frameOf(wide * 8, high * 8, "1x1", { type, tables: [steps] }), random);
+        const scans = [scanOf([0], 0, 0, 0, (wide + high) % 3)];
+        return { name: `${wide} by ${high}`, file: write(frame, scans), expected: guessed(frame, scans) };
+      }),
+    ),
+  );
+});
 
-test.each(coders)(
-  "%s: with some of the nine, only the first five are, within the bits that are missing",
+test.each(progressiveTypes)(
+  "%s: with a scan for any of 1 to 9, only 1 to 5 are estimated, below 2^Al",
   async (_, type) => {
     const frame = noise(frameOf(56, 48, "1x1", { type, tables: [steps] }), randomBytes(5), { sparse: 3, ac: 60 });
     const bands = [
@@ -75,18 +70,14 @@ test.each(coders)(
     await expectPictures(
       bands.map(([ss, se, al]) => {
         const scans = [scanOf([0], 0, 0), scanOf([0], ss, se, 0, al)];
-        return {
-          name: `${ss} to ${se} but for ${al} bits`,
-          file: write(frame, scans),
-          expected: guessed(frame, scans),
-        };
+        return { name: `${ss} to ${se}, Al ${al}`, file: write(frame, scans), expected: guessed(frame, scans) };
       }),
     );
   },
 );
 
 test("a half is rounded away from 0", async () => {
-  // 128 for the DC coefficient makes every odd sum a half.
+  // A DC step of 128 makes every odd sum a half.
   const frame = frameOf(48, 48, "1x1", { type: SOF2, tables: [[128, ...Array(63).fill(1)]] });
   const random = randomBytes(6);
   for (let i = 0; i < 36; i++) frame.components[0].data[i * 64] = (random() % 5) - 2;
@@ -98,7 +89,7 @@ test("a half is rounded away from 0", async () => {
   );
 });
 
-test("steps have 16 bits, without a sign", async () => {
+test("quantization steps are unsigned", async () => {
   const random = randomBytes(13);
   await expectPictures(
     range(0, 9).map(k => {
@@ -118,7 +109,7 @@ test("steps have 16 bits, without a sign", async () => {
   );
 });
 
-test("in long rows", async () => {
+test("rows of about 32, 64 and 96 blocks", async () => {
   const random = randomBytes(14);
   await expectPictures(
     [30, 31, 32, 33, 34, 35, 64, 65, 97].map(wide => {
@@ -129,7 +120,7 @@ test("in long rows", async () => {
   );
 });
 
-test.each(["across", "down"])("in thousands of blocks %s", async way => {
+test.each(["across", "down"])("thousands of blocks %s", async way => {
   const [some, count] = [23, slow ? 180 : 356];
   const sized = (blocks: number): [number, number] => (way === "across" ? [blocks * 8, 8] : [8, blocks * 8]);
   const [once, twice] = [1, 2].map(n => frameOf(...sized(n * some), "1x1", { type: SOF2, tables: [steps] }));
@@ -138,9 +129,9 @@ test.each(["across", "down"])("in thousands of blocks %s", async way => {
   const scans = [scanOf([0], 0, 0)];
   const { tables, header, data } = coded(once, scans[0]);
   const [width, height] = sized(count * some - 0.5);
-  const more = range(0, count - 2).flatMap(n => [marker(RST0 + (n & 7)), data]);
-  const file = jpeg(headerOf({ ...once, width, height }), dri(some), ...tables, header, data, ...more);
-  // From the middle of the first to the middle of the second, all have what they would have around them in between.
+  const intervals = withRestarts<Buffer>(Array(count).fill(data));
+  const file = jpeg(headerOf({ ...once, width, height }), dri(some), ...tables, header, ...intervals);
+  // The part of `twice` from the middle of one copy to the middle of the other is out of reach of the edges.
   const two = guessed(twice, scans, 1).rgba;
   const [start, end] = [some >> 1, some + (some >> 1)].map(pixels => pixels * 4);
   const between = Buffer.alloc((count - 1) * some * 4, two.subarray(start, end));
@@ -149,11 +140,11 @@ test.each(["across", "down"])("in thousands of blocks %s", async way => {
   await expectPictures([{ name: way, file, eighths: 1, expected }]);
 });
 
-test("up to 13 bits can be missing", async () => {
+test("estimates are limited for Al up to 13", async () => {
   const random = randomBytes(16);
   await expectPictures(
     range(5, 13).map(al => {
-      // In 16 bits, the DC coefficients come to 0, and the highest guess to minus the step.
+      // Dequantized in 16 bits, DC wraps to 0, and the largest estimate to minus the step.
       const table = Array(64)
         .fill(65536 >> al)
         .with(0, 32768);
@@ -165,7 +156,7 @@ test("up to 13 bits can be missing", async () => {
   );
 });
 
-test("every component by itself, at any scale", async () => {
+test("each component by its own scans, at every scale", async () => {
   const frame = noise(
     frameOf(70, 60, "2x2,1x1,1x1", { type: SOF2, tables: [steps, steps.toReversed()] }),
     randomBytes(7),
@@ -177,7 +168,7 @@ test("every component by itself, at any scale", async () => {
   );
 });
 
-test("so it is with four", async () => {
+test("each of four components by its own scans", async () => {
   const frame = noise(frameOf(40, 24, "1x1,1x1,1x1,1x1", { type: SOF2, tables: [steps] }), randomBytes(17), {
     sparse: 3,
     ac: 60,
@@ -191,13 +182,13 @@ test("so it is with four", async () => {
   );
 });
 
-test("blocks that fill the last row of MCUs count, and the last row looks less far up if it is short", async () => {
+test("padding blocks below the image count as neighbors, and a partial last row of MCUs has fewer above", async () => {
   const random = randomBytes(8);
   await expectPictures(
     ["1x2,1x1,1x1", "2x2,1x1,1x1", "1x4,1x1,1x1", "1x3,1x1,1x1", "1x2", "1x4"].flatMap(sampling =>
       (slow ? [1, 3, 5, 6, 9] : range(1, 9)).flatMap(high => {
         const frame = noise(frameOf(24, high * 8, sampling, { type: SOF2, tables: [steps] }), random);
-        // They are not in a scan of one component, and are 0.
+        // A scan of one component has no padding blocks, so they are 0.
         const apart = copyOf(frame);
         for (const { data, wide, high, across } of apart.components) {
           data.forEach((_, i) => ((i >> 6) % across >= wide || i >> 6 >= high * across) && (data[i] = 0));
@@ -215,14 +206,14 @@ test("blocks that fill the last row of MCUs count, and the last row looks less f
   );
 });
 
-const rgb = noise(frameOf(24, 48, "1x1,1x1,1x1", { type: SOF2, ids: [82, 71, 66], tables: [steps] }), randomBytes(9), {
+const rgb = noise(frameOf(24, 48, "1x1,1x1,1x1", { type: SOF2, ids: rgbIds, tables: [steps] }), randomBytes(9), {
   sparse: 3,
   ac: 60,
 });
 const colors = "RGB";
 const nothing = Array(10).fill(-1);
 
-test("not if any component has a 0 among the first ten values of its table", async () => {
+test("is off if any component has a 0 among the first ten quantization steps", async () => {
   const scans = [scanOf([0, 1, 2], 0, 0)];
   await expectPictures(
     range(0, 10).map(k => {
@@ -241,7 +232,7 @@ test("not if any component has a 0 among the first ten values of its table", asy
   );
 });
 
-test("not if any component has no DC coefficients", async () => {
+test("is off if any component has no DC scan", async () => {
   await expectPictures(
     [[scanOf([0, 1], 0, 0)], [scanOf([1, 2], 0, 0)], [scanOf([0, 1], 0, 0), scanOf([2], 1, 5)]].map((scans, i) => ({
       name: `${i}`,
@@ -251,14 +242,14 @@ test("not if any component has no DC coefficients", async () => {
   );
 });
 
-/** What is read from zeros changes nothing. */
+/** Zeros decode as a DC difference of 0, or as EOB. */
 const zeroFirst = (symbols: number[]): HuffmanTable =>
   tableOf(
     symbols,
     symbols.map(symbol => (symbol ? 10 : 1)),
   );
 const tables = { 0: zeroFirst(range(0, 15)), [AC]: zeroFirst(bytes) };
-/** The scan at `cut` has data for so many rows of blocks. */
+/** Scan number `cut` ends after `rows` rows of blocks. */
 function cutShort(frame: Frame, scans: Scan[], cut: number, rows: number) {
   const sent = known(frame, scans);
   const without = known(frame, scans.toSpliced(cut, 1));
@@ -272,14 +263,14 @@ function cutShort(frame: Frame, scans: Scan[], cut: number, rows: number) {
   }
   const parts = scans.flatMap((scan, i) => {
     const interval = i === cut ? wide : 0;
-    const { header, data } = coded(frame, { ...scan, interval, longestRun: 1, dc: [0, 0, 0], ac: [0] }, tables);
-    return [dri(interval), header, i === cut ? data.subarray(0, data.indexOf(marker(RST0 + rows - 1))) : data];
+    const { header, data } = coded(frame, { ...scan, interval, maxEobRun: 1, dc: [0, 0, 0], ac: [0] }, tables);
+    return [dri(interval), header, i === cut ? data.subarray(0, data.indexOf(rst(rows - 1))) : data];
   });
-  return { sent, file: jpeg(headerOf(frame), dht(0, tables[0]), dht(AC, tables[AC]), ...parts) };
+  return { sent, file: jpeg(headerOf(frame), ...dhts(tables), ...parts) };
 }
 const oneBit = [0, 1, 1, 1, 1, 1, -1, -1, -1, -1];
 
-test("below the row of MCUs in which the last scan breaks off, by what was missing before it", async () => {
+test("below the row of MCUs where the last scan is truncated, it goes by the state before that scan", async () => {
   const tall = noise(frameOf(24, 80, "1x2", { type: SOF2, tables: [steps] }), randomBytes(10), { sparse: 3, ac: 60 });
   await expectPictures(
     range(1, 8).map(rows => {
@@ -290,9 +281,9 @@ test("below the row of MCUs in which the last scan breaks off, by what was missi
   );
 });
 
-describe("a row has data if there is some left where one of its MCUs begins, ahead of its restart marker", () => {
+describe("a row counts as decoded if data was left when one of its MCUs began, before any restart", () => {
   type Layout = [wide: number, interval: number, data: string, lastRow: number];
-  /** The last scan is of the second component, which is all zeros. Its only code is 0, for `symbol`. */
+  /** The last scan is for component 1, which is all zeros. Its only code is 0, for `symbol`. */
   async function expectLastRows([ss, se, ah]: number[], symbol: number, layouts: Layout[]) {
     const random = randomBytes(15);
     const earlier = [scanOf([0, 1, 2], 0, 0), scanOf([0], 1, 5, 0, 1)];
@@ -304,9 +295,9 @@ describe("a row has data if there is some left where one of its MCUs begins, ahe
         const all = noise({ ...frameOf(wide * 8, 40, "1x1,1x1,1x1"), type: SOF2, tables: [steps] }, random);
         all.components[1].data.fill(0);
         const frame = known(all, earlier.slice(0, 1));
-        const start = write(frame, earlier, { before: said.RGB }).subarray(2, -2);
+        const start = write(frame, earlier, { before: colorMarkers.RGB }).subarray(2, -2);
         const header = sos(frame, scanOf([1], ss, se, ah, ss ? 1 : 0, { dc: [0], ac: [0] }));
-        const parts = data.split(" ").flatMap((part, i) => [i ? marker(RST0 + i - 1) : [], Buffer.from(part, "hex")]);
+        const parts = withRestarts(data.split(" ").map(part => Buffer.from(part, "hex")));
         return {
           name: `${wide}, ${interval}, ${data}`,
           file: jpeg(start, table, dri(interval), header, ...parts),
@@ -320,11 +311,11 @@ describe("a row has data if there is some left where one of its MCUs begins, ahe
   }
 
   test.each([
-    ["DC coefficients", [0, 0, 0]],
-    ["first scan of a band", [1, 5, 0]],
-    ["refinement", [1, 5, 2]],
+    ["first DC scan", [0, 0, 0]],
+    ["first AC scan", [1, 5, 0]],
+    ["AC refinement", [1, 5, 2]],
   ])("%s", async (_, scan) => {
-    // A block is one bit, or else the 17 of what is no code, with which the data ends.
+    // A block is a 0 bit, or an invalid code of 17 bits that goes past the data.
     await expectLastRows(scan, 0, [
       [1, 1, "00 ff00", 1],
       [1, 1, "00 ff00 ff00", 1],
@@ -342,7 +333,7 @@ describe("a row has data if there is some left where one of its MCUs begins, ahe
     ]);
   });
 
-  test("a bit of DC coefficients", async () => {
+  test("DC refinement", async () => {
     await expectLastRows([0, 0, 1], 0, [
       [9, 9, " ", 0],
       [9, 9, " 00", 1],
@@ -350,7 +341,7 @@ describe("a row has data if there is some left where one of its MCUs begins, ahe
     ]);
   });
 
-  test.each([0, 2])("a run of blocks, in 15 bits: Ah %i", async ah => {
+  test.each([0, 2])("EOB14, which takes 15 bits, with Ah = %i", async ah => {
     await expectLastRows([1, 5, ah], 0xe0, [
       [2, 2, "00 00 00 00 00", 0],
       [2, 2, "00 00 00 00 0000", 4],
@@ -359,7 +350,7 @@ describe("a row has data if there is some left where one of its MCUs begins, ahe
   });
 });
 
-test("that is, before the last scan of each component, and nothing was missing before the first of the file", async () => {
+test("the earlier state is that before the last scan of each component, or complete if that is the first of the file", async () => {
   const dc = (components: number[], ah = 0, al = 0) => scanOf(components, 0, 0, ah, al);
   const below = (now: number[][], before: number[][]) => (c: number, row: number) => (row > 2 ? before : now)[c];
   const complete = Array(10).fill(0);
@@ -368,25 +359,25 @@ test("that is, before the last scan of each component, and nothing was missing b
     ["the only scan", [dc([0, 1, 2])], 0, () => nothing],
     ["one for each", [dc([0]), dc([1]), dc([2])], 2, below([nothing, nothing, nothing], [complete, nothing, nothing])],
     [
-      "of another component",
+      "DC refinement of another component",
       [dc([0, 1, 2], 0, 1), scanOf([0], 1, 5, 0, 1), dc([1], 1, 0)],
       2,
       below([oneBit, nothing, nothing], [nothing, nothing, complete]),
     ],
     [
-      "with all nine",
+      "the same, after a scan of 1 to 9",
       [dc([0, 1, 2], 0, 1), scanOf([0], 1, 9), dc([1], 1, 0)],
       2,
       below([complete, nothing, nothing], [nothing, nothing, complete]),
     ],
     [
-      "a refinement",
+      "AC refinement",
       [dc([0, 1, 2]), scanOf([1], 1, 5, 0, 2), scanOf([1], 1, 5, 2, 1)],
       2,
       below([nothing, oneBit, nothing], [complete, twoBits, complete]),
     ],
     [
-      "of a higher band",
+      "a higher band",
       [dc([0, 1, 2]), scanOf([1], 1, 5, 0, 1), scanOf([1], 20, 30)],
       2,
       below([nothing, oneBit, nothing], [complete, oneBit, complete]),
@@ -406,14 +397,14 @@ test("that is, before the last scan of each component, and nothing was missing b
   );
 });
 
-test("but not at all if the last scan was to bring all that was missing", async () => {
+test("is off if the truncated scan completes coefficients 1 to 9", async () => {
   const gray = { ...rgb, components: rgb.components.slice(0, 1) };
   const { sent, file } = cutShort(gray, [scanOf([0], 0, 0), scanOf([0], 1, 9)], 1, 2);
   await expectPictures([{ name: "1 to 9", file, expected: pictureOf(sent) }]);
 });
 
-test.each([1, 3])("with arithmetic coding, no scan is seen to break off: %i wide", async wide => {
-  // Nothing in the band, for which the zeros behind the data stand as well as any.
+test.each([1, 3])("an arithmetic-coded scan never counts as truncated: %i blocks wide", async wide => {
+  // An empty band needs next to no data, so most rows are decoded from the zeros after it.
   const all = noise(frameOf(wide * 8, 48, "1x1", { type: SOF10, tables: [steps] }), randomBytes(16));
   const gray = known(all, [scanOf([0], 0, 0)]);
   const [dc, band] = [coded(gray, scanOf([0], 0, 0)), coded(gray, scanOf([0], 1, 5, 0, 1))];

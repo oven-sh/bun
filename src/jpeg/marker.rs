@@ -1,4 +1,4 @@
-//! The byte after the 0xFF of a marker.
+//! The byte after the 0xFF of a marker, and the identifiers that APPn segments start with.
 
 pub(crate) const TEM: u8 = 0x01;
 pub(crate) const SOF0: u8 = 0xC0;

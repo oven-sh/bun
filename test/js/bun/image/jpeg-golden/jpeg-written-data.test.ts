@@ -1,18 +1,18 @@
-// The coefficients and codes that Bun.Image writes, to the last bit. They are what libjpeg-turbo writes.
+// The files that Bun.Image encodes, byte for byte those of libjpeg-turbo: coefficients and Huffman codes.
 import { describe, expect, test } from "bun:test";
 import { slow } from "../png-golden/check";
 import { sha256 } from "../png-golden/observe";
 import { randomBytes } from "../png-golden/write";
 import { decode, difference, range } from "./decode";
 import { encode, fileOf, fill, mistakes, noisy } from "./encode";
-import { coefficientsOf, pictureOf, tablesFor, transforms } from "./model";
+import { coefficientsOf, pictureOf, tablesFor, toYCbCr, transforms } from "./model";
 import { read, segmentsOf } from "./read";
 import {
   AC,
   frameOf,
   headerOf,
   jpeg,
-  mostCorrections,
+  maxCorrectionBits,
   optimalTable,
   scanOf,
   simpleProgression,
@@ -20,17 +20,18 @@ import {
   sos,
   Symbols,
   symbolsOf,
+  ZRL,
 } from "./write";
 
-describe("samples", () => {
-  test("alpha is not looked at", async () => {
+describe("color conversion, downsampling and DCT", () => {
+  test("alpha is ignored", async () => {
     const picture = noisy(40, 20);
     const opaque = { ...picture, rgba: Buffer.from(picture.rgba.map((byte, i) => (i % 4 === 3 ? 255 : byte))) };
     expect((await encode(picture)).equals(await encode(opaque))).toBe(true);
   });
 
   test("every value of red, green and blue with many of the others", async () => {
-    // At quality 100, a sample that is off by one in a few places shows.
+    // At quality 100, a few samples that are off by one change the coefficients.
     const pictures = [0, 1, 2].map(c =>
       fill(256, slow ? 16 : 32, (x, y) =>
         [0, 1, 2].map(i => (i === c ? x : ((y >> 1) * (i + 3) * 17 + (x & ~1) * 7) & 255)),
@@ -39,19 +40,13 @@ describe("samples", () => {
     expect(await mistakes(pictures, 100, [false])).toEqual([]);
   });
 
-  test("colors that come within a hair of being rounded the other way", async () => {
-    // One to an MCU, where each step of a sample is 8 steps of a coefficient.
-    const rows = [
-      [19595, 38470, 7471, 32768],
-      [-11059, -21709, 32768, 32767],
-      [32768, -27439, -5329, 32767],
-    ];
+  test("colors next to a rounding boundary", async () => {
     const colors: number[][] = [];
     const random = randomBytes(3);
-    for (const [r, g, b, plus] of rows) {
+    for (const [r, g, b, plus] of toYCbCr) {
       for (const up of [true, false]) {
         for (let found = 0; found < 6;) {
-          // A factor that is off by one moves the sum by the sample, and so by 128 or more.
+          // A weight that is off by one moves the sum by at least 128.
           const color = [128 | random(), 128 | random(), 128 | random()];
           const rest = (r * color[0] + g * color[1] + b * color[2] + plus) & 65535;
           if (up ? rest < 65536 - 128 : rest >= 128) continue;
@@ -60,7 +55,7 @@ describe("samples", () => {
         }
       }
     }
-    // And the sums that are a half to the last bit.
+    // Exact halves.
     colors.push(
       [0, 0, 1],
       [1, 0, 0],
@@ -74,8 +69,8 @@ describe("samples", () => {
     expect(await mistakes([fill(colors.length * 16, 16, x => colors[x >> 4])], 100, [false])).toEqual([]);
   });
 
-  test("four samples of color make one, rounded down and up in turns", async () => {
-    // Blue of 0 or 2 on black is a Cb of 128 or 129. All 16 ways, in even and in odd columns.
+  test("chroma is the mean of 2 by 2 samples, with a bias of 1 and 2 in turns", async () => {
+    // Blue of 0 or 2 on black is a Cb of 128 or 129. All 16 patterns, in even and in odd columns.
     const picture = fill(32 * 16, 16, (x, y) => {
       const [way, odd] = [x >> 5, (x >> 4) & 1];
       return [0, 0, ((x >> 1) & 1) === odd && (way >> ((y & 1) * 2 + (x & 1))) & 1 ? 2 : 0];
@@ -83,8 +78,8 @@ describe("samples", () => {
     expect(await mistakes([picture], 100, [false])).toEqual([]);
   });
 
-  test("the strongest contrasts", async () => {
-    // Black and white, or blue and yellow, by the sign of each frequency.
+  test("the largest coefficients", async () => {
+    // Black and white, or blue and yellow, by the sign of each basis function.
     const { factors } = transforms[8];
     const sign = (k: number, x: number, y: number) =>
       factors[(x & 7) * 8 + (k & 7)] * factors[(y & 7) * 8 + (k >> 3)] > 0;
@@ -93,7 +88,7 @@ describe("samples", () => {
       fill(128, 128, (x, y) => (sign((y >> 4) * 8 + (x >> 4), x >> 1, y >> 1) === first ? [0, 0, 255] : [255, 255, 0])),
     ]);
     expect(await mistakes(pictures, 100)).toEqual([]);
-    // The largest difference has 11 bits.
+    // DC category 11.
     const stripes = fill(64, 16, x => ((x >> 3) & 1 ? [255, 255, 255] : [0, 0, 0]));
     expect(
       symbolsOf(coefficientsOf(stripes, 100), scanOf([0, 1, 2]))
@@ -103,20 +98,20 @@ describe("samples", () => {
     expect(await mistakes([stripes], 100)).toEqual([]);
   });
 
-  test("much noise, for the last bits of the transform", async () => {
+  test("noise, for the rounding of the DCT", async () => {
     expect(await mistakes([noisy(128, slow ? 64 : 512)], 100)).toEqual([]);
   });
 });
 
-/** Gray, and as near to these coefficients as whole samples get. `step` is what they are multiplied by. */
+/** A gray image that encodes to about these coefficients. */
 function grayOf(blocks: ArrayLike<number>[], steps: number[], across = 16) {
   const frame = frameOf(across * 8, Math.ceil(blocks.length / across) * 8, "1x1", { tables: [steps] });
   blocks.forEach((block, i) => frame.components[0].data.set(block, i * 64));
   return pictureOf(frame);
 }
 
-describe("codes", () => {
-  test("every run of zeros, in front of a coefficient and behind it", async () => {
+describe("Huffman coding", () => {
+  test("every run of zeros, before a coefficient and after it", async () => {
     const [steps] = tablesFor(75);
     const blocks = range(1, 63).flatMap(k => [
       range(0, 63).map(i => (i === k ? 3 : 0)),
@@ -129,8 +124,8 @@ describe("codes", () => {
     expect(await mistakes([picture], 75)).toEqual([]);
   });
 
-  test("the longest, one behind the other", async () => {
-    // Four levels that make 520 behind 9 zeros, 496 behind 3, and -496 behind 24. 16 bits for each code, and 9 or 10 more.
+  test("the longest codes in a row", async () => {
+    // These levels give 520 after 9 zeros, 496 after 3 and -496 after 24: codes of 16 bits with 9 or 10 extra bits.
     const sign = (at: number) => +(((at + 1) & 2) !== 0);
     const apart = (x: number, y: number) => [255, 255, 249, 1][sign(y) * 2 + sign(x)];
     const diagonal = (x: number, y: number) => ((x & 7) + (y & 7) < 7 + ((x >> 6) & 1) ? 255 : 0);
@@ -140,13 +135,13 @@ describe("codes", () => {
       Array(3).fill([apart(x, y), 256 - apart(x, y), diagonal(x, y), 0, x + y][kinds[(y >> 3) * 16 + (x >> 3)]]),
     );
     const found = symbolsOf(coefficientsOf(picture, 100), scanOf([0, 1, 2])).occurrences();
-    expect([0x9a, 0x39, 0xf0, 0x89, 0x0a].filter(symbol => !found.get(AC)![symbol])).toEqual([]);
+    expect([0x9a, 0x39, ZRL, 0x89, 0x0a].filter(symbol => !found.get(AC)![symbol])).toEqual([]);
     expect(found.get(0)![11]).toBeGreaterThan(0);
     expect(await mistakes([picture], 100)).toEqual([]);
   });
 
-  test("hundreds of thousands in a scan", async () => {
-    // Noise, with stretches of one color.
+  test("hundreds of thousands of symbols in a scan", async () => {
+    // Noise with flat areas.
     const [noise, plain] = [noisy(1000, 1).rgba, Buffer.alloc(512 * 4, 200)];
     const rows = range(0, 383).flatMap(y =>
       y % 128 < 24 ? [plain] : [noise.subarray((y * y) % 2400).subarray(0, 400 * 4), plain.subarray(400 * 4)],
@@ -165,16 +160,27 @@ describe("codes", () => {
     ["at the end", 19, false, /^(..)+ff00$/],
     ["twice in a row", 6691, false, /^(..)+ff00ff00/],
     ["twice in a row at the end of a scan", 3871, true, /^(..)+ff00ff00$/],
-  ])("a 0 behind every FF: %s", async (_, seed, progressive, pattern) => {
+  ])("FF is stuffed %s", async (_, seed, progressive, pattern) => {
     const picture = noisy(8, 8, seed);
     const { segments } = read(await encode(picture, { quality: 95, progressive }));
     expect(segments.map(({ data }) => data?.toString("hex"))).toContainEqual(expect.stringMatching(pattern));
     expect(await mistakes([picture], 95, [progressive])).toEqual([]);
   });
 
-  test("the best for each scan, shortened to 16 bits", async () => {
-    // In the band from 6 on, without two bits: 18 symbols that occur 1, 2, 3, 5, 8 and so on times, and one that fills
-    // the blocks, so that none ends early.
+  test.each([
+    [31, 100, false, 160, (k: number) => (k % 3 ? 0 : 31)],
+    // The last scan has only correction bits, which are all 1.
+    [99, 90, true, 480, (k: number) => (k & 5 ? 3 : -3)],
+  ])("FF is stuffed if it is %i %% of a long scan", async (percent, quality, progressive, blocks, value) => {
+    const picture = grayOf(Array(blocks).fill(range(0, 63).map(k => k && value(k))), tablesFor(quality)[0]);
+    const data = segmentsOf(await encode(picture, { quality, progressive })).at(-1)!.data!;
+    const stuffed = data.filter(byte => byte === 0xff).length;
+    expect(Math.round((100 * stuffed) / (data.length - stuffed))).toBe(percent);
+    expect(await mistakes([picture], quality, [progressive])).toEqual([]);
+  });
+
+  test("optimal codes are limited to 16 bits", async () => {
+    // In the scan of 6 to 63 with Al = 2, 18 symbols have Fibonacci frequencies. One more fills the blocks: no EOB.
     const left: number[][] = [];
     for (let i = 18, a = 1, b = 2; i > 0; i--, [a, b] = [b, a + b])
       left.push(...Array(a).fill([Math.floor(i / 3), i % 3]));
@@ -193,8 +199,8 @@ describe("codes", () => {
     expect(file.equals(fileOf(frame, true))).toBe(true);
   });
 
-  test("there can be more than 128 in a table", async () => {
-    // In the same band: every run up to 15 in front of every size up to 8, where the wave is square and has room for it.
+  test("an optimal table can have more than 128 codes", async () => {
+    // In the same scan, every run with every size up to 8. Coefficient 39 is a square wave, so large values fit.
     const blocks = range(0, 127).map(i =>
       Array(64)
         .fill(0)
@@ -207,8 +213,8 @@ describe("codes", () => {
     expect(file.equals(fileOf(frame, true))).toBe(true);
   });
 
-  test("of symbols that occur equally often, the later is joined first", async () => {
-    // Small pictures have few of each.
+  test("ties between frequencies are broken as in libjpeg", async () => {
+    // Small images have many ties.
     expect(
       await mistakes(
         range(1, 40).map(seed => noisy(3 + (seed % 14), 8, seed)),
@@ -218,35 +224,32 @@ describe("codes", () => {
     ).toEqual([]);
   });
 
-  test("a run of blocks that end early has up to 32767", async () => {
+  test("an EOB run has up to 32767 blocks", async () => {
     for (const [wide, high] of [
       [2 * 43, 3 * 127],
       [7 * 31, 151],
       [256, 128],
       [362, 182],
     ]) {
-      // Without data, a picture is 128 all over.
+      // Without data, all samples are 128.
       const frame = { ...frameOf(1, 1), width: wide * 8, height: high * 8 };
       const file = await new Bun.Image(jpeg(headerOf(frame), sos(frame, scanOf([0]))))
         .jpeg({ progressive: true })
         .bytes();
       const symbols = new Symbols();
-      for (let left = wide * high; left > 0; left -= 32767) {
-        const size = 31 - Math.clz32(Math.min(left, 32767));
-        symbols.symbol(AC, size << 4).bits(Math.min(left, 32767), size);
-      }
+      for (let left = wide * high; left > 0; left -= 32767) symbols.eobRun(AC, Math.min(left, 32767));
       const expected = symbols.bytes({ [AC]: optimalTable(symbols.occurrences().get(AC)!) });
       const scans = segmentsOf(file).filter(({ code }) => code === SOS);
       expect([1, 4, 5, 9].map(i => scans[i].data!.toString("hex"))).toEqual(Array(4).fill(expected.toString("hex")));
     }
   });
 
-  test("and ends when more than 937 bits are waiting behind it", async () => {
+  test("an EOB run ends when more than 937 correction bits are pending", async () => {
     const [steps] = tablesFor(90);
-    /** So many coefficients that are refined in the last scan, and none that is new there. */
+    /** `count` correction bits in the last scan, and no new coefficient. */
     const having = (count: number): number[] => range(0, 63).map(k => (k > 63 - count ? (k % 3 ? 2 : -3) : 0));
     const [many, none] = [having(26), having(0).with(63, 1)];
-    const blocks = [mostCorrections - 1, mostCorrections, mostCorrections + 1].flatMap(bits => [
+    const blocks = [maxCorrectionBits - 1, maxCorrectionBits, maxCorrectionBits + 1].flatMap(bits => [
       ...Array(35).fill(many),
       having(bits - 35 * 26),
       having(1),
@@ -263,7 +266,7 @@ describe("codes", () => {
     expect(file.equals(fileOf(frame, true))).toBe(true);
   });
 
-  test("which can be 1000 by then", async () => {
+  test("an EOB run can have 1000 correction bits", async () => {
     const random = randomBytes(5);
     const full = () => range(0, 63).map(k => (k ? (random() & 1 ? 1 : -1) * (8 + (random() & 7)) : 0));
     // 14 times 63 and 55.

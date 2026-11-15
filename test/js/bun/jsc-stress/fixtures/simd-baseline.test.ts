@@ -239,10 +239,9 @@ function linesOf(file: Uint8Array): Buffer {
 }
 
 describe("JPEG codec: Highway runtime dispatch", () => {
-  // src/jsc/bindings/highway_jpeg.cpp is compiled twice on x64, for SSSE3 and for AVX2, and has parts of its own for
-  // arm64. A machine runs one of the three. All have to come to the same bytes, which test/js/bun/image/jpeg-golden
-  // checks the slow way. Here they are checksums, of what libjpeg-turbo 3.2.0 came to.
-  // Two groups of 32 pixels and a rest, and no whole number of blocks either way.
+  // src/jsc/bindings/highway_jpeg.cpp is compiled for SSSE3 and for AVX2 on x64, and has separate code for arm64. All
+  // three have to give the same bytes. These checksums are from libjpeg-turbo 3.2.0.
+  // Two groups of 32 pixels and a remainder, and partial blocks on both edges.
   const width = 75;
   const height = 37;
 
@@ -256,9 +255,9 @@ describe("JPEG codec: Highway runtime dispatch", () => {
     return bytes;
   }
 
-  /** YCbCr with coefficients of 1 to 3 bits in every place, unless `acSymbols` has the end of a block. */
+  /** YCbCr with random coefficients of 1 to 3 bits. */
   function jpegFile(lumaSampling: number, step: number, acSymbols = [0x01, 0x02, 0x13, 0x03]): Buffer {
-    // The codes 0, 10, 110 and 1110. Without four ones in a row, any bits are data.
+    // The codes 0, 10, 110 and 1110. Without four ones in a row, any bits are valid.
     const counts = [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     return Buffer.concat([
       Buffer.from([0xff, 0xd8, 0xff, 0xdb, 0, 131, 0x10]),
@@ -272,7 +271,7 @@ describe("JPEG codec: Highway runtime dispatch", () => {
     ]);
   }
 
-  /** At 1 to 8 eighths of the size, to which the decoder scales by itself. */
+  /** At 1/8 to 8/8 of the size. The decoder scales to these itself. */
   async function checksums(file: Buffer): Promise<number[]> {
     const sums: number[] = [];
     for (let eighths = 1; eighths <= 8; eighths++) {
@@ -294,7 +293,7 @@ describe("JPEG codec: Highway runtime dispatch", () => {
       lumaSampling: 0x21,
       expected: [0x98c41678, 0x5b7e5919, 0x1087358d, 0xddbb89d8, 0x3803b37a, 0x30b05c66, 0x016d7b1c, 0xe73c7ad3],
     },
-    // Below 8 eighths, the blocks of chroma are twice as large as those of luma.
+    // Below 8/8, chroma gets an IDCT of twice the size.
     {
       name: "4:2:0",
       lumaSampling: 0x22,
@@ -304,7 +303,7 @@ describe("JPEG codec: Highway runtime dispatch", () => {
     expect(await checksums(jpegFile(lumaSampling, 7))).toEqual(expected);
   });
 
-  // These are of test/js/bun/image/jpeg-golden/model.ts.
+  // Out-of-range checksums are from test/js/bun/image/jpeg-golden/model.ts.
   test.each([
     {
       step: 255,
@@ -314,11 +313,11 @@ describe("JPEG codec: Highway runtime dispatch", () => {
       step: 9999,
       expected: [0xabd57f9a, 0x024f6f0a, 0x44dd2a4a, 0xaa6c089a, 0xca2b36e4, 0xa2522916, 0x053d1182, 0x70e25041],
     },
-  ])("decode steps of $step, which come to more than any sample", async ({ step, expected }) => {
+  ])("decode out-of-range coefficients, quantization step $step", async ({ step, expected }) => {
     expect(await checksums(jpegFile(0x22, step))).toEqual(expected);
   });
 
-  // More than half have none. Steps of more than 7 come to more than any sample.
+  // More than half of the blocks have only DC. Steps above 7 are out of range.
   test.each([
     {
       step: 7,
@@ -336,7 +335,7 @@ describe("JPEG codec: Highway runtime dispatch", () => {
       step: 40000,
       expected: [0xd1c842b1, 0x968b43a6, 0x7ac16001, 0xf648a4e5, 0x22202101, 0xe906df4a, 0x02f29c81, 0x10fd209e],
     },
-  ])("decode blocks with few AC coefficients, in steps of $step", async ({ step, expected }) => {
+  ])("decode blocks with few AC coefficients, quantization step $step", async ({ step, expected }) => {
     expect(await checksums(jpegFile(0x22, step, [0x00, 0x03, 0x12, 0x71]))).toEqual(expected);
   });
 

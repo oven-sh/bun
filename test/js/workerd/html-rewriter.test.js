@@ -3568,7 +3568,8 @@ describe("SVG/MathML integration-point elements reach handlers after a sibling i
     ]);
     // intervening whitespace/text must not mask the bug
     expect(await census(`<svg><desc>d</desc> <title>t</title></svg>`)).toEqual(["svg", "desc", "title"]);
-    // intervening non-integration-point element (always worked, regression guard)
+    // a self-closing sibling is always lexed, which re-armed matching even
+    // before the fix (regression guard)
     expect(await census(`<svg><desc>d</desc><circle/><title>t</title></svg>`)).toEqual([
       "svg",
       "desc",
@@ -3582,7 +3583,7 @@ describe("SVG/MathML integration-point elements reach handlers after a sibling i
     expect(await census(`<math><mi>x</mi><ms>s</ms><mtext>t</mtext></math>`)).toEqual(["math", "mi", "ms", "mtext"]);
   });
 
-  it("sanitizer rules on foreignObject are not bypassed by a preceding <title>/<desc>", async () => {
+  it("sanitizer rules on foreignObject are not bypassed by a preceding sibling", async () => {
     const strip = doc =>
       new HTMLRewriter()
         .on("foreignobject", {
@@ -3601,6 +3602,15 @@ describe("SVG/MathML integration-point elements reach handlers after a sibling i
     );
     expect(await strip(`<svg><desc>d</desc><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
       `<svg><desc>d</desc></svg>`,
+    );
+    // Previously bypassed too: any preceding sibling the selector does not
+    // match leaves the parser in scan mode, so its end-tag hint re-armed the
+    // stale flag. A self-closing sibling is lexed and did not.
+    expect(await strip(`<svg><g></g><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><g></g></svg>`,
+    );
+    expect(await strip(`<svg><circle/><foreignObject><script>evil()</script></foreignObject></svg>`)).toBe(
+      `<svg><circle/></svg>`,
     );
   });
 

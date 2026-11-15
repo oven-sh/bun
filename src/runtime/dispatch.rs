@@ -96,7 +96,7 @@ use crate::webcore::file_sink::FileSink;
 use crate::webcore::file_sink::Poll as FileSinkPoll;
 use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
 use crate::webcore::s3::multipart::WriterCollected as S3UploadWriterCollected;
-use crate::webcore::s3::simple_request::S3HttpSimpleTask;
+use crate::webcore::s3::simple_request::{RefusedRequest as S3RefusedRequest, S3HttpSimpleTask};
 use crate::webcore::streams::Pending as StreamPending;
 
 use crate::api::bun_subprocess::Subprocess;
@@ -570,6 +570,13 @@ pub(crate) fn run_task(
                 S3HttpDownloadStreamingTask::on_response(download);
             })
         }
+        task_tag::S3RefusedRequest => {
+            feature_arm!([S3Client], |refused: S3RefusedRequest| -> JsResult<()> {
+                // SAFETY: boxed in `Callback::refuse`; the arm consumes it.
+                unsafe { bun_core::heap::take(refused) }.run()?;
+                Ok(())
+            })?
+        }
         task_tag::S3UploadWriterCollected => feature_arm!(
             [S3Client],
             |collected: S3UploadWriterCollected| -> JsResult<()> {
@@ -864,7 +871,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 86,
+    task_tag::COUNT == 87,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1727,6 +1734,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
             release_in!([S3Client], S3HttpDownloadStreamingTask)
         }
         task_tag::S3HttpSimpleTask => release_in!([S3Client], S3HttpSimpleTask),
+        task_tag::S3RefusedRequest => release_in!([S3Client], S3RefusedRequest),
         task_tag::S3UploadWriterCollected => release_in!([S3Client], S3UploadWriterCollected),
         task_tag::SendQueueDeferred => release_in!([Ipc], crate::ipc::SendQueue),
         task_tag::ServerAllConnectionsClosedTask => {

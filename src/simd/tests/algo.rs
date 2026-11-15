@@ -88,6 +88,30 @@ mod simd {
         }
     }
 
+    /// They are in the same vector, or in the same lane of different ones.
+    fn two_matches<T, S, const N: usize>(alignments: usize, view: fn(&mut [T]) -> &[S])
+    where
+        T: Int<N> + From<u8>,
+        S: Source<Lane = T>,
+    {
+        let (mut room, zero, one) = (Room::new(T::from(0)), T::from(0), T::from(1));
+        let room = room.all();
+        let test = |v: Vector<T, N>| v.simd_eq(one);
+        for range in ranges::<T>(N, alignments).filter(|it| it.len() == 13 * N - 1) {
+            let slice = &mut room[range];
+            for apart in [0, 1, N, 2 * N, 3 * N] {
+                for first in 0..slice.len() - apart {
+                    (slice[first], slice[first + apart]) = (one, one);
+                    let found = Vector::position(black_box(view(slice)), test);
+                    assert_eq!(found, Some(first));
+                    let found = Vector::rposition(black_box(view(slice)), test);
+                    assert_eq!(found, Some(first + apart));
+                    (slice[first], slice[first + apart]) = (zero, zero);
+                }
+            }
+        }
+    }
+
     /// Each index comes once and in its turn.
     fn matches<T: Int<N> + From<u8> + PartialEq, const N: usize>(alignments: usize) {
         let (zero, one, mut random) = (T::from(0), T::from(1), 1u32);
@@ -212,6 +236,9 @@ mod simd {
         searches::<u16, _, { U16::LEN }>(alignments, plain);
         searches::<u32, _, { isa::U32::LEN }>(alignments, plain);
         searches::<u64, _, { isa::U64::LEN }>(alignments, plain);
+        two_matches::<u8, _, { U8::LEN }>(alignments, plain);
+        two_matches::<u8, _, { U8::LEN }>(alignments, shared);
+        two_matches::<u16, _, { U16::LEN }>(alignments, plain);
         matches::<u8, { U8::LEN }>(alignments);
         matches::<u16, { U16::LEN }>(alignments);
         matches::<u64, { isa::U64::LEN }>(alignments);
@@ -253,7 +280,27 @@ mod simd {
     }
 
     #[export]
+    pub fn groups_stay_together() {
+        for (size, count) in [2, 4, 8]
+            .into_iter()
+            .flat_map(|it| (0..40).map(move |n| (it, n)))
+        {
+            let reverse = |v: U8| v.lookup(U8::iota() & 15 ^ (size - 1));
+            let len = usize::from(size) * count;
+            let from: Vec<u8> = (0..len).map(|i| i as u8).collect();
+            let want: Vec<u8> = from.iter().map(|i| i ^ (size - 1)).collect();
+            let [mut a, mut b, mut c] = [vec![0; len], from.clone(), from.clone()];
+            U8::map(&from, a[..].as_mut().into(), reverse);
+            U8::map_in_place(&mut b, reverse);
+            let both = shared(&mut c);
+            U8::map_to_shared(both, both, reverse);
+            assert_eq!([&a, &b, &c], [&want; 3]);
+        }
+    }
+
+    #[export]
     pub fn short_slices() {
+        assert!(U8::load_partial::<u8>(&[]).is_none());
         let (mut from, mut to) = (Room::new(0), Room::new(0));
         let (from, to) = (from.all(), to.all());
         for (i, from) in from.iter_mut().enumerate() {
@@ -273,7 +320,12 @@ mod simd {
                 partial.indices().to_array().map(at),
                 partial.lanes.to_array()
             );
+            to[range.clone()].copy_from_slice(slice);
+            let of_shared = U8::load_partial(shared(&mut to[range.clone()])).unwrap();
+            assert_eq!(of_shared.lanes.to_array(), partial.lanes.to_array());
             assert_eq!(partial.to_bitmask(partial.lanes.simd_eq(0)), 0);
+            assert_eq!(partial.first_set(partial.lanes.simd_eq(0)), None);
+            assert_eq!(partial.last_set(partial.lanes.simd_eq(0)), None);
             assert_eq!(
                 partial.to_bitmask(partial.lanes.simd_lt(255)),
                 (1 << len) - 1
@@ -284,6 +336,31 @@ mod simd {
                 let to = to[range].as_mut().into();
                 assert_eq!(U8::narrow(lanes, lanes).store_partial(to), slice);
             }
+        }
+    }
+
+    /// As if another thread wrote between two reads.
+    #[export]
+    pub fn matches_that_go_once_they_are_seen() {
+        let bytes = &mut vec![0; 13 * U8::LEN];
+        let (slice, last) = (shared(bytes), 13 * U8::LEN - 1);
+        for (goes, stays) in (0..=last).flat_map(|at| [(at, last / 3), (at, last - last / 3)]) {
+            let test = |v: U8| {
+                if v.simd_eq(1).any() {
+                    slice[goes].store(0, Relaxed);
+                }
+                v.simd_ne(0)
+            };
+            slice[goes].store(1, Relaxed);
+            slice[stays].store(2, Relaxed);
+            let first = U8::position(slice, test);
+            assert!([Some(goes.min(stays)), Some(stays)].contains(&first));
+            slice[goes].store(1, Relaxed);
+            slice[stays].store(2, Relaxed);
+            let last = U8::rposition(slice, test);
+            assert!([Some(goes.max(stays)), Some(stays)].contains(&last));
+            slice[goes].store(0, Relaxed);
+            slice[stays].store(0, Relaxed);
         }
     }
 
@@ -310,6 +387,11 @@ fn maps() {
 }
 
 #[test]
+fn groups_stay_together() {
+    on_each_target(simd::groups_stay_together);
+}
+
+#[test]
 fn short_slices() {
     on_each_target(simd::short_slices);
 }
@@ -333,6 +415,11 @@ fn more_alignments() {
         simd::all_searches(16);
         simd::all_maps(16);
     });
+}
+
+#[test]
+fn matches_that_go_once_they_are_seen() {
+    on_each_target(simd::matches_that_go_once_they_are_seen);
 }
 
 /// One match comes and goes, and one stays.

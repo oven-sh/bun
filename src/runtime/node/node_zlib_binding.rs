@@ -189,6 +189,9 @@ impl<T: CompressionStreamImpl> JobContext for PendingWrite<T> {
     type OffThread = Self;
     type Js = StrongWrapper<T>;
 
+    /// The handle needs its stream back, and the callbacks carry their own context.
+    const OUTLIVES_SCRIPT: bool = true;
+
     fn run(this: &mut Self, done: Completion<Self>) -> Option<Completion<Self>> {
         if done.ticket().script_allowed() {
             let (input, out) = this.buffers.slices(&this.stream.input_copy);
@@ -453,7 +456,6 @@ pub(crate) trait CompressionStreamImpl: JsPayload {
         Self::pending_input_set_cached(this_value.to_js(), global_this, in_js);
         Self::pending_output_set_cached(this_value.to_js(), global_this, out_js);
 
-        // The write always completes, also for a script that has stopped: its callbacks carry their own context.
         Job::<PendingWrite<Self>>::schedule(
             &global_this.js_thread(global_this.bun_vm().root_context()),
             PendingWrite {

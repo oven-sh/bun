@@ -120,7 +120,7 @@ fn print_source_map_contents_json<const ASCII_ONLY: bool>(
 
 /// Trait capturing the methods `SourceMapFormat<T>` forwards to its `ctx`.
 pub trait SourceMapFormatCtx: Sized {
-    fn init(prepend_count: bool) -> Self;
+    fn init(is_internal: bool) -> Self;
     fn append_line_separator(&mut self) -> Result<(), crate::Error>;
     fn append(
         &mut self,
@@ -136,9 +136,9 @@ pub struct SourceMapFormat<T: SourceMapFormatCtx> {
 }
 
 impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
-    pub fn init(prepend_count: bool) -> Self {
+    pub fn init(is_internal: bool) -> Self {
         Self {
-            ctx: T::init(prepend_count),
+            ctx: T::init(is_internal),
         }
     }
 
@@ -186,8 +186,8 @@ impl Default for VLQSourceMap {
 }
 
 impl SourceMapFormatCtx for VLQSourceMap {
-    fn init(prepend_count: bool) -> VLQSourceMap {
-        if prepend_count {
+    fn init(is_internal: bool) -> VLQSourceMap {
+        if is_internal {
             return VLQSourceMap {
                 data: MutableString::init_empty(),
                 internal: Some(internal_source_map::Builder::init()),

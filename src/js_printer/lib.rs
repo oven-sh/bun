@@ -7515,7 +7515,7 @@ use js_ast::Ast;
 // `generate_source_map` is a runtime arg: `generic_const_exprs`
 // can't compute a non-`bool` const-generic from a `bool` const-generic without
 // viral `where` clauses, and the body only does runtime branches anyway. The
-// `IS_BUN_PLATFORM` axis stays const so `prepend_count` is still a compile-time
+// `IS_BUN_PLATFORM` axis stays const so `is_internal` is still a compile-time
 // constant in the monomorphized callers.
 pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
@@ -7548,7 +7548,7 @@ pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     // O(n) memmoves on a large module. The estimate is intentionally
     // conservative — undershooting still saves the early small reallocs and
     // the buffer doubles from there. Only the bundler/external path uses
-    // `data` directly; the prepend-count (Lazy) path writes through
+    // `data` directly; the internal (Lazy) path writes through
     // `internal` and would just waste the reservation.
     if builder.source_map.ctx.internal.is_none() {
         let hint = (source.contents.len() / 4).max(approximate_newline_count.saturating_mul(4));

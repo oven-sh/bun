@@ -124,7 +124,7 @@ declare_scope!(S3MultiPartUpload, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
 pub struct MultiPartUpload {
-    /// Held until `State::Finished`, then moved into the commit or rollback request, if there is one.
+    /// Taken on the move to `State::Finished`.
     pub(crate) self_ref: Cell<Option<RefPtr<MultiPartUpload>>>,
     pub(crate) queue: OnceCell<Box<[UploadPart]>>,
     pub(crate) available: Cell<IntegerBitSet<{ Self::MAX_QUEUE_SIZE }>>,

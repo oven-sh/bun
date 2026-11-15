@@ -1,7 +1,6 @@
 use core::cell::Cell;
 
 use bun_core::Utf8Bytes;
-use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
@@ -28,12 +27,11 @@ use crate::generated_bindgen::server::BinaryType;
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` of the SAME socket. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
-// mutability (`Cell` for flags/signal, `JsCell` for the non-`Copy`
-// `JsRef`) carries the writes.
+// mutability (`Cell`, `JsRef`) carries the writes.
 pub(crate) struct ServerWebSocket {
     // Lives in `ServerConfig.websocket` for the server's lifetime.
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
-    this_value: JsCell<JsRef>,
+    this_value: JsRef,
     flags: Cell<Flags>,
     signal: Cell<Option<PendingAbortSignal>>,
 }
@@ -300,7 +298,7 @@ fn compress_from_js(
 }
 
 /// Runs when `on_close` returns.
-struct DowngradeOnClose<'a>(Option<&'a JsCell<JsRef>>);
+struct DowngradeOnClose<'a>(Option<&'a JsRef>);
 
 impl Drop for DowngradeOnClose<'_> {
     fn drop(&mut self) {
@@ -308,7 +306,7 @@ impl Drop for DowngradeOnClose<'_> {
             // The `server` traced edge set in `init` must outlive this
             // wrapper: `self.handler` points into the server's allocation
             // and publish()/send() still work on closed sockets (#36788).
-            this_value.with_mut(|v| v.downgrade());
+            this_value.downgrade();
         }
     }
 }
@@ -336,7 +334,7 @@ impl ServerWebSocket {
 
     /// The handler lives in `ServerConfig.websocket` for the server's lifetime;
     /// non-null while any `ServerWebSocket` exists. All `ServerWebSocket` state
-    /// is interior-mutable (`Cell`/`JsCell`), so the borrow tied to `&self`
+    /// is interior-mutable (`Cell`/`JsRef`), so the borrow tied to `&self`
     /// does not conflict with flag mutation.
     #[inline]
     fn handler(&self) -> &WebSocketServerHandler {
@@ -510,7 +508,7 @@ impl ServerWebSocket {
         let global_object = handler.global_object();
         let this_value = ServerWebSocket {
             handler: bun_ptr::BackRef::new(handler),
-            this_value: JsCell::new(JsRef::empty()),
+            this_value: JsRef::empty(),
             flags: Cell::new(flags),
             signal: Cell::new(signal),
         }
@@ -519,9 +517,7 @@ impl ServerWebSocket {
         let this = this_value.payload_ptr().as_ptr();
         // SAFETY: the struct is stored inline in the wrapper, which `this_value` keeps alive.
         let this_ref = unsafe { &*this };
-        this_ref
-            .this_value
-            .set(JsRef::init_strong(js_value, global_object));
+        this_ref.this_value.set_strong(js_value, global_object);
         js::data_set_cached(js_value, global_object, data_value);
         // Both callers bail out when `handler.server.is_none()`,
         // so this is normally `Some`; keep the `and_then` as
@@ -548,7 +544,7 @@ impl ServerWebSocket {
 
     /// The JS wrapper. `None` once the socket has closed and the wrapper was collected.
     pub(crate) fn js_value(&self) -> Option<JSValue> {
-        self.this_value.get().try_get()
+        self.this_value.try_get()
     }
 
     /// Undoes `init` when uWS rejects the upgrade. Neither `on_open` nor `on_close` runs for
@@ -556,7 +552,7 @@ impl ServerWebSocket {
     pub(crate) fn discard_unopened(&self) {
         self.update_flags(|f| f.set_closed(true));
         self.signal.set(None);
-        self.this_value.with_mut(|v| v.downgrade());
+        self.this_value.downgrade();
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -583,7 +579,7 @@ impl ServerWebSocket {
     /// R-2 (noalias re-entrancy): `&self`, NOT `&mut self`. `ws.cork(...)`
     /// re-enters JS which can `ws.close()` / `ws.send()` on this same socket
     /// via the JS wrapper, flipping `flags.closed`. All state lives
-    /// behind `Cell`/`JsCell`, so the re-entrant frame's writes are visible
+    /// behind `Cell`/`JsRef`, so the re-entrant frame's writes are visible
     /// here without aliasing a `noalias` borrow. `handler`/`vm`/`global_object`
     /// are detached `&'a` borrows of the server config (a separate allocation),
     /// so they may legally span the call.
@@ -823,7 +819,7 @@ impl ServerWebSocket {
 
     /// `&self` for the same noalias-reentry reason as `on_open` (R-2).
     /// Re-entrant `ws.close()` from the close handler routes through the same
-    /// `Cell<Flags>` / `JsCell<JsRef>`, so no `noalias` view is invalidated.
+    /// `Cell<Flags>` / `JsRef`, so no `noalias` view is invalidated.
     pub(crate) fn on_close(&self, _ws: AnyWebSocket, code: i32, message: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
@@ -845,7 +841,7 @@ impl ServerWebSocket {
             }
         }
 
-        let was_not_empty = self.this_value.get().is_not_empty();
+        let was_not_empty = self.this_value.is_not_empty();
         let cached_this = self.js_value().unwrap_or(JSValue::UNDEFINED);
         let _downgrade = DowngradeOnClose(was_not_empty.then_some(&self.this_value));
         let signal = self.signal.take();
@@ -1373,9 +1369,7 @@ impl WsPackageSocket {
             })
         };
 
-        if socket.this_value.get().is_not_empty() {
-            socket.this_value.with_mut(|v| v.downgrade());
-        }
+        socket.this_value.downgrade();
         // If `terminate()` already set the flag, it does its own accounting.
         if !was_closed && let Some(server) = server {
             server.on_websocket_closed();

@@ -105,7 +105,7 @@ pub struct PostgresSQLConnection {
     /// `ReadyForQuery::transaction_status` of the last one.
     transaction_status: Cell<u8>,
     // The wrapper. Strong while `has_pending_activity`.
-    pub(crate) js_value: JsCell<crate::jsc::JsRef>,
+    pub(crate) js_value: crate::jsc::JsRef,
 
     backend_key_data: Cell<Option<protocol::BackendKeyData>>,
     /// Of a connection that only carries a CancelRequest, until it ends.
@@ -242,7 +242,7 @@ impl TimedConnection for PostgresSQLConnection {
     }
 
     fn notify_retiring(&self) {
-        let Some(js_value) = self.js_value.get().try_get() else {
+        let Some(js_value) = self.js_value.try_get() else {
             return;
         };
         if let Some(on_retire) = js::onretire_get_cached(js_value) {
@@ -330,9 +330,9 @@ impl PostgresSQLConnection {
 
     fn update_has_pending_activity(&self) {
         if self.has_pending_activity() {
-            self.js_value.with_mut(|r| r.upgrade(self.global()));
+            self.js_value.upgrade(self.global());
         } else {
-            self.js_value.with_mut(|r| r.downgrade());
+            self.js_value.downgrade();
         }
     }
 
@@ -371,7 +371,7 @@ impl PostgresSQLConnection {
         let Some(on_connect) = self.consume_on_connect_callback(self.global()) else {
             return;
         };
-        let js_value = self.js_value.get().get();
+        let js_value = self.js_value.get();
         js_value.ensure_still_alive();
         run_callback(self.global(), on_connect, &[JSValue::NULL, js_value]);
     }
@@ -379,7 +379,7 @@ impl PostgresSQLConnection {
     pub fn finalize(&self) {
         debug!("PostgresSQLConnection finalize");
         self.timers.stop();
-        self.js_value.with_mut(|r| r.finalize());
+        self.js_value.finalize();
     }
 
     /// Keep the process alive only while a connected connection has something in flight.
@@ -626,7 +626,6 @@ impl PostgresSQLConnection {
 
     fn check_server_identity_callback(&self) -> Option<JSValue> {
         self.js_value
-            .get()
             .try_get()
             .and_then(js::check_server_identity_get_cached)
     }
@@ -1015,7 +1014,7 @@ fn open(
         statements: JsCell::new(StatementCache::default()),
         prepared_statement_id: Cell::new(0),
         transaction_status: Cell::new(b'I'),
-        js_value: JsCell::new(crate::jsc::JsRef::empty()),
+        js_value: crate::jsc::JsRef::empty(),
         backend_key_data: Cell::new(None),
         cancel_target: JsCell::new(params.cancel),
         strings: params.strings,
@@ -1083,8 +1082,7 @@ fn open(
     let this = this.into_this_ptr();
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
-    this.js_value
-        .set(crate::jsc::JsRef::init_strong(js_value, global_object));
+    this.js_value.set_strong(js_value, global_object);
     js::onconnect_set_cached(js_value, global_object, params.on_connect);
     if let Some(column_transform) = params.column_transform {
         js::column_transform_set_cached(js_value, global_object, column_transform);
@@ -1734,8 +1732,7 @@ impl PostgresSQLConnection {
 
         // User code can end the request while its parameters are converted.
         let _statement_ref = req.statement.get().clone();
-        let (Some(statement), Some(this_value)) =
-            (req.statement_mut(), req.this_value.get().try_get())
+        let (Some(statement), Some(this_value)) = (req.statement_mut(), req.this_value.try_get())
         else {
             debug_assert!(false, "a queued request has a statement and a wrapper");
             return self.remove_unwritten(&req);
@@ -1872,7 +1869,7 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        let owner = self.js_value.get().try_get().unwrap_or_default();
+                        let owner = self.js_value.try_get().unwrap_or_default();
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(ParentRef::new(cs));
@@ -1909,7 +1906,7 @@ impl PostgresSQLConnection {
                     return Ok(());
                 }
 
-                let Some(this_value) = request.this_value.get().try_get() else {
+                let Some(this_value) = request.this_value.try_get() else {
                     debug_assert!(false, "query value was freed earlier than expected");
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
@@ -2053,7 +2050,6 @@ impl PostgresSQLConnection {
                 }
                 if let Some(transform) = self
                     .js_value
-                    .get()
                     .try_get()
                     .and_then(js::column_transform_get_cached)
                 {
@@ -2629,7 +2625,7 @@ impl PostgresSQLConnection {
         &self,
         notification: &protocol::NotificationResponse<'_>,
     ) -> Result<Option<PendingNotification>, AnyPostgresError> {
-        let Some(this_value) = self.js_value.get().try_get() else {
+        let Some(this_value) = self.js_value.try_get() else {
             return Ok(None);
         };
         let Some(callback) = js::onnotification_get_cached(this_value) else {
@@ -2650,7 +2646,7 @@ impl PostgresSQLConnection {
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
         debug!("consumeOnConnectCallback");
-        let js_value = self.js_value.get().get();
+        let js_value = self.js_value.get();
         let on_connect = js::onconnect_get_cached(js_value)?;
         debug!("consumeOnConnectCallback exists");
 
@@ -2663,7 +2659,7 @@ impl PostgresSQLConnection {
         global_object: &JSGlobalObject,
     ) -> Option<JSValue> {
         debug!("consumeOnCloseCallback");
-        let js_value = self.js_value.get().get();
+        let js_value = self.js_value.get();
         let on_close = js::onclose_get_cached(js_value)?;
         debug!("consumeOnCloseCallback exists");
         js::onclose_set_cached(js_value, global_object, JSValue::ZERO);

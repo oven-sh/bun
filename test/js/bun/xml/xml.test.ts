@@ -583,6 +583,33 @@ describe("error position", () => {
     expect(position(stray)).toEqual({ line: 2, column: 1, offset: 4, lineText: "\ufffd" });
   });
 
+  test("invalid UTF-8 is placed on the bad byte", () => {
+    expect(position(Buffer.from([0x3c, 0x80, 0x61, 0x2f, 0x3e]))).toEqual({
+      line: 1,
+      column: 2,
+      offset: 1,
+      lineText: "<\ufffda/>",
+    });
+    expect(position(Buffer.from("<a>caf\xe9</a>", "latin1"))).toEqual({
+      line: 1,
+      column: 7,
+      offset: 6,
+      lineText: "<a>caf\ufffd</a>",
+    });
+  });
+
+  test("a byte-order mark is in no column, but offset counts it", () => {
+    const text = "\ufeff<a>\n<b>&</b></a>";
+    const expected = { line: 2, column: 5, lineText: "<b>&</b></a>" };
+    expect(position(text)).toEqual({ ...expected, offset: 9 });
+    expect(text[9]).toBe("<");
+    const utf8 = Buffer.from(text);
+    expect(position(utf8)).toEqual({ ...expected, offset: 11 });
+    expect(utf8[11]).toBe(0x3c);
+    expect(position(Buffer.from(text, "utf16le"))).toEqual({ ...expected, offset: 18 });
+    expect(position("\ufeff<a>\u2014\n<b>&</b></a>")).toEqual({ ...expected, offset: 10 });
+  });
+
   test("\\r and \\r\\n are line ends", () => {
     expect(position("<a>\r\n<b>\r\n<c>&</c></b></a>")).toEqual({
       line: 3,

@@ -948,12 +948,16 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
     fn report_error(&mut self, pos: usize, args: core::fmt::Arguments<'_>) {
         let doc = self.document();
         let pos = pos.min(doc.len());
+        // A byte-order mark is not in any column; `offset` still counts it.
+        let bom = self.content_start.min(pos);
+        let doc = &doc[bom..];
+        let rel = pos - bom;
         let location = if U::WIDE {
-            locate_utf16(self.source, U::utf16(doc), pos, pos)
+            locate_utf16(self.source, U::utf16(doc), rel, pos)
         } else {
             let bytes = U::bytes(doc);
             if self.latin1 {
-                let at = LinePosition::latin1(bytes, pos);
+                let at = LinePosition::latin1(bytes, rel);
                 let line = &bytes[at.line_start..at.line_end];
                 let in_line = at.index - at.line_start;
                 match strings::to_utf8_from_latin1(line) {
@@ -964,9 +968,9 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
                     None => at.to_location(self.source, line, in_line, pos),
                 }
             } else {
-                let at = LinePosition::utf8(bytes, pos);
+                let at = LinePosition::utf8(bytes, rel);
                 let line = &bytes[at.line_start..at.line_end];
-                let mut boundary = pos;
+                let mut boundary = rel;
                 while boundary > 0
                     && boundary < bytes.len()
                     && !strings::is_utf8_char_boundary(bytes[boundary])

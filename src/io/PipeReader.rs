@@ -198,7 +198,7 @@ bitflags::bitflags! {
         const USE_PREAD                = 1 << 8;
         const IS_PAUSED                = 1 << 9;
         const KEEP_ALIVE               = 1 << 10; // default true
-        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. Never cleared: `start()`, `unpause()` and `from()` keep it, and only a reader from `init()` reads again.
+        /// A read failed with a non-retry errno. Set before the bytes read ahead of the failure are delivered, so a pull from inside that delivery cannot read the fd past the error. `start()`, `unpause()` and `from()` keep it: only `reset()` clears it.
         const READ_FAILED              = 1 << 11;
     }
 }
@@ -224,7 +224,7 @@ impl PosixBufferedReader {
         }
     }
 
-    /// Back to what `init` made, for the same owner.
+    /// Back to what `init` made, with the same owner and `maxbuf`.
     pub fn reset(&self) {
         self.release_handle();
         self.rwf_unsupported.set(false);
@@ -382,8 +382,8 @@ impl PosixBufferedReader {
         if self.has_flag(PosixFlags::IS_PAUSED) {
             return ReadStatus::Pending;
         }
-        let fd = self.get_fd();
         if !self.handle.has_poll() {
+            let fd = self.get_fd();
             if fd == Fd::INVALID || !self.has_flag(PosixFlags::POLLABLE) {
                 return ReadStatus::Pending;
             }
@@ -395,7 +395,7 @@ impl PosixBufferedReader {
             (self.handle).with_poll(FilePoll::enable_keeping_process_alive);
         }
 
-        match self.handle.register(FilePollFlag::Readable, fd) {
+        match self.handle.register(FilePollFlag::Readable) {
             sys::Result::Err(err) => ReadStatus::Failed(err),
             sys::Result::Ok(()) => ReadStatus::Pending,
         }

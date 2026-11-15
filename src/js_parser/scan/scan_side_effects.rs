@@ -19,9 +19,8 @@ pub struct Known {
 }
 
 #[derive(Clone, Copy)]
-pub struct BinaryExpressionSimplifyVisitor {
-    // ARENA: points into the AST arena (see LIFETIMES.tsv)
-    pub(crate) bin: StoreRef<E::Binary>,
+pub struct BinaryExpressionSimplifyVisitor<'a> {
+    pub(crate) bin: StoreRef<'a, E::Binary<'a>>,
 }
 
 impl SideEffects {
@@ -35,8 +34,8 @@ impl SideEffects {
 
     pub(crate) fn simplify_boolean<'a, const TS: bool, const SCAN: bool>(
         p: &P<'a, '_, TS, SCAN>,
-        expr: Expr,
-    ) -> Expr {
+        expr: Expr<'a>,
+    ) -> Expr<'a> {
         if !p.options.features.dead_code_elimination {
             return expr;
         }
@@ -118,8 +117,8 @@ impl SideEffects {
 
     pub(crate) fn simplify_unused_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, '_, TS, SCAN>,
-        expr: Expr,
-    ) -> Option<Expr> {
+        expr: Expr<'a>,
+    ) -> Option<Expr<'a>> {
         if !p.options.features.dead_code_elimination {
             return Some(expr);
         }
@@ -467,8 +466,8 @@ impl SideEffects {
     /// recursive `simplify_unused_expr` call.
     fn join_all_simplified<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, '_, TS, SCAN>,
-        items: &[Expr],
-    ) -> Option<Expr> {
+        items: &[Expr<'a>],
+    ) -> Option<Expr<'a>> {
         let len = items.len();
         if len == 0 {
             return None;
@@ -497,8 +496,8 @@ impl SideEffects {
     ///
     fn simplify_unused_binary_comma_expr<'a, const TS: bool, const SCAN: bool>(
         p: &mut P<'a, '_, TS, SCAN>,
-        expr: Expr,
-    ) -> Option<Expr> {
+        expr: Expr<'a>,
+    ) -> Option<Expr<'a>> {
         let ExprData::EBinary(root_bin) = expr.data else {
             if cfg!(debug_assertions) {
                 unreachable!("simplify_unused_binary_comma_expr: not e_binary");
@@ -548,7 +547,7 @@ impl SideEffects {
         }
     }
 
-    fn find_identifiers(binding: Binding, decls: &mut Vec<G::Decl>) {
+    fn find_identifiers<'a>(binding: Binding<'a>, decls: &mut Vec<G::Decl<'a>>) {
         match binding.data {
             bun_ast::binding::Data::BIdentifier(_) => {
                 decls.push(G::Decl {
@@ -570,9 +569,9 @@ impl SideEffects {
         }
     }
 
-    fn should_keep_stmts_in_dead_control_flow(
-        stmts: bun_ast::StmtNodeList,
-        bump: &AstArena,
+    fn should_keep_stmts_in_dead_control_flow<'a>(
+        stmts: bun_ast::StmtNodeList<'a>,
+        bump: &'a AstArena,
     ) -> bool {
         for child in stmts.slice() {
             if Self::should_keep_stmt_in_dead_control_flow(*child, bump) {
@@ -595,7 +594,10 @@ impl SideEffects {
     /// assign to a global variable instead.
     ///
     /// Caller is expected to first check `p.options.dead_code_elimination` so we only check it once.
-    pub(crate) fn should_keep_stmt_in_dead_control_flow(stmt: Stmt, bump: &AstArena) -> bool {
+    pub(crate) fn should_keep_stmt_in_dead_control_flow<'a>(
+        stmt: Stmt<'a>,
+        bump: &'a AstArena,
+    ) -> bool {
         match stmt.data {
             // Omit these statements entirely
             StmtData::SEmpty(_)

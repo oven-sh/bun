@@ -43,7 +43,7 @@ pub enum Data<'a> {
 
 pub struct ReferenceProxy<'a> {
     pub(crate) other_source: Source<'a>,
-    pub(crate) export_names: AstVec<bun_ast::StoreStr>,
+    pub(crate) export_names: AstVec<'a, bun_ast::StoreStr<'a>>,
 }
 
 pub struct ClientEntryWrapper {
@@ -105,11 +105,10 @@ fn task_callback(
     log: &mut Log,
     bump: &'static AstArena,
 ) -> Result<Success<'static>, OOM> {
-    // `ctx` is a `ParentRef` BACKREF to the owning BundleV2; safe `Deref`.
-    let ctx: &BundleV2 = task
+    let ctx = task
         .ctx
-        .as_deref()
         .expect("ServerComponentParseTask.ctx set at enqueue");
+    let ctx: &BundleV2 = ctx.get();
     // `Source` is not `Clone`; the original is consumed here.
     // Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
@@ -166,8 +165,7 @@ impl Default for ServerComponentParseTask<'_> {
 }
 
 fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    let path = bun_ast::StoreStr::new(b.bump.alloc_slice_copy(&data.path));
-    let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
+    let record = b.add_import_record(b.bump.alloc_slice_copy(&data.path), ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
         namespace_ref,
@@ -181,28 +179,23 @@ fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) 
     Ok(())
 }
 
-fn generate_client_reference_proxy(
-    ctx: &BundleV2,
+fn generate_client_reference_proxy<'a>(
+    ctx: &BundleV2<'a>,
     data: &ReferenceProxy,
-    b: &mut AstBuilder,
+    b: &mut AstBuilder<'_, 'a>,
 ) -> Result<(), OOM> {
     let server_components = ctx
         .framework
-        .as_ref()
         .unwrap()
         .server_components
         .as_ref()
         // config must be non-null to enter this function
         .unwrap_or_else(|| unreachable!());
 
-    // `add_import_stmt` stores the slices raw in `ImportRecord`/`ClauseItem`s;
-    // the framework config outlives the bundle pass. Route through `StoreStr`
-    // so the lifetime erasure goes through one audited unsafe.
-    let runtime_import = bun_ast::StoreStr::new(&server_components.server_runtime_import[..]);
-    let register_ref =
-        bun_ast::StoreStr::new(&server_components.server_register_client_reference[..]);
-    let register_client_reference =
-        b.add_import_stmt(runtime_import.slice(), [register_ref.slice()])?[0];
+    let register_client_reference = b.add_import_stmt(
+        &server_components.server_runtime_import,
+        [&server_components.server_register_client_reference],
+    )?[0];
 
     let module_path = b.new_expr(E::String::init(
         // In development, the path loaded is the source file: Easy!

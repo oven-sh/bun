@@ -30,10 +30,10 @@ pub type List = MultiArrayList<LineOffsetTable>;
 
 /// A [`List`] in an [`AstArena`], so that `BundleV2::drop` does not have to walk `LinkerGraph.files`.
 #[derive(Default)]
-pub struct AstList {
-    pub(crate) columns_for_non_ascii: AstVec<StoreSlice<i32>>,
-    pub(crate) byte_offset_to_first_non_ascii: AstVec<u32>,
-    pub(crate) byte_offset_to_start_of_line: AstVec<u32>,
+pub struct AstList<'a> {
+    pub(crate) columns_for_non_ascii: AstVec<'a, StoreSlice<'a, i32>>,
+    pub(crate) byte_offset_to_first_non_ascii: AstVec<'a, u32>,
+    pub(crate) byte_offset_to_start_of_line: AstVec<'a, u32>,
 }
 
 bun_collections::multi_array_columns! {
@@ -121,7 +121,11 @@ impl LineOffsetTable {
         Ok(list)
     }
 
-    pub fn generate_in(contents: &[u8], approximate_line_count: i32, arena: &AstArena) -> AstList {
+    pub fn generate_in<'a>(
+        contents: &[u8],
+        approximate_line_count: i32,
+        arena: &'a AstArena,
+    ) -> AstList<'a> {
         // The lexer counts newlines, and the last line has none.
         let capacity = approximate_line_count.max(0) as usize + 1;
         let mut list = AstList {

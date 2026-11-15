@@ -40,7 +40,7 @@ static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
 impl PostinstallOptimizer {
     fn from_string_array_group(
         list: &mut List,
-        expr: js_ast::JsonView<'_>,
+        expr: js_ast::JsonView<'_, '_>,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
         // `as_array` returns `None` for `[]`, but an empty list still replaces the built-in list.
@@ -64,7 +64,7 @@ impl PostinstallOptimizer {
 
     pub(crate) fn from_package_json(
         list: &mut List,
-        expr: js_ast::JsonView<'_>,
+        expr: js_ast::JsonView<'_, '_>,
     ) -> Result<(), bun_alloc::AllocError> {
         if let Some(native_deps_expr) = expr.get(b"nativeDependencies") {
             list.disable_default_native_binlinks = Self::from_string_array_group(
@@ -146,7 +146,7 @@ impl Default for PkgInfo<'_> {
 impl List {
     /// Whether the installer links the bins of the package `name` into its platform package, in a
     /// project whose package.json is `root`.
-    pub fn is_native_dependency(root: js_ast::JsonView<'_>, name: &[u8]) -> bool {
+    pub fn is_native_dependency(root: js_ast::JsonView<'_, '_>, name: &[u8]) -> bool {
         let mut list = List::default();
         PostinstallOptimizer::from_package_json(&mut list, root).is_ok()
             && list.get(&PkgInfo {

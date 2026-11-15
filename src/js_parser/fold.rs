@@ -12,7 +12,7 @@ use bun_ast::{self as js_ast, AstBox, Binding, E, Expr, Flags, G, LocRef, S};
 // /`eql_bytes` are E0034-ambiguous from here. These thin wrappers go through
 // public fields directly and are removed once E.rs is deduped.
 #[inline]
-fn e_string_init(data: &[u8]) -> E::EString {
+fn e_string_init(data: &[u8]) -> E::EString<'_> {
     E::EString {
         data: data.into(),
         ..Default::default()
@@ -50,9 +50,9 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SCAN_ONLY> {
     pub(crate) fn maybe_relocate_vars_to_top_level(
         &mut self,
-        decls: &[G::Decl],
+        decls: &[G::Decl<'a>],
         mode: RelocateVarsMode,
-    ) -> RelocateVars {
+    ) -> RelocateVars<'a> {
         let p = self;
         // Only do this when the scope is not already top-level and when we're not inside a function.
         if p.current_scope == p.module_scope {
@@ -122,11 +122,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     pub(crate) fn maybe_rewrite_property_access(
         &mut self,
         loc: bun_ast::Loc,
-        target: js_ast::Expr,
+        target: js_ast::Expr<'a>,
         name: &'a [u8],
         name_loc: bun_ast::Loc,
         identifier_opts: IdentifierOpts,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         let p = self;
         let name_static = E::Str::new(name);
 
@@ -833,10 +833,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
     fn maybe_rewrite_property_access_for_namespace(
         &mut self,
         name: &'a [u8],
-        target: &Expr,
+        target: &Expr<'a>,
         loc: bun_ast::Loc,
         name_loc: bun_ast::Loc,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         let p = self;
         let map: &js_ast::TSNamespaceMemberMap = &p.ts_namespace.map.unwrap();
         if let Some(value) = map.get(name) {
@@ -888,7 +888,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
         None
     }
 
-    pub(crate) fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
+    pub(crate) fn check_if_defined_helper(
+        &mut self,
+        expr: Expr<'a>,
+    ) -> Result<Expr<'a>, crate::Error> {
         let p = self;
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
@@ -916,8 +919,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, '_, TYPESCRIPT, SC
 
     pub(crate) fn maybe_defined_helper(
         &mut self,
-        identifier_expr: Expr,
-    ) -> Result<Expr, crate::Error> {
+        identifier_expr: Expr<'a>,
+    ) -> Result<Expr<'a>, crate::Error> {
         let p = self;
         let test = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p

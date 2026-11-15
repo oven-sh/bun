@@ -330,6 +330,7 @@ impl PmVersionCommand {
 
         if let Err(err) = JSPrinter::print_json(
             &mut package_json_writer,
+            &json_bump,
             json,
             &package_json_source,
             JSPrinter::PrintJsonOptions {

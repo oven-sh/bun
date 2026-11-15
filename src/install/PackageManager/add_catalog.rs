@@ -166,7 +166,7 @@ fn refuse_declared(literal: &[u8], target: &[u8], name: &[u8], flag: &[u8]) -> !
     Global::crash();
 }
 
-fn estring(arena: &bun_ast::AstArena, bytes: &[u8]) -> Expr {
+fn estring<'a>(arena: &'a bun_ast::AstArena, bytes: &[u8]) -> Expr<'a> {
     Expr::allocate(
         arena,
         E::EString::init(arena.alloc_slice_copy(bytes)),
@@ -184,7 +184,12 @@ fn reference_literal<'a>(arena: &'a bun_alloc::Arena, name: &[u8]) -> &'a [u8] {
     arena.alloc_slice_copy(&literal)
 }
 
-fn set_property(mut object: Expr, arena: &bun_ast::AstArena, key: &[u8], value: Expr) {
+fn set_property<'a>(
+    mut object: Expr<'a>,
+    arena: &'a bun_ast::AstArena,
+    key: &[u8],
+    value: Expr<'a>,
+) {
     let obj = object
         .data
         .e_object_mut()
@@ -195,11 +200,11 @@ fn set_property(mut object: Expr, arena: &bun_ast::AstArena, key: &[u8], value: 
     }
 }
 
-fn object_property(
-    mut container: Expr,
+fn object_property<'a>(
+    mut container: Expr<'a>,
     key: &[u8],
-    create: Option<&bun_ast::AstArena>,
-) -> Option<Expr> {
+    create: Option<&'a bun_ast::AstArena>,
+) -> Option<Expr<'a>> {
     let obj = container.data.e_object_mut()?;
     let existing = obj.as_property(key);
     if let Some(q) = &existing {
@@ -227,7 +232,7 @@ fn root_defines_catalogs(root: &Expr) -> bool {
     has_catalogs(&workspaces) || has_catalogs(root)
 }
 
-fn catalogs_container(root: &Expr) -> Option<Expr> {
+fn catalogs_container<'a>(root: &Expr<'a>) -> Option<Expr<'a>> {
     let workspaces = root.get(b"workspaces")?;
     let workspaces_is_object = matches!(workspaces.data, ExprData::EObject(_));
     Some(if workspaces_is_object && has_catalogs(&workspaces) {
@@ -239,7 +244,7 @@ fn catalogs_container(root: &Expr) -> Option<Expr> {
     })
 }
 
-fn default_group_objects(container: Expr, group: &[u8]) -> [Option<Expr>; 2] {
+fn default_group_objects<'a>(container: Expr<'a>, group: &[u8]) -> [Option<Expr<'a>>; 2] {
     let singular = object_property(container, b"catalog", None);
     let in_catalogs = object_property(container, b"catalogs", None)
         .and_then(|catalogs| object_property(catalogs, b"default", None));
@@ -250,12 +255,12 @@ fn default_group_objects(container: Expr, group: &[u8]) -> [Option<Expr>; 2] {
     }
 }
 
-fn entries_object(
-    root: &Expr,
+fn entries_object<'a>(
+    root: &Expr<'a>,
     group: &[u8],
     dep: &[u8],
-    create: Option<&bun_ast::AstArena>,
-) -> Option<Expr> {
+    create: Option<&'a bun_ast::AstArena>,
+) -> Option<Expr<'a>> {
     let Some(container) = catalogs_container(root) else {
         if create.is_some() {
             Output::err_generic(
@@ -433,7 +438,7 @@ pub(crate) fn prepare(manager: &mut PackageManager, updates: &[UpdateRequest]) {
     }
 }
 
-fn existing_slot(package_json: &Expr, name: &[u8]) -> Option<StoreStr> {
+fn existing_slot<'a>(package_json: &Expr<'a>, name: &[u8]) -> Option<StoreStr<'a>> {
     for group in DependencyGroup::FOUR {
         let Some(list) = package_json.get(group.prop) else {
             continue;
@@ -711,7 +716,7 @@ fn settle_resolved_positional(
 pub(crate) fn edit_target(
     manager: &mut PackageManager,
     updates: &mut &mut [UpdateRequest],
-    package_json: &mut Expr,
+    package_json: &mut Expr<'static>,
     dependency_list: &[u8],
     options: EditOptions,
 ) -> Result<(), AllocError> {
@@ -744,7 +749,7 @@ pub(crate) fn edit_target(
 
     PackageJSONEditor::edit(manager, updates, package_json, dependency_list, options)?;
 
-    let arena = &manager.ast_arena;
+    let arena = manager.workspace_package_json_cache.arena;
     let lockfile: &Lockfile = &manager.lockfile;
     let state = &mut manager.catalog_add;
     let flag_literal = flag.map(|name| StoreStr::new(reference_literal(arena, name)));
@@ -866,7 +871,7 @@ pub(crate) fn edit_root_before_install(
     let quiet = manager.options.log_level == LogLevel::Silent;
     let mut replaced: Vec<(usize, Box<[u8]>)> = Vec::new();
     {
-        let arena = &manager.ast_arena;
+        let arena = manager.workspace_package_json_cache.arena;
         let adds = &mut manager.catalog_add.adds;
 
         let mut appended: Vec<usize> = Vec::new();
@@ -955,7 +960,7 @@ fn other_users_of(
 
 pub(crate) fn edit_root_entry_before_install(
     manager: &mut PackageManager,
-    root: Expr,
+    root: Expr<'static>,
     path: &[u8],
 ) -> Result<(), crate::Error> {
     if manager.catalog_add.adds.is_empty() {
@@ -977,7 +982,7 @@ pub(crate) fn edit_root_after_install(
         return Ok(false);
     }
 
-    let arena = &manager.ast_arena;
+    let arena = manager.workspace_package_json_cache.arena;
     let exact = manager.options.enable.exact_versions();
     let lockfile: &Lockfile = &manager.lockfile;
     let buf = lockfile.buffers.string_bytes.as_slice();

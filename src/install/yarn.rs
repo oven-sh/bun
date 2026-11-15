@@ -444,8 +444,7 @@ fn append_package_json(
         path.slice(),
         Default::default(),
     ) {
-        // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
-        GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
+        GetJsonResult::Entry(entry) => (entry.source, entry.root),
         GetJsonResult::ReadErr(err) => {
             let path = bstr::BStr::new(path.slice());
             let loc = bun_ast::Loc::EMPTY;
@@ -463,7 +462,7 @@ fn append_package_json(
     let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
     let fields = &mut ParseFields::new(manager);
     let json = bun_ast::JsonView::from(&json);
-    package.parse_with_json(this, fields, log, &source, json, &mut (), features)?;
+    package.parse_with_json(this, fields, log, source, json, &mut (), features)?;
     if let Some(workspace_path) = workspace_path {
         package.resolution = Resolution::init(ResolutionValue::Workspace(workspace_path));
     }

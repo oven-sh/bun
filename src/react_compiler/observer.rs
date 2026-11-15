@@ -33,14 +33,14 @@ pub struct ObservedSymbol<'a> {
     pub origin: SymbolOrigin,
 }
 
-pub struct CompiledFunction<'a> {
+pub struct CompiledFunction<'a, 'ast> {
     /// The `(` of a function. For an arrow function: the `{` of a block body, or the `=>` of an expression body.
     pub parameters_loc: Loc,
-    pub parameters: &'a [G::Arg],
+    pub parameters: &'a [G::Arg<'ast>],
     pub flags: flags::FunctionSet,
-    pub body: &'a [Stmt],
+    pub body: &'a [Stmt<'ast>],
     /// One `S::Function` per function outlined from this one.
-    pub outlined: &'a [Stmt],
+    pub outlined: &'a [Stmt<'ast>],
     /// Every symbol referenced by `parameters`, `body` and `outlined`.
     pub symbols: &'a [ObservedSymbol<'a>],
     pub import_records: &'a [ImportRecord<'a>],
@@ -53,7 +53,7 @@ pub struct AddedImport<'a> {
 }
 
 pub trait Observer {
-    fn function_compiled(&mut self, function: &CompiledFunction<'_>);
+    fn function_compiled(&mut self, function: &CompiledFunction<'_, '_>);
     /// Called once, after the last function.
     fn imports_added(&mut self, imports: &[AddedImport<'_>]);
     fn compilation_failed(&mut self, error: &CompilerError);
@@ -100,7 +100,10 @@ pub(crate) fn with_observation<R>(then: impl FnOnce(Option<&mut Observation<'_>>
 }
 
 impl Observation<'_> {
-    pub(crate) fn record<'h>(&'h mut self, host: &'h mut dyn Host) -> RecordingHost<'h> {
+    pub(crate) fn record<'h, 'ast>(
+        &'h mut self,
+        host: &'h mut dyn Host<'ast>,
+    ) -> RecordingHost<'h, 'ast> {
         RecordingHost {
             host,
             origins: &mut self.origins,
@@ -113,7 +116,7 @@ impl Observation<'_> {
         &mut self,
         host: &dyn Host,
         mut referenced: Vec<Ref>,
-        function: &CompiledFunction<'_>,
+        function: &CompiledFunction<'_, '_>,
     ) {
         referenced.sort_unstable_by_key(|reference| reference.inner_index());
         referenced.dedup();
@@ -190,14 +193,14 @@ impl Observation<'_> {
 }
 
 /// Forwards to the parser's host and records which symbols the compiler creates and references.
-pub(crate) struct RecordingHost<'h> {
-    host: &'h mut dyn Host,
+pub(crate) struct RecordingHost<'h, 'ast> {
+    host: &'h mut dyn Host<'ast>,
     origins: &'h mut FxHashMap<Ref, SymbolOrigin>,
     import_paths: &'h mut Vec<(u32, Box<[u8]>)>,
     referenced: Vec<Ref>,
 }
 
-impl RecordingHost<'_> {
+impl RecordingHost<'_, '_> {
     pub(crate) fn into_referenced(self) -> Vec<Ref> {
         self.referenced
     }
@@ -209,14 +212,14 @@ impl RecordingHost<'_> {
     }
 }
 
-impl Host for RecordingHost<'_> {
-    fn symbols(&self) -> &[Symbol] {
+impl<'ast> Host<'ast> for RecordingHost<'_, 'ast> {
+    fn symbols(&self) -> &[Symbol<'ast>] {
         self.host.symbols()
     }
-    fn module_scope(&self) -> &Scope {
+    fn module_scope(&self) -> &Scope<'ast> {
         self.host.module_scope()
     }
-    fn import_records(&self) -> &[ImportRecord<'_>] {
+    fn import_records(&self) -> &[ImportRecord<'ast>] {
         self.host.import_records()
     }
     fn type_casts(&self) -> &[(Loc, Loc)] {
@@ -237,10 +240,10 @@ impl Host for RecordingHost<'_> {
     fn source(&self) -> &[u8] {
         self.host.source()
     }
-    fn ref_name(&self, ref_: Ref) -> &[u8] {
+    fn ref_name(&self, ref_: Ref) -> &'ast [u8] {
         self.host.ref_name(ref_)
     }
-    fn scope_for_loc(&self, loc: Loc) -> Option<&Scope> {
+    fn scope_for_loc(&self, loc: Loc) -> Option<&Scope<'ast>> {
         self.host.scope_for_loc(loc)
     }
     fn jsx_import(&mut self, kind: JsxImportKind) -> Ref {
@@ -256,7 +259,7 @@ impl Host for RecordingHost<'_> {
     fn is_jsx_classic(&self) -> bool {
         self.host.is_jsx_classic()
     }
-    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr {
+    fn jsx_classic_factory(&mut self, loc: Loc) -> Expr<'ast> {
         let factory = self.host.jsx_classic_factory(loc);
         let mut root = &factory;
         while let ExprData::EDot(member) = &root.data {

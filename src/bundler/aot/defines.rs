@@ -1,7 +1,7 @@
 use bun_alloc::Arena;
 use bun_ast::expr::Data;
 use bun_ast::{AstArena, Expr, Loc, Log};
-use bun_js_parser::defines::{Define as DefineTable, DefineData};
+use bun_js_parser::defines::{Define as DefineTable, DefineData, DefineExprKind};
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
 use bun_sema::hir_from_data::DataValue;
@@ -12,7 +12,7 @@ use crate::options::BundleOptions;
 
 struct DefineEntry<'d> {
     parts: Vec<&'d [u8]>,
-    data: &'d DefineData,
+    data: &'d DefineData<'d>,
 }
 
 pub(crate) fn fold_options<'s>(
@@ -38,12 +38,12 @@ pub(crate) fn fold_options<'s>(
     }
 }
 
-fn collect_define_entries(table: &DefineTable) -> Vec<DefineEntry<'_>> {
-    let identifiers = table.identifiers.iter().map(|(key, data)| DefineEntry {
+fn collect_define_entries<'a>(table: &'a DefineTable<'_>) -> Vec<DefineEntry<'a>> {
+    let identifiers = table.identifiers().iter().map(|(key, data)| DefineEntry {
         parts: vec![&**key],
         data,
     });
-    let dots = table.dots.values().flatten().map(|dot| DefineEntry {
+    let dots = table.dots().values().flatten().map(|dot| DefineEntry {
         parts: dot.parts.iter().map(|part| &**part).collect(),
         data: &dot.data,
     });
@@ -105,33 +105,38 @@ fn define_value<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
 ) -> Result<DefineValue<'s>, NotData> {
-    match data.value {
-        Data::EUndefined(_)
-        | Data::ENull(_)
-        | Data::EBoolean(_)
-        | Data::EBranchBoolean(_)
-        | Data::ENumber(_)
-        | Data::EString(_)
-        | Data::EBigInt(_)
-        | Data::EObject(_)
-        | Data::EArray(_)
-        | Data::EObjectJSON(_)
-        | Data::EArrayJSON(_) => {
+    data.value.with(|&value| match value {
+        DefineExprKind::String(text) => {
+            let root = Expr::allocate(scratch, text.flat_clone(), Loc::EMPTY);
+            data_value_from_expr(&root, scratch, arena, atoms).map(define_value_from_data)
+        }
+        DefineExprKind::Other(
+            value @ (Data::EUndefined(_)
+            | Data::ENull(_)
+            | Data::EBoolean(_)
+            | Data::EBranchBoolean(_)
+            | Data::ENumber(_)
+            | Data::EBigInt(_)
+            | Data::EObject(_)
+            | Data::EArray(_)
+            | Data::EObjectJSON(_)
+            | Data::EArrayJSON(_)),
+        ) => {
             let root = Expr {
-                data: data.value,
+                data: value,
                 loc: Loc::EMPTY,
             };
             data_value_from_expr(&root, scratch, arena, atoms).map(define_value_from_data)
         }
-        Data::EIdentifier(_) => match data.original_name.as_deref() {
+        DefineExprKind::Other(Data::EIdentifier(_)) => match data.original_name.as_deref() {
             Some(name) if !name.is_empty() => {
                 let path = bun_core::strings::split(name, b".");
                 Ok(DefineValue::GlobalPath(intern_slice(path, arena, atoms)))
             }
             Some(_) | None => Err(NotData::Expression),
         },
-        _ => Err(NotData::Expression),
-    }
+        DefineExprKind::Other(_) => Err(NotData::Expression),
+    })
 }
 
 fn define_value_from_data<'s>(value: &'s DataValue<'s>) -> DefineValue<'s> {
@@ -196,11 +201,11 @@ mod tests {
         ("U", "undefined"),
     ];
 
-    fn create_table(
+    fn create_table<'a>(
         entries: &[(&str, &str)],
         dropped: &[&[u8]],
-        scratch: &AstArena,
-    ) -> Box<DefineTable> {
+        scratch: &'a AstArena,
+    ) -> Box<DefineTable<'a>> {
         let input = api::StringMap {
             keys: entries
                 .iter()
@@ -226,11 +231,11 @@ mod tests {
     }
 
     fn fold_configured<'s>(
-        configure: impl FnOnce(&mut BundleOptions<'_>, &AstArena),
+        configure: impl FnOnce(&mut BundleOptions<'_>, &'static AstArena),
         arena: &'s Arena,
         atoms: &Interner<'s>,
     ) -> (FoldOptions<'s>, Log) {
-        let scratch = &AstArena::new();
+        let scratch = Box::leak(Box::default());
         with_test_context(
             |options| configure(options, scratch),
             |context| {
@@ -394,7 +399,7 @@ mod tests {
                 let mut table = create_table(&[("LEVEL", "41")], &[], scratch);
                 let call = Expr::allocate(scratch, E::Call::default(), Loc::EMPTY);
                 let unusable = DefineData {
-                    value: call.data,
+                    value: bun_js_parser::defines::DefineExprData::new(call.data),
                     ..Default::default()
                 };
                 table

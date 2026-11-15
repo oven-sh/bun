@@ -159,7 +159,9 @@ pub(crate) enum Field {
 
 impl Field {
     /// Only one of the two fields is read: `"resolutions"` is ignored if `"overrides"` exists.
-    pub(crate) fn of<'t>(root: JsonView<'t>) -> Option<(Field, bun_ast::json::Query<'t>)> {
+    pub(crate) fn of<'t, 'ast>(
+        root: JsonView<'t, 'ast>,
+    ) -> Option<(Field, bun_ast::json::Query<'t, 'ast>)> {
         [Field::Overrides, Field::Resolutions]
             .into_iter()
             .find_map(|field| Some((field, root.as_property(field.json_name().as_bytes())?)))
@@ -471,7 +473,7 @@ impl OverrideMap {
         buf: &[u8],
         log: &bun_ast::Log,
         source: &bun_ast::Source,
-        root: JsonView<'_>,
+        root: JsonView<'_, '_>,
         has_workspaces: bool,
     ) {
         for dep in self.values() {
@@ -744,7 +746,7 @@ impl OverrideMap {
         log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
-        expr: JsonView<'_>,
+        expr: JsonView<'_, '_>,
         builder: &mut StringBuilder,
     ) {
         if let Some((field, property)) = Field::of(expr) {
@@ -814,7 +816,7 @@ impl OverrideMap {
         log: &bun_ast::Log,
         json_source: &bun_ast::Source,
         workspace_names: &WorkspaceMap,
-        expr: JsonView<'_>,
+        expr: JsonView<'_, '_>,
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0 && self.scoped.is_empty()); // only call parse once
@@ -848,7 +850,7 @@ impl OverrideMap {
     fn parse_from_overrides(
         &mut self,
         ctx: &mut ParseContext<'_, '_>,
-        expr: JsonView<'_>,
+        expr: JsonView<'_, '_>,
     ) -> Result<(), Error> {
         if !expr.is_object() {
             return Err(not_an_object(ctx, expr.loc));
@@ -969,7 +971,7 @@ impl OverrideMap {
     fn parse_from_resolutions(
         &mut self,
         ctx: &mut ParseContext<'_, '_>,
-        expr: JsonView<'_>,
+        expr: JsonView<'_, '_>,
     ) -> Result<(), Error> {
         if !expr.is_object() {
             return Err(not_an_object(ctx, expr.loc));
@@ -1084,7 +1086,7 @@ impl OverrideMap {
 
 /// The location of the top-level rule for `name` in the root package.json. If there is none, the
 /// location of the `"overrides"` or `"resolutions"` field.
-fn rule_loc(root: JsonView<'_>, name: &[u8]) -> bun_ast::Loc {
+fn rule_loc(root: JsonView<'_, '_>, name: &[u8]) -> bun_ast::Loc {
     Field::of(root).map_or(bun_ast::Loc::EMPTY, |(_, rules)| {
         (rules.value.as_property(name)).map_or(rules.loc, |rule| rule.loc)
     })
@@ -1366,7 +1368,10 @@ fn parse_override_value(
 }
 
 /// First string-valued entry for `name` across the four dependency sections of a package.json object.
-fn declared_dependency<'t>(root: JsonView<'t>, name: &[u8]) -> Option<JsonView<'t>> {
+fn declared_dependency<'t, 'ast>(
+    root: JsonView<'t, 'ast>,
+    name: &[u8],
+) -> Option<JsonView<'t, 'ast>> {
     DependencyGroup::FOUR.iter().find_map(|group| {
         root.get(group.prop)
             .and_then(|deps| deps.get(name))
@@ -1379,7 +1384,7 @@ fn count_ref_value(
     log: &bun_ast::Log,
     source: &bun_ast::Source,
     workspace_names: &WorkspaceMap,
-    root_json: JsonView<'_>,
+    root_json: JsonView<'_, '_>,
     value: &[u8],
     builder: &mut StringBuilder,
 ) {

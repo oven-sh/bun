@@ -129,20 +129,20 @@ const _: () = assert!(Ref::NONE.is_empty());
 // In the parser you only have one array, and .sourceIndex() is ignored.
 // In the bundler, you have a 2D array where both parts of the ref are used.
 pub trait SymbolTable {
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol;
+    fn get_symbol(&self, r: Ref) -> &symbol::Symbol<'_>;
 }
 
-impl SymbolTable for [symbol::Symbol] {
+impl SymbolTable for [symbol::Symbol<'_>] {
     #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol {
-        &mut self[r.inner_index() as usize]
+    fn get_symbol(&self, r: Ref) -> &symbol::Symbol<'_> {
+        &self[r.inner_index() as usize]
     }
 }
 
-impl SymbolTable for Vec<symbol::Symbol> {
+impl SymbolTable for Vec<symbol::Symbol<'_>> {
     #[inline]
-    fn get_symbol(&mut self, r: Ref) -> &mut symbol::Symbol {
-        &mut self[r.inner_index() as usize]
+    fn get_symbol(&self, r: Ref) -> &symbol::Symbol<'_> {
+        &self[r.inner_index() as usize]
     }
 }
 
@@ -154,8 +154,8 @@ impl Ref {
     #[inline]
     pub(crate) fn get_symbol<T: SymbolTable + ?Sized>(
         self,
-        symbol_table: &mut T,
-    ) -> &mut symbol::Symbol {
+        symbol_table: &T,
+    ) -> &symbol::Symbol<'_> {
         symbol_table.get_symbol(self)
     }
 }

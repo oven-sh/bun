@@ -3,13 +3,13 @@ use crate::s as S;
 use crate::{AstArena, StoreRef};
 
 #[derive(Clone, Copy)]
-pub struct Stmt {
+pub struct Stmt<'a> {
     pub loc: crate::Loc,
-    pub data: Data,
+    pub data: Data<'a>,
 }
 
-impl Stmt {
-    pub fn assign(bump: &AstArena, a: Expr, b: Expr) -> Stmt {
+impl<'a> Stmt<'a> {
+    pub fn assign(bump: &'a AstArena, a: Expr<'a>, b: Expr<'a>) -> Self {
         Stmt::allocate(
             bump,
             S::SExpr {
@@ -21,7 +21,7 @@ impl Stmt {
     }
 }
 
-impl Stmt {
+impl Stmt<'_> {
     pub fn is_super_call(self) -> bool {
         if let Data::SExpr(s_expr) = self.data {
             if let expr::Data::ECall(e_call) = s_expr.value.data {
@@ -38,14 +38,14 @@ impl Stmt {
         false
     }
 
-    pub fn empty() -> Stmt {
+    pub fn empty() -> Self {
         Stmt {
             data: Data::SEmpty(NONE),
             loc: crate::Loc::default(),
         }
     }
 
-    pub fn to_empty(self) -> Stmt {
+    pub fn to_empty(self) -> Self {
         Stmt {
             data: Data::SEmpty(NONE),
             loc: self.loc,
@@ -53,7 +53,7 @@ impl Stmt {
     }
 }
 
-impl Default for Stmt {
+impl Default for Stmt<'_> {
     /// Used to zero-init `loop_body` and bulk-fill stmt slices before
     /// population.
     #[inline]
@@ -70,21 +70,25 @@ const NONE: S::Empty = S::Empty {};
 /// Each `S::*` payload type implements this to map itself onto the
 /// corresponding `Data` variant; the arm list is the `impl_statement_data!`
 /// invocation below.
-pub trait StatementData: Sized {
+pub trait StatementData<'a>: Sized {
     /// Arena-allocate `self` and wrap.
-    fn arena_alloc(self, bump: &AstArena) -> Data;
+    fn arena_alloc(self, bump: &'a AstArena) -> Data<'a>;
 }
 
-impl Stmt {
+impl<'a> Stmt<'a> {
     #[inline]
-    pub fn allocate<T: StatementData>(bump: &AstArena, orig_data: T, loc: crate::Loc) -> Stmt {
+    pub fn allocate<T: StatementData<'a>>(
+        bump: &'a AstArena,
+        orig_data: T,
+        loc: crate::Loc,
+    ) -> Self {
         Stmt {
             loc,
             data: orig_data.arena_alloc(bump),
         }
     }
 
-    pub fn allocate_expr(bump: &AstArena, expr: Expr) -> Stmt {
+    pub fn allocate_expr(bump: &'a AstArena, expr: Expr<'a>) -> Self {
         Stmt::allocate(
             bump,
             S::SExpr {
@@ -103,17 +107,17 @@ macro_rules! impl_statement_data {
     ( ptr: $( ($ty:ty, $variant:ident) ),* $(,)?
       ; inline: $( ($ity:ty, $ivariant:ident) ),* $(,)? ) => {
         $(
-            impl StatementData for $ty {
+            impl<'a> StatementData<'a> for $ty {
                 #[inline]
-                fn arena_alloc(self, bump: &AstArena) -> Data {
+                fn arena_alloc(self, bump: &'a AstArena) -> Data<'a> {
                     Data::$variant(bump.alloc_node(self))
                 }
             }
         )*
         $(
-            impl StatementData for $ity {
+            impl<'a> StatementData<'a> for $ity {
                 #[inline]
-                fn arena_alloc(self, _bump: &AstArena) -> Data { Data::$ivariant(self) }
+                fn arena_alloc(self, _bump: &'a AstArena) -> Data<'a> { Data::$ivariant(self) }
             }
         )*
     };
@@ -121,35 +125,35 @@ macro_rules! impl_statement_data {
 
 impl_statement_data! {
     ptr:
-        (S::Block,         SBlock),
-        (S::Break,         SBreak),
-        (S::Class,         SClass),
-        (S::Comment,       SComment),
-        (S::Continue,      SContinue),
-        (S::Directive,     SDirective),
-        (S::DoWhile,       SDoWhile),
-        (S::Enum,          SEnum),
-        (S::ExportClause,  SExportClause),
-        (S::ExportDefault, SExportDefault),
-        (S::ExportEquals,  SExportEquals),
-        (S::ExportFrom,    SExportFrom),
-        (S::ExportStar,    SExportStar),
-        (S::SExpr,         SExpr),
-        (S::ForIn,         SForIn),
-        (S::ForOf,         SForOf),
-        (S::For,           SFor),
-        (S::Function,      SFunction),
-        (S::If,            SIf),
-        (S::Import,        SImport),
-        (S::Label,         SLabel),
-        (S::Local,         SLocal),
-        (S::Namespace,     SNamespace),
-        (S::Return,        SReturn),
-        (S::Switch,        SSwitch),
-        (S::Throw,         SThrow),
-        (S::Try,           STry),
-        (S::While,         SWhile),
-        (S::With,          SWith),
+        (S::Block<'a>,         SBlock),
+        (S::Break,             SBreak),
+        (S::Class<'a>,         SClass),
+        (S::Comment<'a>,       SComment),
+        (S::Continue,          SContinue),
+        (S::Directive<'a>,     SDirective),
+        (S::DoWhile<'a>,       SDoWhile),
+        (S::Enum<'a>,          SEnum),
+        (S::ExportClause<'a>,  SExportClause),
+        (S::ExportDefault<'a>, SExportDefault),
+        (S::ExportEquals<'a>,  SExportEquals),
+        (S::ExportFrom<'a>,    SExportFrom),
+        (S::ExportStar<'a>,    SExportStar),
+        (S::SExpr<'a>,         SExpr),
+        (S::ForIn<'a>,         SForIn),
+        (S::ForOf<'a>,         SForOf),
+        (S::For<'a>,           SFor),
+        (S::Function<'a>,      SFunction),
+        (S::If<'a>,            SIf),
+        (S::Import<'a>,        SImport),
+        (S::Label<'a>,         SLabel),
+        (S::Local<'a>,         SLocal),
+        (S::Namespace<'a>,     SNamespace),
+        (S::Return<'a>,        SReturn),
+        (S::Switch<'a>,        SSwitch),
+        (S::Throw<'a>,         SThrow),
+        (S::Try<'a>,           STry),
+        (S::While<'a>,         SWhile),
+        (S::With<'a>,          SWith),
     ; inline:
         (S::Empty,      SEmpty),
         (S::Debugger,   SDebugger),
@@ -211,42 +215,42 @@ impl Tag {
 
 #[derive(Clone, Copy, bun_core::EnumTag)]
 #[enum_tag(existing = Tag)]
-pub enum Data {
-    SBlock(StoreRef<S::Block>),
-    SBreak(StoreRef<S::Break>),
-    SClass(StoreRef<S::Class>),
-    SComment(StoreRef<S::Comment>),
-    SContinue(StoreRef<S::Continue>),
-    SDirective(StoreRef<S::Directive>),
-    SDoWhile(StoreRef<S::DoWhile>),
-    SEnum(StoreRef<S::Enum>),
-    SExportClause(StoreRef<S::ExportClause>),
-    SExportDefault(StoreRef<S::ExportDefault>),
-    SExportEquals(StoreRef<S::ExportEquals>),
-    SExportFrom(StoreRef<S::ExportFrom>),
-    SExportStar(StoreRef<S::ExportStar>),
-    SExpr(StoreRef<S::SExpr>),
-    SForIn(StoreRef<S::ForIn>),
-    SForOf(StoreRef<S::ForOf>),
-    SFor(StoreRef<S::For>),
-    SFunction(StoreRef<S::Function>),
-    SIf(StoreRef<S::If>),
-    SImport(StoreRef<S::Import>),
-    SLabel(StoreRef<S::Label>),
-    SLocal(StoreRef<S::Local>),
-    SNamespace(StoreRef<S::Namespace>),
-    SReturn(StoreRef<S::Return>),
-    SSwitch(StoreRef<S::Switch>),
-    SThrow(StoreRef<S::Throw>),
-    STry(StoreRef<S::Try>),
-    SWhile(StoreRef<S::While>),
-    SWith(StoreRef<S::With>),
+pub enum Data<'a> {
+    SBlock(StoreRef<'a, S::Block<'a>>),
+    SBreak(StoreRef<'a, S::Break>),
+    SClass(StoreRef<'a, S::Class<'a>>),
+    SComment(StoreRef<'a, S::Comment<'a>>),
+    SContinue(StoreRef<'a, S::Continue>),
+    SDirective(StoreRef<'a, S::Directive<'a>>),
+    SDoWhile(StoreRef<'a, S::DoWhile<'a>>),
+    SEnum(StoreRef<'a, S::Enum<'a>>),
+    SExportClause(StoreRef<'a, S::ExportClause<'a>>),
+    SExportDefault(StoreRef<'a, S::ExportDefault<'a>>),
+    SExportEquals(StoreRef<'a, S::ExportEquals<'a>>),
+    SExportFrom(StoreRef<'a, S::ExportFrom<'a>>),
+    SExportStar(StoreRef<'a, S::ExportStar<'a>>),
+    SExpr(StoreRef<'a, S::SExpr<'a>>),
+    SForIn(StoreRef<'a, S::ForIn<'a>>),
+    SForOf(StoreRef<'a, S::ForOf<'a>>),
+    SFor(StoreRef<'a, S::For<'a>>),
+    SFunction(StoreRef<'a, S::Function<'a>>),
+    SIf(StoreRef<'a, S::If<'a>>),
+    SImport(StoreRef<'a, S::Import<'a>>),
+    SLabel(StoreRef<'a, S::Label<'a>>),
+    SLocal(StoreRef<'a, S::Local<'a>>),
+    SNamespace(StoreRef<'a, S::Namespace<'a>>),
+    SReturn(StoreRef<'a, S::Return<'a>>),
+    SSwitch(StoreRef<'a, S::Switch<'a>>),
+    SThrow(StoreRef<'a, S::Throw<'a>>),
+    STry(StoreRef<'a, S::Try<'a>>),
+    SWhile(StoreRef<'a, S::While<'a>>),
+    SWith(StoreRef<'a, S::With<'a>>),
 
     STypeScript(S::TypeScript),
     SEmpty(S::Empty), // special case, its a zero value type
     SDebugger(S::Debugger),
 
-    SLazyExport(StoreRef<expr::Data>),
+    SLazyExport(StoreRef<'a, expr::Data<'a>>),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -276,10 +280,10 @@ const _: () = assert!(core::mem::size_of::<StoreRef<S::SExpr>>() == core::mem::s
 // sound encoding of a tag mismatch.
 // Mirrors `expr::Data::e_*()`. Returns `Option<StoreRef<T>>` (Copy) for
 // pointer-payload variants and `Option<T>` by value for inline ZST variants.
-impl Data {
+impl<'a> Data<'a> {
     // ── StoreRef<S::*> field-style accessors ────────────────────────────
     #[inline]
-    pub fn s_class(&self) -> Option<StoreRef<S::Class>> {
+    pub fn s_class(&self) -> Option<StoreRef<'a, S::Class<'a>>> {
         if let Data::SClass(v) = *self {
             Some(v)
         } else {
@@ -287,7 +291,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_class_mut(&mut self) -> Option<&mut S::Class> {
+    pub fn s_class_mut(&mut self) -> Option<&mut S::Class<'a>> {
         if let Data::SClass(v) = self {
             Some(&mut **v)
         } else {
@@ -295,7 +299,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_expr(&self) -> Option<StoreRef<S::SExpr>> {
+    pub fn s_expr(&self) -> Option<StoreRef<'a, S::SExpr<'a>>> {
         if let Data::SExpr(v) = *self {
             Some(v)
         } else {
@@ -303,7 +307,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_expr_mut(&mut self) -> Option<&mut S::SExpr> {
+    pub fn s_expr_mut(&mut self) -> Option<&mut S::SExpr<'a>> {
         if let Data::SExpr(v) = self {
             Some(&mut **v)
         } else {
@@ -311,7 +315,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_function(&self) -> Option<StoreRef<S::Function>> {
+    pub fn s_function(&self) -> Option<StoreRef<'a, S::Function<'a>>> {
         if let Data::SFunction(v) = *self {
             Some(v)
         } else {
@@ -319,7 +323,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_function_mut(&mut self) -> Option<&mut S::Function> {
+    pub fn s_function_mut(&mut self) -> Option<&mut S::Function<'a>> {
         if let Data::SFunction(v) = self {
             Some(&mut **v)
         } else {
@@ -327,7 +331,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_import(&self) -> Option<StoreRef<S::Import>> {
+    pub fn s_import(&self) -> Option<StoreRef<'a, S::Import<'a>>> {
         if let Data::SImport(v) = *self {
             Some(v)
         } else {
@@ -335,7 +339,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_local_mut(&mut self) -> Option<&mut S::Local> {
+    pub fn s_local_mut(&mut self) -> Option<&mut S::Local<'a>> {
         if let Data::SLocal(v) = self {
             Some(&mut **v)
         } else {
@@ -343,7 +347,7 @@ impl Data {
         }
     }
     #[inline]
-    pub fn s_lazy_export(&self) -> Option<StoreRef<expr::Data>> {
+    pub fn s_lazy_export(&self) -> Option<StoreRef<'a, expr::Data<'a>>> {
         if let Data::SLazyExport(v) = *self {
             Some(v)
         } else {

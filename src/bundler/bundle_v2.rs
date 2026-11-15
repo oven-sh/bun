@@ -66,7 +66,7 @@ pub struct BundleV2<'a> {
     /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
     pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
-    pub(crate) framework: Option<bake::Framework>,
+    pub(crate) framework: Option<&'a bake::Framework>,
     pub(crate) r#loop: EventLoop,
     pub(crate) has_any_css_locals: AtomicU32,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
@@ -194,7 +194,7 @@ bun_core::declare_scope!(scan_counter, visible);
 pub(crate) type ResolveQueue<'a> = StringHashMap<Box<ParseTask<'a>>>;
 
 pub struct BakeOptions<'a> {
-    pub framework: bake::Framework,
+    pub framework: &'a bake::Framework,
     pub client_transpiler: &'a mut Transpiler<'a>,
     /// `Some` with a separate SSR graph.
     pub ssr_transpiler: Option<&'a mut Transpiler<'a>>,
@@ -3381,14 +3381,6 @@ pub mod bv2_impl {
             linker_graph.ast = unsafe { self.graph.ast.shallow_clone() }?;
 
             for module_scope in linker_graph.ast.items_module_scope_mut() {
-                // `children` are arena-allocated `StoreRef<Scope>`s; we re-point
-                // their `parent` BACKREF at the cloned module scope. `StoreRef`'s
-                // safe `DerefMut` replaces the open-coded `unsafe { child.as_mut() }`.
-                let parent_ptr = bun_ast::StoreRef::from(NonNull::from(&mut *module_scope));
-                for child in module_scope.children.slice_mut() {
-                    child.parent = Some(parent_ptr);
-                }
-
                 if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
                     /* arena: help_catch_memory_issues — no-op (mimalloc TLH check) */
                 }
@@ -3526,7 +3518,7 @@ pub mod bv2_impl {
                             ),
                         );
                         let export_name = server.new_expr(E::EString {
-                            data: bun_ast::StoreStr::new(export_name_string),
+                            data: *export_name_string,
                             ..Default::default()
                         });
 
@@ -7431,7 +7423,7 @@ pub mod bv2_impl {
         pub(crate) status: ImportTrackerStatus,
         pub(crate) value: crate::ImportTracker,
         /// `potentially_ambiguous_export_star_refs` of the export that was found.
-        pub(crate) import_data: &'a [crate::ImportData],
+        pub(crate) import_data: &'a [crate::ImportData<'a>],
         /// `Found` an `export default X` where `X` is an import in that file
         /// (`Ast::export_default_alias_of_import`).
         pub(crate) default_alias_of: bun_ast::Ref,

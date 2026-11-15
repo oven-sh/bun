@@ -4,9 +4,9 @@ use core::alloc::{AllocError, Allocator, Layout};
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use bun_ast::{AstArena, StoreStr};
+use bun_ast::AstArena;
 
-use super::HirVec;
+use super::{HirVec, StoreStr};
 
 thread_local! {
     static CURRENT: Cell<Option<NonNull<AstArena>>> = const { Cell::new(None) };
@@ -25,11 +25,12 @@ pub(crate) fn with_arena<R>(arena: &AstArena, run: impl FnOnce() -> R) -> R {
 }
 
 #[inline]
-fn with_current<R>(then: impl FnOnce(&AstArena) -> R) -> R {
+fn with_current<R>(then: impl FnOnce(&'static AstArena) -> R) -> R {
     let arena = CURRENT
         .get()
         .expect("HirAlloc used outside of with_arena()");
-    // SAFETY: `with_arena` borrows the arena until it restores `CURRENT`, which is after `then` returns.
+    // SAFETY: `with_arena` borrows the arena until it restores `CURRENT`, which is after `then` returns. `'static`
+    // stands for the lifetime of the AST, as in `StoreStr`.
     then(unsafe { arena.as_ref() })
 }
 

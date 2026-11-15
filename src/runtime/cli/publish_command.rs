@@ -79,12 +79,11 @@ fn archive_ok<T>(result: Result<T, tar::Error>, message: &str) -> Result<T, Pack
     })
 }
 
-/// `E::String` erases the lifetime of its bytes, so these have to outlive the printing of the AST.
-fn string_property(
-    bump: &bun_ast::AstArena,
+fn string_property<'a>(
+    bump: &'a bun_ast::AstArena,
     key: &'static [u8],
     value: &'static [u8],
-) -> G::Property {
+) -> G::Property<'a> {
     G::Property {
         key: Some(Expr::allocate(
             bump,
@@ -100,7 +99,7 @@ fn string_property(
     }
 }
 
-fn object_expr(bump: &bun_ast::AstArena, properties: Vec<G::Property>) -> Expr {
+fn object_expr<'a>(bump: &'a bun_ast::AstArena, properties: Vec<G::Property<'a>>) -> Expr<'a> {
     Expr::allocate(
         bump,
         E::Object {
@@ -523,13 +522,11 @@ impl PublishCommand {
             workspace_manifests::selected_in_dependency_order(manager, original_cwd)
         {
             let abs_package_json_path = bun_core::ZBox::from_bytes(&abs_package_json_path);
-            // Copied, because the scripts that `pack()` runs invalidate the cache that this points
-            // into.
             let root = pack::package_json_root(manager, &abs_package_json_path);
-            let string_field = |key: &[u8]| -> Box<[u8]> {
+            let string_field = |key: &[u8]| -> &'static [u8] {
                 let value = root.get(key);
                 let value = value.as_ref().and_then(Expr::as_utf8_string_literal);
-                value.unwrap_or(b"").into()
+                value.unwrap_or(b"")
             };
             let (name, version) = (string_field(b"name"), string_field(b"version"));
 
@@ -539,35 +536,35 @@ impl PublishCommand {
                     bun_fmt::escape_control_chars(if name.is_empty() {
                         abs_package_json_path.as_bytes()
                     } else {
-                        &*name
+                        name
                     }),
                 );
                 continue;
             }
 
-            let cli_target = manager.options.publish_target(&name);
+            let cli_target = manager.options.publish_target(name);
 
             // Asked before its scripts run. `pack()` reports a name or version that is not one.
-            if let Some(version) = pack::published_version(&version).filter(|_| !name.is_empty()) {
+            if let Some(version) = pack::published_version(version).filter(|_| !name.is_empty()) {
                 let version = dependency::without_build_tag(version);
-                bun_core::handle_oom(manager.options.apply_publish_config(&root, &bump, &name));
-                let registry = manager.scope_for_package_name(&name);
+                bun_core::handle_oom(manager.options.apply_publish_config(&root, &bump, name));
+                let registry = manager.scope_for_package_name(name);
                 Self::require_credentials(registry);
-                let exists = Self::check_package_version_exists(manager, &name, version, registry);
+                let exists = Self::check_package_version_exists(manager, name, version, registry);
                 bun_core::handle_oom(manager.options.set_publish_target(&cli_target));
                 if exists {
                     bun_core::prettyln!(
                         "<d>skipped {}@{}: already on the registry<r>",
-                        bun_fmt::escape_control_chars(&name),
+                        bun_fmt::escape_control_chars(name),
                         bun_fmt::escape_control_chars(version),
                     );
                     continue;
                 }
             }
 
-            bun_core::prettyln!("\n<b><magenta>{}<r>", bun_fmt::escape_control_chars(&name));
+            bun_core::prettyln!("\n<b><magenta>{}<r>", bun_fmt::escape_control_chars(name));
             let context = Context::from_workspace(&mut *ctx, manager, &abs_package_json_path);
-            let target = manager.options.publish_target(&name);
+            let target = manager.options.publish_target(name);
             bun_core::handle_oom(manager.options.set_publish_target(&cli_target));
             packed.push((abs_package_json_path, target, context));
         }
@@ -1088,13 +1085,13 @@ impl PublishCommand {
         }
     }
 
-    pub(crate) fn normalized_package(
+    pub(crate) fn normalized_package<'a>(
         registry: &Npm::Registry::Scope,
         files: PackageFiles<'_>,
         package_name: &[u8],
         package_version: &[u8],
-        json: &mut Expr,
-        bump: &bun_ast::AstArena,
+        json: &mut Expr<'a>,
+        bump: &'a bun_ast::AstArena,
         json_source: &bun_ast::Source,
         shasum: SHA1Digest,
         integrity: SHA512Digest,
@@ -1104,8 +1101,6 @@ impl PublishCommand {
 
         let version_without_build_tag = dependency::without_build_tag(package_version);
 
-        // `E::String` erases the lifetime of its bytes, so `cli_dupe` keeps them alive through
-        // printing.
         Expr::set_string(json, bump, b"version", cli_dupe(version_without_build_tag))?;
 
         let integrity_fmt = cli_dupe(
@@ -1172,6 +1167,7 @@ impl PublishCommand {
 
         if let Err(e) = bun_js_printer::print_json(
             &mut writer,
+            bump,
             *json,
             json_source,
             bun_js_printer::PrintJsonOptions {
@@ -1209,9 +1205,9 @@ impl PublishCommand {
     }
 
     /// Adds `key: value`, unless `value` is the package root or outside of it.
-    fn push_bin(
-        bump: &bun_ast::AstArena,
-        bin_props: &mut Vec<G::Property>,
+    fn push_bin<'a>(
+        bump: &'a bun_ast::AstArena,
+        bin_props: &mut Vec<G::Property<'a>>,
         key: &[u8],
         value: &[u8],
         files: &PackageFiles<'_>,
@@ -1235,9 +1231,9 @@ impl PublishCommand {
         ));
     }
 
-    fn normalize_bin(
-        json: &mut Expr,
-        bump: &bun_ast::AstArena,
+    fn normalize_bin<'a>(
+        json: &mut Expr<'a>,
+        bump: &'a bun_ast::AstArena,
         package_name: &[u8],
         files: &PackageFiles<'_>,
     ) -> Result<(), AllocError> {

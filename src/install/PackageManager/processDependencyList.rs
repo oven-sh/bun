@@ -42,7 +42,7 @@ impl ResolverContext for OnlyDependencies {
     fn resolve(
         &mut self,
         _builder: &mut StringBuilder<'_>,
-        _json: JsonView<'_>,
+        _json: JsonView<'_, '_>,
     ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::default())
     }
@@ -66,7 +66,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_, '_>) {
         builder.count(self.resolved);
         builder.count(self.locked_repo.as_deref().unwrap_or_default());
     }
@@ -74,7 +74,7 @@ impl<'a> ResolverContext for GitResolver<'a> {
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: JsonView<'_>,
+        _json: JsonView<'_, '_>,
     ) -> Result<ResolutionType<u64>, crate::Error> {
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
@@ -113,14 +113,14 @@ impl<'a> ResolverContext for TarballResolver<'a> {
         true
     }
 
-    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_>) {
+    fn count(&mut self, builder: &mut StringBuilder<'_>, _json: JsonView<'_, '_>) {
         builder.count(self.url);
     }
 
     fn resolve(
         &mut self,
         builder: &mut StringBuilder<'_>,
-        _json: JsonView<'_>,
+        _json: JsonView<'_, '_>,
     ) -> Result<ResolutionType<u64>, crate::Error> {
         Ok(ResolutionType::<u64>::init(match self.resolution.tag {
             ResolutionTag::LocalTarball => {

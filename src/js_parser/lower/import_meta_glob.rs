@@ -169,8 +169,13 @@ struct Expansion<'a> {
     entries: Vec<(&'a [u8], &'a [u8])>,
 }
 
-impl Expansion<'_> {
-    fn import_call(&self, arena: &AstArena, path: &[u8], loc: Loc) -> (Expr, TransposeState) {
+impl<'a> Expansion<'a> {
+    fn import_call(
+        &self,
+        arena: &'a AstArena,
+        path: &'a [u8],
+        loc: Loc,
+    ) -> (Expr<'a>, TransposeState<'a>) {
         let mut state = TransposeState {
             loc,
             ..Default::default()
@@ -288,7 +293,7 @@ pub(crate) struct Literals<'a> {
 }
 
 /// Folds `-1`, `+1` and `!0` (a minifier's `true`) into literals.
-fn literal(expr: Expr) -> Expr {
+fn literal(expr: Expr<'_>) -> Expr<'_> {
     let mut operators = Vec::new();
     let mut operand = expr;
     while let ExprData::EUnary(unary) = operand.data {
@@ -503,7 +508,7 @@ impl<'a> Arguments<'a, '_> {
     }
 
     #[optimize(size)]
-    fn read(&mut self, call: &E::Call, loc: Loc) -> Result<Literals<'a>, Invalid<'a>> {
+    fn read(&mut self, call: &E::Call<'a>, loc: Loc) -> Result<Literals<'a>, Invalid<'a>> {
         let args = call.args.slice();
         if args.is_empty() || args.len() > 2 {
             return self.invalid(
@@ -714,9 +719,9 @@ impl<'a> Arguments<'a, '_> {
     #[optimize(size)]
     fn option(
         &mut self,
-        property: &G::Property,
+        property: &G::Property<'a>,
         object_loc: Loc,
-    ) -> Result<(&'a [u8], Expr, Expr), Invalid<'a>> {
+    ) -> Result<(&'a [u8], Expr<'a>, Expr<'a>), Invalid<'a>> {
         let (G::PropertyKind::Normal, Some(key), Some(value)) =
             (property.kind, property.key, property.value)
         else {
@@ -740,7 +745,7 @@ impl<'a> Arguments<'a, '_> {
         Ok((name.slice(self.arena), key, literal(value)))
     }
 
-    fn options(&mut self, arg: Expr) -> Result<Options<'a>, Invalid<'a>> {
+    fn options(&mut self, arg: Expr<'a>) -> Result<Options<'a>, Invalid<'a>> {
         let ExprData::EObject(object) = arg.data else {
             return self.invalid(
                 arg.loc,
@@ -873,7 +878,7 @@ impl<'a> Arguments<'a, '_> {
         Ok(options)
     }
 
-    fn query(&mut self, query: &E::Object, loc: Loc) -> Result<&'a [u8], Invalid<'a>> {
+    fn query(&mut self, query: &E::Object<'a>, loc: Loc) -> Result<&'a [u8], Invalid<'a>> {
         let mut out = Vec::new();
         for property in query.properties.slice() {
             let (name, _, value) = self.option(property, loc)?;
@@ -908,7 +913,7 @@ impl<'a> Arguments<'a, '_> {
     }
 }
 
-fn object_of(arena: &AstArena, key: &'static [u8], value: Expr) -> Expr {
+fn object_of<'a>(arena: &'a AstArena, key: &'static [u8], value: Expr<'a>) -> Expr<'a> {
     Expr::allocate(
         arena,
         E::Object {
@@ -927,7 +932,7 @@ fn object_of(arena: &AstArena, key: &'static [u8], value: Expr) -> Expr {
     )
 }
 
-fn arrow_of(arena: &AstArena, args: &[js_ast::Ref], body: Stmt) -> Expr {
+fn arrow_of<'a>(arena: &'a AstArena, args: &[js_ast::Ref], body: Stmt<'a>) -> Expr<'a> {
     let loc = body.loc;
     let args = arena.alloc_slice_fill_iter(args.iter().map(|&r#ref| G::Arg {
         binding: js_ast::Binding::alloc(arena, B::Identifier { r#ref }, loc),
@@ -948,7 +953,7 @@ fn arrow_of(arena: &AstArena, args: &[js_ast::Ref], body: Stmt) -> Expr {
     )
 }
 
-fn arrow(arena: &AstArena, args: &[js_ast::Ref], value: Expr) -> Expr {
+fn arrow<'a>(arena: &'a AstArena, args: &[js_ast::Ref], value: Expr<'a>) -> Expr<'a> {
     arrow_of(
         arena,
         args,
@@ -957,7 +962,12 @@ fn arrow(arena: &AstArena, args: &[js_ast::Ref], value: Expr) -> Expr {
 }
 
 #[optimize(size)]
-fn throwing_function(arena: &AstArena, type_error: js_ast::Ref, message: &[u8], loc: Loc) -> Expr {
+fn throwing_function<'a>(
+    arena: &'a AstArena,
+    type_error: js_ast::Ref,
+    message: &'a [u8],
+    loc: Loc,
+) -> Expr<'a> {
     let value = Expr::allocate(
         arena,
         E::New {
@@ -996,7 +1006,7 @@ pub(crate) fn is_object_keys_call(symbols: &[js_ast::Symbol], call: &E::Call) ->
         && object.original_name.slice() == b"Object"
 }
 
-fn dot(arena: &AstArena, target: Expr, name: &[u8]) -> Expr {
+fn dot<'a>(arena: &'a AstArena, target: Expr<'a>, name: &'a [u8]) -> Expr<'a> {
     Expr::allocate(
         arena,
         E::Dot {
@@ -1010,7 +1020,12 @@ fn dot(arena: &AstArena, target: Expr, name: &[u8]) -> Expr {
 }
 
 #[optimize(size)]
-fn then_export(arena: &AstArena, import: Expr, parameter: js_ast::Ref, name: &[u8]) -> Expr {
+fn then_export<'a>(
+    arena: &'a AstArena,
+    import: Expr<'a>,
+    parameter: js_ast::Ref,
+    name: &'a [u8],
+) -> Expr<'a> {
     let namespace = Expr::init(E::Identifier::init(parameter), import.loc);
     Expr::allocate(
         arena,
@@ -1067,7 +1082,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     #[cold]
     pub(crate) fn read_import_meta_glob_call(
         &mut self,
-        call: &E::Call,
+        call: &E::Call<'a>,
         loc: Loc,
     ) -> &'a Result<Literals<'a>, Invalid<'a>> {
         let arguments = Arguments {
@@ -1079,7 +1094,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         self.arena.alloc(arguments)
     }
 
-    fn import_meta_glob_throws(&mut self, message: &[u8], loc: Loc) -> Expr {
+    fn import_meta_glob_throws(&mut self, message: &[u8], loc: Loc) -> Expr<'a> {
         let type_error = self
             .find_symbol(loc, b"TypeError")
             .expect("unreachable")
@@ -1095,7 +1110,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     /// `e` must already be visited. A call that can't be expanded throws a TypeError when it's reached.
     pub(crate) fn expand_import_meta_glob(
         &mut self,
-        e: &mut Expr,
+        e: &mut Expr<'a>,
         arguments: &Result<Literals<'a>, Invalid<'a>>,
         only_keys: bool,
     ) {
@@ -1208,7 +1223,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
     }
 
     /// `import.meta.glob = () => { throw ... }`, so `typeof import.meta.glob` is "function" as in Vite.
-    pub(crate) fn import_meta_glob_definition(&mut self) -> Option<Stmt> {
+    pub(crate) fn import_meta_glob_definition(&mut self) -> Option<Stmt<'a>> {
         if self.options.bundle
             || !matches!(
                 self.import_meta_glob_use,
@@ -1241,7 +1256,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         expansion: &Expansion<'a>,
         path: &'a [u8],
         loc: Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         if expansion.eager {
             return self.import_meta_glob_static_import(expansion, path, loc);
         }
@@ -1272,7 +1287,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, '_, TS, SCAN> {
         expansion: &Expansion<'a>,
         path: &'a [u8],
         loc: Loc,
-    ) -> Expr {
+    ) -> Expr<'a> {
         let name = expansion.import;
         let import_record_index =
             self.add_import_record(ImportKind::Stmt, expansion.path_loc, path);

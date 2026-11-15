@@ -739,11 +739,11 @@ pub(crate) fn warn_unchecked_sources(manager: &mut PackageManager) {
 
 /// Returns the source of the root package.json and its `patchedDependencies` object.
 fn root_patched_dependencies<'a>(
-    cache: &'a mut WorkspacePackageJSONCache,
+    cache: &mut WorkspacePackageJSONCache<'a>,
     log: &bun_ast::Log,
     root_package_json_path: &[u8],
     root_dir: &[u8],
-) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr)> {
+) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr<'a>)> {
     let mut path: &[u8] = root_package_json_path;
     let mut path_buf = bun_paths::path_buffer_pool::get();
     // Auto-install does not call `init`, so the path is empty. It uses the package.json next to the
@@ -760,7 +760,7 @@ fn root_patched_dependencies<'a>(
         return None;
     };
     let patched = entry.root.get_object(b"patchedDependencies")?;
-    Some((&entry.source, patched))
+    Some((entry.source, patched))
 }
 
 /// The `patchedDependencies` keys, read from the root package.json because the lockfile only stores

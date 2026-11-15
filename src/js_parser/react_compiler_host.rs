@@ -34,16 +34,16 @@ impl<'p, 'a, 'log, const TS: bool, const SCAN_ONLY: bool>
     }
 }
 
-impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
+impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host<'a>
     for ReactCompilerHost<'_, 'a, '_, TS, SCAN_ONLY>
 {
-    fn symbols(&self) -> &[js_ast::Symbol] {
+    fn symbols(&self) -> &[js_ast::Symbol<'a>] {
         self.p.symbols.as_slice()
     }
-    fn module_scope(&self) -> &js_ast::Scope {
+    fn module_scope(&self) -> &js_ast::Scope<'a> {
         &self.p.module_scope
     }
-    fn import_records(&self) -> &[js_ast::ImportRecord<'_>] {
+    fn import_records(&self) -> &[js_ast::ImportRecord<'a>] {
         self.p.import_records.items()
     }
     fn is_module_level(&self, ref_: js_ast::Ref) -> bool {
@@ -71,11 +71,11 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         &self.p.source.contents
     }
 
-    fn ref_name(&self, ref_: js_ast::Ref) -> &[u8] {
+    fn ref_name(&self, ref_: js_ast::Ref) -> &'a [u8] {
         self.p.load_name_from_ref(ref_)
     }
 
-    fn scope_for_loc(&self, _loc: bun_ast::Loc) -> Option<&js_ast::Scope> {
+    fn scope_for_loc(&self, _loc: bun_ast::Loc) -> Option<&js_ast::Scope<'a>> {
         // Post-visit, identifier refs are already resolved; lowering's
         // inline name→symbol resolution is unused.
         None
@@ -89,7 +89,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> bun_react_compiler::Host
         self.p.options.jsx.runtime != crate::parser::options::JSX::Runtime::Automatic
     }
 
-    fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> js_ast::Expr {
+    fn jsx_classic_factory(&mut self, loc: bun_ast::Loc) -> js_ast::Expr<'a> {
         self.p
             .jsx_classic_member_expression(loc, |jsx| &jsx.factory)
     }
@@ -203,10 +203,7 @@ impl<'a, const TS: bool, const SCAN_ONLY: bool> P<'a, '_, TS, SCAN_ONLY> {
             for (key, member) in args.members.iter() {
                 let kind = self.symbols[member.ref_.inner_index() as usize].kind;
                 if kind == js_ast::symbol::Kind::Arguments || Some(member.ref_) == name {
-                    // SAFETY: `put` stores `key` by reference, so it has to
-                    // outlive `args`. It is already the key of a member of
-                    // `args`, stored under the same contract.
-                    unsafe { kept.put(self.ast_arena, key, *member) };
+                    kept.put(self.ast_arena, key, *member);
                 }
             }
             args.members = kept;

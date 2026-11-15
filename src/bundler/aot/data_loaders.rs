@@ -170,10 +170,10 @@ fn parse_structured_value<'s>(
 
 fn parse_tree<'a>(
     format: StructuredFormat,
-    source: &'a Source,
+    source: &'a Source<'_>,
     log: &Log,
     scratch: &'a AstArena,
-) -> Option<Expr> {
+) -> Option<Expr<'a>> {
     match format {
         StructuredFormat::Json => {
             bun_parsers::json::parse_json_into_arena(source, log, scratch).ok()

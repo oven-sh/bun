@@ -5,7 +5,7 @@ use crate::diagnostics::{
 };
 use crate::hir::*;
 use bun_ast::expr::Data;
-use bun_ast::{self as ast, E, Expr, G, Loc, OpCode, Ref, StoreRef, symbol};
+use bun_ast::{self as ast, E, G, Loc, OpCode, Ref, StoreRef, symbol};
 
 use super::function::{lower_function_to_value, lower_object_method};
 use super::helpers::{
@@ -368,7 +368,7 @@ fn lower_identifier_reference(
 
 fn lower_binary(
     builder: &mut HirBuilder,
-    bin: &E::Binary,
+    bin: &E::Binary<'static>,
     bun_loc: Loc,
 ) -> Result<InstructionValue, CompilerError> {
     use OpCode::*;
@@ -417,7 +417,7 @@ fn lower_binary(
 
 fn lower_logical(
     builder: &mut HirBuilder,
-    bin: &E::Binary,
+    bin: &E::Binary<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     let continuation_block = builder.reserve(builder.current_block_kind());
@@ -524,7 +524,7 @@ fn lower_logical(
 
 fn lower_conditional(
     builder: &mut HirBuilder,
-    cond: &E::If,
+    cond: &E::If<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     let continuation_block = builder.reserve(builder.current_block_kind());
@@ -610,7 +610,7 @@ fn lower_conditional(
 
 fn lower_sequence(
     builder: &mut HirBuilder,
-    bin: &E::Binary,
+    bin: &E::Binary<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     let continuation_block = builder.reserve(builder.current_block_kind());
@@ -667,7 +667,7 @@ fn lower_sequence(
 
 fn lower_simple_assignment(
     builder: &mut HirBuilder,
-    bin: &E::Binary,
+    bin: &E::Binary<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     match &bin.left.data {
@@ -840,7 +840,7 @@ fn lower_simple_assignment_identifier(
 
 fn lower_compound_assignment(
     builder: &mut HirBuilder,
-    bin: &E::Binary,
+    bin: &E::Binary<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     let binary_op = match bin.op {
@@ -913,7 +913,7 @@ fn lower_compound_assignment(
 fn lower_compound_assignment_identifier(
     builder: &mut HirBuilder,
     ref_: Ref,
-    bin: &E::Binary,
+    bin: &E::Binary<'static>,
     binary_op: BinaryOperator,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
@@ -995,7 +995,7 @@ fn lower_compound_assignment_identifier(
 
 fn lower_unary(
     builder: &mut HirBuilder,
-    unary: &E::Unary,
+    unary: &E::Unary<'static>,
     bun_loc: Loc,
 ) -> Result<InstructionValue, CompilerError> {
     use OpCode::*;
@@ -1059,7 +1059,7 @@ fn lower_unary(
 
 fn lower_update(
     builder: &mut HirBuilder,
-    unary: &E::Unary,
+    unary: &E::Unary<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     let prefix = matches!(unary.op, OpCode::UnPreInc | OpCode::UnPreDec);
@@ -1215,7 +1215,7 @@ fn lower_update_identifier(
 
 fn lower_template(
     builder: &mut HirBuilder,
-    tmpl: &E::Template,
+    tmpl: &E::Template<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<InstructionValue, CompilerError> {
     let parts = tmpl.parts();
@@ -1284,7 +1284,7 @@ fn lower_template(
 }
 
 fn convert_template_contents(
-    c: &E::TemplateContents,
+    c: &E::TemplateContents<'static>,
     loc: Option<SourceLocation>,
 ) -> Result<TemplateQuasi, CompilerError> {
     match c {
@@ -1302,7 +1302,7 @@ fn convert_template_contents(
             })
         }
         E::TemplateContents::Raw(r) => Ok(TemplateQuasi {
-            raw: StoreStr::new(r.slice()),
+            raw: *r,
             cooked: None,
         }),
     }
@@ -1507,7 +1507,7 @@ fn is_module_level_or_global(builder: &HirBuilder, ref_: Ref) -> bool {
 // Conversion helpers
 // =============================================================================
 
-fn convert_js_string(s: StoreRef<E::EString>) -> JsString {
+fn convert_js_string(s: StoreRef<'static, E::EString<'static>>) -> JsString {
     if s.get().next.is_none() {
         return JsString::new(s);
     }

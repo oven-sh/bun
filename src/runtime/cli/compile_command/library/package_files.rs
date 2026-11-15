@@ -176,21 +176,21 @@ struct JsonBuilder<'a> {
     arena: &'a AstArena,
 }
 
-impl JsonBuilder<'_> {
-    fn string(self, value: &[u8]) -> Expr {
+impl<'a> JsonBuilder<'a> {
+    fn string(self, value: &[u8]) -> Expr<'a> {
         let value = E::String::init(self.arena.alloc_slice_copy(value));
         Expr::allocate(self.arena, value, Loc::EMPTY)
     }
 
-    fn relative_path(self, path: &[u8]) -> Expr {
+    fn relative_path(self, path: &[u8]) -> Expr<'a> {
         self.string(&[&b"./"[..], path].concat())
     }
 
-    fn object(self, object: E::Object) -> Expr {
+    fn object(self, object: E::Object<'a>) -> Expr<'a> {
         Expr::allocate(self.arena, object, Loc::EMPTY)
     }
 
-    fn compiler_option(self, value: &Json) -> Expr {
+    fn compiler_option(self, value: &Json) -> Expr<'a> {
         match value {
             Json::Bool(value) => Expr::init(E::Boolean { value: *value }, Loc::EMPTY),
             Json::Array(items) => {
@@ -205,12 +205,12 @@ impl JsonBuilder<'_> {
         }
     }
 
-    fn put(self, object: &mut E::Object, key: &[u8], value: Expr) {
+    fn put(self, object: &mut E::Object<'a>, key: &[u8], value: Expr<'a>) {
         let key = self.arena.alloc_slice_copy(key);
         object.put(self.arena, key, value).unwrap_or_oom();
     }
 
-    fn copy_fields(self, from: Option<&Expr>, fields: &[&[u8]], to: &mut E::Object) {
+    fn copy_fields(self, from: Option<&Expr<'a>>, fields: &[&[u8]], to: &mut E::Object<'a>) {
         for &field in fields {
             if let Some(value) = from.and_then(|from| from.get(field)) {
                 self.put(to, field, value);
@@ -267,10 +267,10 @@ impl Warnings<'_> {
     }
 }
 
-struct KeptExport {
+struct KeptExport<'a> {
     files: Vec<usize>,
     // `None`: the conditions of its one file.
-    conditions: Option<Expr>,
+    conditions: Option<Expr<'a>>,
 }
 
 struct OmittedTarget {
@@ -278,8 +278,8 @@ struct OmittedTarget {
     target: Vec<u8>,
 }
 
-struct WrittenExports {
-    exports: E::Object,
+struct WrittenExports<'a> {
+    exports: E::Object<'a>,
     main: Option<usize>,
 }
 
@@ -290,7 +290,7 @@ struct WrittenFiles<'a> {
     outdir: &'a [u8],
 }
 
-impl WrittenFiles<'_> {
+impl<'a> WrittenFiles<'a> {
     // The project's package.json names a source file, or what this build makes of it.
     fn find(&self, written: &[u8]) -> Option<usize> {
         let path = absolute_path(self.project_directory, written);
@@ -299,7 +299,7 @@ impl WrittenFiles<'_> {
         })
     }
 
-    fn conditions_of(&self, file: usize) -> Expr {
+    fn conditions_of(&self, file: usize) -> Expr<'a> {
         let file = &self.exported[file];
         let mut conditions = E::Object::default();
         if let Some(typed) = &file.typed {
@@ -315,7 +315,7 @@ impl WrittenFiles<'_> {
         self.json.object(conditions)
     }
 
-    fn written_as(&self, kept: &KeptExport) -> Expr {
+    fn written_as(&self, kept: &KeptExport<'a>) -> Expr<'a> {
         kept.conditions
             .unwrap_or_else(|| self.conditions_of(kept.files[0]))
     }
@@ -325,7 +325,7 @@ impl WrittenFiles<'_> {
         authored: &Expr,
         under: &mut Vec<Vec<u8>>,
         omitted: &mut Vec<OmittedTarget>,
-    ) -> Option<KeptExport> {
+    ) -> Option<KeptExport<'_>> {
         if let Some(target) = authored.as_utf8_string_literal() {
             let Some(file) = self.find(target) else {
                 omitted.push(OmittedTarget {
@@ -378,7 +378,11 @@ impl WrittenFiles<'_> {
         })
     }
 
-    fn write_exports(&self, authored: Option<Expr>, warnings: &mut Warnings<'_>) -> WrittenExports {
+    fn write_exports(
+        &self,
+        authored: Option<Expr>,
+        warnings: &mut Warnings<'_>,
+    ) -> WrittenExports<'_> {
         let mut exports = E::Object::default();
         let mut is_in_exports = vec![false; self.exported.len()];
         let mut main = None;
@@ -426,7 +430,7 @@ impl WrittenFiles<'_> {
     fn write_executables(
         &self,
         existing: &Expr,
-        package: &mut E::Object,
+        package: &mut E::Object<'a>,
         warnings: &mut Warnings<'_>,
     ) {
         let Some(bin) = existing.get(b"bin") else {
@@ -592,6 +596,7 @@ pub(super) fn write_package_json(
     let source = bun_ast::Source::init_path_string(&b"package.json"[..], &b""[..]);
     bun_js_printer::print_json(
         &mut writer,
+        &arena,
         json.object(package),
         &source,
         Default::default(),

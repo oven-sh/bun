@@ -43,18 +43,18 @@ pub(crate) enum ConvertError {
 
 type Converts<T> = Result<T, ConvertError>;
 
-pub(crate) enum Root {
-    Function(G::Fn),
-    Arrow(E::Arrow),
+pub(crate) enum Root<'ast> {
+    Function(G::Fn<'ast>),
+    Arrow(E::Arrow<'ast>),
 }
 
-pub(crate) struct Converted {
-    pub(crate) root: Root,
+pub(crate) struct Converted<'ast> {
+    pub(crate) root: Root<'ast>,
     pub(crate) spans: Vec<Span>,
-    pub(crate) symbols: Vec<JsSymbol>,
+    pub(crate) symbols: Vec<JsSymbol<'ast>>,
     /// For each of `symbols`: true if it's bound outside the function, or not bound at all.
     pub(crate) is_outside: Vec<bool>,
-    pub(crate) import_bindings: Vec<(Ref, VariableBinding)>,
+    pub(crate) import_bindings: Vec<(Ref, VariableBinding<'ast>)>,
     /// The tag of `<>`.
     pub(crate) fragment: Ref,
     pub(crate) recorded: Vec<Recorded>,
@@ -138,7 +138,7 @@ impl<'a> Visitor<'a> for FbtTags<'a> {
     fn exit(&mut self, _: Node<'a>) {}
 }
 
-impl Converted {
+impl Converted<'_> {
     /// The range of the node that was given `Loc { start: index }`.
     pub(crate) fn span_of(&self, index: u32) -> Option<Span> {
         self.spans.get(index as usize).copied()
@@ -152,16 +152,16 @@ enum Named {
     Private,
 }
 
-pub(crate) struct Converter<'a, 'x> {
+pub(crate) struct Converter<'a: 'ast, 'ast> {
     file: &'a File<'a>,
-    arena: &'x AstArena,
+    arena: &'ast AstArena,
     flavor: Flavor,
     /// The range of the function being compiled.
     root: Span,
     spans: Vec<Span>,
-    symbols: Vec<JsSymbol>,
+    symbols: Vec<JsSymbol<'ast>>,
     is_outside: Vec<bool>,
-    import_bindings: Vec<(Ref, VariableBinding)>,
+    import_bindings: Vec<(Ref, VariableBinding<'ast>)>,
     by_symbol: FxHashMap<usize, Ref>,
     by_name: FxHashMap<(Named, Name<'a>), Ref>,
     create_element: Ref,
@@ -176,12 +176,12 @@ pub(crate) struct Converter<'a, 'x> {
 }
 
 /// `func` must have a body.
-pub(crate) fn convert<'a>(
+pub(crate) fn convert<'a: 'ast, 'ast>(
     file: &'a File<'a>,
-    arena: &AstArena,
+    arena: &'ast AstArena,
     func: Func<'a>,
     flavor: Flavor,
-) -> Converts<Converted> {
+) -> Converts<Converted<'ast>> {
     let stack = bun_core::StackCheck::init();
     let mut converter = Converter {
         file,
@@ -238,7 +238,7 @@ pub(crate) fn convert<'a>(
     })
 }
 
-impl<'a> Converter<'a, '_> {
+impl<'a: 'ast, 'ast> Converter<'a, 'ast> {
     // ──────────────────────────── locations ───────────────────────────
 
     fn loc(&mut self, span: Span) -> Loc {
@@ -257,7 +257,7 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── symbols ─────────────────────────────
 
-    fn new_symbol(&mut self, name: &[u8], kind: SymbolKind, is_outside: bool) -> Ref {
+    fn new_symbol(&mut self, name: &'ast [u8], kind: SymbolKind, is_outside: bool) -> Ref {
         let index = self.symbols.len() as u32;
         self.symbols.push(JsSymbol {
             original_name: StoreStr::new(name),
@@ -382,7 +382,14 @@ impl<'a> Converter<'a, '_> {
 
     /// The parameters, whether the last one is a rest parameter, and statements to put at the start
     /// of the body.
-    fn args(&mut self, func: Func<'a>) -> Converts<(StoreSlice<G::Arg>, bool, AstVec<JsStmt>)> {
+    fn args(
+        &mut self,
+        func: Func<'a>,
+    ) -> Converts<(
+        StoreSlice<'ast, G::Arg<'ast>>,
+        bool,
+        AstVec<'ast, JsStmt<'ast>>,
+    )> {
         // A `this` parameter is only a type, and oxc's lowering doesn't see it either. Upstream's rejects it.
         if self.flavor == Flavor::Eslint && func.this_param().is_some() {
             return Err(ConvertError::ThisParameter);
@@ -398,7 +405,11 @@ impl<'a> Converter<'a, '_> {
         Ok((args.into_store_slice(), has_rest, first))
     }
 
-    fn arg(&mut self, param: Param<'a>, first: &mut AstVec<JsStmt>) -> Converts<G::Arg> {
+    fn arg(
+        &mut self,
+        param: Param<'a>,
+        first: &mut AstVec<'ast, JsStmt<'ast>>,
+    ) -> Converts<G::Arg<'ast>> {
         let mut binding = self.binding(param.pat())?;
         let default = self.default(&binding, param.pat(), param.default())?;
         // oxc's lowering destructures a parameter like a declaration, which supports variables that
@@ -425,10 +436,10 @@ impl<'a> Converter<'a, '_> {
     /// declaration to `first`.
     fn destructure_in_body(
         &mut self,
-        binding: Binding,
+        binding: Binding<'ast>,
         kind: SymbolKind,
-        first: &mut AstVec<JsStmt>,
-    ) -> Binding {
+        first: &mut AstVec<'ast, JsStmt<'ast>>,
+    ) -> Binding<'ast> {
         let loc = binding.loc;
         let r#ref = self.new_symbol(b"t", kind, false);
         let decls = G::DeclList::from_slice_in(
@@ -459,8 +470,8 @@ impl<'a> Converter<'a, '_> {
         &mut self,
         func: Func<'a>,
         loc: Loc,
-        first: AstVec<JsStmt>,
-    ) -> Converts<(G::FnBody, bool)> {
+        first: AstVec<'ast, JsStmt<'ast>>,
+    ) -> Converts<(G::FnBody<'ast>, bool)> {
         let is_expression = first.is_empty() && matches!(func.body(), FnBody::Expr(_));
         let stmts = match func.body() {
             FnBody::None => first.into_store_slice(),
@@ -490,7 +501,7 @@ impl<'a> Converter<'a, '_> {
         self.treats_own_name_as_outer(func) && func.estree_span() != self.root
     }
 
-    fn function(&mut self, func: Func<'a>) -> Converts<G::Fn> {
+    fn function(&mut self, func: Func<'a>) -> Converts<G::Fn<'ast>> {
         self.nested(|this| {
             let loc = this.loc(func.estree_span());
             let name = match func.name() {
@@ -524,7 +535,7 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow> {
+    fn arrow(&mut self, func: Func<'a>) -> Converts<E::Arrow<'ast>> {
         self.nested(|this| {
             let loc = this.loc(func.estree_span());
             let (args, has_rest_arg, first) = this.args(func)?;
@@ -541,7 +552,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// Converts a function expression, an arrow function, or a method's value, at `span`.
-    fn function_expr(&mut self, func: Func<'a>, span: Span) -> Converts<JsExpr> {
+    fn function_expr(&mut self, func: Func<'a>, span: Span) -> Converts<JsExpr<'ast>> {
         let loc = self.loc(span);
         Ok(match func.is_arrow() {
             true => JsExpr::allocate(self.arena, self.arrow(func)?, loc),
@@ -562,7 +573,7 @@ impl<'a> Converter<'a, '_> {
         binding: &Binding,
         target: Pat<'a>,
         value: Option<Expr<'a>>,
-    ) -> Converts<Option<JsExpr>> {
+    ) -> Converts<Option<JsExpr<'ast>>> {
         let Some(value) = value else {
             return Ok(None);
         };
@@ -601,7 +612,7 @@ impl<'a> Converter<'a, '_> {
         Ok(Some(converted))
     }
 
-    fn binding(&mut self, pat: Pat<'a>) -> Converts<Binding> {
+    fn binding(&mut self, pat: Pat<'a>) -> Converts<Binding<'ast>> {
         self.nested(|this| {
             let loc = this.loc(pat.span());
             Ok(match pat.kind() {
@@ -683,7 +694,7 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── keys and properties ─────────────────────────────
 
-    fn string(&mut self, value: &[u8], span: Span) -> Converts<JsExpr> {
+    fn string(&mut self, value: &'ast [u8], span: Span) -> Converts<JsExpr<'ast>> {
         Ok(JsExpr::allocate(
             self.arena,
             E::EString::init(value),
@@ -692,7 +703,11 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// `at` overrides the span of a key that isn't computed.
-    fn key(&mut self, key: Key<'a>, at: Option<Span>) -> Converts<(JsExpr, flags::PropertySet)> {
+    fn key(
+        &mut self,
+        key: Key<'a>,
+        at: Option<Span>,
+    ) -> Converts<(JsExpr<'ast>, flags::PropertySet)> {
         let span = at.unwrap_or_else(|| key.inner_span(self.file));
         let number = |name: Name<'a>| std::str::from_utf8(name.bytes()).ok()?.parse::<f64>().ok();
         let computed = flags::PropertySet::only(flags::Property::IsComputed);
@@ -737,7 +752,7 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn property(&mut self, prop: Prop<'a>) -> Converts<G::Property> {
+    fn property(&mut self, prop: Prop<'a>) -> Converts<G::Property<'ast>> {
         let kind = prop.kind();
         if kind == PropKind::Spread {
             return Ok(G::Property {
@@ -777,7 +792,7 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn properties(&mut self, props: List<'a, Prop<'a>>) -> Converts<G::PropertyList> {
+    fn properties(&mut self, props: List<'a, Prop<'a>>) -> Converts<G::PropertyList<'ast>> {
         let mut properties: G::PropertyList = AstVec::with_capacity_in(props.len(), self.arena);
         for prop in props {
             properties.push(self.arena, self.property(prop)?);
@@ -788,7 +803,7 @@ impl<'a> Converter<'a, '_> {
     // ───────────────────────────── classes ─────────────────────────────
 
     /// The compiler rejects a class, but still looks inside for what it references.
-    fn class(&mut self, class: Class<'a>) -> Converts<G::Class> {
+    fn class(&mut self, class: Class<'a>) -> Converts<G::Class<'ast>> {
         self.nested(|this| {
             let class_name = class.name().map(|name| LocRef {
                 loc: this.loc(name.span()),
@@ -812,7 +827,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// `None` if the member only exists for types.
-    fn member(&mut self, member: Member<'a>) -> Converts<Option<G::Property>> {
+    fn member(&mut self, member: Member<'a>) -> Converts<Option<G::Property<'ast>>> {
         if member.is_signature() {
             return Ok(None);
         }
@@ -867,7 +882,7 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── expressions ─────────────────────────────
 
-    fn exprs(&mut self, list: List<'a, Expr<'a>>) -> Converts<bun_ast::ExprNodeList> {
+    fn exprs(&mut self, list: List<'a, Expr<'a>>) -> Converts<bun_ast::ExprNodeList<'ast>> {
         let mut converted: bun_ast::ExprNodeList = AstVec::with_capacity_in(list.len(), self.arena);
         for expr in list {
             converted.push(self.arena, self.expr(expr)?);
@@ -883,7 +898,7 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
-    pub(crate) fn expr(&mut self, expr: Expr<'a>) -> Converts<JsExpr> {
+    pub(crate) fn expr(&mut self, expr: Expr<'a>) -> Converts<JsExpr<'ast>> {
         let converted = self.nested(|this| this.expr_at(expr, expr.span()))?;
         if self.flavor == Flavor::Oxlint && expr.is_parenthesized() {
             let whole = self.loc(expr.outer_span());
@@ -892,7 +907,7 @@ impl<'a> Converter<'a, '_> {
         Ok(converted)
     }
 
-    fn expr_at(&mut self, expr: Expr<'a>, span: Span) -> Converts<JsExpr> {
+    fn expr_at(&mut self, expr: Expr<'a>, span: Span) -> Converts<JsExpr<'ast>> {
         // Type-only syntax has no node in this tree.
         if let ExprKind::NonNull(inner) | ExprKind::Instantiation { expr: inner, .. } = expr.kind()
         {
@@ -1147,7 +1162,13 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn dot(&mut self, obj: Expr<'a>, name: Ident<'a>, chain: Chain, loc: Loc) -> Converts<JsExpr> {
+    fn dot(
+        &mut self,
+        obj: Expr<'a>,
+        name: Ident<'a>,
+        chain: Chain,
+        loc: Loc,
+    ) -> Converts<JsExpr<'ast>> {
         let target = self.expr(obj)?;
         let name_loc = self.loc(name.span());
         let optional_chain = Self::chain(chain);
@@ -1180,7 +1201,11 @@ impl<'a> Converter<'a, '_> {
     /// A tagged template keeps its raw text, unless the text has an escape. Bun's lowering rejects
     /// a template when it sees the `\`, and oxc's doesn't, so for oxlint the text is dropped. It
     /// plays no part in the analysis.
-    fn template(&mut self, template: Template<'a>, tag: Option<JsExpr>) -> Converts<E::Template> {
+    fn template(
+        &mut self,
+        template: Template<'a>,
+        tag: Option<JsExpr<'ast>>,
+    ) -> Converts<E::Template<'ast>> {
         let is_oxlint = self.flavor == Flavor::Oxlint;
         let contents = |i: usize| match (tag.is_some(), template.cooked(i)) {
             (false, Some(cooked)) => E::TemplateContents::Cooked(E::EString::init(cooked.bytes())),
@@ -1210,7 +1235,7 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── JSX ─────────────────────────────
 
-    fn jsx_tag(&mut self, tag: Expr<'a>) -> Converts<JsExpr> {
+    fn jsx_tag(&mut self, tag: Expr<'a>) -> Converts<JsExpr<'ast>> {
         match tag.kind() {
             // A name that starts with a lowercase letter is a host element.
             ExprKind::Ident(name) if !name.bytes().first().is_some_and(u8::is_ascii_uppercase) => {
@@ -1220,7 +1245,7 @@ impl<'a> Converter<'a, '_> {
         }
     }
 
-    fn jsx(&mut self, jsx: Jsx<'a>, whole: Expr<'a>, loc: Loc) -> Converts<JsExpr> {
+    fn jsx(&mut self, jsx: Jsx<'a>, whole: Expr<'a>, loc: Loc) -> Converts<JsExpr<'ast>> {
         let name = jsx.tag().map(|tag| self.file.slice(tag.span()));
         let tag = ["fbt", "fbs"]
             .into_iter()
@@ -1304,15 +1329,15 @@ impl<'a> Converter<'a, '_> {
 
     // ───────────────────────────── statements ─────────────────────────────
 
-    fn stmts(&mut self, list: List<'a, Stmt<'a>>) -> Converts<StoreSlice<JsStmt>> {
+    fn stmts(&mut self, list: List<'a, Stmt<'a>>) -> Converts<StoreSlice<'ast, JsStmt<'ast>>> {
         self.stmts_after(AstVec::new(), list)
     }
 
     fn stmts_after(
         &mut self,
-        first: AstVec<JsStmt>,
+        first: AstVec<'ast, JsStmt<'ast>>,
         list: List<'a, Stmt<'a>>,
-    ) -> Converts<StoreSlice<JsStmt>> {
+    ) -> Converts<StoreSlice<'ast, JsStmt<'ast>>> {
         let mut converted = first;
         converted.reserve(self.arena, list.len());
         for stmt in list {
@@ -1322,7 +1347,7 @@ impl<'a> Converter<'a, '_> {
     }
 
     /// The statements of `stmt`, which is a block.
-    fn block(&mut self, stmt: Stmt<'a>) -> Converts<StoreSlice<JsStmt>> {
+    fn block(&mut self, stmt: Stmt<'a>) -> Converts<StoreSlice<'ast, JsStmt<'ast>>> {
         match stmt.as_block() {
             Some(statements) => self.stmts(statements),
             None => Ok(StoreSlice::EMPTY),
@@ -1336,7 +1361,7 @@ impl<'a> Converter<'a, '_> {
         })
     }
 
-    fn local(&mut self, decls: List<'a, VarDecl<'a>>, loc: Loc) -> Converts<JsStmt> {
+    fn local(&mut self, decls: List<'a, VarDecl<'a>>, loc: Loc) -> Converts<JsStmt<'ast>> {
         let kind = match decls.first().map(VarDecl::var_kind) {
             Some(VarKind::Var) | None => S::Kind::KVar,
             Some(VarKind::Let) => S::Kind::KLet,
@@ -1364,11 +1389,11 @@ impl<'a> Converter<'a, '_> {
         ))
     }
 
-    pub(crate) fn stmt(&mut self, stmt: Stmt<'a>) -> Converts<JsStmt> {
+    pub(crate) fn stmt(&mut self, stmt: Stmt<'a>) -> Converts<JsStmt<'ast>> {
         self.nested(|this| this.stmt_here(stmt))
     }
 
-    fn stmt_here(&mut self, stmt: Stmt<'a>) -> Converts<JsStmt> {
+    fn stmt_here(&mut self, stmt: Stmt<'a>) -> Converts<JsStmt<'ast>> {
         let loc = self.loc(stmt.span());
         if let Some(value) = stmt.directive() {
             let value = StoreStr::new(value);

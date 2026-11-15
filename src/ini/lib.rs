@@ -147,7 +147,7 @@ mod draft {
     pub struct Parser<'a> {
         pub(crate) source: &'a Source<'a>,
         pub(crate) src: &'a [u8],
-        pub out: Expr,
+        pub out: Expr<'a>,
         pub(crate) env: &'a DotEnvLoader,
         bump: &'a AstArena,
     }
@@ -168,13 +168,13 @@ mod draft {
     }
 
     enum PrepareResult<'bump> {
-        Value(Expr),
+        Value(Expr<'bump>),
         Section(&'bump mut Rope<'bump>),
         Key(&'bump [u8]),
     }
 
     impl<'bump> PrepareResult<'bump> {
-        bun_core::enum_unwrap!(PrepareResult, Value   => into fn into_value   -> Expr);
+        bun_core::enum_unwrap!(PrepareResult, Value   => into fn into_value   -> Expr<'bump>);
         bun_core::enum_unwrap!(PrepareResult, Section => into fn into_section -> &'bump mut Rope<'bump>);
         bun_core::enum_unwrap!(PrepareResult, Key     => into fn into_key     -> &'bump [u8]);
     }
@@ -435,31 +435,29 @@ mod draft {
                     if val.is_empty() {
                         break 'out;
                     }
-                    // `bun_parsers::json::parse_utf8_impl` returns the T2
-                    // value-subset `bun_ast::Expr`; lift it into the T4
-                    // `bun_ast::Expr` (via the `From` impl in
-                    // `bun_ast::expr`) so the rest of this body works
-                    // against a single `ExprData`.
-                    let src = Source::init_path_string(source_path, val);
                     let log = Log::init();
                     // Try to parse it and if it fails will just treat it as a string
-                    let json_val: Expr =
-                        match bun_parsers::json::parse_utf8_impl::<true>(&src, &log, bump) {
-                            Ok(v) => v,
-                            Err(_) => {
-                                // JSON parse failed (e.g., single-quoted string like '${VAR}')
-                                // Still need to expand env vars in the content
-                                if usage == Usage::Value {
-                                    let expanded = Self::expand_env_vars(env, bump, val)?;
-                                    return Ok(PrepareResult::Value(Expr::allocate(
-                                        bump,
-                                        E::EString::init(expanded),
-                                        Loc { start: offset },
-                                    )));
-                                }
-                                break 'out;
+                    let json_val: Expr = match bun_parsers::json::parse_utf8_document(
+                        source_path,
+                        val,
+                        &log,
+                        bump,
+                    ) {
+                        Ok(v) => v,
+                        Err(_) => {
+                            // JSON parse failed (e.g., single-quoted string like '${VAR}')
+                            // Still need to expand env vars in the content
+                            if usage == Usage::Value {
+                                let expanded = Self::expand_env_vars(env, bump, val)?;
+                                return Ok(PrepareResult::Value(Expr::allocate(
+                                    bump,
+                                    E::EString::init(expanded),
+                                    Loc { start: offset },
+                                )));
                             }
-                        };
+                            break 'out;
+                        }
+                    };
                     drop(log);
 
                     if let ExprData::EString(s) = &json_val.data {
@@ -898,7 +896,7 @@ mod draft {
             Ok(None)
         }
 
-        fn single_str_rope(ropealloc: &'a AstArena, str_: &[u8]) -> OOM<&'a mut Rope<'a>> {
+        fn single_str_rope(ropealloc: &'a AstArena, str_: &'a [u8]) -> OOM<&'a mut Rope<'a>> {
             let rope = ropealloc.alloc(Rope {
                 head: Expr::allocate(ropealloc, E::EString::init(str_), Loc::EMPTY),
                 next: None,
@@ -926,7 +924,7 @@ mod draft {
             Ok(())
         }
 
-        fn str_to_rope(ropealloc: &'a AstArena, key: &[u8]) -> OOM<&'a mut Rope<'a>> {
+        fn str_to_rope(ropealloc: &'a AstArena, key: &'a [u8]) -> OOM<&'a mut Rope<'a>> {
             let Some(mut dot_idx) = next_dot(key) else {
                 let rope = ropealloc.alloc(Rope {
                     head: Expr::allocate(ropealloc, E::EString::init(key), Loc::EMPTY),
@@ -969,11 +967,11 @@ mod draft {
     // ToStringFormatter
     // ──────────────────────────────────────────────────────────────────────────
 
-    pub(crate) struct ToStringFormatter<'a> {
-        pub(crate) d: &'a ExprData,
+    pub(crate) struct ToStringFormatter<'a, 'ast> {
+        pub(crate) d: &'a ExprData<'ast>,
     }
 
-    impl fmt::Display for ToStringFormatter<'_> {
+    impl fmt::Display for ToStringFormatter<'_, '_> {
         fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
             match self.d {
                 ExprData::EArray(arr) => {

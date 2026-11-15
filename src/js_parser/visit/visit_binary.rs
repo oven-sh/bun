@@ -13,10 +13,10 @@ use bun_ast::{
 /// Try to optimize "typeof x === 'undefined'" to "typeof x > 'u'" or similar
 /// Returns the optimized expression if successful, None otherwise
 fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
-    e_: &mut E::Binary,
+    e_: &mut E::Binary<'a>,
     p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
     replacement_op: js_ast::op::Code,
-) -> Option<Expr> {
+) -> Option<Expr<'a>> {
     if p.options.features.is_library {
         return None;
     }
@@ -81,8 +81,8 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
 // the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
 #[inline]
 fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
-    left: &ExprData,
-    right: &ExprData,
+    left: &ExprData<'a>,
+    right: &ExprData<'a>,
     p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
 ) -> Equality {
     if STRICT {
@@ -92,23 +92,20 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     }
 }
 
-pub struct BinaryExpressionVisitor {
+pub struct BinaryExpressionVisitor<'a> {
     /// Arena handle to the in-place `E::Binary` node.
-    /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
-    /// encapsulate the AST-store invariant, so call sites need no raw-pointer
-    /// round-trip to forge an `'arena` borrow.
-    pub(crate) e: StoreRef<E::Binary>,
+    pub(crate) e: StoreRef<'a, E::Binary<'a>>,
     pub(crate) loc: bun_ast::Loc,
 
     /// Input for visiting the left child
     pub(crate) left_in: ExprIn,
 }
 
-impl BinaryExpressionVisitor {
-    pub(crate) fn visit_right_and_finish<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+impl<'a> BinaryExpressionVisitor<'a> {
+    pub(crate) fn visit_right_and_finish<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
-    ) -> Expr {
+    ) -> Expr<'a> {
         // `v.e: StoreRef<E::Binary>` is the safe arena back-reference (Copy).
         // Snapshot the handle for the identity check / tail re-wrap, then take
         // the working `&mut` via `StoreRef::DerefMut` — the arena-backref
@@ -244,10 +241,7 @@ impl BinaryExpressionVisitor {
                         // the comma operator semantics when used as a call target
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             // Keep the comma expression to strip "this" binding
-                            e_.left = Expr {
-                                data: prefill::data::ZERO,
-                                loc: e_.left.loc,
-                            };
+                            e_.left = Expr::init(prefill::value::ZERO, e_.left.loc);
                         } else {
                             return e_.right;
                         }
@@ -387,10 +381,7 @@ impl BinaryExpressionVisitor {
                         // "(0 || this.fn)()" => "(0, this.fn)()"
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
+                                Expr::init(prefill::value::ZERO, e_.left.loc),
                                 p.ast_arena,
                                 e_.right,
                             );
@@ -410,10 +401,7 @@ impl BinaryExpressionVisitor {
                         // "(1 && this.fn)()" => "(0, this.fn)()"
                         if is_call_target && e_.right.has_value_for_this_in_call() {
                             return Expr::join_with_comma(
-                                Expr {
-                                    data: prefill::data::ZERO,
-                                    loc: e_.left.loc,
-                                },
+                                Expr::init(prefill::value::ZERO, e_.left.loc),
                                 p.ast_arena,
                                 e_.right,
                             );
@@ -722,10 +710,10 @@ impl BinaryExpressionVisitor {
         }
     }
 
-    pub(crate) fn check_and_prepare<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    pub(crate) fn check_and_prepare<const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
         v: &mut Self,
         p: &mut P<'a, '_, TYPESCRIPT, SCAN_ONLY>,
-    ) -> Option<Expr> {
+    ) -> Option<Expr<'a>> {
         // Snapshot the `Copy` arena handle before taking the working `&mut`
         // via `StoreRef::DerefMut`, so the early-return re-wrap below does not
         // overlap `e_`'s borrow of `v.e`.

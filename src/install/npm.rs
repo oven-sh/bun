@@ -2369,9 +2369,9 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
 ];
 
 /// npm accepts both spellings. `bundleDependencies` is the documented one.
-fn bundled_dependencies_field(
-    version_obj: Option<&JSON::E::ObjectJSON>,
-) -> Option<&JSON::E::JsonValue> {
+fn bundled_dependencies_field<'a>(
+    version_obj: Option<&'a JSON::E::ObjectJSON<'_>>,
+) -> Option<&'a JSON::E::JsonValue<'a>> {
     let version_obj = version_obj?;
     version_obj
         .get(b"bundleDependencies")
@@ -2379,7 +2379,7 @@ fn bundled_dependencies_field(
 }
 
 /// `npm undeprecate` leaves `"deprecated": ""`.
-fn deprecation_message(version_obj: Option<&JSON::E::ObjectJSON>) -> Option<&[u8]> {
+fn deprecation_message<'a>(version_obj: Option<&'a JSON::E::ObjectJSON<'_>>) -> Option<&'a [u8]> {
     match version_obj?.get(b"deprecated")? {
         JSON::E::JsonValue::Boolean(true) => Some(b"true"),
         value => value.as_str().filter(|message| !message.is_empty()),

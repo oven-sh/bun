@@ -151,8 +151,10 @@ fn handle_stream_headers(
     }
     let n = s.header_count();
 
-    stream.decoded_headers.clear();
-    stream.decoded_headers.reserve(n as usize);
+    let mut headers = Vec::new();
+    if stream.status_code == 0 {
+        headers.reserve_exact(n as usize);
+    }
     let mut status: u16 = 0;
     let mut i: c_uint = 0;
     while i < n {
@@ -169,15 +171,13 @@ fn handle_stream_headers(
             i += 1;
             continue;
         }
-        if stream.status_code == 0
-            && (is_malformed_response_field(name) || is_malformed_response_value(value))
-        {
-            session.fail(thread, index, crate::Error::HTTP3ProtocolError);
-            return;
+        if stream.status_code == 0 {
+            if is_malformed_response_field(name) || is_malformed_response_value(value) {
+                session.fail(thread, index, crate::Error::HTTP3ProtocolError);
+                return;
+            }
+            headers.push(picohttp::Header::new(name, trim_response_value(value)));
         }
-        stream
-            .decoded_headers
-            .push(picohttp::Header::new(name, trim_response_value(value)));
         i += 1;
     }
     if status == 0 {
@@ -194,7 +194,7 @@ fn handle_stream_headers(
         return;
     }
     stream.status_code = status;
-    session.deliver(thread, index, false);
+    session.deliver(thread, index, &headers, false);
 }
 
 /// # Safety
@@ -209,7 +209,7 @@ unsafe extern "C" fn on_stream_data(
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     with_stream(s, |s, session, index, thread| {
         session.streams[index].body_buffer.extend_from_slice(slice);
-        session.deliver(thread, index, fin != 0);
+        session.deliver(thread, index, &[], fin != 0);
 
         if StreamSlot::load_from(s).is_none() {
             return;
@@ -255,6 +255,6 @@ extern "C" fn on_stream_close(s: &mut quic::Stream) {
             stream.status_code,
             stream.headers_delivered,
         );
-        session.deliver(thread, index, true);
+        session.deliver(thread, index, &[], true);
     });
 }

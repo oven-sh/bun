@@ -81,7 +81,7 @@ fn max_response_head_len() -> usize {
 }
 
 /// One slot per line is enough: picohttpparser never emits more than one header per line.
-fn header_slots(head: &[u8]) -> Box<[MaybeUninit<picohttp::Header>]> {
+fn header_slots(head: &[u8]) -> Box<[MaybeUninit<picohttp::Header<'_>>]> {
     Box::new_uninit_slice(strings::count_char(head, b'\n'))
 }
 
@@ -158,18 +158,13 @@ impl ResponseBody {
                 *remaining == 0
             }
             Self::Chunked(decoder) => {
-                let mut len = data.len();
-                // SAFETY: `data` holds `len` initialized bytes. Decoding is in place and never
-                // grows `len`.
-                let rc = unsafe {
-                    picohttp::phr_decode_chunked(&raw mut *decoder, data.as_mut_ptr(), &raw mut len)
-                };
+                let (status, len) = decoder.decode(data);
                 data.truncate(len);
-                // -2: needs more data. -1: malformed, so stop here and leave the body incomplete.
-                if rc >= 0 {
+                // A malformed body stops here and stays incomplete.
+                if status == picohttp::ChunkedStatus::Done {
                     *self = Self::Length(0);
                 }
-                rc != -2
+                status != picohttp::ChunkedStatus::Partial
             }
             Self::UntilClose => false,
         }

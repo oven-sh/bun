@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 use core::ffi::c_int;
 use core::fmt;
+use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
 use bstr::BStr;
@@ -8,10 +9,6 @@ use bstr::BStr;
 use bun_core::fmt::{escape_control_chars, for_terminal};
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
-
-// `Header::clone` uses `append_raw`: callers keep the builder, or its moved-out buffer, alive.
-pub use bun_core::StringBuilder;
-use bun_core::string::string_builder::Counting;
 
 // FFI surface over vendor/picohttpparser. Hand-written rather than
 // bindgen-generated.
@@ -50,7 +47,7 @@ mod c {
             num_headers: *mut usize,
             last_len: usize,
         ) -> c_int;
-        pub fn phr_decode_chunked(
+        pub(super) fn phr_decode_chunked(
             decoder: *mut phr_chunked_decoder,
             buf: *mut u8,
             len: *mut usize,
@@ -71,58 +68,49 @@ use bun_core::strings;
 /// `#[repr(C)]`, so we spell the fields out and expose `.name()` / `.value()`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Header {
+pub struct Header<'a> {
     name_ptr: *const u8,
     name_len: usize,
     value_ptr: *const u8,
     value_len: usize,
+    _borrow: PhantomData<&'a [u8]>,
 }
 
-impl Default for Header {
-    #[inline]
-    fn default() -> Self {
-        Self::ZERO
-    }
-}
+// SAFETY: both pointers come from `&'a [u8]`.
+unsafe impl Send for Header<'_> {}
 
-impl Header {
-    /// All-zero sentinel — name/value are empty slices. Used by callers to
-    /// initialize fixed-size header arrays before filling them.
-    ///
-    /// Uses `null()` (not `b"".as_ptr()`) so the const evaluates to all-zero
-    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`.
-    /// `name()`/`value()` go through `ffi::slice`, which tolerates `(null, 0)`.
+impl<'a> Header<'a> {
+    /// Empty name and value.
     pub const ZERO: Self = Self {
         name_ptr: core::ptr::null(),
         name_len: 0,
         value_ptr: core::ptr::null(),
         value_len: 0,
+        _borrow: PhantomData,
     };
 
-    /// Construct a `Header` from borrowed name/value slices. The caller is
-    /// responsible for keeping the backing storage alive for as long as the
-    /// `Header` is read.
     #[inline]
-    pub const fn new(name: &[u8], value: &[u8]) -> Self {
+    pub const fn new(name: &'a [u8], value: &'a [u8]) -> Self {
         Self {
             name_ptr: name.as_ptr(),
             name_len: name.len(),
             value_ptr: value.as_ptr(),
             value_len: value.len(),
+            _borrow: PhantomData,
         }
     }
 
     #[inline]
-    pub fn name(&self) -> &[u8] {
+    pub fn name(&self) -> &'a [u8] {
         // picohttpparser sets `name = NULL, name_len = 0` for multiline /
         // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
-        // SAFETY: ptr/len originate from picohttpparser pointing into the
-        // caller-provided buffer, or from StringBuilder::append.
+        // SAFETY: ptr/len originate from `new`, or from picohttpparser pointing into the
+        // buffer given to `Response::parse`; both are borrowed for `'a`.
         unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
-    pub fn value(&self) -> &[u8] {
+    pub fn value(&self) -> &'a [u8] {
         // Defensive: picohttpparser always points `value` into `buf` on
         // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
@@ -133,33 +121,13 @@ impl Header {
         self.name_len == 0
     }
 
-    pub(crate) fn count(&self, builder: &mut StringBuilder<Counting>) {
-        builder.count(self.name());
-        builder.count(self.value());
-    }
-
-    pub(crate) fn clone(&self, builder: &mut StringBuilder) -> Header {
-        // SAFETY: returned slices alias `builder`'s heap buffer; caller of
-        // `clone_headers` keeps the builder (or its moved-out buffer) alive for
-        // the lifetime of the cloned `Header` (see the comment on `StringBuilder`).
-        let name = unsafe { builder.append_raw(self.name()) };
-        // SAFETY: same buffer-lifetime invariant as `name` above.
-        let value = unsafe { builder.append_raw(self.value()) };
-        Header {
-            name_ptr: name.as_ptr(),
-            name_len: name.len(),
-            value_ptr: value.as_ptr(),
-            value_len: value.len(),
-        }
-    }
-
     pub(crate) fn curl(&self) -> HeaderCurlFormatter<'_> {
         HeaderCurlFormatter { header: self }
     }
 }
 
 // The `Display` impls here (except `Headers`: wire format) print peer-supplied text to a terminal.
-impl fmt::Display for Header {
+impl fmt::Display for Header<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
         // codes).
@@ -201,7 +169,7 @@ const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::
 const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
 
 struct HeaderCurlFormatter<'a> {
-    header: &'a Header,
+    header: &'a Header<'a>,
 }
 
 impl fmt::Display for HeaderCurlFormatter<'_> {
@@ -226,7 +194,7 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 
 #[derive(Clone, Copy)]
 pub struct HeaderList<'a> {
-    pub list: &'a [Header],
+    pub list: &'a [Header<'a>],
 }
 
 impl<'a> HeaderList<'a> {
@@ -269,7 +237,7 @@ pub struct Request<'a> {
     pub method: &'a [u8],
     pub path: &'a [u8],
     pub minor_version: usize,
-    pub headers: &'a [Header],
+    pub headers: &'a [Header<'a>],
     pub bytes_read: u32,
 }
 
@@ -424,23 +392,9 @@ pub struct Response<'a> {
 }
 
 impl<'a> Response<'a> {
-    pub fn count(&self, builder: &mut StringBuilder<Counting>) {
-        builder.count(self.status);
-
-        for header in self.headers.list {
-            header.count(builder);
-        }
-    }
-
-    /// The headers point into `builder`'s buffer.
-    pub fn clone_headers(&self, builder: &mut StringBuilder) -> Box<[Header]> {
-        let headers = self.headers.list.iter();
-        headers.map(|header| header.clone(builder)).collect()
-    }
-
-    pub fn parse(
-        buf: &'a [u8],
-        src: &'a mut [MaybeUninit<Header>],
+    pub fn parse<'buf: 'a>(
+        buf: &'buf [u8],
+        src: &'a mut [MaybeUninit<Header<'buf>>],
     ) -> Result<Response<'a>, ParseResponseError> {
         let mut minor_version: c_int = 1;
         let mut status_code: c_int = 0;
@@ -524,10 +478,30 @@ impl fmt::Display for Response<'_> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ChunkedStatus {
+    Done,
+    Partial,
+    Malformed,
+}
+
+impl phr_chunked_decoder {
+    /// Decodes in place, and returns how many decoded bytes `buf` now starts with.
+    pub fn decode(&mut self, buf: &mut [u8]) -> (ChunkedStatus, usize) {
+        let mut len = buf.len();
+        // SAFETY: `buf` is writable for `len` bytes.
+        let status = match unsafe { c::phr_decode_chunked(self, buf.as_mut_ptr(), &raw mut len) } {
+            -1 => ChunkedStatus::Malformed,
+            -2 => ChunkedStatus::Partial,
+            _ => ChunkedStatus::Done,
+        };
+        (status, len)
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from picohttp_sys
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use c::phr_chunked_decoder;
-pub use c::phr_decode_chunked;
 pub use c::phr_decode_chunked_is_in_trailers;

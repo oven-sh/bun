@@ -23,7 +23,7 @@ unsafe extern "C" {
     safe fn us_quic_stream_reset_code(s: &mut Stream) -> u64;
     safe fn us_quic_stream_refused_by_goaway(s: &mut Stream) -> c_int;
     safe fn us_quic_stream_header_count(s: &mut Stream) -> c_uint;
-    safe fn us_quic_stream_header(s: &mut Stream, i: c_uint) -> *const Header;
+    safe fn us_quic_stream_header(s: &Stream, i: c_uint) -> *const Header;
     safe fn us_quic_stream_headers_too_large(s: &mut Stream) -> c_int;
     /// `Context::create_client` asks for these bytes.
     safe fn us_quic_stream_ext(s: &Stream) -> &Cell<u64>;
@@ -69,7 +69,7 @@ impl Stream {
         us_quic_stream_header_count(self)
     }
 
-    pub fn header(&mut self, i: c_uint) -> Option<&Header> {
+    pub fn header(&self, i: c_uint) -> Option<&Header> {
         // SAFETY: self is a valid us_quic_stream_t; returned header borrowed from stream's header block.
         unsafe { us_quic_stream_header(self, i).as_ref() }
     }

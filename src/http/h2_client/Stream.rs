@@ -25,7 +25,8 @@ pub struct Stream {
     /// consistent across multiple HEADERS in one read; the resulting strings
     /// land here until `deliverStream` hands them to handleResponseMetadata.
     pub(crate) decoded_bytes: Vec<u8>,
-    pub(crate) decoded_headers: Vec<picohttp::Header>,
+    /// Of each name and value in `decoded_bytes`.
+    pub(crate) decoded_lengths: Vec<[u32; 2]>,
     /// Final (non-1xx) status code; 0 until the response HEADERS arrive.
     pub(crate) status_code: u32,
 
@@ -51,10 +52,8 @@ pub struct Stream {
     /// Per-stream send window (server's INITIAL_WINDOW_SIZE plus any
     /// WINDOW_UPDATEs minus DATA bytes already framed).
     pub(crate) send_window: i32,
-    /// Unsent suffix of a `.bytes` request body, parked while the send
-    /// window is exhausted. Borrows from `client.state.request_body`.
-    // BACKREF: only `write_body` reads it, and it borrows that client.
-    pub(crate) pending_body: bun_ptr::RawSlice<u8>,
+    /// How much of `client.request_body()` has been framed.
+    pub(crate) body_sent: usize,
 }
 
 /// RFC 9113 §5.1. A `Stream` is created by sending HEADERS, so it starts
@@ -86,7 +85,7 @@ impl Stream {
             header_block: Vec::new(),
             body_buffer: Vec::new(),
             decoded_bytes: Vec::new(),
-            decoded_headers: Vec::new(),
+            decoded_lengths: Vec::new(),
             status_code: 0,
             state: State::Open,
             rst_done: false,
@@ -97,8 +96,19 @@ impl Stream {
             unacked_bytes: 0,
             data_bytes_received: 0,
             send_window,
-            pending_body: bun_ptr::RawSlice::EMPTY,
+            body_sent: 0,
         }
+    }
+
+    pub(crate) fn decoded_headers(&self) -> Vec<picohttp::Header<'_>> {
+        let mut rest = &self.decoded_bytes[..];
+        let headers = self.decoded_lengths.iter().map(|&[name_len, value_len]| {
+            let (name, value);
+            (name, rest) = rest.split_at(name_len as usize);
+            (value, rest) = rest.split_at(value_len as usize);
+            picohttp::Header::new(name, value)
+        });
+        headers.collect()
     }
 
     pub(crate) fn sent_end_stream(&mut self) {

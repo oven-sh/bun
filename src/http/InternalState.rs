@@ -47,10 +47,8 @@ pub struct InternalState<'a> {
     compressed_body_consumed: usize,
     pub(crate) content_length: Option<usize>,
     pub(crate) total_body_received: usize,
-    // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
-    // outlives-holder invariant (the backing `original_request_body` is a
-    // sibling field, so it lives exactly as long as this struct).
-    pub(crate) request_body: bun_ptr::RawSlice<u8>,
+    /// Bytes of the body already sent.
+    pub(crate) request_body_sent: usize,
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,
     /// The serialized request head, held from its first partial write until all of it is out.
@@ -137,7 +135,7 @@ impl Default for InternalState<'_> {
             compressed_body_consumed: 0,
             content_length: None,
             total_body_received: 0,
-            request_body: bun_ptr::RawSlice::EMPTY,
+            request_body_sent: 0,
             original_request_body: HTTPRequestBody::Bytes(b""),
             request_sent_len: 0,
             partial_request_head: Vec::new(),
@@ -154,15 +152,23 @@ impl Default for InternalState<'_> {
 
 impl<'a> InternalState<'a> {
     pub(crate) fn init(body: HTTPRequestBody<'a>) -> InternalState<'a> {
-        let request_body = bun_ptr::RawSlice::new(body.slice());
         InternalState {
             original_request_body: body,
-            request_body,
             compressed_body: MutableString::init_empty(),
             response_message_buffer: MutableString::init_empty(),
             decoded_body: MutableString::init_empty(),
             ..Default::default()
         }
+    }
+
+    /// What is left to send of a body of bytes. `compressed` is `HTTPClient::compressed_request_body`.
+    pub(crate) fn request_body<'s>(&'s self, compressed: &'s [u8]) -> &'s [u8] {
+        let body = if self.flags.body_compressed {
+            compressed
+        } else {
+            self.original_request_body.slice()
+        };
+        &body[self.request_body_sent..]
     }
 
     /// Start sending a new request head: the one inside a proxy tunnel follows its CONNECT.
@@ -186,10 +192,7 @@ impl<'a> InternalState<'a> {
     }
 
     /// Split-borrow `chunked_decoder` and the body buffer (which is either
-    /// `compressed_body` or `decoded_body`). Both targets are disjoint from
-    /// each other and from every other field touched by `phr_decode_chunked`
-    /// callers, so this lets the chunked-decode hot path in `lib.rs` operate
-    /// on safe references instead of repeated raw-ptr place expressions.
+    /// `compressed_body` or `decoded_body`).
     #[inline]
     pub(crate) fn chunked_decoder_and_body_buffer(
         &mut self,

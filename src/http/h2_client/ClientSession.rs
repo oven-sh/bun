@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::Error;
 use bun_collections::{ArrayHashMap, VecExt};
+use bun_core::fmt::ItoaBuf;
 use bun_core::strings;
 
 use super::stream::{State as StreamState, Stream};
@@ -484,13 +485,14 @@ impl ClientSession {
 
         // DATA-frame encoding may yield mid-body — compress into the Vec so the
         // cursor stays valid across event-loop ticks.
-        if let Err(e) = client.compress_body_for_send(thread, false) {
+        if let Err(e) = client.compress_body_for_send(thread) {
             drop(stream);
             return client.fail(thread, e);
         }
         let body_len = client.body_len_for_send();
+        let mut content_length = ItoaBuf::new();
         let mut headers = RequestHeaders::new();
-        let request = client.build_request(body_len, &mut headers);
+        let request = client.build_request(body_len, &mut content_length, &mut headers);
         if let Err(err) = encode::write_request(self, &mut client, &mut stream, &request) {
             // encodeHeader pushes into the HPACK encoder's dynamic table per
             // call, so a mid-encode failure leaves entries the server will
@@ -520,7 +522,7 @@ impl ClientSession {
                 &request,
                 client.url.href,
                 !client.flags.reject_unauthorized,
-                client.state.request_body.slice(),
+                client.request_body(),
                 client.verbose == HTTPVerboseLevel::Curl,
             );
         }
@@ -996,24 +998,22 @@ impl ClientSession {
 
         if stream.headers_ready {
             stream.headers_ready = false;
-            let (result, response) = match client.apply_multiplexed_headers(
-                thread,
-                stream.status_code,
-                &stream.decoded_headers,
-            ) {
-                Ok(r) => r,
-                Err(err) => {
-                    self.writer.rst_stream(stream, wire::ErrorCode::CANCEL);
-                    let _ = self.flush();
-                    return client.fail(thread, err);
-                }
-            };
+            let headers = stream.decoded_headers();
+            let (result, response) =
+                match client.apply_multiplexed_headers(thread, stream.status_code, &headers) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        self.writer.rst_stream(stream, wire::ErrorCode::CANCEL);
+                        let _ = self.flush();
+                        return client.fail(thread, err);
+                    }
+                };
             if client.state.flags.is_redirect_pending {
                 self.writer.rst_stream(stream, wire::ErrorCode::CANCEL);
                 let _ = self.flush();
                 return thread.reconnects.push_back((client, Reconnect::Redirect));
             }
-            // Deep-copy: `response` borrows `stream.decoded_headers`.
+            // Deep-copy: `response` borrows `stream.decoded_bytes`.
             client.clone_metadata(&response);
             // `is_done()`: Content-Length: 0 can arrive as `HasBody` (e.g. an SSE content-type).
             if result == HeaderResult::Finished

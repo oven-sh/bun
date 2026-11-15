@@ -242,7 +242,7 @@ pub(crate) fn run_tasks(
         // SAFETY: the `Box` that `PatchTask::run` pushed; `next` read its link before returning it.
         let mut ptask = unsafe { bun_core::heap::take(ptask_ptr) };
         debug_assert!(manager.pending_task_count() > 0);
-        manager.decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
@@ -375,7 +375,7 @@ pub(crate) fn run_tasks(
         // SAFETY: `next()` returned non-null; node is exclusively owned by this batch.
         let task = unsafe { &mut *task_ptr };
         debug_assert!(manager.pending_task_count() > 0);
-        manager.decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         // We cannot free the network task at the end of this scope.
         // It may continue to be referenced in a future task.
 
@@ -815,7 +815,7 @@ pub(crate) fn run_tasks(
             task: task_ptr,
         };
         let manager = &mut *task_guard.manager;
-        manager.decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
 
         // An error in a manifest is reported by the dependency that needs it, if there is one.
         let holds_log = matches!(task.job, Task::Job::PackageManifest { .. })
@@ -1300,11 +1300,6 @@ impl PackageManager {
         // on.
         let _ = INBOX.pending_tasks.fetch_add(count, Ordering::Relaxed);
     }
-
-    #[inline]
-    pub(crate) fn decrement_pending_tasks(&self) {
-        let _ = INBOX.pending_tasks.fetch_sub(1, Ordering::Release);
-    }
 }
 
 pub fn flush_network_queue(this: &mut PackageManager) {
@@ -1595,11 +1590,10 @@ fn throttle_after_network_error(manager: &PackageManager, has_network_error: &mu
     }
 }
 
-/// `github_url` is only read for a GitHub package. The others have the URL in their resolution.
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
-    github_url: &[u8],
+    github_url: Option<&[u8]>,
     is_required: bool,
     dependency_id: DependencyID,
     package: &Package,
@@ -1618,9 +1612,8 @@ pub fn generate_network_task_for_tarball<'a>(
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
     // tail.
-    let cache_dir = directories::open_cache_directory(this);
     let temp_dir = match directories::try_get_temporary_directory(this) {
-        Ok(temp_dir) => temp_dir.handle.fd(),
+        Ok(temp_dir) => temp_dir,
         Err(why) => {
             this.exit_or_log(&why);
             this.mark_network_task_failed(task_id);
@@ -1630,10 +1623,6 @@ pub fn generate_network_task_for_tarball<'a>(
             return Err(ForTarballError::AlreadyFailed);
         }
     };
-    // Backref address only — stored, not dereffed in this function. The tag is
-    // immediately popped by the next `this` use; that's fine for a stored
-    // back-pointer.
-    let this_backref: *mut PackageManager = this;
 
     // Take the pool slot as a raw pointer so borrowck releases `this` for the
     // streaming-setup tail. Reborrowed `&mut` per-statement below.
@@ -1645,15 +1634,15 @@ pub fn generate_network_task_for_tarball<'a>(
     // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref) };
+    unsafe { NetworkTask::write_init(net_ptr, task_id, bun_ptr::ParentRef::new(this)) };
     // SAFETY: `write_init` populated every field.
     let network_task = unsafe { &mut *net_ptr };
 
     let pkg_name = this.lockfile.str(&package.name);
-    let url = match package.resolution.tag {
-        bun_install::ResolutionTag::Npm => this.lockfile.str(&package.resolution.npm().url),
-        bun_install::ResolutionTag::Github => github_url,
-        _ => this.lockfile.str(package.resolution.remote_tarball()),
+    let url = match (github_url, package.resolution.tag) {
+        (Some(url), _) => url,
+        (None, bun_install::ResolutionTag::Npm) => this.lockfile.str(&package.resolution.npm().url),
+        (None, _) => this.lockfile.str(package.resolution.remote_tarball()),
     };
     let (scope, authorization) = match package.resolution.tag {
         bun_install::ResolutionTag::Npm => (
@@ -1676,7 +1665,6 @@ pub fn generate_network_task_for_tarball<'a>(
         registry: directories::folder_cache_key(this, scope),
         name: stored_string(pkg_name),
         resolution: package.resolution,
-        cache_dir,
         temp_dir,
         dependency_id,
         skip_verify: false,

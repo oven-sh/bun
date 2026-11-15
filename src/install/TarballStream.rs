@@ -21,9 +21,11 @@ use bun_core::strings;
 use bun_core::{self, Output, env_var, fmt as bun_fmt};
 use bun_paths::resolve_path::{self, platform};
 use bun_paths::{self, OSPathChar, OSPathSliceZ};
+#[cfg(windows)]
+use bun_sys::Dir;
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
-use bun_sys::{self, Dir, Fd, File, FileKind, Mode, O};
+use bun_sys::{self, Fd, File, FileKind, Mode, O};
 use bun_threading::{Guarded, thread_pool};
 
 use crate::NetworkTask;
@@ -266,7 +268,7 @@ impl TarballStream {
         // SAFETY: see fn-level # Safety — `this` is live. Field
         // projections via raw ptr — no `&mut TarballStream` is formed.
         unsafe {
-            // `addr_of_mut!` (not `&mut (*this).drain_task`) so the raw
+            // `&raw mut` (not `&mut (*this).drain_task`) so the raw
             // pointer inherits `this`'s full-struct provenance: the
             // thread-pool callback recovers the parent `*mut TarballStream`
             // via `offset_of!`, which is OOB for a
@@ -516,13 +518,11 @@ impl Extraction {
             };
         let mut buf = bun_paths::path_buffer_pool::get();
         let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
-        self.staging = Some(UnfinishedEntry::new(tarball.temp_dir, tmpname.as_bytes()));
+        let tmpdir = &tarball.temp_dir.handle;
+        self.staging = Some(UnfinishedEntry::new(tmpdir.fd(), tmpname.as_bytes()));
 
-        let dest = bun_sys::make_path::make_open_path(
-            Dir::borrow(&tarball.temp_dir),
-            tmpname.as_bytes(),
-            Default::default(),
-        )?;
+        let dest =
+            bun_sys::make_path::make_open_path(tmpdir, tmpname.as_bytes(), Default::default())?;
         self.dest = Some(File::from_fd(dest.into_raw()));
         Ok(())
     }

@@ -1984,9 +1984,10 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
         let workspace_package_ids = workspace_res_list.get(&lockfile.buffers.resolutions);
         debug_assert_eq!(workspace_deps.len(), workspace_package_ids.len());
         for (dep, &package_id) in workspace_deps.iter().zip(workspace_package_ids) {
-            if dep.version.tag() != DependencyVersionTag::Npm
-                && dep.version.tag() != DependencyVersionTag::DistTag
-            {
+            if !matches!(
+                dep.version.tag(),
+                DependencyVersionTag::Npm | DependencyVersionTag::DistTag
+            ) {
                 continue;
             }
             if package_id == invalid_package_id {

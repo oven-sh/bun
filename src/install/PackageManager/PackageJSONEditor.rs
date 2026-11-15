@@ -1199,11 +1199,14 @@ pub(crate) fn edit(
                                 if request.e_string.is_none()
                                     && !request.is_aliased
                                     && (!move_to_target || list == dependency_list)
-                                    && (request.version.tag() == dependency::Tag::Github
-                                        || request.version.tag() == dependency::Tag::Git
-                                        || request.version.tag() == dependency::Tag::Tarball
-                                        || request.version.tag() == dependency::Tag::Folder
-                                        || request.version.tag() == dependency::Tag::Symlink)
+                                    && matches!(
+                                        request.version.tag(),
+                                        dependency::Tag::Github
+                                            | dependency::Tag::Git
+                                            | dependency::Tag::Tarball
+                                            | dependency::Tag::Folder
+                                            | dependency::Tag::Symlink
+                                    )
                                 {
                                     for item in query
                                         .expr

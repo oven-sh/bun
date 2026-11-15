@@ -3066,7 +3066,7 @@ mod _async_tasks {
             let mut buf = bun_paths::path_buffer_pool::get();
             let scan = self.readdir_task;
             scan.perform_work(&self.basename, &mut buf, false);
-            // Not in a method of the scan: another thread can free it once the count is down.
+            // No `&self` here: another thread can free `scan` after this. `AcqRel` publishes every subtask's results to the last.
             if scan.subtask_count.fetch_sub(1, Ordering::AcqRel) == 1 {
                 scan.finish_scan().finish();
             }

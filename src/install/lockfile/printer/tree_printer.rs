@@ -8,7 +8,7 @@ use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta, reachable};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
-    PackageNameHash, Resolution, Subcommand, bin, resolution,
+    PackageNameHash, Resolution, Subcommand, bin, dependency, resolution,
 };
 use bun_sys::Fd;
 
@@ -278,7 +278,7 @@ fn catalog_update_info<'a>(
     dependency: &Dependency,
     string_buf: &[u8],
 ) -> Option<&'a PackageUpdateInfo> {
-    let crate::dependency::Value::Catalog(catalog) = &dependency.version.value else {
+    let dependency::Value::Catalog(catalog) = &dependency.version.value else {
         return None;
     };
     if manager.updating_packages.is_empty() {

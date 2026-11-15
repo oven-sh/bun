@@ -1868,7 +1868,7 @@ impl<'a> PackageInstaller<'a> {
                 if len > 0 {
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
                 }
-                installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
+                installer.cache_dir = self.manager_mut().get_cache_directory().handle.fd();
             }
             resolution::Tag::Folder | resolution::Tag::Workspace => {
                 let is_workspace = resolution.tag == resolution::Tag::Workspace;

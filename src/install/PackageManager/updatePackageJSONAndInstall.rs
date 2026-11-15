@@ -506,7 +506,7 @@ pub fn update_package_json_and_install_and_cli(
     cli: &CommandLineArguments,
 ) -> Result<(), Error> {
     let update_groups = cli.update_groups;
-    let (manager_ptr, original_cwd) = 'brk: {
+    let (manager, original_cwd) = 'brk: {
         match super::init(ctx, cli, subcommand) {
             Ok(v) => v,
             Err(e) => {
@@ -537,7 +537,6 @@ pub fn update_package_json_and_install_and_cli(
         }
     };
     let original_cwd: &[u8] = &original_cwd;
-    let manager: &mut PackageManager = &mut *manager_ptr;
 
     if manager.options.should_print_command_name() {
         bun_core::prettyln!(

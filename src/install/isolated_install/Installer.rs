@@ -541,7 +541,7 @@ impl<'a> Installer<'a> {
 
         self.summary.fail += 1;
 
-        self.manager().decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
     }
 
@@ -669,7 +669,7 @@ impl<'a> Installer<'a> {
 
     /// Called from main thread
     pub(crate) fn on_task_complete(&mut self, entry_id: StoreEntryId, state: CompleteState) {
-        self.manager().decrement_pending_tasks();
+        INBOX.decrement_pending_tasks();
         self.resume_unblocked_tasks(entry_id);
 
         let manager = self.manager();
@@ -1689,7 +1689,8 @@ impl<'a> Installer<'a> {
         #[cfg(target_os = "macos")]
         let mut subpath = subpath;
 
-        let cache = directories::cache_directory_if_open().expect("the package was found in it");
+        let cache = directories::cache_directory_if_open()
+            .expect("the install thread opened the cache directory");
         let (cache_dir, cache_dir_path) = (cache.handle.fd(), cache.path.as_bytes());
 
         let uses_global_store = self.entry_uses_global_store(entry_id);

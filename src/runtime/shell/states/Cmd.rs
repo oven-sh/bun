@@ -17,7 +17,7 @@ use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::subproc::{ShellSubprocess, SpawnArgs, SubprocExec};
 use crate::shell::util::Stdio;
-use crate::shell::yield_::{Action, Yield};
+use crate::shell::yield_::{ReentrantAction, Yield};
 use bun_collections::VecExt;
 use core::ops::ControlFlow;
 
@@ -309,7 +309,7 @@ impl<'a> Cmd<'a> {
             return Builtin::start(interp, this);
         }
 
-        Yield::Action(Action::Spawn(this))
+        Yield::Action(ReentrantAction::Spawn(this))
     }
 
     pub(crate) fn spawn(
@@ -591,12 +591,12 @@ impl<'a> Cmd<'a> {
         Yield::Next(this)
     }
 
-    /// See [`SubprocExec::defuse_array_buffer_unpins`].
+    /// See [`SubprocExec::defuse_array_buf_pins`].
     pub(crate) fn defuse_array_buf_pins(&mut self) {
         match &mut self.exec {
             Exec::None => {}
             Exec::Builtin(b) => b.defuse_array_buf_pins(),
-            Exec::Subproc(sub) => sub.defuse_array_buffer_unpins(),
+            Exec::Subproc(sub) => sub.defuse_array_buf_pins(),
         }
     }
 
@@ -665,7 +665,9 @@ impl<'a> Cmd<'a> {
     /// `Done` once the exit code and every piped stdio are in.
     pub(crate) fn finish_if_done(&mut self, this: NodeId) -> Yield {
         match &self.exec {
-            Exec::Subproc(sub) if sub.all_closed() && !sub.spawning && self.exit_code.is_some() => {
+            Exec::Subproc(sub)
+                if sub.all_closed() && !sub.is_spawning && self.exit_code.is_some() =>
+            {
                 self.state = CmdState::Done;
                 Yield::Next(this)
             }

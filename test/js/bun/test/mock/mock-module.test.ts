@@ -4545,8 +4545,29 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             expect(globalThis.loaded).toEqual(["dual cjs", "dual esm"]);
           });
         `,
+        // The CommonJS file requires a second file, which requires the ES module when it is called.
+        "node_modules/reverse/package.json": JSON.stringify({
+          name: "reverse",
+          exports: { ".": { import: "./esm.mjs", require: "./cjs/index.cjs" } },
+        }),
+        "node_modules/reverse/esm.mjs": `export const which = "real esm";`,
+        "node_modules/reverse/cjs/index.cjs": `const load = require("./load.cjs"); module.exports = { which: "real cjs", viaLoad: () => load.get().which };`,
+        "node_modules/reverse/cjs/load.cjs": `exports.get = () => require("../esm.mjs");`,
+        // A mock of the name that no longer answers require() is a mock of the ES module alone: what the CommonJS file
+        // has loaded gets it under the path of that module. The mock of "dual" is there because the rule for the two
+        // files of a mock runs only while some mock answers require().
+        "3.test.js": `
+          import { expect, mock, test } from "bun:test";
+          test("the name, then the path: what the file of require() requires later gets the mock of the name, whatever else is mocked", () => {
+            const { viaLoad } = require("reverse");
+            mock.module("dual", () => ({ which: "other" }));
+            mock.module("reverse", () => ({ which: "by name" }));
+            mock.module(require.resolve("reverse"), () => ({ which: "by path" }));
+            expect([viaLoad(), require("reverse").which, require("dual").which]).toEqual(["by name", "by path", "other"]);
+          });
+        `,
       },
-      6,
+      7,
     );
   });
 

@@ -510,7 +510,7 @@ pub(crate) use self::windows_impl::WriteFileWindows;
 mod windows_impl {
     use super::*;
     use crate::dispatch::fold;
-    use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
+    use bun_io::{self as aio, IntrusiveUvFs as _, JsKeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
     use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
@@ -533,7 +533,7 @@ mod windows_impl {
         pub(crate) err: Option<sys::Error>,
         pub(crate) total_written: usize,
         pub(crate) event_loop: &'static EventLoop,
-        pub poll_ref: KeepAlive,
+        _keep_alive: JsKeepAlive,
 
         pub(crate) owned_fd: bool,
     }
@@ -585,11 +585,10 @@ mod windows_impl {
                 fd: -1,
                 err: None,
                 total_written: 0,
-                poll_ref: KeepAlive::default(),
+                _keep_alive: JsKeepAlive::active(),
                 owned_fd: false,
             });
             write_file.io_request.loop_ = event_loop.uv_loop();
-            write_file.poll_ref.ref_(event_loop.event_loop_ctx());
 
             let store = write_file.file_blob.store.get().as_ref().unwrap();
             let PathOrFileDescriptor::Fd(fd) = &store.data.as_file().pathlike else {
@@ -824,7 +823,6 @@ mod windows_impl {
             if self.fd > 0 && self.owned_fd {
                 aio::Closer::close(Fd::from_uv(self.fd), self.io_request.loop_);
             }
-            self.poll_ref.disable();
         }
     }
 }

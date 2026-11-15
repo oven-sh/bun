@@ -6,7 +6,7 @@ use bun_core::MutableString;
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::error::S3Error;
 
@@ -29,7 +29,7 @@ pub struct S3HttpDownloadStreamingTask {
     pub(crate) has_schedule_callback: AtomicBool,
     pub(crate) signal_store: bun_http::signals::Store,
     pub(crate) signals: Signals,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
 
     pub(crate) mutex: Mutex,
     pub(crate) reported_response_buffer: MutableString,
@@ -395,12 +395,6 @@ impl S3HttpDownloadStreamingTask {
 
 impl Drop for S3HttpDownloadStreamingTask {
     fn drop(&mut self) {
-        // KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
-        // via the global hook (registered by crate::init) — same pattern as
-        // `S3HttpSimpleTask::drop` in simple_request.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
-        ));
         // reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).
         self.release_portable();

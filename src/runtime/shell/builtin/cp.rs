@@ -5,8 +5,8 @@ use crate::node::PathLike;
 use crate::node::fs::{ShellAsyncCpTask, args};
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
-    EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, ShellTaskCtx, parse_flags, shell_join_path, shell_resolve_operand,
+    FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable, ParseFlagResult,
+    ShellTask, ShellTaskCtx, parse_flags, shell_join_path, shell_resolve_operand,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -167,24 +167,19 @@ impl Cp {
             Action::Schedule { start, target } => {
                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
                 let opts = Self::state_mut(interp, cmd).opts;
-                let evtloop = Builtin::event_loop(interp, cmd);
                 let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
                 let operands = 1 + (target - start);
-                let interp_ptr = interp.as_ctx_ptr();
                 for i in start..target {
                     let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                    let task = ShellCpTask::create(
+                    ShellCpTask::schedule(
+                        interp,
                         cmd,
-                        evtloop,
                         opts,
                         operands,
                         src,
                         tgt.clone(),
                         cwd.clone(),
-                        interp_ptr,
                     );
-                    // SAFETY: freshly heap-allocated.
-                    unsafe { ShellCpTask::schedule(task) };
                 }
                 Yield::suspended()
             }
@@ -412,35 +407,6 @@ fn fail<T>(msg: String) -> Result<T, Stop> {
 }
 
 impl ShellCpTask {
-    fn create(
-        cmd: NodeId,
-        evtloop: EventLoopHandle,
-        opts: Opts,
-        operands: usize,
-        src: Vec<u8>,
-        tgt: Vec<u8>,
-        cwd_path: Vec<u8>,
-        interp: *mut Interpreter,
-    ) -> *mut ShellCpTask {
-        let mut task = Box::new(ShellCpTask {
-            cmd,
-            opts,
-            operands,
-            src,
-            tgt,
-            src_absolute: None,
-            tgt_absolute: None,
-            cwd_path,
-            verbose_output: bun_threading::Guarded::new(Vec::new()),
-            err: None,
-            task: ShellTask::new(evtloop),
-        });
-        // Back-ref so `ShellTask::run_from_main_thread::<ShellCpTask>` (the
-        // dispatch.rs bounce-back) can recover `&Interpreter`.
-        task.task.interp = interp;
-        bun_core::heap::into_raw(task)
-    }
-
     /// Appends `"{src} -> {dest}\n"` to the verbose
     /// buffer (printed to stdout once the cp finishes). Called from work-pool
     /// threads; serialised via `verbose_output`'s mutex.
@@ -488,7 +454,7 @@ impl ShellCpTask {
         if let Err(e) = result {
             self.err = Some(ShellErr::new_sys(&e));
         }
-        // SAFETY: the box `create` made, which `run_from_main_thread` takes back.
+        // SAFETY: the box `schedule` made, which `run_from_main_thread` takes back.
         unsafe { ShellTask::run_from_main_thread(bun_core::heap::into_raw(self)) };
     }
 
@@ -499,11 +465,29 @@ impl ShellCpTask {
     /// owns the bounce-back via `cp_on_finish`, so an unconditional post would
     /// double-enqueue. The embedded [`ShellTask`] is reused for its
     /// `WorkPoolTask` / `concurrent_task` / `keep_alive` storage.
-    ///
-    /// # Safety
-    /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    unsafe fn schedule(this: *mut ShellCpTask) {
+    fn schedule(
+        interp: &Interpreter,
+        cmd: NodeId,
+        opts: Opts,
+        operands: usize,
+        src: Vec<u8>,
+        tgt: Vec<u8>,
+        cwd_path: Vec<u8>,
+    ) {
         use bun_threading::work_pool::WorkPool;
+        let this = bun_core::heap::alloc(ShellCpTask {
+            cmd,
+            opts,
+            operands,
+            src,
+            tgt,
+            src_absolute: None,
+            tgt_absolute: None,
+            cwd_path,
+            verbose_output: bun_threading::Guarded::new(Vec::new()),
+            err: None,
+            task: ShellTask::new(interp),
+        });
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
         // may already be running.
@@ -744,27 +728,13 @@ impl ShellCpTask {
             },
         ))
     }
-
-    /// # Safety
-    /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create));
-    /// ownership is reclaimed here.
-    fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task per the caller's contract.
-        let task = unsafe { bun_core::heap::take(this) };
-        Cp::on_shell_cp_task_done(interp, task.cmd, task);
-    }
 }
 
 impl bun_event_loop::Taskable for ShellCpTask {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
-    /// A pool completion that will not run: drop the keep-alive and the box
-    /// (nothing else frees an unrun one).
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box the builtin scheduled.
-        unsafe {
-            (*this).task.unref_unrun();
-            drop(bun_core::heap::take(this));
-        }
+        unsafe { bun_core::heap::destroy(this) };
     }
     /// See [`ShellTaskCtx`](crate::shell::interpreter::ShellTaskCtx): a step of a shell script always runs.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -787,7 +757,8 @@ impl ShellTaskCtx for ShellCpTask {
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
         // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
         // is the live heap-allocated task posted via `ShellTask::schedule`.
-        Self::run_from_main_thread(this, interp)
+        let task = unsafe { bun_core::heap::take(this) };
+        Cp::on_shell_cp_task_done(interp, task.cmd, task);
     }
 }
 

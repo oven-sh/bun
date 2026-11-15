@@ -54,7 +54,7 @@ use crate::webcore::s3::multipart::State as MultiPartUploadState;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_io::StreamBuffer;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 
@@ -299,7 +299,7 @@ pub(crate) fn list_objects(
         concurrent_task: Default::default(),
         proxy_url,
         body: Box::default(),
-        poll_ref: bun_io::KeepAlive::init(),
+        _keep_alive: JsKeepAlive::active(),
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
         context: Default::default(),
@@ -309,8 +309,6 @@ pub(crate) fn list_objects(
     // never writes again. They are stored in `task.http`, an `AsyncHTTP<'static>` that the HTTP
     // thread reads, and remain valid until `task` is dropped in `on_response`.
     let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
-
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
 
     let url = bun_url::URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
@@ -492,7 +490,7 @@ pub(crate) fn writable_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: KeepAlive::init(),
+        poll_ref: JsKeepAlive::active(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -517,7 +515,6 @@ pub(crate) fn writable_stream(
     });
     task.unfinished.set(Some(task.clone()));
 
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
@@ -837,7 +834,7 @@ pub(crate) fn upload_stream(
         storage_class,
         request_payer,
         credentials,
-        poll_ref: KeepAlive::init(),
+        poll_ref: JsKeepAlive::active(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<MultiPartUpload>(),
         context: cx.context().id(),
         // SAFETY (JSC_BORROW): VirtualMachine::get() returns the live per-thread VM; it
@@ -861,7 +858,6 @@ pub(crate) fn upload_stream(
     });
     task.unfinished.set(Some(task.clone()));
 
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
     // SAFETY: heap-allocated and refcounted; it leaves its context when it finishes or drops.
     unsafe { bun_jsc::AbortHandle::arm_owner(task.as_ptr(), cx.context()) };
 
@@ -1130,7 +1126,7 @@ fn download_stream(
             has_schedule_callback: core::sync::atomic::AtomicBool::new(false),
             signal_store: Default::default(),
             signals: Default::default(),
-            poll_ref: bun_io::KeepAlive::init(),
+            poll_ref: JsKeepAlive::active(),
             mutex: Default::default(),
             request_error: None,
             reported_response_buffer: MutableString::default(),
@@ -1151,8 +1147,6 @@ fn download_stream(
     // never writes again, for the HTTP thread. They remain valid until `task` is dropped in
     // `S3HttpDownloadStreamingTask::on_response`. See `execute_simple_s3_request`.
     let task: &'static mut S3HttpDownloadStreamingTask = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
-
     let url = bun_url::URL::parse(&task.sign_result.url);
     let headers_buf: &'static [u8] = task.headers.buf.as_slice();
     let http_proxy = if !task.proxy_url.is_empty() {

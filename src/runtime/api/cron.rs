@@ -21,7 +21,7 @@ use bun_core::EncodedSlice;
 #[cfg(not(windows))]
 use bun_core::env_var;
 use bun_io::BufferedReader as OutputReader;
-use bun_io::{KeepAlive, LoopRef};
+use bun_io::{JsKeepAlive, KeepAlive, LoopRef};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::{HotReload, VirtualMachine};
 use bun_jsc::{
@@ -70,7 +70,6 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     fn owner(&self) -> &Cell<Option<RefPtr<Self>>>;
     fn promise(&self) -> &JsCell<jsc::JSPromiseStrong>;
     fn global(&self) -> GlobalRef;
-    fn poll(&self) -> &KeepAlive;
     fn remaining_fds(&self) -> &Cell<i8>;
     fn err_msg(&self) -> &JsCell<Option<Vec<u8>>>;
     fn has_called_process_exit(&self) -> &Cell<bool>;
@@ -126,7 +125,6 @@ trait CronJobBase: Sized + bun_ptr::AnyRefCounted {
     fn finish(this: ThisPtr<Self>) {
         let _entered = VirtualMachine::get().enter_event_loop_scope();
         let _owner = this.owner().take().expect("cron job finished twice");
-        this.poll().unref(bun_io::js_vm_ctx());
         let global = this.global();
         if let Some(msg) = this.err_msg().replace(None) {
             let err = EncodedSlice::utf8(&msg).to_error_instance(&global);
@@ -220,7 +218,7 @@ struct CronRegisterJob {
     promise: JsCell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
-    poll: KeepAlive,
+    _keep_alive: JsKeepAlive,
 
     bun_exe: &'static ZStr,
     abs_path: ZString,
@@ -297,9 +295,6 @@ impl CronJobBase for CronRegisterJob {
     }
     fn global(&self) -> GlobalRef {
         self.global
-    }
-    fn poll(&self) -> &KeepAlive {
-        &self.poll
     }
     fn remaining_fds(&self) -> &Cell<i8> {
         &self.remaining_fds
@@ -785,7 +780,7 @@ pub(crate) fn register_os_job(
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: KeepAlive::default(),
+        _keep_alive: JsKeepAlive::active(),
         bun_exe,
         abs_path,
         schedule: ZString::from_bytes(normalized_schedule),
@@ -804,7 +799,6 @@ pub(crate) fn register_os_job(
         tmp_path: JsCell::new(None),
         event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
-    job.poll.ref_(bun_io::js_vm_ctx());
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));
@@ -930,7 +924,7 @@ struct CronRemoveJob {
     promise: JsCell<jsc::JSPromiseStrong>,
     // LIFETIMES.tsv: JSC_BORROW → GlobalRef
     global: GlobalRef,
-    poll: KeepAlive,
+    _keep_alive: JsKeepAlive,
     title: ZString,
 
     state: Cell<RemoveState>,
@@ -995,9 +989,6 @@ impl CronJobBase for CronRemoveJob {
     }
     fn global(&self) -> GlobalRef {
         self.global
-    }
-    fn poll(&self) -> &KeepAlive {
-        &self.poll
     }
     fn remaining_fds(&self) -> &Cell<i8> {
         &self.remaining_fds
@@ -1225,7 +1216,7 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         owner: Cell::new(None),
         promise: JsCell::new(jsc::JSPromiseStrong::init(global)),
         global: GlobalRef::from(global),
-        poll: KeepAlive::default(),
+        _keep_alive: JsKeepAlive::active(),
         title: ZString::from_bytes(title),
         state: Cell::new(RemoveState::ReadingCrontab),
         process: JsCell::new(None),
@@ -1239,7 +1230,6 @@ pub(crate) fn remove(cx: &mut JsScope<'_>, title: &[u8]) -> JsResult<JSValue> {
         tmp_path: JsCell::new(None),
         event_loop_handle: EventLoopHandle::init(VirtualMachine::get().event_loop_ptr()),
     });
-    job.poll.ref_(bun_io::js_vm_ctx());
     let promise_value = job.promise.get().value();
     let this = job.this_ptr();
     this.owner.set(Some(job));

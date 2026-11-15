@@ -180,7 +180,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
             .ok()
             .and_then(|data_url| {
                 let blob = Blob::init(data_url.decode_data().ok()?, global_this);
-                let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+                let mime_type = MimeType::MimeType::init(data_url.mime_type);
                 blob.content_type
                     .set(crate::webcore::blob::BlobContentType::from(mime_type));
                 Some(blob)

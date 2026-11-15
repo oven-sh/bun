@@ -1013,10 +1013,10 @@ fn finalize_bundle_inner(
             let rb = dev.route_bundle_ptr(req.route_bundle_index);
             rb.server_state = route_bundle::State::PossibleBundlingFailures;
 
-            let Some((resp, ctx)) = req.take_response_for_error_page() else {
+            let handler = req.take_handler();
+            let Some(resp) = handler.detach_response_for_error_page() else {
                 continue;
             };
-            scopeguard::defer! { ctx.deref() };
 
             dev.send_serialized_failures(
                 resp,
@@ -1156,8 +1156,8 @@ fn finalize_bundle_inner(
         {
             let failures = trace_route_failures(dev, req.route_bundle_index)?.failures;
             if !failures.is_empty() {
-                if let Some((resp, ctx)) = req.take_response_for_error_page() {
-                    scopeguard::defer! { ctx.deref() };
+                let handler = req.take_handler();
+                if let Some(resp) = handler.detach_response_for_error_page() {
                     dev.send_serialized_failures(resp, &failures, None)?;
                 }
                 continue;
@@ -1169,23 +1169,11 @@ fn finalize_bundle_inner(
 
         match req.take_handler() {
             Handler::Aborted => continue,
-            Handler::ServerHandler(saved) => {
-                let response = saved.response;
-                let ctx = saved.ctx;
-                // Note: `js_request: StrongOptional` releases on Drop, but
-                // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
-                // `ctx.ref_()` from `defer_request` here so the request
-                // context's `on_request_complete` (and thus the server's
-                // `pending_requests--`) eventually fires. Without this the
-                // bake-harness graceful-exit deinit check ("Failed to trigger
-                // deinit") never sees DevServer Drop.
-                scopeguard::defer! { ctx.deref() };
-                dev.on_framework_request_with_bundle(
-                    req.route_bundle_index,
-                    SavedRequestUnion::Saved(saved),
-                    response,
-                )?
-            }
+            Handler::ServerHandler(saved) => dev.on_framework_request_with_bundle(
+                req.route_bundle_index,
+                SavedRequestUnion::Saved(&saved),
+                saved.response,
+            )?,
             Handler::BundledHtmlPage(ram) => {
                 dev.on_html_request_with_bundle(req.route_bundle_index, ram.response, ram.method)
             }

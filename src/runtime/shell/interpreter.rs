@@ -284,7 +284,7 @@ pub(crate) struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub args: JsCell<Box<ShellArgs>>,
 
-    pub(crate) keep_alive: bun_io::KeepAlive,
+    pub(crate) keep_alive: bun_io::JsKeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
@@ -546,7 +546,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
-            keep_alive: bun_io::KeepAlive::default(),
+            keep_alive: bun_io::JsKeepAlive::default(),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
@@ -992,7 +992,7 @@ impl Interpreter {
             StateKind::Pipeline => Pipeline::deinit(self, id),
             StateKind::Cmd => Cmd::deinit(self, id),
             StateKind::Expansion => Expansion::deinit(self, id),
-            StateKind::Async => return, // Async deinit is purposefully empty; freed later by async_cmd_done → actually_deinit.
+            StateKind::Async => return, // Freed by `async_cmd_done`.
             StateKind::Script
             | StateKind::Assign
             | StateKind::IfClause
@@ -1018,7 +1018,6 @@ impl Interpreter {
     }
 
     pub(crate) fn async_cmd_done(&self, async_id: NodeId) {
-        Async::actually_deinit(self, async_id);
         self.free_node(async_id);
         self.async_commands_executing
             .set(self.async_commands_executing.get() - 1);
@@ -1527,9 +1526,6 @@ impl Drop for Interpreter {
                 }
             }
         }
-
-        let event_loop_ctx = self.event_loop.as_event_loop_ctx();
-        self.keep_alive.unref(event_loop_ctx);
     }
 }
 
@@ -2458,7 +2454,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 // ShellTask
 // ────────────────────────────────────────────────────────────────────────────
 
-/// Thread-pool task wrapper used by mv/rm/ls/mkdir/touch/cp builtins.
+/// Thread-pool task wrapper used by [`PoolTask`] and the mv/rm/cp builtins.
 ///
 /// A trait the per-builtin task struct implements. The container-of chain
 /// (WorkPoolTask → ShellTask → Ctx) is built from `core::mem::offset_of!` in
@@ -2521,8 +2517,7 @@ pub(crate) struct ShellTask {
     pub(crate) keep_alive: bun_io::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
-    /// field. Set at `ShellTask::new`; cleared (raw-ptr) only when the task
-    /// is freed.
+    /// field.
     pub(crate) interp: *mut Interpreter,
     /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
     /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
@@ -2530,18 +2525,18 @@ pub(crate) struct ShellTask {
     pub(crate) concurrent_task: bun_event_loop::EventLoopTask,
 }
 
-impl ShellTask {
-    /// A queued completion that will never run (`Taskable::release_unrun`):
-    /// drop the keep-alive `schedule` took, as `run_from_main_thread` would have.
-    pub(crate) fn unref_unrun(&self) {
+impl Drop for ShellTask {
+    fn drop(&mut self) {
         self.keep_alive.unref(self.event_loop.as_event_loop_ctx());
     }
+}
 
+impl ShellTask {
     /// A subtask created on a pool thread (`ls -R` discovering a directory):
     /// it reports to the same loop as `parent`, whose poster was captured on
     /// the JS thread — nothing here derives one from the VM.
     #[track_caller]
-    pub(crate) fn new_child(parent: &ShellTask) -> Self {
+    fn new_child(parent: &ShellTask) -> Self {
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
@@ -2555,12 +2550,13 @@ impl ShellTask {
             },
             event_loop: parent.event_loop,
             keep_alive: Default::default(),
-            interp: core::ptr::null_mut(),
+            interp: parent.interp,
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(parent.event_loop),
         }
     }
 
-    pub(crate) fn new(event_loop: EventLoopHandle) -> Self {
+    pub(crate) fn new(interp: &Interpreter) -> Self {
+        let event_loop = interp.event_loop;
         ShellTask {
             task: WorkPoolTask {
                 node: Default::default(),
@@ -2571,7 +2567,7 @@ impl ShellTask {
             poster: None,
             event_loop,
             keep_alive: Default::default(),
-            interp: core::ptr::null_mut(),
+            interp: interp.as_ctx_ptr(),
             concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
         }
     }
@@ -2599,7 +2595,7 @@ impl ShellTask {
     /// exists (e.g. `ls`).
     ///
     /// SAFETY: same as [`Self::schedule`].
-    pub(crate) unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
+    unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `WorkPool::schedule` returns the worker
@@ -2628,8 +2624,7 @@ impl ShellTask {
     /// Called from the worker
     /// thread once `C::run_from_thread_pool` returns; enqueues the embedded
     /// concurrent task so the main thread re-enters via
-    /// [`run_from_main_thread`](Self::run_from_main_thread) (which performs the
-    /// `keep_alive.unref` paired with [`schedule`](Self::schedule)).
+    /// [`run_from_main_thread`](Self::run_from_main_thread).
     ///
     /// # Safety
     /// `ctx` must be the same live heap allocation passed to
@@ -2666,12 +2661,6 @@ impl ShellTask {
         }
     }
 
-    /// Unrefs the
-    /// event-loop keep-alive paired with [`schedule`], then dispatches to
-    /// `C::run_from_main_thread`. The high-tier `runtime::dispatch::run_task`
-    /// `shell_dispatch!` arm calls this so the ref/unref pairing is kept at
-    /// the seam.
-    ///
     /// # Safety
     /// `ctx` must be a live heap allocation that embeds a `ShellTask` at
     /// `C::TASK_OFFSET` whose `interp` back-ref is valid; called on the main
@@ -2681,12 +2670,70 @@ impl ShellTask {
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         unsafe {
             let this = ctx.byte_add(C::TASK_OFFSET).cast::<ShellTask>();
-            (*this)
-                .keep_alive
-                .unref((*this).event_loop.as_event_loop_ctx());
             let interp = &*(*this).interp;
             C::run_from_main_thread(ctx, interp);
         }
+    }
+}
+
+/// What a [`PoolTask`] takes to the pool and back.
+pub(crate) trait ShellWork: Send {
+    const TAG: bun_event_loop::TaskTag;
+    fn run_from_thread_pool(&mut self, task: &ShellTask);
+    fn run_from_main_thread(&mut self, interp: &Interpreter) -> Yield;
+}
+
+/// Owned by the pool, then by the queue of the interpreter's loop.
+pub(crate) struct PoolTask<W> {
+    task: ShellTask,
+    work: W,
+}
+
+impl<W: ShellWork> PoolTask<W> {
+    pub(crate) fn schedule(interp: &Interpreter, work: W) {
+        let task = ShellTask::new(interp);
+        // SAFETY: freed once it is back.
+        unsafe { ShellTask::schedule(bun_core::heap::alloc(Self { task, work })) };
+    }
+
+    pub(crate) fn schedule_no_ref(interp: &Interpreter, work: W) {
+        Self::schedule_task_no_ref(ShellTask::new(interp), work);
+    }
+
+    #[track_caller]
+    pub(crate) fn schedule_child(parent: &ShellTask, work: W) {
+        Self::schedule_task_no_ref(ShellTask::new_child(parent), work);
+    }
+
+    fn schedule_task_no_ref(task: ShellTask, work: W) {
+        // SAFETY: freed once it is back.
+        unsafe { ShellTask::schedule_no_ref(bun_core::heap::alloc(Self { task, work })) };
+    }
+}
+
+impl<W: ShellWork> bun_event_loop::Taskable for PoolTask<W> {
+    const TAG: bun_event_loop::TaskTag = W::TAG;
+    unsafe fn release_unrun(this: *mut Self) {
+        // SAFETY: fn contract.
+        unsafe { bun_core::heap::destroy(this) };
+    }
+    /// See [`ShellTaskCtx`]: a step of a shell script always runs.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
+}
+
+impl<W: ShellWork> ShellTaskCtx for PoolTask<W> {
+    const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
+    fn run_from_thread_pool(this: &mut Self) {
+        this.work.run_from_thread_pool(&this.task);
+    }
+    fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+        // SAFETY: the box that was scheduled, which the queue has let go of.
+        let mut this = unsafe { bun_core::heap::take(this) };
+        let next = this.work.run_from_main_thread(interp);
+        drop(this);
+        next.run(interp);
     }
 }
 

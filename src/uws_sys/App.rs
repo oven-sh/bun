@@ -469,22 +469,16 @@ pub struct ListenSocket<const SSL: bool> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-pub struct OwnedListenSocket<const SSL: bool>(NonNull<ListenSocket<SSL>>);
+pub struct OwnedListenSocket<const SSL: bool>(crate::OwnedListenSocket);
 
 impl<const SSL: bool> OwnedListenSocket<SSL> {
     /// SAFETY: `socket` is from an app's listen callback, and this drops before the loop frees it.
     pub unsafe fn from_raw(socket: *mut UwsListenSocket) -> Option<Self> {
-        NonNull::new(socket.cast()).map(Self)
+        NonNull::new(socket).map(|socket| Self(crate::OwnedListenSocket(socket)))
     }
 
     pub fn as_ptr(&self) -> *mut ListenSocket<SSL> {
-        self.0.as_ptr()
-    }
-}
-
-impl<const SSL: bool> Drop for OwnedListenSocket<SSL> {
-    fn drop(&mut self) {
-        bun_opaque::opaque_deref_mut(self.as_ptr().cast::<UwsListenSocket>()).close()
+        self.0.as_ptr().cast()
     }
 }
 

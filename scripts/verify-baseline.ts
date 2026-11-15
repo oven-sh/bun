@@ -272,7 +272,7 @@ if (values["simd-cpus"] && !values["skip-emulation"]) {
     await runTest(`bun_simd on ${cpu}: features`, [...runner, "probe"], { cpu });
   }
   for (const cpu of oneForEachTarget.split(" ")) {
-    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "avx512_icl", "1", "200"], { cpu });
+    await runTest(`bun_simd on ${cpu}: kernels`, [...runner, "check", "1", "200"], { cpu });
   }
 }
 

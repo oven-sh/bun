@@ -1,4 +1,5 @@
 //! `bun test --run-simd-tests`, in debug and canary builds, for `test/internal/simd.test.ts`.
+//! `BUN_SIMD_TARGET` picks the target.
 #![cfg_attr(target_arch = "aarch64", feature(aarch64_unstable_target_feature))]
 
 mod bench;
@@ -8,7 +9,7 @@ mod pairs;
 mod probe;
 mod room;
 
-use bun_simd::{SharedU8, Target};
+use bun_simd::SharedU8;
 use bun_simd_kernels::Columns;
 use core::mem::MaybeUninit;
 use core::sync::atomic::AtomicU8;
@@ -95,11 +96,10 @@ fn columns<'a, P: From<Uninit<'a, [i32; 2]>>, I: From<Uninit<'a, i32>>>(
 fn run(arguments: &[&[u8]]) -> Option<bool> {
     let number = |text: &[u8]| str::from_utf8(text).ok()?.parse::<u64>().ok();
     let read = |path| bun_sys::File::read_from(bun_core::Fd::cwd(), path).ok();
-    let [command, target, rest @ ..] = arguments else {
-        return (arguments == [b"probe"]).then(probe::run);
-    };
-    let is_named = |it: &&Target| it.name().as_bytes() == *target;
-    bun_simd::limit_to(*Target::ALL.iter().find(is_named)?);
+    let (command, rest) = arguments.split_first()?;
+    if *command == b"probe" {
+        return Some(probe::run());
+    }
     write_line(format_args!(
         "chosen: {} {}",
         simd::chosen_by_default(),

@@ -101,6 +101,10 @@ try {
 // the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
 // first n of them through. FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and
 // what no mode fails, which is nearer to what running out of watches does.
+// FAIL_EPOLL_CTL=first-pidfd-add fails only the first.
+//
+// FAIL_EPOLL_CTL=output-reader-add fails the readable EPOLL_CTL_ADD of every
+// socket and pipe: what a child's stdout and stderr are read from.
 //
 // FAIL_SIGKILL=1 refuses every kill(pid, SIGKILL) with EPERM, which is what the
 // kernel answers for a child that runs as another user by now (sudo, su).
@@ -123,6 +127,7 @@ const SHIM_C = /* c */ `
 #include <sys/ioctl.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -150,6 +155,12 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
     if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
     const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
     return pidfd_adds++ >= (skip ? atoi(skip) : 0);
+  }
+  if (strcmp(mode, "first-pidfd-add") == 0) return op == EPOLL_CTL_ADD && is_pidfd(fd) && pidfd_adds++ == 0;
+  if (strcmp(mode, "output-reader-add") == 0) {
+    struct stat info;
+    if (op != EPOLL_CTL_ADD || !(event->events & EPOLLIN) || fstat(fd, &info) != 0) return 0;
+    return S_ISSOCK(info.st_mode) || S_ISFIFO(info.st_mode);
   }
   // TIOCGPTN succeeds on a pty master only.
   unsigned int pty_number;
@@ -591,22 +602,30 @@ describe.skipIf(!isLinux || !cc)("a shell command is ended, reaped and finished"
 
 // The same goes for what the CLI runs: it reported the script as failed and exited, and the script ran on.
 describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with the event loop is ended", () => {
-  test.concurrent.each(["run --parallel forever", "run --filter=* forever", "install"])("bun %s", async args => {
+  test.concurrent.each([
+    ["run --parallel forever", "pidfd-add"],
+    ["run --filter=* forever", "pidfd-add"],
+    ["install", "pidfd-add"],
+    // The first one aborts the run before the second one is started.
+    ["run --parallel forever again", "first-pidfd-add"],
+  ])("bun %s", async (args, mode) => {
     using project = tempDir("unwatchable-script", { "watched": "" });
     // By then its parent is somebody else, so it is told by its command line.
     const watched = join(String(project), "watched");
     const forever = `exec tail -f ${watched}`;
     await Bun.write(
       join(String(project), "package.json"),
-      JSON.stringify({ name: "unwatchable-script", scripts: { forever, postinstall: forever } }),
+      JSON.stringify({ name: "unwatchable-script", scripts: { forever, again: forever, postinstall: forever } }),
     );
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args.split(" ")],
       cwd: String(project),
-      env: { ...bunEnv, FAIL_EPOLL_CTL: "pidfd-add", LD_PRELOAD: join(String(dir), "shim.so") },
+      env: { ...bunEnv, FAIL_EPOLL_CTL: mode, LD_PRELOAD: join(String(dir), "shim.so") },
       stdin: "ignore",
       stdout: "ignore",
       stderr: "ignore",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
     });
     let exitCode: number | undefined;
     let left: string[] = [];
@@ -622,7 +641,52 @@ describe.skipIf(!isLinux || !cc)("a script whose pidfd fails to register with th
       });
       for (const pid of left) process.kill(Number(pid), "SIGKILL");
     }
-    expect({ left: left.length, failed: exitCode !== 0 }).toEqual({ left: 0, failed: true });
+    expect({ left: left.length, failed: exitCode !== 0, signal: proc.signalCode }).toEqual({
+      left: 0,
+      failed: true,
+      signal: null,
+    });
+  });
+});
+
+describe.skipIf(!isLinux || !cc)("what bun run prints when a registration with the event loop fails", () => {
+  async function run(args: string, env: Record<string, string>) {
+    const scripts = { say: "echo out; echo err >&2", wait: "exec sleep 30" };
+    using project = tempDir("unwatchable-output", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["a", "b"], scripts }),
+      "a/package.json": JSON.stringify({ name: "a", scripts }),
+      "b/package.json": JSON.stringify({ name: "b", scripts }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", ...args.split(" ")],
+      cwd: String(project),
+      env: { ...bunEnv, ...env, LD_PRELOAD: join(String(dir), "shim.so") },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent.each([
+    ["--parallel say", "say | out\n", "say | err\nsay | Done\n"],
+    ["--sequential say", "say | out\n", "say | err\nsay | Done\n"],
+    ["--filter=a say", "a say: out\na say: err\na say: Exited with code 0\n", ""],
+  ])("the output of a script whose pipes are not watched: %s", async (args, stdout, stderr) => {
+    const result = await run(args, { FAIL_EPOLL_CTL: "output-reader-add" });
+    expect({ ...result, stderr: result.stderr.replace(/ in [\d.]+m?s$/m, "") }).toEqual({
+      stdout,
+      stderr,
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("--filter draws no frame before it has started what it can", async () => {
+    const { stdout, exitCode } = await run("--filter=* wait", { FAIL_EPOLL_CTL: "pidfd-add", FORCE_COLOR: "1" });
+    expect(stdout).toContain("Error");
+    expect(stdout).not.toContain("Waiting for");
+    expect(exitCode).toBe(1);
   });
 });
 

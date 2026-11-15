@@ -92,9 +92,7 @@ impl Timings {
         let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
             Ok(p) => p,
             Err(_) => {
-                let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
-                    Output::error_writer(),
-                ));
+                let _ = log.print(Output::error_writer());
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: --timings file <b>{}<r> is not valid JSON",
                     bstr::BStr::new(path)

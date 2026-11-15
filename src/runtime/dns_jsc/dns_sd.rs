@@ -761,7 +761,7 @@ fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static
 }
 
 /// Gives `pending` back if mDNSResponder cannot answer it.
-pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
+pub(crate) fn start(query: &GetAddrInfo, pending: Query) -> Result<(), Query> {
     bun_core::Environment::only_mac();
 
     // mDNSResponder answers names; numeric hosts are a parse and AI_V4MAPPED/AI_ALL need getaddrinfo's semantics.
@@ -787,6 +787,5 @@ pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) -> Res
         return Err(unsafe { bun_core::heap::take(request) }.query);
     }
 
-    this.request_sent(this.vm());
     Ok(())
 }

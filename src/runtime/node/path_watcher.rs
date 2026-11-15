@@ -43,9 +43,9 @@ use bun_paths as path;
 use bun_paths::platform;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_paths::resolve_path::join_z_buf_spill;
+use bun_sys::{self as sys, E, Tag};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-use bun_sys::FdExt;
-use bun_sys::{self as sys, E, Fd, Tag};
+use bun_sys::{Fd, FdExt};
 use bun_threading::{Guarded, Mutex};
 use bun_wyhash::hash;
 
@@ -423,14 +423,13 @@ pub(crate) fn watch(
     // O_RDONLY, which is what F_GETPATH needs anyway).
     let mut resolve_buf = path::path_buffer_pool::get();
     let mut is_file = false;
-    let probe_fd: Fd = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0)
-    {
-        Ok(f) => f,
+    let probe = match sys::open(path, sys::O::PATH | sys::O::DIRECTORY | sys::O::CLOEXEC, 0) {
+        Ok(fd) => sys::CloseOnDrop::new(fd),
         Err(e) => {
             if e.get_errno() == E::ENOTDIR {
                 is_file = true;
                 match sys::open(path, sys::O::PATH | sys::O::CLOEXEC, 0) {
-                    Ok(f) => f,
+                    Ok(fd) => sys::CloseOnDrop::new(fd),
                     Err(e2) => return Err(e2.without_path()),
                 }
             } else {
@@ -438,8 +437,7 @@ pub(crate) fn watch(
             }
         }
     };
-    let _close_probe = sys::CloseOnDrop::new(probe_fd);
-    let resolved: &ZStr = match sys::get_fd_path(probe_fd, &mut resolve_buf) {
+    let resolved: &ZStr = match sys::get_fd_path(probe.fd(), &mut resolve_buf) {
         Err(_) => path, // fall back to the caller's path; best effort
         Ok(r) => {
             let len = r.len();
@@ -612,11 +610,11 @@ impl WalkScratch {
             ZStr::from_slice_with_nul(&self.abs),
             sys::O::RDONLY | sys::O::DIRECTORY | sys::O::CLOEXEC,
             0,
-        ) else {
+        )
+        .map(sys::Dir::from_fd) else {
             return;
         };
-        let _close = sys::CloseOnDrop::new(dir);
-        let mut it = sys::dir_iterator::iterate(dir);
+        let mut it = sys::dir_iterator::iterate(dir.fd());
         let mut found_dir = false;
         while let Ok(Some(entry)) = it.next() {
             let is_file = entry.kind != sys::EntryKind::Directory;

@@ -6,9 +6,12 @@ use bun_paths::strings;
 #[cfg(windows)]
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int, c_uint};
+#[cfg(not(windows))]
+use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::webcore;
+use bun_core::vec::{BorrowedBuf, BorrowedCursor, append_with};
 use bun_core::{String as BunString, Utf8WithString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_io::JsKeepAlive;
@@ -185,29 +188,20 @@ use bun_sys_jsc::ErrorJsc as _;
 #[cfg(unix)]
 const LARGE_FILE_BYTES: usize = 64 << 20;
 
-/// Fills `buf` from `position` on several threads. Returns how many bytes from the start of `buf` were read.
+/// Appends up to `len` bytes from `position`, read on several threads. Returns how many.
 #[cfg(unix)]
-fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
+fn read_large_file(fd: FD, buf: &mut Vec<u8>, len: usize, position: u64) -> Maybe<usize> {
     const MIN_BYTES_PER_THREAD: usize = 16 << 20;
     let threads = usize::from(bun_core::get_thread_count())
-        .min(buf.len() / MIN_BYTES_PER_THREAD)
+        .min(len / MIN_BYTES_PER_THREAD)
         .clamp(1, 8);
-    let len = buf.len();
     let part_len = len.div_ceil(threads).next_multiple_of(1 << 16);
-    let read_part = |part: &mut [u8], position: u64| -> Maybe<usize> {
-        let mut count = 0;
-        while count < part.len() {
-            match sys::pread(fd, &mut part[count..], (position + count as u64) as i64)? {
-                0 => break,
-                amount => count += amount,
-            }
-        }
-        Ok(count)
-    };
     let mut counts: Vec<Maybe<usize>> = (0..len.div_ceil(part_len)).map(|_| Ok(0)).collect();
-    let parts = buf.chunks_mut(part_len).zip(&mut counts).enumerate();
+    let parts = buf.spare_capacity_mut()[..len].chunks_mut(part_len);
+    let parts = parts.zip(&mut counts).enumerate();
     bun_core::for_each_in_parallel(parts, |(index, (part, count))| {
-        *count = read_part(part, position + (index * part_len) as u64);
+        let position = position + (index * part_len) as u64;
+        *count = sys::File::borrow(&fd).pread_all_buf(BorrowedBuf::from(part).unfilled(), position);
     });
     let mut total = 0;
     for (index, count) in counts.into_iter().enumerate() {
@@ -217,6 +211,8 @@ fn read_large_file(fd: FD, buf: &mut [u8], position: u64) -> Maybe<usize> {
             break;
         }
     }
+    // SAFETY: `total` ends with the first part that is not full.
+    unsafe { buf.set_len(buf.len() + total) };
     Ok(total)
 }
 
@@ -490,11 +486,11 @@ fn note_copied(path: &[u8]) {
 }
 
 /// As `read()`, of what may be open of an embedded file.
-pub(crate) fn read_descriptor(fd: FD, buffer: &mut [u8]) -> Maybe<usize> {
+pub(crate) fn read_descriptor(fd: FD, buffer: BorrowedCursor<'_, u8>) -> Maybe<usize> {
     #[cfg(not(windows))]
-    return bun_standalone_graph::read_descriptor(fd, || Syscall::read(fd, buffer));
+    return bun_standalone_graph::read_descriptor(fd, || Syscall::read_buf(fd, buffer));
     #[cfg(windows)]
-    Syscall::read(fd, buffer)
+    Syscall::read_buf(fd, buffer)
 }
 
 /// In front of each call of `node:fs` and behind each that a thread of the pool has made.
@@ -2949,12 +2945,8 @@ mod _async_tasks {
 
     /// `readdir(.., { recursive: true })`: a scan fanned out over pool subtasks
     /// that share this state (it is the job's off-thread part, so its address
-    /// is stable while any subtask runs). Subtasks touch only owned data here —
-    /// never the JS-backed `args` — since they run outside `run`.
+    /// is stable while any subtask runs).
     pub(crate) struct AsyncReaddirRecursiveTask {
-        /// Async-parsed arguments; their JS-backed path is not read off-thread
-        /// (`root_path` is the owned copy).
-        pub(crate) _args: ThreadIsolated<args::Readdir<'static>>,
         pub(crate) tag: ret::ReaddirTag,
         pub(crate) encoding: Encoding,
         /// The completion token, finished by whichever subtask ends the scan.
@@ -2994,8 +2986,8 @@ mod _async_tasks {
         pub(crate) pending_err_mutex: bun_threading::Mutex,
     }
     // SAFETY: shared by the pool subtasks through atomics / the lock-free
-    // queue / the mutex; `args` is Send by `ThreadIsolated`'s contract; results
-    // are owned buffers and WTF strings built off-thread for hand-off.
+    // queue / the mutex; results are owned buffers and WTF strings built
+    // off-thread for hand-off.
     unsafe impl Send for AsyncReaddirRecursiveTask {}
 
     impl Drop for AsyncReaddirRecursiveTask {
@@ -3141,7 +3133,7 @@ mod _async_tasks {
         /// `callback`: as for [`AsyncFSTask::create`].
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
-            args: ThreadIsolated<args::Readdir<'static>>,
+            args: &args::Readdir<'_>,
             vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
@@ -3152,8 +3144,6 @@ mod _async_tasks {
                 ret::ReaddirTag::WithFileTypes => ResultListEntryValue::WithFileTypes(Vec::new()),
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
-            // Subtasks read the root path after `run` has returned its borrow of the
-            // arguments, so it must be an owned copy. NUL-terminated.
             let root_path = {
                 let src = args.path.slice();
                 let mut owned = Vec::with_capacity(src.len() + 1);
@@ -3168,7 +3158,6 @@ mod _async_tasks {
             bun_jsc::Job::<Self>::schedule(
                 cx,
                 AsyncReaddirRecursiveTask {
-                    _args: args,
                     tag,
                     encoding,
                     done: None,
@@ -5452,30 +5441,16 @@ impl NodeFS {
         }
 
         const STACK_BUF_LEN: usize = 64 * 1024;
-        let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
-        let mut buf_to_free: Vec<u8> = Vec::new();
-        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
-        let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
-
-        'maybe_allocate_large_temp_buf: {
-            if stat_size > STACK_BUF_LEN * 16 {
-                // Don't allocate more than 8 MB at a time
-                let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
-                // The slab must stay uninitialised: `Vec::resize` here was a
-                // debug-build hot path (byte-by-byte `extend_with`). Use
-                // `expand_to_capacity` instead — the slab is write-only,
-                // `Syscall::read` fills it from the kernel.
-                use bun_collections::vec_ext::VecExt as _;
-                if buf_to_free.try_reserve_exact(clamped_size).is_err() {
-                    break 'maybe_allocate_large_temp_buf;
-                }
-                // SAFETY: `u8` has no validity invariant; the buffer is handed
-                // straight to the kernel which only stores into it.
-                unsafe { buf_to_free.expand_to_capacity() };
-                buf = &mut buf_to_free[..];
-            }
-        }
-        // buf_to_free dropped at scope exit
+        let mut stack_buf = [const { MaybeUninit::uninit() }; STACK_BUF_LEN];
+        let mut heap_buf: Vec<u8> = Vec::new();
+        // Don't allocate more than 8 MB at a time
+        let buf = if stat_size > STACK_BUF_LEN * 16
+            && (heap_buf.try_reserve_exact(stat_size.min(8 * 1024 * 1024))).is_ok()
+        {
+            heap_buf.spare_capacity_mut()
+        } else {
+            &mut stack_buf[..]
+        };
 
         let mut remain = stat_size as u64;
         // VERIFY-FIX(round1): the
@@ -5485,7 +5460,8 @@ impl NodeFS {
         let mut broke = false;
         'toplevel: while remain > 0 {
             let read_len = (buf.len() as u64).min(remain) as usize;
-            let amt = match Syscall::read(src_fd, &mut buf[..read_len]) {
+            let mut read = BorrowedBuf::from(&mut buf[..read_len]);
+            let amt = match Syscall::read_buf(src_fd, read.unfilled()) {
                 Ok(result) => result,
                 Err(err) => {
                     return Err(if !src.is_empty() {
@@ -5503,7 +5479,7 @@ impl NodeFS {
             *wrote += amt as u64;
             remain = remain.saturating_sub(amt as u64);
 
-            let mut slice = &buf[..amt];
+            let mut slice = read.filled();
             while !slice.is_empty() {
                 let written = match Syscall::write(dest_fd, slice) {
                     Ok(result) => result,
@@ -5524,7 +5500,8 @@ impl NodeFS {
         }
         if !broke {
             'outer: loop {
-                let amt = match Syscall::read(src_fd, buf) {
+                let mut read = BorrowedBuf::from(&mut *buf);
+                let amt = match Syscall::read_buf(src_fd, read.unfilled()) {
                     Ok(result) => result,
                     Err(err) => {
                         return Err(if !src.is_empty() {
@@ -5541,7 +5518,7 @@ impl NodeFS {
                 }
                 *wrote += amt as u64;
 
-                let mut slice = &buf[..amt];
+                let mut slice = read.filled();
                 while !slice.is_empty() {
                     let written = match Syscall::write(dest_fd, slice) {
                         Ok(result) => result,
@@ -6756,7 +6733,7 @@ impl NodeFS {
         buf = &mut buf[off..];
         let l = (args.length as usize).min(buf.len());
         buf = &mut buf[..l];
-        match read_descriptor(args.fd, buf) {
+        match read_descriptor(args.fd, BorrowedBuf::from(buf).unfilled()) {
             Err(err) => Err(err),
             Ok(amt) => Ok(ret::Read {
                 bytes_read: amt as u64,
@@ -7219,7 +7196,7 @@ impl NodeFS {
                 ..Default::default()
             },
         );
-        let fd = match open_res {
+        let opened = match open_res {
             Err(err) if !is_root && Self::readdir_skips_subdir(err.get_errno()) => return Ok(()),
             Err(err) => {
                 return Err(Self::readdir_error(
@@ -7230,15 +7207,18 @@ impl NodeFS {
                     &err,
                 ));
             }
-            Ok(fd_) => fd_,
+            Ok(fd) => sys::File::from_fd(fd),
         };
 
-        if is_root {
-            async_task.root_dir = Some(sys::File::from_fd(fd));
-        }
-        let _subdir = (!is_root).then(|| sys::File::from_fd(fd));
+        let root_fd;
+        let dir: &sys::File = if is_root {
+            root_fd = async_task.root_dir.insert(opened).fd();
+            sys::File::borrow(&root_fd)
+        } else {
+            &opened
+        };
 
-        let mut iterator = DirIterator::iterate(fd);
+        let mut iterator = DirIterator::iterate(dir.fd());
         let mut dirent_path_prev = BunString::EMPTY;
         let mut spill: Vec<u8> = Vec::new();
         let mut dirent_spill: Vec<u8> = Vec::new();
@@ -7297,7 +7277,7 @@ impl NodeFS {
                     sys::FileKind::Unknown => {
                         if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                         // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
-                        match sys::lstatat(fd, current.name.as_zstr()) {
+                        match sys::lstatat(dir, current.name.as_zstr()) {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
@@ -7689,8 +7669,8 @@ impl NodeFS {
         flavor: Flavor,
         string_type: ReadFileStringType,
     ) -> Maybe<ret::ReadFileWithOptions> {
-        let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
-        let fd_maybe_windows: FD = match &args.path {
+        let (lent, opened);
+        let file: &sys::File = match &args.path {
             PathOrFileDescriptor::Path(p) => {
                 let path = p.slice_z(&mut self.sync_error_buf);
                 let read_in = |graph: &bun_standalone_graph::Graph| {
@@ -7718,25 +7698,23 @@ impl NodeFS {
                         }
                         return Err(err.with_path(p.slice()));
                     }
-                    Ok(fd) => fd,
+                    Ok(fd) => {
+                        opened = fd
+                            .make_lib_uv_owned_for_syscall(
+                                sys::Tag::open,
+                                sys::ErrorCase::CloseOnFail,
+                            )
+                            .map(sys::File::from_fd)?;
+                        &opened
+                    }
                 }
             }
-            PathOrFileDescriptor::Fd(fd) => *fd,
-        };
-        let fd: FD = match fd_maybe_windows.make_lib_uv_owned() {
-            Ok(fd) => fd,
-            Err(_) => {
-                if path_is_path {
-                    fd_maybe_windows.close();
-                }
-                return Err(sys::Error {
-                    errno: E::EMFILE as _,
-                    syscall: sys::Tag::open,
-                    ..Default::default()
-                });
+            PathOrFileDescriptor::Fd(fd) => {
+                lent =
+                    fd.make_lib_uv_owned_for_syscall(sys::Tag::open, sys::ErrorCase::LeakFdOnFail)?;
+                sys::File::borrow(&lent)
             }
         };
-        let _opened = path_is_path.then(|| sys::File::from_fd(fd));
 
         if args.aborted() {
             return Err(abort_err());
@@ -7744,11 +7722,10 @@ impl NodeFS {
 
         // Only used in DOMFormData
         if args.offset > 0 {
-            let _ = sys::set_file_offset(fd, args.offset as u64);
+            let _ = file.seek_to(args.offset as u64);
         }
 
         let mut did_succeed = false;
-        let mut total: usize = 0;
 
         // --- Optimization: attempt to read up to 256 KB before calling stat()
         // If we manage to read the entire file, we don't need to call stat() at all.
@@ -7756,41 +7733,32 @@ impl NodeFS {
         //
         // The sync case claims the per-VM pipe-read scratch when it is free;
         // otherwise (async, no VM, or a read further up the stack holds it)
-        // a heap buffer stands in. It stays uninitialised: it is write-only,
-        // `Syscall::read` hands it straight to the kernel.
-        use bun_collections::vec_ext::VecExt as _;
+        // a heap buffer stands in.
         let mut scratch = match self.vm {
             Some(vm) if flavor == Flavor::Sync => vm.rare_data().pipe_read_scratch.claim(),
             _ => None,
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
-        if scratch.is_none() && heap_buffer.try_reserve_exact(256 * 1024).is_ok() {
-            // SAFETY: `u8` has no validity invariant; the buffer is handed
-            // straight to the kernel which only stores into it. Only the
-            // `[..total]` prefix actually filled by `read` is ever observed.
-            unsafe { heap_buffer.expand_to_capacity() };
-        }
-        let pre_stat_buf: &mut [u8] = match scratch.as_mut() {
-            Some(scratch) => &mut scratch[..],
-            None => &mut heap_buffer[..],
-        };
-        let pre_stat_len = pre_stat_buf
-            .len()
-            .min(args.max_size.map_or(usize::MAX, |v| v as usize));
-        let pre_stat_buf = &mut pre_stat_buf[..pre_stat_len];
-        let temporary_read_buffer_before_stat_call: &[u8] = {
-            let mut available: &mut [u8] = &mut pre_stat_buf[..];
-            while !available.is_empty() {
-                let amt = read_descriptor(fd, available)?;
-                if amt == 0 {
-                    did_succeed = true;
-                    break;
-                }
-                total += amt;
-                available = &mut available[amt..];
+        let pre_stat_max = args.max_size.map_or(usize::MAX, |v| v as usize);
+        let mut pre_stat_buf = match scratch.as_deref_mut() {
+            Some(scratch) => {
+                let len = scratch.len().min(pre_stat_max);
+                BorrowedBuf::from(&mut scratch[..len])
             }
-            &pre_stat_buf[..total]
+            None => {
+                let _ = heap_buffer.try_reserve_exact(256 * 1024);
+                let spare = heap_buffer.spare_capacity_mut();
+                let len = spare.len().min(pre_stat_max);
+                BorrowedBuf::from(&mut spare[..len])
+            }
         };
+        while pre_stat_buf.len() < pre_stat_buf.capacity() {
+            if read_descriptor(file.fd(), pre_stat_buf.unfilled())? == 0 {
+                did_succeed = true;
+                break;
+            }
+        }
+        let temporary_read_buffer_before_stat_call = pre_stat_buf.filled();
 
         if did_succeed {
             return match args.encoding {
@@ -7848,7 +7816,7 @@ impl NodeFS {
                         let contents = ret::ReadFileWithOptions::null_terminated(
                             temporary_read_buffer_before_stat_call,
                         );
-                        bun_core::secure_zero(&mut pre_stat_buf[..total]);
+                        bun_core::secure_zero(pre_stat_buf.filled_mut());
                         Ok(contents)
                     }
                 }
@@ -7860,7 +7828,7 @@ impl NodeFS {
             return Err(abort_err());
         }
 
-        let stat_ = Syscall::fstat(fd)?;
+        let stat_ = Syscall::fstat(file.fd())?;
 
         // For certain files, the size might be 0 but the file might still have contents.
         // https://github.com/oven-sh/bun/issues/1220
@@ -7869,7 +7837,7 @@ impl NodeFS {
 
         let size: u64 = (stat_.st_size as i64)
             .min(max_size as i64) // Only used in DOMFormData
-            .max(total as i64)
+            .max(temporary_read_buffer_before_stat_call.len() as i64)
             .max(0) as u64;
 
         if args.limit_size_for_javascript &&
@@ -7900,40 +7868,27 @@ impl NodeFS {
         if !temporary_read_buffer_before_stat_call.is_empty() {
             buf.extend_from_slice(temporary_read_buffer_before_stat_call);
         }
-        // Read into the uninitialised tail. `Vec::resize(cap, 0)` is *not* equivalent in
-        // debug builds: it goes through `extend_with`'s byte-by-byte loop (no memset
-        // specialisation), which dominated `readFileSync` of large files. Use
-        // `VecExt::expand_to_capacity` (the tail is write-only — `Syscall::read`
-        // hands it straight to the kernel, which only stores into it).
-        // SAFETY: `u8` has no validity invariant; the buffer is handed straight
-        // to the kernel which only stores into it.
-        unsafe { buf.expand_to_capacity() };
 
         #[cfg(unix)]
-        if path_is_path && sys::S::ISREG(stat_.st_mode as u32) {
-            let end = (stat_.st_size as u64).min(max_size).min(buf.len() as u64) as usize;
-            if end.saturating_sub(total) >= LARGE_FILE_BYTES {
-                let position = args.offset as u64 + total as u64;
-                let count = read_large_file(fd, &mut buf[total..end], position)?;
-                total += count;
-                sys::set_file_offset(fd, position + count as u64)?;
+        if matches!(args.path, PathOrFileDescriptor::Path(_)) && sys::S::ISREG(stat_.st_mode as u32)
+        {
+            let end = (stat_.st_size as u64).min(max_size) as usize;
+            let len = end.min(buf.capacity()).saturating_sub(buf.len());
+            if len >= LARGE_FILE_BYTES {
+                let position = args.offset as u64 + buf.len() as u64;
+                let count = read_large_file(file.fd(), &mut buf, len, position)?;
+                file.seek_to(position + count as u64)?;
             }
         }
 
-        // Two-phase read: first up to `size`, then keep going until EOF.
-        // `phase == 0` is the size-bounded loop, `phase == 1` is the unbounded tail.
-        let mut phase: u8 = if (total as u64) < size { 0 } else { 1 };
         loop {
             if args.aborted() {
                 return Err(abort_err());
             }
-            // When `total == min(buf.capacity, max_size)`
-            // the next read receives an empty slice → returns 0 → `did_succeed = true; break`.
-            // Do NOT pre-grow here; growth happens only in the `total > size && amt != 0 &&
-            // !has_max_size` arm below.
-            let upper = (buf.capacity() as u64).min(max_size) as usize;
-            let amt = read_descriptor(fd, &mut buf[total..upper])?;
-            total += amt;
+            // With no room left this reads nothing, which ends the loop.
+            let max = (max_size as usize).saturating_sub(buf.len());
+            let amt = append_with(&mut buf, max, |spare| read_descriptor(file.fd(), spare))?;
+            let total = buf.len();
 
             if args.limit_size_for_javascript {
                 if let Some(err) = Self::should_throw_out_of_memory_early_for_javascript(
@@ -7947,35 +7902,21 @@ impl NodeFS {
 
             // There are cases where stat()'s size is wrong or out of date
             if (total as u64) > size && amt != 0 && !has_max_size {
-                // Reset len to the bytes actually read. `expand_to_capacity` left
-                // `len == capacity`, so without this `try_reserve(8192)`
-                // would reallocate every read and RawVec doubling grows
-                // the buffer exponentially (a >256 KB FIFO / proc file
-                // balloons to multi-GB RSS).
-                buf.truncate(total);
                 if buf.try_reserve(8192).is_err() {
                     return Err(with_path_like(
                         sys::Error::from_code(E::ENOMEM, sys::Tag::read),
                         &args.path,
                     ));
                 }
-                // SAFETY: `u8` has no validity invariant; kernel only stores.
-                unsafe { buf.expand_to_capacity() };
                 continue;
             }
 
             if amt == 0 {
-                did_succeed = true;
                 break;
-            }
-
-            if phase == 0 && (total as u64) >= size {
-                // fall through into the unbounded tail loop
-                phase = 1;
             }
         }
 
-        if total == 0 {
+        if buf.is_empty() {
             drop(buf);
             return match args.encoding {
                 Encoding::Buffer => Ok(ret::ReadFileWithOptions::Buffer(Buffer::EMPTY)),
@@ -7988,9 +7929,7 @@ impl NodeFS {
                 }
             };
         }
-        let _ = did_succeed; // `buf` is dropped on every error-return above.
 
-        buf.truncate(total);
         match args.encoding {
             Encoding::Buffer => Ok(ret::ReadFileWithOptions::Buffer(Buffer::from_bytes(
                 buf.into_boxed_slice(),
@@ -8001,7 +7940,7 @@ impl NodeFS {
                     Ok(ret::ReadFileWithOptions::String(buf.into_boxed_slice()))
                 } else {
                     let contents = ret::ReadFileWithOptions::null_terminated(&buf);
-                    bun_core::secure_zero(pre_stat_buf);
+                    bun_core::secure_zero(pre_stat_buf.filled_mut());
                     bun_core::secure_zero(&mut buf);
                     Ok(contents)
                 }
@@ -8013,7 +7952,8 @@ impl NodeFS {
         pathbuf: &mut PathBuffer,
         args: &args::WriteFile,
     ) -> Maybe<ret::WriteFile> {
-        let fd = match &args.file {
+        let opened;
+        let file: &sys::File = match &args.file {
             PathOrFileDescriptor::Path(p) => {
                 if let Some(error) = refuse_open_for_write(p.slice(), args.flag.as_int()) {
                     return Err(error);
@@ -8029,15 +7969,14 @@ impl NodeFS {
                 match sys::openat(args.dirfd, path, flags, args.mode) {
                     Err(err) => return Err(err.with_path(p.slice())),
                     Ok(fd) => {
+                        opened = sys::File::from_fd(fd);
                         note_opened_for_write(p.slice(), flags & sys::O::APPEND == 0);
-                        fd
+                        &opened
                     }
                 }
             }
-            PathOrFileDescriptor::Fd(fd) => *fd,
+            PathOrFileDescriptor::Fd(fd) => sys::File::borrow(fd),
         };
-        let _opened =
-            matches!(args.file, PathOrFileDescriptor::Path(_)).then(|| sys::File::from_fd(fd));
 
         if args.aborted() {
             return Err(abort_err());
@@ -8059,7 +7998,7 @@ impl NodeFS {
                     (args.flag.as_int() & sys::O::APPEND) != 0
                 } else {
                     // `flag` is the option, not how the caller opened this fd.
-                    match sys::get_fcntl_flags(fd) {
+                    match sys::get_fcntl_flags(file.fd()) {
                         Ok(open_flags) => (open_flags as c_int & sys::O::APPEND) != 0,
                         Err(_) => break 'preallocate,
                     }
@@ -8070,13 +8009,13 @@ impl NodeFS {
                 let offset: usize = if is_path {
                     0
                 } else {
-                    match Syscall::lseek(fd, 0, libc::SEEK_CUR) {
+                    match Syscall::lseek(file.fd(), 0, libc::SEEK_CUR) {
                         Err(_) => break 'preallocate,
                         Ok(pos) => usize::try_from(pos).expect("int cast"),
                     }
                 };
                 let _ = sys::preallocate_file(
-                    fd.native(),
+                    file.fd().native(),
                     i64::try_from(offset).expect("int cast"),
                     i64::try_from(buf.len()).expect("int cast"),
                 );
@@ -8088,7 +8027,7 @@ impl NodeFS {
         // the bytes that did land.
         let mut write_err: Option<sys::Error> = None;
         while !buf.is_empty() {
-            match sys::write(fd, buf) {
+            match sys::write(file.fd(), buf) {
                 Err(err) => {
                     write_err = Some(err);
                     break;
@@ -8118,11 +8057,11 @@ impl NodeFS {
             // Not all files are seekable (and thus, not all files can be truncated).
             #[cfg(windows)]
             {
-                let _ = unsafe { windows::SetEndOfFile(fd.native()) };
+                let _ = unsafe { windows::SetEndOfFile(file.fd().native()) };
             }
             #[cfg(not(windows))]
             {
-                let _ = Syscall::ftruncate(fd, (written as u64 & ((1u64 << 63) - 1)) as i64);
+                let _ = Syscall::ftruncate(file.fd(), (written as u64 & ((1u64 << 63) - 1)) as i64);
             }
         }
 
@@ -8133,11 +8072,11 @@ impl NodeFS {
         if args.flush {
             #[cfg(windows)]
             {
-                let _ = unsafe { windows::kernel32::FlushFileBuffers(fd.native()) };
+                let _ = unsafe { windows::kernel32::FlushFileBuffers(file.fd().native()) };
             }
             #[cfg(not(windows))]
             {
-                let _ = Syscall::fsync(fd);
+                let _ = Syscall::fsync(file.fd());
             }
         }
 

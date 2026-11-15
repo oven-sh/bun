@@ -11,8 +11,6 @@ pub use crate::w;
 pub mod escape_reg_exp;
 #[path = "HashedString.rs"]
 pub mod hashed_string;
-#[path = "SmolStr.rs"]
-pub mod smol_str;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "StringJoiner.rs"]
@@ -1687,7 +1685,6 @@ pub use crate::StringPointer;
 
 pub use hashed_string::HashedString;
 pub use mutable_string::MutableString;
-pub use smol_str::SmolStr;
 pub use string_builder::StringBuilder;
 
 // ──────────────────────────────────────────────────────────────────────────

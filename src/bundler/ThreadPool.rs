@@ -7,7 +7,6 @@
 //! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
-use core::mem::ManuallyDrop;
 use core::ops::{Deref, DerefMut};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -15,7 +14,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, output as Output};
-use bun_ptr::AliasableBox;
+use bun_ptr::{AliasableBox, BackRef};
 use bun_sys::Fd;
 use bun_threading::{WaitGroup, io_thread_pool, thread_pool as ThreadPoolLib};
 
@@ -50,9 +49,7 @@ pub struct ThreadPool {
     /// last step schedules a parse on `worker_pool`, and that parse can finish
     /// before the callback returns.
     io_tasks_in_flight: WaitGroup,
-    pub worker_pool: *mut ThreadPoolLib::ThreadPool,
-    /// `worker_pool`, unless the caller lent one.
-    _owned_worker_pool: Option<AliasableBox<ThreadPoolLib::ThreadPool>>,
+    worker_pool: WorkerPool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
     // the field so `get_worker` can take `&self` — `Worker::get` is entered
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
@@ -65,15 +62,20 @@ pub struct ThreadPool {
     pub(crate) generation: u64,
 }
 
+enum WorkerPool {
+    Owned(AliasableBox<ThreadPoolLib::ThreadPool>),
+    Lent(BackRef<ThreadPoolLib::ThreadPool>),
+}
+
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
 // field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
-// the raw-pointer fields are set during init, before the pool is shared with
+// the pointer fields are set during init, before the pool is shared with
 // worker threads, and only read thereafter.
 unsafe impl Send for ThreadPool {}
 // SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
 // `get_worker(&self)`; the only field mutated under `&self` is
 // `workers_assignments` (through its `bun_threading::Guarded` lock), and the
-// raw-pointer target (`ThreadPoolLib::ThreadPool`) is `Sync`.
+// pointers' target (`ThreadPoolLib::ThreadPool`) is `Sync`.
 unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
@@ -82,31 +84,22 @@ impl ThreadPool {
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
-    pub(crate) fn init(
-        // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
-        // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
-        // worker threads). Materializing `&mut` from that provenance is UB
-        // under Stacked Borrows even if the body never writes through it; the
-        // pool is stored as `*mut` in the struct anyway, so keep it raw
-        // end-to-end.
-        worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
-    ) -> ThreadPool {
-        let (worker_pool, owned) = match worker_pool {
-            Some(lent) => (lent.as_ptr(), None),
+    pub(crate) fn init(worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>) -> ThreadPool {
+        let worker_pool = match worker_pool {
+            Some(lent) => WorkerPool::Lent(BackRef::from(lent)),
             None => {
                 let cpu_count = bun_core::get_thread_count();
-                let pool =
-                    AliasableBox::new(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
+                bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
+                WorkerPool::Owned(AliasableBox::new(ThreadPoolLib::ThreadPool::init(
+                    ThreadPoolLib::Config {
                         max_threads: u32::from(cpu_count),
                         ..Default::default()
-                    }));
-                bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
-                (pool.as_ptr(), Some(pool))
+                    },
+                )))
             }
         };
         ThreadPool {
             worker_pool,
-            _owned_worker_pool: owned,
             io_pool: Self::uses_io_pool().then(io_thread_pool::get),
             io_tasks_in_flight: WaitGroup::init(),
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
@@ -129,14 +122,12 @@ impl ThreadPool {
         unsafe { WaitGroup::finish_raw(&raw const (*this).io_tasks_in_flight) };
     }
 
-    /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
-    /// pointer is set in `init` and never null while `self`
-    /// is observable; encapsulating the deref keeps callers out of `unsafe`.
     #[inline]
     pub(crate) fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
-        // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until it drops; all driver methods take `&self`.
-        unsafe { &*self.worker_pool }
+        match &self.worker_pool {
+            WorkerPool::Owned(pool) => pool,
+            WorkerPool::Lent(pool) => pool,
+        }
     }
 
     /// Sends every thread that may hold a [`Worker`] through its idle queue.
@@ -327,7 +318,7 @@ impl ThreadPool {
                 thread: NonNull::new(ThreadPoolLib::Thread::current())
                     .map(bun_ptr::ParentRef::from),
                 data: None,
-                ast_memory_store: ManuallyDrop::new(bun_ast::ASTMemoryAllocator::default()),
+                ast_memory_store: bun_ast::ASTMemoryAllocator::default(),
                 has_created: false,
                 deinit_task: ThreadPoolLib::Task {
                     node: ThreadPoolLib::Node::default(),
@@ -405,7 +396,7 @@ pub struct Worker {
     /// post-`has_created`.
     pub(crate) data: Option<WorkerData>,
 
-    pub(crate) ast_memory_store: ManuallyDrop<bun_ast::ASTMemoryAllocator>,
+    pub(crate) ast_memory_store: bun_ast::ASTMemoryAllocator,
     pub(crate) has_created: bool,
     /// `ThreadPoolLib.Thread.current` — `None` when called off a pool thread.
     /// `ParentRef` (not raw `*mut`) because the pool-owned `Thread` strictly
@@ -508,10 +499,7 @@ impl Worker {
     /// # Safety
     /// `this` must have come from `heap::alloc` in [`ThreadPool::get_worker`].
     pub(crate) unsafe fn deinit(this: *mut Worker) {
-        // SAFETY: caller contract — reclaim the Box; dropping it at scope end
-        // runs the remaining field drop glue (`Option` fields are `None`,
-        // `ast_memory_store` is `ManuallyDrop`), defending against future
-        // `Drop`-carrying fields.
+        // SAFETY: caller contract.
         let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)
@@ -521,15 +509,8 @@ impl Worker {
             worker.temporary_arena = None;
             worker.stmt_list = None;
         }
-        // SAFETY: `ast_memory_store` is always a valid `ManuallyDrop` —
-        // `get_worker` unconditionally writes `ASTMemoryAllocator::default()`,
-        // and `create()` may overwrite it
-        // via `*ast_memory_store = ...`. Dropped exactly once here, *outside*
-        // the `has_created` guard so the default-constructed arena is freed
-        // even when `create()` never ran.
-        // Ordered before `heap = None` in case `ASTMemoryAllocator::new`
-        // ever threads `arena_ref` (= `&self.heap`) through.
-        unsafe { ManuallyDrop::drop(&mut worker.ast_memory_store) };
+        // Before `heap`, which it borrows.
+        drop(worker.ast_memory_store);
         if worker.has_created {
             worker.heap = None;
         }
@@ -575,7 +556,7 @@ impl Worker {
         // One mi_heap for the AST stores, `AstAlloc` spills and the parser's
         // arena: allocations alternate between them per node, and mimalloc
         // caches only the last heap a thread touched.
-        *self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
+        self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
         self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());

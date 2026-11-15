@@ -62,6 +62,7 @@ Key types and functions:
 - `File::open(path: &ZStr, flags, mode)` / `File::openat(dir: Fd, path: &[u8], flags, mode)` / `File::make_open(...)` (creates parent dirs) / `File::create(dir, path, truncate)`
 - `file.read(buf)` / `read_all(buf)` / `read_to_end()` / `read_to_end_small()` / `write_all(buf)`
 - `bun_sys::open`, `read`, `write`, `pread`, `pwrite`, `stat`, `fstat`, `lstat`, `mkdir`, `unlink`, `rename`, `symlink`, `chmod` — free fns over `Fd`
+- `bun_sys::read_buf(fd, cursor)` / `file.read_all_buf(cursor)` / `pread_all_buf(cursor, offset)` — fill uninitialized memory through a `BorrowedCursor`; `bun_core::vec::append_with` lends one over the spare capacity of a `Vec`
 - Open flags: `bun_sys::O::RDONLY`, `O::WRONLY | O::CREAT | O::TRUNC`, etc.
 
 `bun_sys::Error` carries `errno`, `syscall: Tag`, `path: Box<[u8]>`. Convert

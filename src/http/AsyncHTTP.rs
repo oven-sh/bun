@@ -270,34 +270,31 @@ impl<'a> AsyncHTTP<'a> {
 // Preconnect
 // ──────────────────────────────────────────────────────────────────────────
 
-struct Preconnect {
-    _href: Vec<u8>,
+type Href = std::borrow::Cow<'static, [u8]>;
+
+fn on_preconnect_result(href: *mut Href, finished: Finished, _: HTTPClientResult<'_>) {
+    drop(finished);
+    // SAFETY: the box that `preconnect()` leaked; this is its only result.
+    unsafe { bun_core::heap::destroy(href) };
 }
 
-impl Preconnect {
-    fn on_result(this: *mut Preconnect, finished: Finished, _: HTTPClientResult<'_>) {
-        drop(finished);
-        // SAFETY: the box that `preconnect()` leaked; this is its only result.
-        unsafe { bun_core::heap::destroy(this) };
-    }
-}
-
-/// `href` is what `url` points into, unless that is static.
-pub fn preconnect(url: URL<'static>, href: Vec<u8>) {
+pub fn preconnect(href: Href) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         return;
     }
 
     crate::http_thread::init(&Default::default());
 
-    let this = bun_core::heap::into_raw(Box::new(Preconnect { _href: href }));
+    let href = bun_core::heap::into_raw(Box::new(href));
+    // SAFETY: freed after the request that borrows it.
+    let url = URL::parse(unsafe { &*href });
     let mut async_http = AsyncHTTP::init(
         Method::GET,
         url,
         headers::EntryList::default(),
         b"",
         b"",
-        HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
+        HTTPClientResultCallback::new(href, on_preconnect_result),
         FetchRedirect::Manual,
         Options::default(),
     );

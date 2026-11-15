@@ -93,7 +93,7 @@ impl Yes {
         // which matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell_mut();
+            let shell = &mut *cmd_node.shell;
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };

@@ -4,18 +4,17 @@ use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::interpreter::{Interpreter, Node, NodeId, ShellExecEnv, ShellExecEnvKind, log};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::script::Script;
 use crate::shell::yield_::Yield;
 
 pub(crate) struct Subshell {
     pub(crate) base: Base,
-    /// What `base.shell` points to. `None` in a pipeline, which owns its members' envs.
-    _env: Option<AliasableBox<ShellExecEnv>>,
     pub node: bun_ptr::BackRef<ast::Subshell>,
     pub(crate) io: IO,
     pub(crate) state: SubshellState,
     pub(crate) exit_code: ExitCode,
+    shell: AliasableBox<ShellExecEnv>,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -27,27 +26,16 @@ pub enum SubshellState {
 }
 
 impl Subshell {
-    /// `shell` is the env that the parent Pipeline duped for this member.
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: AliasableBox<ShellExecEnv>,
         node: &ast::Subshell,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
-        Self::alloc(interp, Base::new(parent, shell), None, node, io)
-    }
-
-    fn alloc(
-        interp: &Interpreter,
-        base: Base,
-        env: Option<AliasableBox<ShellExecEnv>>,
-        node: &ast::Subshell,
-        io: IO,
-    ) -> NodeId {
         interp.alloc_node(Node::Subshell(Subshell {
-            base,
-            _env: env,
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: SubshellState::Idle,
@@ -75,8 +63,7 @@ impl Subshell {
         // `ShellExecEnv` owned by the parent state for the duration of this
         // call (see `# Safety` above).
         let env = unsafe { (*parent_shell).dupe_for_subshell(&io, ShellExecEnvKind::Subshell) }?;
-        let base = Base::new(parent, env.as_ptr());
-        Ok(Self::alloc(interp, base, Some(env), node, io))
+        Ok(Self::init(interp, env, node, parent, io))
     }
 
     pub(crate) fn start(_interp: &Interpreter, this: NodeId) -> Yield {
@@ -92,18 +79,18 @@ impl Subshell {
         match interp.as_subshell(this).state {
             SubshellState::Idle => {
                 // Spawn Script directly with
-                // `this.base.shell`. The env was already duped at construction
+                // `this.shell`. The env was already duped at construction
                 // (by `init_dupe_shell_state` or by Pipeline) — do NOT dupe
                 // again here.
                 let (shell, io, node) = {
                     let me = interp.as_subshell(this);
-                    (me.base.shell, me.io.clone(), me.node)
+                    (me.shell.as_ptr(), me.io.clone(), me.node)
                 };
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
                 // `node.redirect` is always `None` here: the parser rejects
                 // subshells with redirections ("Subshells with redirections
                 // are currently not supported", shell_parser/parse.rs).
-                let script = Script::init(interp, shell, &node.script, this, io);
+                let script = Script::init(interp, Env::inherited(shell), &node.script, this, io);
                 Script::start(interp, script)
             }
             SubshellState::Exec => Yield::suspended(),

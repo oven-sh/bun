@@ -4,11 +4,9 @@ use crate::node::fs::stat_embedded_shell_operand;
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::dispatch_tasks::ShellCondExprStatTask;
-use crate::shell::interpreter::{
-    Interpreter, Node, NodeId, PoolTask, ShellExecEnv, ShellTask, ShellWork,
-};
+use crate::shell::interpreter::{Interpreter, Node, NodeId, PoolTask, ShellTask, ShellWork};
 use crate::shell::io::IO;
-use crate::shell::states::base::Base;
+use crate::shell::states::base::{Base, Env};
 use crate::shell::states::expansion::Expansion;
 use crate::shell::yield_::Yield;
 
@@ -18,6 +16,7 @@ pub(crate) struct CondExpr {
     pub(crate) io: IO,
     pub(crate) state: CondExprState,
     pub args: Vec<Vec<u8>>,
+    shell: Env,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -34,13 +33,14 @@ pub enum CondExprState {
 impl CondExpr {
     pub(crate) fn init(
         interp: &Interpreter,
-        shell: *mut ShellExecEnv,
+        shell: Env,
         node: &ast::CondExpr,
         parent: NodeId,
         io: IO,
     ) -> NodeId {
         interp.alloc_node(Node::CondExpr(CondExpr {
-            base: Base::new(parent, shell),
+            base: Base::new(parent),
+            shell,
             node: bun_ptr::BackRef::new(node),
             io,
             state: CondExprState::Idle,
@@ -57,7 +57,7 @@ impl CondExpr {
         loop {
             let (shell, node) = {
                 let me = interp.as_condexpr(this);
-                (me.base.shell, me.node)
+                (me.shell.as_ptr(), me.node)
             };
             let n = node.get();
             match interp.as_condexpr(this).state {
@@ -66,10 +66,9 @@ impl CondExpr {
                     continue;
                 }
                 CondExprState::ExpandingArgs { idx } => {
-                    if (idx as usize) >= n.args.len() {
+                    let Some(atom) = n.args.slice().get(idx as usize) else {
                         return Self::command_impl_start(interp, this, n.op);
-                    }
-                    let atom = n.args.get_const(idx as usize);
+                    };
                     let child = Expansion::init(interp, shell, atom, this, false);
                     return Expansion::start(interp, child);
                 }
@@ -101,7 +100,7 @@ impl CondExpr {
                 // back on the main thread via `on_stat_task_done`.
                 let (cwd_fd, mut path) = {
                     let me = interp.as_condexpr(this);
-                    let cwd_fd = me.base.shell().cwd_fd.fd();
+                    let cwd_fd = me.shell.cwd_fd.fd();
                     (cwd_fd, me.args[0].clone())
                 };
                 if path.last() != Some(&0) {
@@ -201,7 +200,7 @@ impl CondExpr {
             CondExprState::WaitingStat
         ));
         let op = interp.as_condexpr(this).node.op;
-        let cwd = interp.as_condexpr(this).base.shell().cwd();
+        let cwd = interp.as_condexpr(this).shell.cwd();
         let operand = path.strip_suffix(b"\0").unwrap_or(path);
         let embedded = match stat {
             Err(_) => stat_embedded_shell_operand(cwd, operand),
@@ -304,13 +303,7 @@ impl CondExpr {
         if let OutKind::Pipe = &interp.as_condexpr(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
-            let stderr = unsafe {
-                interp
-                    .as_condexpr_mut(this)
-                    .base
-                    .shell_mut()
-                    .buffered_stderr_mut()
-            };
+            let stderr = unsafe { interp.as_condexpr_mut(this).shell.buffered_stderr_mut() };
             stderr.extend_from_slice(&buf);
         }
         let parent = interp.as_condexpr(this).base.parent;

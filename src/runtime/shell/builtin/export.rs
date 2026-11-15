@@ -39,12 +39,7 @@ impl Export {
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::init_ref_counted(name.into());
             let val = EnvStr::init_ref_counted(value.into());
-            interp
-                .as_cmd_mut(cmd)
-                .base
-                .shell_mut()
-                .export_env
-                .insert(label, val);
+            interp.as_cmd_mut(cmd).shell.export_env.insert(label, val);
         }
         Builtin::done(interp, cmd, 0)
     }

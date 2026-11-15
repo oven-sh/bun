@@ -2631,10 +2631,10 @@ pub(crate) fn inject<'a>(
         #[cfg(not(windows))]
         let copy = UnfinishedCopy::new(fd, zname);
         #[cfg(not(windows))]
-        let self_fd: Fd = 'brk2: {
+        let template = 'brk2: {
             for retry in 0..3 {
                 match Syscall::open(self_exe, bun_sys::O::CLOEXEC | bun_sys::O::RDONLY, 0) {
-                    Ok(res) => break 'brk2 res,
+                    Ok(res) => break 'brk2 Syscall::CloseOnDrop::new(res),
                     Err(err) => {
                         if retry < 2 {
                             match err.get_errno() {
@@ -2659,8 +2659,6 @@ pub(crate) fn inject<'a>(
 
         #[cfg(not(windows))]
         {
-            let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
-
             // A trimmed executable is written whole, from the template's bytes: an ELF one where it has compiled code.
             let is_written_whole = additions.trims()
                 && match target.os {
@@ -2668,7 +2666,7 @@ pub(crate) fn inject<'a>(
                     CompileTargetOs::Mac => true,
                     _ => false,
                 };
-            if !is_written_whole && let Err(e) = bun_sys::copy_file(self_fd, fd) {
+            if !is_written_whole && let Err(e) = bun_sys::copy_file(template.fd(), fd) {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e

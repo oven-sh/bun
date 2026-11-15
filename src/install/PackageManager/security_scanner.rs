@@ -8,7 +8,6 @@ use bstr::BStr;
 use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::bun_json::{Expr, ExprData};
-use crate::package_manager_real::Command::Context as CommandContext;
 use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{append_without_url_credentials, append_without_url_userinfo};
 use bun_collections::ArrayHashMap;
@@ -29,7 +28,7 @@ use bun_ptr::RefPtr;
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::subprocess::{self, StdioResult};
 use bun_spawn::{
-    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage, SpawnEnv,
+    self as spawn, Exited, Process, ProcessExit, ProcessExitKind, ProcessHandle, Rusage,
     SpawnOptions, Status, Stdio,
 };
 use bun_sys::{self, Fd, File};
@@ -84,7 +83,6 @@ impl SecurityScanResults {
 
 fn do_partial_install_of_security_scanner(
     manager: &mut PackageManager,
-    ctx: CommandContext,
     log_level: crate::package_manager::Options::LogLevel,
     security_scanner_pkg_id: PackageID,
 ) -> Result<(), Error> {
@@ -110,7 +108,6 @@ fn do_partial_install_of_security_scanner(
     let mut summary = if isolated {
         IsolatedInstall::install_isolated_packages(
             manager,
-            ctx,
             /* install_root_dependencies */ true,
             &[],
             packages_to_install,
@@ -119,7 +116,6 @@ fn do_partial_install_of_security_scanner(
     } else {
         HoistedInstall::install_hoisted_packages(
             manager,
-            ctx,
             &[],
             true,
             log_level,
@@ -201,7 +197,6 @@ impl<'a> ScannerFinder<'a> {
 
 pub(crate) fn perform_security_scan_after_resolution(
     manager: &mut PackageManager,
-    command_ctx: CommandContext,
     original_cwd: &[u8],
     seeds: &[PackageID],
     loaded_lockfile: bool,
@@ -230,33 +225,18 @@ pub(crate) fn perform_security_scan_after_resolution(
                 | bun_install::Subcommand::Install
                 | bun_install::Subcommand::Update
         );
-    scan_installing_scanner_if_needed(
-        manager,
-        security_scanner,
-        scan_all,
-        seeds,
-        command_ctx,
-        original_cwd,
-    )
+    scan_installing_scanner_if_needed(manager, security_scanner, scan_all, seeds, original_cwd)
 }
 
 pub fn perform_security_scan_for_all(
     manager: &mut PackageManager,
-    command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
     let Some(security_scanner) = manager.options.security_scanner else {
         return Ok(None);
     };
 
-    scan_installing_scanner_if_needed(
-        manager,
-        security_scanner,
-        true,
-        &[],
-        command_ctx,
-        original_cwd,
-    )
+    scan_installing_scanner_if_needed(manager, security_scanner, true, &[], original_cwd)
 }
 
 fn scan_installing_scanner_if_needed(
@@ -264,7 +244,6 @@ fn scan_installing_scanner_if_needed(
     security_scanner: &[u8],
     scan_all: bool,
     seeds: &[PackageID],
-    command_ctx: CommandContext,
     original_cwd: &[u8],
 ) -> Result<Option<SecurityScanResults>, Error> {
     match attempt_security_scan(
@@ -279,7 +258,7 @@ fn scan_installing_scanner_if_needed(
         ScanAttemptResult::NeedsInstall(pkg_id) => {
             bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
-            do_partial_install_of_security_scanner(manager, command_ctx, log_level, pkg_id)?;
+            do_partial_install_of_security_scanner(manager, log_level, pkg_id)?;
             bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             match attempt_security_scan(
@@ -885,15 +864,14 @@ impl<'a> SecurityScanSubprocess<'a> {
             env.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")?;
         }
         let envp = env.map.create_null_delimited_env_map()?;
-        let envp: Vec<&CStr> = envp.iter().collect();
 
         #[cfg(windows)]
         {
-            self.spawn_windows(&argv, &envp, ipc_pipe)?;
+            self.spawn_windows(&argv, envp.as_list(), ipc_pipe)?;
         }
         #[cfg(not(windows))]
         {
-            self.spawn_posix(&argv, &envp, ipc_pipe)?;
+            self.spawn_posix(&argv, envp.as_list(), ipc_pipe)?;
         }
 
         Ok(())
@@ -907,7 +885,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_posix(
         &mut self,
         argv: &[&CStr],
-        envp: &[&CStr],
+        envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
         let extra_fds: Box<[Stdio]> = Box::new([
@@ -924,7 +902,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop(ipc_write);
@@ -947,7 +925,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     fn spawn_windows(
         &mut self,
         argv: &[&CStr],
-        envp: &[&CStr],
+        envp: bun_core::CStrList<'_>,
         [ipc_read, ipc_write]: [File; 2],
     ) -> Result<(), Error> {
         use bun_sys::ReturnCodeExt as _;
@@ -982,7 +960,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, SpawnEnv::Strings(envp))?
+        let mut spawned = spawn::spawn_process_cstr(&spawn_options, argv, Some(envp))?
             .map_err(|e| e.to_zig_err())?;
 
         drop((ipc_write, child_read));

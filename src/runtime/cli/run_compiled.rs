@@ -960,7 +960,7 @@ fn run_second_process(arguments: Vec<Vec<u8>>, original_cwd: Option<&[u8]>) -> u
     bun_spawn::ctrl_c::install();
     let spawned = sync::spawn(&sync::Options {
         argv,
-        argv0: Some(executable.as_ptr().cast::<core::ffi::c_char>()),
+        argv0: Some(executable.into()),
         cwd: original_cwd.map(Box::<[u8]>::from).unwrap_or_default(),
         envp: None,
         stderr: sync::SyncStdio::Inherit,
@@ -1374,13 +1374,10 @@ pub(crate) extern "C" fn Bun__AOT__runsTestFilesAgain() -> bool {
 pub(crate) extern "C" fn Bun__AOT__isBetweenLoadOfTestFileAndItsCallbacks(
     global: &bun_jsc::JSGlobalObject,
 ) -> bool {
-    let Some(runner) = crate::test_runner::jest::Jest::runner() else {
+    let Some(file) = crate::test_runner::bun_test::clone_active_strong() else {
         return false;
     };
-    let Some(file) = runner.bun_test_root.clone_active_file() else {
-        return false;
-    };
-    file.get().is_loading
+    file.is_loading.get()
         && global
             .bun_vm()
             .pending_internal_promise()

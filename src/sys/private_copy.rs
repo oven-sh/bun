@@ -14,16 +14,16 @@ pub fn map(bytes: &[u8]) -> Option<core::ptr::NonNull<u8>> {
 
     // The writer aligns a file of `MIN_MAPPED_BYTES`. Another writer or an older layout may not have.
     let offset = offset_in_executable(bytes).filter(|it| it.is_multiple_of(ALIGNMENT))?;
-    let executable =
-        crate::open(bun_core::zstr!("/proc/self/exe"), O::RDONLY | O::CLOEXEC, 0).ok()?;
-    let _close = CloseOnDrop::new(executable);
+    let executable = crate::open(bun_core::zstr!("/proc/self/exe"), O::RDONLY | O::CLOEXEC, 0)
+        .map(CloseOnDrop::new)
+        .ok()?;
     let delta = offset % bun_alloc::page_size();
     let base = crate::mmap(
         core::ptr::null_mut(),
         bytes.len() + delta,
         libc::PROT_READ | libc::PROT_WRITE,
         libc::MAP_PRIVATE,
-        executable,
+        executable.fd(),
         i64::try_from(offset - delta).ok()?,
     )
     .ok()?;

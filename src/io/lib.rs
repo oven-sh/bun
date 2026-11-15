@@ -251,7 +251,7 @@ pub use parent_death_watchdog as ParentDeathWatchdog;
 // ─── public surface (was bun_io's crate root) ──────────────────────────────
 
 #[cfg(not(windows))]
-pub use posix_event_loop::{FilePoll, Loop};
+pub use posix_event_loop::{FilePoll, Loop, OwnedFilePoll};
 /// The raw `uv_loop_t`, which a `WindowsLoop` wraps.
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
@@ -276,8 +276,8 @@ pub fn uws_to_native(uws: &'static bun_uws_sys::Loop) -> LoopRef {
 }
 
 #[cfg(not(windows))]
-pub use posix_event_loop::Owner;
-pub use posix_event_loop::{AllocatorType, PollTag, get_vm_ctx, js_vm_ctx};
+pub use posix_event_loop::{IoEvent, Owner};
+pub use posix_event_loop::{PollTag, js_vm_ctx};
 
 #[cfg(not(windows))]
 pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
@@ -295,12 +295,7 @@ bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn loop_() -> &'static bun_uws_sys::Loop;
         #[cfg(not(windows))]
-        fn file_polls_ptr() -> *mut Store;
-        // `alloc_file_poll() -> *mut FilePoll` was removed — it
-        // returned an *uninitialized* hive slot, and any caller forming
-        // `&mut FilePoll` over it hit validity-invariant UB on the niche-
-        // bearing enum fields. `FilePoll::init` now goes through
-        // `file_polls_ptr()` + `Store::get_init` (write-before-read).
+        fn file_polls_ptr() -> *const Store;
         fn increment_pending_unref_counter();
         #[cfg(not(windows))]
         fn after_event_loop_callback() -> Option<OpaqueCallback>;
@@ -315,17 +310,11 @@ bun_dispatch::link_interface! {
 }
 
 impl EventLoopCtx {
-    /// Single backref-deref accessor for the per-thread `Store`:
-    /// `pub(crate)`, `&self → &mut`, must NOT be called while
-    /// another `&mut Store` (or a `&mut FilePoll` that lives inside the inline
-    /// hive buffer) is live. Every in-crate caller is a leaf op that holds none.
     #[inline]
     #[cfg(not(windows))]
-    fn file_polls_mut(&self) -> &'static mut Store {
-        // SAFETY: per-thread set-once pointer (`BackRef`-shaped); the event
-        // loop is single-threaded so no concurrent `&mut Store` exists, and
-        // every crate-internal caller upholds the leaf-op discipline above.
-        unsafe { &mut *self.file_polls_ptr() }
+    fn file_polls(&self) -> &Store {
+        // SAFETY: owned by the VM/Mini loop, which is live (`EventLoopCtx::new`).
+        unsafe { &*self.file_polls_ptr() }
     }
     /// Claims the per-loop pipe-read scratch; `None` while a read further up the stack holds it.
     #[inline]
@@ -356,22 +345,6 @@ impl EventLoopCtx {
     #[inline]
     pub(crate) fn loop_sub_active(&self, n: u32) {
         self.loop_().sub_active(n);
-    }
-    #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn alloc_file_poll(&self, value: FilePoll) -> core::ptr::NonNull<FilePoll> {
-        self.file_polls_mut().get_init(value)
-    }
-
-    /// What a `FilePoll` keeps of the ctx it was made with; [`get_vm_ctx`] gives that ctx back.
-    #[inline]
-    #[cfg(not(windows))]
-    pub(crate) fn allocator_type(&self) -> AllocatorType {
-        match self.kind {
-            EventLoopCtxKind::Js => AllocatorType::Js,
-            EventLoopCtxKind::Mini => AllocatorType::Mini,
-            EventLoopCtxKind::SpawnSync => AllocatorType::SpawnSync,
-        }
     }
     /// See [`uws_to_native`].
     #[inline]
@@ -1745,143 +1718,10 @@ impl Poll {
 
 pub const RETRY: E = E::EAGAIN;
 
-#[cfg(not(windows))]
-use crate::posix_event_loop::Flags as PollFlags;
-#[cfg(not(windows))]
-use crate::posix_event_loop::OneShotFlag;
-
 pub type EventLoopHandle = EventLoopCtx;
 
 #[cfg(not(windows))]
-pub type FilePollFlag = PollFlags;
-
-#[cfg(not(windows))]
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum FilePollKind {
-    Readable,
-    Writable,
-}
-
-/// A slot of the event loop's `Store`. Dropping it unregisters the poll and puts the slot back.
-#[cfg(not(windows))]
-pub struct OwnedFilePoll<const FORCE_UNREGISTER: bool = false>(core::ptr::NonNull<FilePoll>);
-
-#[cfg(not(windows))]
-impl<const FORCE_UNREGISTER: bool> OwnedFilePoll<FORCE_UNREGISTER> {
-    pub fn new(ev: EventLoopCtx, fd: Fd, owner: Owner) -> Self {
-        Self(FilePoll::init(ev, fd, owner))
-    }
-
-    pub(crate) fn poll_ref(&self) -> FilePollRef<'_> {
-        FilePollRef(self.0, core::marker::PhantomData)
-    }
-}
-
-#[cfg(not(windows))]
-impl<const FORCE_UNREGISTER: bool> core::ops::Deref for OwnedFilePoll<FORCE_UNREGISTER> {
-    type Target = FilePoll;
-    fn deref(&self) -> &FilePoll {
-        // SAFETY: as in `FilePollRef::inner`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-#[cfg(not(windows))]
-impl<const FORCE_UNREGISTER: bool> core::ops::DerefMut for OwnedFilePoll<FORCE_UNREGISTER> {
-    fn deref_mut(&mut self) -> &mut FilePoll {
-        self.poll_ref().inner()
-    }
-}
-
-#[cfg(not(windows))]
-impl<const FORCE_UNREGISTER: bool> Drop for OwnedFilePoll<FORCE_UNREGISTER> {
-    fn drop(&mut self) {
-        let (ev, was_ever_registered) = self.reset(FORCE_UNREGISTER);
-        ev.file_polls_mut().put(self.0, ev, was_ever_registered);
-    }
-}
-
-/// The slot of an [`OwnedFilePoll`], to change through a shared borrow of the owner.
-#[cfg(not(windows))]
-#[repr(transparent)]
-#[derive(Clone, Copy)]
-pub struct FilePollRef<'a>(
-    core::ptr::NonNull<FilePoll>,
-    core::marker::PhantomData<&'a FilePoll>,
-);
-
-#[cfg(not(windows))]
-impl<'a> FilePollRef<'a> {
-    #[inline]
-    fn inner(self) -> &'a mut FilePoll {
-        // SAFETY: the owner is alive, the loop is single-threaded, and no
-        // caller runs user code under the borrow.
-        unsafe { &mut *self.0.as_ptr() }
-    }
-    #[inline]
-    pub(crate) fn fd(self) -> Fd {
-        self.inner().fd
-    }
-    #[inline]
-    pub(crate) fn set_owner(self, owner: Owner) {
-        self.inner().owner = owner;
-    }
-    #[inline]
-    pub(crate) fn unregister(self, loop_: LoopRef, force: bool) -> sys::Result<()> {
-        self.inner().unregister(loop_, force)
-    }
-    #[inline]
-    pub(crate) fn register_with_fd(
-        self,
-        loop_: LoopRef,
-        kind: FilePollKind,
-        fd: Fd,
-    ) -> sys::Result<()> {
-        let flag = match kind {
-            FilePollKind::Readable => PollFlags::Readable,
-            FilePollKind::Writable => PollFlags::Writable,
-        };
-        self.inner()
-            .register_with_fd(loop_, flag, OneShotFlag::Dispatch, fd)
-    }
-    #[inline]
-    pub(crate) fn has_flag(self, f: FilePollFlag) -> bool {
-        self.inner().flags.contains(f)
-    }
-    #[inline]
-    pub fn set_flag(self, f: FilePollFlag) {
-        self.inner().flags.insert(f);
-    }
-    #[inline]
-    pub(crate) fn file_type(self) -> crate::pipes::FileType {
-        self.inner().file_type()
-    }
-    #[inline]
-    pub fn is_registered(self) -> bool {
-        self.inner().is_registered()
-    }
-    #[inline]
-    pub fn is_watching(self) -> bool {
-        self.inner().is_watching()
-    }
-    #[inline]
-    pub(crate) fn enable_keeping_process_alive(self, ev: EventLoopHandle) {
-        self.inner().enable_keeping_process_alive(ev);
-    }
-    #[inline]
-    pub(crate) fn disable_keeping_process_alive(self, ev: EventLoopHandle) {
-        self.inner().disable_keeping_process_alive(ev);
-    }
-    #[inline]
-    pub(crate) fn set_keeping_process_alive(self, ev: EventLoopHandle, value: bool) {
-        if value {
-            self.enable_keeping_process_alive(ev)
-        } else {
-            self.disable_keeping_process_alive(ev)
-        }
-    }
-}
+pub type FilePollFlag = posix_event_loop::Flags;
 
 /// Moved from `bun_runtime::webcore::PathOrFileDescriptor`.
 /// Owned here so `open_for_writing` has no upward dep; runtime re-exports it.

@@ -24,6 +24,9 @@
 
 #include "JSCryptoKeyUsage.h"
 
+#include "ErrorCode.h"
+#include "ObjectBindings.h"
+#include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/NeverDestroyed.h>
@@ -90,9 +93,88 @@ template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsa
     return std::nullopt;
 }
 
-template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSGlobalObject& lexicalGlobalObject, JSValue value)
+// The bit of the entry at `index` of keyUsages: ToString, then the usage of that name.
+static CryptoKeyUsageBitmap convertKeyUsage(JSGlobalObject& lexicalGlobalObject, JSValue entry, ASCIILiteral context, size_t index)
 {
-    return parseEnumerationFromString<CryptoKeyUsage>(value.toWTFString(&lexicalGlobalObject));
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (entry.isSymbol()) [[unlikely]] {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, '[', index, "] is a Symbol and cannot be converted to a string."_s));
+        return 0;
+    }
+    auto string = entry.toWTFString(&lexicalGlobalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    auto usage = parseEnumerationFromString<CryptoKeyUsage>(string);
+    if (!usage) [[unlikely]] {
+        Bun::MessageBuilder message;
+        message.append(context, '[', index, "] '"_s, string, "' is not a valid enum value of type KeyUsage."_s);
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, message);
+        return 0;
+    }
+    return toCryptoKeyUsageBitmap(*usage);
+}
+
+// Node's createSequenceConverter() of createEnumConverter(): https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webidl.js#L817-L876 and #L643-L660
+CryptoKeyUsageBitmap convertKeyUsages(JSGlobalObject& lexicalGlobalObject, JSValue value, ASCIILiteral context)
+{
+    auto& vm = JSC::getVM(&lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CryptoKeyUsageBitmap usages = 0;
+    size_t index = 0;
+    auto notSequence = [&] {
+        Bun::throwError(&lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, makeString(context, " cannot be converted to sequence."_s));
+        return 0;
+    };
+
+    auto* object = value.getObject();
+    if (!object) [[unlikely]]
+        return notSequence();
+
+    // An array or a Set is read in place when nothing can observe its iteration. JSC's forEachInFastArray() and forEachInIterable() close an iterator when an entry fails, and WebIDL closes none.
+    if (isJSArray(object) && asArray(object)->isIteratorProtocolFastAndNonObservable()) [[likely]] {
+        auto* array = asArray(object);
+        for (unsigned i = 0; i < array->length(); ++i) {
+            JSValue entry = array->getIndex(&lexicalGlobalObject, i);
+            RETURN_IF_EXCEPTION(scope, 0);
+            usages |= convertKeyUsage(lexicalGlobalObject, entry, context, i);
+            RETURN_IF_EXCEPTION(scope, 0);
+        }
+    } else if (auto* set = dynamicDowncast<JSSet>(object); set && set->isIteratorProtocolFastAndNonObservable()) {
+        if (auto* storage = set->storageOrSentinel(vm); storage != vm.orderedHashTableSentinel()) {
+            forEachInSetStorage(vm, &lexicalGlobalObject, storage, 0, [&](VM&, JSGlobalObject*, JSValue entry) {
+                usages |= convertKeyUsage(lexicalGlobalObject, entry, context, index++);
+            });
+        }
+    } else {
+        JSValue method = object->get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
+        RETURN_IF_EXCEPTION(scope, 0);
+        if (!method.isCallable())
+            return notSequence();
+        JSValue iterator = JSC::call(&lexicalGlobalObject, method, object, ArgList(), "keyUsages[Symbol.iterator]"_s);
+        RETURN_IF_EXCEPTION(scope, 0);
+        if (!iterator.isObject())
+            return notSequence();
+        JSValue next = iterator.get(&lexicalGlobalObject, vm.propertyNames->next);
+        RETURN_IF_EXCEPTION(scope, 0);
+        if (!next.isCallable())
+            return notSequence();
+        while (true) {
+            JSValue step = JSC::call(&lexicalGlobalObject, next, iterator, ArgList(), "keyUsages iterator next"_s);
+            RETURN_IF_EXCEPTION(scope, 0);
+            if (!step.isObject())
+                return notSequence();
+            auto [done, entry] = Bun::getIteratorResult(&lexicalGlobalObject, asObject(step), Bun::IteratorDoneValue::Skip);
+            RETURN_IF_EXCEPTION(scope, 0);
+            if (done.toBoolean(&lexicalGlobalObject))
+                break;
+            usages |= convertKeyUsage(lexicalGlobalObject, entry, context, index++);
+            RETURN_IF_EXCEPTION(scope, 0);
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, 0);
+    return usages;
 }
 
 } // namespace WebCore

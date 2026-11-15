@@ -27,6 +27,8 @@
 
 #if ENABLE(WEB_CRYPTO)
 
+#include <wtf/Assertions.h>
+
 namespace WebCore {
 
 enum {
@@ -67,6 +69,38 @@ enum class CryptoKeyUsage {
     DecapsulateKey,
     DecapsulateBits
 };
+
+inline CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(CryptoKeyUsage usage)
+{
+    switch (usage) {
+    case CryptoKeyUsage::Encrypt:
+        return CryptoKeyUsageEncrypt;
+    case CryptoKeyUsage::Decrypt:
+        return CryptoKeyUsageDecrypt;
+    case CryptoKeyUsage::Sign:
+        return CryptoKeyUsageSign;
+    case CryptoKeyUsage::Verify:
+        return CryptoKeyUsageVerify;
+    case CryptoKeyUsage::DeriveKey:
+        return CryptoKeyUsageDeriveKey;
+    case CryptoKeyUsage::DeriveBits:
+        return CryptoKeyUsageDeriveBits;
+    case CryptoKeyUsage::WrapKey:
+        return CryptoKeyUsageWrapKey;
+    case CryptoKeyUsage::UnwrapKey:
+        return CryptoKeyUsageUnwrapKey;
+    case CryptoKeyUsage::EncapsulateKey:
+        return CryptoKeyUsageEncapsulateKey;
+    case CryptoKeyUsage::EncapsulateBits:
+        return CryptoKeyUsageEncapsulateBits;
+    case CryptoKeyUsage::DecapsulateKey:
+        return CryptoKeyUsageDecapsulateKey;
+    case CryptoKeyUsage::DecapsulateBits:
+        return CryptoKeyUsageDecapsulateBits;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 } // namespace WebCore
 

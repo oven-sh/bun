@@ -22,10 +22,8 @@
 #include "SubtleCrypto.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertObject.h"
-#include "JSDOMConvertSequences.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMConvertUnion.h"
-#include "JSDOMConvertEnumeration.h"
 #include "JSDOMExceptionHandling.h"
 #include "OpenSSLUtilities.h"
 #include "CryptoGenKeyPair.h"
@@ -967,9 +965,6 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     auto algorithm = WebCore::convert<WebCore::IDLUnion<WebCore::IDLObject, WebCore::IDLDOMString>>(*lexicalGlobalObject, algorithmValue);
     RETURN_IF_EXCEPTION(scope, {});
     bool extractable = extractableValue.toBoolean(lexicalGlobalObject);
-    auto keyUsages = WebCore::convert<WebCore::IDLSequence<WebCore::IDLEnumeration<WebCore::CryptoKeyUsage>>>(*lexicalGlobalObject, keyUsagesValue);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto usagesBitmap = WebCore::SubtleCrypto::toCryptoKeyUsageBitmap(keyUsages);
 
     auto throwDOMException = [&](WebCore::ExceptionCode code, const String& message) -> JSValue {
         // createDOMException() turns this code into JavaScript's own SyntaxError.
@@ -989,6 +984,14 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
     }
     auto params = paramsOrException.releaseReturnValue();
     auto identifier = params->identifier;
+
+    // Node has no AES-CFB-8, so its normalization rejects the name. Bun's subtle.importKey takes it as an extension.
+    if (identifier == CryptoAlgorithmIdentifier::AES_CFB)
+        return throwDOMException(WebCore::NotSupportedError, "Unrecognized algorithm name"_s);
+
+    // Node converts keyUsages after it normalizes the algorithm: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/crypto/keys.js#L190-L192
+    auto usagesBitmap = WebCore::convertKeyUsages(*lexicalGlobalObject, keyUsagesValue, "Value"_s);
+    RETURN_IF_EXCEPTION(scope, {});
 
     RefPtr<WebCore::CryptoKey> result;
     std::optional<WebCore::ExceptionCode> failureCode;
@@ -1014,9 +1017,6 @@ JSValue KeyObject::toCryptoKey(JSGlobalObject* lexicalGlobalObject, ThrowScope& 
             format = WebCore::CryptoKeyFormat::RawSecret;
             break;
         default:
-            // AES-CFB lands here on purpose: node v26.3.0 has no AES-CFB in
-            // webcrypto, so toCryptoKey rejects it even though Bun's
-            // subtle.importKey accepts it as an extension.
             return throwDOMException(WebCore::NotSupportedError, "Unrecognized algorithm name"_s);
         }
 

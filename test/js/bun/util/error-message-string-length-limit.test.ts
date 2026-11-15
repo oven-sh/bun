@@ -32,6 +32,7 @@ const fixture = `
     "constructor name rendered for a Rust validator": () => new SocketAddress({ address: "1.2.3.4", port: new C() }),
     "missing performance mark": () => performance.measure("m", long),
     "invalid SubtleCrypto key format": () => crypto.subtle.importKey(long, new Uint8Array(8), "AES-GCM", false, ["encrypt"]),
+    "invalid SubtleCrypto key usage": () => crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, false, [long]),
     "invalid ReadableStream source type": () => new ReadableStream({ type: long }),
     "value that ReadableStream.from cannot iterate": () => ReadableStream.from(Symbol(long)),
   };
@@ -67,6 +68,7 @@ test.skipIf(totalmem() < 10 * 1024 ** 3)(
         "constructor name rendered for a Rust validator: RangeError: Out of memory",
         "missing performance mark: RangeError: Out of memory",
         "invalid SubtleCrypto key format: RangeError: Out of memory",
+        "invalid SubtleCrypto key usage: RangeError: Out of memory",
         "invalid ReadableStream source type: RangeError: Out of memory",
         "value that ReadableStream.from cannot iterate: RangeError: Out of memory",
       ],

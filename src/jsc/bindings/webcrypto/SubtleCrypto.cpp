@@ -506,44 +506,12 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
     return result;
 }
 
-static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(CryptoKeyUsage usage)
-{
-    switch (usage) {
-    case CryptoKeyUsage::Encrypt:
-        return CryptoKeyUsageEncrypt;
-    case CryptoKeyUsage::Decrypt:
-        return CryptoKeyUsageDecrypt;
-    case CryptoKeyUsage::Sign:
-        return CryptoKeyUsageSign;
-    case CryptoKeyUsage::Verify:
-        return CryptoKeyUsageVerify;
-    case CryptoKeyUsage::DeriveKey:
-        return CryptoKeyUsageDeriveKey;
-    case CryptoKeyUsage::DeriveBits:
-        return CryptoKeyUsageDeriveBits;
-    case CryptoKeyUsage::WrapKey:
-        return CryptoKeyUsageWrapKey;
-    case CryptoKeyUsage::UnwrapKey:
-        return CryptoKeyUsageUnwrapKey;
-    case CryptoKeyUsage::EncapsulateKey:
-        return CryptoKeyUsageEncapsulateKey;
-    case CryptoKeyUsage::EncapsulateBits:
-        return CryptoKeyUsageEncapsulateBits;
-    case CryptoKeyUsage::DecapsulateKey:
-        return CryptoKeyUsageDecapsulateKey;
-    case CryptoKeyUsage::DecapsulateBits:
-        return CryptoKeyUsageDecapsulateBits;
-    }
-
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-CryptoKeyUsageBitmap SubtleCrypto::toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>& usages)
+static CryptoKeyUsageBitmap toCryptoKeyUsageBitmap(const Vector<CryptoKeyUsage>& usages)
 {
     CryptoKeyUsageBitmap result = 0;
     // Maybe we shouldn't silently bypass duplicated usages?
     for (auto usage : usages)
-        result |= WebCore::toCryptoKeyUsageBitmap(usage);
+        result |= toCryptoKeyUsageBitmap(usage);
 
     return result;
 }
@@ -590,7 +558,7 @@ static void rejectWithException(Ref<DeferredPromise>&& passedPromise, ExceptionC
 static void normalizeJsonWebKey(JsonWebKey& webKey)
 {
     // Maybe we shouldn't silently bypass duplicated usages?
-    webKey.usages = webKey.key_ops ? SubtleCrypto::toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
+    webKey.usages = webKey.key_ops ? toCryptoKeyUsageBitmap(webKey.key_ops.value()) : 0;
 }
 
 // FIXME: This returns an std::optional<KeyData> and takes a promise, rather than returning an
@@ -984,7 +952,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     RELEASE_AND_RETURN(scope, algorithm->digest(WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
 }
 
-void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -995,8 +963,6 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
         return;
     }
     auto params = paramsOrException.releaseReturnValue();
-
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
@@ -1036,7 +1002,7 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
     RELEASE_AND_RETURN(scope, algorithm->generateKey(*params, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext()));
 }
 
-void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, AlgorithmIdentifier&& derivedKeyType, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& baseKey, AlgorithmIdentifier&& derivedKeyType, bool extractable, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1063,8 +1029,6 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         return;
     }
     auto getLengthParams = getLengthParamsOrException.releaseReturnValue();
-
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (!baseKey.allows(CryptoKeyUsageDeriveKey)) {
         promise->reject(InvalidAccessError, "baseKey does not have deriveKey usage"_s);
@@ -1246,7 +1210,7 @@ static bool aliasExportKeyFormat(const CryptoKey& key, SubtleCrypto::KeyFormat& 
     return true;
 }
 
-void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDataVariant&& keyDataVariant, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDataVariant&& keyDataVariant, AlgorithmIdentifier&& algorithmIdentifier, bool extractable, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1265,7 +1229,6 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     }
 
     auto keyData = *keyDataOrNull;
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (!aliasImportKeyFormat(params->identifier, format, promise.get()))
         return;
@@ -1486,7 +1449,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     RELEASE_AND_RETURN(scope, exportAlgorithm->exportKey(format, key, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
-void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, BufferSource&& wrappedKeyBufferSource, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithmIdentifier, AlgorithmIdentifier&& unwrappedKeyAlgorithmIdentifier, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, BufferSource&& wrappedKeyBufferSource, CryptoKey& unwrappingKey, AlgorithmIdentifier&& unwrapAlgorithmIdentifier, AlgorithmIdentifier&& unwrappedKeyAlgorithmIdentifier, bool extractable, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1518,8 +1481,6 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         return;
     }
     auto unwrappedKeyAlgorithm = unwrappedKeyAlgorithmOrException.releaseReturnValue();
-
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (unwrapParams->identifier != unwrappingKey.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
@@ -1638,14 +1599,13 @@ static JSC::JSValue toJSArrayBuffer(JSDOMGlobalObject& globalObject, RefPtr<JSC:
     return JSC::JSArrayBuffer::create(globalObject.vm(), globalObject.arrayBufferStructure(JSC::ArrayBufferSharingMode::Default), WTF::move(buffer));
 }
 
-void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     if (key.type() != CryptoKeyType::Private) {
         promise->reject(key.type() == CryptoKeyType::Secret ? NotSupportedError : InvalidAccessError, "key must be a private key"_s);
         return;
     }
 
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
     auto identifier = key.algorithmIdentifier();
 
     std::unique_ptr<CryptoAlgorithmParameters> importParams;
@@ -1761,7 +1721,7 @@ void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
     RELEASE_AND_RETURN(scope, algorithm->encapsulate(encapsulationKey, WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
-void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& encapsulationKey, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& encapsulationKey, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1780,8 +1740,6 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
         return;
     }
     auto importParams = importParamsOrException.releaseReturnValue();
-
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (params->identifier != encapsulationKey.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "key algorithm mismatch"_s);
@@ -1882,7 +1840,7 @@ void SubtleCrypto::decapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
     RELEASE_AND_RETURN(scope, algorithm->decapsulate(decapsulationKey, WTF::move(*ciphertext), WTF::move(callback), WTF::move(exceptionCallback)));
 }
 
-void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& decapsulationKey, BufferSource&& ciphertextBufferSource, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, Vector<CryptoKeyUsage>&& keyUsages, Ref<DeferredPromise>&& promise)
+void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algorithmIdentifier, CryptoKey& decapsulationKey, BufferSource&& ciphertextBufferSource, AlgorithmIdentifier&& sharedKeyAlgorithm, bool extractable, CryptoKeyUsageBitmap keyUsagesBitmap, Ref<DeferredPromise>&& promise)
 {
     auto& vm = state.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1905,8 +1863,6 @@ void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto ciphertext = copyToVector(WTF::move(ciphertextBufferSource), promise);
     if (!ciphertext)
         return;
-
-    auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (params->identifier != decapsulationKey.algorithmIdentifier()) {
         promise->reject(InvalidAccessError, "key algorithm mismatch"_s);

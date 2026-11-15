@@ -31,7 +31,9 @@ String convertEnumerationToString(CryptoKeyUsage);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, CryptoKeyUsage);
 
 template<> std::optional<CryptoKeyUsage> parseEnumerationFromString<CryptoKeyUsage>(const String&);
-template<> std::optional<CryptoKeyUsage> parseEnumeration<CryptoKeyUsage>(JSC::JSGlobalObject&, JSC::JSValue);
+
+// WebIDL's conversion of a `sequence<KeyUsage>`, with Node's errors. `context` is what an error calls the value: "Value", or "Failed to execute 'generateKey' on 'SubtleCrypto': 3rd argument".
+CryptoKeyUsageBitmap convertKeyUsages(JSC::JSGlobalObject&, JSC::JSValue, ASCIILiteral context);
 
 } // namespace WebCore
 

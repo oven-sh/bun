@@ -75,11 +75,11 @@ describe.concurrent("an early error that only JavaScriptCore reports stops the b
   test("in a module that is imported", async () => {
     using dir = tempDir("aot-early-errors", {
       "main.ts": `import { value } from "./imported";\nconsole.log("never printed", value);\n`,
-      "imported.ts": `export const value: number = 1;\n\nclass Unused { constructor() {} constructor() {} }\n`,
+      "imported.ts": `export const value: number = 1;\n\nfunction unused() { return /(?<n>a)(?<n>b)/; } console.log(unused);\n`,
     });
     const cwd = String(dir);
     const expected = syntaxErrorOf((await run(cwd, "run", "./main.ts")).stderr);
-    expect(expected).toBe("SyntaxError: Cannot declare multiple constructors in a single class.");
+    expect(expected).toBe("SyntaxError: Invalid regular expression: duplicate group specifier name");
     for (const args of [
       ["run", "--debug-aot", "./main.ts"],
       ["build", "--compile", "--aot", "./main.ts", "--outfile", "app"],

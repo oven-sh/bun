@@ -325,6 +325,41 @@ impl Members {
     }
 }
 
+/// The label of a `Kind::Label` scope. Its symbol's source index is the file's, so only the index is kept.
+#[derive(Clone, Copy)]
+pub struct ScopeLabel {
+    symbol_index_plus_one: u32,
+    name_loc: crate::Loc,
+}
+
+const _: () = assert!(core::mem::size_of::<ScopeLabel>() == 8);
+const _: () = assert!(core::mem::align_of::<ScopeLabel>() == 4);
+
+impl ScopeLabel {
+    pub const NONE: ScopeLabel = ScopeLabel {
+        symbol_index_plus_one: 0,
+        name_loc: crate::Loc { start: 0 },
+    };
+
+    #[inline]
+    pub const fn new(symbol: Ref, name_loc: crate::Loc) -> ScopeLabel {
+        ScopeLabel {
+            symbol_index_plus_one: symbol.inner_index() + 1,
+            name_loc,
+        }
+    }
+
+    #[inline]
+    pub const fn symbol_index(self) -> Option<u32> {
+        self.symbol_index_plus_one.checked_sub(1)
+    }
+
+    #[inline]
+    pub const fn name_loc(self) -> crate::Loc {
+        self.name_loc
+    }
+}
+
 pub struct Scope {
     pub kind: Kind,
     // BACKREF: parent owns this scope via `children`. `StoreRef` (arena
@@ -342,8 +377,8 @@ pub struct Scope {
     /// `u32::MAX` for a scope the visit pass never entered.
     pub visit_span: [u32; 2],
 
-    // This is used to store the ref of the label symbol for ScopeLabel scopes.
-    pub label_ref: Ref,
+    /// Set by the visit pass on a `Kind::Label` scope.
+    pub label: ScopeLabel,
     pub label_stmt_is_loop: bool,
 
     // If a scope contains a direct eval() expression, then none of the symbols
@@ -383,7 +418,7 @@ impl Scope {
         members: Members::EMPTY,
         generated: AstAlloc::vec(),
         visit_span: [u32::MAX, u32::MAX],
-        label_ref: Ref::NONE,
+        label: ScopeLabel::NONE,
         label_stmt_is_loop: false,
         contains_direct_eval: false,
         contains_with: false,
@@ -400,6 +435,10 @@ impl Default for Scope {
         Self::EMPTY
     }
 }
+
+// 128 bytes is a mimalloc size class, and the next one is 160.
+#[cfg(target_pointer_width = "64")]
+const _: () = assert!(core::mem::size_of::<Scope>() <= 128);
 
 impl Scope {
     /// `(first, last)`: this scope and everything inside it, as visit-pass

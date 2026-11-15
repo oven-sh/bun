@@ -1101,7 +1101,7 @@ test("removes decorated declare and abstract fields from a class expression", as
 test("lowering many decorated instance fields into a large constructor body stays linear", async () => {
   // Hold N fixed; compare M=100 vs M=50000. If the splice-after-super() were O(M*N)
   // instead of O(M+N), tLarge/tSmall would be ~5x (debug) / ~90x (release) here, not ~2x.
-  // One turn of the two sizes takes about 9 s on a debug build, and the child has 60 s.
+  // Seven turns take 53 s on one machine and 64 s on another on a debug build, and the child has 60 s.
   const turns = isDebug ? 2 : 7;
   await using proc = Bun.spawn({
     cmd: [

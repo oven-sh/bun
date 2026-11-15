@@ -1293,8 +1293,8 @@ static void addToImportChain(Zig::GlobalObject* globalObject, BunPlugin::OnLoad:
 }
 
 // The key of the original of the file that require() resolves the name of `mock` to. A module that is loaded under the path itself is the real file: nothing of the mock is filed there.
-// Otherwise the original is a copy, as for a mock of one file.
-static String originalKeyOfRequirePath(Zig::GlobalObject* globalObject, JSModuleMock* mock)
+// `fileItself` is set to that module, where the caller asks for it. Otherwise the original is a copy, as for a mock of one file.
+static String originalKeyOfRequirePath(Zig::GlobalObject* globalObject, JSModuleMock* mock, LoadedModule* fileItself = nullptr)
 {
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
     String path = mock->requirePath->tryGetValue().data;
@@ -1303,7 +1303,11 @@ static String originalKeyOfRequirePath(Zig::GlobalObject* globalObject, JSModule
         return originalModuleKey(path);
     LoadedModule loaded = findLoadedModule(globalObject, mock->requirePath.get());
     RETURN_IF_EXCEPTION(scope, {});
-    return loaded.esmNamespace || loaded.commonJSModule ? path : originalModuleKey(path);
+    if (!loaded.esmNamespace && !loaded.commonJSModule)
+        return originalModuleKey(path);
+    if (fileItself)
+        *fileItself = loaded;
+    return path;
 }
 
 static String dependencyKeyOfModuleMock(JSC::JSGlobalObject* globalObject, JSModuleMock* mock)
@@ -4472,6 +4476,9 @@ struct ModuleMockSpecifier {
     // The path that require() resolves the name to. Null unless the caller asked for it and it is another file than `key`.
     JSC::JSString* requireKeyString { nullptr };
     WTF::String written;
+
+    // The path of the file that require() of the name loads: `key` for a name with one file.
+    WTF::String keyForRequire() const { return requireKeyString ? requireKeyString->tryGetValue().data : key; }
 };
 
 // `forRequire`: the caller stands for what require() of the name loads, so the name is resolved that way too. As in Vitest, the functions of `vi` resolve it as an import alone.
@@ -6984,7 +6991,8 @@ static void redisplacePreloadMock(Zig::GlobalObject* globalObject, JSModuleMock*
 }
 #endif
 
-// `forRequire`: jest.unmock() and jest.dontMock() resolve the name as require() does too. As in Vitest, vi.unmock() and vi.doUnmock() resolve it as an import alone.
+// `forRequire`: jest.unmock() and jest.dontMock() resolve the name as require() does too, and also end the mock that require() of it gets.
+// As in Vitest, vi.unmock() and vi.doUnmock() resolve it as an import alone.
 static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe, JSValue returned, bool forRequire = false)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -6994,23 +7002,38 @@ static JSC::EncodedJSValue unmock(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
     auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "unmock(module)"_s, forRequire);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (JSModuleMock* mock = registeredModuleMock(globalObject, specifier.key)) {
+    JSModuleMock* ofKey = registeredModuleMock(globalObject, specifier.key);
+    // The mock that require() of the name gets, where that is another one: a mock of the path that require() resolves the name to,
+    // or else the mock of a name that require() resolves to that path. Both are looked up before either ends, and each ends under its own key.
+    JSModuleMock* ofRequire = nullptr;
+    if (forRequire) {
+        String requirePath = specifier.keyForRequire();
+        ofRequire = specifier.requireKeyString ? registeredModuleMock(globalObject, requirePath) : ofKey;
+        if (!ofRequire)
+            ofRequire = moduleMockOfRequirePath(globalObject, requirePath);
+        if (ofRequire == ofKey)
+            ofRequire = nullptr;
+    }
+    String keyOfRequire = ofRequire ? ofRequire->specifier->tryGetValue().data : String();
+    for (auto& [mock, key] : { std::pair { ofRequire, keyOfRequire }, std::pair { ofKey, specifier.key } }) {
+        if (!mock)
+            continue;
 #if ENABLE(AOT)
         // In `bun test` it stays displaced until the end of the test file, so nothing is registered here.
         if (mock->wasRestoredByTestMock)
-            return JSValue::encode(returned);
+            continue;
 #endif
         if (mock->isFromPreload && !JSMock__isInPreload(globalObject))
             globalObject->onLoadPlugins.displacedPreloadModuleMocks.append(JSC::Strong<JSC::JSObject> { vm, mock });
 #if ENABLE(AOT)
-        if (auto file = vm.hasCompiledCode() && Bun::isBunTest ? Bun::compiledModuleForPath(specifier.key) : std::nullopt)
+        if (auto file = vm.hasCompiledCode() && Bun::isBunTest ? Bun::compiledModuleForPath(key) : std::nullopt)
             JSC::AOT::tellIfMockedBelowImport(globalObject, *file, Bun::compiledModuleForPath(callerPath(vm, callframe)));
 #endif
-        unmockModule(globalObject, mock, specifier.key);
+        unmockModule(globalObject, mock, key);
         RETURN_IF_EXCEPTION(scope, {});
 #if ENABLE(AOT)
-        globalObject->onLoadPlugins.filesWithEarlierOriginal.remove(specifier.key);
-        didEndMockOverPreload(globalObject, mock, specifier.key);
+        globalObject->onLoadPlugins.filesWithEarlierOriginal.remove(key);
+        didEndMockOverPreload(globalObject, mock, key);
         RETURN_IF_EXCEPTION(scope, {});
 #endif
     }
@@ -7122,6 +7145,66 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionImportActualModule, (JSC::JSGlobalObject * le
     return JSValue::encode(loading);
 }
 
+// The mock that jest.requireActual(), jest.requireMock() and jest.createMockFromModule() go by. They stand for require() of a name.
+struct ModuleMockForRequire {
+    JSModuleMock* mock { nullptr };
+    // The key that `mock` is registered under.
+    String key;
+    // `mock` is the mock of a name, found by the path that require() resolves that name to. An import resolves the name to another file, which is `key`.
+    bool answersRequirePathOfName { false };
+};
+
+// The mock that require() of the name gets: a mock of the path that require() resolves the name to, or else the mock of a name that require() resolves to that path.
+// Where there is none, a mock that answers an import of the name alone is found as well: a mock of vi.mock(), a mock of that file by its path,
+// or a mock of the name that no longer answers require().
+static ModuleMockForRequire moduleMockForRequire(Zig::GlobalObject* globalObject, const ModuleMockSpecifier& specifier)
+{
+    String requirePath = specifier.keyForRequire();
+    if (auto* mock = moduleMockForTest(globalObject, requirePath))
+        return { mock, requirePath, false };
+    if (auto* mock = moduleMockOfRequirePath(globalObject, requirePath))
+        return { mock, mock->specifier->tryGetValue().data, true };
+    if (auto* mock = specifier.requireKeyString ? moduleMockForTest(globalObject, specifier.key) : nullptr)
+        return { mock, specifier.key, false };
+    return {};
+}
+
+// The exports of the file that require() resolves the name of `mock` to, where `mock` answers require() of that path: require() of the path would give the mock.
+// A module that is loaded under the path is the file itself, and what require() gives of it is read off the loader. Otherwise a copy is required under the key of an original.
+static JSValue requireFileAtRequirePath(Zig::GlobalObject* globalObject, JSModuleMock* mock, const String& from)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    LoadedModule fileItself;
+    String key = originalKeyOfRequirePath(globalObject, mock, &fileItself);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (fileItself.commonJSModule) {
+        // As require() does: an import may have made the module object and not run it yet.
+        fileItself.commonJSModule->load(vm, globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, fileItself.commonJSModule->exportsObject());
+    }
+    if (fileItself.esmNamespace)
+        RELEASE_AND_RETURN(scope, withoutUninitializedExports(globalObject, fileItself.esmNamespace));
+    // While the factory of the mock runs, the copy joins its import chain, as the original does in requireOriginalModule().
+    if (auto* running = findRunningModuleMock(globalObject, mock)) {
+        redirectedModuleKey(globalObject, *running, key, mock->specifier->tryGetValue().data);
+        addToImportChain(globalObject, *running, key);
+    }
+    RELEASE_AND_RETURN(scope, requireModuleKey(globalObject, from, key));
+}
+
+// What jest.requireActual() gives and jest.createMockFromModule() is made of: the file that require() of the name loads, whatever is mocked.
+// Under a mock that answers an import of the name alone, it is the original of that mock: the file that an import loads.
+static JSValue requireActualModule(Zig::GlobalObject* globalObject, const ModuleMockSpecifier& specifier, const ModuleMockForRequire& found, const String& from)
+{
+    if (!found.mock)
+        return requireModuleKey(globalObject, from, specifier.keyForRequire());
+    if (found.answersRequirePathOfName)
+        return requireFileAtRequirePath(globalObject, found.mock, from);
+    return requireOriginalModule(globalObject, found.mock);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -7131,9 +7214,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireActualModule, (JSC::JSGlobalObject * l
     auto specifier = moduleMockSpecifierArgument(globalObject, callframe, "requireActual(module)"_s, true);
     RETURN_IF_EXCEPTION(scope, {});
 
-    if (JSModuleMock* mock = moduleMockForTest(globalObject, specifier.key))
-        RELEASE_AND_RETURN(scope, JSValue::encode(requireOriginalModule(globalObject, mock)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, callerPath(vm, callframe), specifier.key)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(requireActualModule(globalObject, specifier, moduleMockForRequire(globalObject, specifier), callerPath(vm, callframe))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionImportMockDidLoad, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
@@ -7203,11 +7284,12 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
     RETURN_IF_EXCEPTION(scope, {});
     String from = callerPath(vm, callframe);
 
-    JSModuleMock* mock = moduleMockForTest(globalObject, specifier.key);
+    auto found = moduleMockForRequire(globalObject, specifier);
     if (!fromOriginal) {
-        if (mock)
-            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, specifier.key)));
-        JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, specifier.key, true);
+        // By its own key: the path that require() resolves the name to gets the file wherever keyOfModuleMockAtRequirePath() makes no turn.
+        if (found.mock)
+            RELEASE_AND_RETURN(scope, JSValue::encode(requireModuleKey(globalObject, from, found.key)));
+        JSC::JSString* manualMock = findManualModuleMock(globalObject, from, specifier.written, specifier.keyForRequire(), true);
         RETURN_IF_EXCEPTION(scope, {});
         if (manualMock) {
             String key = manualMock->value(globalObject);
@@ -7216,7 +7298,7 @@ static JSC::EncodedJSValue requireMockModule(JSC::JSGlobalObject* lexicalGlobalO
         }
     }
 
-    JSValue original = mock ? requireOriginalModule(globalObject, mock) : requireModuleKey(globalObject, from, specifier.key);
+    JSValue original = requireActualModule(globalObject, specifier, found, from);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, JSValue::encode(Bun::mockObject(globalObject, original, false)));
 }

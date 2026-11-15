@@ -279,6 +279,8 @@ impl ClientSession {
         // Formed only after detach() so its Unique tag is not invalidated by
         // detach()'s aliasing write to `client.h3`.
         let client = client_mut(client_ptr);
+        // Nothing is sent on the new stream yet, whatever went out on this one.
+        client.state.request_stage = HTTPStage::Pending;
         if !ClientContext::as_mut(ctx).connect(client, &host, port) {
             client.fail_from_h2(err);
         }

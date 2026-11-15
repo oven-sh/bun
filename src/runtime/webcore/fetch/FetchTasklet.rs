@@ -150,6 +150,8 @@ pub struct FetchTasklet {
     js_ref: Option<RefPtr<FetchTasklet>>,
     pub global_this: GlobalRef,
     pub(crate) request_body: HTTPRequestBody,
+    /// The HTTP thread is done with `request_body`. Under `mutex`.
+    request_body_released: bool,
     /// This side's ref; the HTTP thread holds the other of the two initial refs.
     pub(crate) request_body_streaming_buffer: Option<RefPtr<ThreadSafeStreamBuffer>>,
 
@@ -451,19 +453,14 @@ impl FetchTasklet {
         }
     }
 
-    /// The HTTP thread reported `request_body_released`: a response that is
-    /// still streaming must not keep the request's bytes (or file) alive. The
-    /// caller holds `mutex` and drops the returned body once it does not.
+    /// A response that is still streaming must not keep the request's bytes (or file) alive.
+    /// The caller holds `mutex` and drops the returned body once it does not.
     fn take_released_request_body(&mut self) -> Option<HTTPRequestBody> {
-        if !core::mem::take(&mut self.result.request_body_released)
-            // A redirect dropped it; `abort_listener` may still have to cancel it.
+        if !core::mem::take(&mut self.request_body_released)
+            // A 303 dropped it, but `start_request_stream` or `abort_listener` may not have run yet.
             || matches!(self.request_body, HTTPRequestBody::ReadableStream(_))
         {
             return None;
-        }
-        if let Some(http_) = self.http.as_mut() {
-            // Borrows `request_body`.
-            http_.request_body = http::HTTPRequestBody::Bytes(b"");
         }
         Some(core::mem::take(&mut self.request_body))
     }
@@ -1820,6 +1817,7 @@ impl FetchTasklet {
             js_ref: None,
             global_this: GlobalRef::from(cx.global()),
             request_body: fetch_options.body,
+            request_body_released: false,
             request_body_streaming_buffer: None,
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
@@ -2340,11 +2338,13 @@ impl FetchTasklet {
         // explicit field-subset copy (`AsyncHTTP` is not `Copy`:
         // `HTTPClient: Drop`, owned Vecs); see `AsyncHTTP::sync_progress_from`
         // for the field list.
-        task_ref
-            .http
-            .as_mut()
-            .unwrap()
-            .sync_progress_from(async_http);
+        let http_ = task_ref.http.as_mut().unwrap();
+        http_.sync_progress_from(async_http);
+        if result.request_body_released {
+            // It borrows `request_body`. Written here because this thread also reads `http` unlocked.
+            http_.request_body = http::HTTPRequestBody::Bytes(b"");
+            task_ref.request_body_released = true;
+        }
 
         bun_output::scoped_log!(
             FetchTasklet,
@@ -2358,7 +2358,6 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
-        let prev_request_body_released = task_ref.result.request_body_released;
         // `result.body` borrows the HTTP thread's scratch buffer on non-terminal
         // callbacks; the terminal callback carries the bytes in `body_owned`
         // instead. Capture both; the stored copy keeps neither.
@@ -2367,7 +2366,6 @@ impl FetchTasklet {
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
-        task_ref.result.request_body_released |= prev_request_body_released;
 
         // Preserve pending certificate info if it was preovided in the previous update.
         if task_ref.result.certificate_info.is_none() {

@@ -479,8 +479,8 @@ pub struct HTTPClientResult<'a> {
     /// Set once ALPN selected h2 so the JS side writes raw bytes into the
     /// streaming-body buffer instead of chunked-encoding them.
     pub is_http2: bool,
-    /// The client is done with the `Bytes` / `Sendfile` request body it was
-    /// started with, so its owner may free it. Set at most once, with `metadata`.
+    /// The client sent all it will send and holds no request body any more: the owner of the
+    /// `Bytes` / `Sendfile` it was started with may free it. Set at most once, with `metadata`.
     pub request_body_released: bool,
 
     pub fail: Option<crate::Error>,
@@ -3017,7 +3017,8 @@ impl<'a> HTTPClient<'a> {
             compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
         };
         self.compressed_body_len = slice.len();
-        // The `Vec` is next rewritten only once `reset()`/`init()` has re-seated this cursor.
+        // The `Vec` is next rewritten only once `reset()`/`init()`/`release_sent_request_body()`
+        // has re-seated this cursor.
         self.state.request_body = bun_ptr::RawSlice::new(slice);
         self.state.flags.body_compressed = true;
         Ok(())

@@ -49,7 +49,7 @@ pub struct InternalState<'a> {
     pub(crate) total_body_received: usize,
     // Self-borrow into `original_request_body.bytes`; `RawSlice` carries the
     // outlives-holder invariant (the backing `original_request_body` is a
-    // sibling field, so it lives exactly as long as this struct).
+    // sibling field, and `release_sent_request_body` empties the two together).
     pub(crate) request_body: bun_ptr::RawSlice<u8>,
     pub(crate) original_request_body: HTTPRequestBody<'a>,
     pub(crate) request_sent_len: usize,

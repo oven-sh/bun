@@ -880,8 +880,7 @@ pub struct WriteEvent(Completion);
 
 #[cfg(windows)]
 enum Completion {
-    Wrote(usize),
-    Canceled,
+    Wrote,
     StreamFailed(sys::Error),
     FileFailed(sys::Error),
     VmTeardown,
@@ -953,30 +952,28 @@ impl WindowsPipeWriter {
 
     /// The owner may free `self`.
     /// SAFETY: `this` is `as_uv_data` of a live writer.
-    unsafe fn dispatch(this: *mut Self, completion: impl FnOnce(&Self) -> Completion) {
+    unsafe fn dispatch(this: *mut Self, completion: Completion) {
+        let event = IoEvent::Write(WriteEvent(completion));
         // SAFETY: fn contract, and `set_owner`'s.
-        unsafe {
-            let event = IoEvent::Write(WriteEvent(completion(&*this)));
-            __bun_run_io((*this).owner.get(), event);
-        }
+        unsafe { __bun_run_io((*this).owner.get(), event) };
     }
 
     /// `uv::open_handles` closes this writer's stream through here at teardown.
     unsafe fn stop_for_vm_teardown(this: *mut c_void) {
         // SAFETY: recorded by `set_source`. Closing the source takes it off the list.
-        unsafe { Self::dispatch(this.cast(), |_| Completion::VmTeardown) };
+        unsafe { Self::dispatch(this.cast(), Completion::VmTeardown) };
     }
 
     fn on_stream_write(this: *mut Self, status: uv::ReturnCode) {
-        let completion = |this: &Self| {
-            this.in_flight.set(false);
-            match status.to_error(sys::Tag::write) {
-                Some(err) => Completion::StreamFailed(err),
-                None => Completion::Wrote(this.reset_payload()),
-            }
+        let completion = match status.to_error(sys::Tag::write) {
+            Some(err) => Completion::StreamFailed(err),
+            None => Completion::Wrote,
         };
         // SAFETY: set by `submit`. `Drop` does not return while the write is in flight.
-        unsafe { Self::dispatch(this, completion) };
+        unsafe {
+            (*this).in_flight.set(false);
+            Self::dispatch(this, completion);
+        }
     }
 
     unsafe extern "C" fn on_file_write(fs: *mut uv::fs_t) {
@@ -984,19 +981,16 @@ impl WindowsPipeWriter {
         let Some((result, this)) = (unsafe { File::on_complete(fs) }) else {
             return;
         };
-        let completion = |this: &Self| {
-            this.in_flight.set(false);
-            if result.int() == uv::UV_ECANCELED as i64 {
-                this.reset_payload();
-                return Completion::Canceled;
-            }
-            match result.to_error(sys::Tag::write) {
-                Some(err) => Completion::FileFailed(err),
-                None => Completion::Wrote(this.reset_payload()),
-            }
+        let completion = match result.to_error(sys::Tag::write) {
+            Some(err) => Completion::FileFailed(err),
+            None => Completion::Wrote,
         };
+        let this = this.cast::<Self>();
         // SAFETY: set by `set_source`, and cleared by dropping the file.
-        unsafe { Self::dispatch(this.cast(), completion) };
+        unsafe {
+            (*this).in_flight.set(false);
+            Self::dispatch(this, completion);
+        }
     }
 
     /// Returns the length it had.
@@ -1931,8 +1925,7 @@ impl WindowsStreamingWriter {
             handler.on_write_in_flight(false);
         }
         match completion {
-            Completion::Wrote(written) => self.on_write_complete(handler, written),
-            Completion::Canceled => {}
+            Completion::Wrote => self.on_write_complete(handler, self.pipe.reset_payload()),
             Completion::StreamFailed(err) => self.report_error(handler, err),
             Completion::FileFailed(err) => {
                 self.close(handler);

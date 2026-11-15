@@ -707,18 +707,6 @@ describe.concurrent("bun fmt", () => {
       ["comment.css", "a {\n  /* b\n}\n", "Unclosed comment", 2, 3],
       ["bracket.css", "a {\n  b: c(1;\n}\n", "Unclosed bracket", 2, 7],
       ["url.css", "a {\n  b: url(c;\n}\n", "Unclosed bracket", 2, 9],
-      [
-        "at-rule-bracket.css",
-        "@media (min-width: 640px {\n  .a {\n    color: red;\n  }\n}\n",
-        "Unclosed bracket",
-        1,
-        8,
-      ],
-      ["at-rule-square-bracket.css", "@media [a {\n  .a {\n    color: red;\n  }\n}\n", "Unclosed bracket", 1, 8],
-      ["at-rule-bracket-in-block.css", "@media (a {\n  b: c);\n}\n", "Unclosed bracket", 1, 8],
-      ["at-rule-at-word.css", '@media (a;\n@import "b";\n', "Unclosed bracket", 1, 8],
-      ["at-rule-declarations.css", "@media (min-width: 640px\n  color: red;\n", "Unclosed bracket", 1, 8],
-      ["at-rule-prelude.css", "@media (min-width: 640px\n", "Unclosed bracket", 1, 8],
       ["custom-property.css", "a {\n  --x: {\n", "Unclosed bracket", 2, 8],
       ["word.css", "a {\n  b c;\n}\n", "Expected a declaration or a rule", 2, 3],
       ["at.css", "@ a;\n", 'Expected a name after "@"', 1, 1],
@@ -732,10 +720,8 @@ describe.concurrent("bun fmt", () => {
       ["interpolation.scss", "a {\n  b: #{$c;\n", "Unclosed interpolation", 2, 6],
       ["string.scss", 'a {\n  b: "x;\n}\n', "Unclosed string", 2, 6],
       ["nested.scss", "a {\n  b: c: {\n    d: e;\n  }\n}\n", 'Unexpected ":"', 2, 7],
-      ["at-rule-bracket.scss", "@include foo( {\n  .a {\n    color: red;\n  }\n}\n", "Unclosed bracket", 1, 13],
       ["mixin.less", "a {\n  .b(;\n}\n", "Unclosed bracket", 2, 5],
       ["each.less", "each(@a, {\n", "Unclosed bracket", 1, 5],
-      ["at-rule-bracket.less", "@media (a;\n.b {\n  color: blue;\n}\n", "Unclosed bracket", 1, 8],
       ["word.less", "a {\n  b c;\n}\n", "Expected a declaration or a rule", 2, 3],
       ["end.graphql", "query {\n  a\n", "Unexpected end of file", 3, 1],
       ["name.graphql", "query {\n}\n", "Expected a name", 2, 1],
@@ -890,19 +876,63 @@ describe.concurrent("bun fmt", () => {
     }
   });
 
-  test("an at-rule whose bracket is open at the end of the file is a syntax error, and the file stays as it is", async () => {
-    // `postcss` takes the rest of the file as the params of the at-rule, so Prettier 3.9.9 prints `@media ;` and
-    // drops both rules. oxfmt 0.72 refuses the file: "expect token `<ident>`, but found `(`".
-    const text = "@media (min-width: 640px {\n  .a {\n    color: red;\n  }\n}\n.b {\n  color: blue;\n}\n";
-    const error = problem("a.css", "Unclosed bracket", [1, 8, "@media (min-width: 640px {"]);
-    for (const configuration of [{}, { ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
-      for (const flags of [[], ["--check"]]) {
-        const result = await format({ ...configuration, "a.css": text }, [...flags, "a.css"], { reads: ["a.css"] });
-        expect(result.stderr).toStartWith(error);
-        expect(result.files["a.css"]).toBe(text);
-        expect(result.exitCode).toBe(2);
+  describe("an at-rule whose bracket is open at the end of the file", () => {
+    // `postcss` takes the rest of the file as the params of the at-rule, and Prettier formats that. oxfmt 0.72 refuses
+    // each of these with "expect token `<ident>`, but found `(`" or the like. Each row is the file, its text, the line
+    // and the column of the bracket, and what Prettier 3.9.9 prints: for `@media` an empty query, which drops every
+    // rule of the file, and for other names the text with a `;` after it.
+    test.each([
+      [
+        "a.css",
+        "@media (min-width: 640px {\n  .a {\n    color: red;\n  }\n}\n.b {\n  color: blue;\n}\n",
+        1,
+        8,
+        "@media ;\n",
+      ],
+      [
+        "a.css",
+        "@supports (display: grid {\n  .a {\n    color: red;\n  }\n}\n.b {\n  color: blue;\n}\n",
+        1,
+        11,
+        "@supports (display: grid {\n  .a {\n    color: red;\n  }\n}\n.b {\n  color: blue;\n};\n",
+      ],
+      ["a.css", "@media [a {\n  .a {\n    color: red;\n  }\n}\n", 1, 8, "@media [a { .a { color: red; } };\n"],
+      ["a.css", "@media (a {\n  b: c);\n}\n", 1, 8, "@media ((a {\n b: c);\n});\n"],
+      ["a.css", '@media (a;\n@import "b";\n', 1, 8, "@media ;\n"],
+      ["a.css", "@media (min-width: 640px\n  color: red;\n", 1, 8, "@media ;\n"],
+      ["a.css", "@media (min-width: 640px\n", 1, 8, "@media ;\n"],
+      // The first bracket is closed, so the second is the one that is reported.
+      ["a.css", "@media (a\n) and (b {\n  .c {\n  }\n}\n", 2, 7, "@media (a) and;\n"],
+      [
+        "a.scss",
+        "@include foo( {\n  .a {\n    color: red;\n  }\n}\n",
+        1,
+        13,
+        "@include foo( {\n  .a {\n    color: red;\n  }\n};\n",
+      ],
+      ["a.less", "@media (a;\n.b {\n  color: blue;\n}\n", 1, 8, "@media ;\n"],
+    ])("%j", async (name, text, line, column, byPrettier) => {
+      expect(byPrettier).not.toBe(text);
+      const error = problem(name, "Unclosed bracket", [line, column, text.split("\n")[line - 1]]);
+      // Another tool's configuration makes no difference, and neither does `--check`.
+      for (const configuration of [{}, { ".prettierrc": "{}\n" }, { ".oxfmtrc.json": "{}\n" }]) {
+        for (const flags of [[], ["--check"]]) {
+          const result = await format({ ...configuration, [name]: text }, [...flags, name], { reads: [name] });
+          expect(result.stderr).toStartWith(error);
+          expect(result.files[name]).toBe(text);
+          expect(result.exitCode).toBe(2);
+        }
       }
-    }
+    });
+
+    test("unless only punctuation, spaces and comments follow the bracket", async () => {
+      // Prettier's `scss/no-semicolon/url.scss`: `//` starts a comment in SCSS, so the bracket is never closed.
+      const text = "@import ur\n  l(//b);\n";
+      const written = "@import ur\n  l(; //b);\n";
+      const result = await format({ "a.scss": text, "b.scss": written }, [], { reads: ["a.scss", "b.scss"] });
+      expect(result.files).toEqual({ "a.scss": written, "b.scss": written });
+      expect(result.exitCode).toBe(0);
+    });
   });
 
   // `bun lint` and `bun build` count lines the same way, and don't count the byte order mark either.

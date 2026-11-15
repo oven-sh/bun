@@ -682,9 +682,9 @@ fn unclosed_bracket(tokens: &[Token], braces: Braces) -> u32 {
         .map_or(0, |it| it.range.start)
 }
 
-/// Returns the offset of the bracket that the params of an at-rule leave open at the end of the file, if a word, a
-/// string or a bracket group follows it. Prettier formats `scss/no-semicolon/url.scss`, which ends in `(` and a `//`
-/// comment, and prints `(;` before the comment.
+/// Returns the offset of the bracket that the params of an at-rule leave open at the end of the file, unless only
+/// punctuation, spaces and comments follow it: Prettier formats `scss/no-semicolon/url.scss`, whose `@import` ends in
+/// `(` and a `//` comment, as `(;` and the comment.
 #[cold]
 fn swallowed_by_bracket(params: &[Token]) -> Option<u32> {
     let index = first_unclosed(params, Braces::InBracket)?;
@@ -946,8 +946,8 @@ impl<'a> Parser<'a> {
             }
         }
 
-        // `other` in `postcss` has this check and `atrule` has not, so Prettier prints `@media ;` for
-        // `@media (a {\n.b {\n}`.
+        // Refused like a declaration (`other_with`). `postcss` formats it: Prettier prints `@media ;` for
+        // `@media (a {\n.b {\n}`, and the text with a `;` after it for another name.
         if !brackets.is_empty()
             && let Some(at) = swallowed_by_bracket(&params)
         {

@@ -32,7 +32,7 @@ bun_core::declare_scope!(FileSink, visible);
 
 // Shared borrows only. A method may release every ref but the one its caller borrows from.
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileSink {
+pub(crate) struct FileSink {
     ref_count: Cell<u32>,
     pub(crate) writer: StreamingWriter,
     /// Held while a write is in flight.
@@ -891,7 +891,7 @@ impl FileSink {
         this
     }
 
-    pub fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
+    pub(crate) fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
@@ -1044,7 +1044,7 @@ impl FileSink {
         }
     }
 
-    pub fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js(this: RefPtr<FileSink>, global_this: &JSGlobalObject) -> JSValue {
         JSSink::create_object(global_this, WrapperRef(this), None)
     }
 
@@ -1458,7 +1458,7 @@ pub(crate) fn on_reject_stream(
 
 impl FileSink {
     /// `Bun.write(file, stream)`: the byte-count promise `on_close` settles.
-    pub fn pipe_stream(
+    pub(crate) fn pipe_stream(
         this: &RefPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,
@@ -1512,7 +1512,7 @@ impl FileSink {
         }
     }
 
-    pub fn assign_to_stream(
+    pub(crate) fn assign_to_stream(
         this: &RefPtr<FileSink>,
         stream: &mut ReadableStream,
         global_this: &JSGlobalObject,

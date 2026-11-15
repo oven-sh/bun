@@ -22,7 +22,7 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// `None` until `create_context_data()` has run.
+    /// `None` only in `ContextData::default()`.
     pub log: Option<&'static bun_ast::Log>,
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
@@ -244,7 +244,7 @@ pub type Context<'a> = &'a mut ContextData;
 pub static CONSOLE_DEPTH: AtomicU16 = AtomicU16::new(2);
 
 /// `--silent`, `run.silent`. Read by every thread that runs a server.
-pub static SILENT: AtomicBool = AtomicBool::new(false);
+pub static IS_SILENT: AtomicBool = AtomicBool::new(false);
 
 pub struct DebugOptions {
     pub hot_reload: HotReload,

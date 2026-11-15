@@ -500,7 +500,7 @@ impl Worker {
         let mut worker = unsafe { bun_core::heap::take(this) };
         if worker.has_created {
             if let Some(data) = &mut worker.data {
-                // It is in `heap`, which drops nothing.
+                // The log is in the arena, which does not run `Drop`.
                 data.transpiler.log().clear_and_free();
             }
             // Drop order: `data` (whose `transpiler.arena` borrows `heap`)

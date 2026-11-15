@@ -503,7 +503,7 @@ pub struct PackageManager {
     // iterations — use `ast_arena` instead. The manager is a leaked singleton, so
     // this arena has process lifetime.
     pub(crate) ast_arena: bun_alloc::Arena,
-    /// The tasks of an isolated install share `&PackageManager`, which must not lead to it.
+    /// `SyncView`: other threads share `&Self`, and `Log` is not `Sync`.
     log: SyncView<&'static bun_ast::Log>,
     pub(crate) timestamp_for_manifest_cache_control: u32,
     pub(crate) extracted_count: u32,
@@ -2837,7 +2837,7 @@ fn init_with_runtime_once(
             runtime_auto_install: true,
             ..Default::default()
         },
-        // No importer's log lives as long. `report_to` hands over what this one collects.
+        // Outlives every caller's log, and is drained into it.
         Box::leak(Box::default()),
         root_dir,
         env,
@@ -2852,7 +2852,7 @@ fn init_with_runtime_once(
     // the `&mut PackageManager` validity invariant now holds for the post-init
     // body.
     let manager = unsafe { &mut *manager_ptr };
-    let _report = manager.report_to(Some(log));
+    let _drain = manager.drain_log_on_drop(Some(log));
 
     if Output::enable_ansi_colors_stderr() {
         manager.progress = Progress::default();

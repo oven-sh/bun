@@ -90,8 +90,8 @@ pub struct InitOptions {
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
     pub log: Option<&'static bun_ast::Log>,
-    /// The level of the log that a VM makes when it is given no `log`.
-    pub own_log_level: bun_ast::Level,
+    /// Used when `log` is `None`.
+    pub owned_log: bun_ast::Log,
     /// Forwarded to
     /// `RuntimeHooks::init_runtime_state` so the high-tier `Transpiler::init`
     /// reuses the caller's env loader.
@@ -125,7 +125,7 @@ impl Default for InitOptions {
             transform_options: Default::default(),
             debugger: Default::default(),
             log: None,
-            own_log_level: bun_ast::Log::default().level.get(),
+            owned_log: bun_ast::Log::default(),
             env_loader: None,
             owned_env_loader: None,
             graph: None,
@@ -175,10 +175,10 @@ pub struct VirtualMachine {
     /// `None` when hot reload is disabled.
     pub bun_watcher: JsCell<Option<std::sync::Arc<bun_watcher::Watcher>>>,
     pub(crate) console: Box<crate::console_object::ConsoleObject>,
-    /// `InitOptions::log` or `own_log`. `transpiler` and its resolver write to it too.
+    /// `InitOptions::log` or `owned_log`. `transpiler` and its resolver write to it too.
     pub log: &'static bun_ast::Log,
-    own_log: bun_ast::Log,
-    /// Of `log`, which has another one while it is redirected.
+    owned_log: bun_ast::Log,
+    /// The level of `log` at `init`; `Log::redirect` swaps the level too.
     pub log_level: bun_ast::Level,
     /// Path of the entry module: the user's module that runs first. `None` when there is none, as
     /// for `bun bake`, where the program is a built-in module (`main_entry_point`). BACKREF —
@@ -2274,7 +2274,7 @@ impl VirtualMachine {
         // SAFETY: sole owner; nothing past this point dereferences the VM.
         unsafe {
             core::ptr::drop_in_place(&raw mut (*this).console);
-            core::ptr::drop_in_place(&raw mut (*this).own_log);
+            core::ptr::drop_in_place(&raw mut (*this).owned_log);
             VMHolder::set_vm(None);
             // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
             // `init`, NOT `Box::new` — dealloc the raw storage directly so
@@ -3074,12 +3074,9 @@ impl VirtualMachine {
             use core::ptr::addr_of_mut;
             addr_of_mut!((*vm).global).write(Cell::new(core::ptr::null_mut()));
             addr_of_mut!((*vm).console).write(console);
-            addr_of_mut!((*vm).own_log).write(bun_ast::Log {
-                level: Cell::new(opts.own_log_level),
-                ..Default::default()
-            });
-            // `'static` as in `get()`: until this thread is done with script.
-            addr_of_mut!((*vm).log).write(opts.log.unwrap_or(&(*vm).own_log));
+            addr_of_mut!((*vm).owned_log).write(core::mem::take(&mut opts.owned_log));
+            // `'static` like `get()`: `exit_and_free` drops `owned_log`.
+            addr_of_mut!((*vm).log).write(opts.log.unwrap_or(&(*vm).owned_log));
             addr_of_mut!((*vm).log_level).write((*vm).log.level.get());
             addr_of_mut!((*vm).bun_watcher).write(JsCell::new(None));
             addr_of_mut!((*vm).pending_reloads).write(OnceCell::new());

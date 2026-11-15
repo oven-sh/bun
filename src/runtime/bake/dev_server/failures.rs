@@ -389,8 +389,8 @@ impl DevServer {
         Ok(())
     }
 
-    /// Returns what the resolution failures of `abs_path` are grouped by.
-    pub(crate) fn mark_resolution_failure(
+    /// Inserts `abs_path` into its graph as stale.
+    pub(crate) fn insert_stale_owner(
         &mut self,
         abs_path: &[u8],
         graph: bake::Graph,

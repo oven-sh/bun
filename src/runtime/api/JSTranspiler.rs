@@ -874,14 +874,14 @@ impl JSTranspiler {
         config_arg: Option<&TranspilerOptions<'_>>,
     ) -> JsResult<*mut JSTranspiler> {
         let global = cx.global();
-        let owned_arena = bun_ptr::AliasableBox::new(Arena::new());
+        let arena = bun_ptr::AliasableBox::new(Arena::new());
         // SAFETY: `'static` for `Transpiler<'static>`. `config` and `transpiler` drop before
-        // `owned_arena`, here and as fields of the `JSTranspiler` that all three move into.
-        let arena = unsafe { bun_ptr::detach_lifetime_ref(&*owned_arena) };
+        // `arena`, here and as fields of the `JSTranspiler` that all three move into.
+        let arena_ref = unsafe { bun_ptr::detach_lifetime_ref(&*arena) };
         let mut log = bun_ast::Log::init();
         let mut config = Config::default();
 
-        config.from_js(global, config_arg, arena, &log)?;
+        config.from_js(global, config_arg, arena_ref, &log)?;
 
         if (log.warnings.get() + log.errors.get()) > 0 {
             return Err(
@@ -893,7 +893,7 @@ impl JSTranspiler {
         let _redirect = vm.log.redirect(&mut log);
         let log = vm.log;
         let transpiler = match Transpiler::Transpiler::init(
-            arena,
+            arena_ref,
             log,
             config.transform.clone(),
             Some(vm.transpiler.get().env),
@@ -911,7 +911,7 @@ impl JSTranspiler {
 
         let mut this: Box<JSTranspiler> = Box::new(JSTranspiler {
             config,
-            _arena: owned_arena,
+            _arena: arena,
             log_level: log.level.get(),
             transpiler: JsCell::new(transpiler),
             macro_load_states: MacroLoadStates::default(),

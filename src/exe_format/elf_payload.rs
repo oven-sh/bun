@@ -785,8 +785,8 @@ mod tests {
     use bun_core::slice_to_nul;
 
     use super::*;
-    use crate::elf_ranges::reserve_payload_segments;
     use crate::elf_ranges::tests::toy_elf;
+    use crate::elf_ranges::{cut_model, reserve_payload_segments};
     use crate::image::{AddressRange, Architecture, ImageEditor};
 
     const ARCHITECTURES: [Architecture; 2] = [Architecture::X86_64, Architecture::Aarch64];
@@ -862,7 +862,10 @@ mod tests {
         let page = page_size(elf);
         let start = align_up(find_section(elf, b".text").sh_addr, page);
         let end = start + 4 * page;
-        let cut = AddressRange { start, end };
+        remove(elf, AddressRange { start, end })
+    }
+
+    fn remove(elf: &mut Vec<u8>, cut: AddressRange) -> AddressRange {
         let mut editor = ImageEditor::open(elf).unwrap();
         editor.remove_ranges(&[cut]).unwrap();
         cut
@@ -1178,6 +1181,42 @@ mod tests {
             assert_both_fail(&longer_span, 100, ElfError::BunSectionAlreadyWritten);
             let moved_span = edited::<Elf64_Phdr>(&first, span_offset, |span| span.p_vaddr += page);
             assert_both_fail(&moved_span, 100, ElfError::BunSectionAlreadyWritten);
+        }
+    }
+
+    #[test]
+    fn payload_with_code_is_replaced_after_another_cut() {
+        for architecture in ARCHITECTURES {
+            let mut trimmed = template(architecture);
+            let first_cut = remove_text_pages(&mut trimmed);
+            let page = page_size(&trimmed);
+            let first =
+                write_with_code(&trimmed, &create_payload(4 * page), page - 8..3 * page - 8);
+            let free_slots = |elf: &[u8]| cut_model(elf).free_slots();
+            assert_eq!(free_slots(&first), free_slots(&trimmed));
+
+            let mut cut_twice = first.clone();
+            let second_cut = remove(
+                &mut cut_twice,
+                AddressRange {
+                    start: first_cut.end,
+                    end: first_cut.end + page,
+                },
+            );
+            assert_eq!(find_reserved_segment(&cut_twice), None);
+            assert_eq!(free_slots(&cut_twice), free_slots(&first));
+
+            let mut cut_once = template(architecture);
+            remove(
+                &mut cut_once,
+                AddressRange {
+                    start: first_cut.start,
+                    end: second_cut.end,
+                },
+            );
+            let (payload, code) = (create_payload(6 * page), 2 * page - 8..5 * page - 8);
+            let built = write_with_code(&cut_twice, &payload, code.clone());
+            assert!(built == write_with_code(&cut_once, &payload, code));
         }
     }
 

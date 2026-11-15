@@ -275,6 +275,28 @@ static JSC::EncodedJSValue keyOfRequireUnderModuleMocks(Zig::GlobalObject* globa
     return JSC::JSValue::encode(given == key ? resolved : JSC::JSValue(jsString(vm, given)));
 }
 
+// Where require() has its path from a replaced Module._resolveFilename or with options.paths, module mocks are not asked about it. Only a mock that
+// OnLoad::moduleMockKeysByRequirePath names gives the path another key there (Bun::keyOfModuleMockAtRequirePath()), and a running factory is asked only about a path
+// that the map has as a key, so that its own require() of its name gets the original. A mock of a name with one file has no say there, nor has `bun test --aot`, which leaves the map empty.
+static JSC::EncodedJSValue keyOfRequireUnderModuleMocksAtRequirePaths(Zig::GlobalObject* globalObject, JSC::JSValue resolved, JSC::JSValue from)
+{
+    auto& plugins = globalObject->onLoadPlugins;
+    if (plugins.moduleMockKeysByRequirePath.isEmpty()) [[likely]]
+        return JSC::JSValue::encode(resolved);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String key = asString(resolved)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto fromString = from.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    String given = key;
+    if (!plugins.runningModuleMocks.isEmpty() && plugins.moduleMockKeysByRequirePath.contains(key))
+        given = Bun::keyOfImportWhileModuleMocksRun(globalObject, key, fromString, false);
+    if (!plugins.moduleMockKeysByRequirePath.isEmpty())
+        given = Bun::keyOfModuleMockAtRequirePath(globalObject, given, fromString, false);
+    return JSC::JSValue::encode(given == key ? resolved : JSC::JSValue(jsString(vm, given)));
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -354,7 +376,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                     WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
                     if (!prefixed.isNull()) {
-                        return JSValue::encode(jsString(vm, prefixed));
+                        // "imports" of a package.json can give require() a builtin for a name that an import resolves to a file. A mock of that name answers require() of the builtin.
+                        RELEASE_AND_RETURN(scope, keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, jsString(vm, prefixed), from));
                     }
                     // In an ahead-of-time executable Module._resolveFilename() answers, as require.resolve() does, with where the file lay when the program was built.
                     if (Bun::hasCompiledModules()) [[unlikely]] {
@@ -363,7 +386,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     }
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, string, moduleName, from);
                     RETURN_IF_EXCEPTION(scope, {});
-                    return JSC::JSValue::encode(string);
+                    RELEASE_AND_RETURN(scope, keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, string, from));
                 }
                 return JSC::JSValue::encode(result);
             }
@@ -422,6 +445,8 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result), moduleName, from);
                     if (scope.exception()) [[unlikely]]
                         result = {};
+                    else
+                        result = keyOfRequireUnderModuleMocksAtRequirePaths(globalObject, JSC::JSValue::decode(result), from);
                 }
 
             cleanup:

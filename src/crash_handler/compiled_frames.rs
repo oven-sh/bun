@@ -225,13 +225,16 @@ pub(crate) fn is_own_stop(
     if signal != libc::SIGTRAP && signal != libc::SIGILL {
         return (pc == address || is_raised) && removed_feature_entered(pc).is_some();
     }
+    if !cfg!(target_os = "macos") && !is_raised {
+        return false;
+    }
     let is_breakpoint = signal == libc::SIGTRAP;
     let pc = pc.wrapping_sub(usize::from(cfg!(target_arch = "x86_64") && is_breakpoint));
     if offset_in_code(pc).is_none() && !is_in_own_segment(pc) {
         return false;
     }
     if !cfg!(target_os = "macos") {
-        return is_raised;
+        return true;
     }
     let instruction = core::ptr::with_exposed_provenance::<[u8; 4]>(pc);
     // SAFETY: the processor has run or tried to run the instruction there.

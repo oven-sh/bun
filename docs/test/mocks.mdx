@@ -869,7 +869,16 @@ A mock that reaches both is still one mock, and Bun keeps it under the path of t
 - A later mock of that path, or of the name with `vi.mock()` or `vi.doMock()`, replaces it for `import` and ends it for `require()`. `import` gets the later mock, and `require()` of the name loads the real file.
 - `require.cache[require.resolve(name)]` is not the mock. `require.resolve(name)` returns the path of the real file, and `require.cache` has either that file there or nothing.
 
-If your tests mock such a name with `mock.module()`, `jest.mock()` or `jest.doMock()` and also call `mock.module(require.resolve(name), factory)` to make `require()` get the mock, you can delete that line. The mock of the name reaches `require()`. The line still works if you keep it. It makes a second mock, for the file that `require()` loads, and `require()` of the name gets whichever of the two mocks was made last. Keep the line beside `vi.mock()` and `vi.doMock()`. Their mock doesn't reach `require()` of such a name.
+If your tests mock such a name with `mock.module()`, `jest.mock()` or `jest.doMock()` and also call `mock.module(require.resolve(name), factory)` to make `require()` get the mock, the mock of the name now reaches `require()` without that line. If you keep the line, it makes a second mock, for the file that `require()` loads, and `require()` of the name gets whichever of the two mocks was made last.
+
+You can delete the line, with two exceptions. In both, the file that `require()` loads is already loaded when the line runs. The line updates that file in place, and the mock of the name leaves it as it is (see [Lazy Evaluation](#lazy-evaluation)).
+
+- The factory returns an object with `__esModule: true` and a `default`. With the line, `require()` of the name gets that object. Without the line, `require()` gets the value of `default`. To delete the line, put the names that CommonJS callers read on `default`.
+- The factory is an `async` function that awaits, and the file that `import` loads isn't loaded. With the line, Bun calls the factory when the line runs, and `require()` of the name gets the mock once you have awaited `mock.module()`. Without the line, `require()` gets the real file until an `import` of the name has called the factory and the factory has settled.
+
+A hoisted `jest.mock()` of the name answers a `require()` that runs while the imports of the test file load. The file that `require()` loads may then not be loaded when the line runs. If the factory returns `__esModule: true` and a `default`, `require()` then gets the value of `default` with the line too. Put the names that CommonJS callers read on `default`.
+
+Keep the line beside `vi.mock()` and `vi.doMock()`. Their mock doesn't reach `require()` of such a name.
 
 ### Import Timing Effects
 

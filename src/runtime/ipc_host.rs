@@ -315,23 +315,22 @@ pub(crate) fn emit_handle_ipc_message<'a>(
             // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
             // the cluster's internal-message dispatcher instead of emitting a
             // process 'message' event, mirroring Node's NODE_-prefix routing.
+            let channel = get_ipc_instance(global_this.bun_vm());
             if is_object {
                 if let Some(cmd) = message.get(global_this, "cmd")? {
                     if cmd.is_string() {
                         let cmd_str = cmd.to_bun_string(global_this)?;
                         if cmd_str.eq_ascii(b"NODE_CLUSTER") {
-                            crate::node::node_cluster_binding::handle_internal_message_child(
-                                global_this,
-                                message,
-                                handle,
-                            )?;
+                            if let Some(channel) = channel {
+                                let internal = &channel.data().internal_msg_queue;
+                                internal.dispatch(message, handle, global_this);
+                            }
                             return Ok(());
                         }
                     }
                 }
             }
-            let vm = global_this.bun_vm();
-            if get_ipc_instance(vm).is_none() {
+            if channel.is_none() {
                 // Channel already gone: a handle that finished adopting after EOF is still delivered, as in node.
                 Process__emitMessageEvent(global_this, message, handle);
                 return Ok(());
@@ -419,11 +418,10 @@ impl IPCInstance {
             DecodedIPCMessage::Internal(data) => {
                 bun_core::scoped_log!(IPC, "Received IPC internal message from parent");
                 let _entered = vm.enter_event_loop_scope();
-                crate::node::node_cluster_binding::handle_internal_message_child(
-                    global_this,
-                    data,
-                    handle,
-                )?;
+                if let Some(channel) = CHANNEL.get() {
+                    let internal = &channel.data().internal_msg_queue;
+                    internal.dispatch(data, handle, global_this);
+                }
             }
         }
         Ok(())
@@ -433,7 +431,9 @@ impl IPCInstance {
     pub(crate) fn handle_ipc_close() {
         bun_core::scoped_log!(IPC, "IPCInstance#handleIPCClose");
         let vm = bun_jsc::virtual_machine::VirtualMachine::get();
-        crate::jsc_hooks::ipc_child_singleton_deinit();
+        if let Some(channel) = CHANNEL.get() {
+            channel.data().internal_msg_queue.stop_listening();
+        }
         {
             let _entered = vm.enter_event_loop_scope();
             Process__emitDisconnectEvent(vm.global());
@@ -473,11 +473,7 @@ pub(crate) fn get_ipc_instance(
         let loop_ = vm.uws_loop();
         let group = vm.rare_data().spawn_ipc_group(loop_);
 
-        let data = SendQueue::new(
-            mode,
-            Some(IPC::SendQueueOwner::Instance),
-            IPC::SocketUnion::Uninitialized,
-        );
+        let data = SendQueue::new(mode, Some(IPC::SendQueueOwner::Instance));
 
         let Some(socket) = IPC::Socket::from_fd::<SendQueue>(
             group,
@@ -492,18 +488,14 @@ pub(crate) fn get_ipc_instance(
         };
         socket.set_timeout(0);
 
-        data.socket.set(IPC::SocketUnion::Open(socket));
+        data.socket.set(Some(socket));
 
         data
     };
 
     #[cfg(windows)]
     let data = {
-        let data = SendQueue::new(
-            mode,
-            Some(IPC::SendQueueOwner::Instance),
-            IPC::SocketUnion::Uninitialized,
-        );
+        let data = SendQueue::new(mode, Some(IPC::SendQueueOwner::Instance));
         let send_queue: *mut SendQueue = data.as_ptr();
 
         // `windows_configure_client` STORES the `*mut SendQueue` in

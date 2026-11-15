@@ -71,16 +71,13 @@ pub(crate) unsafe trait HasAutoFlusher: Sized {
     /// # Safety
     /// `this` must be the same pointer that was registered via
     /// [`AutoFlusher::erased_ctx`] (i.e. a valid, live `*mut Self`), and the
-    /// call must occur on the JS thread with no aliasing `&mut Self`.
+    /// call must occur on the JS thread.
     unsafe fn on_auto_flush(this: *mut Self) -> bool;
 }
 
 impl AutoFlusher {
     #[inline]
     fn erased_ctx<T>(this: &T) -> Option<NonNull<core::ffi::c_void>> {
-        // Ctx is opaque ptr identity only; `cast_mut()` does not assert write
-        // provenance (no `&mut T` formed) — the trampoline recovers `*mut T`
-        // and the impl decides how to borrow.
         NonNull::new(
             core::ptr::from_ref::<T>(this)
                 .cast_mut()
@@ -169,8 +166,8 @@ unsafe impl HasAutoFlusher for file_sink::FileSink {
     }
 }
 
-// SAFETY: written to only in its heap allocation, and `drop` unregisters.
-unsafe impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL> {
+// SAFETY: refcounted on the heap, and `drop` unregisters.
+unsafe impl HasAutoFlusher for streams::HTTPServerWritable {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         &self.auto_flusher
@@ -178,8 +175,11 @@ unsafe impl<const SSL: bool> HasAutoFlusher for streams::HTTPServerWritable<SSL>
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].
     unsafe fn on_auto_flush(this: *mut Self) -> bool {
-        // SAFETY: fn contract.
-        unsafe { (*this).on_auto_flush() }
+        // SAFETY: fn contract. Only a write of the controller registers the sink, and the
+        // controller's ref lasts for as long as `_controller` keeps it from being collected.
+        let this = unsafe { &*this };
+        let _controller = this.pipe.cell().map(jsc::EnsureStillAlive);
+        this.on_auto_flush()
     }
 }
 
@@ -318,85 +318,48 @@ pub(crate) enum PathOrFileDescriptor {
 }
 
 // ─── SinkHandle ──────────────────────────────────────────────────────────────
-// Held by ByteStream; dispatches write()/end() to the native sink.
+// Held by ByteStream and FileReader; dispatches write()/end() to the native sink.
 
-#[derive(Copy, Clone, Default)]
+#[derive(Clone)]
 pub(crate) enum SinkHandle {
-    #[default]
-    None,
+    /// Holds no ref: the context detaches the stream before it is released.
     ServerResponse(crate::server::AnyRequestContext),
-    FetchRequestBody(bun_ptr::BackRef<fetch::FetchRequestBodySink, bun_ptr::Mut>),
-    S3Upload(bun_ptr::BackRef<streams::NetworkSink, bun_ptr::Mut>),
-    FileSink(bun_ptr::BackRef<file_sink::FileSink>),
-    HTMLRewriter(bun_ptr::BackRef<crate::api::html_rewriter::RewriterPipe>),
-    HttpResponse(bun_ptr::BackRef<streams::HTTPResponseSink, bun_ptr::Mut>),
-    HttpsResponse(bun_ptr::BackRef<streams::HTTPSResponseSink, bun_ptr::Mut>),
+    FetchRequestBody(RefPtr<fetch::FetchRequestBodySink>),
+    S3Upload(RefPtr<streams::NetworkSink>),
+    FileSink(RefPtr<file_sink::FileSink>),
+    HTMLRewriter(RefPtr<crate::api::html_rewriter::RewriterPipe>),
 }
 
-use bun_removable_features::{removable_body, removable_body_of_either};
+use bun_ptr::RefPtr;
+use bun_removable_features::removable_body;
 
 impl SinkHandle {
-    #[inline]
-    pub(crate) fn is_none(&self) -> bool {
-        matches!(self, SinkHandle::None)
-    }
-
-    #[inline]
-    pub(crate) fn is_some(&self) -> bool {
-        !self.is_none()
-    }
-
-    /// SAFETY: every non-None variant's pointee is alive for as long as this handle is installed.
-    pub(crate) fn write(&self, data: &streams::Result<'_>) -> streams::Writable {
-        match *self {
-            SinkHandle::None => streams::Writable::Done,
+    pub(crate) fn write(&self, data: &streams::Result<'_>) -> streams::Writable<'_> {
+        match self {
             SinkHandle::ServerResponse(any) => {
                 removable_body!(Serve, Abort, { any.write_chunk(data) })
             }
-            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
-                // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data)
-            }),
-            SinkHandle::S3Upload(mut p) => removable_body!(S3Client, Abort, {
-                // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.write(data)
-            }),
-            SinkHandle::FileSink(p) => p.ref_guard().write(data),
+            SinkHandle::FetchRequestBody(p) => removable_body!(Fetch, Abort, { p.write(data) }),
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, { p.write(data) }),
+            SinkHandle::FileSink(p) => p.write(data),
             SinkHandle::HTMLRewriter(p) => removable_body!(HtmlRewriter, Abort, { p.write(data) }),
-            SinkHandle::HttpResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
-                // SAFETY: live backref; transform detaches before the JSSink is finalized.
-                unsafe { p.get_mut() }.write(data)
-            }),
-            SinkHandle::HttpsResponse(mut p) => removable_body_of_either!(Serve, WebStreams, {
-                // SAFETY: live backref; transform detaches before the JSSink is finalized.
-                unsafe { p.get_mut() }.write(data)
-            }),
         }
     }
 
     /// Signal end-of-stream (or terminal error) to the attached sink.
-    ///
-    /// SAFETY: same pointee-liveness invariant as [`Self::write`].
     pub(crate) fn end(&self, err: Option<streams::StreamError>) {
-        match *self {
-            SinkHandle::None => {}
+        match self {
             SinkHandle::ServerResponse(any) => {
                 removable_body!(Serve, Abort, { any.end_chunk(err.as_ref()) })
             }
-            SinkHandle::FetchRequestBody(mut p) => removable_body!(Fetch, Abort, {
-                // SAFETY: live backref; ByteStream clears sink before free.
-                unsafe { p.get_mut() }.end_from_stream(err)
-            }),
-            // Raw-ptr dispatch: may re-borrow and free the sink (see its doc).
-            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, {
-                streams::NetworkSink::end_from_stream(p.as_ptr(), err)
-            }),
-            SinkHandle::FileSink(p) => p.ref_guard().end_from_stream(err),
+            SinkHandle::FetchRequestBody(p) => {
+                removable_body!(Fetch, Abort, { p.end_from_stream(err) })
+            }
+            SinkHandle::S3Upload(p) => removable_body!(S3Client, Abort, { p.end_from_stream(err) }),
+            SinkHandle::FileSink(p) => p.end_from_stream(err),
             SinkHandle::HTMLRewriter(p) => {
                 removable_body!(HtmlRewriter, Abort, { p.end_from_stream(err) })
             }
-            SinkHandle::HttpResponse(_) => {}
-            SinkHandle::HttpsResponse(_) => {}
         }
     }
 }

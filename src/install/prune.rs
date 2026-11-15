@@ -1769,7 +1769,7 @@ fn tarball_may_contain(
         ResolutionTag::Workspace | ResolutionTag::Folder | ResolutionTag::Git => return false,
         ResolutionTag::Npm => {
             let name = lockfile.packages.items_name()[pkg_id as usize];
-            crate::package_manager::cached_npm_package_folder_name_print(
+            crate::package_manager::cached_npm_package_folder_name(
                 manager,
                 &mut buf,
                 name.slice(&lockfile.buffers.string_bytes),

@@ -1212,8 +1212,8 @@ fn spawn_maybe_sync(
         exited_due_to_maxbuf: Cell::new(None),
     });
     let subprocess_ptr = subprocess_ref.as_ptr();
-    // SAFETY: subprocess_ptr is a freshly-boxed Subprocess; we hold the only reference.
-    let subprocess = unsafe { &mut *subprocess_ptr };
+    // SAFETY: `subprocess_ref`, and then the wrapper that takes it, outlive this borrow.
+    let subprocess = unsafe { &*subprocess_ptr };
     #[cfg(windows)]
     SubprocessT::record_stdio_pipe_ownership(subprocess_ptr);
     // Erase the borrow lifetime to 'static for the intrusive back-pointer
@@ -1249,13 +1249,16 @@ fn spawn_maybe_sync(
         _ => None,
     };
 
-    match Writable::init(
-        stdin,
-        event_loop,
-        subprocess,
-        spawned_stdin,
-        &mut promise_for_stream,
-    ) {
+    // SAFETY: stored right here.
+    match unsafe {
+        Writable::init(
+            stdin,
+            event_loop,
+            &subprocess_ref,
+            spawned_stdin,
+            &mut promise_for_stream,
+        )
+    } {
         Ok(v) => subprocess.stdin.set(v),
         Err(err) => {
             // stdout/stderr are still `.ignore` — close the raw
@@ -1488,13 +1491,13 @@ fn spawn_maybe_sync(
 
     let mut setup_err = match subprocess.stdin.get() {
         Writable::Buffer(buffer) => {
-            let start_ref = buffer.clone();
-            Writable::buffer_writer_mut(buffer).start(start_ref).err()
+            let started = buffer.start(loop_handle);
+            started.map(|state| subprocess.on_stdin_state(state)).err()
         }
         _ => None,
     };
     if let Some(err) = &setup_err {
-        // An unstarted writer never reports on_close; a Buffer left here pins the wrapper.
+        // A Buffer left here pins the wrapper.
         #[cfg(not(windows))] // Windows adopts the pipe at create and start() cannot fail there.
         subprocess.on_close_stdin();
         // Only this call can reap a sync child: it is killed once watched, and the error thrown after the wait.
@@ -1649,7 +1652,7 @@ fn spawn_maybe_sync(
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
             if let Writable::Buffer(buffer) = subprocess.stdin.get() {
-                Writable::buffer_writer_mut(buffer).watch();
+                subprocess.on_stdin_state(buffer.watch());
             }
 
             pipes.iter().rev().flatten().for_each(PipeReader::watch);

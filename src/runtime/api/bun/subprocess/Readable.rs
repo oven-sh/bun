@@ -16,7 +16,7 @@ use super::{StdioResult, Subprocess};
 
 pub(crate) enum Readable {
     Fd(Fd),
-    /// Until the read ends.
+    /// Becomes `Buffer` or `Errored` when the read ends.
     Pipe(RefPtr<PipeReader>),
     Inherit,
     Ignore,

@@ -283,13 +283,13 @@ impl Worker {
         Ok(())
     }
 
-    /// The exit of the process ends the worker, not the end of a reader.
     pub(crate) fn on_io(&mut self, kind: Kind, event: IoEvent) {
         let reader = match kind {
             Kind::Stdout => &self.out,
             Kind::Stderr => &self.err,
         };
         let event_loop = self.event_loop.as_event_loop_ctx();
+        // Ignored: `on_process_exit` ends the worker.
         let _ = reader.read_chunks(event_loop, Some(event), |chunk, _| {
             self.captured.extend_from_slice(&chunk);
             true

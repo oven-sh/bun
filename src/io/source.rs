@@ -32,7 +32,7 @@ impl OpenTty {
         self.0.as_ptr()
     }
 
-    /// For a handle that may outlive the reader at `data`.
+    /// Stops the read if the reader at `data` started it: the stdin tty is static.
     pub(crate) fn stop_reading_for(&self, data: *const c_void) {
         if core::ptr::eq(self.uv.data, data) {
             // SAFETY: a live stream.
@@ -109,9 +109,9 @@ impl OpenFile {
         // libuv copies `iov`.
         let rc =
             unsafe { uv::uv_fs_read(loop_, fs, file, &raw const iov, 1, offset, Some(callback)) };
-        // Tagged `write`, which `error.syscall` has always said here.
+        // Tagged `write`: `error.syscall` is user-visible.
         rc.to_result(bun_sys::Tag::write).inspect_err(|_| {
-            // SAFETY: refused.
+            // SAFETY: `uv_fs_read` returned an error, so no pool thread has `fs`.
             unsafe { self.complete(false) };
             *buffer = self.buffer.take();
         })
@@ -224,7 +224,9 @@ impl File {
     }
 
     /// `on_complete`, and the buffer with what was read in its spare capacity.
-    /// SAFETY: `fs` is what libuv passed to the callback of `submit_read`.
+    ///
+    /// # Safety
+    /// `fs` is what libuv passed to the callback of `submit_read`.
     pub(crate) unsafe fn on_read_complete(
         fs: *mut uv::fs_t,
     ) -> Option<(uv::ReturnCodeI64, Vec<u8>, *mut c_void)> {
@@ -252,7 +254,9 @@ impl File {
     }
 
     /// Mark the operation as complete and clean up.
-    /// SAFETY: libuv has refused the operation, or is calling its callback.
+    ///
+    /// # Safety
+    /// libuv has refused the operation, or is calling its callback.
     pub(crate) unsafe fn complete(&self, was_canceled: bool) {
         debug_assert!(self.is_busy());
         if was_canceled {
@@ -347,10 +351,7 @@ impl Source {
 
     /// The boxed `File`'s address — the key a reader lists it under.
     pub fn file_key(&self) -> Option<*mut c_void> {
-        match self {
-            Source::SyncFile(file) | Source::File(file) => Some(file.as_ptr().cast()),
-            _ => None,
-        }
+        self.file().map(|file| file.as_ptr().cast())
     }
 
     pub fn ref_(&mut self) {

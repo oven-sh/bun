@@ -37,14 +37,14 @@ pub(crate) struct Parser<'a, 's, 'i> {
     spill_depth: usize,
 }
 
-impl<'s> LexerLog<'s> for Parser<'_, 's, '_> {
+impl LexerLog for Parser<'_, '_, '_> {
     type Err = crate::Error;
     #[inline]
     fn log(&self) -> &Log {
         self.log
     }
     #[inline]
-    fn source(&self) -> &'s Source<'s> {
+    fn source(&self) -> &Source<'_> {
         self.source
     }
     #[inline]
@@ -1315,7 +1315,7 @@ fn read_trail_surrogate_escape(
     Some(value as u16)
 }
 
-fn decode_string_escapes<'s, const ALLOW_RAW_CONTROL: bool, L: LexerLog<'s, Err = crate::Error>>(
+fn decode_string_escapes<const ALLOW_RAW_CONTROL: bool, L: LexerLog<Err = crate::Error>>(
     l: &mut L,
     body: &[u8],
     buf: &mut Vec<u8>,
@@ -1392,12 +1392,12 @@ struct MiniLog<'a, 's> {
     prev_error_loc: Loc,
 }
 
-impl<'s> LexerLog<'s> for MiniLog<'_, 's> {
+impl LexerLog for MiniLog<'_, '_> {
     type Err = crate::Error;
     fn log(&self) -> &Log {
         self.log
     }
-    fn source(&self) -> &'s Source<'s> {
+    fn source(&self) -> &Source<'_> {
         self.source
     }
     fn prev_error_loc_mut(&mut self) -> &mut Loc {

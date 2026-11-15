@@ -510,7 +510,7 @@ pub(crate) fn scan_imports_and_exports(
                         &mut member_resolutions,
                     );
 
-                    if log.errors.get() > 0 {
+                    if log.has_errors() {
                         return Err(ScanImportsAndExportsError::ImportResolutionFailed);
                     }
                 }

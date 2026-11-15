@@ -71,7 +71,7 @@ fn create_page_outputs(
         let result = run(&mut bundle, pages, heap);
         drop(bundle);
 
-        let has_page_errors = page_log.errors.get() > 0;
+        let has_page_errors = page_log.has_errors();
         page_log.append_to(log);
 
         result.map_err(|error| {
@@ -152,7 +152,7 @@ fn run<'h>(
 
     bundle.wait_for_parse();
     let log = bundle.transpiler.log();
-    if log.errors.get() > 0 {
+    if log.has_errors() {
         return Err(crate::Error::BuildFailed);
     }
     bundle.fail_if_no_entry_points()?;
@@ -167,7 +167,7 @@ fn run<'h>(
 
     let mut linker = LinkerContext::load(bundle, linker_graph, &reachable_files)?;
     let mut chunks = linker.link(log)?;
-    if log.errors.get() > 0 {
+    if log.has_errors() {
         return Err(crate::Error::BuildFailed);
     }
 

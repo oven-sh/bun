@@ -679,7 +679,7 @@ impl BuildCommand {
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    if log.msgs_len() > 0 {
+                    if log.has_msgs() {
                         log.print(Output::error_writer())?;
                     } else {
                         write!(Output::error_writer(), "error: {}", err.name())?;
@@ -1157,7 +1157,7 @@ impl BuildCommand {
                 break 'dump;
             }
 
-            if log.errors.get() == 0 {
+            if !log.has_errors() {
                 if opt_transform_only {
                     bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",

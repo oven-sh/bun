@@ -604,7 +604,6 @@ fn build_program(
         module_prefix,
         outfile: outfile.as_deref(),
         replaced_file: replaced_file.as_deref(),
-        log: request.log,
         arena: bundler.arena,
         event_loop: bundler.event_loop,
         worker_pool: bundler.worker_pool,

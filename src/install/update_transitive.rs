@@ -1012,8 +1012,7 @@ fn warn_unchecked(
         });
         used.count()
     });
-    log.warnings
-        .set(log.warnings.get().saturating_sub(consumed as u32));
+    log.warnings.update(|n| n.saturating_sub(consumed as u32));
 }
 
 /// The fetch failures name the package as a URL segment (`/` + name, `/` encoded as `%2f`) or after `manifest `, followed by a space, an escape, or the end.

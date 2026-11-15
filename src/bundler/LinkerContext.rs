@@ -2619,7 +2619,7 @@ impl<'l, 'a> LinkerContext<'l, 'a> {
                 }
             }
         }
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             ScanCssImportsResult::Errors
         } else {
             ScanCssImportsResult::Ok

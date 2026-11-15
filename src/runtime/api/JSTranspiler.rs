@@ -639,8 +639,7 @@ impl TransformTask {
         loader: Loader,
     ) -> JSValue {
         let config = &transpiler.config;
-        let log = bun_ast::Log::init();
-        log.level.set(transpiler.log_level);
+        let log = bun_ast::Log::with_level(transpiler.log_level);
 
         // SAFETY: `ManuallyDrop` keeps this bitwise copy from freeing what the
         // wrapper owns; `run` replaces its log before it uses the copy.
@@ -883,7 +882,7 @@ impl JSTranspiler {
 
         config.from_js(global, config_arg, arena_ref, &log)?;
 
-        if (log.warnings.get() + log.errors.get()) > 0 {
+        if log.has_any() {
             return Err(
                 global.throw_value(log.to_js(global, format_args!("Failed to create transpiler"))?)
             );
@@ -900,7 +899,7 @@ impl JSTranspiler {
         ) {
             Ok(t) => t,
             Err(err) => {
-                if (log.warnings.get() + log.errors.get()) > 0 {
+                if log.has_any() {
                     return Err(global.throw_value(
                         log.to_js(global, format_args!("Failed to create transpiler"))?,
                     ));
@@ -926,7 +925,7 @@ impl JSTranspiler {
         transpiler.options.no_macros = config.no_macros;
         transpiler.options.env.behavior = options::EnvBehavior::disable;
         if let Err(err) = transpiler.configure_defines() {
-            if (log.warnings.get() + log.errors.get()) > 0 {
+            if log.has_any() {
                 return Err(
                     global.throw_value(log.to_js(global, format_args!("Failed to load define"))?)
                 );
@@ -1049,7 +1048,7 @@ impl JSTranspiler {
         // still borrows the transpiler.
         let result = unsafe { self.transpiler.get_mut() }.parse(parse_options, None);
         drop(redirect);
-        if (log.warnings.get() + log.errors.get()) > 0 {
+        if log.has_any() {
             return Err(global.throw_value(log.to_js(global, format_args!("Parse error"))?));
         }
         Ok(result)
@@ -1183,8 +1182,7 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let mut log = bun_ast::Log::init();
-        log.level.set(self.log_level);
+        let mut log = bun_ast::Log::with_level(self.log_level);
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
@@ -1342,14 +1340,14 @@ impl JSTranspiler {
 
         let result = (|| -> JsResult<JSValue> {
             if let Err(err) = scan_result {
-                if (log.warnings.get() + log.errors.get()) > 0 {
+                if log.has_any() {
                     return Err(global
                         .throw_value(log.to_js(global, format_args!("Failed to scan imports"))?));
                 }
                 return Err(global.throw_error(err, "Failed to scan imports"));
             }
 
-            if (log.warnings.get() + log.errors.get()) > 0 {
+            if log.has_any() {
                 return Err(
                     global.throw_value(log.to_js(global, format_args!("Failed to scan imports"))?)
                 );

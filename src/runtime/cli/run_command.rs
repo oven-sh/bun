@@ -1543,9 +1543,9 @@ impl Run<'_> {
 
                 let _ = promise.result(vm.jsc_vm());
 
-                if log_has_msgs(vm) {
+                if vm.log.has_msgs() {
                     dump_build_error(vm);
-                    log_clear_msgs(vm);
+                    vm.log.with_msgs(Vec::clear);
                 }
             }
             Some(Err(err)) => entry_point_load_failed(vm, &err.into()),
@@ -1636,7 +1636,7 @@ impl Run<'_> {
             vm.on_before_exit();
         }
 
-        if log_has_msgs(vm) {
+        if vm.log.has_msgs() {
             dump_build_error(vm);
             Output::flush();
         }
@@ -1669,16 +1669,6 @@ impl Run<'_> {
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
-}
-
-#[inline]
-fn log_has_msgs(vm: &VirtualMachine) -> bool {
-    vm.log.msgs_len() > 0
-}
-
-#[inline]
-fn log_clear_msgs(vm: &VirtualMachine) {
-    vm.log.with_msgs(Vec::clear);
 }
 
 #[cold]
@@ -1723,9 +1713,9 @@ fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
     unsafe(link_section = ".text.unlikely.entry_point_load_failed")
 )]
 fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
-    if log_has_msgs(vm) {
+    if vm.log.has_msgs() {
         dump_build_error(vm);
-        log_clear_msgs(vm);
+        vm.log.with_msgs(Vec::clear);
     } else {
         pretty_errorln!(
             "Error occurred loading entry point: {}",
@@ -2105,7 +2095,7 @@ impl RunCommand {
             && let Some(arg) =
                 (passthrough.iter()).find(|arg| bun_which::batch_arg_has_cmd_metachars(arg))
         {
-            if !IS_SILENT.load(Ordering::Relaxed) {
+            if !IS_SILENT.load() {
                 pretty_errorln!(
                     "<r><red>error<r>: Failed to run \"<b>{}<r>\": argument {} contains a cmd.exe special character and cannot be passed to a .bat/.cmd file",
                     bstr::BStr::new(Self::basename_or_bun(executable)),
@@ -2121,7 +2111,7 @@ impl RunCommand {
             argv.push(p.clone());
         }
 
-        let silent = IS_SILENT.load(Ordering::Relaxed);
+        let silent = IS_SILENT.load();
 
         // TODO: remember to free this when we add --filter or --concurrent
         // in the meantime we don't need to free it.
@@ -2476,7 +2466,7 @@ impl RunCommand {
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
-                        let silent = IS_SILENT.load(Ordering::Relaxed);
+                        let silent = IS_SILENT.load();
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         crate::cli::run_compiled::reject(

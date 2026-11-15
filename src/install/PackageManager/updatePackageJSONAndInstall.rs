@@ -140,7 +140,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     original_cwd: &[u8],
 ) -> Result<(), Error> {
     let log_level = manager.options.log_level;
-    if manager.log().errors.get() > 0 {
+    if manager.log().has_errors() {
         let _ = manager.log().print(Output::error_writer());
         Global::crash();
     }

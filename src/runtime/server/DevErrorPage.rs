@@ -71,9 +71,8 @@ impl DevErrorPage<'_> {
 
         // `Log.errors` / `Log.warnings` don't count messages added via
         // `add_msg`, which is how build/resolve errors reach this log.
-        let msgs = self.msgs;
         let (mut errors, mut warnings) = (0u32, 0u32);
-        for msg in msgs {
+        for msg in self.msgs {
             errors += (msg.kind == Kind::Err) as u32;
             warnings += (msg.kind == Kind::Warn) as u32;
         }
@@ -82,7 +81,7 @@ impl DevErrorPage<'_> {
             "],\"build\":{{\"errors\":{errors},\"warnings\":{warnings},\"msgs\":["
         )
         .unwrap();
-        for (i, msg) in msgs.iter().enumerate() {
+        for (i, msg) in self.msgs.iter().enumerate() {
             if i > 0 {
                 w.push(b',');
             }

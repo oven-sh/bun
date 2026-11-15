@@ -142,7 +142,7 @@ fn convert_paths(
 
 fn report_errors(configure: impl FnOnce(&mut BundleOptions<'_>)) -> Vec<String> {
     convert(Case::default(), configure, |result, log| {
-        assert_eq!(result.is_none(), log.msgs_len() > 0);
+        assert_eq!(result.is_none(), log.has_msgs());
         errors(log)
     })
 }

@@ -59,8 +59,6 @@ pub struct AotBuildRequest<'r, 'a> {
     pub outfile: Option<&'r [u8]>,
     /// The real path of the file that the executable replaces, if any.
     pub replaced_file: Option<&'r [u8]>,
-    /// That of `transpiler`.
-    pub log: &'r Log,
     pub arena: &'a bun_alloc::Arena,
     pub event_loop: EventLoop,
     pub worker_pool: Option<NonNull<bun_threading::ThreadPool>>,
@@ -126,7 +124,6 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         module_prefix,
         outfile,
         replaced_file,
-        log,
         arena,
         event_loop,
         worker_pool,
@@ -134,6 +131,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         file_map,
         typescript_libs,
     } = request;
+    let log = transpiler.log();
 
     if let Some(outfile) = outfile {
         transpiler.resolver.pass_over_outfile(outfile);
@@ -208,6 +206,7 @@ pub fn build(request: AotBuildRequest<'_, '_>) -> Result<AotBuild, AotBuildFailu
         },
     )
     .with_assets(assets_by_absolute_paths, assets_root);
+    // `work_beside_engine` can write to `log` from another thread while `compile` runs.
     let said_by_compiler = Log::init();
     let result = bun_aot::compile(&options, &services, &said_by_compiler);
     said_by_compiler.append_to(log);

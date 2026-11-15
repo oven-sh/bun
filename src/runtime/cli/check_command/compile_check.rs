@@ -154,7 +154,7 @@ fn report_compile_check(
         report::write_lines(&outcome.report_messages, true, &mut out);
     }
     let _ = Output::writer().write_all(&out);
-    if log.errors.get() > 0 {
+    if log.has_errors() {
         bun_core::pretty_errorln!("{}", BStr::new(&errors_line(log, files_checked)));
     } else if let Some(outcome) = &outcome {
         let clean_files =

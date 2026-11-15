@@ -799,7 +799,7 @@ impl CreateCommand {
                 ) {
                     Ok(r) => r,
                     Err(_) => {
-                        if log.errors.get() > 0 {
+                        if log.has_errors() {
                             let _ = log.print(Output::error_writer());
                         }
                         break 'process_package_json;
@@ -812,7 +812,7 @@ impl CreateCommand {
                     break 'process_package_json;
                 }
 
-                if log.errors.get() > 0 {
+                if log.has_errors() {
                     let _ = log.print(Output::error_writer());
 
                     break 'process_package_json;
@@ -1766,7 +1766,7 @@ impl Example {
                 refresher.end();
                 refresher.refresh();
 
-                if log.errors.get() > 0 {
+                if log.has_errors() {
                     let _ = log.print(Output::error_writer());
                 } else {
                     bun_core::pretty_errorln!("Error parsing package: <r><red>{}<r>", err.name(),);
@@ -1775,7 +1775,7 @@ impl Example {
             }
         };
 
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             refresher.end();
             refresher.refresh();
 
@@ -1910,7 +1910,7 @@ impl Example {
         let examples_object = match JSON::parse_utf8(&source, log, bump) {
             Ok(e) => e,
             Err(err) => {
-                if log.errors.get() > 0 {
+                if log.has_errors() {
                     let _ = log.print(Output::error_writer());
                 } else {
                     bun_core::pretty_errorln!("Error parsing examples: <r><red>{}<r>", err.name(),);
@@ -1919,7 +1919,7 @@ impl Example {
             }
         };
 
-        if log.errors.get() > 0 {
+        if log.has_errors() {
             let _ = log.print(Output::error_writer());
             Global::exit(1);
         }

@@ -267,7 +267,7 @@ impl PatchTask {
         let Callback::Apply(apply) = &mut self.callback else {
             unreachable!()
         };
-        if apply.logger.errors.get() > 0 {
+        if apply.logger.has_errors() {
             Output::err_generic(
                 "failed to apply patchfile ({})",
                 format_args!("{}", BStr::new(&apply.patchfilepath)),

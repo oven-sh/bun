@@ -2981,7 +2981,7 @@ fn parse_runtime_root(
             Ok(())
         });
     manager.lockfile = lockfile;
-    if parse_log.errors.get() > 0 {
+    if parse_log.has_errors() {
         parse_log.append_to(log);
     }
     result

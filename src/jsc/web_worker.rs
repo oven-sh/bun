@@ -1047,7 +1047,7 @@ impl WebWorker {
             Ok(p) => p,
             Err(unresolved) => {
                 vm.exit_handler.exit_code.set(1);
-                if vm.log.errors.get() == 0
+                if !vm.log.has_errors()
                     && let Unresolved::Because(text) = unresolved
                 {
                     vm.log.add_error(None, bun_ast::Loc::EMPTY, text);
@@ -1332,7 +1332,7 @@ impl WebWorker {
     /// object would run into the pending termination.
     fn flush_logs(&self, vm: &VirtualMachine) {
         jsc::mark_binding();
-        if vm.log.msgs_len() == 0 || !vm.script_allowed() {
+        if !vm.log.has_msgs() || !vm.script_allowed() {
             return;
         }
         let global = vm.global();

@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
 use bun_core::{EncodedSlice, String as BunString};
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
@@ -51,7 +51,7 @@ pub(crate) struct Listener {
     pub(crate) handlers: Rc<Handlers>,
     pub(crate) listener: JsCell<ListenerType>,
 
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     pub(crate) connection: JsCell<UnixOrHost>,
     /// Embedded sweep/iteration list-head for every accepted socket on this
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
@@ -262,7 +262,7 @@ impl Listener {
                         true,
                     ),
                     pause_on_connect,
-                    poll_ref: KeepAlive::init(),
+                    poll_ref: JsKeepAlive::default(),
                     group: uws::SocketGroup::default(),
                     secure_ctx: JsCell::new(None),
                     strong_data: JsCell::new(Strong::empty()),
@@ -384,7 +384,7 @@ impl Listener {
             ),
             pause_on_connect,
             listener: JsCell::new(ListenerType::None),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             group: uws::SocketGroup::default(),
             secure_ctx: JsCell::new(None),
             strong_data: JsCell::new(Strong::empty()),
@@ -612,7 +612,7 @@ impl Listener {
             flags: Cell::new(listener.accepted_socket_flags()),
             owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
@@ -658,7 +658,7 @@ impl Listener {
             flags: Cell::new(listener.accepted_socket_flags()),
             owned_ssl_ctx: JsCell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             connection: JsCell::new(None),
             local_binding: JsCell::new(None),
@@ -1057,7 +1057,7 @@ impl Listener {
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
-                            poll_ref: KeepAlive::init(),
+                            poll_ref: JsKeepAlive::default(),
                             ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
@@ -1143,7 +1143,7 @@ impl Listener {
                             owned_ssl_ctx: JsCell::new(None),
                             flags: Cell::new(SocketFlags::default()),
                             this_value: JsCell::new(jsc::JsRef::empty()),
-                            poll_ref: KeepAlive::init(),
+                            poll_ref: JsKeepAlive::default(),
                             ref_pollref_on_connect: Cell::new(true),
                             buffered_data_for_node_net: Default::default(),
                             bytes_written: Cell::new(0),
@@ -1335,7 +1335,6 @@ impl Drop for Listener {
         }
         this.listener.set(ListenerType::None);
         this.this_value.with_mut(|r| r.finalize());
-        this.poll_ref.unref(bun_io::js_vm_ctx());
 
         // Before force-closing: an accepted socket's `on_close` must not release this listener's refs a second time.
         this.handlers.set_listener(None);
@@ -1403,7 +1402,7 @@ fn connect_finish<const IS_SSL: bool>(
             owned_ssl_ctx: JsCell::new(owned_ssl_ctx),
             flags: Cell::new(SocketFlags::default()),
             this_value: JsCell::new(jsc::JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: Default::default(),
             bytes_written: Cell::new(0),

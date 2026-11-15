@@ -18,7 +18,7 @@ use bun_dns::{
     self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultList as GetAddrInfoResultList,
 };
-use bun_io::{self as Async, KeepAlive};
+use bun_io::JsKeepAlive;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -87,14 +87,6 @@ fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
 struct SendPtr<T>(*mut T);
 // SAFETY: see type doc — synchronization is provided by `global_cache()`.
 unsafe impl<T> Send for SendPtr<T> {}
-
-/// Bridge the JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used
-/// by `KeepAlive` / `FilePoll`. The DNS resolver always runs on the JS event
-/// loop, so the global `Js` ctx is the correct erasure here.
-#[inline]
-fn js_event_loop_ctx() -> Async::EventLoopCtx {
-    Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js)
-}
 
 bun_output::declare_scope!(GetAddrInfoRequest, visible);
 bun_output::declare_scope!(DNSLookup, visible);
@@ -481,7 +473,7 @@ impl c_ares::AddrInfoHandler for Query {
 struct DNSLookup {
     global_this: bun_ptr::BackRef<JSGlobalObject>, // JSC_BORROW (BACKREF — JSGlobalObject outlives the request)
     promise: JSPromiseStrong,
-    poll_ref: KeepAlive,
+    _keep_alive: JsKeepAlive,
     /// The context whose script asked: an answer for a stopped one settles nothing.
     context: bun_jsc::ContextId,
 }
@@ -490,12 +482,9 @@ impl DNSLookup {
     fn init(global_this: &JSGlobalObject, context: bun_jsc::ContextId) -> Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
-        let poll_ref = KeepAlive::init();
-        poll_ref.ref_(js_event_loop_ctx());
-
         Self {
             global_this: bun_ptr::BackRef::new(global_this),
-            poll_ref,
+            _keep_alive: JsKeepAlive::active(),
             promise: JSPromiseStrong::init(global_this),
             context,
         }
@@ -769,17 +758,6 @@ impl Outcome {
             Outcome::Error(e) => promise.reject(global, Ok(e)),
             Outcome::Stopped => return,
         });
-    }
-}
-
-impl Drop for DNSLookup {
-    fn drop(&mut self) {
-        bun_output::scoped_log!(DNSLookup, "deinit");
-        // DNSLookup is always created on the JS event loop (it holds a JSGlobalObject),
-        // so the Js-arm vtable is the correct EventLoopCtx for KeepAlive::unref.
-        self.poll_ref.unref(Async::posix_event_loop::get_vm_ctx(
-            Async::AllocatorType::Js,
-        ));
     }
 }
 
@@ -2228,7 +2206,7 @@ hostent_ttls_record_type!(
 #[cfg(windows)]
 type PollType = OpenUvDnsPoll;
 #[cfg(not(windows))]
-type PollType = Async::OwnedFilePoll;
+type PollType = bun_io::OwnedFilePoll;
 
 type PollsMap = ArrayHashMap<c_ares::ares_socket_t, PollType>;
 
@@ -2738,9 +2716,9 @@ impl Resolver {
         });
         #[cfg(not(windows))]
         self.polls.with_mut(|polls| {
-            let ctx = js_event_loop_ctx();
-            let owner = Async::Owner::new(
-                Async::posix_event_loop::poll_tag::DNS_RESOLVER,
+            let ctx = bun_io::js_vm_ctx();
+            let owner = bun_io::Owner::new(
+                bun_io::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
             let loop_ = self.vm().uws_loop();
@@ -2753,8 +2731,8 @@ impl Resolver {
             // both directions on one poll (epoll: combined mask via CTL_MOD;
             // kqueue: two filters on the same ident, both EV_DELETEd on
             // unregister).
-            let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
-            let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
+            let have_readable = poll.flags.contains(bun_io::PollFlag::PollReadable);
+            let have_writable = poll.flags.contains(bun_io::PollFlag::PollWritable);
 
             if (have_readable && !readable) || (have_writable && !writable) {
                 // Dropping a direction. FilePoll has no per-direction
@@ -2765,10 +2743,10 @@ impl Resolver {
                 // correct path and c-ares DNS fds are short-lived.
                 let _ = poll.unregister(loop_, false);
                 if readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Readable, false);
                 }
                 if writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Writable, false);
                 }
             } else {
                 // Only adding directions (or no change). register() issues a
@@ -2776,10 +2754,10 @@ impl Resolver {
                 // on kqueue EV_ADD creates a separate (ident, filter) knote
                 // without disturbing the existing one.
                 if readable && !have_readable {
-                    let _ = poll.register(loop_, Async::PollKind::Readable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Readable, false);
                 }
                 if writable && !have_writable {
-                    let _ = poll.register(loop_, Async::PollKind::Writable, false);
+                    let _ = poll.register(loop_, bun_io::PollKind::Writable, false);
                 }
             }
         });

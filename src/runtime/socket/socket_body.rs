@@ -8,7 +8,7 @@ use crate::generated_bindgen::socket_body::{
     AnySocket, BunSocket, DuplexTLSOptions, SocketHandle, js_TCPSocket, js_TLSSocket,
 };
 use bun_core::EncodedSlice;
-use bun_io::KeepAlive;
+use bun_io::JsKeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
@@ -323,7 +323,7 @@ pub(crate) struct NewSocket<const SSL: bool> {
     /// wrapper cannot be garbage-collected out from under in-flight callbacks, and
     /// downgraded to weak once the socket is closed/inactive so GC can reclaim it.
     pub this_value: JsCell<JsRef>,
-    pub poll_ref: KeepAlive,
+    pub poll_ref: JsKeepAlive,
     pub(crate) ref_pollref_on_connect: Cell<bool>,
     pub(crate) connection: JsCell<Option<super::listener::UnixOrHost>>,
     /// `localAddress`/`localPort` from the connect options: the socket is
@@ -356,7 +356,6 @@ impl<const SSL: bool> Drop for NewSocket<SSL> {
     fn drop(&mut self) {
         self.mark_inactive();
         self.detach_native_callback();
-        self.poll_ref.unref(js_loop_ctx());
     }
 }
 
@@ -3366,7 +3365,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             ),
             flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
@@ -3481,7 +3480,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `self`.
             flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
             this_value: JsCell::new(JsRef::empty()),
-            poll_ref: KeepAlive::init(),
+            poll_ref: JsKeepAlive::default(),
             ref_pollref_on_connect: Cell::new(true),
             buffered_data_for_node_net: JsCell::new(Vec::new()),
             bytes_written: Cell::new(0),
@@ -4383,7 +4382,7 @@ pub(crate) fn upgrade_duplex_to_tls<'a>(
         ),
         flags: Cell::new(initial_flags),
         this_value: JsCell::new(JsRef::empty()),
-        poll_ref: KeepAlive::init(),
+        poll_ref: JsKeepAlive::default(),
         ref_pollref_on_connect: Cell::new(true),
         buffered_data_for_node_net: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),

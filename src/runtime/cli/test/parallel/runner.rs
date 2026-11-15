@@ -688,8 +688,7 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             // The channel holds no reference on the loop, and a loop that nothing holds polls without sleeping.
-            let waits_for_command = bun_io::KeepAlive::init();
-            waits_for_command.ref_(bun_io::js_vm_ctx());
+            let waits_for_command = bun_io::JsKeepAlive::active();
             while !self.cmds.read_commands() {
                 vm.event_loop().tick();
                 if self.cmds.read_commands() {
@@ -697,7 +696,7 @@ impl<'a> WorkerLoop<'a> {
                 }
                 vm.event_loop().auto_tick();
             }
-            waits_for_command.unref(bun_io::js_vm_ctx());
+            drop(waits_for_command);
             let Some(idx) = self.cmds.pending_idx.take() else {
                 break;
             };

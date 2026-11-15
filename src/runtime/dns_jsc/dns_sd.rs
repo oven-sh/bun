@@ -404,10 +404,10 @@ unsafe extern "C" fn on_reply<const INTERNAL: bool>(
 
 /// One per event loop: owns the primary `DNSServiceRef` + `FilePoll`; lookups are ShareConnection subordinates.
 pub(crate) struct SharedConnection {
-    file_poll: Async::OwnedFilePoll,
+    file_poll: bun_io::OwnedFilePoll,
     /// After `file_poll`, whose fd it closes.
     main_ref: OwnedServiceRef,
-    ctx: Async::EventLoopCtx,
+    ctx: bun_io::EventLoopCtx,
     inflight: Vec<Inflight>,
     /// `context` of the previous reply (a different one ends the prior request's contiguous run).
     last_ctx: *mut c_void,
@@ -440,7 +440,7 @@ impl SharedConnection {
     }
 
     /// Lazily connect; `None` (caller falls back to getaddrinfo) if mDNSResponder is unreachable.
-    pub(crate) fn get<'a>(ctx: Async::EventLoopCtx) -> Option<&'a mut Self> {
+    pub(crate) fn get<'a>(ctx: bun_io::EventLoopCtx) -> Option<&'a mut Self> {
         if let Some(existing) = Self::current() {
             return Some(existing);
         }
@@ -460,11 +460,11 @@ impl SharedConnection {
         }
         let fd = sys::Fd::from_native(raw_fd);
         let mut this = Box::new(Self {
-            file_poll: Async::OwnedFilePoll::new(
+            file_poll: bun_io::OwnedFilePoll::new(
                 ctx,
                 fd,
-                Async::Owner::new(
-                    Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
+                bun_io::Owner::new(
+                    bun_io::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
                     ptr::null_mut(),
                 ),
             ),
@@ -479,8 +479,8 @@ impl SharedConnection {
         this.file_poll
             .register_with_fd(
                 ctx.loop_(),
-                Async::PollKind::Readable,
-                Async::posix_event_loop::OneShotFlag::None,
+                bun_io::PollKind::Readable,
+                bun_io::posix_event_loop::OneShotFlag::None,
                 fd,
             )
             .ok()?;
@@ -776,7 +776,7 @@ pub(crate) fn start(this: &Resolver, query: &GetAddrInfo, pending: Query) -> Res
         return Err(pending);
     }
 
-    let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
+    let Some(shared) = SharedConnection::get(bun_io::js_vm_ctx()) else {
         return Err(pending);
     };
 

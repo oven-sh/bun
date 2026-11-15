@@ -39,7 +39,7 @@ pub mod windows_event_loop;
 // `#[cfg(unix)]`-gated so the module still compiles on Windows.
 mod keep_alive;
 pub mod posix_event_loop;
-pub use keep_alive::KeepAlive;
+pub use keep_alive::{JsKeepAlive, KeepAlive};
 
 // ParentDeathWatchdog: POSIX uses `PR_SET_PDEATHSIG` / `EVFILT_PROC` plus an
 // exit-time descendant SIGKILL walk. Windows does both halves via Win32:

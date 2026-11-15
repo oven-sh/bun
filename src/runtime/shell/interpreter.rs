@@ -284,7 +284,7 @@ pub(crate) struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub args: JsCell<Box<ShellArgs>>,
 
-    pub(crate) keep_alive: bun_io::KeepAlive,
+    pub(crate) keep_alive: bun_io::JsKeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
@@ -546,7 +546,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
-            keep_alive: bun_io::KeepAlive::default(),
+            keep_alive: bun_io::JsKeepAlive::default(),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
@@ -1526,9 +1526,6 @@ impl Drop for Interpreter {
                 }
             }
         }
-
-        let event_loop_ctx = self.event_loop.as_event_loop_ctx();
-        self.keep_alive.unref(event_loop_ctx);
     }
 }
 

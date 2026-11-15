@@ -2912,6 +2912,20 @@ describe.concurrent("a name that import and require() resolve to two files", () 
         }),
         "node_modules/two-cjs/for-import.cjs": `(globalThis.loaded ??= []).push("import file"); module.exports = { which: "import file" };`,
         "node_modules/two-cjs/for-require.cjs": `(globalThis.loaded ??= []).push("require file"); module.exports = { which: "require file" };`,
+        // An ES module that imports the CommonJS file of its name, and one that imports it through a second ES module.
+        "node_modules/wraps/package.json": JSON.stringify({
+          name: "wraps",
+          exports: { ".": { import: "./wrapper.mjs", require: "./index.cjs" } },
+        }),
+        "node_modules/wraps/wrapper.mjs": `import cjs from "./index.cjs"; export const which = cjs.which; export default cjs;`,
+        "node_modules/wraps/index.cjs": `module.exports = { which: "real" };`,
+        "node_modules/shim/package.json": JSON.stringify({
+          name: "shim",
+          exports: { ".": { import: "./esm/index.mjs", require: "./cjs/index.cjs" } },
+        }),
+        "node_modules/shim/esm/index.mjs": `import cjs from "./shim.mjs"; export const which = cjs.which; export default cjs;`,
+        "node_modules/shim/esm/shim.mjs": `import cjs from "../cjs/index.cjs"; export default cjs;`,
+        "node_modules/shim/cjs/index.cjs": `module.exports = { which: "real" };`,
         "preload.js": `
           globalThis.importPath = Bun.resolveSync("two-cjs", import.meta.dir);
           globalThis.preload = [require("two-cjs"), require(globalThis.importPath)];
@@ -2922,6 +2936,10 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           test("a file loads the ES module of one name and the CommonJS file of another", () => {
             globalThis.first = [dual, require("dual/sub")];
             expect([dual.which, globalThis.first[1].which]).toEqual(["real esm", "real cjs"]);
+          });
+          test("and ES modules that have loaded the CommonJS file of their name, the second through another ES module", async () => {
+            globalThis.wrappers = [await import("wraps"), await import("shim")];
+            expect(globalThis.wrappers.map(wrapper => wrapper.which)).toEqual(["real", "real"]);
           });
         `,
         "2.test.js": `
@@ -2939,6 +2957,15 @@ describe.concurrent("a name that import and require() resolve to two files", () 
             mock.module("two-cjs", () => ({ which: "mock" }));
             expect(require("two-cjs").which).toBe("mock");
           });
+          // Such an ES module has the CommonJS file of its name as it is, under a mock of the name too. So the mock
+          // leaves it and the module that it loaded the file through, where the other importers of that file that
+          // the first test file loaded run again.
+          test.each([["wraps", 0], ["shim", 1]])("the ES module of %s, which has loaded the CommonJS file of its name, is the instance that it was too", async (name, index) => {
+            mock.module(name, () => ({ which: "mock" }));
+            expect([require(name).which, (await import(name)).which]).toEqual(["mock", "mock"]);
+            jest.unmock(name);
+            expect(await import(name)).toBe(globalThis.wrappers[index]);
+          });
         `,
         "3.test.js": `
           import { expect, test } from "bun:test";
@@ -2953,7 +2980,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           });
         `,
       },
-      4,
+      7,
       ["--preload", "./preload.js"],
     );
   });
@@ -3662,6 +3689,21 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           apart,
         ),
         ...inFolder(
+          "require-actual-cycle",
+          `
+          import { expect, jest, test } from "bun:test";
+          // An import loads the module of the mock, which runs the CommonJS file ahead of a factory that takes it
+          // with jest.requireActual(). The helper requires that file again before anything has called the factory,
+          // and gets the file as far as it has run, as it does where the factory itself loads the file: the mock
+          // would call the factory in the middle of the file, which would spread half of its exports.
+          test("jest.requireActual() in the factory, then an import, where the CommonJS file requires a helper that requires it again", async () => {
+            jest.doMock("cycle", () => ({ ...jest.requireActual("cycle"), extra: "mock" }));
+            const imported = await import("cycle");
+            expect([imported.viaHelper(), imported.named(), imported.extra, require("cycle").extra]).toEqual(["real named", "real named", "mock", "mock"]);
+          });
+        `,
+        ),
+        ...inFolder(
           "loaded-by-originals",
           `
           import { expect, jest, mock, test, vi } from "bun:test";
@@ -3804,7 +3846,7 @@ describe.concurrent("a name that import and require() resolve to two files", () 
           usesWrapB,
         ),
       },
-      35,
+      36,
       args,
     );
   });

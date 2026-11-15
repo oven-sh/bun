@@ -289,9 +289,11 @@ impl PosixLoop {
     /// tick; at process/Worker teardown the loop has stopped, so
     /// `closeAllSocketGroups()` must drain it explicitly or every just-closed
     /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
-    pub fn drain_closed_sockets(&self) {
-        // SAFETY: nothing up the stack is dispatching this loop's events, so nothing still holds a
-        // closed socket: both callers run at teardown, once the loop has stopped.
+    ///
+    /// # Safety
+    /// No frame up the stack uses a closed socket again.
+    pub unsafe fn drain_closed_sockets(&self) {
+        // SAFETY: fn contract.
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
@@ -466,9 +468,10 @@ impl WindowsLoop {
         self.dec();
     }
 
-    pub fn drain_closed_sockets(&self) {
-        // SAFETY: nothing up the stack is dispatching this loop's events, so nothing still holds a
-        // closed socket: both callers run at teardown, once the loop has stopped.
+    /// # Safety
+    /// No frame up the stack uses a closed socket again.
+    pub unsafe fn drain_closed_sockets(&self) {
+        // SAFETY: fn contract.
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 

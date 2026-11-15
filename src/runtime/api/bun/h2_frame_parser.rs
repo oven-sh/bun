@@ -24,8 +24,8 @@ use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef,
-    JsResult, Strong, StrongOptional,
+    AbortSignal, AbortSignalRef, GlobalRef, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    Strong, StrongOptional,
 };
 use bun_ptr::{AliasableBox, RefPtr};
 
@@ -77,13 +77,11 @@ enum BunSocket {
 
 impl BunSocket {
     fn from_js(value: JSValue) -> Option<Self> {
-        // SAFETY: `from_js` returns what the wrapper `value` holds a ref on.
-        unsafe {
-            if let Some(socket) = TLSSocket::from_js(value) {
-                return Some(Self::Tls(RefPtr::init_ref(socket)));
-            }
-            TCPSocket::from_js(value).map(|socket| Self::Tcp(RefPtr::init_ref(socket)))
+        if let Some(socket) = value.as_class_this_ptr::<TLSSocket>() {
+            return Some(Self::Tls(RefPtr::from_this(socket)));
         }
+        let socket = value.as_class_this_ptr::<TCPSocket>()?;
+        Some(Self::Tcp(RefPtr::from_this(socket)))
     }
 
     fn write_maybe_corked(&self, buf: &[u8]) -> i32 {
@@ -2300,8 +2298,7 @@ impl H2FrameParser {
             .deprecated_report_extra_memory(bytes.len());
     }
 
-    fn reset_write_buffer(wb: &mut Vec<u8>) {
-        wb.clear();
+    fn shrink_write_buffer(wb: &mut Vec<u8>) {
         // lets keep size under control
         if wb.capacity() > MAX_BUFFER_SIZE as usize {
             wb.shrink_to(MAX_BUFFER_SIZE as usize);
@@ -2334,7 +2331,7 @@ impl H2FrameParser {
                     .deprecated_report_extra_memory(bytes.len().min(total - written));
             }
         } else if self.native_socket.is_attached() && self.pending_len() == 0 {
-            Self::reset_write_buffer(&mut pending);
+            pending.clear();
             self.write_buffer.set(pending);
         }
         (written, total)
@@ -2344,7 +2341,11 @@ impl H2FrameParser {
         let written = if self.pending_len() > 0
             && let Some(socket) = self.native_socket.get()
         {
-            self.write_pending(&socket, b"").0
+            let (written, total) = self.write_pending(&socket, b"");
+            if written == total {
+                self.write_buffer.with_taken(Self::shrink_write_buffer);
+            }
+            written
         } else {
             0
         };
@@ -2355,9 +2356,13 @@ impl H2FrameParser {
     fn generic_write(&self, socket: &BunSocket, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
-        if self.pending_len() > 0 {
+        let had_pending = self.pending_len() > 0;
+        if had_pending {
             if self.transport_write_runs_js() {
                 let (written, total) = self.write_pending(socket, bytes);
+                if written == total {
+                    self.write_buffer.with_taken(Self::shrink_write_buffer);
+                }
                 return written == total;
             }
             let (written, total) = self.write_pending(socket, b"");
@@ -2378,6 +2383,9 @@ impl H2FrameParser {
             // ops not all data was sent, lets buffer again
             self.append_pending(&bytes[written..]);
             return false;
+        }
+        if had_pending {
+            self.write_buffer.with_taken(Self::shrink_write_buffer);
         }
         true
     }
@@ -2466,7 +2474,8 @@ impl H2FrameParser {
                 self.write_buffer.with_taken(|wb| {
                     if offset + bytes_len >= wb.len() {
                         self.write_buffer_offset.set(0);
-                        Self::reset_write_buffer(wb);
+                        wb.clear();
+                        Self::shrink_write_buffer(wb);
                     } else {
                         self.write_buffer_offset.set(offset + bytes_len);
                     }

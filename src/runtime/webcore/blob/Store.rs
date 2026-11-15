@@ -25,7 +25,7 @@ use bun_ptr::RefPtr;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) use bun_jsc::webcore_types::store::{
-    Bytes, Data, DataTag, File, IsAllAscii, S3, SerializeTag, Store,
+    Bytes, Data, DataTag, File, S3, SerializeTag, Store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -115,12 +115,10 @@ impl StoreExt for Store {
         // Store so we don't need to clone the owned PathLike.
         let mime_type = mime_type.or_else(|| mime_from_path_ext(path.slice()));
 
-        Ok(RefPtr::new(Store {
-            data: Data::S3(S3::init(path, mime_type, credentials)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        }))
+        Ok(RefPtr::new(Store::new(
+            Data::S3(S3::init(path, mime_type, credentials)),
+            bun_http_types::MimeType::NONE,
+        )))
     }
 
     fn init_file(
@@ -134,12 +132,10 @@ impl StoreExt for Store {
             PathOrFileDescriptor::Fd(_) => None,
         });
 
-        Ok(RefPtr::new(Store {
-            data: Data::File(File::init(pathlike, mime_type)),
-            mime_type: bun_http_types::MimeType::NONE,
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
-            is_all_ascii: IsAllAscii::default(),
-        }))
+        Ok(RefPtr::new(Store::new(
+            Data::File(File::init(pathlike, mime_type)),
+            bun_http_types::MimeType::NONE,
+        )))
     }
 
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {

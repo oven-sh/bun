@@ -126,7 +126,7 @@ The system API underneath (`getaddrinfo`) does not expose the TTL of a DNS entry
 
 ### Connecting to a name with several addresses
 
-When a name resolves to more than one address, Bun tries the addresses one at a time ([Happy Eyeballs, RFC 8305](https://www.rfc-editor.org/rfc/rfc8305)). Bun keeps the resolver's order and alternates between IPv6 and IPv4. This applies to `fetch`, `WebSocket`, `Bun.connect`, `Bun.SQL`, `RedisClient`, `S3Client` and `bun install`. `node:net` follows its `autoSelectFamily` option instead.
+When a name resolves to more than one address, Bun tries the addresses one at a time ([Happy Eyeballs, RFC 8305](https://www.rfc-editor.org/rfc/rfc8305)). Bun keeps the resolver's order and alternates between IPv6 and IPv4. This applies to `fetch` (except over HTTP/3), `WebSocket`, `Bun.connect`, `Bun.SQL`, `RedisClient`, `S3Client` and `bun install`. `node:net` follows its `autoSelectFamily` option instead.
 
 Bun tries the next address as soon as an attempt fails, or after 250 ms without a connection. Earlier attempts keep going, up to six at a time, and Bun uses the first one that connects. While the name stays in the DNS cache, later connections start with the address that connected last.
 

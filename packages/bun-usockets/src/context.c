@@ -866,7 +866,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     int opened;
     int delay_ms = Bun__addrinfo_attemptDelayMs();
     if (delay_ms > 0 && c->addrinfo_head && c->addrinfo_head->ai_next) {
-        c->attempt_delay_ms = delay_ms > 0xffff ? 0xffff : (uint16_t) delay_ms;
+        c->attempt_delay_ms = delay_ms;
         /* The list is in the resolver's order with families interleaved; lead
          * with what connected last time through this cache entry, if recorded. */
         struct sockaddr_storage last;

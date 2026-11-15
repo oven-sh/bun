@@ -62,7 +62,7 @@ pub struct BundleV2<'a> {
     /// Before what tasks borrow: dropping it joins the threads of a pool it owns.
     pub graph: Graph<'a>,
     /// When Bun Bake is used, the resolved framework is passed here.
-    pub(crate) framework: Option<bake::Framework>,
+    pub(crate) framework: Option<std::sync::Arc<bake::Framework>>,
     pub(crate) r#loop: EventLoop,
     pub(crate) has_any_css_locals: AtomicU32,
     /// The order files of `--bytecode-order` / `compile.bytecodeOrder`, read and merged when the bundle started.
@@ -191,7 +191,7 @@ bun_core::declare_scope!(scan_counter, visible);
 pub(crate) type ResolveQueue<'a> = StringHashMap<&'a mut ParseTask<'a>>;
 
 pub struct BakeOptions<'a> {
-    pub framework: bake::Framework,
+    pub framework: std::sync::Arc<bake::Framework>,
     pub client_transpiler: &'a mut Transpiler<'a>,
     /// `Some` with a separate SSR graph.
     pub ssr_transpiler: Option<&'a mut Transpiler<'a>>,

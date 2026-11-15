@@ -37,7 +37,7 @@ fn dump_build_error(vm: &VirtualMachine) {
     let _flush = Output::flush_guard();
 
     if let Some(mut p) = vm.log.get() {
-        // SAFETY: `vm.log` is set during `VirtualMachine::init` to the VM-owned log and
+        // SAFETY: `vm.log` is set during `VirtualMachine::init` to its creator's log and
         // remains valid for the lifetime of `vm`; nothing else uses it while this prints.
         let _ = unsafe { p.as_mut() }.print(writer);
     }

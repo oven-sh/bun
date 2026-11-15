@@ -78,31 +78,6 @@ impl<'a> Transpiler<'a> {
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
 
-    /// VM-teardown: the owning `VirtualMachine` is raw-allocated and never `Drop`'d,
-    /// so free `BundleOptions` here. `log`/`env` are aliased/singletons; left alone.
-    /// `resolver` is a value field whose caches alias process-global BSSMaps, so the
-    /// resolver itself stays put — only its owned `opts` projection (cloned in
-    /// `resolver_bundle_options_subset`) is released.
-    ///
-    /// # Safety
-    /// Calls `drop_in_place` on `options` / `result` / `resolver.opts` /
-    /// `resolve_results`, leaving them logically uninitialized. After this
-    /// returns, `self` must never be dropped (or `deinit`'d again) — every
-    /// caller holds a `Transpiler` that bypasses `Drop`: a raw-`dealloc`'d
-    /// `VirtualMachine` field. Owned `Transpiler`s from [`Self::for_worker`] must use
-    /// normal `Drop` instead.
-    pub unsafe fn deinit(&mut self) {
-        // SAFETY: `options`, `result`, and `resolver.opts` are init'd and never
-        // read past `destroy()`. Caller upholds
-        // the no-auto-drop contract above.
-        unsafe {
-            core::ptr::drop_in_place(&raw mut self.options);
-            core::ptr::drop_in_place(&raw mut self.result);
-            core::ptr::drop_in_place(&raw mut self.resolver.opts);
-            core::ptr::drop_in_place(&raw mut self.resolve_results);
-        }
-    }
-
     /// Shared read-only borrow of the `Log`. Use for `has_errors()` /
     /// `.errors` / `.warnings` checks; prefer [`Self::log_mut`] for writes.
     #[inline]
@@ -912,7 +887,7 @@ pub(crate) fn resolver_bundle_options_subset(
         },
         external: src.external.clone(),
         extra_cjs_extensions: src.extra_cjs_extensions.clone(),
-        framework: src.framework.map(|f| {
+        framework: src.framework.as_deref().map(|f| {
             // Bundler-local `bake_types::BuiltInModule` and
             // `bun_options_types::BuiltInModule` are nominally distinct (the
             // former predates the TYPE_ONLY move-down); convert variant-wise.
@@ -970,8 +945,7 @@ pub(crate) fn resolver_bundle_options_subset(
 }
 
 impl<'a> Transpiler<'a> {
-    /// Called by [`init_runtime_state`](../runtime/jsc_hooks.rs)
-    /// to write `vm.transpiler`. Builds on:
+    /// Builds on:
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
@@ -984,8 +958,7 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        // Caller contract: `log` is the freshly-boxed per-VM `Log` from
-        // `VirtualMachine::init` and is never null. Validate up front so the
+        // Caller contract: `log` is never null. Validate up front so the
         // deref sites below go through `NonNull` rather than the raw argument.
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::init: log is non-null");
         bun_ast::expr::data::Store::create();
@@ -1042,8 +1015,8 @@ impl<'a> Transpiler<'a> {
         }
 
         // hide elapsed time when loglevel is warn or error
-        // SAFETY: caller contract — `log` is the freshly-boxed per-VM `Log`
-        // (`VirtualMachine::init`), `env_loader` is either caller-owned or the
+        // SAFETY: caller contract — `log` is caller-owned,
+        // `env_loader` is either caller-owned or the
         // leak above; no other live `&mut` to either at this point.
         unsafe {
             (*env_loader).quiet = !log_nn.as_ref().level.at_least(bun_ast::Level::Info);
@@ -2148,7 +2121,7 @@ impl<'a> Transpiler<'a> {
         //
         // `print_arena` is the same per-call arena that built `ast` (the one
         // passed in `ParseOptions.arena`). Do NOT use `self.arena` here: on the
-        // runtime per-import path that aliases the per-VM `transpiler_arena`
+        // runtime per-import path that is the VM's handle on the main heap
         // (`Arena::borrowing_default()` → `mi_heap_main()`, never freed), so the
         // printer's rope/template-string flattening (`Str::resolve_rope_if_needed`)
         // would strand its bytes in `mi_heap_main` on every print.

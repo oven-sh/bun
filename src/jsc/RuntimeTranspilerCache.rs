@@ -574,7 +574,7 @@ pub struct RuntimeTranspilerCache {
 struct PendingEntry {
     input_hash: u64,
     input_byte_length: u64,
-    /// The key. `set_parsed` replaces it with one of the next two if the file needs it.
+    /// `set_parsed` can replace it with `test_features_hash` or `vitest_features_hash`.
     features_hash: u64,
     /// For a file with `uses_test_api`. Also hashes the parser features `bun test` sets.
     test_features_hash: u64,
@@ -647,7 +647,7 @@ impl RuntimeTranspilerCache {
         }
 
         if let Some(dir) = env_var::BUN_RUNTIME_TRANSPILER_CACHE_PATH.get() {
-            if dir.is_empty() || (dir.len() == 1 && dir[0] == b'0') {
+            if Self::is_disabled_by_env() {
                 return 0;
             }
 
@@ -870,7 +870,7 @@ impl RuntimeTranspilerCache {
             .is_some_and(|v| v.is_empty() || v == b"0")
     }
 
-    /// For the printer. `None` if the output is not to be saved.
+    /// `None` if the output is not to be saved.
     pub fn for_printer(&self) -> Option<&dyn bun_js_printer::TranspilerCacheWriter> {
         Some(self.pending_entry.as_ref()?)
     }
@@ -971,9 +971,8 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
         CacheLookup::Hit
     }
 
-    fn set_parsed(&mut self, parsed: Option<ParsedForCache>) {
-        let (Some(parsed), Some(pending_entry)) = (parsed, &mut self.pending_entry) else {
-            self.pending_entry = None;
+    fn set_parsed(&mut self, parsed: ParsedForCache) {
+        let Some(pending_entry) = &mut self.pending_entry else {
             return;
         };
         self.imports_vitest = parsed.imports_vitest;
@@ -983,6 +982,10 @@ impl bun_js_parser::TranspilerCache for RuntimeTranspilerCache {
         } else if parsed.uses_test_api {
             pending_entry.features_hash = pending_entry.test_features_hash;
         }
+    }
+
+    fn discard(&mut self) {
+        self.pending_entry = None;
     }
 }
 

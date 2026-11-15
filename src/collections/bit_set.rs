@@ -500,7 +500,9 @@ impl DynamicBitSet {
 
     pub fn clone(&self) -> Result<Self, AllocError> {
         let mut masks = Vec::new();
-        (masks.try_reserve_exact(self.masks.len())).map_err(|_| AllocError)?;
+        masks
+            .try_reserve_exact(self.masks.len())
+            .map_err(|_| AllocError)?;
         masks.extend_from_slice(&self.masks);
         Ok(Self {
             bit_length: self.bit_length,
@@ -555,7 +557,10 @@ impl<Masks: Deref<Target = [usize]>> DynamicBitSet<Masks> {
         total
     }
 
-    pub(crate) fn has_intersection(&self, other: &Self) -> bool {
+    pub(crate) fn has_intersection(
+        &self,
+        other: &DynamicBitSet<impl Deref<Target = [usize]>>,
+    ) -> bool {
         debug_assert_eq!(self.masks.len(), other.masks.len());
         for (a, b) in self.masks.iter().zip(other.masks.iter()) {
             if (a & b) != 0 {
@@ -669,7 +674,7 @@ impl<Masks: DerefMut<Target = [usize]>> DynamicBitSet<Masks> {
         self.zip_masks(other, |a, b| a | b);
     }
 
-    pub fn set_intersection(&mut self, other: &Self) {
+    pub fn set_intersection(&mut self, other: &DynamicBitSet<impl Deref<Target = [usize]>>) {
         self.zip_masks(other, |a, b| a & b);
     }
 
@@ -715,6 +720,7 @@ impl DynamicBitSetList {
 
 // ───────────────────────────── AutoBitSet ─────────────────────────────
 
+/// Two masks, so that `AutoBitSet` is three words.
 const AUTO_STATIC_BITS: usize = 2 * usize::BITS as usize - 1;
 
 pub(crate) type AutoBitSetStatic =
@@ -724,6 +730,8 @@ pub enum AutoBitSet {
     Static(AutoBitSetStatic),
     Dynamic(DynamicBitSet),
 }
+
+const _: () = assert!(size_of::<AutoBitSet>() == 3 * size_of::<usize>());
 
 // ─── two-arm forward helper ────────────────────────────────────────────
 // This macro forwards a call to whichever arm is active and is applied to
@@ -1001,10 +1009,5 @@ mod tests {
         );
         assert!(set.subset_of(&list.at(1)) && !set.eql(&list.at(1)));
         assert_eq!(DynamicBitSetList::init_empty(3, 0).at(2).count(), 0);
-    }
-
-    #[test]
-    fn auto_bit_set_is_three_words() {
-        assert_eq!(size_of::<AutoBitSet>(), 3 * size_of::<usize>());
     }
 }

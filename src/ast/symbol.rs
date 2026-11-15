@@ -655,8 +655,7 @@ impl Map {
         // which stores a Ref that came from `declare_symbol` / `new_symbol` /
         // `LinkerGraph::generate_new_symbol`, and (c) prior `follow()` path
         // compression, which stores a `root` that itself satisfied (b). All
-        // such refs are in bounds:
-        // `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
+        // such refs are in bounds: `(source_index, inner_index)` with tag ∈ {Symbol, AllocatedName},
         // never `SourceContentsSlice` and never the null source sentinel.
         let outer = self.symbols_for_source.as_slice();
         let lookup = |r: Ref| -> &Symbol {

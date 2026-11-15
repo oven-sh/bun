@@ -378,8 +378,7 @@ impl Watcher {
         if self.evict_list_i == 0 {
             return;
         }
-        // The close+swap_remove below must be serialized against
-        // `append_file_maybe_lock<true>` re-adds, which take `self.mutex`.
+        // The close+swap_remove below must be serialized against `append_file_maybe_lock<true>` re-adds, which take `self.mutex`.
         // The close in pass 1 is also why the watchlist's stored fd is never
         // handed out for reads: a reader that copied the number before this
         // ran would hit `EBADF`/`EISDIR` after.

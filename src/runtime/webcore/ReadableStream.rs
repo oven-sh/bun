@@ -1302,9 +1302,11 @@ impl<C: SourceContext> NewSource<C> {
     pub fn drain(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let list = self.context.drain_internal_buffer();
         if list.len() > 0 {
-            // JSC's `MarkedArrayBuffer_deallocator` frees the buffer.
-            let ab = jsc::ArrayBuffer::from_bytes(list.leak(), jsc::JSType::Uint8Array);
-            return ab.to_js(cx.global());
+            return jsc::ArrayBuffer::from_default_allocator(
+                cx.global(),
+                jsc::JSType::Uint8Array,
+                list,
+            );
         }
         Ok(JSValue::UNDEFINED)
     }

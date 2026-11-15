@@ -651,7 +651,7 @@ pub(crate) fn decode_header_block(session: &mut ClientSession, stream: &mut Stre
         let value = trim_response_value(result.value);
         stream.decoded_bytes.extend_from_slice(result.name);
         stream.decoded_bytes.extend_from_slice(value);
-        // Both are below the cap.
+        // Both fit: their sum is at most `LOCAL_MAX_HEADER_LIST_SIZE`.
         lengths.push([result.name.len() as u32, value.len() as u32]);
     }
 

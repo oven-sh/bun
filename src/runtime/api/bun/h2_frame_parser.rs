@@ -4782,12 +4782,12 @@ impl H2FrameParser {
                             self.drain_cork_into(batch);
                             if vectorize {
                                 segments = BATCH_SEGMENTS.take();
-                            }
-                            if vectorize && !batch.is_empty() {
-                                segments.push(BatchSegment::Batch {
-                                    off: 0,
-                                    len: batch.len() as u32,
-                                });
+                                if !batch.is_empty() {
+                                    segments.push(BatchSegment::Batch {
+                                        off: 0,
+                                        len: batch.len() as u32,
+                                    });
+                                }
                             }
                         }
                         let header_off = batch.len();

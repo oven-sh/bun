@@ -313,7 +313,8 @@ impl MachoFile {
         // [header][...data before __BUN][__BUN][...data after __BUN]
         // We need to shift [...data after __BUN] forward by size_diff bytes.
         let after_bun_dst = original_data_end + (new_len - prev_len);
-        (self.data).copy_within(original_bun_end..prev_len, after_bun_dst);
+        self.data
+            .copy_within(original_bun_end..prev_len, after_bun_dst);
 
         // Now we copy the u64 size header (8 bytes for alignment)
         self.data[original_fileoff as usize..][..8]

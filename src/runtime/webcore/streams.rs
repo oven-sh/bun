@@ -1,8 +1,9 @@
+use core::cell::Cell;
 use core::ffi::c_void;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
-use bun_ptr::{BackRef, JsCell, RefPtr};
+use bun_ptr::{BackRef, OptionCellExt as _, RefPtr};
 
 use crate::webcore::jsc::{
     self as jsc, ArrayBuffer, CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject,
@@ -88,8 +89,7 @@ impl Start {
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(list) => {
-                // JSC's `MarkedArrayBuffer_deallocator` frees the buffer.
-                ArrayBuffer::from_bytes(list.leak(), JSType::Uint8Array).to_js(global_this)
+                ArrayBuffer::from_default_allocator(global_this, JSType::Uint8Array, list)
             }
             _ => Ok(JSValue::UNDEFINED),
         }
@@ -389,7 +389,7 @@ pub struct IntoArray {
 
 /// The read that waits for its source, if there is one.
 #[derive(Default)]
-pub struct Pending(JsCell<Option<PendingRead>>);
+pub struct Pending(Cell<Option<PendingRead>>);
 
 pub(crate) struct PendingRead {
     promise: JSPromiseStrong,
@@ -401,7 +401,7 @@ pub(crate) struct PendingRead {
 
 impl Pending {
     pub(crate) fn is_pending(&self) -> bool {
-        self.0.get().is_some()
+        self.0.is_some()
     }
 
     fn promise(&self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
@@ -416,13 +416,13 @@ impl Pending {
     }
 
     pub(crate) fn run(&self, result: StreamResult<'_>) {
-        if let Some(read) = self.0.replace(None) {
+        if let Some(read) = self.0.take() {
             read.run(result);
         }
     }
 
     pub(crate) fn close_on_next_tick(&self) {
-        if let Some(read) = self.0.replace(None) {
+        if let Some(read) = self.0.take() {
             VirtualMachine::get()
                 .event_loop()
                 .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(read)));
@@ -516,8 +516,7 @@ impl StreamResult<'_> {
     pub fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match self {
             StreamResult::Owned(list) | StreamResult::OwnedAndDone(list) => {
-                // JSC's `MarkedArrayBuffer_deallocator` frees the buffer.
-                ArrayBuffer::from_bytes(list.leak(), JSType::Uint8Array).to_js(cx.global())
+                ArrayBuffer::from_default_allocator(cx.global(), JSType::Uint8Array, list)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
                 // Allocate an uninitialized Uint8Array and

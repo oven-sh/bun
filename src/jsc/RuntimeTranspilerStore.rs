@@ -439,9 +439,7 @@ unsafe impl unbounded_queue::Linked for TranspilerJob {
 /// store, by contrast, are stack-local per call and bulk-freed on return; see
 /// the RSS-regression note in `run()`.
 //
-// `#[thread_local]` not `thread_local!`: the macro's `LocalKey::__getit`
-// wrapper showed up on the
-// async-import hot path. No destructor runs.
+// Not `thread_local!`: its `LocalKey` wrapper showed up on the async-import hot path. The buffer is not freed at thread exit.
 #[thread_local]
 static SOURCE_CODE_PRINTER: Cell<BufferPrinter> =
     Cell::new(BufferPrinter::init(BufferWriter::init()));

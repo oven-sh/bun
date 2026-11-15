@@ -365,15 +365,18 @@ pub trait TranspilerCache {
         used_jsx: bool,
     ) -> CacheLookup;
 
-    /// Follows a miss. `None`: the output depends on more than the source and must not be saved.
-    fn set_parsed(&mut self, parsed: Option<ParsedForCache>);
+    /// Follows a miss.
+    fn set_parsed(&mut self, parsed: ParsedForCache);
+
+    /// Follows a miss whose output must not be saved.
+    fn discard(&mut self);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum CacheLookup {
     Hit,
     Miss,
-    /// The file is not one that gets saved.
+    /// The cache is off, or the source is too small or not a file.
     Skipped,
 }
 
@@ -2510,12 +2513,15 @@ impl<'a> Parser<'a> {
             if let Some(cache) = cache
                 && cache_lookup == CacheLookup::Miss
             {
-                let parsed = ParsedForCache {
-                    exports_kind,
-                    uses_test_api,
-                    imports_vitest,
-                };
-                cache.set_parsed((!p.depends_on_more_than_source()).then_some(parsed));
+                if p.depends_on_more_than_source() {
+                    cache.discard();
+                } else {
+                    cache.set_parsed(ParsedForCache {
+                        exports_kind,
+                        uses_test_api,
+                        imports_vitest,
+                    });
+                }
             }
         }
         // A test entry point gets its own cache key.

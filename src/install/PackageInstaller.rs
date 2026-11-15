@@ -13,7 +13,7 @@ use crate::bin_real as bin;
 use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::NodeId;
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -54,8 +54,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) manager: *mut PackageManager,
     /// BACKREF into `(*manager).lockfile`. Never null.
     pub lockfile: *mut Lockfile,
-    /// BACKREF into `(*manager).progress`. Never null.
-    pub(crate) progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
     pub(crate) node_modules: NodeModulesFolder,
@@ -80,7 +78,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) pkg_name_hashes: bun_ptr::RawSlice<PackageNameHash>,
     pub(crate) bins: bun_ptr::RawSlice<Bin>,
     pub(crate) resolutions: bun_ptr::RawSlice<Resolution>,
-    pub(crate) node: &'a mut ProgressNode,
     pub(crate) destination_dir_subpath_buf: PathBuffer,
     pub(crate) folder_path_buf: PathBuffer,
     pub(crate) successfully_installed: Bitset,
@@ -631,14 +628,6 @@ impl<'a> PackageInstaller<'a> {
         unsafe { &mut *self.lockfile }
     }
 
-    #[inline]
-    fn progress_mut(&self) -> &'a mut Progress {
-        // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
-        // `*self`; the install pass is single-threaded so no concurrent `&mut
-        // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
-        unsafe { &mut *self.progress }
-    }
-
     /// Increments the number of installed packages for the current tree and runs available scripts
     /// if the tree is finished.
     fn increment_tree_install_count(
@@ -1071,7 +1060,7 @@ impl<'a> PackageInstaller<'a> {
         let name = bstr::BStr::new(name);
         if log_level.show_progress() {
             if Output::enable_ansi_colors_stderr() {
-                self.progress_mut().log(format_args!(
+                self.manager().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         true
@@ -1081,7 +1070,7 @@ impl<'a> PackageInstaller<'a> {
                     err.name(),
                 ));
             } else {
-                self.progress_mut().log(format_args!(
+                self.manager().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         false
@@ -1193,9 +1182,9 @@ impl<'a> PackageInstaller<'a> {
             self.manager_mut().report_slow_lifecycle_scripts();
 
             if log_level.show_progress() {
-                if let Some(scripts_node) = self.manager_mut().scripts_node_mut() {
-                    scripts_node.activate();
-                    self.manager_mut().progress.refresh();
+                if let Some(scripts_node) = self.manager().scripts_node {
+                    self.manager().progress.activate(scripts_node);
+                    self.manager().progress.refresh();
                 }
             }
 
@@ -2039,7 +2028,7 @@ impl<'a> PackageInstaller<'a> {
             );
         self.summary.skipped += (!needs_install) as u32;
         if !needs_install && log_level.show_progress() {
-            self.node.complete_one();
+            self.manager().progress.complete_one(NodeId::Install);
         }
 
         // `install_from_link` only re-points one symlink. Everything else replaces the folder.
@@ -2487,7 +2476,7 @@ impl<'a> PackageInstaller<'a> {
                 self.successfully_installed.set(package_id as usize);
 
                 if log_level.show_progress() {
-                    self.node.complete_one();
+                    self.manager().progress.complete_one(NodeId::Install);
                 }
 
                 if self.bins[package_id as usize].tag != bin::Tag::None {
@@ -2778,21 +2767,18 @@ impl<'a> PackageInstaller<'a> {
             return false;
         }
 
-        // Bind once: a second `manager_mut()` would invalidate `scripts_node`, derived from this.
         let m = self.manager_mut();
         m.total_scripts += scripts_list.total as usize;
-        if let Some(scripts_node) = m.scripts_node_mut() {
-            m.set_node_name::<true>(
+        if let Some(scripts_node) = m.scripts_node {
+            m.set_node_name(
                 scripts_node,
                 &scripts_list.package_name,
                 ProgressStrings::SCRIPT_EMOJI.as_bytes(),
             );
-            scripts_node.set_estimated_total_items(
-                scripts_node
-                    .unprotected_estimated_total_items
-                    .load(Ordering::Relaxed)
-                    + scripts_list.total as usize,
-            );
+            m.progress
+                .node(scripts_node)
+                .estimated_total_items
+                .update(|total| total + scripts_list.total as usize);
         }
         let optional = !self
             .manager()

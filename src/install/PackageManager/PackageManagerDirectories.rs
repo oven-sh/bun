@@ -1304,7 +1304,7 @@ pub fn save_lockfile(
 
     if log_level.show_progress() {
         this.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        this.progress.start(ProgressStrings::save(), 0).activate();
+        this.progress.start(ProgressStrings::save(), 0);
 
         this.progress.refresh();
     }
@@ -1341,9 +1341,9 @@ pub fn save_lockfile(
     }
 
     if log_level.show_progress() {
-        this.progress.root.end();
+        this.progress.end();
         this.progress.refresh();
-        this.progress.root.end();
+        this.progress.end();
         this.progress = Default::default();
     } else if wrote && log_level != LogLevel::Silent {
         bun_core::pretty_errorln!("Saved lockfile");

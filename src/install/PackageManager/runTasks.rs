@@ -141,20 +141,17 @@ impl Drop for FinishPass<'_> {
 
             if self.counts_tasks {
                 let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
-                // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
-                // points into `manager.progress` which is live.
-                let node = manager.downloads_node_mut();
-                if completed_items != node.unprotected_completed_items.load(Ordering::Relaxed)
-                    || self.has_updated_this_run.get()
+                let node = manager.progress.node(manager.downloads_node());
+                if completed_items != node.completed_items.get() || self.has_updated_this_run.get()
                 {
-                    node.set_completed_items(completed_items);
-                    node.set_estimated_total_items(manager.total_tasks as usize);
+                    node.completed_items.set(completed_items);
+                    node.estimated_total_items.set(manager.total_tasks as usize);
                 }
             }
             // The progress bar shows the node that was activated last, so the downloads node is
             // only activated once there is something to download.
             if manager.total_tasks > 0 {
-                manager.downloads_node_mut().activate();
+                manager.progress.activate(manager.downloads_node());
             }
             manager.progress.maybe_refresh();
         }
@@ -267,9 +264,9 @@ pub fn run_tasks(
     const DOWNLOAD: &str = ProgressStrings::DOWNLOAD_EMOJI;
     const EXTRACT: &str = ProgressStrings::EXTRACT_EMOJI;
     // The progress bar shows the name of the first task in each pass.
-    let name_progress = |manager: &mut PackageManager, name: &[u8], emoji: &str| {
+    let name_progress = |manager: &PackageManager, name: &[u8], emoji: &str| {
         if log_level.show_progress() && !has_updated_this_run.replace(true) {
-            manager.set_node_name::<true>(manager.downloads_node_mut(), name, emoji.as_bytes());
+            manager.set_node_name(manager.downloads_node(), name, emoji.as_bytes());
         }
     };
     let return_network_task = |task: *mut NetworkTask| {
@@ -1018,8 +1015,8 @@ pub fn run_tasks(
                 }
 
                 if let Some(name) = progress_name {
-                    manager.set_node_name::<true>(
-                        manager.downloads_node_mut(),
+                    manager.set_node_name(
+                        manager.downloads_node(),
                         &name,
                         ProgressStrings::DOWNLOAD_EMOJI.as_bytes(),
                     );

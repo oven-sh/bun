@@ -526,14 +526,14 @@ private:
                  * state.outgoing). A write or uncork can empty the buffer before
                  * the writable event tells that response so (kqueue reports read
                  * and write readiness separately); onWritable stays armed until then. */
-                queueBehindEarlierResponse = !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_OTHER_HANDLER)
+                queueBehindEarlierResponse = !(httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_BUN_SERVE_HANDLER)
                     && (httpResponseData->nodeHttpQueuedPipelinedCount > 0
                         || !((AsyncSocket<SSL> *) s)->hasFullyDrained()
                         || httpResponseData->onWritable != nullptr);
             }
             if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) || queueBehindEarlierResponse) {
                 if (!IsNodeHttp || !httpContextData->flags.queuesPipelinedResponses
-                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_OTHER_HANDLER)) {
+                    || (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_BUN_SERVE_HANDLER)) {
                     /* Responses that completed earlier in this read can still
                      * sit in the cork buffer. close() sends them first. */
                     ((AsyncSocket<SSL> *) s)->close();
@@ -588,7 +588,7 @@ private:
                  * on this keep-alive connection (the flag itself was cleared above). */
                 if constexpr (IsNodeHttp) {
                     ((HttpResponseData<SSL, true> *) httpResponseData)->nodeHttpResponseTrailers.clear();
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_OTHER_HANDLER;
+                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_NODE_BUN_SERVE_HANDLER;
                 }
             }
 

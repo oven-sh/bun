@@ -5,7 +5,9 @@ use core::time::Duration;
 use std::time::Instant;
 
 use bun_core::{ZBox, strings, zstr};
-use bun_sys::{Fd, File};
+use bun_sys::linux::{PrctlOp, prctl};
+use bun_sys::posix::{Rlimit, RlimitResource, setrlimit};
+use bun_sys::{Fd, File, O};
 
 pub(crate) struct Limits {
     pub(crate) cpu_seconds: u32,
@@ -221,8 +223,7 @@ impl Program<'_> {
     }
 
     fn run_compiled(&self) -> Run {
-        // SAFETY: takes integers.
-        unsafe { libc::lseek(self.graph.native(), 0, libc::SEEK_SET) };
+        let _ = bun_sys::set_file_offset(self.graph, 0);
         let graph_flag = format!("--aot-graph-fd={}", self.graph.native());
         run(
             &[b"run", graph_flag.as_bytes(), self.path],
@@ -267,13 +268,13 @@ pub(crate) fn keep_find(kind: &str, summary: &[u8], files: &[(&str, &[u8])]) {
     let folder = [root, b"/", name.as_bytes()].concat();
 
     let index = ZBox::from_bytes(&[root, b"/index.txt"].concat());
-    let flags = libc::O_WRONLY | libc::O_APPEND | libc::O_CREAT | libc::O_CLOEXEC;
     let _ = bun_sys::mkdir_recursive(&[root, b"/", group.as_bytes()].concat());
-    // SAFETY: the path ends with a NUL.
-    let index = unsafe { libc::open(index.as_ptr(), flags, 0o644) };
-    // SAFETY: takes integers.
-    let is_full = unsafe { libc::lseek(index, 0, libc::SEEK_END) } > MAX_INDEX_BYTES;
-    if index >= 0 && !is_full && bun_sys::mkdir(&ZBox::from_bytes(&folder), 0o755).is_ok() {
+    let Ok(index) = File::open(&index, O::WRONLY | O::APPEND | O::CREAT, 0o644) else {
+        return;
+    };
+    let is_full =
+        bun_sys::lseek(index.fd(), 0, libc::SEEK_END).is_ok_and(|end| end > MAX_INDEX_BYTES);
+    if !is_full && bun_sys::mkdir(&ZBox::from_bytes(&folder), 0o755).is_ok() {
         for (position, (file_name, bytes)) in files.iter().enumerate() {
             let path = ZBox::from_bytes(&[&folder[..], b"/", file_name.as_bytes()].concat());
             let limit = if position == 0 {
@@ -283,36 +284,19 @@ pub(crate) fn keep_find(kind: &str, summary: &[u8], files: &[(&str, &[u8])]) {
             };
             let _ = File::write_file(Fd::cwd(), &path, &bytes[..bytes.len().min(limit)]);
         }
-        let _ = bun_sys::write(Fd::from_native(index), format!("{name}\n").as_bytes());
+        let _ = bun_sys::write(index.fd(), format!("{name}\n").as_bytes());
     }
-    // SAFETY: takes an integer.
-    unsafe { libc::close(index) };
 }
 
-fn open_output(path: &[u8], suffix: &[u8]) -> i32 {
+fn open_output(path: &[u8], suffix: &[u8]) -> Option<File> {
     let path = ZBox::from_bytes(&[path, suffix].concat());
-    let flags = libc::O_RDWR | libc::O_CREAT | libc::O_TRUNC | libc::O_CLOEXEC;
-    // SAFETY: the path ends with a NUL.
-    unsafe { libc::open(path.as_ptr(), flags, 0o600) }
+    File::open(&path, O::RDWR | O::CREAT | O::TRUNC, 0o600).ok()
 }
 
-fn read_output(descriptor: i32) -> Vec<u8> {
+fn read_output(file: Option<&File>) -> Vec<u8> {
     let mut bytes = vec![0u8; MAX_OUTPUT_BYTES];
-    let mut length = 0;
-    while length < bytes.len() {
-        let rest = &mut bytes[length..];
-        let offset = libc::off_t::try_from(length).unwrap_or(0);
-        // SAFETY: the kernel writes at most `rest.len()` bytes into `rest`.
-        let count =
-            unsafe { libc::pread(descriptor, rest.as_mut_ptr().cast(), rest.len(), offset) };
-        let Ok(count @ 1..) = usize::try_from(count) else {
-            break;
-        };
-        length += count;
-    }
-    bytes.truncate(length);
-    // SAFETY: takes an integer.
-    unsafe { libc::close(descriptor) };
+    let length = file.and_then(|file| file.pread_all(&mut bytes, 0).ok());
+    bytes.truncate(length.unwrap_or(0));
     bytes
 }
 
@@ -326,13 +310,12 @@ fn resident_bytes_of(process: libc::pid_t) -> u64 {
     pages.unwrap_or(0) * 4096
 }
 
-fn set_limit(resource: libc::__rlimit_resource_t, soft: u64, hard: u64) {
-    let limit = libc::rlimit {
-        rlim_cur: soft,
-        rlim_max: hard,
+pub(crate) fn set_limit(resource: RlimitResource, soft: u64, hard: u64) {
+    let limit = Rlimit {
+        cur: soft,
+        max: hard,
     };
-    // SAFETY: the kernel reads one `rlimit`.
-    unsafe { libc::setrlimit(resource, &raw const limit) };
+    let _ = setrlimit(resource, limit);
 }
 
 /// Starts Bun with `arguments` and this process's environment, less the variables that start with one of `removed`.
@@ -375,19 +358,21 @@ fn run(
     let child = unsafe { libc::fork() };
     if child == 0 {
         set_limit(
-            libc::RLIMIT_CPU,
+            RlimitResource::CPU,
             u64::from(limits.cpu_seconds),
             u64::from(limits.cpu_seconds) + 1,
         );
         set_limit(
-            libc::RLIMIT_FSIZE,
+            RlimitResource::FSIZE,
             MAX_OUTPUT_BYTES as u64,
             MAX_OUTPUT_BYTES as u64,
         );
+        let [stdout, stderr] =
+            [&stdout, &stderr].map(|file| file.as_ref().map_or(-1, |file| file.fd().native()));
         // SAFETY: every pointer is to a NUL-terminated string or to an array of them that ends with a null pointer.
         unsafe {
             libc::setpgid(0, 0);
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong);
             let null = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
             libc::dup2(null, 0);
             libc::dup2(stdout, 1);
@@ -439,8 +424,8 @@ fn run(
     };
     Run {
         end,
-        stdout: remove_details_of_errors(&read_output(stdout)),
-        stderr: read_output(stderr),
+        stdout: remove_details_of_errors(&read_output(stdout.as_ref())),
+        stderr: read_output(stderr.as_ref()),
     }
 }
 

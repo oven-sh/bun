@@ -8,11 +8,15 @@ use std::sync::Arc;
 
 use bun_core::{Global, Output, ZBox, zstr};
 use bun_options_types::aot_options::Preload;
+#[cfg(target_os = "linux")]
+use bun_sys::linux::{PrctlOp, prctl};
+use bun_sys::posix::{RlimitResource, getrlimit};
 use bun_sys::{Fd, File};
 
 use super::compile_command::{CompileProduct, compile_from_context, print_log};
 use super::fuzzilli_run_comparison::{
     FINDING, Limits, Program, Verdict, find_top_level_names, keep_find, name_of_exit_code,
+    set_limit,
 };
 use crate::cli::command::{Context, ContextData};
 
@@ -174,8 +178,7 @@ pub(crate) fn compile_programs(ctx: Context<'_>) -> ! {
         }
         .compare_with_plain_bun(),
     };
-    // SAFETY: no preconditions.
-    unsafe { libc::_exit(i32::from(exit_code)) }
+    Global::_exit(i32::from(exit_code))
 }
 
 fn write_to_unnamed_file(bytes: &[u8]) -> Fd {
@@ -305,10 +308,7 @@ impl Channel {
             let child = unsafe { libc::fork() };
             if child == 0 {
                 #[cfg(target_os = "linux")]
-                // SAFETY: takes integers.
-                unsafe {
-                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-                }
+                prctl(PrctlOp::SET_PDEATHSIG, libc::SIGKILL as libc::c_ulong);
                 limit_cpu_time(self.cpu_seconds);
                 RESIDENT_BYTES_AT_START.store(resident_bytes().max(1), Ordering::Relaxed);
                 watch_memory(self.memory_bytes);
@@ -347,8 +347,7 @@ impl Channel {
 
 /// Fuzzilli gives stderr a file and rewinds it in front of each program. Empty where stderr is something else.
 fn read_stderr_of_this_program() -> Vec<u8> {
-    // SAFETY: takes integers.
-    let length = unsafe { libc::lseek(libc::STDERR_FILENO, 0, libc::SEEK_CUR) };
+    let length = File::borrow(&Fd::stderr()).get_pos().unwrap_or(0);
     let mut bytes = vec![0u8; usize::try_from(length).unwrap_or(0)];
     match File::borrow(&Fd::stderr()).pread_all(&mut bytes, 0) {
         Ok(count) => bytes.truncate(count),
@@ -390,17 +389,11 @@ fn add_prefix(path: &[u8], prefix: &[u8]) -> Box<[u8]> {
 
 /// The threads that compile in other builds of Bun have this much.
 fn grow_stack_to(bytes: u32) {
-    let mut limit = libc::rlimit {
-        rlim_cur: 0,
-        rlim_max: 0,
-    };
-    // SAFETY: the kernel writes one `rlimit`.
-    unsafe { libc::getrlimit(libc::RLIMIT_STACK, &raw mut limit) };
-    let bytes = libc::rlim_t::from(bytes);
-    if limit.rlim_cur < bytes {
-        limit.rlim_cur = bytes.min(limit.rlim_max);
-        // SAFETY: the kernel reads one `rlimit`.
-        unsafe { libc::setrlimit(libc::RLIMIT_STACK, &raw const limit) };
+    let bytes = u64::from(bytes);
+    if let Ok(limit) = getrlimit(RlimitResource::STACK)
+        && limit.cur < bytes
+    {
+        set_limit(RlimitResource::STACK, bytes.min(limit.max), limit.max);
     }
 }
 
@@ -414,8 +407,7 @@ fn read_limit(name: &bun_core::ZStr, default: u32) -> u32 {
 fn stop(reason: &str) -> ! {
     Output::flush();
     let _ = bun_sys::write(Fd::stderr(), format!("fuzzilli: {reason}\n").as_bytes());
-    // SAFETY: no preconditions.
-    unsafe { libc::abort() }
+    std::process::abort()
 }
 
 /// A build that takes more processor time ends by SIGXCPU.
@@ -426,13 +418,9 @@ fn limit_cpu_time(seconds: u32) {
     };
     // SAFETY: the kernel writes one `timespec`.
     unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &raw mut used) };
-    let used_seconds = libc::rlim_t::try_from(used.tv_sec).unwrap_or(0);
-    let limit = libc::rlimit {
-        rlim_cur: used_seconds + 1 + libc::rlim_t::from(seconds),
-        rlim_max: libc::RLIM_INFINITY,
-    };
-    // SAFETY: the kernel reads one `rlimit`.
-    unsafe { libc::setrlimit(libc::RLIMIT_CPU, &raw const limit) };
+    let used_seconds = u64::try_from(used.tv_sec).unwrap_or(0);
+    let limit = used_seconds + 1 + u64::from(seconds);
+    set_limit(RlimitResource::CPU, limit, libc::RLIM_INFINITY);
 }
 
 fn resident_bytes() -> u64 {

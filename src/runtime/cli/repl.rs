@@ -1131,15 +1131,7 @@ impl<'a> Repl<'a> {
                 .tty_state
                 .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
 
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
+            bun_core::signal::set_default_action(libc::SIGINT);
         }
     }
 

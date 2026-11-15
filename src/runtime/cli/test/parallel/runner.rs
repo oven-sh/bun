@@ -218,9 +218,8 @@ pub(crate) fn run_as_coordinator(
         #[cfg(windows)]
         windows_job: bun_sys::windows::create_kill_on_close_job()
             .map(std::os::windows::io::IntoRawHandle::into_raw_handle),
+        abort_guard: Some(abort_handler::install()),
     };
-
-    let _abort_guard = abort_handler::install();
 
     vm.event_loop().ensure_waker();
     crate::cli::run_compiled::log_step_of_test_run(format_args!("the coordinator is set up"));

@@ -1,6 +1,6 @@
-//! `Zeroable` for the foreign C structs Bun zero-initializes. The orphan rule puts these impls here.
+//! `Zeroable`, `AnyBitPattern` and `NoUninit` for foreign C structs. The orphan rule puts these impls here.
 
-use crate::{Zeroable, impl_zeroable};
+use crate::{Zeroable, impl_any_bit_pattern, impl_zeroable};
 
 macro_rules! has_pointers {
     ($($T:ty),+ $(,)?) => {$(
@@ -12,6 +12,7 @@ macro_rules! has_pointers {
 #[cfg(unix)]
 mod unix {
     use super::*;
+    use crate::impl_pod;
 
     impl_zeroable!(
         libc::utsname,
@@ -25,9 +26,9 @@ mod unix {
         libc::sockaddr,
         libc::sockaddr_in,
         libc::sockaddr_in6,
-        libc::sockaddr_storage,
-        libc::sockaddr_un,
     );
+    impl_any_bit_pattern!(libc::sockaddr_storage);
+    impl_pod!(libc::sockaddr_un);
     // A `u32` on Darwin, which the primitive impl covers.
     #[cfg(not(target_vendor = "apple"))]
     impl_zeroable!(libc::sigset_t);
@@ -43,7 +44,7 @@ mod unix {
     #[cfg(target_os = "macos")]
     impl_zeroable!(libc::kevent64_s, libc::rusage_info_v4);
     #[cfg(target_os = "freebsd")]
-    impl_zeroable!(libc::_umtx_time);
+    impl_zeroable!(libc::_umtx_time, libc::kinfo_file);
 
     has_pointers!(
         libc::sigaction,
@@ -75,10 +76,10 @@ mod windows {
         w::IO_STATUS_BLOCK,
         w::JOBOBJECT_BASIC_LIMIT_INFORMATION,
         w::JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        ws2_32::sockaddr_storage,
         ws2_32::sockaddr_in,
         ws2_32::sockaddr_in6,
     );
+    impl_any_bit_pattern!(ws2_32::sockaddr_storage);
 
     has_pointers!(
         w::OBJECT_ATTRIBUTES,

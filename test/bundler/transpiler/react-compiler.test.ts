@@ -1683,6 +1683,175 @@ describe("bundler", () => {
     run: { stdout: '[[5,-10,10],{"v":[5,-10],"x":10},[[5,-5],6]]' },
   });
 
+  // One memo cache per mount, kept between its renders, as a fiber keeps it.
+  const reactWithMounts = {
+    "/node_modules/react/index.js": /* js */ `
+      let current;
+      exports.mount = Component => {
+        const fiber = { cache: null };
+        return props => {
+          current = fiber;
+          return Component(props);
+        };
+      };
+      exports.memoCache = size =>
+        (current.cache ??= new Array(size).fill(Symbol.for("react.memo_cache_sentinel")));
+    `,
+    "/node_modules/react/compiler-runtime.js": `exports.c = size => require("./index.js").memoCache(size);`,
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => props;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => props;`,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
+  // `0 === -0`, but a local that is `0` on one path and `-0` on another is not a constant. Constant propagation took
+  // the zero of one path for it, also of a path that is never taken (facebook/react#37995). Each component is mounted
+  // twice and renders three times on the memo cache of each mount, with `flag` true, false, true and then false, true,
+  // false, so that each zero is the first one once. A compiled build has to render what the plain build renders.
+  // Each component reads its zero in a division, which no memo block holds: see the case after this one.
+  const zeroOrMinusZero: Record<string, string> = {
+    ZeroOrMinusZero: "Infinity -Infinity Infinity | -Infinity Infinity -Infinity",
+    MinusZeroOrZero: "-Infinity Infinity -Infinity | Infinity -Infinity Infinity",
+    ZeroFromATernary: "true false true | false true false",
+    ZeroUnlessAssigned: "-Infinity Infinity -Infinity | Infinity -Infinity Infinity",
+    ZeroFromASwitch: "Infinity -Infinity Infinity | -Infinity Infinity -Infinity",
+    ZeroInACallback: "Infinity -Infinity Infinity | -Infinity Infinity -Infinity",
+    ZeroBesideADeadPath: "Infinity",
+    SameZeroOnBothPaths: "Infinity,-Infinity,42,true",
+  };
+  const zeroOrMinusZeroFiles = {
+    "/entry.js": /* js */ `
+      import { mount } from "react";
+      import * as forms from "./forms.jsx";
+      const show = value => (Object.is(value, -0) ? "-0" : String(value));
+      const orders = [[true, false, true], [false, true, false]];
+      for (const [name, Form] of Object.entries(forms)) {
+        const mounts = orders.map(flags => {
+          const render = mount(Form);
+          return flags.map(flag => [render({ flag }).children].flat().map(show).join());
+        });
+        const same = new Set(mounts.flat()).size === 1;
+        console.log(name + "=" + (same ? mounts[0][0] : mounts.map(renders => renders.join(" ")).join(" | ")));
+      }
+    `,
+    "/forms.jsx": /* jsx */ `
+      export function ZeroOrMinusZero({ flag }) {
+        let z;
+        if (flag) z = 0;
+        else z = -0;
+        return <i>{1 / z}</i>;
+      }
+      export function MinusZeroOrZero({ flag }) {
+        let z;
+        if (flag) z = -0;
+        else z = 0;
+        return <i>{1 / z}</i>;
+      }
+      export function ZeroFromATernary({ flag }) {
+        const z = flag ? 0 : -0;
+        return <i>{1 / z > 0}</i>;
+      }
+      export function ZeroUnlessAssigned({ flag }) {
+        let z = 0;
+        if (flag) z = -0;
+        return <i>{1 / z}</i>;
+      }
+      export function ZeroFromASwitch({ flag }) {
+        let z;
+        switch (flag) {
+          case true:
+            z = 0;
+            break;
+          default:
+            z = -0;
+        }
+        return <i>{1 / z}</i>;
+      }
+      export function ZeroInACallback({ flag }) {
+        const divide = on => {
+          let z;
+          if (on) z = 0;
+          else z = -0;
+          return 1 / z;
+        };
+        return <i>{divide(flag)}</i>;
+      }
+      // The assignment never runs. Its \`-0\` was still the constant for \`z\`.
+      export function ZeroBesideADeadPath() {
+        const never = false;
+        let z = 0;
+        if (never) z = -0;
+        return <i>{[1 / z]}</i>;
+      }
+      // The same zero on both paths is still a constant, and so is a number that is not zero.
+      export function SameZeroOnBothPaths({ flag }) {
+        let zero, minusZero, other;
+        if (flag) {
+          zero = 0;
+          minusZero = -0;
+          other = 42;
+        } else {
+          zero = 0;
+          minusZero = -0;
+          other = 42;
+        }
+        return <i>{[1 / zero, 1 / minusZero, other, 0 === -0]}</i>;
+      }
+    `,
+    ...reactWithMounts,
+  };
+  const zeroOrMinusZeroBuilds = {
+    plain: { reactCompiler: false, backend: "api" },
+    api: { reactCompiler: true, backend: "api" },
+    cli: { reactCompiler: true, backend: "cli" },
+    ssr: { reactCompiler: true, backend: "api", reactCompilerOutputMode: "ssr" },
+    minified: { reactCompiler: true, backend: "api", minifySyntax: true },
+  } as const;
+  for (const [build, options] of Object.entries(zeroOrMinusZeroBuilds)) {
+    itBundled(`react-compiler/ZeroAndMinusZeroAreNotOneConstant-${build}`, {
+      files: zeroOrMinusZeroFiles,
+      ...options,
+      target: "browser",
+      run: {
+        stdout: Object.entries(zeroOrMinusZero)
+          .map(([name, renders]) => `${name}=${renders}`)
+          .sort()
+          .join("\n"),
+      },
+      onAfterBundle(api) {
+        if (!options.reactCompiler || "minifySyntax" in options) return;
+        // The last two are constants in the output: the compiler still computes them.
+        const out = api.readFile("/out.js").replace(/\s/g, "");
+        expect(["[Infinity]", "[Infinity,-Infinity,42,true]"].filter(array => !out.includes(array))).toEqual([]);
+      },
+    });
+  }
+
+  // A memo block compares a dependency with `!==`, and `0 !== -0` is false. So a block that holds the zero itself
+  // does not run again when only its sign changes: a compiled build prints `true true true`. Upstream prints the same
+  // guard.
+  itBundled("react-compiler/MemoBlockRunsAgainForTheOtherZero", {
+    todo: true,
+    files: {
+      "/entry.js": /* js */ `
+        import { mount } from "react";
+        import { IsMinusZero } from "./forms.jsx";
+        const render = mount(IsMinusZero);
+        console.log([false, true, false].map(flag => render({ flag }).children).join(" "));
+      `,
+      "/forms.jsx": /* jsx */ `
+        export function IsMinusZero({ flag }) {
+          const z = flag ? 0 : -0;
+          return <i>{Object.is(z, -0)}</i>;
+        }
+      `,
+      ...reactWithMounts,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "api",
+    run: { stdout: "true false true" },
+  });
+
   itBundled("react-compiler/HoistsMemoCacheSentinel", {
     files: {
       "/entry.jsx": /* jsx */ `

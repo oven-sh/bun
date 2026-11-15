@@ -51,6 +51,8 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
+        // oxlint 1.87 and eslint-plugin-react-hooks 7.1.1 have a compiler from before facebook/react#37995.
+        zeros_of_a_phi_keep_their_sign: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

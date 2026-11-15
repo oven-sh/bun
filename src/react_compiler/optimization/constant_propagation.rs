@@ -145,6 +145,7 @@ fn apply_constant_propagation(
     constants: &mut Constants,
 ) -> bool {
     let mut has_changes = false;
+    let zeros_keep_their_sign = env.config.zeros_of_a_phi_keep_their_sign;
 
     let instructions = &mut func.instructions;
     for block in func.body.blocks.values_mut() {
@@ -153,7 +154,7 @@ fn apply_constant_propagation(
             .phis
             .iter()
             .filter_map(|phi| {
-                let value = evaluate_phi(phi, constants)?;
+                let value = evaluate_phi(phi, constants, zeros_keep_their_sign)?;
                 Some((phi.place.identifier, value))
             })
             .collect();
@@ -237,7 +238,7 @@ fn apply_constant_propagation(
 // Phi evaluation
 // =============================================================================
 
-fn evaluate_phi(phi: &Phi, constants: &Constants) -> Option<Constant> {
+fn evaluate_phi(phi: &Phi, constants: &Constants, zeros_keep_their_sign: bool) -> Option<Constant> {
     let mut value: Option<Constant> = None;
     for (_pred, operand) in &phi.operands {
         let operand_value = constants.get(operand.identifier)?;
@@ -253,6 +254,15 @@ fn evaluate_phi(phi: &Phi, constants: &Constants) -> Option<Constant> {
                     // Use JS strict equality semantics: NaN !== NaN
                     if !js_strict_equal(a, b) {
                         return None;
+                    }
+                    // Strict equality alone would merge 0 and -0, which are not interchangeable. Keep rejecting NaN as before.
+                    if let (PrimitiveValue::Number(a), PrimitiveValue::Number(b)) = (a, b) {
+                        // Not in upstream: the flag. `bun lint` merges the two, as the compilers of its pinned tools do.
+                        if zeros_keep_their_sign
+                            && a.value().is_sign_negative() != b.value().is_sign_negative()
+                        {
+                            return None;
+                        }
                     }
                 }
                 (

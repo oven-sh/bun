@@ -2,6 +2,7 @@
 import { render } from "../react-stand-in/render";
 import * as JoinedText from "./JoinedText";
 import * as Shapes from "./Shapes";
+import * as Zeros from "./Zeros";
 
 type Component = (props: unknown) => unknown;
 
@@ -11,6 +12,6 @@ const allProps = [
   { a: 1, text: "x", list, nested: { value: 7 } },
   { a: 2, text: "y", list: [3, 4], nested: null },
 ];
-for (const [name, component] of Object.entries({ ...Shapes, ...JoinedText })) {
+for (const [name, component] of Object.entries({ ...Shapes, ...JoinedText, ...Zeros })) {
   for (const props of allProps) console.log(name, JSON.stringify(render(component as Component, props)));
 }

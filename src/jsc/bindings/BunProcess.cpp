@@ -2,6 +2,7 @@
 #include "napi.h"
 
 #include "BunProcess.h"
+#include "NodeV8.h"
 #include "BunCompiledModules.h"
 #include "BunSignalActions.h"
 #include "ObjectBindings.h"
@@ -2862,7 +2863,7 @@ __attribute__((minsize)) static JSValue constructReportObjectComplete(VM& vm, Zi
         putDirectNamed(vm, heap, "usedMemory"_s, jsNumber(0));
         putDirectNamed(vm, heap, "memoryLimit"_s, jsNumber(0));
         putDirectNamed(vm, heap, "mallocedMemory"_s, jsNumber(0));
-        putDirectNamed(vm, heap, "externalMemory"_s, JSC::jsNumber(vm.heap.externalMemorySize()));
+        putDirectNamed(vm, heap, "externalMemory"_s, JSC::jsNumber(Bun::externalMemorySize(vm.heap)));
         putDirectNamed(vm, heap, "peakMallocedMemory"_s, jsNumber(0));
         putDirectNamed(vm, heap, "nativeContextCount"_s, JSC::jsNumber(1));
         putDirectNamed(vm, heap, "detachedContextCount"_s, JSC::jsNumber(0));
@@ -5358,20 +5359,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     size_t heapUsed = WebCore::clientData(vm)->heapSizeAfterLastCollection();
     result->putDirectOffset(vm, 2, JSC::jsNumber(heapUsed ? heapUsed : heapTotal));
 
-    result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
-
-    // JSC won't count this number until vm.heap.addReference() is called.
-    // That will only happen in cases like:
-    // - new ArrayBuffer()
-    // - new Uint8Array(42).buffer
-    // - fs.readFile(path, "utf-8") (sometimes)
-    // - ...
-    //
-    // But it won't happen in cases like:
-    // - new Uint8Array(42)
-    // - Buffer.alloc(42)
-    // - new Uint8Array(42).slice()
-    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.arrayBufferSize()));
+    result->putDirectOffset(vm, 3, JSC::jsNumber(Bun::externalMemorySize(vm.heap)));
+    // ArrayBuffer storage, plus the vector of a typed array that has no ArrayBuffer yet. A subset of external, as in Node.
+    result->putDirectOffset(vm, 4, JSC::jsNumber(vm.heap.typedArrayBackingStoreSize()));
 
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(result));
 }

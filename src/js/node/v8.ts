@@ -18,11 +18,14 @@ interface GCEvent {
 
 const {
   isStringOneByteRepresentation,
+  externalMemorySize,
   startGCProfiler,
   stopGCProfiler,
   discardGCProfiler,
 }: {
   isStringOneByteRepresentation(content: string): boolean;
+  /** The same number as process.memoryUsage().external. */
+  externalMemorySize(): number;
   /** The session's id. */
   startGCProfiler(): number;
   stopGCProfiler(session: number): GCEvent[];
@@ -231,7 +234,7 @@ function getHeapStatistics() {
     used_global_handles_size: 2208,
     // ---- End of copied from Node
 
-    external_memory: stats.extraMemorySize,
+    external_memory: externalMemorySize(),
   };
 }
 // V8 divides its heap into fixed spaces; JSC manages one undivided heap, so

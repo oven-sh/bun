@@ -18,6 +18,12 @@
 
 namespace Bun {
 
+// Node's external_memory, as of now: the bytes that heap objects own outside the heap.
+inline size_t externalMemorySize(JSC::Heap& heap)
+{
+    return heap.extraMemorySizeForReporting() + heap.externalMemorySize();
+}
+
 // One record per garbage collection observed while at least one GCProfiler is
 // running. Only values JavaScriptCore actually measures are stored; the shape
 // node:v8 reports is assembled in src/js/node/v8.ts.
@@ -55,7 +61,7 @@ public:
         auto& heap = m_vm->heap;
         m_collectionStart = WTF::MonotonicTime::now();
         m_capacityBefore = heap.capacity();
-        m_externalBefore = heap.extraMemorySize();
+        m_externalBefore = Bun::externalMemorySize(heap);
         // Only sessions that existed at this prologue receive the record; a
         // profiler started during the concurrent phase has no honest start time
         // for this collection.
@@ -87,7 +93,7 @@ public:
             record.usedAfter = heap.sizeAfterLastEdenCollection();
         }
         record.capacityAfter = heap.capacity();
-        record.externalAfter = heap.extraMemorySize();
+        record.externalAfter = Bun::externalMemorySize(heap);
         // For a full collection Heap::willStartCollection() zeroes m_extraMemorySize
         // before notifying observers, so the prologue sample under-reports; reuse the
         // epilogue value so external memory doesn't appear to grow across a sweep.

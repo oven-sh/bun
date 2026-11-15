@@ -9,6 +9,7 @@ use core::ptr::NonNull;
 use std::sync::Arc;
 
 use bun_bundler::Transpiler;
+use bun_core::EncodedUnits;
 use bun_io as Async;
 use bun_ptr::{CellExt as _, OptionCellExt as _, VecCellExt as _};
 use bun_uws as uws;
@@ -2778,7 +2779,7 @@ pub struct RuntimeHooks {
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<WorkerExecArgvFlags>,
+        fn(exec_argv: &[Option<&bun_core::WTFStringImplStruct>]) -> Option<WorkerExecArgvFlags>,
     /// Cron jobs and the memory pressure watcher, while the loop and `RareData` are alive.
     pub stop_watches_for_vm_teardown: fn(vm: &VirtualMachine),
     /// `CronJob.clearAllForVM(vm, .reload)`.
@@ -3349,13 +3350,10 @@ impl VirtualMachine {
                 .and_then(crate::web_worker::WebWorker::exec_argv)
                 .is_some_and(|exec_argv| {
                     use bun_core::WTFStringImplExt as _;
-                    exec_argv.iter().any(|&arg| {
-                        // SAFETY: each entry borrows the C++ `WorkerOptions`
-                        // array, kept alive by the owning `WebCore::Worker`
-                        // for the worker's lifetime (see `WebWorker::argv`).
-                        !arg.is_null()
-                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
-                    })
+                    exec_argv
+                        .iter()
+                        .flatten()
+                        .any(|arg| is_bootstrap_flag(arg.to_owned_slice_z().as_bytes()))
                 });
         if needs_pre_execution && crate::compiled_program::can_load_unused_library_modules() {
             // The C++ side catches and reports any JS exception thrown while
@@ -4563,7 +4561,7 @@ impl VirtualMachine {
                 ..ResolvedSource::printed(ast, Default::default())
             });
         }
-        let source = bun_core::String::adopt_wtf_impl(self.ref_counted_string(code)?.into_raw());
+        let source = bun_core::String::from(self.ref_counted_string(code)?);
         Ok(ResolvedSource {
             source_url: specifier.create_if_different(source_url),
             ..ResolvedSource::printed(ast, source)
@@ -5078,9 +5076,9 @@ impl VirtualMachine {
 
         // Bare/`node:` builtins: answer from the alias table before paying for UTF-8 copies and the resolver.
         // (Alias names are ASCII, so the Latin-1 bytes are the UTF-8 bytes whenever they can match.)
-        if specifier.is_8bit() {
+        if let EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) = specifier.encoded_units() {
             if let Some(hardcoded) = ModuleLoader::HardcodedModule::Alias::get(
-                specifier.latin1(),
+                bytes,
                 bun_ast::Target::Bun,
                 ModuleLoader::alias_cfg(),
             ) {
@@ -6627,7 +6625,7 @@ impl VirtualMachine {
                     match code_value.to_bun_string(global_ref) {
                         Ok(s) if s.is_8bit() => {
                             code_string = Some(s);
-                            code_string.as_ref().map(|s| s.latin1())
+                            code_string.as_ref().map(|s| s.byte_slice())
                         }
                         Ok(_) => None,
                         // A primitive string only fails to convert when it is a rope
@@ -7012,22 +7010,9 @@ impl VirtualMachine {
                 'brk: {
                     if let Some(code) = optional_code {
                         if bun_core::is_all_ascii(code) {
-                            let has_prefix = if message.is_utf16() {
-                                let msg_chars = message.utf16();
-                                msg_chars.len() > code.len() + 2 + 1
-                                    && code
-                                        .iter()
-                                        .zip(msg_chars.iter())
-                                        .all(|(&a, &b)| u16::from(a) == b)
-                                    && msg_chars[code.len()] == u16::from(b':')
-                                    && msg_chars[code.len() + 1] == u16::from(b' ')
-                            } else {
-                                let msg_chars = message.latin1();
-                                msg_chars.len() > code.len() + 2 + 1
-                                    && bun_core::strings::eql_long(&msg_chars[..code.len()], code)
-                                    && msg_chars[code.len()] == b':'
-                                    && msg_chars[code.len() + 1] == b' '
-                            };
+                            let has_prefix = message.length() > code.len() + 2 + 1
+                                && message.starts_with_ascii(code)
+                                && message.substring(code.len()).starts_with_ascii(b": ");
                             if has_prefix {
                                 break 'brk (
                                     bun_core::StringView::from_bytes(code),

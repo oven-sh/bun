@@ -30,7 +30,7 @@ use bun_collections::StringSet;
 use bun_core::ZBox;
 use bun_core::fmt::HostFormatter;
 use bun_core::strings;
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::{EncodedUnits, String as BunString, Utf8Bytes};
 use bun_http::header_has_token;
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
@@ -1683,13 +1683,13 @@ fn last_connect_error_code() -> BunString {
 /// (<https://fetch.spec.whatwg.org/#concept-header-value>). C++ has already rejected
 /// anything above U+00FF.
 fn isomorphic_encode(s: &BunString) -> Cow<'_, [u8]> {
-    if !s.is_utf16() {
-        return Cow::Borrowed(s.latin1());
+    match s.encoded_units() {
+        EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => Cow::Borrowed(bytes),
+        EncodedUnits::Utf16(units) => units
+            .iter()
+            .map(|&unit| u8::try_from(unit).unwrap_or(b'?'))
+            .collect(),
     }
-    s.utf16()
-        .iter()
-        .map(|&unit| u8::try_from(unit).unwrap_or(b'?'))
-        .collect()
 }
 
 fn encode_headers(names: &[BunString], values: &[BunString]) -> Headers {

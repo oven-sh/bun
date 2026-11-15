@@ -21,6 +21,7 @@ pub mod mapping;
 pub mod parsed_source_map;
 
 pub use bun_base64::vlq;
+use bun_core::EncodedUnits;
 pub use vlq::VLQ;
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
@@ -423,10 +424,11 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let source = provider.get_source_slice();
                 debug_assert!(source.tag() == bun_core::Tag::EncodedSlice);
 
-                let maybe_found_url = if source.is_8bit() {
-                    find_source_mapping_url_u8(source.latin1())
-                } else {
-                    find_source_mapping_url_u16(source.utf16())
+                let maybe_found_url = match source.encoded_units() {
+                    EncodedUnits::Latin1(bytes) | EncodedUnits::Utf8(bytes) => {
+                        find_source_mapping_url_u8(bytes)
+                    }
+                    EncodedUnits::Utf16(units) => find_source_mapping_url_u16(units),
                 };
 
                 let Some(found_url) = maybe_found_url else {
